@@ -1,9 +1,0 @@
-# Sample CSV format for API keys
-# Copy this file to debug_keys.csv and replace with real API keys
-#
-# Format: provider,model,api_key
-#
-provider,model,api_key
-OpenAI,gpt-4o,sk-your-openai-key-here
-Anthropic,claude-3-5-sonnet-20241022,sk-ant-api03-your-anthropic-key-here  
-DeepSeek,deepseek-chat,sk-ds-your-deepseek-key-here 
