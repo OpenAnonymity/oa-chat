@@ -39,9 +39,18 @@ export const useApiKey = () => {
       return;
     }
 
+    // Parse expiration time as UTC
     const expiryDate = new Date(expiresAt);
+    
+    // Verify it's a valid date
+    if (isNaN(expiryDate.getTime())) {
+      console.error('Invalid expiration date:', expiresAt);
+      setTimeRemaining('Invalid date');
+      return;
+    }
 
     const updateTimeRemaining = () => {
+      // Get current time in UTC
       const now = new Date();
       const diff = expiryDate - now;
 
@@ -51,9 +60,18 @@ export const useApiKey = () => {
         clearApiKey();
       } else {
         setIsExpired(false);
-        const minutes = Math.floor(diff / 60000);
+        const hours = Math.floor(diff / 3600000);
+        const minutes = Math.floor((diff % 3600000) / 60000);
         const seconds = Math.floor((diff % 60000) / 1000);
-        setTimeRemaining(`${minutes}m ${seconds}s`);
+        
+        // Format based on time remaining
+        if (hours > 0) {
+          setTimeRemaining(`${hours}h ${minutes}m`);
+        } else if (minutes > 0) {
+          setTimeRemaining(`${minutes}m ${seconds}s`);
+        } else {
+          setTimeRemaining(`${seconds}s`);
+        }
       }
     };
 
