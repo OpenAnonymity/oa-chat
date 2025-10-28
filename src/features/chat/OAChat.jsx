@@ -12,6 +12,7 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeHighlight from 'rehype-highlight';
 import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css'; // Ensure KaTeX CSS is loaded
 
 import { useTheme } from '../theme/ThemeProvider';
 import { useApiKey, useInvitationCode, useLocalStorage } from '../../shared/hooks';
@@ -122,7 +123,7 @@ export const OAChat = () => {
   }, [isResizing, handleMouseMoveResize, handleMouseUp]);
 
   /**
-   * Process text content (handle escape sequences)
+   * Process text content (handle escape sequences and LaTeX normalization)
    */
   const processTextContent = (text) => {
     if (!text) return '';
@@ -133,6 +134,17 @@ export const OAChat = () => {
       .replace(/\\\\/g, '\\')
       .replace(/\\"/g, '"')
       .replace(/\\'/g, "'");
+  };
+
+  /**
+   * Normalize LaTeX delimiters for remark-math
+   * Converts \(...\) to $...$ and \[...\] to $$...$$
+   */
+  const normalizeLatex = (text) => {
+    if (!text) return '';
+    return text
+      .replace(/\\\((.*?)\\\)/g, '$$$1$$')  // Inline: \(...\) → $...$
+      .replace(/\\\[(.*?)\\\]/gs, '$$$$$$$$1$$$$$$'); // Block: \[...\] → $$...$$
   };
 
   /**
@@ -324,7 +336,7 @@ export const OAChat = () => {
                             ),
                           }}
                         >
-                          {message.parts[0]?.text || ''}
+                          {normalizeLatex(message.parts[0]?.text || '')}
                         </ReactMarkdown>
                       </div>
                     )}

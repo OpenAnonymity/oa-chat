@@ -12,6 +12,7 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeHighlight from 'rehype-highlight';
 import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css'; // Ensure KaTeX CSS is loaded
 import NewModelSelector from '../../../shared/components/NewModelSelector';
 import { MODEL_METADATA } from '../../models';
 
@@ -25,6 +26,15 @@ const processTextContent = (text) => {
     .replace(/\\\\/g, '\\')
     .replace(/\\"/g, '"')
     .replace(/\\'/g, "'");
+};
+
+// Normalize LaTeX delimiters for remark-math
+// Converts \(...\) to $...$ and \[...\] to $$...$$
+const normalizeLatex = (text) => {
+  if (!text) return '';
+  return text
+    .replace(/\\\((.*?)\\\)/g, '$$$1$$')  // Inline: \(...\) → $...$
+    .replace(/\\\[(.*?)\\\]/gs, '$$$$$$$$1$$$$$$'); // Block: \[...\] → $$...$$
 };
 
 // Status utility functions
@@ -678,7 +688,7 @@ export const MessageList = ({ messages, isShredding, messagesEndRef, input, onIn
                         ),
                       }}
                     >
-                      {part.text}
+                      {normalizeLatex(part.text)}
                     </ReactMarkdown>
                   );
                 }
