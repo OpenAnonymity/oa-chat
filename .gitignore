@@ -1,111 +1,37 @@
-# Backend (Python/FastAPI)
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-env/
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-.pytest_cache/
-.coverage
-htmlcov/
-.tox/
-.nox/
-.hypothesis/
-.venv
-venv/
-ENV/
-*/api_keys.csv
-*/new-backend-planner.md
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
-# Frontend (React/Node.js)
-node_modules/
-/client/node_modules
-/client/.pnp
-/client/.pnp.js
-/client/coverage
-/client/build
-/client/.DS_Store
-/client/.env
-/client/.env.local
-/client/.env.development.local
-/client/.env.test.local
-/client/.env.production.local
-/client/npm-debug.log*
-/client/yarn-debug.log*
-/client/yarn-error.log*
+# dependencies
+/node_modules
+/.pnp
+.pnp.js
 
-# Environment variables
+# testing
+/coverage
+
+# production
+/build
+
+# misc
+.DS_Store
 .env
-.env.*
-!.env.example
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
 
-# MongoDB data directory
-/data/db/
-
-# Logs
-logs/
-*.log
+# logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-lerna-debug.log*
+*.log
 
-# OS specific
-.DS_Store
-Thumbs.db
-.directory
+# temp files
+*.tmp
 *.swp
 *.swo
+*~
 
-# Editor specific
-.idea/
+# IDE
 .vscode/
-*.sublime-project
-*.sublime-workspace
-.project
-.classpath
-.c9/
-*.launch
-.settings/
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
-
-# API and model directories
-openai_key.txt
-anthropic_key.txt
-grok_key.txt
-deepseek_key.txt
-secrets/
-
-# Docker
-.dockerignore
-docker-compose.override.yml
-
-# Jupyter Notebooks
-.ipynb_checkpoints
-
-# Production files
-/server/static/
-/server/media/
-
-# UV
-.uv/
-.venv/
-__pypackages__/
+.idea/
+*.sublime-*
