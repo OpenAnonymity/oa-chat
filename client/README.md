@@ -41,7 +41,51 @@ module.exports = function(app) {
 # Optional customization
 REACT_APP_API_URL=http://localhost:8000
 REACT_APP_WS_URL=ws://localhost:8000
+
+# Organization API for station discovery and ticket issuance
+REACT_APP_ORG_URL=https://org.openanonymity.ai
+
+# Fallback station URL (used if org discovery fails)
+REACT_APP_STATION_URL=http://localhost:8002
+
+# Privacy Pass Provider: 'wasm' (default) or 'extension'
+REACT_APP_PRIVACY_PASS_PROVIDER=wasm
 ```
+
+## Privacy Pass Integration
+
+The webapp uses Privacy Pass for anonymous authentication with inference tickets.
+
+### Direct WASM (Default)
+By default, the webapp loads the Privacy Pass WASM module directly without requiring a browser extension:
+
+- WASM files located in `src/wasm/`
+- Automatically bundled by webpack
+- Initialized on first use
+- No extension installation needed
+
+### Browser Extension (Alternative)
+To use the browser extension instead:
+
+1. Set environment variable:
+   ```bash
+   REACT_APP_PRIVACY_PASS_PROVIDER=extension
+   ```
+
+2. Install the Privacy Pass extension from `../privacypass-extension`
+
+### Switching Providers
+The Privacy Pass service is modular and can be easily switched:
+
+```javascript
+// In src/shared/services/station.js
+const PRIVACY_PASS_PROVIDER = process.env.REACT_APP_PRIVACY_PASS_PROVIDER || 'wasm';
+```
+
+Both providers implement the same interface:
+- `initialize()` - Initialize the provider
+- `createSingleTokenRequest(publicKey, challenge)` - Create blinded token
+- `finalizeToken(signedResponse, state)` - Unblind token
 
 ## Development
 

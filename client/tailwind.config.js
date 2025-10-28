@@ -72,7 +72,7 @@ module.exports = {
         "accordion-up": "accordion-up 0.2s ease-out",
       },
       fontFamily: {
-        mono: ['ui-monospace', 'SFMono-Regular', 'Monaco', 'Consolas', 'Liberation Mono', 'Courier New', 'monospace'],
+        mono: ['"PT Mono"', 'ui-monospace', 'SFMono-Regular', 'monospace'],
       },
     },
   },

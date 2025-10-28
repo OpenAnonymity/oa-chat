@@ -1,0 +1,4 @@
+# WASM-generated files - ignore linting
+*.js
+*.wasm
+

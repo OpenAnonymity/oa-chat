@@ -1,14 +1,14 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { ThemeProvider } from './features/theme/ThemeProvider';
-import Chat from './pages/Chat';
+import OAChat from './features/chat/OAChat';
 
 function App() {
   return (
     <ThemeProvider>
-      <Router>
+      <Router basename="/chat">
         <Routes>
-          <Route path="/" element={<Chat />} />
+          <Route path="/" element={<OAChat />} />
         </Routes>
       </Router>
     </ThemeProvider>
