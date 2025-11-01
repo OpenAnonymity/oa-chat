@@ -4,7 +4,6 @@ class ChatApp {
         this.state = {
             sessions: [],
             currentSessionId: null,
-            selectedModels: [],
             models: [],
             modelsLoading: false
         };
@@ -16,8 +15,7 @@ class ChatApp {
             messagesContainer: document.getElementById('messages-container'),
             messageInput: document.getElementById('message-input'),
             sendBtn: document.getElementById('send-btn'),
-            addModelBtn: document.getElementById('add-model-btn'),
-            selectedModelsContainer: document.getElementById('selected-models-container'),
+            modelPickerBtn: document.getElementById('model-picker-btn'),
             modelPickerModal: document.getElementById('model-picker-modal'),
             closeModalBtn: document.getElementById('close-modal-btn'),
             modelsList: document.getElementById('models-list'),
@@ -47,7 +45,7 @@ class ChatApp {
         // Render initial state
         this.renderSessions();
         this.renderMessages();
-        this.renderSelectedModels();
+        this.renderCurrentModel();
 
         // Set up event listeners
         this.setupEventListeners();
@@ -73,16 +71,12 @@ class ChatApp {
         // Load sessions
         this.state.sessions = await chatDB.getAllSessions();
         
-        // Load selected models
-        const savedModels = await chatDB.getSetting('selectedModels');
-        if (savedModels) {
-            this.state.selectedModels = savedModels;
-        }
-
         // Load current session
         const currentId = await chatDB.getSetting('currentSessionId');
         if (currentId && this.state.sessions.find(s => s.id === currentId)) {
             this.state.currentSessionId = currentId;
+        } else if (this.state.sessions.length > 0) {
+            this.state.currentSessionId = this.state.sessions[0].id;
         }
     }
 
@@ -110,7 +104,7 @@ class ChatApp {
             id: this.generateId(),
             title,
             createdAt: Date.now(),
-            models: [...this.state.selectedModels]
+            model: null 
         };
 
         this.state.sessions.unshift(session);
@@ -121,6 +115,7 @@ class ChatApp {
 
         this.renderSessions();
         this.renderMessages();
+        this.renderCurrentModel();
 
         return session;
     }
@@ -130,6 +125,7 @@ class ChatApp {
         chatDB.saveSetting('currentSessionId', sessionId);
         this.renderSessions();
         this.renderMessages();
+        this.renderCurrentModel();
     }
 
     getCurrentSession() {
@@ -188,26 +184,35 @@ class ChatApp {
         this.elements.messageInput.style.height = '24px';
 
         const session = this.getCurrentSession();
-
-        // If no models are selected globally, apply the default.
-        if (this.state.selectedModels.length === 0) {
-            const defaultModelName = 'GPT-5 Chat';
-            // Check if default exists
-            let modelExists = this.state.models.find(m => m.name.toLowerCase() === defaultModelName.toLowerCase());
-            if (modelExists) {
-                this.state.selectedModels.push(defaultModelName);
-            } else {
-                this.state.selectedModels.push('GPT-4o');
-            }
-            await chatDB.saveSetting('selectedModels', this.state.selectedModels);
-            this.renderSelectedModels();
-        }
         
-        // Sync session models with global selection
-        session.models = [...this.state.selectedModels];
-        await chatDB.saveSession(session);
-    
-        const modelNameToUse = session.models[0];
+        let modelNameToUse = session.model;
+
+        if (!modelNameToUse) {
+            const gpt5Model = this.state.models.find(m => m.name.toLowerCase().includes('gpt-5 chat'));
+            if (gpt5Model) {
+                modelNameToUse = gpt5Model.name;
+            } else {
+                const gpt4oModel = this.state.models.find(m => m.name.toLowerCase().includes('gpt-4o'));
+                if (gpt4oModel) {
+                    modelNameToUse = gpt4oModel.name;
+                } else if (this.state.models.length > 0) {
+                    modelNameToUse = this.state.models[0].name;
+                }
+            }
+            
+            if (modelNameToUse) {
+                session.model = modelNameToUse;
+                await chatDB.saveSession(session);
+                this.renderCurrentModel();
+            }
+        }
+
+        if (!modelNameToUse) {
+            console.warn('No available models to send message.');
+            await this.addMessage('assistant', 'No models are available right now. Please add a model and try again.');
+            return;
+        }
+
         let selectedModel = this.state.models.find(m => m.name === modelNameToUse);
         let modelId;
         
@@ -221,6 +226,14 @@ class ChatApp {
         // Show typing indicator
         const typingId = this.showTypingIndicator(modelNameToUse);
 
+        // --- SIMULATED RESPONSE ---
+        setTimeout(async () => {
+            this.removeTypingIndicator(typingId);
+            await this.addMessage('assistant', `You said: "${content}"`);
+        }, 1000);
+        // --- END SIMULATED RESPONSE ---
+
+        /*
         try {
             // Get AI response from OpenRouter
             const messages = await chatDB.getSessionMessages(session.id);
@@ -236,6 +249,7 @@ class ChatApp {
             this.removeTypingIndicator(typingId);
             await this.addMessage('assistant', 'Sorry, I encountered an error while processing your request.');
         }
+        */
     }
 
     showTypingIndicator(modelName) {
@@ -335,42 +349,35 @@ class ChatApp {
         });
     }
 
-    renderSelectedModels() {
-        this.elements.selectedModelsContainer.innerHTML = this.state.selectedModels.map(modelName => {
+    renderCurrentModel() {
+        const session = this.getCurrentSession();
+        const modelName = session ? session.model : null;
+
+        const shortcutHtml = `
+            <div class="flex items-center gap-0.5 ml-2">
+                <kbd class="flex items-center justify-center h-4 w-4 p-1 rounded-sm bg-muted border border-border text-foreground text-xs">⌘</kbd>
+                <kbd class="flex items-center justify-center h-4 w-4 p-1 rounded-sm bg-muted border border-border text-foreground text-xs">K</kbd>
+            </div>
+        `;
+
+        if (modelName) {
             const model = this.state.models.find(m => m.name === modelName);
-            if (!model) return '';
-
-            return `
-                <div class="duration-200 fade-in">
-                    <div role="button" tabindex="0" class="relative flex h-8 cursor-pointer items-center justify-between gap-1 rounded-md transition-all duration-150 ease-in-out border border-border bg-background text-foreground hover:bg-accent w-fit shrink-0">
-                        <div class="relative flex h-full w-full select-none items-center gap-1.5 pl-1.5 pr-1">
-                            <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 bg-muted">
-                                <span class="text-[10px] font-semibold">${model.provider.charAt(0)}</span>
-                            </div>
-                            <div class="min-w-0 flex-1">
-                                <span class="block text-xs font-medium">${model.name}</span>
-                            </div>
-                            <button 
-                                data-model="${model.name}" 
-                                class="remove-model-btn inline-flex items-center justify-center rounded-md transition-colors text-muted-foreground h-5 w-5 hover:bg-red-50 hover:text-red-600" 
-                                aria-label="Remove model">
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3 h-3">
-                                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
-                                </svg>
-                            </button>
-                        </div>
-                    </div>
+            const providerInitial = model ? model.provider.charAt(0) : '';
+            this.elements.modelPickerBtn.innerHTML = `
+                <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 bg-muted">
+                    <span class="text-[10px] font-semibold">${providerInitial}</span>
                 </div>
+                <span class="truncate">${modelName}</span>
+                ${shortcutHtml}
             `;
-        }).join('');
-
-        // Add remove handlers
-        document.querySelectorAll('.remove-model-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this.removeModel(btn.dataset.model);
-            });
-        });
+            this.elements.modelPickerBtn.classList.add('gap-1.5');
+        } else {
+            this.elements.modelPickerBtn.innerHTML = `
+                <span>Select Model</span>
+                ${shortcutHtml}
+            `;
+            this.elements.modelPickerBtn.classList.remove('gap-1.5');
+        }
     }
 
     async renderMessages() {
@@ -378,7 +385,7 @@ class ChatApp {
         if (!session) {
             this.elements.messagesContainer.innerHTML = `
                 <div class="text-center text-muted-foreground mt-20">
-                    <p class="text-lg">Start a conversation</p>
+                    <p class="text-lg">Chat anonymously</p>
                     <p class="text-sm mt-2">Type a message below to get started</p>
                 </div>
             `;
@@ -391,7 +398,7 @@ class ChatApp {
         if (messages.length === 0) {
             this.elements.messagesContainer.innerHTML = `
                 <div class="text-center text-muted-foreground mt-20">
-                    <p class="text-lg">Start a conversation</p>
+                    <p class="text-lg">Chat anonymously</p>
                     <p class="text-sm mt-2">Type a message below to get started</p>
                 </div>
             `;
@@ -419,8 +426,8 @@ class ChatApp {
                 `;
             } else {
                 const session = this.getCurrentSession();
-                // Use the first model from the session for displaying the message bubble info
-                const modelName = (session && session.models.length > 0) ? session.models[0] : 'GPT-5 Chat';
+                // Use the model from the session for displaying the message bubble info
+                const modelName = session ? session.model : 'GPT-5 Chat';
                 const model = this.state.models.find(m => m.name === modelName);
                 const providerInitial = model ? model.provider.charAt(0) : 'A';
                 
@@ -483,7 +490,8 @@ class ChatApp {
                     ${filteredModels
                         .filter(m => m.category === category)
                         .map(model => {
-                            const isSelected = this.state.selectedModels.includes(model.name);
+                            const session = this.getCurrentSession();
+                            const isSelected = session && session.model === model.name;
                             return `
                                 <div class="model-option px-2 py-1.5 rounded-sm cursor-pointer transition-colors hover:bg-accent ${isSelected ? 'bg-accent' : ''}" data-model="${model.name}">
                                     <div class="flex items-center gap-2">
@@ -505,43 +513,18 @@ class ChatApp {
         // Add click handlers
         document.querySelectorAll('.model-option').forEach(el => {
             el.addEventListener('click', () => {
-                this.toggleModel(el.dataset.model);
+                this.selectModel(el.dataset.model);
             });
         });
     }
 
-    async toggleModel(modelName) {
-        const index = this.state.selectedModels.indexOf(modelName);
-        if (index > -1) {
-            this.state.selectedModels.splice(index, 1);
-        } else {
-            this.state.selectedModels.push(modelName);
-        }
-
-        await chatDB.saveSetting('selectedModels', this.state.selectedModels);
-        this.renderModels(this.elements.modelSearch.value);
-        this.renderSelectedModels();
-
-        // Update current session as well
+    async selectModel(modelName) {
         const session = this.getCurrentSession();
-        if(session) {
-            session.models = [...this.state.selectedModels];
+        if (session) {
+            session.model = modelName;
             await chatDB.saveSession(session);
-        }
-    }
-
-    async removeModel(modelName) {
-        const index = this.state.selectedModels.indexOf(modelName);
-        if (index > -1) {
-            this.state.selectedModels.splice(index, 1);
-            await chatDB.saveSetting('selectedModels', this.state.selectedModels);
-            this.renderSelectedModels();
-            // Update current session as well
-            const session = this.getCurrentSession();
-            if(session) {
-                session.models = [...this.state.selectedModels];
-                await chatDB.saveSession(session);
-            }
+            this.renderCurrentModel();
+            this.closeModelPicker();
         }
     }
 
@@ -593,7 +576,7 @@ class ChatApp {
         });
 
         // Model picker
-        this.elements.addModelBtn.addEventListener('click', () => {
+        this.elements.modelPickerBtn.addEventListener('click', () => {
             this.openModelPicker();
         });
 
@@ -617,6 +600,21 @@ class ChatApp {
         this.elements.settingsBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             this.elements.settingsMenu.classList.toggle('hidden');
+        });
+
+        this.elements.settingsMenu.addEventListener('click', async (e) => {
+            if (e.target.tagName === 'BUTTON') {
+                const action = e.target.textContent.trim();
+                if (action === 'Clear Models') {
+                    const session = this.getCurrentSession();
+                    if (session) {
+                        session.model = null;
+                        await chatDB.saveSession(session);
+                        this.renderCurrentModel();
+                    }
+                }
+                this.elements.settingsMenu.classList.add('hidden');
+            }
         });
 
         // Close settings menu when clicking outside

@@ -90,7 +90,7 @@
                             autocorrect="off" 
                             autocapitalize="off" 
                             spellcheck="false" 
-                            placeholder="Search rooms..." 
+                            placeholder="Search chats..." 
                             value="">
                         
                         <div class="flex-1 min-h-0 overflow-y-auto">
@@ -116,29 +116,15 @@
                 <!-- Input Area -->
                 <div class="sm:mb-2 sm:mt-0 flex-shrink-0 md:px-4">
                     <div class="rounded-xl overflow-hidden p-2 border border-slate-4 w-full max-w-4xl mx-auto flex-shrink-0 bg-white dark:bg-slate-2 shadow-lg" style="isolation: isolate; contain: layout;">
-                            <!-- Selected Models Row -->
-                            <div class="relative min-h-[32px] mb-1">
-                                <div class="flex items-center gap-1 overflow-x-auto whitespace-nowrap">
-                                    <div id="selected-models-container" class="flex flex-wrap gap-1"></div>
-                                    <button id="add-model-btn" class="inline-flex items-center justify-center whitespace-nowrap rounded-md transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 gap-1 bg-transparent border border-border text-foreground hover:bg-accent text-xs h-8 px-2 flex-shrink-0" type="button" aria-label="Add Model">
-                                        <span class="text-xs">Add Model</span>
-                                        <div class="flex items-center gap-0.5">
-                                            <kbd class="flex items-center justify-center h-3.5 w-3.5 p-0.5 rounded-sm bg-muted border border-border text-foreground text-[10px]">⌘</kbd>
-                                            <kbd class="flex items-center justify-center h-3.5 w-3.5 p-0.5 rounded-sm bg-muted border border-border text-foreground text-[10px]">K</kbd>
-                                        </div>
-                                    </button>
-                                </div>
-                            </div>
-
                             <!-- Textarea Container -->
-                            <div class="relative w-full flex flex-col gap-2">
-                                <div class="rounded-lg w-full focus-within:bg-accent shadow-sm text-muted-foreground focus-within:text-foreground transition-colors focus-within:shadow-inner bg-background">
+                            <div class="relative w-full flex flex-col">
+                                <div class="rounded-lg w-full focus-within:bg-accent text-muted-foreground focus-within:text-foreground transition-colors bg-background">
                                     <div class="flex h-max py-2 max-h-96 bg-background px-2">
                                         <textarea 
                                             id="message-input"
                                             rows="1" 
                                             class="w-full bg-transparent leading-6 focus:outline-none resize-none overflow-y-hidden text-foreground placeholder:text-muted-foreground" 
-                                            placeholder="Start a new message..."
+                                            placeholder="Chat anonymously"
                                             style="height: 24px; min-height: 24px; max-height: 200px;"
                                         ></textarea>
                                     </div>
@@ -146,8 +132,15 @@
                             </div>
                             
                             <!-- Bottom Actions Bar -->
-                            <div class="flex gap-1 mt-2">
+                            <div class="flex gap-1 pt-2">
                                 <div class="relative flex w-full min-w-0 items-center gap-1">
+                                    <button id="model-picker-btn" class="inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 border border-input bg-transparent hover:bg-accent hover:text-accent-foreground h-9 px-3 shrink-0 gap-1">
+                                        <span>Select Model</span>
+                                        <div class="flex items-center gap-0.5 ml-2">
+                                            <kbd class="flex items-center justify-center h-4 w-4 p-1 rounded-sm bg-muted border border-border text-foreground text-xs">⌘</kbd>
+                                            <kbd class="flex items-center justify-center h-4 w-4 p-1 rounded-sm bg-muted border border-border text-foreground text-xs">K</kbd>
+                                        </div>
+                                    </button>
                                     <!-- File Upload Button -->
                                     <span class="inline-flex">
                                         <button class="inline-flex items-center justify-center rounded-md transition-colors hover:bg-accent text-muted-foreground hover:text-foreground h-9 w-9">
@@ -192,20 +185,6 @@
                                             <span class="search-switch-thumb h-[17px] w-[17px] rounded-full inline-block transform transition duration-200 ease-in-out bg-white/80 group-hover:bg-white translate-x-[2px]"></span>
                                         </button>
                                     </div>
-
-                                    <!-- Memory Button -->
-                                    <button class="inline-flex items-center justify-center rounded-md transition-colors hover:bg-accent text-muted-foreground hover:text-foreground h-9 px-3 gap-1">
-                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
-                                            <path stroke-linecap="round" stroke-linejoin="round" d="M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3-3c-1.354 0-2.694-.055-4.02-.163a2.115 2.115 0 0 1-.825-.242m9.345-8.334a2.126 2.126 0 0 0-.476-.095 48.64 48.64 0 0 0-8.048 0c-1.131.094-1.976 1.057-1.976 2.192v4.286c0 .837.46 1.58 1.155 1.951m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.455 48.455 0 0 0 11.25 3c-2.115 0-4.198.137-6.24.402-1.608.209-2.76 1.614-2.76 3.235v6.226c0 1.621 1.152 3.026 2.76 3.235.577.075 1.157.14 1.74.194V21l4.155-4.155" />
-                                        </svg>
-                                        <span class="text-sm font-medium">
-                                            <span class="sm:hidden">8</span>
-                                            <span class="hidden sm:inline">Memory (8)</span>
-                                        </span>
-                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="hidden sm:block h-4 w-4 opacity-70">
-                                            <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
-                                        </svg>
-                                    </button>
                                 </div>
                                 
                                 <div class="flex">
