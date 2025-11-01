@@ -229,7 +229,7 @@ class ChatApp {
         // --- SIMULATED RESPONSE ---
         setTimeout(async () => {
             this.removeTypingIndicator(typingId);
-            await this.addMessage('assistant', `You said: "${content}"`);
+            await this.addMessage('assistant', content);
         }, 1000);
         // --- END SIMULATED RESPONSE ---
 
@@ -353,13 +353,6 @@ class ChatApp {
         const session = this.getCurrentSession();
         const modelName = session ? session.model : null;
 
-        const shortcutHtml = `
-            <div class="flex items-center gap-0.5 ml-2">
-                <kbd class="flex items-center justify-center h-4 w-4 p-1 rounded-sm bg-muted border border-border text-foreground text-xs">⌘</kbd>
-                <kbd class="flex items-center justify-center h-4 w-4 p-1 rounded-sm bg-muted border border-border text-foreground text-xs">K</kbd>
-            </div>
-        `;
-
         if (modelName) {
             const model = this.state.models.find(m => m.name === modelName);
             const providerInitial = model ? model.provider.charAt(0) : '';
@@ -368,10 +361,15 @@ class ChatApp {
                     <span class="text-[10px] font-semibold">${providerInitial}</span>
                 </div>
                 <span class="truncate">${modelName}</span>
-                ${shortcutHtml}
             `;
             this.elements.modelPickerBtn.classList.add('gap-1.5');
         } else {
+            const shortcutHtml = `
+                <div class="flex items-center gap-0.5 ml-2">
+                    <kbd class="flex items-center justify-center h-4 w-4 p-1 rounded-sm bg-muted border border-border text-foreground text-xs">⌘</kbd>
+                    <kbd class="flex items-center justify-center h-4 w-4 p-1 rounded-sm bg-muted border border-border text-foreground text-xs">K</kbd>
+                </div>
+            `;
             this.elements.modelPickerBtn.innerHTML = `
                 <span>Select Model</span>
                 ${shortcutHtml}
@@ -410,12 +408,6 @@ class ChatApp {
                 return `
                     <div class="w-full px-2 md:px-3 fade-in self-end">
                         <div class="group my-2 flex w-full flex-col gap-2 justify-end items-end">
-                            <div class="flex items-center justify-end gap-2">
-                                <span class="text-xs text-muted-foreground">${this.formatTime(message.timestamp)}</span>
-                                <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow bg-blue-500">
-                                    <span class="text-white text-xs font-bold">U</span>
-                                </div>
-                            </div>
                             <div class="py-3 px-4 font-normal rounded-lg message-user max-w-full">
                                 <div class="min-w-0 w-full overflow-hidden break-words">
                                     <p class="mb-0">${this.escapeHtml(message.content)}</p>
@@ -441,7 +433,7 @@ class ChatApp {
                                 </div>
                                 <span class="text-xs text-primary font-medium">${modelName}</span>
                             </div>
-                            <div class="py-3 px-4 font-normal rounded-lg message-assistant rounded-tl-none w-full">
+                            <div class="py-3 px-4 font-normal rounded-lg message-assistant rounded-tl-none w-full flex items-center">
                                 <div class="min-w-0 w-full overflow-hidden message-content prose">
                                     ${marked.parse(message.content)}
                                 </div>
@@ -458,7 +450,8 @@ class ChatApp {
                 delimiters: [
                     {left: '$$', right: '$$', display: true},
                     {left: '\\[', right: '\\]', display: true},
-                    {left: '\\(', right: '\\)', display: false}
+                    {left: '\\(', right: '\\)', display: false},
+                    {left: '$', right: '$', display: false}
                 ],
                 throwOnError: false
             });

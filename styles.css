@@ -198,3 +198,11 @@ textarea:focus {
     background: linear-gradient(to bottom, transparent, var(--slate-2) 10%);
 }
 
+.prose p:first-child {
+    margin-top: 0;
+}
+
+.prose p:last-child {
+    margin-bottom: 0;
+}
+
