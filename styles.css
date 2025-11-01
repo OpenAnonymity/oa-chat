@@ -1,0 +1,200 @@
+/* Slate color definitions */
+:root {
+    --slate-1: hsl(206, 30%, 98.8%);
+    --slate-2: hsl(210, 16.7%, 97.6%);
+    --slate-3: hsl(209, 13.3%, 95.3%);
+    --slate-4: hsl(209, 12.2%, 93.2%);
+    --slate-200: hsl(214.3, 31.8%, 91.4%);
+    --slate-800: hsl(217.2, 32.6%, 17.5%);
+}
+
+.dark {
+    --slate-1: hsl(200, 7%, 8.8%);
+    --slate-2: hsl(195, 7.1%, 11%);
+    --slate-3: hsl(197, 6.8%, 13.6%);
+    --slate-4: hsl(198, 6.6%, 15.8%);
+    --slate-200: hsl(217.2, 32.6%, 17.5%);
+    --slate-800: hsl(214.3, 31.8%, 91.4%);
+}
+
+/* Tailwind slate color classes */
+.bg-slate-1 { background-color: var(--slate-1); }
+.bg-slate-2 { background-color: var(--slate-2); }
+.bg-slate-3 { background-color: var(--slate-3); }
+.bg-slate-4 { background-color: var(--slate-4); }
+.border-slate-4 { border-color: var(--slate-4); }
+.border-slate-200 { border-color: var(--slate-200); }
+.border-slate-800 { border-color: var(--slate-800); }
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+}
+
+/* Smooth transitions */
+.transition-colors {
+    transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+/* Session list styles */
+.chat-session {
+    transition: all 0.15s ease;
+}
+
+.chat-session:hover {
+    background-color: rgba(59, 130, 246, 0.05);
+}
+
+.chat-session.active {
+    background-color: rgba(59, 130, 246, 0.1);
+    color: hsl(222.2 47.4% 11.2%);
+}
+
+/* Message styles */
+.message-user {
+    background-color: hsl(217.2 91.2% 59.8%);
+    color: white;
+    border-radius: 0.75rem;
+    border-top-right-radius: 0.25rem;
+}
+
+.message-assistant {
+    background-color: var(--slate-2);
+    border: 1px solid var(--slate-4);
+    border-radius: 0.75rem;
+    border-top-left-radius: 0.25rem;
+}
+
+/* Prose styles for markdown */
+.prose {
+    max-width: none;
+}
+
+.prose h1 {
+    font-size: 1.875rem;
+    font-weight: 700;
+    margin-top: 1.5rem;
+    margin-bottom: 1rem;
+    padding-bottom: 0.25rem;
+    border-bottom: 1px solid hsl(214.3 31.8% 91.4%);
+}
+
+.prose h2 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin-top: 1.5rem;
+    margin-bottom: 1rem;
+}
+
+.prose h3 {
+    font-size: 1.125rem;
+    font-weight: 700;
+    margin-top: 1.5rem;
+    margin-bottom: 1rem;
+}
+
+.prose p {
+    margin-bottom: 1rem;
+    word-wrap: break-word;
+}
+
+.prose ul, .prose ol {
+    margin-bottom: 1rem;
+    padding-left: 2rem;
+}
+
+.prose li {
+    margin-top: 0.375rem;
+}
+
+.prose ul {
+    list-style-type: disc;
+}
+
+.prose ol {
+    list-style-type: decimal;
+}
+
+.prose strong {
+    font-weight: 700;
+}
+
+.prose em {
+    font-style: italic;
+}
+
+.prose code {
+    background-color: hsl(210 40% 96.1%);
+    padding: 0.125rem 0.25rem;
+    border-radius: 0.25rem;
+    font-size: 0.875em;
+}
+
+.prose pre {
+    background-color: hsl(210 40% 96.1%);
+    padding: 1rem;
+    border-radius: 0.5rem;
+    overflow-x: auto;
+    margin-bottom: 1rem;
+}
+
+.prose pre code {
+    background-color: transparent;
+    padding: 0;
+}
+
+.prose hr {
+    margin: 1.5rem 0;
+    border-top: 1px solid hsl(214.3 31.8% 91.4%);
+}
+
+/* Input focus styles */
+textarea:focus {
+    outline: none;
+}
+
+/* Animation */
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.fade-in {
+    animation: fadeIn 0.3s ease-out;
+}
+
+/* Model category headers */
+.model-category-header {
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: hsl(215.4 16.3% 46.9%);
+}
+
+/* Model picker styles */
+[cmdk-input-wrapper] {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+/* Chat area styling */
+.chat-container {
+    background: linear-gradient(to bottom, transparent, var(--slate-2) 10%);
+}
+
