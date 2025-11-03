@@ -206,3 +206,158 @@ textarea:focus {
     margin-bottom: 0;
 }
 
+/* Hide scrollbar when not hovering */
+.overflow-y-auto::-webkit-scrollbar {
+    width: 8px;
+}
+
+.overflow-y-auto::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.overflow-y-auto::-webkit-scrollbar-thumb {
+    background: transparent;
+    border-radius: 4px;
+}
+
+.overflow-y-auto:hover::-webkit-scrollbar-thumb,
+.scrolling::-webkit-scrollbar-thumb {
+    background: var(--slate-6);
+}
+
+/* Network Log Styles */
+.network-log-entry {
+    transition: all 0.2s ease;
+}
+
+.network-log-header:hover {
+    background-color: hsl(210 40% 96.1%);
+}
+
+.network-log-details {
+    animation: expandLog 0.2s ease-out;
+}
+
+@keyframes expandLog {
+    from {
+        opacity: 0;
+        max-height: 0;
+    }
+    to {
+        opacity: 1;
+        max-height: 500px;
+    }
+}
+
+/* Network log status badges */
+.bg-blue-500 {
+    background-color: #3b82f6;
+}
+
+.bg-purple-500 {
+    background-color: #a855f7;
+}
+
+.bg-green-500 {
+    background-color: #22c55e;
+}
+
+.bg-gray-500 {
+    background-color: #6b7280;
+}
+
+.bg-red-500 {
+    background-color: #ef4444;
+}
+
+.text-green-600 {
+    color: #16a34a;
+}
+
+.text-red-600 {
+    color: #dc2626;
+}
+
+.text-orange-600 {
+    color: #ea580c;
+}
+
+.text-gray-600 {
+    color: #4b5563;
+}
+
+/* Network logs container scrollbar */
+#network-logs-container {
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e1 transparent;
+}
+
+#network-logs-container::-webkit-scrollbar {
+    width: 6px;
+}
+
+#network-logs-container::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+#network-logs-container::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 3px;
+}
+
+#network-logs-container::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+}
+
+/* Utility classes for opacity */
+.opacity-50 {
+    opacity: 0.5;
+}
+
+.opacity-60 {
+    opacity: 0.6;
+}
+
+/* Breathing dot animation */
+.breathing-dot {
+    animation: breathe 2s ease-in-out infinite;
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.4);
+}
+
+.breathing-dot.status-active {
+    background-color: #22c55e;
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.4);
+}
+
+.breathing-dot.status-inactive {
+    background-color: #ef4444;
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+}
+
+@keyframes breathe {
+    0% {
+        transform: scale(1);
+        box-shadow: 0 0 0 0 currentColor;
+    }
+    70% {
+        transform: scale(1);
+        box-shadow: 0 0 0 6px rgba(0, 0, 0, 0);
+    }
+    100% {
+        transform: scale(1);
+        box-shadow: 0 0 0 0 rgba(0, 0, 0, 0);
+    }
+}
+
+/* Right panel responsive styles */
+.right-panel-desktop {
+    transform: translateX(100%);
+}
+
+@media (min-width: 1024px) {
+    .right-panel-desktop:not(.panel-hidden) {
+        transform: translateX(0);
+    }
+}
+
+

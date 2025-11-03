@@ -1,4 +1,4 @@
-# OpenRouter Chat Clone
+# OA Chat
 
 A minimal, fully-functional chat web application that replicates OpenRouter's chat interface design and core functionality.
 

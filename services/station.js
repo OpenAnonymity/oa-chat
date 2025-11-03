@@ -1,0 +1,406 @@
+/**
+ * Station API Client
+ * Handles authentication and API key provisioning from the station backend
+ */
+
+import privacyPassProvider from './privacyPass.js';
+import networkLogger from './networkLogger.js';
+
+const ORG_API_BASE = 'http://localhost:8005';
+const FALLBACK_STATION_URL = '';
+
+class StationClient {
+    constructor() {
+        console.log('🚀 Initializing StationClient');
+        this.ppExtension = privacyPassProvider;
+        this.tickets = this.loadTickets();
+        this.currentTicketIndex = 0;
+        this.selectedStationUrl = null;
+        this.selectedStationName = null;
+        console.log(`📊 StationClient ready with ${this.tickets.length} tickets`);
+    }
+
+    async getOnlineStations() {
+        try {
+            console.log('🔍 Fetching online stations from org...');
+            const response = await fetch(`${ORG_API_BASE}/api/v2/online`, {
+                signal: AbortSignal.timeout(5000)
+            });
+
+            const data = await response.json();
+            const stations = Object.entries(data).map(([name, info]) => ({
+                name,
+                url: info.url,
+                models: info.models || [],
+                lastSeenSecondsAgo: info.last_seen_seconds_ago,
+            }));
+
+            console.log(`✅ Found ${stations.length} online stations:`, stations.map(s => s.name));
+            return stations;
+        } catch (error) {
+            console.error('❌ Failed to fetch online stations:', error.message);
+            return [];
+        }
+    }
+
+    selectRandomStation(stations) {
+        if (!stations || stations.length === 0) {
+            console.log('⚠️  No stations available, using fallback');
+            return {
+                name: 'fallback-station',
+                url: FALLBACK_STATION_URL,
+            };
+        }
+
+        const randomIndex = crypto.getRandomValues(new Uint32Array(1))[0] % stations.length;
+        const selected = stations[randomIndex];
+        
+        console.log(`🎲 Randomly selected station: ${selected.name} (${randomIndex + 1}/${stations.length})`);
+        
+        this.selectedStationUrl = selected.url;
+        this.selectedStationName = selected.name;
+        
+        return selected;
+    }
+
+    loadTickets() {
+        try {
+            const stored = localStorage.getItem('inference_tickets');
+            const tickets = stored ? JSON.parse(stored) : [];
+            console.log(`📥 Loaded ${tickets.length} tickets from localStorage`);
+            return tickets;
+        } catch (error) {
+            console.error('❌ Error loading tickets:', error);
+            return [];
+        }
+    }
+
+    saveTickets(tickets) {
+        try {
+            localStorage.setItem('inference_tickets', JSON.stringify(tickets));
+            this.tickets = tickets;
+            this.currentTicketIndex = 0;
+            console.log(`💾 Saved ${tickets.length} tickets to localStorage`);
+            
+            // Notify app about ticket updates
+            window.dispatchEvent(new CustomEvent('tickets-updated'));
+        } catch (error) {
+            console.error('❌ Error saving tickets:', error);
+        }
+    }
+
+    getNextTicket() {
+        if (!this.tickets || this.tickets.length === 0) {
+            return null;
+        }
+
+        const unusedTickets = this.tickets.filter(t => !t.used);
+        
+        if (unusedTickets.length === 0) {
+            console.log('❌ No unused tickets available');
+            return null;
+        }
+
+        return unusedTickets[0];
+    }
+
+    getTicketCount() {
+        if (!this.tickets) return 0;
+        return this.tickets.filter(t => !t.used).length;
+    }
+
+    clearTickets() {
+        this.tickets = [];
+        this.currentTicketIndex = 0;
+        localStorage.removeItem('inference_tickets');
+        console.log('🗑️  All tickets cleared');
+        window.dispatchEvent(new CustomEvent('tickets-updated'));
+    }
+
+    async alphaRegister(invitationCode, progressCallback) {
+        console.log('=== Starting alphaRegister ===');
+        
+        try {
+            if (progressCallback) progressCallback('Validating invitation code...', 5);
+            
+            if (!invitationCode || invitationCode.length !== 24) {
+                throw new Error('Invalid invitation code format (must be 24 characters)');
+            }
+
+            const suffix = invitationCode.slice(20, 24);
+            const ticketCount = parseInt(suffix, 16);
+            
+            if (isNaN(ticketCount) || ticketCount === 0) {
+                throw new Error('Invalid invitation code: unable to determine ticket count');
+            }
+
+            if (progressCallback) progressCallback('Initializing Privacy Pass...', 10);
+            
+            const hasProvider = await this.ppExtension.checkAvailability();
+            
+            if (!hasProvider) {
+                throw new Error('Privacy Pass is not available. Please check your configuration.');
+            }
+
+            if (progressCallback) progressCallback('Getting issuer public key...', 20);
+            
+            let publicKey;
+            try {
+                const keyResponse = await fetch(`${ORG_API_BASE}/api/ticket/issue/public-key`);
+                const keyData = await keyResponse.json();
+                publicKey = keyData.public_key;
+                
+                if (!publicKey) {
+                    throw new Error('Station did not return public key');
+                }
+            } catch (error) {
+                throw new Error(`Failed to get public key: ${error.message}`);
+            }
+
+            if (progressCallback) progressCallback(`Blinding ${ticketCount} tickets...`, 25);
+            
+            const challenge = await this.ppExtension.createChallenge("oa-station", ["oa-station-api"]);
+            
+            const indexedBlindedRequests = [];
+            const clientStates = [];
+            
+            for (let i = 0; i < ticketCount; i++) {
+                const result = await this.ppExtension.createSingleTokenRequest(publicKey, challenge);
+                const { blindedRequest, state } = result;
+                indexedBlindedRequests.push([i, blindedRequest]);
+                clientStates.push([i, state]);
+                
+                if (i > 0 && i % Math.max(1, Math.floor(ticketCount / 20)) === 0) {
+                    const progressPct = 25 + Math.floor((i / ticketCount) * 20);
+                    if (progressCallback) {
+                        progressCallback(`Blinding tickets... (${i}/${ticketCount})`, progressPct);
+                    }
+                }
+            }
+
+            if (progressCallback) progressCallback('Sending blinded tickets to server for signing...', 50);
+            
+            const registerUrl = `${ORG_API_BASE}/api/alpha-register`;
+            const registerBody = {
+                credential: invitationCode,
+                blinded_requests: indexedBlindedRequests
+            };
+            
+            let signData;
+            try {
+                const signResponse = await fetch(registerUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(registerBody),
+                    signal: AbortSignal.timeout(Math.max(120000, ticketCount * 50))
+                });
+
+                signData = await signResponse.json();
+                
+                // Log the request
+                networkLogger.logRequest({
+                    type: 'ticket',
+                    method: 'POST',
+                    url: registerUrl,
+                    status: signResponse.status,
+                    request: {
+                        headers: { 'Content-Type': 'application/json' },
+                        body: { credential: '***', blinded_requests: `${indexedBlindedRequests.length} tickets` }
+                    },
+                    response: signData
+                });
+
+                if (!signResponse.ok) {
+                    throw new Error(signData.detail || signData.message || 'Server error during registration');
+                }
+            } catch (error) {
+                // Log failed request
+                networkLogger.logRequest({
+                    type: 'ticket',
+                    method: 'POST',
+                    url: registerUrl,
+                    status: 0,
+                    request: {
+                        headers: { 'Content-Type': 'application/json' },
+                        body: { credential: '***', blinded_requests: `${indexedBlindedRequests.length} tickets` }
+                    },
+                    error: error.message
+                });
+                throw error;
+            }
+
+            if (progressCallback) progressCallback('Signed tickets received...', 70);
+            
+            const indexedSignedResponses = signData.signed_responses;
+            
+            if (!indexedSignedResponses || indexedSignedResponses.length === 0) {
+                throw new Error('Station did not return signed responses');
+            }
+
+            const responseMap = {};
+            indexedSignedResponses.forEach(([idx, signedResp]) => {
+                responseMap[idx] = signedResp;
+            });
+
+            if (progressCallback) progressCallback('Unblinding tickets...', 75);
+            
+            const tickets = [];
+            const progressInterval = Math.max(1, Math.floor(clientStates.length / 10));
+            
+            for (let i = 0; i < clientStates.length; i++) {
+                const [idx, state] = clientStates[i];
+                
+                if (!(idx in responseMap)) {
+                    throw new Error(`Missing signed response for ticket index ${idx}`);
+                }
+                
+                const signedResponse = responseMap[idx];
+                const blindedRequest = indexedBlindedRequests[idx][1];
+                
+                const finalizedTicket = await this.ppExtension.finalizeToken(signedResponse, state);
+                
+                tickets.push({
+                    blinded_request: blindedRequest,
+                    signed_response: signedResponse,
+                    finalized_ticket: finalizedTicket,
+                    used: false,
+                    used_at: null,
+                    created_at: new Date().toISOString(),
+                });
+                
+                if (i > 0 && i % progressInterval === 0) {
+                    const progressPct = 75 + Math.floor((i / clientStates.length) * 15);
+                    if (progressCallback) {
+                        progressCallback(`Unblinding tickets... (${i}/${clientStates.length})`, progressPct);
+                    }
+                }
+            }
+
+            if (progressCallback) progressCallback('Saving tickets...', 90);
+
+            this.saveTickets(tickets);
+
+            if (progressCallback) progressCallback('Registration complete!', 100);
+
+            return {
+                success: true,
+                tickets_issued: tickets.length,
+                credential: invitationCode,
+                expires_at: signData.expires_at,
+            };
+
+        } catch (error) {
+            console.error('Alpha register error:', error);
+            throw error;
+        }
+    }
+
+    async requestApiKey(name = 'OA-WebApp-Key') {
+        let ticket = null;
+        
+        try {
+            ticket = this.getNextTicket();
+            
+            if (!ticket) {
+                throw new Error('No inference tickets available. Please register with an invitation code first.');
+            }
+
+            const onlineStations = await this.getOnlineStations();
+            const selectedStation = this.selectRandomStation(onlineStations);
+
+            console.log(`🔑 Requesting API key from: ${selectedStation.name}`);
+
+            const requestKeyUrl = `${selectedStation.url}/api/v2/request_key`;
+            const requestHeaders = {
+                'Content-Type': 'application/json',
+                'Authorization': `InferenceTicket token=${ticket.finalized_ticket}`,
+            };
+            const requestBody = { name };
+            
+            const response = await fetch(requestKeyUrl, {
+                method: 'POST',
+                headers: requestHeaders,
+                body: JSON.stringify(requestBody),
+                signal: AbortSignal.timeout(30000)
+            });
+
+            const data = await response.json();
+            
+            // Log the request
+            networkLogger.logRequest({
+                type: 'api-key',
+                method: 'POST',
+                url: requestKeyUrl,
+                status: response.status,
+                request: {
+                    headers: networkLogger.sanitizeHeaders(requestHeaders),
+                    body: requestBody
+                },
+                response: data
+            });
+
+            if (!response.ok) {
+                if (response.status === 401 || data.detail?.includes('double-spending')) {
+                    this.markTicketAsUsed(ticket);
+                    throw new Error('This ticket was already used. Please try again with next ticket.');
+                }
+                
+                throw new Error(data.detail || 'Failed to provision API key');
+            }
+
+            this.markTicketAsUsed(ticket);
+
+            return {
+                key: data.key,
+                name: data.name,
+                credit_limit: data.credit_limit,
+                duration_minutes: data.duration_minutes,
+                expires_at: data.expires_at,
+                station_name: this.selectedStationName,
+                station_url: this.selectedStationUrl,
+                ticket_used: {
+                    blinded_request: ticket.blinded_request,
+                    signed_response: ticket.signed_response,
+                    finalized_ticket: ticket.finalized_ticket,
+                }
+            };
+
+        } catch (error) {
+            console.error('Request API key error:', error);
+            throw error;
+        }
+    }
+
+    markTicketAsUsed(ticket) {
+        if (!ticket || !this.tickets) return;
+
+        const ticketIndex = this.tickets.findIndex(
+            t => t.finalized_ticket === ticket.finalized_ticket
+        );
+
+        if (ticketIndex !== -1) {
+            this.tickets[ticketIndex].used = true;
+            this.tickets[ticketIndex].used_at = new Date().toISOString();
+            
+            this.saveTickets(this.tickets);
+            
+            console.log(`✅ Marked ticket ${ticketIndex + 1}/${this.tickets.length} as used`);
+            console.log(`📊 Remaining tickets: ${this.tickets.filter(t => !t.used).length}`);
+
+            window.dispatchEvent(new CustomEvent('tickets-updated'));
+        }
+    }
+}
+
+// Export singleton instance
+const stationClient = new StationClient();
+
+// Make available in console for debugging
+if (typeof window !== 'undefined') {
+    window.stationClient = stationClient;
+}
+
+export default stationClient;
+

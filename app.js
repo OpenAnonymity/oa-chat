@@ -1,4 +1,8 @@
 // Main application logic
+import RightPanel from './components/RightPanel.js';
+import FloatingPanel from './components/FloatingPanel.js';
+import apiKeyStore from './services/apiKeyStore.js';
+
 class ChatApp {
     constructor() {
         this.state = {
@@ -25,16 +29,42 @@ class ChatApp {
             searchToggle: document.getElementById('search-toggle'),
             searchSwitch: document.getElementById('search-switch'),
             clearChatBtn: document.getElementById('clear-chat-btn'),
+            toggleRightPanelBtn: document.getElementById('toggle-right-panel-btn'), // This might be legacy, but let's keep it for now.
+            showRightPanelBtn: document.getElementById('show-right-panel-btn'),
+            sessionsScrollArea: document.getElementById('sessions-scroll-area'),
+            modelListScrollArea: document.getElementById('model-list-scroll-area'),
         };
 
         this.searchEnabled = false;
+        this.rightPanel = null;
+        this.floatingPanel = null;
 
         this.init();
+    }
+
+    initScrollAwareScrollbars(element) {
+        let scrollTimer = null;
+        element.addEventListener('scroll', () => {
+            element.classList.add('scrolling');
+            if (scrollTimer) {
+                clearTimeout(scrollTimer);
+            }
+            scrollTimer = setTimeout(() => {
+                element.classList.remove('scrolling');
+            }, 1500);
+        });
     }
 
     async init() {
         // Initialize IndexedDB
         await chatDB.init();
+
+        // Initialize right panel with app context
+        this.rightPanel = new RightPanel(this);
+        this.rightPanel.mount();
+        
+        // Initialize floating panel
+        this.floatingPanel = new FloatingPanel(this);
 
         // Load models from OpenRouter API
         await this.loadModels();
@@ -47,6 +77,12 @@ class ChatApp {
         this.renderMessages();
         this.renderCurrentModel();
 
+        // Notify right panel of current session
+        const currentSession = this.getCurrentSession();
+        if (this.rightPanel && currentSession) {
+            this.rightPanel.onSessionChange(currentSession);
+        }
+
         // Set up event listeners
         this.setupEventListeners();
 
@@ -54,10 +90,20 @@ class ChatApp {
         if (this.state.sessions.length === 0) {
             await this.createSession();
         }
+
+        this.initScrollAwareScrollbars(this.elements.chatArea);
+        this.initScrollAwareScrollbars(this.elements.sessionsScrollArea);
+        this.initScrollAwareScrollbars(this.elements.modelListScrollArea);
     }
 
     async loadModels() {
         this.state.modelsLoading = true;
+        
+        // Don't log system-level model fetches to any session
+        if (window.networkLogger) {
+            window.networkLogger.setCurrentSession(null);
+        }
+        
         try {
             this.state.models = await openRouterAPI.fetchModels();
         } catch (error) {
@@ -104,7 +150,10 @@ class ChatApp {
             id: this.generateId(),
             title,
             createdAt: Date.now(),
-            model: null 
+            model: null,
+            apiKey: null,
+            apiKeyInfo: null,
+            expiresAt: null
         };
 
         this.state.sessions.unshift(session);
@@ -116,6 +165,11 @@ class ChatApp {
         this.renderSessions();
         this.renderMessages();
         this.renderCurrentModel();
+        
+        // Notify right panel of session change
+        if (this.rightPanel) {
+            this.rightPanel.onSessionChange(session);
+        }
 
         return session;
     }
@@ -126,6 +180,12 @@ class ChatApp {
         this.renderSessions();
         this.renderMessages();
         this.renderCurrentModel();
+        
+        // Notify right panel of session change
+        const session = this.getCurrentSession();
+        if (this.rightPanel && session) {
+            this.rightPanel.onSessionChange(session);
+        }
     }
 
     getCurrentSession() {
@@ -183,7 +243,26 @@ class ChatApp {
         this.elements.sendBtn.disabled = true;
         this.elements.messageInput.style.height = '24px';
 
-        const session = this.getCurrentSession();
+        let session = this.getCurrentSession();
+        
+        // Automatically acquire API key if needed
+        const isKeyExpired = session.expiresAt ? new Date(session.expiresAt) <= new Date() : true;
+        if (!session.apiKey || isKeyExpired) {
+            try {
+                this.floatingPanel.showMessage('Acquiring API key...', 'info');
+                await this.acquireAndSetApiKey(session);
+                this.floatingPanel.showMessage('Successfully acquired API key!', 'success', 2000);
+            } catch (error) {
+                this.floatingPanel.showMessage(error.message, 'error', 5000);
+                await this.addMessage('assistant', `**Error:** ${error.message}`);
+                return;
+            }
+        }
+        
+        // Set current session for network logging
+        if (window.networkLogger) {
+            window.networkLogger.setCurrentSession(session.id);
+        }
         
         let modelNameToUse = session.model;
 
@@ -226,14 +305,6 @@ class ChatApp {
         // Show typing indicator
         const typingId = this.showTypingIndicator(modelNameToUse);
 
-        // --- SIMULATED RESPONSE ---
-        setTimeout(async () => {
-            this.removeTypingIndicator(typingId);
-            await this.addMessage('assistant', content);
-        }, 1000);
-        // --- END SIMULATED RESPONSE ---
-
-        /*
         try {
             // Get AI response from OpenRouter
             const messages = await chatDB.getSessionMessages(session.id);
@@ -249,7 +320,6 @@ class ChatApp {
             this.removeTypingIndicator(typingId);
             await this.addMessage('assistant', 'Sorry, I encountered an error while processing your request.');
         }
-        */
     }
 
     showTypingIndicator(modelName) {
@@ -427,11 +497,11 @@ class ChatApp {
                     <div class="w-full px-2 md:px-3 fade-in self-start">
                         <div class="group flex w-full flex-col items-start justify-start gap-2">
                             <div class="flex w-full items-center justify-start gap-2">
-                                <span class="text-xs text-muted-foreground">${this.formatTime(message.timestamp)}</span>
                                 <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow bg-muted">
                                     <span class="text-xs font-semibold">${providerInitial}</span>
                                 </div>
                                 <span class="text-xs text-primary font-medium">${modelName}</span>
+                                <span class="text-xs text-muted-foreground">${this.formatTime(message.timestamp)}</span>
                             </div>
                             <div class="py-3 px-4 font-normal rounded-lg message-assistant rounded-tl-none w-full flex items-center">
                                 <div class="min-w-0 w-full overflow-hidden message-content prose">
@@ -646,6 +716,25 @@ class ChatApp {
             }
         });
 
+        // Status dot button handler - toggles floating panel
+        const statusDotBtn = document.getElementById('status-dot-btn');
+        if (statusDotBtn) {
+            statusDotBtn.addEventListener('click', () => {
+                if (this.floatingPanel) {
+                    this.floatingPanel.toggle();
+                }
+            });
+        }
+        
+        // Show right panel button
+        if (this.elements.showRightPanelBtn) {
+            this.elements.showRightPanelBtn.addEventListener('click', () => {
+                if (this.rightPanel) {
+                    this.rightPanel.show();
+                }
+            });
+        }
+
         // Keyboard shortcuts
         document.addEventListener('keydown', (e) => {
             // Cmd/Ctrl + / for new chat
@@ -680,6 +769,35 @@ class ChatApp {
                 this.elements.settingsMenu.classList.add('hidden');
             }
         });
+    }
+
+    async acquireAndSetApiKey(session) {
+        if (!session) throw new Error("No active session found.");
+
+        const ticketCount = stationClient.getTicketCount();
+        if (ticketCount === 0) {
+            throw new Error("You have no inference tickets. Please open the right panel to register an invitation code and get tickets.");
+        }
+
+        try {
+            const result = await stationClient.requestApiKey();
+            
+            session.apiKey = result.key;
+            session.apiKeyInfo = result;
+            session.expiresAt = result.expires_at;
+            
+            await chatDB.saveSession(session);
+            
+            // Update the UI components
+            if (this.rightPanel) {
+                this.rightPanel.onSessionChange(session);
+            }
+
+            return result.key;
+        } catch (error) {
+            console.error('Failed to automatically acquire API key:', error);
+            throw new Error(`A network error occurred while trying to get an API key: ${error.message}`);
+        }
     }
 }
 
