@@ -14,6 +14,9 @@ class FloatingPanel {
         this.message = null; // To hold status messages
         
         // Position will be calculated dynamically
+        
+        // Show the panel on initialization
+        setTimeout(() => this.show(), 100);
     }
     
     show() {
@@ -61,7 +64,7 @@ class FloatingPanel {
             const panelLeft = rect.right + 8; // 8px gap
             // The breathing animation expands the dot with a 6px box-shadow.
             // We adjust the top position to align with the top of the animation's outer edge.
-            const panelTop = rect.top - 6; // Nudge up by 6px to match the shadow radius
+            const panelTop = rect.top - 12; // Nudge up by 11px (6px for shadow + 5px extra)
 
             floatingPanel.style.top = `${panelTop}px`;
             floatingPanel.style.left = `${panelLeft}px`;
@@ -144,7 +147,7 @@ class FloatingPanel {
         }
 
         const session = this.app.getCurrentSession();
-        const hasActiveKey = session && session.apiKey && (new Date(session.expiresAt) > new Date());
+        const hasActiveKey = session && session.apiKey && session.expiresAt && (new Date(session.expiresAt) > new Date());
         
         if (hasActiveKey) {
             if (this.currentLog) {
@@ -157,9 +160,20 @@ class FloatingPanel {
                 // Attach event handlers
                 const logContainer = document.getElementById('minimal-log-container');
                 if (logContainer) {
-                    logContainer.onclick = () => {
+                    logContainer.onclick = (e) => {
+                        // Don't toggle if clicking the close button
+                        if (e.target.closest('#close-floating-btn')) return;
                         this.isExpanded = !this.isExpanded;
                         this.render();
+                    };
+                }
+                
+                // Attach close handler
+                const closeBtn = document.getElementById('close-floating-btn');
+                if (closeBtn) {
+                    closeBtn.onclick = (e) => {
+                        e.stopPropagation();
+                        this.hide();
                     };
                 }
             } else {
@@ -175,6 +189,12 @@ class FloatingPanel {
                         </button>
                     </div>
                 `;
+                
+                // Attach close handler
+                const closeBtn = document.getElementById('close-floating-btn');
+                if (closeBtn) {
+                    closeBtn.onclick = () => this.hide();
+                }
             }
         } else {
             // No active key, render the prompt message.
@@ -193,12 +213,12 @@ class FloatingPanel {
                     </div>
                 </div>
             `;
-        }
-        
-        // Attach close handler
-        const closeBtn = document.getElementById('close-floating-btn');
-        if (closeBtn) {
-            closeBtn.onclick = () => this.hide();
+            
+            // Attach close handler
+            const closeBtn = document.getElementById('close-floating-btn');
+            if (closeBtn) {
+                closeBtn.onclick = () => this.hide();
+            }
         }
     }
     

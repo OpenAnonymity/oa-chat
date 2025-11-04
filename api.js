@@ -1,11 +1,10 @@
 // OpenRouter API integration
 class OpenRouterAPI {
     constructor() {
-        this.fallbackApiKey = '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';
         this.baseUrl = 'https://openrouter.ai/api/v1';
     }
 
-    // Get API key - check ticket-based key first, then fall back to hardcoded key
+    // Get API key - only use ticket-based key
     getApiKey() {
         try {
             const stored = localStorage.getItem('openrouter_api_key_data');
@@ -23,17 +22,14 @@ class OpenRouterAPI {
         } catch (error) {
             console.error('Error loading ticket-based API key:', error);
         }
-        console.log('Using fallback API key');
-        return this.fallbackApiKey;
+        return null; // No API key available
     }
 
     // Fetch available models from OpenRouter
     async fetchModels() {
         const url = `${this.baseUrl}/models`;
         const headers = {
-            'Authorization': `Bearer ${this.getApiKey()}`,
             'HTTP-Referer': window.location.origin,
-            // 'X-Title': 'OA chat'
             'X-Title': 'chat'
         };
         
@@ -154,12 +150,17 @@ class OpenRouterAPI {
     }
 
     // Send chat completion request
-    async sendCompletion(messages, modelId) {
+    async sendCompletion(messages, modelId, apiKey) {
         const url = `${this.baseUrl}/chat/completions`;
+        const key = apiKey || this.getApiKey();
+        
+        if (!key) {
+            throw new Error('No API key available. Please obtain an API key first.');
+        }
+        
         const headers = {
-            'Authorization': `Bearer ${this.getApiKey()}`,
+            'Authorization': `Bearer ${key}`,
             'HTTP-Referer': window.location.origin,
-            // 'X-Title': 'OA chat',
             'X-Title': 'chat',
             'Content-Type': 'application/json'
         };
@@ -222,18 +223,31 @@ class OpenRouterAPI {
         }
     }
 
-    // Stream chat completion (for future implementation)
-    async streamCompletion(messages, modelId, onChunk) {
+    // Stream chat completion
+    async streamCompletion(messages, modelId, apiKey, onChunk, onTokenUpdate) {
+        const url = `${this.baseUrl}/chat/completions`;
+        const key = apiKey || this.getApiKey();
+        
+        if (!key) {
+            throw new Error('No API key available. Please obtain an API key first.');
+        }
+        
+        const headers = {
+            'Authorization': `Bearer ${key}`,
+            'HTTP-Referer': window.location.origin,
+            'X-Title': 'chat',
+            'Content-Type': 'application/json'
+        };
+        
+        let totalTokens = 0;
+        let promptTokens = 0;
+        let completionTokens = 0;
+        let modelUsed = modelId;
+        
         try {
-            const response = await fetch(`${this.baseUrl}/chat/completions`, {
+            const response = await fetch(url, {
                 method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${this.getApiKey()}`,
-                    'HTTP-Referer': window.location.origin,
-                    // 'X-Title': 'OA chat',
-                    'X-Title': 'chat',
-                    'Content-Type': 'application/json'
-                },
+                headers: headers,
                 body: JSON.stringify({
                     model: modelId,
                     messages: messages.map(msg => ({
@@ -246,6 +260,21 @@ class OpenRouterAPI {
 
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            // Log the streaming request
+            if (window.networkLogger) {
+                window.networkLogger.logRequest({
+                    type: 'openrouter',
+                    method: 'POST',
+                    url: url,
+                    status: response.status,
+                    request: { 
+                        headers: window.networkLogger.sanitizeHeaders(headers),
+                        body: { model: modelId, messages: messages.length + ' messages', stream: true }
+                    },
+                    response: { streaming: true }
+                });
             }
 
             const reader = response.body.getReader();
@@ -270,6 +299,26 @@ class OpenRouterAPI {
                             const content = parsed.choices[0]?.delta?.content;
                             if (content) {
                                 onChunk(content);
+                                // Estimate tokens during streaming (rough approximation: 1 token ≈ 4 chars)
+                                completionTokens = Math.ceil(content.length / 4);
+                                if (onTokenUpdate) {
+                                    onTokenUpdate({ 
+                                        completionTokens, 
+                                        isStreaming: true 
+                                    });
+                                }
+                            }
+                            
+                            // Check for usage info in the stream
+                            if (parsed.usage) {
+                                totalTokens = parsed.usage.total_tokens || 0;
+                                promptTokens = parsed.usage.prompt_tokens || 0;
+                                completionTokens = parsed.usage.completion_tokens || 0;
+                            }
+                            
+                            // Check for model info
+                            if (parsed.model) {
+                                modelUsed = parsed.model;
                             }
                         } catch (e) {
                             console.error('Error parsing chunk:', e);
@@ -277,8 +326,32 @@ class OpenRouterAPI {
                     }
                 }
             }
+            
+            // Return token usage data
+            return {
+                totalTokens,
+                promptTokens,
+                completionTokens,
+                model: modelUsed
+            };
         } catch (error) {
             console.error('Error streaming completion:', error);
+            
+            // Log failed request
+            if (window.networkLogger) {
+                window.networkLogger.logRequest({
+                    type: 'openrouter',
+                    method: 'POST',
+                    url: url,
+                    status: 0,
+                    request: { 
+                        headers: window.networkLogger.sanitizeHeaders(headers),
+                        body: { model: modelId, messages: messages.length + ' messages', stream: true }
+                    },
+                    error: error.message
+                });
+            }
+            
             throw error;
         }
     }

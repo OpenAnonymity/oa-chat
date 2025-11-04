@@ -5,6 +5,7 @@
 
 import stationClient from '../services/station.js';
 import networkLogger from '../services/networkLogger.js';
+import { getActivityDescription, getActivityIcon, getStatusDotClass, formatTimestamp } from '../services/networkLogRenderer.js';
 
 class RightPanel {
     constructor(app) {
@@ -118,22 +119,20 @@ class RightPanel {
         networkLogger.subscribe(() => {
             // Reload logs for current session
             if (this.currentSession) {
+                // Collapse all logs before adding a new one
+                this.expandedLogIds.clear();
+                
                 this.networkLogs = networkLogger.getLogsBySession(this.currentSession.id);
                 this.render();
                 
+                // Auto-scroll to bottom to show newest activity
+                this.scrollToBottom();
+                
                 // Notify app about new log for floating panel
                 if (this.app.floatingPanel && this.networkLogs.length > 0) {
-                    const latestLog = [...this.networkLogs].reverse()[0];
+                    const latestLog = this.networkLogs[0];
                     this.app.floatingPanel.updateWithLog(latestLog);
                 }
-                
-                // Auto-scroll to bottom to show newest log
-                setTimeout(() => {
-                    const container = document.getElementById('network-logs-container');
-                    if (container) {
-                        container.scrollTop = container.scrollHeight;
-                    }
-                }, 100);
             }
         });
     }
@@ -230,8 +229,8 @@ class RightPanel {
             const timeRemainingEl = document.getElementById('api-key-expiry');
             if (timeRemainingEl) {
                 timeRemainingEl.textContent = this.timeRemaining || 'Loading...';
-                timeRemainingEl.className = `text-xs font-medium px-2 py-0.5 rounded ${
-                    this.isExpired ? 'bg-red-500 text-white' : 'bg-green-500 text-black'
+                timeRemainingEl.className = `font-medium px-2 py-0.5 rounded-full text-[10px] ${
+                    this.isExpired ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
                 }`;
             }
         };
@@ -264,6 +263,7 @@ class RightPanel {
     updatePanelVisibility() {
         const panel = document.getElementById('right-panel');
         const showBtn = document.getElementById('show-right-panel-btn');
+        const appContainer = document.getElementById('app');
         if (!panel) return;
 
         if (this.isDesktop) {
@@ -271,10 +271,12 @@ class RightPanel {
                 panel.style.width = '20rem';
                 panel.style.borderLeftWidth = '1px';
                 if (showBtn) showBtn.classList.add('hidden');
+                if (appContainer) appContainer.classList.add('right-panel-open');
             } else {
                 panel.style.width = '0';
                 panel.style.borderLeftWidth = '0';
                 if (showBtn) showBtn.classList.remove('hidden');
+                if (appContainer) appContainer.classList.remove('right-panel-open');
             }
         } else {
             // Mobile mode, remove inline styles to let classes take over
@@ -282,6 +284,7 @@ class RightPanel {
             panel.style.borderLeftWidth = '';
             panel.style.transform = 'translateX(100%)';
             if (showBtn) showBtn.classList.add('hidden');
+            if (appContainer) appContainer.classList.remove('right-panel-open');
         }
     }
 
@@ -296,6 +299,11 @@ class RightPanel {
         this.registrationError = null;
         this.registrationProgress = { message: 'Starting...', percent: 0 };
         this.render();
+
+        // Set current session for network logging
+        if (this.currentSession && window.networkLogger) {
+            window.networkLogger.setCurrentSession(this.currentSession.id);
+        }
 
         try {
             await stationClient.alphaRegister(invitationCode, (message, percent) => {
@@ -326,6 +334,11 @@ class RightPanel {
         if (!this.currentTicket || this.isRequestingKey || !this.currentSession) return;
 
         try {
+            // Set current session for network logging
+            if (this.currentSession && window.networkLogger) {
+                window.networkLogger.setCurrentSession(this.currentSession.id);
+            }
+            
             // Start the animation
             this.isTransitioning = true;
             this.render();
@@ -365,6 +378,11 @@ class RightPanel {
                 this.render();
                 this.startExpirationTimer();
                 this.updateStatusIndicator();
+                
+                // Update floating panel with new status
+                if (this.app.floatingPanel) {
+                    this.app.floatingPanel.render();
+                }
             }, 500);
         } catch (error) {
             console.error('Error requesting API key:', error);
@@ -475,9 +493,24 @@ class RightPanel {
         if (this.expandedLogIds.has(logId)) {
             this.expandedLogIds.delete(logId);
         } else {
+            // Only allow one log to be expanded at a time
+            this.expandedLogIds.clear();
             this.expandedLogIds.add(logId);
         }
         this.render();
+    }
+
+    scrollToBottom() {
+        // Scroll the network logs container to bottom to show newest activity
+        requestAnimationFrame(() => {
+            const container = document.getElementById('network-logs-container');
+            if (container) {
+                container.scrollTo({
+                    top: container.scrollHeight,
+                    behavior: 'smooth'
+                });
+            }
+        });
     }
 
     formatTimestamp(timestamp) {
@@ -541,157 +574,143 @@ class RightPanel {
                     <svg class="w-12 h-12 mx-auto mb-3 text-muted-foreground/20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
                     </svg>
-                    <p class="text-xs text-muted-foreground">No network activity for this session yet</p>
+                    <p class="text-xs text-muted-foreground">No activity for this session yet</p>
                 </div>
             `;
         }
 
-        // Reverse to show oldest first, newest last
-        const logsToShow = [...this.networkLogs].reverse().slice(0, 50);
+        // Reverse order: oldest first, newest last
+        const logsToShow = [...this.networkLogs].reverse();
         
         return logsToShow.map((log, index) => {
             const isExpanded = this.expandedLogIds.has(log.id);
-            const badge = this.getTypeBadge(log.type);
-            const statusIcon = this.getStatusIcon(log.status);
-            const statusClass = this.getStatusClass(log.status);
-            const endpoint = networkLogger.getEndpointName(log.url);
+            const description = getActivityDescription(log);
+            const icon = getActivityIcon(log);
+            const dotClass = getStatusDotClass(log.status);
+            const isFirst = index === 0;
+            const isLast = index === logsToShow.length - 1;
+            // Dim all but the latest (last in reversed array)
+            const opacityClass = isLast ? '' : 'opacity-60';
             
-            // Dim all except the last one (most recent)
-            const isLatest = index === logsToShow.length - 1;
-            const opacityClass = isLatest ? '' : 'opacity-50';
-
             return `
-                <div class="network-log-entry border-b border-border/50 last:border-b-0 ${opacityClass}">
-                    <div class="network-log-header px-4 py-3 hover:bg-muted/50 cursor-pointer transition-all duration-200 text-xs" data-log-id="${log.id}">
-                        <div class="space-y-1.5">
-                            <div class="flex items-center gap-2">
-                                <span class="text-muted-foreground font-mono text-[10px]">${this.formatTimestamp(log.timestamp)}</span>
-                                <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold ${badge.class}">${badge.text}</span>
-                                <span class="${statusClass} font-bold">${statusIcon}</span>
-                                <span class="font-medium">${log.method}</span>
-                                <span class="text-muted-foreground">(${log.status || 'ERR'})</span>
-                                <svg class="w-3 h-3 transition-transform ${isExpanded ? 'rotate-180' : ''} ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div class="activity-log-entry relative flex ${opacityClass}" data-log-id="${log.id}">
+                    <!-- Timeline visualization column -->
+                    <div class="flex flex-col items-center" style="width: 24px; flex-shrink: 0;">
+                        <!-- Top line -->
+                        ${!isFirst ? `<div class="w-0.5 bg-border" style="height: 6px;"></div>` : '<div style="height: 6px;"></div>'}
+                        
+                        <!-- Activity node -->
+                        <div class="relative flex items-center justify-center" style="width: 16px; height: 16px; flex-shrink: 0;">
+                            <div class="${dotClass} activity-node rounded-full transition-all duration-200" style="width: 8px; height: 8px;"></div>
+                            </div>
+                        
+                        <!-- Bottom line (extends to next entry) -->
+                        ${!isLast ? `<div class="w-0.5 bg-border" style="height: 12px;"></div>` : ''}
+                    </div>
+                    
+                    <!-- Content column -->
+                    <div class="flex-1 min-w-0" style="margin-top: 1px;">
+                        <!-- Compact one-line view -->
+                        <div class="activity-log-header cursor-pointer hover:bg-muted/30 pl-1 pr-2 py-1 rounded transition-all duration-150" data-log-id="${log.id}">
+                            <div class="flex items-center gap-1.5 text-xs">
+                                <span class="flex-shrink-0 text-muted-foreground">
+                                    ${icon}
+                                </span>
+                                <span class="truncate flex-1 font-medium" title="${description}">
+                                    ${description}
+                                </span>
+                                <span class="text-muted-foreground font-mono ml-auto" style="font-size: 10px;">
+                                    ${formatTimestamp(log.timestamp)}
+                                </span>
+                                <svg class="w-3 h-3 flex-shrink-0 text-muted-foreground transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
                                 </svg>
                             </div>
-                            <div class="flex items-center gap-2 text-[10px]">
-                                <svg class="w-3 h-3 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"></path>
-                                </svg>
-                                <span class="font-mono text-foreground font-medium truncate flex-1" title="${log.url}">
-                                    ${this.getHostFromUrl(log.url)}
-                                </span>
-                                <span class="text-muted-foreground">→</span>
-                                <span class="text-muted-foreground truncate">
-                                    /${endpoint}
-                                </span>
-                            </div>
                         </div>
-                    </div>
-                    ${isExpanded ? `
-                        <div class="network-log-details bg-muted/20 text-xs border-t border-border/50">
-                            <div class="grid grid-cols-2 divide-x divide-border/50">
-                                <!-- Request Section -->
-                                <div class="p-3 space-y-2">
-                                    <div class="flex items-center gap-1.5">
-                                        <svg class="w-3 h-3 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
-                                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11V6a1 1 0 10-2 0v1H6a1 1 0 100 2h3v3a1 1 0 102 0V9h3a1 1 0 100-2h-3z" clip-rule="evenodd"></path>
-                                        </svg>
-                                        <span class="font-semibold text-[11px]">Request</span>
-                                    </div>
-                                    
-                    <!-- URL and Method Display -->
-                    <div class="space-y-2">
-                        <div class="flex items-center gap-2">
-                            <span class="text-[10px] font-medium px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded">${log.method}</span>
-                            <span class="text-[10px] text-muted-foreground">
-                                ${networkLogger.getEndpointName(log.url)}
-                            </span>
-                        </div>
-                        <div class="space-y-1">
-                            <div class="text-[10px] text-muted-foreground font-medium">Destination</div>
-                            <div class="text-[10px] font-mono bg-blue-50 p-1.5 rounded border border-blue-200/50">
-                                <div class="truncate" title="${log.url}">${this.formatDestinationUrl(log.url)}</div>
-                            </div>
-                        </div>
-                    </div>
-                                    
-                                    <!-- Headers Summary -->
-                                    ${log.request?.headers ? `
-                                        <div class="space-y-1">
-                                            <div class="text-[10px] text-muted-foreground font-medium">Headers</div>
-                                            ${Object.entries(log.request.headers).slice(0, 3).map(([key, value]) => `
-                                                <div class="flex text-[10px] gap-1">
-                                                    <span class="text-muted-foreground">${key}:</span>
-                                                    <span class="font-mono truncate flex-1" title="${value}">${value}</span>
-                                                </div>
-                                            `).join('')}
-                                            ${Object.keys(log.request.headers).length > 3 ? `
-                                                <div class="text-[10px] text-muted-foreground">+${Object.keys(log.request.headers).length - 3} more</div>
-                                            ` : ''}
-                                        </div>
-                                    ` : ''}
-                                    
-                                    <!-- Body Preview -->
-                                    ${log.request?.body ? `
-                                        <div class="space-y-1">
-                                            <div class="text-[10px] text-muted-foreground font-medium">Body</div>
-                                            <div class="text-[10px] font-mono text-muted-foreground bg-background/50 p-1.5 rounded border border-border/50 truncate">
-                                                ${networkLogger.getRequestSummary(log.request)}
-                                            </div>
-                                        </div>
-                                    ` : ''}
+                        
+                        <!-- Expanded details -->
+                        ${isExpanded ? `
+                            <div class="activity-log-details mt-2 text-xs bg-muted/10 rounded-lg border border-border/50 overflow-hidden" style="animation: slideDown 0.2s ease-out;">
+                                <!-- Detailed description -->
+                                <div class="px-3 pt-2.5 pb-2 bg-muted/20 border-b border-border/50">
+                                    <div class="text-foreground leading-relaxed">${getActivityDescription(log, true)}</div>
                                 </div>
                                 
-                                <!-- Response Section -->
-                                <div class="p-3 space-y-2">
-                                    <div class="flex items-center gap-1.5">
-                                        <svg class="w-3 h-3 ${log.error ? 'text-red-600' : 'text-green-600'}" fill="currentColor" viewBox="0 0 20 20">
-                                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
-                                        </svg>
-                                        <span class="font-semibold text-[11px]">Response</span>
-                                    </div>
-                                    
-                                    <!-- Status -->
-                                    <div class="flex items-center gap-2">
-                                        <span class="text-[10px] font-medium px-1.5 py-0.5 rounded ${
-                                            log.status >= 200 && log.status < 300 ? 'bg-green-100 text-green-700' : 
-                                            log.status === 0 ? 'bg-red-100 text-red-700' : 
-                                            'bg-orange-100 text-orange-700'
-                                        }">
-                                            ${log.status || 'ERROR'}
-                                        </span>
-                                        <span class="text-[10px] text-muted-foreground">
-                                            ${log.status >= 200 && log.status < 300 ? 'Success' : 
-                                              log.status === 0 ? 'Failed' : 
-                                              'Warning'}
-                                        </span>
-                                    </div>
-                                    
-                                    <!-- Response Data -->
-                                    ${log.error ? `
-                                        <div class="text-[10px] text-red-600 bg-red-50/50 p-1.5 rounded border border-red-200/50">
-                                            ${this.escapeHtml(log.error)}
+                                <!-- Technical Details -->
+                                <div class="p-3 space-y-2.5">
+                                    <!-- Status and Method -->
+                                    <div class="flex items-center gap-3">
+                                        <div class="flex items-center gap-1.5">
+                                            <span class="text-[10px] text-muted-foreground">Status:</span>
+                                            <span class="text-[10px] font-medium px-1.5 py-0.5 rounded ${
+                                                log.status >= 200 && log.status < 300 ? 'bg-green-100 text-green-700' : 
+                                                log.status === 0 ? 'bg-red-100 text-red-700' : 
+                                                'bg-orange-100 text-orange-700'
+                                            }">
+                                                ${log.status || 'ERROR'}
+                                            </span>
                                         </div>
-                                    ` : `
+                                        <div class="flex items-center gap-1.5">
+                                            <span class="text-[10px] text-muted-foreground">Method:</span>
+                                            <span class="text-[10px] font-medium px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded">${log.method}</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- URL -->
+                                    <div class="space-y-1">
+                                        <div class="text-[10px] text-muted-foreground font-medium">Destination</div>
+                                        <div class="text-[10px] font-mono bg-background p-2 rounded border border-border/50 break-all">
+                                            ${log.url}
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Key Headers (if any) -->
+                                    ${log.request?.headers && Object.keys(log.request.headers).length > 0 ? `
                                         <div class="space-y-1">
-                                            <div class="text-[10px] text-muted-foreground font-medium">Data</div>
-                                            <div class="text-[10px] font-mono text-muted-foreground bg-background/50 p-1.5 rounded border border-border/50">
-                                                ${networkLogger.getResponseSummary(log.response, log.status) || 'Empty response'}
+                                            <div class="text-[10px] text-muted-foreground font-medium">Key Headers</div>
+                                            <div class="space-y-1">
+                                                ${log.request.headers.Authorization && log.method === 'POST' ? `
+                                                    <div class="flex text-[10px]">
+                                                        <span class="text-muted-foreground" style="min-width: 96px;">Authorization:</span>
+                                                        <span class="font-mono text-muted-foreground">${networkLogger.sanitizeHeaders({ Authorization: log.request.headers.Authorization }).Authorization}</span>
+                                                    </div>
+                                                ` : ''}
+                                                ${log.request.headers['X-Title'] ? `
+                                                    <div class="flex text-[10px]">
+                                                        <span class="text-muted-foreground" style="min-width: 96px;">Application:</span>
+                                                        <span class="font-mono">${log.request.headers['X-Title']}</span>
+                                                    </div>
+                                                ` : ''}
+                                                ${log.request.headers['Content-Type'] ? `
+                                                    <div class="flex text-[10px]">
+                                                        <span class="text-muted-foreground" style="min-width: 96px;">Content Type:</span>
+                                                        <span class="font-mono">${log.request.headers['Content-Type']}</span>
+                                                    </div>
+                                                ` : ''}
                                             </div>
                                         </div>
-                                    `}
+                                    ` : ''}
                                     
-                                    <!-- Note about IP -->
-                                    <div class="mt-2 pt-2 border-t border-border/30">
-                                        <div class="text-[9px] text-muted-foreground/70 italic">
-                                            Note: IP addresses are not accessible from browser JavaScript for security reasons
+                                    <!-- Error or Success Message -->
+                                    ${log.error ? `
+                                        <div class="space-y-1">
+                                            <div class="text-[10px] text-red-600 font-medium">Error Details</div>
+                                            <div class="text-[10px] text-red-600 bg-red-50/50 p-2 rounded border border-red-200/50">
+                                                ${this.escapeHtml(log.error)}
+                                            </div>
                                         </div>
-                                    </div>
+                                    ` : log.response ? `
+                                        <div class="space-y-1">
+                                            <div class="text-[10px] text-muted-foreground font-medium">Response Summary</div>
+                                            <div class="text-[10px] text-muted-foreground bg-background p-2 rounded border border-border/50">
+                                                ${networkLogger.getResponseSummary(log.response, log.status) || 'Request completed successfully'}
+                                            </div>
+                                        </div>
+                                    ` : ''}
                                 </div>
                             </div>
-                        </div>
-                    ` : ''}
+                        ` : ''}
+                    </div>
                 </div>
             `;
         }).join('');
@@ -706,68 +725,71 @@ class RightPanel {
 
         panel.innerHTML = `
             <!-- Header -->
-            <div class="p-5 bg-muted/30 border-b border-border">
+            <div class="p-3 bg-muted/30 border-b border-border">
                 <div class="flex items-center justify-between">
-                    <h2 class="text-sm font-semibold text-foreground">Ticket System</h2>
-                    <button id="close-right-panel" class="text-muted-foreground hover:text-foreground transition-colors p-1 rounded-lg hover:bg-background">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <h2 class="text-xs font-semibold text-foreground">System Panel</h2>
+                    <button id="close-right-panel" class="text-muted-foreground hover:text-foreground transition-colors p-0.5 rounded-lg hover:bg-background">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M6 18L18 6M6 6l12 12"></path>
                         </svg>
                     </button>
                 </div>
             </div>
 
-            <!-- Invitation Code Section -->
-            <div class="p-5">
+            <div class="flex flex-col h-full overflow-hidden">
+            <!-- Top Section: Tickets and API Key (non-scrollable) -->
+            <div class="flex-shrink-0">
+                <!-- Invitation Code Section -->
+                <div class="p-3">
                 <div class="flex items-center justify-between">
-                    <div class="flex items-center gap-2">
-                        <svg class="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <div class="flex items-center gap-1.5">
+                        <svg class="w-3.5 h-3.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z"></path>
                         </svg>
-                        <span class="text-sm font-medium">Inference Tickets: <span class="font-semibold">${this.ticketCount}</span></span>
+                        <span class="text-xs font-medium">Inference Tickets: <span class="font-semibold">${this.ticketCount}</span></span>
                     </div>
                     <button 
                         id="toggle-invitation-form-btn"
-                        class="inline-flex items-center gap-1 px-3 py-1.5 text-xs rounded-lg border border-border bg-background hover:bg-accent transition-all duration-200 shadow-sm hover:shadow"
+                        class="inline-flex items-center gap-1 px-2 py-1 text-[10px] rounded-md border border-border bg-background hover:bg-accent transition-all duration-200 shadow-sm hover:shadow"
                     >
                         <span>${this.showInvitationForm || this.ticketCount === 0 ? 'Hide' : 'Add'}</span>
-                        <svg class="w-3 h-3 transition-transform ${this.showInvitationForm || this.ticketCount === 0 ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <svg class="w-2.5 h-2.5 transition-transform ${this.showInvitationForm || this.ticketCount === 0 ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
                         </svg>
                     </button>
                 </div>
 
                 ${this.showInvitationForm || this.ticketCount === 0 ? `
-                    <form id="invitation-code-form" class="space-y-3 mt-4 p-4 bg-muted/20 rounded-lg">
+                    <form id="invitation-code-form" class="space-y-2 mt-3 p-3 bg-muted/20 rounded-lg">
                         <input
                             id="invitation-code-input"
                             type="text"
                             placeholder="Enter 24-char invitation code"
                             maxlength="24"
-                            class="w-full px-4 py-2.5 text-sm border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-all"
+                            class="w-full px-3 py-2 text-xs border border-border rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-all"
                             ${this.isRegistering ? 'disabled' : ''}
                         />
                         <button
                             type="submit"
-                            class="w-full inline-flex items-center justify-center rounded-lg text-sm font-medium transition-all duration-200 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 shadow-sm hover:shadow"
+                            class="w-full inline-flex items-center justify-center rounded-md text-xs font-medium transition-all duration-200 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-8 px-3 shadow-sm hover:shadow"
                             ${this.isRegistering ? 'disabled' : ''}
                         >
                             ${this.isRegistering ? 'Registering...' : 'Register Code'}
                         </button>
-                        <p class="text-xs text-muted-foreground leading-relaxed">Register with an invitation code to obtain inference tickets. Each ticket can be used to request a temporary OpenRouter API key.</p>
+                        <p class="text-[10px] text-muted-foreground leading-relaxed">Register with an invitation code to obtain inference tickets. Each ticket can be used to request a temporary OpenRouter API key.</p>
                     </form>
 
                     ${this.registrationProgress ? `
-                        <div class="mt-3 text-xs text-blue-600 space-y-1">
+                        <div class="mt-2 text-[10px] text-blue-600 space-y-1">
                             <div>${this.escapeHtml(this.registrationProgress.message)}</div>
-                            <div class="w-full bg-gray-200 rounded-full h-2">
-                                <div class="bg-blue-600 h-2 rounded-full transition-all" style="width: ${this.registrationProgress.percent}%"></div>
+                            <div class="w-full bg-gray-200 rounded-full h-1.5">
+                                <div class="bg-blue-600 h-1.5 rounded-full transition-all" style="width: ${this.registrationProgress.percent}%"></div>
                             </div>
                         </div>
                     ` : ''}
 
                     ${this.registrationError ? `
-                        <div class="mt-3 text-xs text-red-600">
+                        <div class="mt-2 text-[10px] text-red-600">
                             ${this.escapeHtml(this.registrationError)}
                         </div>
                     ` : ''}
@@ -776,39 +798,39 @@ class RightPanel {
 
             <!-- Ticket Visualization Section -->
             ${hasTickets && !hasApiKey && this.currentTicket ? `
-                <div class="mx-5 mb-5 p-5 bg-gradient-to-br from-purple-50 to-blue-50 rounded-xl border border-purple-200/50">
-                    <div class="mb-4">
+                <div class="mx-3 mb-3 p-3 bg-gradient-to-br from-purple-50 to-blue-50 rounded-lg border border-purple-200/50">
+                    <div class="mb-3">
                         <div class="flex items-center justify-between">
-                            <span class="text-sm font-semibold text-purple-900">Next Inference Ticket</span>
-                            <span class="text-xs text-purple-600 font-medium px-2 py-1 bg-purple-100 rounded-full">#${this.ticketIndex + 1} of ${this.ticketCount}</span>
+                            <span class="text-xs font-semibold text-purple-900">Next Inference Ticket</span>
+                            <span class="text-[10px] text-purple-600 font-medium px-1.5 py-0.5 bg-purple-100 rounded-full">#${this.ticketIndex + 1} of ${this.ticketCount}</span>
                         </div>
                     </div>
 
-                    <div class="space-y-3">
+                    <div class="space-y-2">
                         <!-- Ticket Data Display -->
-                        <div class="relative min-h-[100px]">
+                        <div class="relative min-h-[60px]">
                             ${!this.showFinalized ? `
-                                <div class="space-y-2 transition-all duration-500 ${
+                                <div class="space-y-1 transition-all duration-500 ${
                                     this.isTransitioning ? 'opacity-50 scale-95' : 'opacity-100 scale-100'
                                 }">
-                                    <div class="text-xs text-muted-foreground mb-1">
+                                    <div class="text-[10px] text-muted-foreground mb-1">
                                         Signed Response (from server):
                                     </div>
-                                    <div class="bg-white border-2 border-dashed border-gray-300 rounded p-2 text-xs font-mono break-all text-gray-700">
+                                    <div class="bg-white border border-dashed border-gray-300 rounded p-1.5 text-[10px] font-mono break-all text-gray-700">
                                         ${this.formatTicketData(this.currentTicket.signed_response)}
                                     </div>
                                 </div>
                             ` : `
-                                <div class="space-y-2 transition-all duration-500 ${
+                                <div class="space-y-1 transition-all duration-500 ${
                                     this.showFinalized ? 'opacity-100 scale-100' : 'opacity-0 scale-110'
                                 }">
-                                    <div class="text-xs text-green-600 mb-1 flex items-center gap-1">
+                                    <div class="text-[10px] text-green-600 mb-1 flex items-center gap-1">
                                         <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                                         </svg>
                                         Finalized Token (ready to use):
                                     </div>
-                                    <div class="bg-green-50 border-2 border-green-500 rounded p-2 text-xs font-mono break-all text-green-700 animate-pulse">
+                                    <div class="bg-green-50 border border-green-500 rounded p-1.5 text-[10px] font-mono break-all text-green-700 animate-pulse">
                                         ${this.formatTicketData(this.currentTicket.finalized_ticket)}
                                     </div>
                                 </div>
@@ -818,15 +840,15 @@ class RightPanel {
                         <!-- Use Ticket Button -->
                         <button
                             id="use-ticket-btn"
-                            class="w-full inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-all focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 h-9 px-4 ${
+                            class="w-full inline-flex items-center justify-center gap-1.5 rounded-md text-xs font-medium transition-all focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 h-7 px-3 ${
                                 this.isTransitioning 
-                                    ? 'bg-blue-500 text-white border-2 border-blue-600' 
+                                    ? 'bg-blue-500 text-white border border-blue-600' 
                                     : 'bg-primary text-primary-foreground hover:bg-primary/90'
                             }"
                             ${this.isRequestingKey || this.isTransitioning ? 'disabled' : ''}
                         >
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1721 9z"></path>
                             </svg>
                             ${this.isRequestingKey ? 'Requesting...' : this.isTransitioning ? 'Transforming...' : 'Use This Ticket'}
                         </button>
@@ -841,9 +863,9 @@ class RightPanel {
                     </div>
                 </div>
             ` : hasTickets && !hasApiKey && !this.currentTicket ? `
-                <div class="mx-5 mb-5 p-8">
-                    <div class="text-center text-sm text-muted-foreground">
-                        <svg class="w-12 h-12 mx-auto mb-3 text-muted-foreground/30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div class="mx-3 mb-3 p-4">
+                    <div class="text-center text-xs text-muted-foreground">
+                        <svg class="w-8 h-8 mx-auto mb-2 text-muted-foreground/30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
                         </svg>
                         No tickets available
@@ -853,23 +875,23 @@ class RightPanel {
 
             <!-- API Key Panel -->
             ${hasApiKey ? `
-                <div class="p-5">
-                    <div class="mb-4">
-                        <div class="flex items-center gap-2 mb-3">
+                <div class="p-3">
+                    <div class="mb-3">
+                        <div class="flex items-center gap-1.5 mb-2">
                             <svg class="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
                             </svg>
-                            <span class="text-sm font-medium">OpenRouter API Key</span>
+                            <span class="text-xs font-medium">OpenRouter API Key</span>
                         </div>
-                        <div class="text-xs font-mono bg-muted/50 p-3 rounded-lg border border-border break-all">
+                        <div class="text-[10px] font-mono bg-muted/50 p-2 rounded-md border border-border break-all">
                             ${this.maskApiKey(this.apiKey)}
                         </div>
                     </div>
 
-                    <div class="space-y-3 mb-4">
-                        <div class="flex items-center justify-between p-3 bg-background rounded-lg border border-border">
-                            <span class="text-xs text-muted-foreground">Expires in:</span>
-                            <span id="api-key-expiry" class="font-medium px-2.5 py-1 rounded-full text-xs ${
+                    <div class="space-y-2 mb-3">
+                        <div class="flex items-center justify-between p-2 bg-background rounded-md border border-border">
+                            <span class="text-[10px] text-muted-foreground">Expires in:</span>
+                            <span id="api-key-expiry" class="font-medium px-2 py-0.5 rounded-full text-[10px] ${
                                 this.isExpired ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
                             }">
                                 ${this.timeRemaining || 'Loading...'}
@@ -877,53 +899,54 @@ class RightPanel {
                         </div>
 
                         ${this.apiKeyInfo?.station_name ? `
-                            <div class="flex items-center justify-between p-3 bg-background rounded-lg border border-border">
-                                <span class="text-xs text-muted-foreground">Station</span>
-                                <span class="text-xs font-medium">${this.escapeHtml(this.apiKeyInfo.station_name)}</span>
+                            <div class="flex items-center justify-between p-2 bg-background rounded-md border border-border">
+                                <span class="text-[10px] text-muted-foreground">Station</span>
+                                <span class="text-[10px] font-medium">${this.escapeHtml(this.apiKeyInfo.station_name)}</span>
                             </div>
                         ` : ''}
                     </div>
 
-                    <div class="grid grid-cols-3 gap-2">
+                    <div class="grid grid-cols-3 gap-1.5">
                         <button
                             id="verify-key-btn"
-                            class="text-xs px-3 py-2 rounded-lg border border-border bg-background hover:bg-accent transition-all duration-200 hover:shadow-sm"
+                            class="text-[10px] px-2 py-1.5 rounded-md border border-border bg-background hover:bg-accent transition-all duration-200 hover:shadow-sm"
                             ${this.isExpired ? 'disabled' : ''}
                         >
                             Verify
                         </button>
                         <button
                             id="renew-key-btn"
-                            class="text-xs px-3 py-2 rounded-lg border border-border bg-background hover:bg-accent transition-all duration-200 hover:shadow-sm"
+                            class="text-[10px] px-2 py-1.5 rounded-md border border-border bg-background hover:bg-accent transition-all duration-200 hover:shadow-sm"
                         >
                             Renew
                         </button>
                         <button
                             id="clear-key-btn"
-                            class="text-xs px-3 py-2 rounded-lg border border-red-200 text-red-600 bg-red-50 hover:bg-red-100 hover:border-red-300 transition-all duration-200"
+                            class="text-[10px] px-2 py-1.5 rounded-md border border-red-200 text-red-600 bg-red-50 hover:bg-red-100 hover:border-red-300 transition-all duration-200"
                         >
                             Remove
                         </button>
                     </div>
                 </div>
             ` : ''}
+            </div>
+            <!-- End of Top Section -->
 
-            <!-- Network Activity Log -->
-            <div class="border-t border-border flex flex-col bg-muted/10" style="flex: 1; min-height: 0;">
-                <div class="p-5 border-b border-border bg-muted/20">
-                    <div class="flex items-center gap-2">
-                        <svg class="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+            <!-- Activity Timeline (scrollable) -->
+            <div class="border-t border-border flex flex-col bg-muted/10 flex-1 min-h-0">
+                <div class="p-3 border-b border-border bg-muted/20">
+                    <div class="flex items-center gap-1.5">
+                        <svg class="w-3.5 h-3.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                         </svg>
-                        <h3 class="text-sm font-medium">Network Activity</h3>
+                        <h3 class="text-xs font-medium">Activity Timeline</h3>
                     </div>
                 </div>
-                <div id="network-logs-container" class="flex-1 overflow-y-auto" style="max-height: 300px;">
+                <div id="network-logs-container" class="flex-1 overflow-y-auto px-3 py-2">
                     ${this.renderNetworkLogs()}
                 </div>
                 
-                <!-- Divider between sections -->
-                <div class="h-px bg-border"></div>
+            </div>
             </div>
         `;
 
@@ -986,10 +1009,10 @@ class RightPanel {
             clearBtn.onclick = () => this.handleClearApiKey();
         }
 
-        // Network log expand/collapse
-        document.querySelectorAll('.network-log-header').forEach(header => {
-            header.onclick = () => {
-                const logId = header.dataset.logId;
+        // Activity log expand/collapse
+        document.querySelectorAll('.activity-log-header').forEach(header => {
+            header.onclick = (e) => {
+                const logId = e.currentTarget.dataset.logId;
                 this.toggleLogExpand(logId);
             };
         });
@@ -1001,6 +1024,12 @@ class RightPanel {
         
         // Set initial visibility
         this.updatePanelVisibility();
+        
+        // Set initial state for app container
+        const appContainer = document.getElementById('app');
+        if (appContainer && this.isDesktop && this.isVisible) {
+            appContainer.classList.add('right-panel-open');
+        }
         
         // Hide legacy toggle button
         const oldToggleBtn = document.getElementById('toggle-right-panel-btn');

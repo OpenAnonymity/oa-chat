@@ -1,6 +1,7 @@
 // Main application logic
 import RightPanel from './components/RightPanel.js';
 import FloatingPanel from './components/FloatingPanel.js';
+import MessageNavigation from './components/MessageNavigation.js';
 import apiKeyStore from './services/apiKeyStore.js';
 
 class ChatApp {
@@ -38,8 +39,29 @@ class ChatApp {
         this.searchEnabled = false;
         this.rightPanel = null;
         this.floatingPanel = null;
+        this.messageNavigation = null;
+        this.isWaitingForResponse = false;
 
         this.init();
+    }
+
+    /**
+     * Process content with protected LaTeX expressions
+     * This prevents marked from breaking LaTeX delimiters
+     */
+    processContentWithLatex(content) {
+        // Escape backslashes for LaTeX delimiters to prevent marked from stripping them
+        // This is based on the solution from https://stackoverflow.com/questions/78220687/
+        let processedContent = content
+            .replace(/\\\[/g, '\\\\[')
+            .replace(/\\\]/g, '\\\\]')
+            .replace(/\\\(/g, '\\\\(')
+            .replace(/\\\)/g, '\\\\)');
+
+        // Process markdown
+        let html = marked.parse(processedContent);
+
+        return html;
     }
 
     initScrollAwareScrollbars(element) {
@@ -65,12 +87,20 @@ class ChatApp {
         
         // Initialize floating panel
         this.floatingPanel = new FloatingPanel(this);
+        
+        // Initialize message navigation
+        this.messageNavigation = new MessageNavigation(this);
 
-        // Load models from OpenRouter API
-        await this.loadModels();
-
-        // Load data from IndexedDB
+        // Load data from IndexedDB FIRST (to get session)
         await this.loadFromDB();
+
+        // Create initial session if none exist
+        if (this.state.sessions.length === 0) {
+            await this.createSession();
+        }
+
+        // Load models from OpenRouter API (now we have a session)
+        await this.loadModels();
 
         // Render initial state
         this.renderSessions();
@@ -82,26 +112,36 @@ class ChatApp {
         if (this.rightPanel && currentSession) {
             this.rightPanel.onSessionChange(currentSession);
         }
+        if (this.floatingPanel && currentSession) {
+            this.floatingPanel.render();
+        }
 
         // Set up event listeners
         this.setupEventListeners();
 
-        // Create initial session if none exist
-        if (this.state.sessions.length === 0) {
-            await this.createSession();
-        }
-
         this.initScrollAwareScrollbars(this.elements.chatArea);
         this.initScrollAwareScrollbars(this.elements.sessionsScrollArea);
         this.initScrollAwareScrollbars(this.elements.modelListScrollArea);
+        
+        // Set up scroll listener for message navigation
+        this.elements.chatArea.addEventListener('scroll', () => {
+            if (this.messageNavigation) {
+                this.messageNavigation.handleScroll();
+            }
+        });
+        
+        // Scroll to bottom after initial load (for refresh)
+        setTimeout(() => {
+            this.elements.chatArea.scrollTop = this.elements.chatArea.scrollHeight;
+        }, 100);
     }
 
     async loadModels() {
         this.state.modelsLoading = true;
         
-        // Don't log system-level model fetches to any session
-        if (window.networkLogger) {
-            window.networkLogger.setCurrentSession(null);
+        // Tag model fetches with current session if available
+        if (window.networkLogger && this.state.currentSessionId) {
+            window.networkLogger.setCurrentSession(this.state.currentSessionId);
         }
         
         try {
@@ -117,6 +157,15 @@ class ChatApp {
         // Load sessions
         this.state.sessions = await chatDB.getAllSessions();
         
+        // Migrate old sessions to add updatedAt if missing
+        const sessionsToMigrate = this.state.sessions.filter(s => !s.updatedAt);
+        if (sessionsToMigrate.length > 0) {
+            for (const session of sessionsToMigrate) {
+                session.updatedAt = session.createdAt;
+                await chatDB.saveSession(session);
+            }
+        }
+        
         // Load current session
         const currentId = await chatDB.getSetting('currentSessionId');
         if (currentId && this.state.sessions.find(s => s.id === currentId)) {
@@ -131,18 +180,13 @@ class ChatApp {
     }
 
     formatTime(timestamp) {
-        const now = new Date();
         const messageTime = new Date(timestamp);
-        const diffMs = now - messageTime;
-        const diffSecs = Math.floor(diffMs / 1000);
-        const diffMins = Math.floor(diffSecs / 60);
-        const diffHours = Math.floor(diffMins / 60);
-        const diffDays = Math.floor(diffHours / 24);
-
-        if (diffSecs < 60) return `${diffSecs} seconds ago`;
-        if (diffMins < 60) return `${diffMins} minutes ago`;
-        if (diffHours < 24) return `${diffHours} hours ago`;
-        return `${diffDays} days ago`;
+        return messageTime.toLocaleTimeString('en-US', { 
+            hour12: false, 
+            hour: '2-digit', 
+            minute: '2-digit', 
+            second: '2-digit' 
+        });
     }
 
     async createSession(title = 'New Chat') {
@@ -150,6 +194,7 @@ class ChatApp {
             id: this.generateId(),
             title,
             createdAt: Date.now(),
+            updatedAt: Date.now(),
             model: null,
             apiKey: null,
             apiKeyInfo: null,
@@ -186,6 +231,9 @@ class ChatApp {
         if (this.rightPanel && session) {
             this.rightPanel.onSessionChange(session);
         }
+        if (this.floatingPanel && session) {
+            this.floatingPanel.render();
+        }
     }
 
     getCurrentSession() {
@@ -196,12 +244,13 @@ class ChatApp {
         const session = this.state.sessions.find(s => s.id === sessionId);
         if (session) {
             session.title = title;
+            session.updatedAt = Date.now();
             await chatDB.saveSession(session);
             this.renderSessions();
         }
     }
 
-    async addMessage(role, content) {
+    async addMessage(role, content, metadata = {}) {
         const session = this.getCurrentSession();
         if (!session) return;
 
@@ -210,10 +259,17 @@ class ChatApp {
             sessionId: session.id,
             role,
             content,
-            timestamp: Date.now()
+            timestamp: Date.now(),
+            model: metadata.model || session.model,
+            tokenCount: metadata.tokenCount || null,
+            streamingTokens: metadata.streamingTokens || null
         };
 
         await chatDB.saveMessage(message);
+        
+        // Update session's updatedAt timestamp
+        session.updatedAt = Date.now();
+        await chatDB.saveSession(session);
 
         // Auto-generate title from first user message
         if (role === 'user') {
@@ -225,100 +281,195 @@ class ChatApp {
         }
 
         this.renderMessages();
+        this.renderSessions(); // Re-render sessions to update sorting
         return message;
     }
 
     async sendMessage() {
+        if (this.isWaitingForResponse) return;
+
         const content = this.elements.messageInput.value.trim();
         if (!content) return;
 
-        // Create session if none exists
-        if (!this.getCurrentSession()) {
-            await this.createSession();
-        }
+        this.isWaitingForResponse = true;
+        this.updateInputState();
 
-        // Add user message
-        await this.addMessage('user', content);
-        this.elements.messageInput.value = '';
-        this.elements.sendBtn.disabled = true;
-        this.elements.messageInput.style.height = '24px';
-
-        let session = this.getCurrentSession();
-        
-        // Automatically acquire API key if needed
-        const isKeyExpired = session.expiresAt ? new Date(session.expiresAt) <= new Date() : true;
-        if (!session.apiKey || isKeyExpired) {
-            try {
-                this.floatingPanel.showMessage('Acquiring API key...', 'info');
-                await this.acquireAndSetApiKey(session);
-                this.floatingPanel.showMessage('Successfully acquired API key!', 'success', 2000);
-            } catch (error) {
-                this.floatingPanel.showMessage(error.message, 'error', 5000);
-                await this.addMessage('assistant', `**Error:** ${error.message}`);
-                return;
+        try {
+            // Create session if none exists
+            if (!this.getCurrentSession()) {
+                await this.createSession();
             }
-        }
-        
-        // Set current session for network logging
-        if (window.networkLogger) {
-            window.networkLogger.setCurrentSession(session.id);
-        }
-        
-        let modelNameToUse = session.model;
-
-        if (!modelNameToUse) {
-            const gpt5Model = this.state.models.find(m => m.name.toLowerCase().includes('gpt-5 chat'));
-            if (gpt5Model) {
-                modelNameToUse = gpt5Model.name;
-            } else {
-                const gpt4oModel = this.state.models.find(m => m.name.toLowerCase().includes('gpt-4o'));
-                if (gpt4oModel) {
-                    modelNameToUse = gpt4oModel.name;
-                } else if (this.state.models.length > 0) {
-                    modelNameToUse = this.state.models[0].name;
+    
+            // Add user message
+            await this.addMessage('user', content);
+            this.elements.messageInput.value = '';
+            this.updateInputState();
+            this.elements.messageInput.style.height = '24px';
+    
+            let session = this.getCurrentSession();
+            
+            // Automatically acquire API key if needed
+            const isKeyExpired = session.expiresAt ? new Date(session.expiresAt) <= new Date() : true;
+            if (!session.apiKey || isKeyExpired) {
+                try {
+                    this.floatingPanel.showMessage('Acquiring API key...', 'info');
+                    await this.acquireAndSetApiKey(session);
+                    this.floatingPanel.showMessage('Successfully acquired API key!', 'success', 2000);
+                } catch (error) {
+                    this.floatingPanel.showMessage(error.message, 'error', 5000);
+                    await this.addMessage('assistant', `**Error:** ${error.message}`);
+                    return; // Return early if key acquisition fails
                 }
             }
             
-            if (modelNameToUse) {
-                session.model = modelNameToUse;
-                await chatDB.saveSession(session);
-                this.renderCurrentModel();
+            // Set current session for network logging
+            if (window.networkLogger) {
+                window.networkLogger.setCurrentSession(session.id);
             }
-        }
-
-        if (!modelNameToUse) {
-            console.warn('No available models to send message.');
-            await this.addMessage('assistant', 'No models are available right now. Please add a model and try again.');
-            return;
-        }
-
-        let selectedModel = this.state.models.find(m => m.name === modelNameToUse);
-        let modelId;
-        
-        if (selectedModel) {
-            modelId = selectedModel.id;
-        } else {
-            // Fallback if model from session is somehow not in the list anymore
-            modelId = 'openai/gpt-4o';
-        }
-        
-        // Show typing indicator
-        const typingId = this.showTypingIndicator(modelNameToUse);
-
-        try {
-            // Get AI response from OpenRouter
-            const messages = await chatDB.getSessionMessages(session.id);
-            const response = await openRouterAPI.sendCompletion(messages, modelId);
-
-            // Remove typing indicator
-            this.removeTypingIndicator(typingId);
-
-            // Add assistant message
-            await this.addMessage('assistant', response);
-        } catch (error) {
-            console.error('Error getting AI response:', error);
-            this.removeTypingIndicator(typingId);
-            await this.addMessage('assistant', 'Sorry, I encountered an error while processing your request.');
+            
+            let modelNameToUse = session.model;
+    
+            if (!modelNameToUse) {
+                const gpt5Model = this.state.models.find(m => m.name.toLowerCase().includes('gpt-5 chat'));
+                if (gpt5Model) {
+                    modelNameToUse = gpt5Model.name;
+                } else {
+                    const gpt4oModel = this.state.models.find(m => m.name.toLowerCase().includes('gpt-4o'));
+                    if (gpt4oModel) {
+                        modelNameToUse = gpt4oModel.name;
+                    } else if (this.state.models.length > 0) {
+                        modelNameToUse = this.state.models[0].name;
+                    }
+                }
+                
+                if (modelNameToUse) {
+                    session.model = modelNameToUse;
+                    await chatDB.saveSession(session);
+                    this.renderCurrentModel();
+                }
+            }
+    
+            if (!modelNameToUse) {
+                console.warn('No available models to send message.');
+                await this.addMessage('assistant', 'No models are available right now. Please add a model and try again.');
+                return; // Return early
+            }
+    
+            let selectedModel = this.state.models.find(m => m.name === modelNameToUse);
+            let modelId;
+            
+            if (selectedModel) {
+                modelId = selectedModel.id;
+            } else {
+                // Fallback if model from session is somehow not in the list anymore
+                modelId = 'openai/gpt-4o';
+            }
+            
+            // Show typing indicator
+            const typingId = this.showTypingIndicator(modelNameToUse);
+    
+            try {
+                // Get AI response from OpenRouter with streaming
+                const messages = await chatDB.getSessionMessages(session.id);
+                
+                // Create a placeholder message for streaming
+                const streamingMessageId = this.generateId();
+                let streamedContent = '';
+                let streamingTokenCount = 0;
+                
+                // Add empty assistant message that we'll update
+                const streamingMessage = {
+                    id: streamingMessageId,
+                    sessionId: session.id,
+                    role: 'assistant',
+                    content: '',
+                    timestamp: Date.now(),
+                    model: modelNameToUse,
+                    tokenCount: null,
+                    streamingTokens: 0
+                };
+                await chatDB.saveMessage(streamingMessage);
+                
+                // Remove typing indicator and render messages to show the empty message
+                this.removeTypingIndicator(typingId);
+                await this.renderMessages();
+                
+                // Track progress for periodic saves
+                let lastSaveLength = 0;
+                const SAVE_INTERVAL_CHARS = 100; // Save every 100 characters
+                
+                // Stream the response with token tracking
+                const tokenData = await openRouterAPI.streamCompletion(
+                    messages, 
+                    modelId, 
+                    session.apiKey, 
+                    async (chunk) => {
+                        streamedContent += chunk;
+                        
+                        // Periodically save partial content to handle refresh during streaming
+                        if (streamedContent.length - lastSaveLength >= SAVE_INTERVAL_CHARS) {
+                            streamingMessage.content = streamedContent;
+                            streamingMessage.streamingTokens = Math.ceil(streamedContent.length / 4);
+                            await chatDB.saveMessage(streamingMessage);
+                            lastSaveLength = streamedContent.length;
+                        }
+                        
+                        // Update the message content in real-time
+                        const messageEl = document.querySelector(`[data-message-id="${streamingMessageId}"]`);
+                        if (messageEl) {
+                            const contentEl = messageEl.querySelector('.message-content');
+                            if (contentEl) {
+                                // Use our LaTeX-safe processor
+                                contentEl.innerHTML = this.processContentWithLatex(streamedContent);
+                                // Re-render LaTeX for the updated content
+                                if (typeof renderMathInElement !== 'undefined') {
+                                    renderMathInElement(contentEl, {
+                                        delimiters: [
+                                            {left: '$$', right: '$$', display: true},
+                                            {left: '\\[', right: '\\]', display: true},
+                                            {left: '\\(', right: '\\)', display: false},
+                                            {left: '$', right: '$', display: false}
+                                        ],
+                                        throwOnError: false
+                                    });
+                                }
+                            }
+                        }
+                        // Keep scrolling to bottom
+                        this.elements.chatArea.scrollTop = this.elements.chatArea.scrollHeight;
+                    },
+                    (tokenUpdate) => {
+                        // Update streaming token count in real-time
+                        streamingTokenCount = tokenUpdate.completionTokens || 0;
+                        const messageEl = document.querySelector(`[data-message-id="${streamingMessageId}"]`);
+                        if (messageEl && tokenUpdate.isStreaming) {
+                            const tokenEl = messageEl.querySelector('.streaming-token-count');
+                            if (tokenEl) {
+                                tokenEl.textContent = streamingTokenCount;
+                            }
+                        }
+                    }
+                );
+                
+                // Save the final message content with token data
+                streamingMessage.content = streamedContent;
+                streamingMessage.tokenCount = tokenData.totalTokens || tokenData.completionTokens || streamingTokenCount;
+                streamingMessage.model = tokenData.model || modelNameToUse;
+                streamingMessage.streamingTokens = null; // Clear streaming tokens after completion
+                await chatDB.saveMessage(streamingMessage);
+                
+                // Re-render to show final token count
+                this.renderMessages();
+                
+            } catch (error) {
+                console.error('Error getting AI response:', error);
+                await this.addMessage('assistant', 'Sorry, I encountered an error while processing your request.');
+                this.removeTypingIndicator(typingId);
+            }
+        } finally {
+            this.isWaitingForResponse = false;
+            this.updateInputState();
+            this.elements.messageInput.focus();
         }
     }
 
@@ -384,23 +535,70 @@ class ChatApp {
         return div.innerHTML;
     }
 
+    getSessionDateGroup(timestamp) {
+        const now = new Date();
+        const sessionDate = new Date(timestamp);
+        
+        const nowDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const sessionDay = new Date(sessionDate.getFullYear(), sessionDate.getMonth(), sessionDate.getDate());
+        const diffDays = Math.floor((nowDay - sessionDay) / (1000 * 60 * 60 * 24));
+        
+        if (diffDays === 0) return 'TODAY';
+        if (diffDays === 1) return 'YESTERDAY';
+        if (diffDays <= 7) return 'PREVIOUS 7 DAYS';
+        if (diffDays <= 30) return 'PREVIOUS 30 DAYS';
+        return 'OLDER';
+    }
+
     renderSessions() {
-        this.elements.sessionsList.innerHTML = this.state.sessions.map(session => `
-            <div class="group relative flex h-9 items-center rounded-lg ${session.id === this.state.currentSessionId ? 'chat-session active' : 'hover:bg-accent/50'} transition-colors pl-3 chat-session" data-session-id="${session.id}">
-                <a class="flex flex-1 items-center justify-between h-full min-w-0 text-foreground/80 hover:text-foreground cursor-pointer">
-                    <div class="flex min-w-0 flex-1 items-center">
-                        <input class="w-full cursor-pointer truncate bg-transparent text-sm leading-5 focus:outline-none ${session.title === 'New Chat' ? 'italic text-muted-foreground' : ''}" placeholder="Untitled Chat" readonly value="${session.title}">
-                    </div>
-                </a>
-                <div class="flex shrink-0 items-center">
-                    <button class="delete-session-btn inline-flex items-center justify-center whitespace-nowrap rounded-md font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 gap-2 leading-6 text-muted-foreground hover:bg-accent hover:text-accent-foreground border border-transparent h-9 w-9 group-hover:opacity-100 md:opacity-0" aria-label="Delete session" data-session-id="${session.id}">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5ZM12 12.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5ZM12 18.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5Z" />
-                        </svg>
-                    </button>
+        // Group sessions by date (using updatedAt so active sessions move to TODAY)
+        const grouped = {};
+        const groupOrder = ['TODAY', 'YESTERDAY', 'PREVIOUS 7 DAYS', 'PREVIOUS 30 DAYS', 'OLDER'];
+        
+        this.state.sessions.forEach(session => {
+            // Use updatedAt if available, otherwise fall back to createdAt
+            const timestamp = session.updatedAt || session.createdAt;
+            const group = this.getSessionDateGroup(timestamp);
+            if (!grouped[group]) {
+                grouped[group] = [];
+            }
+            grouped[group].push(session);
+        });
+        
+        // Sort sessions within each group by updatedAt (most recent first)
+        Object.keys(grouped).forEach(groupName => {
+            grouped[groupName].sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt));
+        });
+        
+        // Render grouped sessions
+        const html = groupOrder.map(groupName => {
+            const sessions = grouped[groupName];
+            if (!sessions || sessions.length === 0) return '';
+            
+            return `
+                <div class="mb-3">
+                    <div class="model-category-header px-3 flex items-center h-9">${groupName}</div>
+                    ${sessions.map(session => `
+                        <div class="group relative flex h-9 items-center rounded-lg ${session.id === this.state.currentSessionId ? 'chat-session active' : 'hover:bg-accent/50'} transition-colors pl-3 chat-session" data-session-id="${session.id}">
+                            <a class="flex flex-1 items-center justify-between h-full min-w-0 text-foreground/80 hover:text-foreground cursor-pointer">
+                                <div class="flex min-w-0 flex-1 items-center">
+                                    <input class="w-full cursor-pointer truncate bg-transparent text-sm leading-5 focus:outline-none ${session.title === 'New Chat' ? 'italic text-muted-foreground' : ''}" placeholder="Untitled Chat" readonly value="${session.title}">
+                                </div>
+                            </a>
+                            <div class="flex shrink-0 items-center">
+                                <button class="delete-session-btn inline-flex items-center justify-center whitespace-nowrap rounded-md font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 gap-2 leading-6 text-muted-foreground hover:bg-accent hover:text-accent-foreground border border-transparent h-9 w-9 group-hover:opacity-100 md:opacity-0" aria-label="Delete session" data-session-id="${session.id}">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5ZM12 12.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5ZM12 18.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5Z" />
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                    `).join('')}
                 </div>
-            </div>
-        `).join('');
+            `;
+        }).join('');
+        
+        this.elements.sessionsList.innerHTML = html;
 
         // Add click handlers
         document.querySelectorAll('.chat-session').forEach(el => {
@@ -476,7 +674,7 @@ class ChatApp {
         this.elements.messagesContainer.innerHTML = messages.map(message => {
             if (message.role === 'user') {
                 return `
-                    <div class="w-full px-2 md:px-3 fade-in self-end">
+                    <div class="w-full px-2 md:px-3 fade-in self-end" data-message-id="${message.id}">
                         <div class="group my-2 flex w-full flex-col gap-2 justify-end items-end">
                             <div class="py-3 px-4 font-normal rounded-lg message-user max-w-full">
                                 <div class="min-w-0 w-full overflow-hidden break-words">
@@ -493,19 +691,27 @@ class ChatApp {
                 const model = this.state.models.find(m => m.name === modelName);
                 const providerInitial = model ? model.provider.charAt(0) : 'A';
                 
+                // Display token count if available
+                const tokenDisplay = message.tokenCount 
+                    ? `<span class="text-xs text-muted-foreground ml-auto" style="font-size: 0.7rem;">${message.tokenCount}</span>`
+                    : (message.streamingTokens !== null && message.streamingTokens !== undefined
+                        ? `<span class="text-xs text-muted-foreground ml-auto streaming-token-count" style="font-size: 0.7rem;">${message.streamingTokens}</span>`
+                        : '');
+                
                 return `
-                    <div class="w-full px-2 md:px-3 fade-in self-start">
+                    <div class="w-full px-2 md:px-3 fade-in self-start" data-message-id="${message.id}">
                         <div class="group flex w-full flex-col items-start justify-start gap-2">
                             <div class="flex w-full items-center justify-start gap-2">
                                 <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow bg-muted">
                                     <span class="text-xs font-semibold">${providerInitial}</span>
                                 </div>
-                                <span class="text-xs text-primary font-medium">${modelName}</span>
-                                <span class="text-xs text-muted-foreground">${this.formatTime(message.timestamp)}</span>
+                                <span class="text-xs text-primary font-medium" style="font-size: 0.7rem;">${modelName}</span>
+                                <span class="text-xs text-muted-foreground" style="font-size: 0.7rem;">${this.formatTime(message.timestamp)}</span>
+                                ${tokenDisplay}
                             </div>
-                            <div class="py-3 px-4 font-normal rounded-lg message-assistant rounded-tl-none w-full flex items-center">
+                            <div class="py-3 px-4 font-normal rounded-lg message-assistant w-full flex items-center">
                                 <div class="min-w-0 w-full overflow-hidden message-content prose">
-                                    ${marked.parse(message.content)}
+                                    ${this.processContentWithLatex(message.content || '')}
                                 </div>
                             </div>
                         </div>
@@ -515,20 +721,29 @@ class ChatApp {
         }).join('');
 
         // Render LaTeX
-        document.querySelectorAll('.message-content').forEach(el => {
-            renderMathInElement(el, {
-                delimiters: [
-                    {left: '$$', right: '$$', display: true},
-                    {left: '\\[', right: '\\]', display: true},
-                    {left: '\\(', right: '\\)', display: false},
-                    {left: '$', right: '$', display: false}
-                ],
-                throwOnError: false
+        if (typeof renderMathInElement !== 'undefined') {
+            document.querySelectorAll('.message-content').forEach(el => {
+                renderMathInElement(el, {
+                    delimiters: [
+                        {left: '$$', right: '$$', display: true},
+                        {left: '\\[', right: '\\]', display: true},
+                        {left: '\\(', right: '\\)', display: false},
+                        {left: '$', right: '$', display: false}
+                    ],
+                    throwOnError: false
+                });
             });
-        });
+        }
 
-        // Scroll to bottom
-        this.elements.chatArea.scrollTop = this.elements.chatArea.scrollHeight;
+        // Scroll to bottom after a brief delay to ensure rendering is complete
+        requestAnimationFrame(() => {
+            this.elements.chatArea.scrollTop = this.elements.chatArea.scrollHeight;
+        });
+        
+        // Update message navigation if it exists
+        if (this.messageNavigation) {
+            this.messageNavigation.update();
+        }
     }
 
     filterModels(searchTerm = '') {
@@ -616,11 +831,7 @@ class ChatApp {
         this.elements.messageInput.addEventListener('input', () => {
             this.elements.messageInput.style.height = '24px';
             this.elements.messageInput.style.height = Math.min(this.elements.messageInput.scrollHeight, 384) + 'px';
-
-            const hasContent = this.elements.messageInput.value.trim();
-            this.elements.sendBtn.disabled = !hasContent;
-            this.elements.sendBtn.classList.toggle('opacity-40', !hasContent);
-            this.elements.sendBtn.classList.toggle('opacity-100', hasContent);
+            this.updateInputState();
         });
 
         // Send on Enter
@@ -771,12 +982,34 @@ class ChatApp {
         });
     }
 
+    updateInputState() {
+        const hasContent = this.elements.messageInput.value.trim();
+        const shouldBeDisabled = !hasContent || this.isWaitingForResponse;
+
+        this.elements.messageInput.disabled = this.isWaitingForResponse;
+        this.elements.sendBtn.disabled = shouldBeDisabled;
+
+        this.elements.sendBtn.classList.toggle('opacity-40', shouldBeDisabled);
+        this.elements.sendBtn.classList.toggle('opacity-100', !shouldBeDisabled);
+        
+        if (this.isWaitingForResponse) {
+            this.elements.messageInput.placeholder = "Waiting for response...";
+        } else {
+            this.elements.messageInput.placeholder = "Chat anonymously";
+        }
+    }
+
     async acquireAndSetApiKey(session) {
         if (!session) throw new Error("No active session found.");
 
         const ticketCount = stationClient.getTicketCount();
         if (ticketCount === 0) {
             throw new Error("You have no inference tickets. Please open the right panel to register an invitation code and get tickets.");
+        }
+
+        // Set current session for network logging
+        if (window.networkLogger) {
+            window.networkLogger.setCurrentSession(session.id);
         }
 
         try {
