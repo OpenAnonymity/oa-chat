@@ -6,7 +6,7 @@
 import privacyPassProvider from './privacyPass.js';
 import networkLogger from './networkLogger.js';
 
-const ORG_API_BASE = 'http://localhost:8005';
+const ORG_API_BASE = 'https://org.openanonymity.ai';
 const FALLBACK_STATION_URL = '';
 
 class StationClient {
@@ -54,12 +54,12 @@ class StationClient {
 
         const randomIndex = crypto.getRandomValues(new Uint32Array(1))[0] % stations.length;
         const selected = stations[randomIndex];
-        
+
         console.log(`🎲 Randomly selected station: ${selected.name} (${randomIndex + 1}/${stations.length})`);
-        
+
         this.selectedStationUrl = selected.url;
         this.selectedStationName = selected.name;
-        
+
         return selected;
     }
 
@@ -81,7 +81,7 @@ class StationClient {
             this.tickets = tickets;
             this.currentTicketIndex = 0;
             console.log(`💾 Saved ${tickets.length} tickets to localStorage`);
-            
+
             // Notify app about ticket updates
             window.dispatchEvent(new CustomEvent('tickets-updated'));
         } catch (error) {
@@ -95,7 +95,7 @@ class StationClient {
         }
 
         const unusedTickets = this.tickets.filter(t => !t.used);
-        
+
         if (unusedTickets.length === 0) {
             console.log('❌ No unused tickets available');
             return null;
@@ -119,37 +119,37 @@ class StationClient {
 
     async alphaRegister(invitationCode, progressCallback) {
         console.log('=== Starting alphaRegister ===');
-        
+
         try {
             if (progressCallback) progressCallback('Validating invitation code...', 5);
-            
+
             if (!invitationCode || invitationCode.length !== 24) {
                 throw new Error('Invalid invitation code format (must be 24 characters)');
             }
 
             const suffix = invitationCode.slice(20, 24);
             const ticketCount = parseInt(suffix, 16);
-            
+
             if (isNaN(ticketCount) || ticketCount === 0) {
                 throw new Error('Invalid invitation code: unable to determine ticket count');
             }
 
             if (progressCallback) progressCallback('Initializing Privacy Pass...', 10);
-            
+
             const hasProvider = await this.ppExtension.checkAvailability();
-            
+
             if (!hasProvider) {
                 throw new Error('Privacy Pass is not available. Please check your configuration.');
             }
 
             if (progressCallback) progressCallback('Getting issuer public key...', 20);
-            
+
             let publicKey;
             try {
                 const keyResponse = await fetch(`${ORG_API_BASE}/api/ticket/issue/public-key`);
                 const keyData = await keyResponse.json();
                 publicKey = keyData.public_key;
-                
+
                 if (!publicKey) {
                     throw new Error('Station did not return public key');
                 }
@@ -158,18 +158,18 @@ class StationClient {
             }
 
             if (progressCallback) progressCallback(`Blinding ${ticketCount} tickets...`, 25);
-            
+
             const challenge = await this.ppExtension.createChallenge("oa-station", ["oa-station-api"]);
-            
+
             const indexedBlindedRequests = [];
             const clientStates = [];
-            
+
             for (let i = 0; i < ticketCount; i++) {
                 const result = await this.ppExtension.createSingleTokenRequest(publicKey, challenge);
                 const { blindedRequest, state } = result;
                 indexedBlindedRequests.push([i, blindedRequest]);
                 clientStates.push([i, state]);
-                
+
                 if (i > 0 && i % Math.max(1, Math.floor(ticketCount / 20)) === 0) {
                     const progressPct = 25 + Math.floor((i / ticketCount) * 20);
                     if (progressCallback) {
@@ -179,13 +179,13 @@ class StationClient {
             }
 
             if (progressCallback) progressCallback('Sending blinded tickets to server for signing...', 50);
-            
+
             const registerUrl = `${ORG_API_BASE}/api/alpha-register`;
             const registerBody = {
                 credential: invitationCode,
                 blinded_requests: indexedBlindedRequests
             };
-            
+
             let signData;
             try {
                 const signResponse = await fetch(registerUrl, {
@@ -198,7 +198,7 @@ class StationClient {
                 });
 
                 signData = await signResponse.json();
-                
+
                 // Log the request
                 networkLogger.logRequest({
                     type: 'ticket',
@@ -232,9 +232,9 @@ class StationClient {
             }
 
             if (progressCallback) progressCallback('Signed tickets received...', 70);
-            
+
             const indexedSignedResponses = signData.signed_responses;
-            
+
             if (!indexedSignedResponses || indexedSignedResponses.length === 0) {
                 throw new Error('Station did not return signed responses');
             }
@@ -245,22 +245,22 @@ class StationClient {
             });
 
             if (progressCallback) progressCallback('Unblinding tickets...', 75);
-            
+
             const tickets = [];
             const progressInterval = Math.max(1, Math.floor(clientStates.length / 10));
-            
+
             for (let i = 0; i < clientStates.length; i++) {
                 const [idx, state] = clientStates[i];
-                
+
                 if (!(idx in responseMap)) {
                     throw new Error(`Missing signed response for ticket index ${idx}`);
                 }
-                
+
                 const signedResponse = responseMap[idx];
                 const blindedRequest = indexedBlindedRequests[idx][1];
-                
+
                 const finalizedTicket = await this.ppExtension.finalizeToken(signedResponse, state);
-                
+
                 tickets.push({
                     blinded_request: blindedRequest,
                     signed_response: signedResponse,
@@ -269,7 +269,7 @@ class StationClient {
                     used_at: null,
                     created_at: new Date().toISOString(),
                 });
-                
+
                 if (i > 0 && i % progressInterval === 0) {
                     const progressPct = 75 + Math.floor((i / clientStates.length) * 15);
                     if (progressCallback) {
@@ -299,10 +299,10 @@ class StationClient {
 
     async requestApiKey(name = 'OA-WebApp-Key') {
         let ticket = null;
-        
+
         try {
             ticket = this.getNextTicket();
-            
+
             if (!ticket) {
                 throw new Error('No inference tickets available. Please register with an invitation code first.');
             }
@@ -318,7 +318,7 @@ class StationClient {
                 'Authorization': `InferenceTicket token=${ticket.finalized_ticket}`,
             };
             const requestBody = { name };
-            
+
             const response = await fetch(requestKeyUrl, {
                 method: 'POST',
                 headers: requestHeaders,
@@ -327,7 +327,7 @@ class StationClient {
             });
 
             const data = await response.json();
-            
+
             // Log the request
             networkLogger.logRequest({
                 type: 'api-key',
@@ -346,7 +346,7 @@ class StationClient {
                     this.markTicketAsUsed(ticket);
                     throw new Error('This ticket was already used. Please try again with next ticket.');
                 }
-                
+
                 throw new Error(data.detail || 'Failed to provision API key');
             }
 
@@ -383,9 +383,9 @@ class StationClient {
         if (ticketIndex !== -1) {
             this.tickets[ticketIndex].used = true;
             this.tickets[ticketIndex].used_at = new Date().toISOString();
-            
+
             this.saveTickets(this.tickets);
-            
+
             console.log(`✅ Marked ticket ${ticketIndex + 1}/${this.tickets.length} as used`);
             console.log(`📊 Remaining tickets: ${this.tickets.filter(t => !t.used).length}`);
 

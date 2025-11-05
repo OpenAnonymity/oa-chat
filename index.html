@@ -1,21 +1,45 @@
 <!DOCTYPE html>
-<html lang="en" class="light">
+<html lang="en" class="theme-light">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>OA Chat</title>
-    
+    <script>
+        (function () {
+            try {
+                const storageKey = 'oa-theme-preference';
+                const stored = localStorage.getItem(storageKey);
+                const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+                const preference = stored === 'light' || stored === 'dark' ? stored : 'system';
+                const effectiveTheme = preference === 'dark' || (preference === 'system' && prefersDark) ? 'dark' : 'light';
+                const root = document.documentElement;
+
+                root.setAttribute('data-theme-preference', preference);
+                root.setAttribute('data-theme', effectiveTheme);
+
+                if (effectiveTheme === 'dark') {
+                    root.classList.add('dark', 'theme-dark');
+                    root.classList.remove('theme-light');
+                } else {
+                    root.classList.add('theme-light');
+                    root.classList.remove('dark', 'theme-dark');
+                }
+            } catch (error) {
+                console.warn('Unable to apply stored theme preference before hydration:', error);
+            }
+        })();
+    </script>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    
+
     <!-- Marked.js for Markdown -->
     <script src="https://cdn.jsdelivr.net/npm/marked@11.0.0/marked.min.js"></script>
-    
+
     <!-- KaTeX for LaTeX -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
     <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
-    
+
     <script>
         tailwind.config = {
             darkMode: 'class',
@@ -60,7 +84,7 @@
             }
         }
     </script>
-    
+
     <link rel="stylesheet" href="styles.css">
 </head>
 <body class="bg-background text-foreground h-screen overflow-hidden">
@@ -69,8 +93,8 @@
         <aside id="sidebar" class="flex-shrink-0 flex flex-col bg-background border-r border-border w-full md:w-72 h-full min-h-0">
             <div class="flex h-full w-full flex-col gap-2 p-2">
                 <div class="flex w-full items-center gap-2">
-                    <button id="new-chat-btn" class="flex-1 inline-flex items-center whitespace-nowrap transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 gap-2 bg-white dark:bg-slate-200 dark:border-slate-300 border border-border text-foreground shadow-sm hover:bg-gray-50 dark:hover:bg-slate-100 text-sm font-medium hover:text-foreground h-9 rounded-md px-3 justify-start">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 stroke-muted-foreground fill-accent">
+                    <button id="new-chat-btn" class="flex-1 inline-flex items-center whitespace-nowrap transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 gap-2 bg-card border border-border text-foreground shadow-sm hover:bg-accent text-sm font-medium hover:text-accent-foreground h-9 rounded-md px-3 justify-start">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 text-muted-foreground">
                             <path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" />
                         </svg>
                         <span>New Chat</span>
@@ -80,19 +104,19 @@
                         </div>
                     </button>
                 </div>
-                
+
                 <div class="flex-1 min-h-0 overflow-hidden py-px">
                     <div class="flex h-full min-h-0 w-full flex-col gap-2">
-                        <input 
-                            id="search-rooms" 
-                            class="appearance-none px-3 py-2 text-foreground transition duration-150 ease-in-out rounded-lg placeholder:text-muted-foreground shadow-sm focus:shadow-inner focus:outline-none h-9 w-full border bg-secondary border-border focus:bg-secondary focus:border-input shrink-0" 
-                            autocomplete="off" 
-                            autocorrect="off" 
-                            autocapitalize="off" 
-                            spellcheck="false" 
-                            placeholder="Search chats..." 
+                        <input
+                            id="search-rooms"
+                            class="appearance-none px-3 py-2 text-foreground transition duration-150 ease-in-out rounded-lg placeholder:text-muted-foreground shadow-sm focus:shadow-inner focus:outline-none h-9 w-full border bg-background border-border focus:bg-background focus:border-input shrink-0"
+                            autocomplete="off"
+                            autocorrect="off"
+                            autocapitalize="off"
+                            spellcheck="false"
+                            placeholder="Search chats..."
                             value="">
-                        
+
                         <div id="sessions-scroll-area" class="flex-1 min-h-0 overflow-y-auto">
                             <div id="sessions-list" class="flex flex-col gap-0.5"></div>
                         </div>
@@ -100,7 +124,7 @@
                 </div>
             </div>
         </aside>
-        
+
         <div class="flex flex-1 min-w-0">
             <!-- Main Content Area -->
             <main class="relative flex-1 flex flex-col min-w-0 min-h-0 h-full pt-2">
@@ -110,43 +134,43 @@
                         <div id="breathing-dot" class="w-2.5 h-2.5 rounded-full breathing-dot cursor-pointer hover:scale-110 transition-transform"></div>
                     </button>
                 </div>
-                
+
                 <!-- Show Right Panel Button -->
-                <button id="show-right-panel-btn" class="hidden absolute top-4 right-4 z-30 items-center justify-center rounded-md transition-colors hover:bg-accent text-muted-foreground hover:text-foreground h-8 w-8 cursor-pointer select-none">
+                <button id="show-right-panel-btn" class="hidden absolute top-4 right-4 z-30 items-center justify-center rounded-md transition-colors hover:bg-accent/30 text-muted-foreground hover:text-foreground h-8 w-8 cursor-pointer select-none">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
                     </svg>
                 </button>
-                
+
                 <div class="flex flex-1 flex-col min-w-0 gap-2 min-h-0 h-full overflow-hidden">
                     <!-- Chat Messages Area -->
                     <div id="chat-area" class="flex-1 min-h-0 w-full overflow-y-auto relative">
                         <div id="messages-container" class="max-w-4xl w-full mx-auto flex flex-col items-center gap-6 p-6 pb-32">
                         </div>
                     </div>
-                    
+
                     <!-- Input Area -->
                     <div class="absolute bottom-0 left-0 right-0 sm:mb-2 sm:mt-0 flex-shrink-0 md:px-4">
-                        <div class="rounded-lg overflow-hidden p-1.5 border border-slate-4 w-full max-w-4xl mx-auto flex-shrink-0 bg-white dark:bg-slate-2 shadow-lg" style="isolation: isolate; contain: layout;">
+                        <div class="rounded-lg p-1.5 border border-border w-full max-w-4xl mx-auto flex-shrink-0 bg-card shadow-lg" style="isolation: isolate;">
                                 <!-- Textarea Container -->
                                 <div class="relative w-full flex flex-col">
-                                    <div class="rounded-md w-full focus-within:bg-accent text-muted-foreground focus-within:text-foreground transition-colors bg-background">
-                                        <div class="flex h-max py-1.5 max-h-96 bg-background px-2">
-                                            <textarea 
+                                    <div class="rounded-md w-full focus-within:bg-accent text-muted-foreground focus-within:text-foreground transition-colors bg-card">
+                                        <div class="flex h-max py-1.5 max-h-96 bg-card px-2">
+                                            <textarea
                                                 id="message-input"
-                                                rows="1" 
-                                                class="w-full bg-transparent leading-6 focus:outline-none resize-none overflow-y-hidden text-foreground placeholder:text-muted-foreground" 
+                                                rows="1"
+                                                class="w-full bg-transparent leading-6 focus:outline-none resize-none overflow-y-hidden text-foreground placeholder:text-muted-foreground"
                                                 placeholder="Chat anonymously"
                                                 style="height: 24px; min-height: 24px; max-height: 200px;"
                                             ></textarea>
                                         </div>
                                     </div>
                                 </div>
-                                
+
                                 <!-- Bottom Actions Bar -->
                                 <div class="flex gap-1 pt-1.5">
                                     <div class="relative flex w-full min-w-0 items-center gap-1">
-                                        <button id="model-picker-btn" class="inline-flex items-center justify-center whitespace-nowrap rounded-md text-xs font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 border border-input bg-transparent hover:bg-accent hover:text-accent-foreground h-7 px-2 shrink-0 gap-1">
+                                        <button id="model-picker-btn" class="inline-flex items-center justify-center whitespace-nowrap rounded-md text-xs font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-7 px-2 shrink-0 gap-1 text-foreground">
                                             <span>Select Model</span>
                                             <div class="flex items-center gap-0.5 ml-1.5">
                                                 <kbd class="flex items-center justify-center h-3.5 w-3.5 p-0.5 rounded-sm bg-muted border border-border text-foreground text-[10px]">⌘</kbd>
@@ -155,7 +179,7 @@
                                         </button>
                                         <!-- File Upload Button -->
                                         <span class="inline-flex">
-                                            <button class="inline-flex items-center justify-center rounded-md transition-colors hover:bg-accent text-muted-foreground hover:text-foreground h-7 w-7">
+                                            <button class="inline-flex items-center justify-center rounded-md transition-colors hover:bg-accent/30 text-muted-foreground hover:text-foreground h-7 w-7">
                                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                                                     <path stroke-linecap="round" stroke-linejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 0 1-6.364-6.364l10.94-10.94A3 3 0 1 1 19.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 0 0 2.112 2.13" />
                                                 </svg>
@@ -163,45 +187,85 @@
                                         </span>
 
                                         <!-- Settings Dropdown -->
-                                        <div class="relative">
-                                            <button id="settings-btn" class="inline-flex items-center justify-center rounded-md transition-colors hover:bg-accent text-muted-foreground hover:text-foreground h-7 w-7">
+                                        <div class="relative z-50">
+                                            <button id="settings-btn" class="inline-flex items-center justify-center rounded-md transition-colors hover:bg-accent/30 text-muted-foreground hover:text-foreground h-7 w-7">
                                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                                                     <path stroke-linecap="round" stroke-linejoin="round" d="M10.343 3.94c.09-.542.56-.94 1.11-.94h1.093c.55 0 1.02.398 1.11.94l.149.894c.07.424.384.764.78.93.398.164.855.142 1.205-.108l.737-.527a1.125 1.125 0 0 1 1.45.12l.773.774c.39.389.44 1.002.12 1.45l-.527.737c-.25.35-.272.806-.107 1.204.165.397.505.71.93.78l.893.15c.543.09.94.559.94 1.109v1.094c0 .55-.397 1.02-.94 1.11l-.894.149c-.424.07-.764.383-.929.78-.165.398-.143.854.107 1.204l.527.738c.32.447.269 1.06-.12 1.45l-.774.773a1.125 1.125 0 0 1-1.449.12l-.738-.527c-.35-.25-.806-.272-1.203-.107-.398.165-.71.505-.781.929l-.149.894c-.09.542-.56.94-1.11.94h-1.094c-.55 0-1.019-.398-1.11-.94l-.148-.894c-.071-.424-.384-.764-.781-.93-.398-.164-.854-.142-1.204.108l-.738.527c-.447.32-1.06.269-1.45-.12l-.773-.774a1.125 1.125 0 0 1-.12-1.45l.527-.737c.25-.35.272-.806.108-1.204-.165-.397-.506-.71-.93-.78l-.894-.15c-.542-.09-.94-.56-.94-1.109v-1.094c0-.55.398-1.02.94-1.11l.894-.149c.424-.07.765-.383.93-.78.165-.398.143-.854-.108-1.204l-.526-.738a1.125 1.125 0 0 1 .12-1.45l.773-.773a1.125 1.125 0 0 1 1.45-.12l.737.527c.35.25.807.272 1.204.107.397-.165.71-.505.78-.929l.15-.894Z" />
                                                     <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
                                                 </svg>
                                             </button>
                                             <!-- Settings Dropdown Menu (hidden by default) -->
-                                            <div id="settings-menu" class="hidden absolute bottom-full mb-2 left-0 z-50 rounded-lg border bg-white shadow-md p-2 min-w-[200px]">
-                                                <button class="w-full text-left px-3 py-2 text-sm hover:bg-accent rounded-md">Auto-expand</button>
-                                                <button class="w-full text-left px-3 py-2 text-sm hover:bg-accent rounded-md">Export</button>
-                                                <button class="w-full text-left px-3 py-2 text-sm hover:bg-accent rounded-md">Import</button>
-                                                <button class="w-full text-left px-3 py-2 text-sm hover:bg-accent rounded-md">Get Markdown</button>
-                                                <button class="w-full text-left px-3 py-2 text-sm hover:bg-accent rounded-md">Clear Models</button>
-                                                <button id="clear-chat-btn" class="w-full text-left px-3 py-2 text-sm hover:bg-accent rounded-md flex items-center justify-between">
+                                            <div id="settings-menu" class="hidden absolute bottom-full mb-2 left-0 z-[100] rounded-lg border border-border bg-popover shadow-lg p-2 min-w-[220px]">
+                                                <button class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent hover:text-accent-foreground rounded-md transition-colors">Auto-expand</button>
+                                                <button class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent hover:text-accent-foreground rounded-md transition-colors">Export</button>
+                                                <button class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent hover:text-accent-foreground rounded-md transition-colors">Import</button>
+                                                <button class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent hover:text-accent-foreground rounded-md transition-colors">Get Markdown</button>
+                                                <button class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent hover:text-accent-foreground rounded-md transition-colors">Clear Models</button>
+                                                <button id="clear-chat-btn" class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent hover:text-accent-foreground rounded-md flex items-center justify-between transition-colors">
                                                     <span>Clear Chat</span>
                                                     <span class="text-xs text-muted-foreground">⌘ ⇧ ⌫</span>
                                                 </button>
-                                                <button class="w-full text-left px-3 py-2 text-sm hover:bg-accent rounded-md">Share Models</button>
-                                                <button class="w-full text-left px-3 py-2 text-sm hover:bg-accent rounded-md">Import Character</button>
-                                                <button class="w-full text-left px-3 py-2 text-sm hover:bg-accent rounded-md">Duplicate Room</button>
+                                                <button class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent hover:text-accent-foreground rounded-md transition-colors">Share Models</button>
+                                                <button class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent hover:text-accent-foreground rounded-md transition-colors">Import Character</button>
+                                                <button class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent hover:text-accent-foreground rounded-md transition-colors">Duplicate Room</button>
+
+                                                <div class="mt-2 border-t border-border pt-2">
+                                                    <p class="px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Theme</p>
+                                                    <div role="group" aria-label="Theme selection" class="space-y-1">
+                                                        <button type="button" class="theme-option flex w-full items-center justify-between rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" data-theme-option="light" role="menuitemradio" aria-checked="false">
+                                                            <span class="flex items-center gap-2">
+                                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1.5m0 15V21m9-9h-1.5M4.5 12H3m15.364-6.364-1.06 1.06M6.697 17.303l-1.06 1.06m0-12.728 1.06 1.06m9.607 9.607 1.06 1.06M12 8.25a3.75 3.75 0 1 1 0 7.5 3.75 3.75 0 0 1 0-7.5z"></path>
+                                                                </svg>
+                                                                <span>Light</span>
+                                                            </span>
+                                                            <svg class="theme-option-check w-4 h-4 opacity-0 text-primary transition-opacity" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                                                                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path>
+                                                            </svg>
+                                                        </button>
+                                                        <button type="button" class="theme-option flex w-full items-center justify-between rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" data-theme-option="dark" role="menuitemradio" aria-checked="false">
+                                                            <span class="flex items-center gap-2">
+                                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M21 12.79A9 9 0 0 1 11.21 3 7.5 7.5 0 1 0 21 12.79z"></path>
+                                                                </svg>
+                                                                <span>Dark</span>
+                                                            </span>
+                                                            <svg class="theme-option-check w-4 h-4 opacity-0 text-primary transition-opacity" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                                                                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path>
+                                                            </svg>
+                                                        </button>
+                                                        <button type="button" class="theme-option flex w-full items-center justify-between rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" data-theme-option="system" role="menuitemradio" aria-checked="false">
+                                                            <span class="flex items-center gap-2">
+                                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 17v2h6v-2m2 0h.75A2.25 2.25 0 0 0 20 14.75V7.25A2.25 2.25 0 0 0 17.75 5H6.25A2.25 2.25 0 0 0 4 7.25v7.5A2.25 2.25 0 0 0 6.25 17H7.5"></path>
+                                                                </svg>
+                                                                <span>System</span>
+                                                            </span>
+                                                            <svg class="theme-option-check w-4 h-4 opacity-0 text-primary transition-opacity" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                                                                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path>
+                                                            </svg>
+                                                        </button>
+                                                    </div>
+                                                    <p id="theme-effective-label" class="px-3 pt-1 text-[11px] text-muted-foreground/80"></p>
+                                                </div>
                                             </div>
                                         </div>
 
                                         <!-- Search Toggle -->
-                                        <div id="search-toggle" class="inline-flex items-center justify-center rounded-md transition-colors hover:bg-accent text-muted-foreground hover:text-foreground h-7 px-2 gap-1 cursor-pointer select-none">
+                                        <div id="search-toggle" class="inline-flex items-center justify-center rounded-md transition-colors hover:bg-accent/30 text-muted-foreground hover:text-foreground h-7 px-2 gap-1 cursor-pointer select-none">
                                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                                                 <path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 0 0 8.716-6.747M12 21a9.004 9.004 0 0 1-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 0 1 7.843 4.582M12 3a8.997 8.997 0 0 0-7.843 4.582m15.686 0A11.953 11.953 0 0 1 12 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0 1 21 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0 1 12 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 0 1 3 12c0-1.605.42-3.113 1.157-4.418" />
                                             </svg>
                                             <span class="text-xs">Search</span>
-                                            <button type="button" id="search-switch" role="switch" aria-checked="false" class="group relative h-[18px] w-[36px] rounded-full inline-flex shrink-0 cursor-pointer items-center transition active:scale-105 border border-transparent text-xs focus-visible:ring-1 focus-visible:ring-offset-1 bg-slate-200 hover:bg-slate-300">
-                                                <span class="search-switch-thumb h-[14px] w-[14px] rounded-full inline-block transform transition duration-200 ease-in-out bg-white/80 group-hover:bg-white translate-x-[2px]"></span>
+                                            <button type="button" id="search-switch" role="switch" aria-checked="false" class="group relative h-[18px] w-[36px] rounded-full inline-flex shrink-0 cursor-pointer items-center transition active:scale-105 border border-transparent text-xs focus-visible:ring-1 focus-visible:ring-offset-1 bg-muted hover:bg-muted/80">
+                                                <span class="search-switch-thumb h-[14px] w-[14px] rounded-full inline-block transform transition duration-200 ease-in-out bg-background/80 group-hover:bg-background translate-x-[2px]"></span>
                                             </button>
                                         </div>
                                     </div>
-                                    
+
                                     <div class="flex">
-                                        <button 
-                                            id="send-btn" 
+                                        <button
+                                            id="send-btn"
                                             class="inline-flex items-center justify-center whitespace-nowrap rounded-md font-medium disabled:pointer-events-none disabled:opacity-40 gap-2 leading-5 bg-primary text-primary-foreground shadow hover:bg-primary/90 h-7 w-7 transition-all"
                                             disabled
                                         >
@@ -210,7 +274,7 @@
                                             </svg>
                                         </button>
                                     </div>
-                                    
+
                                 </div>
                         </div>
                     </div>
@@ -225,20 +289,20 @@
             </aside>
         </div>
     </div>
-    
+
     <!-- Model Picker Modal -->
     <div id="model-picker-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-        <div role="dialog" aria-modal="true" tabindex="-1" data-slot="dialog-content" class="cursor-default relative w-full max-w-lg border bg-background shadow-lg rounded-lg duration-0 overflow-hidden flex flex-col m-4" data-state="open">
+        <div role="dialog" aria-modal="true" tabindex="-1" data-slot="dialog-content" class="cursor-default relative w-full max-w-lg border border-border bg-background shadow-lg rounded-lg duration-0 overflow-hidden flex flex-col m-4" data-state="open">
             <!-- Search Input -->
-            <div class="flex items-center border-b px-3" cmdk-input-wrapper="">
+            <div class="flex items-center border-b border-border px-3" cmdk-input-wrapper="">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-4 h-4 text-muted-foreground mr-2 flex-shrink-0">
                     <path fill-rule="evenodd" d="M10.5 3.75a6.75 6.75 0 1 0 0 13.5 6.75 6.75 0 0 0 0-13.5ZM2.25 10.5a8.25 8.25 0 1 1 14.59 5.28l4.69 4.69a.75.75 0 1 1-1.06 1.06l-4.69-4.69A8.25 8.25 0 0 1 2.25 10.5Z" clip-rule="evenodd"></path>
                 </svg>
-                <input 
-                    id="model-search" 
-                    type="text" 
-                    placeholder="Search models..." 
-                    class="flex-1 bg-transparent outline-none text-sm py-2.5"
+                <input
+                    id="model-search"
+                    type="text"
+                    placeholder="Search models..."
+                    class="flex-1 bg-transparent outline-none text-sm py-2.5 text-foreground placeholder:text-muted-foreground"
                     cmdk-input=""
                 />
                 <button id="close-modal-btn" class="ml-2 text-muted-foreground hover:text-foreground transition-colors p-1">
@@ -252,7 +316,7 @@
             </div>
         </div>
     </div>
-    
+
     <!-- Load external scripts -->
     <script src="db.js"></script>
     <script type="module" src="services/networkLogger.js"></script>

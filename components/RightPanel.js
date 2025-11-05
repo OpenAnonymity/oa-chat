@@ -11,11 +11,11 @@ class RightPanel {
     constructor(app) {
         this.app = app; // Reference to main app
         this.currentSession = null;
-        
+
         // Responsive behavior
         this.isDesktop = window.innerWidth >= 1024;
         this.isVisible = this.isDesktop; // Show by default on desktop
-        
+
         this.ticketCount = 0;
         this.apiKey = null;
         this.apiKeyInfo = null;
@@ -27,7 +27,7 @@ class RightPanel {
         this.registrationProgress = null;
         this.registrationError = null;
         this.timerInterval = null;
-        
+
         // Ticket animation state
         this.currentTicket = null;
         this.ticketIndex = 0;
@@ -37,7 +37,7 @@ class RightPanel {
         // Network logs state
         this.networkLogs = [];
         this.expandedLogIds = new Set();
-        
+
         // Invitation code dropdown state
         this.showInvitationForm = false;
 
@@ -49,32 +49,32 @@ class RightPanel {
     initializeState() {
         // Load initial ticket count
         this.ticketCount = stationClient.getTicketCount();
-        
+
         // Load current ticket for animation
         this.loadNextTicket();
-        
+
         // Get current session from app
         if (this.app) {
             this.currentSession = this.app.getCurrentSession();
             this.loadSessionData();
         }
     }
-    
+
     loadSessionData() {
         if (!this.currentSession) return;
-        
+
         // Load API key from current session
         this.apiKey = this.currentSession.apiKey || null;
         this.apiKeyInfo = this.currentSession.apiKeyInfo || null;
         this.expiresAt = this.currentSession.expiresAt || null;
-        
+
         // Load network logs for this session
         this.networkLogs = networkLogger.getLogsBySession(this.currentSession.id);
-        
+
         this.render();
         this.startExpirationTimer();
     }
-    
+
     onSessionChange(session) {
         this.currentSession = session;
         this.loadSessionData();
@@ -121,13 +121,13 @@ class RightPanel {
             if (this.currentSession) {
                 // Collapse all logs before adding a new one
                 this.expandedLogIds.clear();
-                
+
                 this.networkLogs = networkLogger.getLogsBySession(this.currentSession.id);
                 this.render();
-                
+
                 // Auto-scroll to bottom to show newest activity
                 this.scrollToBottom();
-                
+
                 // Notify app about new log for floating panel
                 if (this.app.floatingPanel && this.networkLogs.length > 0) {
                     const latestLog = this.networkLogs[0];
@@ -142,7 +142,7 @@ class RightPanel {
         window.addEventListener('resize', () => {
             const wasDesktop = this.isDesktop;
             this.isDesktop = window.innerWidth >= 1024;
-            
+
             if (wasDesktop !== this.isDesktop) {
                 if (this.isDesktop) {
                     // Switched to desktop
@@ -164,11 +164,11 @@ class RightPanel {
 
     updateStatusIndicator() {
         const dot = document.getElementById('breathing-dot');
-        
+
         if (!dot) return;
-        
+
         const hasActiveKey = this.apiKey && !this.isExpired;
-        
+
         if (hasActiveKey) {
             dot.classList.add('status-active');
             dot.classList.remove('status-inactive');
@@ -176,7 +176,7 @@ class RightPanel {
             dot.classList.add('status-inactive');
             dot.classList.remove('status-active');
         }
-        
+
         // Notify floating panel about status change
         if (this.app.floatingPanel && !hasActiveKey) {
             // If no API key, floating panel might want to show ticket info
@@ -215,7 +215,7 @@ class RightPanel {
                 const hours = Math.floor(diff / 3600000);
                 const minutes = Math.floor((diff % 3600000) / 60000);
                 const seconds = Math.floor((diff % 60000) / 1000);
-                
+
                 if (hours > 0) {
                     this.timeRemaining = `${hours}h ${minutes}m`;
                 } else if (minutes > 0) {
@@ -224,13 +224,13 @@ class RightPanel {
                     this.timeRemaining = `${seconds}s`;
                 }
             }
-            
+
             // Update the UI
             const timeRemainingEl = document.getElementById('api-key-expiry');
             if (timeRemainingEl) {
                 timeRemainingEl.textContent = this.timeRemaining || 'Loading...';
                 timeRemainingEl.className = `font-medium px-2 py-0.5 rounded-full text-[10px] ${
-                    this.isExpired ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
+                    this.isExpired ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' : 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
                 }`;
             }
         };
@@ -251,7 +251,7 @@ class RightPanel {
         this.isVisible = !this.isVisible;
         this.updatePanelVisibility();
     }
-    
+
     closeRightPanel() {
         // Close the desktop right panel
         if (this.isDesktop) {
@@ -312,7 +312,7 @@ class RightPanel {
             });
 
             this.ticketCount = stationClient.getTicketCount();
-            
+
             // Clear form
             const input = document.getElementById('invitation-code-input');
             if (input) input.value = '';
@@ -338,47 +338,47 @@ class RightPanel {
             if (this.currentSession && window.networkLogger) {
                 window.networkLogger.setCurrentSession(this.currentSession.id);
             }
-            
+
             // Start the animation
             this.isTransitioning = true;
             this.render();
-            
+
             // Wait a bit for the animation to start
             await new Promise(resolve => setTimeout(resolve, 500));
-            
+
             // Show the finalized version
             this.showFinalized = true;
             this.render();
-            
+
             // Wait for the transformation animation
             await new Promise(resolve => setTimeout(resolve, 1000));
-            
+
             // Actually request the API key
             this.isRequestingKey = true;
             this.render();
-            
+
             const result = await stationClient.requestApiKey();
-            
+
             // Store API key in current session
             this.currentSession.apiKey = result.key;
             this.currentSession.apiKeyInfo = result;
             this.currentSession.expiresAt = result.expires_at;
-            
+
             // Save session to DB
             await chatDB.saveSession(this.currentSession);
-            
+
             // Update local state
             this.apiKey = result.key;
             this.apiKeyInfo = result;
             this.expiresAt = result.expires_at;
-            
+
             // Success - reset for next ticket
             setTimeout(() => {
                 this.loadNextTicket();
                 this.render();
                 this.startExpirationTimer();
                 this.updateStatusIndicator();
-                
+
                 // Update floating panel with new status
                 if (this.app.floatingPanel) {
                     this.app.floatingPanel.render();
@@ -387,7 +387,7 @@ class RightPanel {
         } catch (error) {
             console.error('Error requesting API key:', error);
             alert(`Failed to request API key: ${error.message}`);
-            
+
             // Reset state even on error
             setTimeout(() => {
                 this.loadNextTicket();
@@ -415,7 +415,7 @@ class RightPanel {
         try {
             // Tag this request with session ID
             networkLogger.setCurrentSession(this.currentSession.id);
-            
+
             const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
                 method: 'POST',
                 headers: {
@@ -451,23 +451,23 @@ class RightPanel {
 
     async handleClearApiKey() {
         if (!this.currentSession) return;
-        
+
         if (confirm('Are you sure you want to remove the current API key?')) {
             this.currentSession.apiKey = null;
             this.currentSession.apiKeyInfo = null;
             this.currentSession.expiresAt = null;
-            
+
             await chatDB.saveSession(this.currentSession);
-            
+
             this.apiKey = null;
             this.apiKeyInfo = null;
             this.expiresAt = null;
-            
+
             if (this.timerInterval) {
                 clearInterval(this.timerInterval);
                 this.timerInterval = null;
             }
-            
+
             this.render();
             this.updateStatusIndicator(); // Ensure dot updates
         }
@@ -581,7 +581,7 @@ class RightPanel {
 
         // Reverse order: oldest first, newest last
         const logsToShow = [...this.networkLogs].reverse();
-        
+
         return logsToShow.map((log, index) => {
             const isExpanded = this.expandedLogIds.has(log.id);
             const description = getActivityDescription(log);
@@ -591,23 +591,23 @@ class RightPanel {
             const isLast = index === logsToShow.length - 1;
             // Dim all but the latest (last in reversed array)
             const opacityClass = isLast ? '' : 'opacity-60';
-            
+
             return `
                 <div class="activity-log-entry relative flex ${opacityClass}" data-log-id="${log.id}">
                     <!-- Timeline visualization column -->
                     <div class="flex flex-col items-center" style="width: 24px; flex-shrink: 0;">
                         <!-- Top line -->
                         ${!isFirst ? `<div class="w-0.5 bg-border" style="height: 6px;"></div>` : '<div style="height: 6px;"></div>'}
-                        
+
                         <!-- Activity node -->
                         <div class="relative flex items-center justify-center" style="width: 16px; height: 16px; flex-shrink: 0;">
                             <div class="${dotClass} activity-node rounded-full transition-all duration-200" style="width: 8px; height: 8px;"></div>
                             </div>
-                        
+
                         <!-- Bottom line (extends to next entry) -->
                         ${!isLast ? `<div class="w-0.5 bg-border" style="height: 12px;"></div>` : ''}
                     </div>
-                    
+
                     <!-- Content column -->
                     <div class="flex-1 min-w-0" style="margin-top: 1px;">
                         <!-- Compact one-line view -->
@@ -627,15 +627,15 @@ class RightPanel {
                                 </svg>
                             </div>
                         </div>
-                        
+
                         <!-- Expanded details -->
                         ${isExpanded ? `
                             <div class="activity-log-details mt-2 text-xs bg-muted/10 rounded-lg border border-border/50 overflow-hidden" style="animation: slideDown 0.2s ease-out;">
-                                <!-- Detailed description -->
-                                <div class="px-3 pt-2.5 pb-2 bg-muted/20 border-b border-border/50">
-                                    <div class="text-foreground leading-relaxed">${getActivityDescription(log, true)}</div>
-                                </div>
-                                
+                                    <!-- Detailed description -->
+                                    <div class="px-3 pt-2.5 pb-2 bg-muted/5 border-b border-border/50">
+                                        <div class="text-foreground leading-relaxed">${getActivityDescription(log, true)}</div>
+                                    </div>
+
                                 <!-- Technical Details -->
                                 <div class="p-3 space-y-2.5">
                                     <!-- Status and Method -->
@@ -643,19 +643,19 @@ class RightPanel {
                                         <div class="flex items-center gap-1.5">
                                             <span class="text-[10px] text-muted-foreground">Status:</span>
                                             <span class="text-[10px] font-medium px-1.5 py-0.5 rounded ${
-                                                log.status >= 200 && log.status < 300 ? 'bg-green-100 text-green-700' : 
-                                                log.status === 0 ? 'bg-red-100 text-red-700' : 
-                                                'bg-orange-100 text-orange-700'
+                                                log.status >= 200 && log.status < 300 ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' :
+                                                log.status === 0 ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' :
+                                                'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
                                             }">
                                                 ${log.status || 'ERROR'}
                                             </span>
                                         </div>
                                         <div class="flex items-center gap-1.5">
                                             <span class="text-[10px] text-muted-foreground">Method:</span>
-                                            <span class="text-[10px] font-medium px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded">${log.method}</span>
+                                            <span class="text-[10px] font-medium px-1.5 py-0.5 bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 rounded">${log.method}</span>
                                         </div>
                                     </div>
-                                    
+
                                     <!-- URL -->
                                     <div class="space-y-1">
                                         <div class="text-[10px] text-muted-foreground font-medium">Destination</div>
@@ -663,7 +663,7 @@ class RightPanel {
                                             ${log.url}
                                         </div>
                                     </div>
-                                    
+
                                     <!-- Key Headers (if any) -->
                                     ${log.request?.headers && Object.keys(log.request.headers).length > 0 ? `
                                         <div class="space-y-1">
@@ -690,7 +690,7 @@ class RightPanel {
                                             </div>
                                         </div>
                                     ` : ''}
-                                    
+
                                     <!-- Error or Success Message -->
                                     ${log.error ? `
                                         <div class="space-y-1">
@@ -725,10 +725,10 @@ class RightPanel {
 
         panel.innerHTML = `
             <!-- Header -->
-            <div class="p-3 bg-muted/30 border-b border-border">
+            <div class="p-3 bg-muted/10 border-b border-border">
                 <div class="flex items-center justify-between">
                     <h2 class="text-xs font-semibold text-foreground">System Panel</h2>
-                    <button id="close-right-panel" class="text-muted-foreground hover:text-foreground transition-colors p-0.5 rounded-lg hover:bg-background">
+                    <button id="close-right-panel" class="text-muted-foreground hover:text-foreground transition-colors p-0.5 rounded-lg hover:bg-accent">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M6 18L18 6M6 6l12 12"></path>
                         </svg>
@@ -748,7 +748,7 @@ class RightPanel {
                         </svg>
                         <span class="text-xs font-medium">Inference Tickets: <span class="font-semibold">${this.ticketCount}</span></span>
                     </div>
-                    <button 
+                    <button
                         id="toggle-invitation-form-btn"
                         class="inline-flex items-center gap-1 px-2 py-1 text-[10px] rounded-md border border-border bg-background hover:bg-accent transition-all duration-200 shadow-sm hover:shadow"
                     >
@@ -766,12 +766,12 @@ class RightPanel {
                             type="text"
                             placeholder="Enter 24-char invitation code"
                             maxlength="24"
-                            class="w-full px-3 py-2 text-xs border border-border rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-all"
+                            class="w-full px-3 py-2 text-xs border border-border rounded-md bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-all"
                             ${this.isRegistering ? 'disabled' : ''}
                         />
                         <button
                             type="submit"
-                            class="w-full inline-flex items-center justify-center rounded-md text-xs font-medium transition-all duration-200 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-8 px-3 shadow-sm hover:shadow"
+                            class="w-full inline-flex items-center justify-center rounded-md text-xs font-medium transition-all duration-200 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 bg-accent text-accent-foreground hover:bg-accent/70 h-8 px-3 shadow-sm hover:shadow border border-border"
                             ${this.isRegistering ? 'disabled' : ''}
                         >
                             ${this.isRegistering ? 'Registering...' : 'Register Code'}
@@ -780,16 +780,16 @@ class RightPanel {
                     </form>
 
                     ${this.registrationProgress ? `
-                        <div class="mt-2 text-[10px] text-blue-600 space-y-1">
-                            <div>${this.escapeHtml(this.registrationProgress.message)}</div>
-                            <div class="w-full bg-gray-200 rounded-full h-1.5">
-                                <div class="bg-blue-600 h-1.5 rounded-full transition-all" style="width: ${this.registrationProgress.percent}%"></div>
+                        <div class="mt-2 text-[10px] space-y-1">
+                            <div class="text-foreground">${this.escapeHtml(this.registrationProgress.message)}</div>
+                            <div class="w-full bg-muted rounded-full h-1.5">
+                                <div class="bg-primary h-1.5 rounded-full transition-all" style="width: ${this.registrationProgress.percent}%"></div>
                             </div>
                         </div>
                     ` : ''}
 
                     ${this.registrationError ? `
-                        <div class="mt-2 text-[10px] text-red-600">
+                        <div class="mt-2 text-[10px] text-destructive">
                             ${this.escapeHtml(this.registrationError)}
                         </div>
                     ` : ''}
@@ -798,11 +798,11 @@ class RightPanel {
 
             <!-- Ticket Visualization Section -->
             ${hasTickets && !hasApiKey && this.currentTicket ? `
-                <div class="mx-3 mb-3 p-3 bg-gradient-to-br from-purple-50 to-blue-50 rounded-lg border border-purple-200/50">
+                <div class="mx-3 mb-3 p-3 bg-muted/10 rounded-lg border border-border">
                     <div class="mb-3">
                         <div class="flex items-center justify-between">
-                            <span class="text-xs font-semibold text-purple-900">Next Inference Ticket</span>
-                            <span class="text-[10px] text-purple-600 font-medium px-1.5 py-0.5 bg-purple-100 rounded-full">#${this.ticketIndex + 1} of ${this.ticketCount}</span>
+                            <span class="text-xs font-semibold text-foreground">Next Inference Ticket</span>
+                            <span class="text-[10px] text-foreground font-medium px-1.5 py-0.5 bg-muted/50 rounded-full">#${this.ticketIndex + 1} of ${this.ticketCount}</span>
                         </div>
                     </div>
 
@@ -816,7 +816,7 @@ class RightPanel {
                                     <div class="text-[10px] text-muted-foreground mb-1">
                                         Signed Response (from server):
                                     </div>
-                                    <div class="bg-white border border-dashed border-gray-300 rounded p-1.5 text-[10px] font-mono break-all text-gray-700">
+                                    <div class="bg-background border border-dashed border-border rounded p-1.5 text-[10px] font-mono break-all text-muted-foreground">
                                         ${this.formatTicketData(this.currentTicket.signed_response)}
                                     </div>
                                 </div>
@@ -824,13 +824,13 @@ class RightPanel {
                                 <div class="space-y-1 transition-all duration-500 ${
                                     this.showFinalized ? 'opacity-100 scale-100' : 'opacity-0 scale-110'
                                 }">
-                                    <div class="text-[10px] text-green-600 mb-1 flex items-center gap-1">
+                                    <div class="text-[10px] text-foreground mb-1 flex items-center gap-1">
                                         <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                                         </svg>
                                         Finalized Token (ready to use):
                                     </div>
-                                    <div class="bg-green-50 border border-green-500 rounded p-1.5 text-[10px] font-mono break-all text-green-700 animate-pulse">
+                                    <div class="bg-accent/50 border border-primary rounded p-1.5 text-[10px] font-mono break-all text-foreground animate-pulse">
                                         ${this.formatTicketData(this.currentTicket.finalized_ticket)}
                                     </div>
                                 </div>
@@ -841,22 +841,22 @@ class RightPanel {
                         <button
                             id="use-ticket-btn"
                             class="w-full inline-flex items-center justify-center gap-1.5 rounded-md text-xs font-medium transition-all focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 h-7 px-3 ${
-                                this.isTransitioning 
-                                    ? 'bg-blue-500 text-white border border-blue-600' 
-                                    : 'bg-primary text-primary-foreground hover:bg-primary/90'
+                                this.isTransitioning
+                                    ? 'bg-accent text-accent-foreground border border-border'
+                                    : 'bg-accent text-accent-foreground hover:bg-accent/70 border border-border'
                             }"
                             ${this.isRequestingKey || this.isTransitioning ? 'disabled' : ''}
                         >
-                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1721 9z"></path>
+                            <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
                             </svg>
-                            ${this.isRequestingKey ? 'Requesting...' : this.isTransitioning ? 'Transforming...' : 'Use This Ticket'}
+                            <span>${this.isRequestingKey ? 'Requesting...' : this.isTransitioning ? 'Transforming...' : 'Use This Ticket'}</span>
                         </button>
 
                         <!-- Ticket Status -->
                         <div class="flex items-center justify-between text-xs">
                             <span class="text-muted-foreground">Status:</span>
-                            <span class="${this.currentTicket.used ? 'text-red-500' : 'text-green-500'}">
+                            <span class="${this.currentTicket.used ? 'text-destructive' : 'text-foreground'}">
                                 ${this.currentTicket.used ? 'Used' : 'Available'}
                             </span>
                         </div>
@@ -883,7 +883,7 @@ class RightPanel {
                             </svg>
                             <span class="text-xs font-medium">OpenRouter API Key</span>
                         </div>
-                        <div class="text-[10px] font-mono bg-muted/50 p-2 rounded-md border border-border break-all">
+                        <div class="text-[10px] font-mono bg-muted/20 p-2 rounded-md border border-border break-all text-foreground">
                             ${this.maskApiKey(this.apiKey)}
                         </div>
                     </div>
@@ -892,7 +892,7 @@ class RightPanel {
                         <div class="flex items-center justify-between p-2 bg-background rounded-md border border-border">
                             <span class="text-[10px] text-muted-foreground">Expires in:</span>
                             <span id="api-key-expiry" class="font-medium px-2 py-0.5 rounded-full text-[10px] ${
-                                this.isExpired ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
+                                this.isExpired ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' : 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
                             }">
                                 ${this.timeRemaining || 'Loading...'}
                             </span>
@@ -909,20 +909,20 @@ class RightPanel {
                     <div class="grid grid-cols-3 gap-1.5">
                         <button
                             id="verify-key-btn"
-                            class="text-[10px] px-2 py-1.5 rounded-md border border-border bg-background hover:bg-accent transition-all duration-200 hover:shadow-sm"
+                            class="text-[10px] px-2 py-1.5 rounded-md border border-border bg-background text-foreground hover:bg-accent/50 hover:border-border transition-all duration-200 hover:shadow-sm"
                             ${this.isExpired ? 'disabled' : ''}
                         >
                             Verify
                         </button>
                         <button
                             id="renew-key-btn"
-                            class="text-[10px] px-2 py-1.5 rounded-md border border-border bg-background hover:bg-accent transition-all duration-200 hover:shadow-sm"
+                            class="text-[10px] px-2 py-1.5 rounded-md border border-border bg-background text-foreground hover:bg-accent/50 hover:border-border transition-all duration-200 hover:shadow-sm"
                         >
                             Renew
                         </button>
                         <button
                             id="clear-key-btn"
-                            class="text-[10px] px-2 py-1.5 rounded-md border border-red-200 text-red-600 bg-red-50 hover:bg-red-100 hover:border-red-300 transition-all duration-200"
+                            class="text-[10px] px-2 py-1.5 rounded-md border border-destructive/30 text-destructive bg-destructive/10 hover:bg-destructive/30 hover:border-destructive/60 transition-all duration-200"
                         >
                             Remove
                         </button>
@@ -933,26 +933,26 @@ class RightPanel {
             <!-- End of Top Section -->
 
             <!-- Activity Timeline (scrollable) -->
-            <div class="border-t border-border flex flex-col bg-muted/10 flex-1 min-h-0">
-                <div class="p-3 border-b border-border bg-muted/20">
+            <div class="border-t border-border flex flex-col bg-background flex-1 min-h-0">
+                <div class="p-3 border-b border-border bg-muted/10">
                     <div class="flex items-center gap-1.5">
                         <svg class="w-3.5 h-3.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                         </svg>
-                        <h3 class="text-xs font-medium">Activity Timeline</h3>
+                        <h3 class="text-xs font-medium text-foreground">Activity Timeline</h3>
                     </div>
                 </div>
                 <div id="network-logs-container" class="flex-1 overflow-y-auto px-3 py-2">
                     ${this.renderNetworkLogs()}
                 </div>
-                
+
             </div>
             </div>
         `;
 
         // Attach event listeners
         this.attachEventListeners();
-        
+
         // Start timer if we have an API key
         if (hasApiKey) {
             this.startExpirationTimer();
@@ -1021,16 +1021,16 @@ class RightPanel {
     mount() {
         // Initial render
         this.render();
-        
+
         // Set initial visibility
         this.updatePanelVisibility();
-        
+
         // Set initial state for app container
         const appContainer = document.getElementById('app');
         if (appContainer && this.isDesktop && this.isVisible) {
             appContainer.classList.add('right-panel-open');
         }
-        
+
         // Hide legacy toggle button
         const oldToggleBtn = document.getElementById('toggle-right-panel-btn');
         if (oldToggleBtn) {

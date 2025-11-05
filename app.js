@@ -3,6 +3,7 @@ import RightPanel from './components/RightPanel.js';
 import FloatingPanel from './components/FloatingPanel.js';
 import MessageNavigation from './components/MessageNavigation.js';
 import apiKeyStore from './services/apiKeyStore.js';
+import themeManager from './services/themeManager.js';
 
 class ChatApp {
     constructor() {
@@ -34,7 +35,15 @@ class ChatApp {
             showRightPanelBtn: document.getElementById('show-right-panel-btn'),
             sessionsScrollArea: document.getElementById('sessions-scroll-area'),
             modelListScrollArea: document.getElementById('model-list-scroll-area'),
+            themeOptionButtons: Array.from(document.querySelectorAll('[data-theme-option]')),
+            themeEffectiveLabel: document.getElementById('theme-effective-label'),
         };
+
+        themeManager.init();
+        this.updateThemeControls(themeManager.getPreference(), themeManager.getEffectiveTheme());
+        this.themeUnsubscribe = themeManager.onChange((preference, effectiveTheme) => {
+            this.updateThemeControls(preference, effectiveTheme);
+        });
 
         this.searchEnabled = false;
         this.rightPanel = null;
@@ -84,10 +93,10 @@ class ChatApp {
         // Initialize right panel with app context
         this.rightPanel = new RightPanel(this);
         this.rightPanel.mount();
-        
+
         // Initialize floating panel
         this.floatingPanel = new FloatingPanel(this);
-        
+
         // Initialize message navigation
         this.messageNavigation = new MessageNavigation(this);
 
@@ -122,14 +131,14 @@ class ChatApp {
         this.initScrollAwareScrollbars(this.elements.chatArea);
         this.initScrollAwareScrollbars(this.elements.sessionsScrollArea);
         this.initScrollAwareScrollbars(this.elements.modelListScrollArea);
-        
+
         // Set up scroll listener for message navigation
         this.elements.chatArea.addEventListener('scroll', () => {
             if (this.messageNavigation) {
                 this.messageNavigation.handleScroll();
             }
         });
-        
+
         // Scroll to bottom after initial load (for refresh)
         setTimeout(() => {
             this.elements.chatArea.scrollTop = this.elements.chatArea.scrollHeight;
@@ -138,12 +147,12 @@ class ChatApp {
 
     async loadModels() {
         this.state.modelsLoading = true;
-        
+
         // Tag model fetches with current session if available
         if (window.networkLogger && this.state.currentSessionId) {
             window.networkLogger.setCurrentSession(this.state.currentSessionId);
         }
-        
+
         try {
             this.state.models = await openRouterAPI.fetchModels();
         } catch (error) {
@@ -156,7 +165,7 @@ class ChatApp {
     async loadFromDB() {
         // Load sessions
         this.state.sessions = await chatDB.getAllSessions();
-        
+
         // Migrate old sessions to add updatedAt if missing
         const sessionsToMigrate = this.state.sessions.filter(s => !s.updatedAt);
         if (sessionsToMigrate.length > 0) {
@@ -165,7 +174,7 @@ class ChatApp {
                 await chatDB.saveSession(session);
             }
         }
-        
+
         // Load current session
         const currentId = await chatDB.getSetting('currentSessionId');
         if (currentId && this.state.sessions.find(s => s.id === currentId)) {
@@ -181,11 +190,11 @@ class ChatApp {
 
     formatTime(timestamp) {
         const messageTime = new Date(timestamp);
-        return messageTime.toLocaleTimeString('en-US', { 
-            hour12: false, 
-            hour: '2-digit', 
-            minute: '2-digit', 
-            second: '2-digit' 
+        return messageTime.toLocaleTimeString('en-US', {
+            hour12: false,
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
         });
     }
 
@@ -210,7 +219,7 @@ class ChatApp {
         this.renderSessions();
         this.renderMessages();
         this.renderCurrentModel();
-        
+
         // Notify right panel of session change
         if (this.rightPanel) {
             this.rightPanel.onSessionChange(session);
@@ -225,7 +234,7 @@ class ChatApp {
         this.renderSessions();
         this.renderMessages();
         this.renderCurrentModel();
-        
+
         // Notify right panel of session change
         const session = this.getCurrentSession();
         if (this.rightPanel && session) {
@@ -266,7 +275,7 @@ class ChatApp {
         };
 
         await chatDB.saveMessage(message);
-        
+
         // Update session's updatedAt timestamp
         session.updatedAt = Date.now();
         await chatDB.saveSession(session);
@@ -299,15 +308,15 @@ class ChatApp {
             if (!this.getCurrentSession()) {
                 await this.createSession();
             }
-    
+
             // Add user message
             await this.addMessage('user', content);
             this.elements.messageInput.value = '';
             this.updateInputState();
             this.elements.messageInput.style.height = '24px';
-    
+
             let session = this.getCurrentSession();
-            
+
             // Automatically acquire API key if needed
             const isKeyExpired = session.expiresAt ? new Date(session.expiresAt) <= new Date() : true;
             if (!session.apiKey || isKeyExpired) {
@@ -321,14 +330,14 @@ class ChatApp {
                     return; // Return early if key acquisition fails
                 }
             }
-            
+
             // Set current session for network logging
             if (window.networkLogger) {
                 window.networkLogger.setCurrentSession(session.id);
             }
-            
+
             let modelNameToUse = session.model;
-    
+
             if (!modelNameToUse) {
                 const gpt5Model = this.state.models.find(m => m.name.toLowerCase().includes('gpt-5 chat'));
                 if (gpt5Model) {
@@ -341,42 +350,42 @@ class ChatApp {
                         modelNameToUse = this.state.models[0].name;
                     }
                 }
-                
+
                 if (modelNameToUse) {
                     session.model = modelNameToUse;
                     await chatDB.saveSession(session);
                     this.renderCurrentModel();
                 }
             }
-    
+
             if (!modelNameToUse) {
                 console.warn('No available models to send message.');
                 await this.addMessage('assistant', 'No models are available right now. Please add a model and try again.');
                 return; // Return early
             }
-    
+
             let selectedModel = this.state.models.find(m => m.name === modelNameToUse);
             let modelId;
-            
+
             if (selectedModel) {
                 modelId = selectedModel.id;
             } else {
                 // Fallback if model from session is somehow not in the list anymore
                 modelId = 'openai/gpt-4o';
             }
-            
+
             // Show typing indicator
             const typingId = this.showTypingIndicator(modelNameToUse);
-    
+
             try {
                 // Get AI response from OpenRouter with streaming
                 const messages = await chatDB.getSessionMessages(session.id);
-                
+
                 // Create a placeholder message for streaming
                 const streamingMessageId = this.generateId();
                 let streamedContent = '';
                 let streamingTokenCount = 0;
-                
+
                 // Add empty assistant message that we'll update
                 const streamingMessage = {
                     id: streamingMessageId,
@@ -389,23 +398,23 @@ class ChatApp {
                     streamingTokens: 0
                 };
                 await chatDB.saveMessage(streamingMessage);
-                
+
                 // Remove typing indicator and render messages to show the empty message
                 this.removeTypingIndicator(typingId);
                 await this.renderMessages();
-                
+
                 // Track progress for periodic saves
                 let lastSaveLength = 0;
                 const SAVE_INTERVAL_CHARS = 100; // Save every 100 characters
-                
+
                 // Stream the response with token tracking
                 const tokenData = await openRouterAPI.streamCompletion(
-                    messages, 
-                    modelId, 
-                    session.apiKey, 
+                    messages,
+                    modelId,
+                    session.apiKey,
                     async (chunk) => {
                         streamedContent += chunk;
-                        
+
                         // Periodically save partial content to handle refresh during streaming
                         if (streamedContent.length - lastSaveLength >= SAVE_INTERVAL_CHARS) {
                             streamingMessage.content = streamedContent;
@@ -413,7 +422,7 @@ class ChatApp {
                             await chatDB.saveMessage(streamingMessage);
                             lastSaveLength = streamedContent.length;
                         }
-                        
+
                         // Update the message content in real-time
                         const messageEl = document.querySelector(`[data-message-id="${streamingMessageId}"]`);
                         if (messageEl) {
@@ -450,17 +459,17 @@ class ChatApp {
                         }
                     }
                 );
-                
+
                 // Save the final message content with token data
                 streamingMessage.content = streamedContent;
                 streamingMessage.tokenCount = tokenData.totalTokens || tokenData.completionTokens || streamingTokenCount;
                 streamingMessage.model = tokenData.model || modelNameToUse;
                 streamingMessage.streamingTokens = null; // Clear streaming tokens after completion
                 await chatDB.saveMessage(streamingMessage);
-                
+
                 // Re-render to show final token count
                 this.renderMessages();
-                
+
             } catch (error) {
                 console.error('Error getting AI response:', error);
                 await this.addMessage('assistant', 'Sorry, I encountered an error while processing your request.');
@@ -538,11 +547,11 @@ class ChatApp {
     getSessionDateGroup(timestamp) {
         const now = new Date();
         const sessionDate = new Date(timestamp);
-        
+
         const nowDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
         const sessionDay = new Date(sessionDate.getFullYear(), sessionDate.getMonth(), sessionDate.getDate());
         const diffDays = Math.floor((nowDay - sessionDay) / (1000 * 60 * 60 * 24));
-        
+
         if (diffDays === 0) return 'TODAY';
         if (diffDays === 1) return 'YESTERDAY';
         if (diffDays <= 7) return 'PREVIOUS 7 DAYS';
@@ -554,7 +563,7 @@ class ChatApp {
         // Group sessions by date (using updatedAt so active sessions move to TODAY)
         const grouped = {};
         const groupOrder = ['TODAY', 'YESTERDAY', 'PREVIOUS 7 DAYS', 'PREVIOUS 30 DAYS', 'OLDER'];
-        
+
         this.state.sessions.forEach(session => {
             // Use updatedAt if available, otherwise fall back to createdAt
             const timestamp = session.updatedAt || session.createdAt;
@@ -564,25 +573,25 @@ class ChatApp {
             }
             grouped[group].push(session);
         });
-        
+
         // Sort sessions within each group by updatedAt (most recent first)
         Object.keys(grouped).forEach(groupName => {
             grouped[groupName].sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt));
         });
-        
+
         // Render grouped sessions
         const html = groupOrder.map(groupName => {
             const sessions = grouped[groupName];
             if (!sessions || sessions.length === 0) return '';
-            
+
             return `
                 <div class="mb-3">
                     <div class="model-category-header px-3 flex items-center h-9">${groupName}</div>
                     ${sessions.map(session => `
-                        <div class="group relative flex h-9 items-center rounded-lg ${session.id === this.state.currentSessionId ? 'chat-session active' : 'hover:bg-accent/50'} transition-colors pl-3 chat-session" data-session-id="${session.id}">
-                            <a class="flex flex-1 items-center justify-between h-full min-w-0 text-foreground/80 hover:text-foreground cursor-pointer">
+                        <div class="group relative flex h-9 items-center rounded-lg ${session.id === this.state.currentSessionId ? 'chat-session active' : 'hover:bg-accent/30'} transition-colors pl-3 chat-session" data-session-id="${session.id}">
+                            <a class="flex flex-1 items-center justify-between h-full min-w-0 text-foreground hover:text-foreground cursor-pointer">
                                 <div class="flex min-w-0 flex-1 items-center">
-                                    <input class="w-full cursor-pointer truncate bg-transparent text-sm leading-5 focus:outline-none ${session.title === 'New Chat' ? 'italic text-muted-foreground' : ''}" placeholder="Untitled Chat" readonly value="${session.title}">
+                                    <input class="w-full cursor-pointer truncate bg-transparent text-sm leading-5 focus:outline-none text-foreground ${session.title === 'New Chat' ? 'italic text-muted-foreground' : ''}" placeholder="Untitled Chat" readonly value="${session.title}">
                                 </div>
                             </a>
                             <div class="flex shrink-0 items-center">
@@ -597,7 +606,7 @@ class ChatApp {
                 </div>
             `;
         }).join('');
-        
+
         this.elements.sessionsList.innerHTML = html;
 
         // Add click handlers
@@ -690,22 +699,22 @@ class ChatApp {
                 const modelName = session ? session.model : 'GPT-5 Chat';
                 const model = this.state.models.find(m => m.name === modelName);
                 const providerInitial = model ? model.provider.charAt(0) : 'A';
-                
+
                 // Display token count if available
-                const tokenDisplay = message.tokenCount 
+                const tokenDisplay = message.tokenCount
                     ? `<span class="text-xs text-muted-foreground ml-auto" style="font-size: 0.7rem;">${message.tokenCount}</span>`
                     : (message.streamingTokens !== null && message.streamingTokens !== undefined
                         ? `<span class="text-xs text-muted-foreground ml-auto streaming-token-count" style="font-size: 0.7rem;">${message.streamingTokens}</span>`
                         : '');
-                
+
                 return `
                     <div class="w-full px-2 md:px-3 fade-in self-start" data-message-id="${message.id}">
                         <div class="group flex w-full flex-col items-start justify-start gap-2">
                             <div class="flex w-full items-center justify-start gap-2">
                                 <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow bg-muted">
-                                    <span class="text-xs font-semibold">${providerInitial}</span>
+                                    <span class="text-xs font-semibold text-foreground">${providerInitial}</span>
                                 </div>
-                                <span class="text-xs text-primary font-medium" style="font-size: 0.7rem;">${modelName}</span>
+                                <span class="text-xs text-foreground font-medium" style="font-size: 0.7rem;">${modelName}</span>
                                 <span class="text-xs text-muted-foreground" style="font-size: 0.7rem;">${this.formatTime(message.timestamp)}</span>
                                 ${tokenDisplay}
                             </div>
@@ -739,7 +748,7 @@ class ChatApp {
         requestAnimationFrame(() => {
             this.elements.chatArea.scrollTop = this.elements.chatArea.scrollHeight;
         });
-        
+
         // Update message navigation if it exists
         if (this.messageNavigation) {
             this.messageNavigation.update();
@@ -750,7 +759,7 @@ class ChatApp {
         const term = searchTerm.toLowerCase();
         if (!term) return this.state.models;
 
-        return this.state.models.filter(model => 
+        return this.state.models.filter(model =>
             model.name.toLowerCase().includes(term) ||
             model.provider.toLowerCase().includes(term) ||
             model.category.toLowerCase().includes(term)
@@ -822,6 +831,8 @@ class ChatApp {
     }
 
     setupEventListeners() {
+        this.setupThemeControls();
+
         // New chat button
         this.elements.newChatBtn.addEventListener('click', () => {
             this.createSession();
@@ -912,18 +923,18 @@ class ChatApp {
         this.elements.searchToggle.addEventListener('click', () => {
             this.searchEnabled = !this.searchEnabled;
             this.elements.searchSwitch.setAttribute('aria-checked', this.searchEnabled);
-            
+
             const thumb = this.elements.searchSwitch.querySelector('.search-switch-thumb');
             if (this.searchEnabled) {
                 this.elements.searchSwitch.classList.add('bg-primary');
-                this.elements.searchSwitch.classList.remove('bg-slate-200', 'hover:bg-slate-300');
-                thumb.classList.remove('translate-x-[2px]');
-                thumb.classList.add('translate-x-[21px]');
+                this.elements.searchSwitch.classList.remove('bg-muted', 'hover:bg-muted/80');
+                thumb.classList.remove('translate-x-[2px]', 'bg-background/80');
+                thumb.classList.add('translate-x-[21px]', 'bg-primary-foreground');
             } else {
                 this.elements.searchSwitch.classList.remove('bg-primary');
-                this.elements.searchSwitch.classList.add('bg-slate-200', 'hover:bg-slate-300');
-                thumb.classList.remove('translate-x-[21px]');
-                thumb.classList.add('translate-x-[2px]');
+                this.elements.searchSwitch.classList.add('bg-muted', 'hover:bg-muted/80');
+                thumb.classList.remove('translate-x-[21px]', 'bg-primary-foreground');
+                thumb.classList.add('translate-x-[2px]', 'bg-background/80');
             }
         });
 
@@ -936,7 +947,7 @@ class ChatApp {
                 }
             });
         }
-        
+
         // Show right panel button
         if (this.elements.showRightPanelBtn) {
             this.elements.showRightPanelBtn.addEventListener('click', () => {
@@ -982,6 +993,57 @@ class ChatApp {
         });
     }
 
+    setupThemeControls() {
+        if (!this.elements.themeOptionButtons || this.elements.themeOptionButtons.length === 0) {
+            return;
+        }
+
+        this.elements.themeOptionButtons.forEach((button) => {
+            button.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+
+                const preference = button.dataset.themeOption || 'system';
+                themeManager.setPreference(preference);
+
+                if (this.elements.settingsMenu) {
+                    this.elements.settingsMenu.classList.add('hidden');
+                }
+            });
+        });
+    }
+
+    updateThemeControls(preference, effectiveTheme) {
+        if (this.elements.themeOptionButtons && this.elements.themeOptionButtons.length > 0) {
+            this.elements.themeOptionButtons.forEach((button) => {
+                const option = button.dataset.themeOption;
+                const isActive = option === preference;
+
+                button.classList.toggle('theme-option-active', isActive);
+                button.setAttribute('aria-checked', String(isActive));
+
+                const checkIcon = button.querySelector('.theme-option-check');
+                if (checkIcon) {
+                    checkIcon.classList.toggle('opacity-100', isActive);
+                    checkIcon.classList.toggle('opacity-0', !isActive);
+                }
+            });
+        }
+
+        if (this.elements.themeEffectiveLabel) {
+            if (preference === 'system') {
+                this.elements.themeEffectiveLabel.textContent = `Follows system appearance (${this.formatThemeName(effectiveTheme)})`;
+            } else {
+                this.elements.themeEffectiveLabel.textContent = `Using ${this.formatThemeName(preference)} theme`;
+            }
+        }
+    }
+
+    formatThemeName(theme) {
+        if (!theme) return '';
+        return theme.charAt(0).toUpperCase() + theme.slice(1);
+    }
+
     updateInputState() {
         const hasContent = this.elements.messageInput.value.trim();
         const shouldBeDisabled = !hasContent || this.isWaitingForResponse;
@@ -991,7 +1053,7 @@ class ChatApp {
 
         this.elements.sendBtn.classList.toggle('opacity-40', shouldBeDisabled);
         this.elements.sendBtn.classList.toggle('opacity-100', !shouldBeDisabled);
-        
+
         if (this.isWaitingForResponse) {
             this.elements.messageInput.placeholder = "Waiting for response...";
         } else {
@@ -1014,13 +1076,13 @@ class ChatApp {
 
         try {
             const result = await stationClient.requestApiKey();
-            
+
             session.apiKey = result.key;
             session.apiKeyInfo = result;
             session.expiresAt = result.expires_at;
-            
+
             await chatDB.saveSession(session);
-            
+
             // Update the UI components
             if (this.rightPanel) {
                 this.rightPanel.onSessionChange(session);

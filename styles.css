@@ -7,6 +7,27 @@
     --slate-200: hsl(214.3, 31.8%, 91.4%);
     --slate-800: hsl(217.2, 32.6%, 17.5%);
     --slate-6: hsl(209, 9.0%, 82.5%);
+
+    color-scheme: light;
+    --color-background: 0 0% 100%;
+    --color-foreground: 222.2 84% 4.9%;
+    --color-card: 0 0% 100%;
+    --color-card-foreground: 222.2 84% 4.9%;
+    --color-popover: 0 0% 100%;
+    --color-popover-foreground: 222.2 84% 4.9%;
+    --color-primary: 222.2 47.4% 11.2%;
+    --color-primary-foreground: 210 40% 98%;
+    --color-secondary: 210 40% 96.1%;
+    --color-secondary-foreground: 222.2 47.4% 11.2%;
+    --color-muted: 210 40% 96.1%;
+    --color-muted-foreground: 215.4 16.3% 46.9%;
+    --color-accent: 210 40% 96.1%;
+    --color-accent-foreground: 222.2 47.4% 11.2%;
+    --color-destructive: 0 84.2% 60.2%;
+    --color-destructive-foreground: 210 40% 98%;
+    --color-border: 214.3 31.8% 91.4%;
+    --color-input: 214.3 31.8% 91.4%;
+    --color-ring: 222.2 84% 4.9%;
 }
 
 .dark {
@@ -17,6 +38,137 @@
     --slate-200: hsl(217.2, 32.6%, 17.5%);
     --slate-800: hsl(214.3, 31.8%, 91.4%);
     --slate-6: hsl(198, 4.8%, 28.2%);
+
+    color-scheme: dark;
+    --color-background: 222.2 84% 4.9%;
+    --color-foreground: 210 40% 98%;
+    --color-card: 222.2 47.4% 11.2%;
+    --color-card-foreground: 210 40% 98%;
+    --color-popover: 222.2 47.4% 11.2%;
+    --color-popover-foreground: 210 40% 98%;
+    --color-primary: 210 40% 98%;
+    --color-primary-foreground: 222.2 47.4% 11.2%;
+    --color-secondary: 217.2 32.6% 17.5%;
+    --color-secondary-foreground: 210 40% 98%;
+    --color-muted: 217.2 32.6% 17.5%;
+    --color-muted-foreground: 215 20.2% 65.1%;
+    --color-accent: 217.2 32.6% 17.5%;
+    --color-accent-foreground: 210 40% 98%;
+    --color-destructive: 0 62.8% 30.6%;
+    --color-destructive-foreground: 210 40% 98%;
+    --color-border: 217.2 32.6% 17.5%;
+    --color-input: 217.2 32.6% 17.5%;
+    --color-ring: 212.7 26.8% 83.9%;
+}
+
+:root,
+.dark {
+    --tw-ring-offset-color: hsl(var(--color-background));
+    --tw-ring-color: hsl(var(--color-ring));
+}
+
+.bg-background {
+    --tw-bg-opacity: 1;
+    background-color: hsl(var(--color-background) / var(--tw-bg-opacity, 1)) !important;
+}
+
+.text-foreground {
+    --tw-text-opacity: 1;
+    color: hsl(var(--color-foreground) / var(--tw-text-opacity, 1)) !important;
+}
+
+.border-border {
+    --tw-border-opacity: 1;
+    border-color: hsl(var(--color-border) / var(--tw-border-opacity, 1)) !important;
+}
+
+.border-input {
+    --tw-border-opacity: 1;
+    border-color: hsl(var(--color-input) / var(--tw-border-opacity, 1)) !important;
+}
+
+.bg-secondary {
+    --tw-bg-opacity: 1;
+    background-color: hsl(var(--color-secondary) / var(--tw-bg-opacity, 1)) !important;
+}
+
+.text-secondary-foreground {
+    --tw-text-opacity: 1;
+    color: hsl(var(--color-secondary-foreground) / var(--tw-text-opacity, 1)) !important;
+}
+
+.bg-muted {
+    --tw-bg-opacity: 1;
+    background-color: hsl(var(--color-muted) / var(--tw-bg-opacity, 1)) !important;
+}
+
+.text-muted-foreground {
+    --tw-text-opacity: 1;
+    color: hsl(var(--color-muted-foreground) / var(--tw-text-opacity, 1)) !important;
+}
+
+.bg-accent {
+    --tw-bg-opacity: 1;
+    background-color: hsl(var(--color-accent) / var(--tw-bg-opacity, 1)) !important;
+}
+
+.text-accent-foreground {
+    --tw-text-opacity: 1;
+    color: hsl(var(--color-accent-foreground) / var(--tw-text-opacity, 1)) !important;
+}
+
+.bg-card {
+    --tw-bg-opacity: 1;
+    background-color: hsl(var(--color-card) / var(--tw-bg-opacity, 1)) !important;
+}
+
+.text-card-foreground {
+    --tw-text-opacity: 1;
+    color: hsl(var(--color-card-foreground) / var(--tw-text-opacity, 1)) !important;
+}
+
+.bg-popover {
+    --tw-bg-opacity: 1;
+    background-color: hsl(var(--color-popover) / var(--tw-bg-opacity, 1)) !important;
+}
+
+.text-popover-foreground {
+    --tw-text-opacity: 1;
+    color: hsl(var(--color-popover-foreground) / var(--tw-text-opacity, 1)) !important;
+}
+
+.bg-primary {
+    --tw-bg-opacity: 1;
+    background-color: hsl(var(--color-primary) / var(--tw-bg-opacity, 1)) !important;
+}
+
+.text-primary-foreground {
+    --tw-text-opacity: 1;
+    color: hsl(var(--color-primary-foreground) / var(--tw-text-opacity, 1)) !important;
+}
+
+.bg-destructive {
+    --tw-bg-opacity: 1;
+    background-color: hsl(var(--color-destructive) / var(--tw-bg-opacity, 1)) !important;
+}
+
+.text-destructive-foreground {
+    --tw-text-opacity: 1;
+    color: hsl(var(--color-destructive-foreground) / var(--tw-text-opacity, 1)) !important;
+}
+
+.theme-option {
+    transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.theme-option-active {
+    background-color: hsl(var(--color-accent) / 0.65) !important;
+    color: hsl(var(--color-foreground));
+}
+
+.dark .theme-option-active {
+    background-color: hsl(var(--color-secondary) / 0.55) !important;
+    color: hsl(var(--color-foreground));
 }
 
 /* Tailwind slate color classes */
@@ -39,13 +191,13 @@
 }
 
 ::-webkit-scrollbar-thumb {
-    background: #cbd5e1;
+    background: var(--slate-6);
     border-radius: 4px;
     transition: background-color 0.2s ease;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: #94a3b8;
+    background: var(--slate-4);
 }
 
 /* Smooth transitions */
@@ -59,12 +211,11 @@
 }
 
 .chat-session:hover {
-    background-color: rgba(59, 130, 246, 0.05);
+    background-color: hsl(var(--color-accent) / 0.3);
 }
 
 .chat-session.active {
-    background-color: rgba(59, 130, 246, 0.1);
-    color: hsl(222.2 47.4% 11.2%);
+    background-color: hsl(var(--color-accent) / 0.5);
 }
 
 /* Message styles */
@@ -102,7 +253,7 @@
     margin-top: 1.25rem;
     margin-bottom: 0.75rem;
     padding-bottom: 0.25rem;
-    border-bottom: 1px solid hsl(214.3 31.8% 91.4%);
+    border-bottom: 1px solid hsl(var(--color-border));
 }
 
 .prose h2 {
@@ -158,7 +309,7 @@
 }
 
 .prose code {
-    background-color: hsl(210 40% 96.1%);
+    background-color: hsl(var(--color-muted));
     padding: 0.1rem 0.2rem;
     border-radius: 0.25rem;
     font-size: 0.8125rem;
@@ -166,7 +317,7 @@
 }
 
 .prose pre {
-    background-color: hsl(210 40% 96.1%);
+    background-color: hsl(var(--color-muted));
     padding: 0.75rem;
     border-radius: 0.5rem;
     overflow-x: auto;
@@ -182,36 +333,23 @@
 
 .prose hr {
     margin: 1rem 0;
-    border-top: 1px solid hsl(214.3 31.8% 91.4%);
+    border-top: 1px solid hsl(var(--color-border));
 }
 
 /* Dark mode adjustments for prose */
 .dark .prose h1 {
-    border-bottom-color: hsl(217.2 32.6% 25%);
-}
-
-.dark .prose code {
-    background-color: hsl(217.2 32.6% 25%);
-}
-
-.dark .prose pre {
-    background-color: hsl(217.2 32.6% 20%);
+    border-bottom-color: hsl(var(--color-border));
 }
 
 /* Blockquote styles */
 .prose blockquote {
-    border-left: 3px solid hsl(214.3 31.8% 91.4%);
+    border-left: 3px solid hsl(var(--color-border));
     padding-left: 0.75rem;
     margin-left: 0;
     margin-bottom: 0.75rem;
-    color: hsl(215.4 16.3% 46.9%);
+    color: hsl(var(--color-muted-foreground));
     font-style: italic;
     font-size: 0.875rem;
-}
-
-.dark .prose blockquote {
-    border-left-color: hsl(217.2 32.6% 35%);
-    color: hsl(215.4 16.3% 66.9%);
 }
 
 /* Input focus styles */
@@ -247,11 +385,11 @@ textarea:focus {
 
 /* Chat area styling */
 .chat-container {
-    background: linear-gradient(to bottom, transparent, var(--slate-2) 10%);
+    background: linear-gradient(to bottom, transparent, hsl(var(--color-background)) 10%);
 }
 
 #chat-area {
-    background-color: var(--slate-1);
+    background-color: hsl(var(--color-background));
 }
 
 .prose p:first-child {
@@ -280,23 +418,14 @@ textarea:focus {
 
 .prose table th,
 .prose table td {
-    border: 1px solid hsl(214.3 31.8% 91.4%);
+    border: 1px solid hsl(var(--color-border));
     padding: 0.5rem;
     text-align: left;
 }
 
 .prose table th {
-    background-color: hsl(210 40% 96.1%);
+    background-color: hsl(var(--color-muted));
     font-weight: 600;
-}
-
-.dark .prose table th {
-    background-color: hsl(217.2 32.6% 25%);
-}
-
-.dark .prose table th,
-.dark .prose table td {
-    border-color: hsl(217.2 32.6% 25%);
 }
 
 /* Hide scrollbar when not hovering */
@@ -366,7 +495,7 @@ textarea:focus {
 }
 
 .network-log-header:hover {
-    background-color: hsl(210 40% 96.1%);
+    background-color: hsl(var(--color-accent));
 }
 
 .network-log-details {
@@ -424,7 +553,7 @@ textarea:focus {
 /* Network logs container scrollbar */
 #network-logs-container {
     scrollbar-width: thin;
-    scrollbar-color: #cbd5e1 transparent;
+    scrollbar-color: var(--slate-6) transparent;
 }
 
 #network-logs-container::-webkit-scrollbar {
@@ -436,12 +565,12 @@ textarea:focus {
 }
 
 #network-logs-container::-webkit-scrollbar-thumb {
-    background: #cbd5e1;
+    background: var(--slate-6);
     border-radius: 3px;
 }
 
 #network-logs-container::-webkit-scrollbar-thumb:hover {
-    background: #94a3b8;
+    background: var(--slate-4);
 }
 
 /* Utility classes for opacity */
@@ -506,7 +635,7 @@ textarea:focus {
     flex-direction: column;
     align-items: flex-end;
     gap: 1px;
-    opacity: 0.5;
+    opacity: 0.6;
     transition: opacity 0.2s ease, right 0.3s ease;
 }
 
@@ -540,23 +669,20 @@ textarea:focus {
     height: auto;
     background: transparent;
     border: none;
-    color: rgba(0, 0, 0, 0.25);
+    color: hsl(var(--color-foreground) / 0.5);
     cursor: pointer;
     transition: all 0.15s ease;
     padding: 0;
 }
 
 .nav-btn:hover {
-    color: rgba(0, 0, 0, 0.5);
-    transform: scale(1.15);
+    color: hsl(var(--color-foreground) / 0.8);
+    transform: scale(1.2);
 }
 
-.dark .nav-btn {
-    color: rgba(255, 255, 255, 0.25);
-}
-
-.dark .nav-btn:hover {
-    color: rgba(255, 255, 255, 0.5);
+.nav-btn svg {
+    width: 24px;
+    height: 24px;
 }
 
 .nav-btn:active {
@@ -580,10 +706,10 @@ textarea:focus {
 }
 
 .message-indicator {
-    height: 2px;
-    background: rgba(0, 0, 0, 0.12);
+    height: 3px;
+    background: hsl(var(--color-foreground) / 0.4);
     border: none;
-    border-radius: 1px;
+    border-radius: 1.5px;
     cursor: pointer;
     transition: all 0.15s ease;
     padding: 0;
@@ -592,33 +718,21 @@ textarea:focus {
 }
 
 .message-indicator:hover {
-    background: rgba(0, 0, 0, 0.25);
-    transform: scaleY(1.8);
+    background: hsl(var(--color-foreground) / 0.7);
+    transform: scaleY(1.5);
 }
 
 .message-indicator.active {
     background: hsl(217.2 91.2% 59.8%);
-    height: 3px;
-}
-
-.dark .message-indicator {
-    background: rgba(255, 255, 255, 0.12);
-}
-
-.dark .message-indicator:hover {
-    background: rgba(255, 255, 255, 0.25);
-}
-
-.dark .message-indicator.active {
-    background: hsl(217.2 91.2% 59.8%);
+    height: 4px;
 }
 
 /* Message Preview Popover */
 .message-preview-popover {
     position: fixed;
     max-width: 320px;
-    background: white;
-    border: 1px solid hsl(214.3 31.8% 91.4%);
+    background: hsl(var(--color-popover));
+    border: 1px solid hsl(var(--color-border));
     border-radius: 10px;
     box-shadow: 0 8px 24px -4px rgba(0, 0, 0, 0.12), 0 2px 8px -2px rgba(0, 0, 0, 0.08);
     z-index: 50;
@@ -627,36 +741,25 @@ textarea:focus {
 }
 
 .dark .message-preview-popover {
-    background: hsl(217.2 32.6% 17.5%);
-    border-color: hsl(217.2 32.6% 25%);
     box-shadow: 0 8px 24px -4px rgba(0, 0, 0, 0.4), 0 2px 8px -2px rgba(0, 0, 0, 0.3);
 }
 
 .popover-header {
     font-size: 0.7rem;
     font-weight: 600;
-    color: hsl(215.4 16.3% 46.9%);
+    color: hsl(var(--color-muted-foreground));
     padding: 10px 14px 8px;
-    border-bottom: 1px solid hsl(214.3 31.8% 91.4%);
+    border-bottom: 1px solid hsl(var(--color-border));
     letter-spacing: 0.03em;
     text-transform: uppercase;
 }
 
-.dark .popover-header {
-    border-color: hsl(217.2 32.6% 25%);
-    color: hsl(215.4 16.3% 56.9%);
-}
-
 .popover-content {
     font-size: 0.8125rem;
-    color: hsl(222.2 84% 4.9%);
+    color: hsl(var(--color-popover-foreground));
     padding: 12px 14px;
     line-height: 1.5;
     word-wrap: break-word;
-}
-
-.dark .popover-content {
-    color: hsl(210 40% 94%);
 }
 
 @keyframes popoverFadeIn {
@@ -692,5 +795,3 @@ html {
         opacity: 0.5;
     }
 }
-
-
