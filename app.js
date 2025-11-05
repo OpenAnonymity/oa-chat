@@ -37,6 +37,10 @@ class ChatApp {
             modelListScrollArea: document.getElementById('model-list-scroll-area'),
             themeOptionButtons: Array.from(document.querySelectorAll('[data-theme-option]')),
             themeEffectiveLabel: document.getElementById('theme-effective-label'),
+            fileUploadBtn: document.getElementById('file-upload-btn'),
+            fileUploadInput: document.getElementById('file-upload-input'),
+            filePreviewsContainer: document.getElementById('file-previews-container'),
+            fileCountBadge: document.getElementById('file-count-badge'),
         };
 
         themeManager.init();
@@ -46,6 +50,7 @@ class ChatApp {
         });
 
         this.searchEnabled = false;
+        this.uploadedFiles = [];
         this.rightPanel = null;
         this.floatingPanel = null;
         this.messageNavigation = null;
@@ -59,16 +64,38 @@ class ChatApp {
      * This prevents marked from breaking LaTeX delimiters
      */
     processContentWithLatex(content) {
-        // Escape backslashes for LaTeX delimiters to prevent marked from stripping them
-        // This is based on the solution from https://stackoverflow.com/questions/78220687/
-        let processedContent = content
-            .replace(/\\\[/g, '\\\\[')
-            .replace(/\\\]/g, '\\\\]')
+        // Store block-level LaTeX to prevent wrapping in <p> tags
+        const blockLatexPlaceholders = [];
+        let processedContent = content;
+        
+        // Extract block LaTeX \[...\] and replace with placeholders
+        processedContent = processedContent.replace(/\\\[([\s\S]*?)\\\]/g, (match, latex) => {
+            const placeholder = `BLOCKLATEX${blockLatexPlaceholders.length}PLACEHOLDER`;
+            blockLatexPlaceholders.push(match);
+            return `\n\n${placeholder}\n\n`;
+        });
+        
+        // Extract block LaTeX $$...$$ and replace with placeholders
+        processedContent = processedContent.replace(/\$\$([\s\S]*?)\$\$/g, (match, latex) => {
+            const placeholder = `BLOCKLATEX${blockLatexPlaceholders.length}PLACEHOLDER`;
+            blockLatexPlaceholders.push(match);
+            return `\n\n${placeholder}\n\n`;
+        });
+        
+        // Escape inline LaTeX delimiters
+        processedContent = processedContent
             .replace(/\\\(/g, '\\\\(')
             .replace(/\\\)/g, '\\\\)');
 
         // Process markdown
         let html = marked.parse(processedContent);
+        
+        // Restore block LaTeX without <p> wrapping
+        blockLatexPlaceholders.forEach((latex, index) => {
+            const placeholder = `BLOCKLATEX${index}PLACEHOLDER`;
+            // Remove <p> tags around placeholder and replace with the LaTeX
+            html = html.replace(new RegExp(`<p>${placeholder}</p>|${placeholder}`, 'g'), latex);
+        });
 
         return html;
     }
@@ -83,6 +110,38 @@ class ChatApp {
             scrollTimer = setTimeout(() => {
                 element.classList.remove('scrolling');
             }, 1500);
+        });
+    }
+
+    /**
+     * Reliably scroll chat area to bottom
+     * Uses multiple RAF calls to ensure content is fully rendered
+     */
+    scrollToBottom(force = false) {
+        const chatArea = this.elements.chatArea;
+        if (!chatArea) return;
+
+        // Check if user is near bottom (unless forced)
+        if (!force) {
+            const isNearBottom = chatArea.scrollHeight - chatArea.scrollTop - chatArea.clientHeight < 150;
+            if (!isNearBottom) return;
+        }
+
+        // Use double requestAnimationFrame for more reliable scrolling
+        // First RAF: wait for current render to complete
+        requestAnimationFrame(() => {
+            // Second RAF: wait for any triggered reflows/repaints
+            requestAnimationFrame(() => {
+                chatArea.scrollTop = chatArea.scrollHeight;
+                
+                // Third RAF: verify we actually reached the bottom, scroll again if needed
+                requestAnimationFrame(() => {
+                    const isAtBottom = chatArea.scrollHeight - chatArea.scrollTop - chatArea.clientHeight < 5;
+                    if (!isAtBottom) {
+                        chatArea.scrollTop = chatArea.scrollHeight;
+                    }
+                });
+            });
         });
     }
 
@@ -124,6 +183,12 @@ class ChatApp {
         if (this.floatingPanel && currentSession) {
             this.floatingPanel.render();
         }
+        
+        // Restore search state from current session
+        if (currentSession) {
+            this.searchEnabled = currentSession.searchEnabled || false;
+            this.updateSearchToggle();
+        }
 
         // Set up event listeners
         this.setupEventListeners();
@@ -138,11 +203,35 @@ class ChatApp {
                 this.messageNavigation.handleScroll();
             }
         });
-
+        
+        // Set up ResizeObserver to adjust chat area padding when input area expands
+        this.setupInputAreaObserver();
+        
         // Scroll to bottom after initial load (for refresh)
         setTimeout(() => {
-            this.elements.chatArea.scrollTop = this.elements.chatArea.scrollHeight;
+            this.scrollToBottom(true);
         }, 100);
+    }
+
+    setupInputAreaObserver() {
+        // Find the input container element
+        const inputContainer = document.querySelector('.absolute.bottom-0.left-0.right-0');
+        if (!inputContainer) return;
+        
+        // Create a ResizeObserver to watch for size changes
+        const resizeObserver = new ResizeObserver((entries) => {
+            for (const entry of entries) {
+                const inputHeight = entry.contentRect.height;
+                // Add extra padding to ensure messages aren't covered
+                const paddingBottom = inputHeight + 16; // 16px extra for spacing
+                this.elements.messagesContainer.style.paddingBottom = `${paddingBottom}px`;
+                
+                // Auto-scroll to bottom using our reliable scroll helper
+                this.scrollToBottom();
+            }
+        });
+        
+        resizeObserver.observe(inputContainer);
     }
 
     async loadModels() {
@@ -207,11 +296,16 @@ class ChatApp {
             model: null,
             apiKey: null,
             apiKeyInfo: null,
-            expiresAt: null
+            expiresAt: null,
+            searchEnabled: false
         };
 
         this.state.sessions.unshift(session);
         this.state.currentSessionId = session.id;
+        
+        // Reset search toggle for new session
+        this.searchEnabled = false;
+        this.updateSearchToggle();
 
         await chatDB.saveSession(session);
         await chatDB.saveSetting('currentSessionId', session.id);
@@ -231,12 +325,19 @@ class ChatApp {
     switchSession(sessionId) {
         this.state.currentSessionId = sessionId;
         chatDB.saveSetting('currentSessionId', sessionId);
+        
+        // Load session-specific search state
+        const session = this.getCurrentSession();
+        if (session) {
+            this.searchEnabled = session.searchEnabled || false;
+            this.updateSearchToggle();
+        }
+        
         this.renderSessions();
         this.renderMessages();
         this.renderCurrentModel();
 
         // Notify right panel of session change
-        const session = this.getCurrentSession();
         if (this.rightPanel && session) {
             this.rightPanel.onSessionChange(session);
         }
@@ -290,7 +391,9 @@ class ChatApp {
             timestamp: Date.now(),
             model: metadata.model || session.model,
             tokenCount: metadata.tokenCount || null,
-            streamingTokens: metadata.streamingTokens || null
+            streamingTokens: metadata.streamingTokens || null,
+            files: metadata.files || null,
+            searchEnabled: metadata.searchEnabled || false
         };
 
         await chatDB.saveMessage(message);
@@ -317,20 +420,47 @@ class ChatApp {
         if (this.isWaitingForResponse) return;
 
         const content = this.elements.messageInput.value.trim();
-        if (!content) return;
+        const hasFiles = this.uploadedFiles.length > 0;
+        if (!content && !hasFiles) return;
 
         this.isWaitingForResponse = true;
         this.updateInputState();
+
+        // Store current files and search state before clearing
+        const currentFiles = [...this.uploadedFiles];
+        const searchEnabled = this.searchEnabled;
 
         try {
             // Create session if none exists
             if (!this.getCurrentSession()) {
                 await this.createSession();
             }
-
-            // Add user message
-            await this.addMessage('user', content);
+    
+            // Add user message with file metadata
+            const metadata = {};
+            if (hasFiles) {
+                // Store file data for preview rendering
+                const fileData = await Promise.all(currentFiles.map(async (file) => {
+                    const dataUrl = await this.createImagePreview(file);
+                    return {
+                        name: file.name,
+                        type: file.type,
+                        size: file.size,
+                        dataUrl: dataUrl
+                    };
+                }));
+                metadata.files = fileData;
+            }
+            if (searchEnabled) {
+                metadata.searchEnabled = true;
+            }
+            await this.addMessage('user', content || 'Please analyze these files:', metadata);
+            
+            // Clear input and files
             this.elements.messageInput.value = '';
+            this.uploadedFiles = [];
+            this.renderFilePreviews();
+            this.updateFileCountBadge();
             this.updateInputState();
             this.elements.messageInput.style.height = '24px';
 
@@ -417,21 +547,25 @@ class ChatApp {
                     streamingTokens: 0
                 };
                 await chatDB.saveMessage(streamingMessage);
-
-                // Remove typing indicator and render messages to show the empty message
-                this.removeTypingIndicator(typingId);
-                await this.renderMessages();
-
+                
                 // Track progress for periodic saves
                 let lastSaveLength = 0;
                 const SAVE_INTERVAL_CHARS = 100; // Save every 100 characters
-
+                let firstChunk = true;
+                
                 // Stream the response with token tracking
                 const tokenData = await openRouterAPI.streamCompletion(
                     messages,
                     modelId,
                     session.apiKey,
                     async (chunk) => {
+                        // Remove typing indicator on first chunk
+                        if (firstChunk) {
+                            this.removeTypingIndicator(typingId);
+                            await this.renderMessages();
+                            firstChunk = false;
+                        }
+                        
                         streamedContent += chunk;
 
                         // Periodically save partial content to handle refresh during streaming
@@ -458,13 +592,15 @@ class ChatApp {
                                             {left: '\\(', right: '\\)', display: false},
                                             {left: '$', right: '$', display: false}
                                         ],
-                                        throwOnError: false
+                                        throwOnError: false,
+                                        errorColor: '#cc0000',
+                                        strict: false
                                     });
                                 }
                             }
                         }
-                        // Keep scrolling to bottom
-                        this.elements.chatArea.scrollTop = this.elements.chatArea.scrollHeight;
+                        // Auto-scroll if user is already at bottom
+                        this.scrollToBottom();
                     },
                     (tokenUpdate) => {
                         // Update streaming token count in real-time
@@ -476,7 +612,9 @@ class ChatApp {
                                 tokenEl.textContent = streamingTokenCount;
                             }
                         }
-                    }
+                    },
+                    currentFiles,
+                    searchEnabled
                 );
 
                 // Save the final message content with token data
@@ -507,21 +645,25 @@ class ChatApp {
         const id = 'typing-' + Date.now();
         const typingHtml = `
             <div id="${id}" class="max-w-4xl w-full px-2 md:px-3 fade-in">
-                <div class="flex items-center gap-2">
+                <div class="flex items-center gap-3">
                     <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow bg-muted p-0.5">
                         <span class="text-xs font-semibold">${providerInitial}</span>
                     </div>
-                    <div class="flex gap-1">
-                        <div class="w-2 h-2 bg-muted-foreground rounded-full animate-pulse"></div>
-                        <div class="w-2 h-2 bg-muted-foreground rounded-full animate-pulse" style="animation-delay: 0.2s"></div>
-                        <div class="w-2 h-2 bg-muted-foreground rounded-full animate-pulse" style="animation-delay: 0.4s"></div>
+                    <div class="flex items-center gap-2">
+                        <div class="flex gap-1">
+                            <div class="w-2 h-2 bg-primary rounded-full animate-bounce" style="animation-delay: 0s"></div>
+                            <div class="w-2 h-2 bg-primary rounded-full animate-bounce" style="animation-delay: 0.15s"></div>
+                            <div class="w-2 h-2 bg-primary rounded-full animate-bounce" style="animation-delay: 0.3s"></div>
+                        </div>
+                        <span class="text-sm text-muted-foreground animate-pulse">
+                            Processing...
+                        </span>
                     </div>
                 </div>
             </div>
         `;
         this.elements.messagesContainer.insertAdjacentHTML('beforeend', typingHtml);
-        const chatArea = this.elements.messagesContainer.parentElement;
-        chatArea.scrollTop = chatArea.scrollHeight;
+        this.scrollToBottom(true);
         return id;
     }
 
@@ -701,9 +843,109 @@ class ChatApp {
 
         this.elements.messagesContainer.innerHTML = messages.map(message => {
             if (message.role === 'user') {
+                // Check for file attachments
+                const hasFiles = message.files && message.files.length > 0;
+                
+                const filePreview = hasFiles ? `
+                    <div class="flex flex-wrap gap-2 mt-3">
+                        ${message.files.map(fileData => {
+                            // Handle both old format (string) and new format (object)
+                            const fileName = typeof fileData === 'string' ? fileData : fileData.name;
+                            const fileType = typeof fileData === 'string' ? '' : fileData.type;
+                            const dataUrl = typeof fileData === 'string' ? null : fileData.dataUrl;
+                            
+                            const isPdf = fileType === 'application/pdf' || fileName.toLowerCase().endsWith('.pdf');
+                            const isImage = fileType.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp)$/i.test(fileName);
+                            const isAudio = fileType.startsWith('audio/') || /\.(wav|mp3|ogg|webm)$/i.test(fileName);
+                            
+                            if (isPdf) {
+                                return `
+                                    <div class="bg-background relative h-32 w-48 cursor-pointer select-none overflow-hidden rounded-lg border border-border shadow-sm hover:shadow-md transition-shadow">
+                                        <div class="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-red-50 to-red-100 dark:from-red-900/20 dark:to-red-800/20">
+                                            <div class="flex flex-col items-center justify-center text-red-600 dark:text-red-400">
+                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-10 h-10 mb-1">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+                                                </svg>
+                                                <span class="text-xs font-semibold">PDF</span>
+                                            </div>
+                                        </div>
+                                        <div class="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/60 to-transparent">
+                                            <div class="text-xs font-medium text-white truncate" title="${fileName}">
+                                                ${fileName}
+                                            </div>
+                                        </div>
+                                    </div>
+                                `;
+                            } else if (isImage && dataUrl) {
+                                return `
+                                    <div class="bg-background relative h-32 w-48 cursor-pointer select-none overflow-hidden rounded-lg border border-border shadow-sm hover:shadow-md transition-shadow">
+                                        <img src="${dataUrl}" class="absolute inset-0 w-full h-full object-cover" alt="${fileName}">
+                                        <div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>
+                                        <div class="absolute bottom-0 left-0 right-0 p-2">
+                                            <div class="text-xs font-medium text-white truncate" title="${fileName}">
+                                                ${fileName}
+                                            </div>
+                                        </div>
+                                    </div>
+                                `;
+                            } else if (isImage) {
+                                // Fallback for old messages without dataUrl
+                                return `
+                                    <div class="bg-background relative h-32 w-48 cursor-pointer select-none overflow-hidden rounded-lg border border-border shadow-sm hover:shadow-md transition-shadow">
+                                        <div class="p-3 h-full flex flex-col">
+                                            <div class="flex items-center gap-2 mb-2">
+                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4 text-primary flex-shrink-0">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" />
+                                                </svg>
+                                                <span class="font-medium text-foreground text-xs truncate">${fileName}</span>
+                                            </div>
+                                            <div class="text-muted-foreground text-xs leading-relaxed">
+                                                Image
+                                            </div>
+                                        </div>
+                                    </div>
+                                `;
+                            } else if (isAudio) {
+                                return `
+                                    <div class="bg-background relative h-32 w-48 cursor-pointer select-none overflow-hidden rounded-lg border border-border text-xs shadow-sm hover:shadow-md transition-shadow">
+                                        <div class="p-3 h-full flex flex-col">
+                                            <div class="flex items-center gap-2 mb-2">
+                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4 text-green-600 flex-shrink-0">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" d="m9 9 10.5-3m0 6.553v3.75a2.25 2.25 0 0 1-1.632 2.163l-1.32.377a1.803 1.803 0 1 1-.99-3.467l2.31-.66a2.25 2.25 0 0 0 1.632-2.163Zm0 0V2.25L9 5.25v10.303m0 0v3.75a2.25 2.25 0 0 1-1.632 2.163l-1.32.377a1.803 1.803 0 0 1-.99-3.467l2.31-.66A2.25 2.25 0 0 0 9 15.553Z" />
+                                                </svg>
+                                                <span class="font-medium text-foreground truncate">${fileName}</span>
+                                            </div>
+                                            <div class="text-muted-foreground leading-relaxed">
+                                                Audio File
+                                            </div>
+                                        </div>
+                                    </div>
+                                `;
+                            } else {
+                                return `
+                                    <div class="bg-background relative h-32 w-48 cursor-pointer select-none overflow-hidden rounded-lg border border-border text-xs shadow-sm hover:shadow-md transition-shadow">
+                                        <div class="p-3 h-full flex flex-col">
+                                            <div class="flex items-center gap-2 mb-2">
+                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4 text-muted-foreground flex-shrink-0">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+                                                </svg>
+                                                <span class="font-medium text-foreground truncate">${fileName}</span>
+                                            </div>
+                                            <div class="text-muted-foreground leading-relaxed">
+                                                File
+                                            </div>
+                                        </div>
+                                    </div>
+                                `;
+                            }
+                        }).join('')}
+                    </div>
+                ` : '';
+                
                 return `
                     <div class="w-full px-2 md:px-3 fade-in self-end" data-message-id="${message.id}">
                         <div class="group my-2 flex w-full flex-col gap-2 justify-end items-end">
+                            ${filePreview}
                             <div class="py-3 px-4 font-normal rounded-lg message-user max-w-full">
                                 <div class="min-w-0 w-full overflow-hidden break-words">
                                     <p class="mb-0">${this.escapeHtml(message.content)}</p>
@@ -758,16 +1000,16 @@ class ChatApp {
                         {left: '\\(', right: '\\)', display: false},
                         {left: '$', right: '$', display: false}
                     ],
-                    throwOnError: false
+                    throwOnError: false,
+                    errorColor: '#cc0000',
+                    strict: false
                 });
             });
         }
 
-        // Scroll to bottom after a brief delay to ensure rendering is complete
-        requestAnimationFrame(() => {
-            this.elements.chatArea.scrollTop = this.elements.chatArea.scrollHeight;
-        });
-
+        // Scroll to bottom after rendering is complete
+        this.scrollToBottom(true);
+        
         // Update message navigation if it exists
         if (this.messageNavigation) {
             this.messageNavigation.update();
@@ -939,26 +1181,44 @@ class ChatApp {
         });
 
         // Search toggle functionality
-        this.elements.searchToggle.addEventListener('click', () => {
+        this.elements.searchToggle.addEventListener('click', async () => {
             this.searchEnabled = !this.searchEnabled;
             this.elements.searchSwitch.setAttribute('aria-checked', this.searchEnabled);
 
             const thumb = this.elements.searchSwitch.querySelector('.search-switch-thumb');
             if (this.searchEnabled) {
-                this.elements.searchSwitch.style.backgroundColor = 'hsl(217.2 91.2% 59.8%)';
                 this.elements.searchSwitch.classList.remove('bg-muted', 'hover:bg-muted/80');
+                this.elements.searchSwitch.classList.add('search-switch-active');
                 thumb.classList.remove('translate-x-[2px]', 'bg-background/80');
-                thumb.classList.add('translate-x-[19px]');
-                thumb.style.backgroundColor = 'white';
+                thumb.classList.add('translate-x-[19px]', 'search-switch-thumb-active');
             } else {
-                this.elements.searchSwitch.style.backgroundColor = '';
+                this.elements.searchSwitch.classList.remove('search-switch-active');
                 this.elements.searchSwitch.classList.add('bg-muted', 'hover:bg-muted/80');
-                thumb.classList.remove('translate-x-[19px]');
+                thumb.classList.remove('translate-x-[19px]', 'search-switch-thumb-active');
                 thumb.classList.add('translate-x-[2px]', 'bg-background/80');
-                thumb.style.backgroundColor = '';
+            }
+            
+            // Save to current session
+            const session = this.getCurrentSession();
+            if (session) {
+                session.searchEnabled = this.searchEnabled;
+                await chatDB.saveSession(session);
             }
             this.updateInputState();
         });
+
+        // File upload button
+        if (this.elements.fileUploadBtn && this.elements.fileUploadInput) {
+            this.elements.fileUploadBtn.addEventListener('click', () => {
+                this.elements.fileUploadInput.click();
+            });
+
+            this.elements.fileUploadInput.addEventListener('change', async (e) => {
+                const files = Array.from(e.target.files);
+                await this.handleFileUpload(files);
+                e.target.value = ''; // Reset input
+            });
+        }
 
         // Status dot button handler - toggles floating panel
         const statusDotBtn = document.getElementById('status-dot-btn');
@@ -1067,7 +1327,7 @@ class ChatApp {
     }
 
     updateInputState() {
-        const hasContent = this.elements.messageInput.value.trim();
+        const hasContent = this.elements.messageInput.value.trim() || this.uploadedFiles.length > 0;
         const shouldBeDisabled = !hasContent || this.isWaitingForResponse;
 
         this.elements.messageInput.disabled = this.isWaitingForResponse;
@@ -1082,6 +1342,209 @@ class ChatApp {
             this.elements.messageInput.placeholder = "Search the web anonymously";
         } else {
             this.elements.messageInput.placeholder = "Ask anonymously";
+        }
+    }
+
+    async handleFileUpload(files) {
+        const { validateFile } = await import('./services/fileUtils.js');
+        
+        const validFiles = [];
+        const errors = [];
+        
+        for (const file of files) {
+            const validation = validateFile(file);
+            if (validation.valid) {
+                validFiles.push(file);
+            } else {
+                errors.push(validation.error);
+            }
+        }
+        
+        if (validFiles.length > 0) {
+            this.uploadedFiles.push(...validFiles);
+            this.renderFilePreviews();
+            this.updateFileCountBadge();
+            this.updateInputState();
+        }
+        
+        if (errors.length > 0) {
+            this.showErrorNotification(errors.join('\n\n'));
+        }
+    }
+
+    showErrorNotification(message) {
+        // Create notification element
+        const notification = document.createElement('div');
+        notification.className = 'fixed top-4 right-4 z-50 max-w-md bg-destructive/90 text-white px-4 py-3 rounded-lg shadow-lg border border-destructive animate-in slide-in-from-top-5 fade-in';
+        notification.innerHTML = `
+            <div class="flex items-start gap-3">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 flex-shrink-0 mt-0.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" />
+                </svg>
+                <div class="flex-1">
+                    <div class="font-semibold text-sm mb-1">Upload Error</div>
+                    <div class="text-sm opacity-90 whitespace-pre-line">${message}</div>
+                </div>
+                <button onclick="this.parentElement.parentElement.remove()" class="flex-shrink-0 hover:opacity-70 transition-opacity">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
+        `;
+        
+        document.body.appendChild(notification);
+        
+        // Auto-remove after 6 seconds
+        setTimeout(() => {
+            notification.remove();
+        }, 6000);
+    }
+
+    async renderFilePreviews() {
+        const container = this.elements.filePreviewsContainer;
+        if (this.uploadedFiles.length === 0) {
+            container.classList.add('hidden');
+            return;
+        }
+        
+        container.classList.remove('hidden');
+        
+        // Generate previews with image and PDF thumbnails
+        const previewPromises = this.uploadedFiles.map(async (file, index) => {
+            const fileSize = this.formatFileSize(file.size);
+            const isImage = file.type.startsWith('image/');
+            const isPdf = file.type === 'application/pdf';
+            
+            let preview = '';
+            if (isImage) {
+                // Create image preview
+                const imageUrl = await this.createImagePreview(file);
+                preview = `
+                    <img src="${imageUrl}" class="absolute inset-0 w-full h-full object-cover" alt="${file.name}">
+                    <div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>
+                `;
+            } else if (isPdf) {
+                // Create PDF preview
+                const pdfUrl = await this.createImagePreview(file);
+                preview = `
+                    <div class="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-red-50 to-red-100 dark:from-red-900/20 dark:to-red-800/20">
+                        <div class="flex flex-col items-center justify-center text-red-600 dark:text-red-400">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-12 h-12 mb-1">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+                            </svg>
+                            <span class="text-xs font-semibold">PDF</span>
+                        </div>
+                    </div>
+                    <div class="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent"></div>
+                `;
+            } else {
+                // Icon-based preview for other files
+                const icon = this.getFileTypeIcon(file);
+                preview = `
+                    <div class="absolute inset-0 flex items-center justify-center bg-muted/50">
+                        ${icon}
+                    </div>
+                `;
+            }
+            
+            return `
+                <div class="bg-background relative h-28 w-40 cursor-default select-none overflow-hidden rounded-xl border border-border shadow-md hover:shadow-lg transition-shadow">
+                    ${preview}
+                    <div class="absolute top-2 right-2 z-10">
+                        <button class="flex items-center justify-center w-5 h-5 rounded-full bg-destructive/90 hover:bg-destructive text-white transition-colors shadow-sm" onclick="app.removeFile(${index})" title="Remove file">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-3 h-3">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="absolute bottom-0 left-0 right-0 p-2 ${isImage || isPdf ? 'text-white' : 'text-foreground'}">
+                        <div class="text-xs font-medium truncate" title="${file.name}">
+                            ${file.name}
+                        </div>
+                        <div class="text-xs ${isImage || isPdf ? 'text-white/80' : 'text-muted-foreground'}">
+                            ${fileSize}
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+        
+        const previews = await Promise.all(previewPromises);
+        container.innerHTML = previews.join('');
+    }
+
+    createImagePreview(file) {
+        return new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onload = (e) => resolve(e.target.result);
+            reader.readAsDataURL(file);
+        });
+    }
+
+    getFileTypeIcon(file) {
+        const type = file.type;
+        
+        if (type.startsWith('image/')) {
+            return `
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-8 h-8 text-primary">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" />
+                </svg>
+            `;
+        } else if (type === 'application/pdf') {
+            return `
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-8 h-8 text-destructive">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+                </svg>
+            `;
+        } else if (type.startsWith('audio/')) {
+            return `
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-8 h-8 text-green-600">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="m9 9 10.5-3m0 6.553v3.75a2.25 2.25 0 0 1-1.632 2.163l-1.32.377a1.803 1.803 0 1 1-.99-3.467l2.31-.66a2.25 2.25 0 0 0 1.632-2.163Zm0 0V2.25L9 5.25v10.303m0 0v3.75a2.25 2.25 0 0 1-1.632 2.163l-1.32.377a1.803 1.803 0 0 1-.99-3.467l2.31-.66A2.25 2.25 0 0 0 9 15.553Z" />
+                </svg>
+            `;
+        }
+        return '';
+    }
+
+    formatFileSize(bytes) {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+    }
+
+    updateFileCountBadge() {
+        if (this.uploadedFiles.length > 0) {
+            this.elements.fileCountBadge.textContent = this.uploadedFiles.length;
+            this.elements.fileCountBadge.classList.remove('hidden');
+        } else {
+            this.elements.fileCountBadge.classList.add('hidden');
+        }
+    }
+
+    removeFile(index) {
+        this.uploadedFiles.splice(index, 1);
+        this.renderFilePreviews();
+        this.updateFileCountBadge();
+        this.updateInputState();
+    }
+
+    updateSearchToggle() {
+        this.elements.searchSwitch.setAttribute('aria-checked', this.searchEnabled);
+        
+        const thumb = this.elements.searchSwitch.querySelector('.search-switch-thumb');
+        if (this.searchEnabled) {
+            this.elements.searchSwitch.classList.remove('bg-muted', 'hover:bg-muted/80');
+            this.elements.searchSwitch.classList.add('search-switch-active');
+            thumb.classList.remove('translate-x-[2px]', 'bg-background/80');
+            thumb.classList.add('translate-x-[19px]', 'search-switch-thumb-active');
+        } else {
+            this.elements.searchSwitch.classList.remove('search-switch-active');
+            this.elements.searchSwitch.classList.add('bg-muted', 'hover:bg-muted/80');
+            thumb.classList.remove('translate-x-[19px]', 'search-switch-thumb-active');
+            thumb.classList.add('translate-x-[2px]', 'bg-background/80');
         }
     }
 

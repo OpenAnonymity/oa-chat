@@ -143,13 +143,15 @@ export default class MessageNavigation {
     
     calculateBarWidth(content) {
         const length = content.length;
-        // Define width categories with more pronounced differences
-        if (length < 50) return 6;     // Very short (one-liners)
-        if (length < 150) return 10;   // Short (brief)
-        if (length < 400) return 15;   // Medium-short
-        if (length < 800) return 20;   // Medium
-        if (length < 1500) return 26;  // Long
-        return 32; // Very long (detailed responses)
+        // Define width categories with more varied lengths for better visual distinction
+        if (length < 100) return 6;      // Very short (one-liners)
+        if (length < 300) return 8;      // Short (brief)
+        if (length < 600) return 10;     // Medium-short
+        if (length < 1000) return 12;    // Medium
+        if (length < 1500) return 14;    // Medium-long
+        if (length < 2500) return 16;    // Long
+        if (length < 4000) return 18;    // Very long
+        return 20; // Extremely long (detailed responses)
     }
 
     showPreview(button, messageIndex) {

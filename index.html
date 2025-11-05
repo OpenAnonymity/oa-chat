@@ -152,6 +152,9 @@
                     <!-- Input Area -->
                     <div class="absolute bottom-0 left-0 right-0 sm:mb-2 sm:mt-0 flex-shrink-0 md:px-4">
                         <div class="rounded-lg p-1.5 border border-border w-full max-w-4xl mx-auto flex-shrink-0 bg-card shadow-lg" style="isolation: isolate;">
+                                <!-- File Previews Container -->
+                                <div id="file-previews-container" class="hidden mb-3 flex flex-wrap gap-3"></div>
+                                
                                 <!-- Textarea Container -->
                                 <div class="relative w-full flex flex-col">
                                     <div class="rounded-md w-full focus-within:bg-accent text-muted-foreground focus-within:text-foreground transition-colors bg-card">
@@ -178,11 +181,13 @@
                                             </div>
                                         </button>
                                         <!-- File Upload Button -->
-                                        <span class="inline-flex">
-                                            <button class="inline-flex items-center justify-center rounded-md transition-colors hover:bg-accent/30 text-muted-foreground hover:text-foreground h-7 w-7">
+                                        <span class="inline-flex relative">
+                                            <input type="file" id="file-upload-input" multiple accept="image/*,.pdf,audio/*" class="hidden">
+                                            <button id="file-upload-btn" class="inline-flex items-center justify-center rounded-md transition-colors hover:bg-accent/30 text-muted-foreground hover:text-foreground h-7 w-7 relative" title="Upload files (images, PDFs, audio)">
                                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                                                     <path stroke-linecap="round" stroke-linejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 0 1-6.364-6.364l10.94-10.94A3 3 0 1 1 19.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 0 0 2.112 2.13" />
                                                 </svg>
+                                                <span id="file-count-badge" class="hidden absolute -top-1 -right-1 w-4 h-4 bg-green-600 text-white text-[10px] font-bold rounded-full flex items-center justify-center"></span>
                                             </button>
                                         </span>
 

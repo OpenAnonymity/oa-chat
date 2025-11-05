@@ -779,6 +779,15 @@ textarea:focus {
     }
 }
 
+/* Search switch active state - works in both light and dark mode */
+.search-switch-active {
+    background-color: rgb(59, 130, 246) !important;
+}
+
+.search-switch-thumb-active {
+    background-color: white !important;
+}
+
 /* Smooth scroll behavior */
 html {
     scroll-behavior: smooth;
