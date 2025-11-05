@@ -571,7 +571,7 @@ class RightPanel {
         if (this.networkLogs.length === 0) {
             return `
                 <div class="p-8 text-center">
-                    <svg class="w-12 h-12 mx-auto mb-3 text-muted-foreground/20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg class="w-12 h-12 mx-auto mb-3 text-muted-foreground/30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
                     </svg>
                     <p class="text-xs text-muted-foreground">No activity for this session yet</p>
@@ -802,7 +802,7 @@ class RightPanel {
                     <div class="mb-3">
                         <div class="flex items-center justify-between">
                             <span class="text-xs font-semibold text-foreground">Next Inference Ticket</span>
-                            <span class="text-[10px] text-foreground font-medium px-1.5 py-0.5 bg-muted/50 rounded-full">#${this.ticketIndex + 1} of ${this.ticketCount}</span>
+                            <span class="text-[10px] text-foreground font-medium px-1.5 py-0.5 bg-primary/10 border border-border/30 rounded-full">#${this.ticketIndex + 1} of ${this.ticketCount}</span>
                         </div>
                     </div>
 

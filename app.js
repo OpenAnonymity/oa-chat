@@ -249,6 +249,25 @@ class ChatApp {
         return this.state.sessions.find(s => s.id === this.state.currentSessionId);
     }
 
+    async handleNewChatRequest() {
+        const current = this.getCurrentSession();
+        if (current) {
+            const messages = await chatDB.getSessionMessages(current.id);
+            const isEmptyNoKey = messages.length === 0 && !current.apiKey;
+            if (isEmptyNoKey) {
+                if (this.floatingPanel) {
+                    this.floatingPanel.showMessage(
+                        "You're already in a new chat. Send a message or acquire a key first.",
+                        'plain',
+                        3000
+                    );
+                }
+                return; // Block creating another new session
+            }
+        }
+        await this.createSession();
+    }
+
     async updateSessionTitle(sessionId, title) {
         const session = this.state.sessions.find(s => s.id === sessionId);
         if (session) {
@@ -660,7 +679,7 @@ class ChatApp {
         if (!session) {
             this.elements.messagesContainer.innerHTML = `
                 <div class="text-center text-muted-foreground mt-20">
-                    <p class="text-lg">Chat anonymously</p>
+                    <p class="text-lg">Ask anonymously</p>
                     <p class="text-sm mt-2">Type a message below to get started</p>
                 </div>
             `;
@@ -673,7 +692,7 @@ class ChatApp {
         if (messages.length === 0) {
             this.elements.messagesContainer.innerHTML = `
                 <div class="text-center text-muted-foreground mt-20">
-                    <p class="text-lg">Chat anonymously</p>
+                    <p class="text-lg">Ask anonymously</p>
                     <p class="text-sm mt-2">Type a message below to get started</p>
                 </div>
             `;
@@ -835,7 +854,7 @@ class ChatApp {
 
         // New chat button
         this.elements.newChatBtn.addEventListener('click', () => {
-            this.createSession();
+            this.handleNewChatRequest();
         });
 
         // Auto-resize textarea
@@ -926,16 +945,19 @@ class ChatApp {
 
             const thumb = this.elements.searchSwitch.querySelector('.search-switch-thumb');
             if (this.searchEnabled) {
-                this.elements.searchSwitch.classList.add('bg-primary');
+                this.elements.searchSwitch.style.backgroundColor = 'hsl(217.2 91.2% 59.8%)';
                 this.elements.searchSwitch.classList.remove('bg-muted', 'hover:bg-muted/80');
                 thumb.classList.remove('translate-x-[2px]', 'bg-background/80');
-                thumb.classList.add('translate-x-[21px]', 'bg-primary-foreground');
+                thumb.classList.add('translate-x-[19px]');
+                thumb.style.backgroundColor = 'white';
             } else {
-                this.elements.searchSwitch.classList.remove('bg-primary');
+                this.elements.searchSwitch.style.backgroundColor = '';
                 this.elements.searchSwitch.classList.add('bg-muted', 'hover:bg-muted/80');
-                thumb.classList.remove('translate-x-[21px]', 'bg-primary-foreground');
+                thumb.classList.remove('translate-x-[19px]');
                 thumb.classList.add('translate-x-[2px]', 'bg-background/80');
+                thumb.style.backgroundColor = '';
             }
+            this.updateInputState();
         });
 
         // Status dot button handler - toggles floating panel
@@ -962,7 +984,7 @@ class ChatApp {
             // Cmd/Ctrl + / for new chat
             if ((e.metaKey || e.ctrlKey) && e.key === '/') {
                 e.preventDefault();
-                this.createSession();
+                this.handleNewChatRequest();
             }
 
             // Cmd/Ctrl + K for model picker
@@ -1056,8 +1078,10 @@ class ChatApp {
 
         if (this.isWaitingForResponse) {
             this.elements.messageInput.placeholder = "Waiting for response...";
+        } else if (this.searchEnabled) {
+            this.elements.messageInput.placeholder = "Search the web anonymously";
         } else {
-            this.elements.messageInput.placeholder = "Chat anonymously";
+            this.elements.messageInput.placeholder = "Ask anonymously";
         }
     }
 

@@ -333,7 +333,13 @@
 
 .prose hr {
     margin: 1rem 0;
-    border-top: 1px solid hsl(var(--color-border));
+    border: none;
+    border-top: 2px solid hsl(var(--color-border));
+    opacity: 0.6;
+}
+
+.dark .prose hr {
+    opacity: 0.8;
 }
 
 /* Dark mode adjustments for prose */

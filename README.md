@@ -12,7 +12,7 @@ A minimal, fully-functional chat web application that replicates OpenRouter's ch
 - ✅ **LaTeX Rendering**: Mathematical equations with KaTeX
 - ✅ **IndexedDB Storage**: Persistent sessions and messages in browser database
 - ✅ **Auto-scrolling**: Messages automatically scroll to bottom
-- ✅ **Keyboard Shortcuts**: 
+- ✅ **Keyboard Shortcuts**:
   - ⌘/ - New chat
   - ⌘K - Open model picker
   - ⌘⇧⌫ - Clear chat
@@ -21,15 +21,13 @@ A minimal, fully-functional chat web application that replicates OpenRouter's ch
 
 ### Advanced Features
 - 🔍 **Live Model Search**: Filter models by name, provider, or category
-- ⚙️ **Settings Menu**: 
+- ⚙️ **Settings Menu**:
   - Auto-expand
   - Export/Import
   - Get Markdown
   - Clear Models
   - Clear Chat
   - Share Models
-  - Import Character
-  - Duplicate Room
 - 🔄 **Search Toggle**: Enable/disable search functionality
 - 📁 **File Upload**: Attach files to messages (UI ready)
 - 💾 **Memory System**: Context management (UI ready)

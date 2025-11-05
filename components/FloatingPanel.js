@@ -12,31 +12,31 @@ class FloatingPanel {
         this.isExpanded = false;
         this.currentLog = null;
         this.message = null; // To hold status messages
-        
+
         // Position will be calculated dynamically
-        
+
         // Show the panel on initialization
         setTimeout(() => this.show(), 100);
     }
-    
+
     show() {
         if (this.isVisible) return;
-        
+
         this.isVisible = true;
         this.createElement();
         this.render();
     }
-    
+
     hide() {
         if (!this.isVisible) return;
-        
+
         this.isVisible = false;
         const panel = document.getElementById('floating-panel');
         if (panel) {
             panel.remove();
         }
     }
-    
+
     toggle() {
         if (this.isVisible) {
             this.hide();
@@ -44,19 +44,19 @@ class FloatingPanel {
             this.show();
         }
     }
-    
+
     createElement() {
         // Remove existing panel if any
         const existing = document.getElementById('floating-panel');
         if (existing) {
             existing.remove();
         }
-        
+
         // Create floating panel container
         const floatingPanel = document.createElement('div');
         floatingPanel.id = 'floating-panel';
         floatingPanel.className = 'fixed bg-background border border-border shadow-lg rounded-lg z-50 transition-all duration-300';
-        
+
         // Dynamically calculate position based on the status dot
         const statusDotBtn = document.getElementById('status-dot-btn');
         if (statusDotBtn) {
@@ -76,24 +76,24 @@ class FloatingPanel {
 
         floatingPanel.style.width = '280px';
         floatingPanel.style.maxWidth = 'calc(100vw - 2.5rem)';
-        
+
         // Add content container
         const content = document.createElement('div');
         content.id = 'floating-panel-content';
         content.className = 'bg-background rounded-lg flex flex-col';
         content.style.height = 'auto';
-        
+
         floatingPanel.appendChild(content);
         document.body.appendChild(floatingPanel);
     }
-    
+
     updateWithLog(log) {
         this.currentLog = log;
         if (this.isVisible) {
             this.render();
         }
     }
-    
+
     showMessage(text, type = 'info', duration = 0) {
         this.message = { text, type };
         if (!this.isVisible) {
@@ -112,7 +112,7 @@ class FloatingPanel {
             this.render();
         }
     }
-    
+
     render() {
         const content = document.getElementById('floating-panel-content');
         if (!content) return;
@@ -128,6 +128,10 @@ class FloatingPanel {
                 case 'success':
                     colorClass = 'text-green-500';
                     icon = `<svg class="w-4 h-4 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path></svg>`;
+                    break;
+                case 'plain':
+                    colorClass = 'text-muted-foreground';
+                    icon = '';
                     break;
                 default:
                     colorClass = 'text-foreground';
@@ -148,7 +152,7 @@ class FloatingPanel {
 
         const session = this.app.getCurrentSession();
         const hasActiveKey = session && session.apiKey && session.expiresAt && (new Date(session.expiresAt) > new Date());
-        
+
         if (hasActiveKey) {
             if (this.currentLog) {
                 content.innerHTML = `
@@ -156,7 +160,7 @@ class FloatingPanel {
                         ${renderNetworkLog(this.currentLog, this.isExpanded, true)}
                     </div>
                 `;
-                
+
                 // Attach event handlers
                 const logContainer = document.getElementById('minimal-log-container');
                 if (logContainer) {
@@ -167,7 +171,7 @@ class FloatingPanel {
                         this.render();
                     };
                 }
-                
+
                 // Attach close handler
                 const closeBtn = document.getElementById('close-floating-btn');
                 if (closeBtn) {
@@ -189,7 +193,7 @@ class FloatingPanel {
                         </button>
                     </div>
                 `;
-                
+
                 // Attach close handler
                 const closeBtn = document.getElementById('close-floating-btn');
                 if (closeBtn) {
@@ -213,7 +217,7 @@ class FloatingPanel {
                     </div>
                 </div>
             `;
-            
+
             // Attach close handler
             const closeBtn = document.getElementById('close-floating-btn');
             if (closeBtn) {
@@ -221,7 +225,7 @@ class FloatingPanel {
             }
         }
     }
-    
+
     destroy() {
         this.hide();
     }

@@ -160,7 +160,7 @@
                                                 id="message-input"
                                                 rows="1"
                                                 class="w-full bg-transparent leading-6 focus:outline-none resize-none overflow-y-hidden text-foreground placeholder:text-muted-foreground"
-                                                placeholder="Chat anonymously"
+                                                placeholder="Ask anonymously"
                                                 style="height: 24px; min-height: 24px; max-height: 200px;"
                                             ></textarea>
                                         </div>
@@ -196,23 +196,21 @@
                                             </button>
                                             <!-- Settings Dropdown Menu (hidden by default) -->
                                             <div id="settings-menu" class="hidden absolute bottom-full mb-2 left-0 z-[100] rounded-lg border border-border bg-popover shadow-lg p-2 min-w-[220px]">
-                                                <button class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent hover:text-accent-foreground rounded-md transition-colors">Auto-expand</button>
-                                                <button class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent hover:text-accent-foreground rounded-md transition-colors">Export</button>
-                                                <button class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent hover:text-accent-foreground rounded-md transition-colors">Import</button>
-                                                <button class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent hover:text-accent-foreground rounded-md transition-colors">Get Markdown</button>
-                                                <button class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent hover:text-accent-foreground rounded-md transition-colors">Clear Models</button>
-                                                <button id="clear-chat-btn" class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent hover:text-accent-foreground rounded-md flex items-center justify-between transition-colors">
+                                                <button class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent/30 hover:text-accent-foreground rounded-md transition-colors">Auto-expand</button>
+                                                <button class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent/30 hover:text-accent-foreground rounded-md transition-colors">Export</button>
+                                                <button class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent/30 hover:text-accent-foreground rounded-md transition-colors">Import</button>
+                                                <button class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent/30 hover:text-accent-foreground rounded-md transition-colors">Get Markdown</button>
+                                                <button class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent/30 hover:text-accent-foreground rounded-md transition-colors">Clear Models</button>
+                                                <button id="clear-chat-btn" class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent/30 hover:text-accent-foreground rounded-md flex items-center justify-between transition-colors">
                                                     <span>Clear Chat</span>
                                                     <span class="text-xs text-muted-foreground">⌘ ⇧ ⌫</span>
                                                 </button>
-                                                <button class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent hover:text-accent-foreground rounded-md transition-colors">Share Models</button>
-                                                <button class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent hover:text-accent-foreground rounded-md transition-colors">Import Character</button>
-                                                <button class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent hover:text-accent-foreground rounded-md transition-colors">Duplicate Room</button>
+                                                <button class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent/30 hover:text-accent-foreground rounded-md transition-colors">Share Models</button>
 
                                                 <div class="mt-2 border-t border-border pt-2">
                                                     <p class="px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Theme</p>
                                                     <div role="group" aria-label="Theme selection" class="space-y-1">
-                                                        <button type="button" class="theme-option flex w-full items-center justify-between rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" data-theme-option="light" role="menuitemradio" aria-checked="false">
+                                                        <button type="button" class="theme-option flex w-full items-center justify-between rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" data-theme-option="light" role="menuitemradio" aria-checked="false">
                                                             <span class="flex items-center gap-2">
                                                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                                                                     <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1.5m0 15V21m9-9h-1.5M4.5 12H3m15.364-6.364-1.06 1.06M6.697 17.303l-1.06 1.06m0-12.728 1.06 1.06m9.607 9.607 1.06 1.06M12 8.25a3.75 3.75 0 1 1 0 7.5 3.75 3.75 0 0 1 0-7.5z"></path>
@@ -223,7 +221,7 @@
                                                                 <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path>
                                                             </svg>
                                                         </button>
-                                                        <button type="button" class="theme-option flex w-full items-center justify-between rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" data-theme-option="dark" role="menuitemradio" aria-checked="false">
+                                                        <button type="button" class="theme-option flex w-full items-center justify-between rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" data-theme-option="dark" role="menuitemradio" aria-checked="false">
                                                             <span class="flex items-center gap-2">
                                                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                                                                     <path stroke-linecap="round" stroke-linejoin="round" d="M21 12.79A9 9 0 0 1 11.21 3 7.5 7.5 0 1 0 21 12.79z"></path>
@@ -234,7 +232,7 @@
                                                                 <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path>
                                                             </svg>
                                                         </button>
-                                                        <button type="button" class="theme-option flex w-full items-center justify-between rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" data-theme-option="system" role="menuitemradio" aria-checked="false">
+                                                        <button type="button" class="theme-option flex w-full items-center justify-between rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" data-theme-option="system" role="menuitemradio" aria-checked="false">
                                                             <span class="flex items-center gap-2">
                                                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                                                                     <path stroke-linecap="round" stroke-linejoin="round" d="M9 17v2h6v-2m2 0h.75A2.25 2.25 0 0 0 20 14.75V7.25A2.25 2.25 0 0 0 17.75 5H6.25A2.25 2.25 0 0 0 4 7.25v7.5A2.25 2.25 0 0 0 6.25 17H7.5"></path>
