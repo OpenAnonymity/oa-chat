@@ -270,7 +270,7 @@ class RightPanel {
             // Desktop mode: clear transform and use width for show/hide
             panel.style.transform = '';
             if (this.isVisible) {
-                panel.style.width = '20rem';
+                panel.style.width = '18rem';
                 panel.style.borderLeftWidth = '1px';
                 if (showBtn) showBtn.classList.add('hidden');
                 if (appContainer) appContainer.classList.add('right-panel-open');

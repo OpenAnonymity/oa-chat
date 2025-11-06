@@ -631,6 +631,83 @@ textarea:focus {
     }
 }
 
+/* Sidebar hidden state */
+#sidebar.sidebar-hidden {
+    width: 0 !important;
+    border-right-width: 0 !important;
+}
+
+#sidebar.sidebar-hidden ~ * #show-sidebar-btn {
+    display: flex !important;
+}
+
+/* Sidebar responsive styles */
+@media (max-width: 768px) {
+    /* Hide sidebar by default on mobile */
+    #sidebar:not(.mobile-visible) {
+        position: fixed !important;
+        left: 0;
+        top: 0;
+        z-index: 40;
+        width: 0 !important;
+        border-right-width: 0 !important;
+    }
+
+    /* Show sidebar toggle button on mobile */
+    #show-sidebar-btn {
+        display: flex !important;
+    }
+
+    /* When sidebar is shown on mobile, make it overlay with proper width */
+    #sidebar.mobile-visible {
+        position: fixed !important;
+        left: 0;
+        top: 0;
+        z-index: 40;
+        width: 16rem !important;
+        border-right-width: 1px !important;
+        box-shadow: 0 0 20px rgba(0, 0, 0, 0.3);
+    }
+}
+
+/* Desktop: respect hidden state */
+@media (min-width: 769px) {
+    #sidebar:not(.sidebar-hidden) {
+        width: 16rem;
+        border-right-width: 1px;
+    }
+
+    #sidebar.sidebar-hidden {
+        width: 0 !important;
+        border-right-width: 0 !important;
+    }
+
+    #sidebar.sidebar-hidden ~ * #show-sidebar-btn {
+        display: flex !important;
+    }
+}
+
+/* Mobile sidebar backdrop */
+.mobile-sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    background-color: rgba(0, 0, 0, 0.5);
+    z-index: 35;
+    animation: fadeIn 0.2s ease-out;
+    display: none;
+}
+
+.mobile-sidebar-backdrop.visible {
+    display: block;
+}
+
+@media (min-width: 769px) {
+    /* Hide backdrop on desktop */
+    .mobile-sidebar-backdrop {
+        display: none !important;
+    }
+}
+
 /* Message Navigation Styles */
 .message-navigation {
     position: fixed;
@@ -653,7 +730,7 @@ textarea:focus {
 /* Adjust position when right panel is open on desktop */
 @media (min-width: 1024px) {
     .right-panel-open .message-navigation {
-        right: calc(12px + 320px); /* 320px is default right panel width */
+        right: calc(12px + 288px); /* 288px is default right panel width */
     }
 }
 

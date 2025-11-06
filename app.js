@@ -36,6 +36,7 @@ class ChatApp {
             sidebar: document.getElementById('sidebar'),
             hideSidebarBtn: document.getElementById('hide-sidebar-btn'),
             showSidebarBtn: document.getElementById('show-sidebar-btn'),
+            mobileSidebarBackdrop: document.getElementById('mobile-sidebar-backdrop'),
             sessionsScrollArea: document.getElementById('sessions-scroll-area'),
             modelListScrollArea: document.getElementById('model-list-scroll-area'),
             themeOptionButtons: Array.from(document.querySelectorAll('[data-theme-option]')),
@@ -209,6 +210,10 @@ class ChatApp {
 
         // Set up ResizeObserver to adjust chat area padding when input area expands
         this.setupInputAreaObserver();
+        // Handle mobile view on initial load
+        if (this.isMobileView()) {
+            this.hideSidebar();
+        }
 
         // Scroll to bottom after initial load (for refresh)
         setTimeout(() => {
@@ -347,6 +352,11 @@ class ChatApp {
         if (this.floatingPanel && session) {
             this.floatingPanel.render();
         }
+
+        // Close sidebar on mobile after switching session
+        if (this.isMobileView()) {
+            this.hideSidebar();
+        }
     }
 
     getCurrentSession() {
@@ -370,6 +380,11 @@ class ChatApp {
             }
         }
         await this.createSession();
+
+        // Close sidebar on mobile after creating new chat
+        if (this.isMobileView()) {
+            this.hideSidebar();
+        }
     }
 
     async updateSessionTitle(sessionId, title) {
@@ -845,7 +860,10 @@ class ChatApp {
         const session = this.getCurrentSession();
         if (!session) {
             this.elements.messagesContainer.innerHTML = `
-                <div class="text-center text-muted-foreground mt-20">
+                <div class="text-center text-muted-foreground mt-20 flex flex-col items-center">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-16 h-16 mb-4 opacity-40" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3-3c-1.354 0-2.694-.055-4.02-.163a2.115 2.115 0 0 1-.825-.242m9.345-8.334a2.126 2.126 0 0 0-.476-.095 48.64 48.64 0 0 0-8.048 0c-1.131.094-1.976 1.057-1.976 2.192v4.286c0 .837.46 1.58 1.155 1.951m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.455 48.455 0 0 0 11.25 3c-2.115 0-4.198.137-6.24.402-1.608.209-2.76 1.614-2.76 3.235v6.226c0 1.621 1.152 3.026 2.76 3.235.577.075 1.157.14 1.74.194V21l4.155-4.155" />
+                    </svg>
                     <p class="text-lg">Ask anonymously</p>
                     <p class="text-sm mt-2">Type a message below to get started</p>
                 </div>
@@ -858,7 +876,10 @@ class ChatApp {
 
         if (messages.length === 0) {
             this.elements.messagesContainer.innerHTML = `
-                <div class="text-center text-muted-foreground mt-20">
+                <div class="text-center text-muted-foreground mt-20 flex flex-col items-center">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-16 h-16 mb-4 opacity-40" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3-3c-1.354 0-2.694-.055-4.02-.163a2.115 2.115 0 0 1-.825-.242m9.345-8.334a2.126 2.126 0 0 0-.476-.095 48.64 48.64 0 0 0-8.048 0c-1.131.094-1.976 1.057-1.976 2.192v4.286c0 .837.46 1.58 1.155 1.951m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.455 48.455 0 0 0 11.25 3c-2.115 0-4.198.137-6.24.402-1.608.209-2.76 1.614-2.76 3.235v6.226c0 1.621 1.152 3.026 2.76 3.235.577.075 1.157.14 1.74.194V21l4.155-4.155" />
+                    </svg>
                     <p class="text-lg">Ask anonymously</p>
                     <p class="text-sm mt-2">Type a message below to get started</p>
                 </div>
@@ -1117,25 +1138,48 @@ class ChatApp {
     }
 
     hideSidebar() {
-        if (this.elements.sidebar) {
-            this.elements.sidebar.classList.add('hidden');
-            this.elements.sidebar.classList.remove('md:flex');
+        const sidebar = this.elements.sidebar;
+        const showBtn = this.elements.showSidebarBtn;
+        const backdrop = this.elements.mobileSidebarBackdrop;
+
+        if (sidebar) {
+            // Use CSS class instead of inline styles
+            sidebar.classList.add('sidebar-hidden');
+            sidebar.classList.remove('mobile-visible');
         }
-        if (this.elements.showSidebarBtn) {
-            this.elements.showSidebarBtn.classList.remove('hidden');
-            this.elements.showSidebarBtn.classList.add('flex');
+        if (showBtn) {
+            showBtn.classList.remove('hidden');
+            showBtn.classList.add('flex');
+        }
+        if (backdrop) {
+            backdrop.classList.remove('visible');
         }
     }
 
     showSidebar() {
-        if (this.elements.sidebar) {
-            this.elements.sidebar.classList.remove('hidden');
-            this.elements.sidebar.classList.add('md:flex');
+        const sidebar = this.elements.sidebar;
+        const showBtn = this.elements.showSidebarBtn;
+        const backdrop = this.elements.mobileSidebarBackdrop;
+
+        if (sidebar) {
+            // Use CSS class instead of inline styles
+            sidebar.classList.remove('sidebar-hidden');
+            if (this.isMobileView()) {
+                sidebar.classList.add('mobile-visible');
+            }
         }
-        if (this.elements.showSidebarBtn) {
-            this.elements.showSidebarBtn.classList.add('hidden');
-            this.elements.showSidebarBtn.classList.remove('flex');
+        if (showBtn) {
+            showBtn.classList.add('hidden');
+            showBtn.classList.remove('flex');
         }
+        // Show backdrop only on mobile
+        if (backdrop && this.isMobileView()) {
+            backdrop.classList.add('visible');
+        }
+    }
+
+    isMobileView() {
+        return window.innerWidth <= 768;
     }
 
     setupEventListeners() {
@@ -1300,6 +1344,28 @@ class ChatApp {
         if (this.elements.showSidebarBtn) {
             this.elements.showSidebarBtn.addEventListener('click', () => {
                 this.showSidebar();
+            });
+        }
+
+        // Close sidebar on mobile when clicking outside
+        document.addEventListener('click', (e) => {
+            if (this.isMobileView()) {
+                const sidebar = this.elements.sidebar;
+                const showBtn = this.elements.showSidebarBtn;
+
+                if (sidebar && sidebar.classList.contains('mobile-visible')) {
+                    // Check if click is outside sidebar and not on the show button
+                    if (!sidebar.contains(e.target) && !showBtn.contains(e.target)) {
+                        this.hideSidebar();
+                    }
+                }
+            }
+        });
+
+        // Close sidebar when clicking backdrop
+        if (this.elements.mobileSidebarBackdrop) {
+            this.elements.mobileSidebarBackdrop.addEventListener('click', () => {
+                this.hideSidebar();
             });
         }
 

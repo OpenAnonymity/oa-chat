@@ -88,9 +88,12 @@
     <link rel="stylesheet" href="styles.css">
 </head>
 <body class="bg-background text-foreground h-screen overflow-hidden">
+    <!-- Mobile sidebar backdrop -->
+    <div id="mobile-sidebar-backdrop" class="mobile-sidebar-backdrop"></div>
+
     <div id="app" class="flex flex-col md:flex-row h-full w-full">
         <!-- Left Sidebar: Chat Sessions -->
-        <aside id="sidebar" class="flex-shrink-0 hidden md:flex flex-col bg-background border-r border-border md:w-64 h-full min-h-0">
+        <aside id="sidebar" class="flex-shrink-0 flex flex-col bg-background border-r border-border h-full min-h-0 overflow-hidden transition-[width,border-width] duration-300 ease-in-out w-64">
             <div class="flex h-full w-full flex-col gap-2 p-2">
                 <div class="flex w-full items-center gap-2">
                     <button id="new-chat-btn" class="flex-1 inline-flex items-center whitespace-nowrap transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 gap-2 bg-card border border-border text-foreground shadow-sm hover:bg-accent text-sm font-medium hover:text-accent-foreground h-9 rounded-md px-3 justify-start">
@@ -105,7 +108,7 @@
                     </button>
                     <button id="hide-sidebar-btn" class="inline-flex items-center justify-center rounded-md transition-colors hover:bg-accent/30 text-muted-foreground hover:text-foreground h-9 w-9 flex-shrink-0" aria-label="Hide sidebar">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12" />
                         </svg>
                     </button>
                 </div>
@@ -134,9 +137,9 @@
             <!-- Main Content Area -->
             <main class="relative flex-1 flex flex-col min-w-0 min-h-0 h-full pt-2">
                 <!-- Show Sidebar Button (hidden by default, shown when sidebar is hidden) -->
-                <button id="show-sidebar-btn" class="hidden absolute top-4 left-4 z-30 items-center justify-center rounded-md transition-colors hover:bg-accent/30 text-muted-foreground hover:text-foreground h-8 w-8 cursor-pointer select-none">
+                <button id="show-sidebar-btn" class="hidden absolute top-4 left-4 z-30 inline-flex items-center justify-center rounded-md transition-colors hover:bg-accent/30 text-muted-foreground hover:text-foreground h-8 w-8 cursor-pointer select-none">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12" />
                     </svg>
                 </button>
 
@@ -148,16 +151,16 @@
                 </div>
 
                 <!-- Show Right Panel Button -->
-                <button id="show-right-panel-btn" class="hidden absolute top-4 right-4 z-30 items-center justify-center rounded-md transition-colors hover:bg-accent/30 text-muted-foreground hover:text-foreground h-8 w-8 cursor-pointer select-none">
+                <button id="show-right-panel-btn" class="hidden absolute top-4 right-4 z-30 inline-flex items-center justify-center rounded-md transition-colors hover:bg-accent/30 text-muted-foreground hover:text-foreground h-8 w-8 cursor-pointer select-none">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 4.5v15m6-15v15m-10.875 0h15.75c.621 0 1.125-.504 1.125-1.125V5.625c0-.621-.504-1.125-1.125-1.125H4.125C3.504 4.5 3 5.004 3 5.625v13.5c0 .621.504 1.125 1.125 1.125Z" />
                     </svg>
                 </button>
 
-                <div class="flex flex-1 flex-col min-w-0 gap-2 min-h-0 h-full overflow-hidden">
+                <div class="flex flex-1 flex-col min-w-0 min-h-0 max-h-full">
                     <!-- Chat Messages Area -->
-                    <div id="chat-area" class="flex-1 min-h-0 w-full overflow-y-auto relative">
-                        <div id="messages-container" class="max-w-3xl w-full mx-auto flex flex-col items-center gap-6 px-4 sm:px-6 pb-32">
+                    <div id="chat-area" class="flex-1 min-h-0 w-full overflow-y-auto">
+                        <div id="messages-container" class="max-w-3xl w-full mx-auto flex flex-col items-center gap-6 px-2 sm:px-4 md:px-6 pb-6">
                         </div>
                     </div>
 
