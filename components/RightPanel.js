@@ -267,6 +267,8 @@ class RightPanel {
         if (!panel) return;
 
         if (this.isDesktop) {
+            // Desktop mode: clear transform and use width for show/hide
+            panel.style.transform = '';
             if (this.isVisible) {
                 panel.style.width = '20rem';
                 panel.style.borderLeftWidth = '1px';
@@ -279,7 +281,7 @@ class RightPanel {
                 if (appContainer) appContainer.classList.remove('right-panel-open');
             }
         } else {
-            // Mobile mode, remove inline styles to let classes take over
+            // Mobile mode: clear width styles and use transform
             panel.style.width = '';
             panel.style.borderLeftWidth = '';
             panel.style.transform = 'translateX(100%)';
@@ -883,20 +885,17 @@ class RightPanel {
                             </svg>
                             <span class="text-xs font-medium">OpenRouter API Key</span>
                         </div>
-                        <div class="text-[10px] font-mono bg-muted/20 p-2 rounded-md border border-border break-all text-foreground">
-                            ${this.maskApiKey(this.apiKey)}
+                        <div class="flex items-center justify-between text-[10px] font-mono bg-muted/20 p-2 rounded-md border border-border break-all text-foreground">
+                            <span>${this.maskApiKey(this.apiKey)}</span>
+                            <span id="api-key-expiry" class="font-medium px-2 py-0.5 rounded-full text-[10px] flex-shrink-0 ml-2 ${
+                                this.isExpired ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' : 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                            }">
+                                ${this.timeRemaining || 'Load   ing...'}
+                            </span>
                         </div>
                     </div>
 
                     <div class="space-y-2 mb-3">
-                        <div class="flex items-center justify-between p-2 bg-background rounded-md border border-border">
-                            <span class="text-[10px] text-muted-foreground">Expires in:</span>
-                            <span id="api-key-expiry" class="font-medium px-2 py-0.5 rounded-full text-[10px] ${
-                                this.isExpired ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' : 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                            }">
-                                ${this.timeRemaining || 'Loading...'}
-                            </span>
-                        </div>
 
                         ${this.apiKeyInfo?.station_name ? `
                             <div class="flex items-center justify-between p-2 bg-background rounded-md border border-border">

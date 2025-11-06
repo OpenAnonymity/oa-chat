@@ -90,7 +90,7 @@
 <body class="bg-background text-foreground h-screen overflow-hidden">
     <div id="app" class="flex flex-col md:flex-row h-full w-full">
         <!-- Left Sidebar: Chat Sessions -->
-        <aside id="sidebar" class="flex-shrink-0 flex flex-col bg-background border-r border-border w-full md:w-72 h-full min-h-0">
+        <aside id="sidebar" class="flex-shrink-0 hidden md:flex flex-col bg-background border-r border-border md:w-64 h-full min-h-0">
             <div class="flex h-full w-full flex-col gap-2 p-2">
                 <div class="flex w-full items-center gap-2">
                     <button id="new-chat-btn" class="flex-1 inline-flex items-center whitespace-nowrap transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 gap-2 bg-card border border-border text-foreground shadow-sm hover:bg-accent text-sm font-medium hover:text-accent-foreground h-9 rounded-md px-3 justify-start">
@@ -102,6 +102,11 @@
                             <kbd class="flex items-center justify-center aspect-square h-4 w-4 p-1 pointer-events-none rounded-sm bg-muted border border-border text-foreground text-xs">⌘</kbd>
                             <kbd class="flex items-center justify-center aspect-square h-4 w-4 p-1 pointer-events-none rounded-sm bg-muted border border-border text-foreground text-xs">/</kbd>
                         </div>
+                    </button>
+                    <button id="hide-sidebar-btn" class="inline-flex items-center justify-center rounded-md transition-colors hover:bg-accent/30 text-muted-foreground hover:text-foreground h-9 w-9 flex-shrink-0" aria-label="Hide sidebar">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+                        </svg>
                     </button>
                 </div>
 
@@ -128,8 +133,15 @@
         <div class="flex flex-1 min-w-0">
             <!-- Main Content Area -->
             <main class="relative flex-1 flex flex-col min-w-0 min-h-0 h-full pt-2">
+                <!-- Show Sidebar Button (hidden by default, shown when sidebar is hidden) -->
+                <button id="show-sidebar-btn" class="hidden absolute top-4 left-4 z-30 items-center justify-center rounded-md transition-colors hover:bg-accent/30 text-muted-foreground hover:text-foreground h-8 w-8 cursor-pointer select-none">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                    </svg>
+                </button>
+
                 <!-- Status Indicator Dot (Always visible) -->
-                <div id="status-indicator" class="absolute top-4 left-4 z-30">
+                <div id="status-indicator" class="absolute top-4 left-12 z-30">
                     <button id="status-dot-btn" class="relative group">
                         <div id="breathing-dot" class="w-2.5 h-2.5 rounded-full breathing-dot cursor-pointer hover:scale-110 transition-transform"></div>
                     </button>
@@ -145,7 +157,7 @@
                 <div class="flex flex-1 flex-col min-w-0 gap-2 min-h-0 h-full overflow-hidden">
                     <!-- Chat Messages Area -->
                     <div id="chat-area" class="flex-1 min-h-0 w-full overflow-y-auto relative">
-                        <div id="messages-container" class="max-w-4xl w-full mx-auto flex flex-col items-center gap-6 p-6 pb-32">
+                        <div id="messages-container" class="max-w-3xl w-full mx-auto flex flex-col items-center gap-6 px-4 sm:px-6 pb-32">
                         </div>
                     </div>
 
@@ -154,7 +166,7 @@
                         <div class="rounded-lg p-1.5 border border-border w-full max-w-4xl mx-auto flex-shrink-0 bg-card shadow-lg" style="isolation: isolate;">
                                 <!-- File Previews Container -->
                                 <div id="file-previews-container" class="hidden mb-3 flex flex-wrap gap-3"></div>
-                                
+
                                 <!-- Textarea Container -->
                                 <div class="relative w-full flex flex-col">
                                     <div class="rounded-md w-full focus-within:bg-accent text-muted-foreground focus-within:text-foreground transition-colors bg-card">
@@ -171,7 +183,7 @@
                                 </div>
 
                                 <!-- Bottom Actions Bar -->
-                                <div class="flex gap-1 pt-1.5">
+                                <div class="flex flex-wrap gap-1 pt-1.5 md:flex-nowrap">
                                     <div class="relative flex w-full min-w-0 items-center gap-1">
                                         <button id="model-picker-btn" class="inline-flex items-center justify-center whitespace-nowrap rounded-md text-xs font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-7 px-2 shrink-0 gap-1 text-foreground">
                                             <span>Select Model</span>
@@ -279,6 +291,7 @@
                                     </div>
 
                                 </div>
+                            </div>
                         </div>
                     </div>
                 </div>

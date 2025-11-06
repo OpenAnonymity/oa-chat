@@ -33,6 +33,9 @@ class ChatApp {
             clearChatBtn: document.getElementById('clear-chat-btn'),
             toggleRightPanelBtn: document.getElementById('toggle-right-panel-btn'), // This might be legacy, but let's keep it for now.
             showRightPanelBtn: document.getElementById('show-right-panel-btn'),
+            sidebar: document.getElementById('sidebar'),
+            hideSidebarBtn: document.getElementById('hide-sidebar-btn'),
+            showSidebarBtn: document.getElementById('show-sidebar-btn'),
             sessionsScrollArea: document.getElementById('sessions-scroll-area'),
             modelListScrollArea: document.getElementById('model-list-scroll-area'),
             themeOptionButtons: Array.from(document.querySelectorAll('[data-theme-option]')),
@@ -67,21 +70,21 @@ class ChatApp {
         // Store block-level LaTeX to prevent wrapping in <p> tags
         const blockLatexPlaceholders = [];
         let processedContent = content;
-        
+
         // Extract block LaTeX \[...\] and replace with placeholders
         processedContent = processedContent.replace(/\\\[([\s\S]*?)\\\]/g, (match, latex) => {
             const placeholder = `BLOCKLATEX${blockLatexPlaceholders.length}PLACEHOLDER`;
             blockLatexPlaceholders.push(match);
             return `\n\n${placeholder}\n\n`;
         });
-        
+
         // Extract block LaTeX $$...$$ and replace with placeholders
         processedContent = processedContent.replace(/\$\$([\s\S]*?)\$\$/g, (match, latex) => {
             const placeholder = `BLOCKLATEX${blockLatexPlaceholders.length}PLACEHOLDER`;
             blockLatexPlaceholders.push(match);
             return `\n\n${placeholder}\n\n`;
         });
-        
+
         // Escape inline LaTeX delimiters
         processedContent = processedContent
             .replace(/\\\(/g, '\\\\(')
@@ -89,7 +92,7 @@ class ChatApp {
 
         // Process markdown
         let html = marked.parse(processedContent);
-        
+
         // Restore block LaTeX without <p> wrapping
         blockLatexPlaceholders.forEach((latex, index) => {
             const placeholder = `BLOCKLATEX${index}PLACEHOLDER`;
@@ -133,7 +136,7 @@ class ChatApp {
             // Second RAF: wait for any triggered reflows/repaints
             requestAnimationFrame(() => {
                 chatArea.scrollTop = chatArea.scrollHeight;
-                
+
                 // Third RAF: verify we actually reached the bottom, scroll again if needed
                 requestAnimationFrame(() => {
                     const isAtBottom = chatArea.scrollHeight - chatArea.scrollTop - chatArea.clientHeight < 5;
@@ -183,7 +186,7 @@ class ChatApp {
         if (this.floatingPanel && currentSession) {
             this.floatingPanel.render();
         }
-        
+
         // Restore search state from current session
         if (currentSession) {
             this.searchEnabled = currentSession.searchEnabled || false;
@@ -203,10 +206,10 @@ class ChatApp {
                 this.messageNavigation.handleScroll();
             }
         });
-        
+
         // Set up ResizeObserver to adjust chat area padding when input area expands
         this.setupInputAreaObserver();
-        
+
         // Scroll to bottom after initial load (for refresh)
         setTimeout(() => {
             this.scrollToBottom(true);
@@ -217,7 +220,7 @@ class ChatApp {
         // Find the input container element
         const inputContainer = document.querySelector('.absolute.bottom-0.left-0.right-0');
         if (!inputContainer) return;
-        
+
         // Create a ResizeObserver to watch for size changes
         const resizeObserver = new ResizeObserver((entries) => {
             for (const entry of entries) {
@@ -225,12 +228,12 @@ class ChatApp {
                 // Add extra padding to ensure messages aren't covered
                 const paddingBottom = inputHeight + 16; // 16px extra for spacing
                 this.elements.messagesContainer.style.paddingBottom = `${paddingBottom}px`;
-                
+
                 // Auto-scroll to bottom using our reliable scroll helper
                 this.scrollToBottom();
             }
         });
-        
+
         resizeObserver.observe(inputContainer);
     }
 
@@ -302,7 +305,7 @@ class ChatApp {
 
         this.state.sessions.unshift(session);
         this.state.currentSessionId = session.id;
-        
+
         // Reset search toggle for new session
         this.searchEnabled = false;
         this.updateSearchToggle();
@@ -325,14 +328,14 @@ class ChatApp {
     switchSession(sessionId) {
         this.state.currentSessionId = sessionId;
         chatDB.saveSetting('currentSessionId', sessionId);
-        
+
         // Load session-specific search state
         const session = this.getCurrentSession();
         if (session) {
             this.searchEnabled = session.searchEnabled || false;
             this.updateSearchToggle();
         }
-        
+
         this.renderSessions();
         this.renderMessages();
         this.renderCurrentModel();
@@ -435,7 +438,7 @@ class ChatApp {
             if (!this.getCurrentSession()) {
                 await this.createSession();
             }
-    
+
             // Add user message with file metadata
             const metadata = {};
             if (hasFiles) {
@@ -455,7 +458,7 @@ class ChatApp {
                 metadata.searchEnabled = true;
             }
             await this.addMessage('user', content || 'Please analyze these files:', metadata);
-            
+
             // Clear input and files
             this.elements.messageInput.value = '';
             this.uploadedFiles = [];
@@ -547,12 +550,12 @@ class ChatApp {
                     streamingTokens: 0
                 };
                 await chatDB.saveMessage(streamingMessage);
-                
+
                 // Track progress for periodic saves
                 let lastSaveLength = 0;
                 const SAVE_INTERVAL_CHARS = 100; // Save every 100 characters
                 let firstChunk = true;
-                
+
                 // Stream the response with token tracking
                 const tokenData = await openRouterAPI.streamCompletion(
                     messages,
@@ -565,7 +568,7 @@ class ChatApp {
                             await this.renderMessages();
                             firstChunk = false;
                         }
-                        
+
                         streamedContent += chunk;
 
                         // Periodically save partial content to handle refresh during streaming
@@ -644,8 +647,8 @@ class ChatApp {
         const providerInitial = model ? model.provider.charAt(0) : 'A';
         const id = 'typing-' + Date.now();
         const typingHtml = `
-            <div id="${id}" class="max-w-4xl w-full px-2 md:px-3 fade-in">
-                <div class="flex items-center gap-3">
+            <div id="${id}" class="w-full px-2 md:px-3 fade-in">
+                <div class="flex items-center gap-2">
                     <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow bg-muted p-0.5">
                         <span class="text-xs font-semibold">${providerInitial}</span>
                     </div>
@@ -755,12 +758,15 @@ class ChatApp {
                                     <input class="w-full cursor-pointer truncate bg-transparent text-sm leading-5 focus:outline-none text-foreground ${session.title === 'New Chat' ? 'italic text-muted-foreground' : ''}" placeholder="Untitled Chat" readonly value="${session.title}">
                                 </div>
                             </a>
-                            <div class="flex shrink-0 items-center">
-                                <button class="delete-session-btn inline-flex items-center justify-center whitespace-nowrap rounded-md font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 gap-2 leading-6 text-muted-foreground hover:bg-accent hover:text-accent-foreground border border-transparent h-9 w-9 group-hover:opacity-100 md:opacity-0" aria-label="Delete session" data-session-id="${session.id}">
+                            <div class="flex shrink-0 items-center relative">
+                                <button class="session-menu-btn inline-flex items-center justify-center whitespace-nowrap rounded-md font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 gap-2 leading-6 text-muted-foreground hover:bg-accent hover:text-accent-foreground border border-transparent h-9 w-9 group-hover:opacity-100 md:opacity-0" aria-label="Session options" data-session-id="${session.id}">
                                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
                                         <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5ZM12 12.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5ZM12 18.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5Z" />
                                     </svg>
                                 </button>
+                                <div class="session-menu hidden absolute right-0 top-10 z-[100] rounded-lg border border-border bg-popover shadow-lg p-1 min-w-[140px]" data-session-id="${session.id}">
+                                    <button class="delete-session-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent/30 hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">Delete</button>
+                                </div>
                             </div>
                         </div>
                     `).join('')}
@@ -773,16 +779,35 @@ class ChatApp {
         // Add click handlers
         document.querySelectorAll('.chat-session').forEach(el => {
             el.addEventListener('click', (e) => {
-                if (!e.target.closest('.delete-session-btn')) {
+                if (!e.target.closest('.session-menu-btn') && !e.target.closest('.session-menu')) {
                     this.switchSession(el.dataset.sessionId);
                 }
             });
         });
 
-        document.querySelectorAll('.delete-session-btn').forEach(btn => {
+        // Session menu toggle
+        document.querySelectorAll('.session-menu-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
-                this.deleteSession(btn.dataset.sessionId);
+                const sessionId = btn.dataset.sessionId;
+                const menu = document.querySelector(`.session-menu[data-session-id="${sessionId}"]`);
+
+                // Close all other session menus
+                document.querySelectorAll('.session-menu').forEach(m => {
+                    if (m !== menu) m.classList.add('hidden');
+                });
+
+                menu.classList.toggle('hidden');
+            });
+        });
+
+        // Delete session action
+        document.querySelectorAll('.delete-session-action').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const sessionId = btn.dataset.sessionId;
+                this.deleteSession(sessionId);
+                // Menu will be removed when sessions are re-rendered
             });
         });
     }
@@ -845,7 +870,7 @@ class ChatApp {
             if (message.role === 'user') {
                 // Check for file attachments
                 const hasFiles = message.files && message.files.length > 0;
-                
+
                 const filePreview = hasFiles ? `
                     <div class="flex flex-wrap gap-2 mt-3">
                         ${message.files.map(fileData => {
@@ -853,11 +878,11 @@ class ChatApp {
                             const fileName = typeof fileData === 'string' ? fileData : fileData.name;
                             const fileType = typeof fileData === 'string' ? '' : fileData.type;
                             const dataUrl = typeof fileData === 'string' ? null : fileData.dataUrl;
-                            
+
                             const isPdf = fileType === 'application/pdf' || fileName.toLowerCase().endsWith('.pdf');
                             const isImage = fileType.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp)$/i.test(fileName);
                             const isAudio = fileType.startsWith('audio/') || /\.(wav|mp3|ogg|webm)$/i.test(fileName);
-                            
+
                             if (isPdf) {
                                 return `
                                     <div class="bg-background relative h-32 w-48 cursor-pointer select-none overflow-hidden rounded-lg border border-border shadow-sm hover:shadow-md transition-shadow">
@@ -941,7 +966,7 @@ class ChatApp {
                         }).join('')}
                     </div>
                 ` : '';
-                
+
                 return `
                     <div class="w-full px-2 md:px-3 fade-in self-end" data-message-id="${message.id}">
                         <div class="group my-2 flex w-full flex-col gap-2 justify-end items-end">
@@ -1009,7 +1034,7 @@ class ChatApp {
 
         // Scroll to bottom after rendering is complete
         this.scrollToBottom(true);
-        
+
         // Update message navigation if it exists
         if (this.messageNavigation) {
             this.messageNavigation.update();
@@ -1091,6 +1116,28 @@ class ChatApp {
         this.elements.modelSearch.value = '';
     }
 
+    hideSidebar() {
+        if (this.elements.sidebar) {
+            this.elements.sidebar.classList.add('hidden');
+            this.elements.sidebar.classList.remove('md:flex');
+        }
+        if (this.elements.showSidebarBtn) {
+            this.elements.showSidebarBtn.classList.remove('hidden');
+            this.elements.showSidebarBtn.classList.add('flex');
+        }
+    }
+
+    showSidebar() {
+        if (this.elements.sidebar) {
+            this.elements.sidebar.classList.remove('hidden');
+            this.elements.sidebar.classList.add('md:flex');
+        }
+        if (this.elements.showSidebarBtn) {
+            this.elements.showSidebarBtn.classList.add('hidden');
+            this.elements.showSidebarBtn.classList.remove('flex');
+        }
+    }
+
     setupEventListeners() {
         this.setupThemeControls();
 
@@ -1163,11 +1210,15 @@ class ChatApp {
             }
         });
 
-        // Close settings menu when clicking outside
+        // Close settings menu and session menus when clicking outside
         document.addEventListener('click', () => {
             if (!this.elements.settingsMenu.classList.contains('hidden')) {
                 this.elements.settingsMenu.classList.add('hidden');
             }
+            // Close all session menus
+            document.querySelectorAll('.session-menu').forEach(menu => {
+                menu.classList.add('hidden');
+            });
         });
 
         // Clear chat functionality
@@ -1197,7 +1248,7 @@ class ChatApp {
                 thumb.classList.remove('translate-x-[19px]', 'search-switch-thumb-active');
                 thumb.classList.add('translate-x-[2px]', 'bg-background/80');
             }
-            
+
             // Save to current session
             const session = this.getCurrentSession();
             if (session) {
@@ -1239,6 +1290,19 @@ class ChatApp {
             });
         }
 
+        // Sidebar toggle buttons
+        if (this.elements.hideSidebarBtn) {
+            this.elements.hideSidebarBtn.addEventListener('click', () => {
+                this.hideSidebar();
+            });
+        }
+
+        if (this.elements.showSidebarBtn) {
+            this.elements.showSidebarBtn.addEventListener('click', () => {
+                this.showSidebar();
+            });
+        }
+
         // Keyboard shortcuts
         document.addEventListener('keydown', (e) => {
             // Cmd/Ctrl + / for new chat
@@ -1268,9 +1332,36 @@ class ChatApp {
                 this.closeModelPicker();
             }
 
-            // Escape to close settings menu
-            if (e.key === 'Escape' && !this.elements.settingsMenu.classList.contains('hidden')) {
-                this.elements.settingsMenu.classList.add('hidden');
+            // Escape to close settings menu and session menus
+            if (e.key === 'Escape') {
+                if (!this.elements.settingsMenu.classList.contains('hidden')) {
+                    this.elements.settingsMenu.classList.add('hidden');
+                }
+                document.querySelectorAll('.session-menu').forEach(menu => {
+                    menu.classList.add('hidden');
+                });
+            }
+
+            // Auto-focus message input when typing
+            const activeElement = document.activeElement;
+            const isInputFocused = activeElement && (
+                activeElement.tagName === 'INPUT' ||
+                activeElement.tagName === 'TEXTAREA' ||
+                activeElement.isContentEditable
+            );
+
+            // Only auto-focus if:
+            // - No input/textarea is currently focused
+            // - Not using modifier keys (Cmd/Ctrl/Alt)
+            // - Key is a printable character
+            // - Model picker is closed
+            if (!isInputFocused &&
+                !e.metaKey &&
+                !e.ctrlKey &&
+                !e.altKey &&
+                e.key.length === 1 &&
+                this.elements.modelPickerModal.classList.contains('hidden')) {
+                this.elements.messageInput.focus();
             }
         });
     }
@@ -1291,6 +1382,9 @@ class ChatApp {
                 if (this.elements.settingsMenu) {
                     this.elements.settingsMenu.classList.add('hidden');
                 }
+                document.querySelectorAll('.session-menu').forEach(menu => {
+                    menu.classList.add('hidden');
+                });
             });
         });
     }
@@ -1347,10 +1441,10 @@ class ChatApp {
 
     async handleFileUpload(files) {
         const { validateFile } = await import('./services/fileUtils.js');
-        
+
         const validFiles = [];
         const errors = [];
-        
+
         for (const file of files) {
             const validation = validateFile(file);
             if (validation.valid) {
@@ -1359,14 +1453,14 @@ class ChatApp {
                 errors.push(validation.error);
             }
         }
-        
+
         if (validFiles.length > 0) {
             this.uploadedFiles.push(...validFiles);
             this.renderFilePreviews();
             this.updateFileCountBadge();
             this.updateInputState();
         }
-        
+
         if (errors.length > 0) {
             this.showErrorNotification(errors.join('\n\n'));
         }
@@ -1392,9 +1486,9 @@ class ChatApp {
                 </button>
             </div>
         `;
-        
+
         document.body.appendChild(notification);
-        
+
         // Auto-remove after 6 seconds
         setTimeout(() => {
             notification.remove();
@@ -1407,15 +1501,15 @@ class ChatApp {
             container.classList.add('hidden');
             return;
         }
-        
+
         container.classList.remove('hidden');
-        
+
         // Generate previews with image and PDF thumbnails
         const previewPromises = this.uploadedFiles.map(async (file, index) => {
             const fileSize = this.formatFileSize(file.size);
             const isImage = file.type.startsWith('image/');
             const isPdf = file.type === 'application/pdf';
-            
+
             let preview = '';
             if (isImage) {
                 // Create image preview
@@ -1447,7 +1541,7 @@ class ChatApp {
                     </div>
                 `;
             }
-            
+
             return `
                 <div class="bg-background relative h-28 w-40 cursor-default select-none overflow-hidden rounded-xl border border-border shadow-md hover:shadow-lg transition-shadow">
                     ${preview}
@@ -1469,7 +1563,7 @@ class ChatApp {
                 </div>
             `;
         });
-        
+
         const previews = await Promise.all(previewPromises);
         container.innerHTML = previews.join('');
     }
@@ -1484,7 +1578,7 @@ class ChatApp {
 
     getFileTypeIcon(file) {
         const type = file.type;
-        
+
         if (type.startsWith('image/')) {
             return `
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-8 h-8 text-primary">
@@ -1533,7 +1627,7 @@ class ChatApp {
 
     updateSearchToggle() {
         this.elements.searchSwitch.setAttribute('aria-checked', this.searchEnabled);
-        
+
         const thumb = this.elements.searchSwitch.querySelector('.search-switch-thumb');
         if (this.searchEnabled) {
             this.elements.searchSwitch.classList.remove('bg-muted', 'hover:bg-muted/80');
