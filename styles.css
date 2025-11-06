@@ -230,6 +230,7 @@
 .message-user p {
     font-size: 0.875rem;
     margin: 0;
+    white-space: pre-wrap; /* Preserve whitespace and newlines */
 }
 
 .message-assistant {
