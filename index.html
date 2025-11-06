@@ -144,11 +144,14 @@
                 </button>
 
                 <!-- Status Indicator Dot (Always visible) -->
+                <!-- FEATURE DISABLED: Status indicator and activity banner - uncomment to re-enable -->
+                <!--
                 <div id="status-indicator" class="absolute top-4 left-12 z-30">
                     <button id="status-dot-btn" class="relative group">
                         <div id="breathing-dot" class="w-2.5 h-2.5 rounded-full breathing-dot cursor-pointer hover:scale-110 transition-transform"></div>
                     </button>
                 </div>
+                -->
 
                 <!-- Show Right Panel Button -->
                 <button id="show-right-panel-btn" class="hidden absolute top-4 right-4 z-30 inline-flex items-center justify-center rounded-md transition-colors hover:bg-accent/30 text-muted-foreground hover:text-foreground h-8 w-8 cursor-pointer select-none">
@@ -160,7 +163,7 @@
                 <div class="flex flex-1 flex-col min-w-0 min-h-0 max-h-full">
                     <!-- Chat Messages Area -->
                     <div id="chat-area" class="flex-1 min-h-0 w-full overflow-y-auto">
-                        <div id="messages-container" class="max-w-3xl w-full mx-auto flex flex-col items-center gap-6 px-2 sm:px-4 md:px-6 pb-6">
+                        <div id="messages-container" class="max-w-3xl w-full mx-auto flex flex-col items-center gap-6 px-2 sm:px-4 md:px-6 pt-6 pb-6">
                         </div>
                     </div>
 

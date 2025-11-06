@@ -181,6 +181,8 @@ class FloatingPanel {
                     };
                 }
             } else {
+                // FEATURE DISABLED: "No activity yet" banner - uncomment to re-enable
+                /*
                 content.innerHTML = `
                     <div class="p-2 flex items-center justify-between text-xs">
                         <div class="flex items-center gap-2">
@@ -199,6 +201,7 @@ class FloatingPanel {
                 if (closeBtn) {
                     closeBtn.onclick = () => this.hide();
                 }
+                */
             }
         } else {
             // No active key, render the prompt message.

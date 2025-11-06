@@ -1,5 +1,6 @@
 // Main application logic
 import RightPanel from './components/RightPanel.js';
+// FEATURE DISABLED: Status indicator and activity banner - uncomment to re-enable
 import FloatingPanel from './components/FloatingPanel.js';
 import MessageNavigation from './components/MessageNavigation.js';
 import apiKeyStore from './services/apiKeyStore.js';
@@ -157,8 +158,9 @@ class ChatApp {
         this.rightPanel = new RightPanel(this);
         this.rightPanel.mount();
 
+        // FEATURE DISABLED: Status indicator and activity banner - uncomment to re-enable
         // Initialize floating panel
-        this.floatingPanel = new FloatingPanel(this);
+        // this.floatingPanel = new FloatingPanel(this);
 
         // Initialize message navigation
         this.messageNavigation = new MessageNavigation(this);
@@ -488,11 +490,17 @@ class ChatApp {
             const isKeyExpired = session.expiresAt ? new Date(session.expiresAt) <= new Date() : true;
             if (!session.apiKey || isKeyExpired) {
                 try {
-                    this.floatingPanel.showMessage('Acquiring API key...', 'info');
+                    if (this.floatingPanel) {
+                        this.floatingPanel.showMessage('Acquiring API key...', 'info');
+                    }
                     await this.acquireAndSetApiKey(session);
-                    this.floatingPanel.showMessage('Successfully acquired API key!', 'success', 2000);
+                    if (this.floatingPanel) {
+                        this.floatingPanel.showMessage('Successfully acquired API key!', 'success', 2000);
+                    }
                 } catch (error) {
-                    this.floatingPanel.showMessage(error.message, 'error', 5000);
+                    if (this.floatingPanel) {
+                        this.floatingPanel.showMessage(error.message, 'error', 5000);
+                    }
                     await this.addMessage('assistant', `**Error:** ${error.message}`);
                     return; // Return early if key acquisition fails
                 }
