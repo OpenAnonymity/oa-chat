@@ -609,7 +609,7 @@ class RightPanel {
                     </div>
 
                     <!-- Content column -->
-                    <div class="flex-1 min-w-0" style="margin-top: 1px;">
+                    <div class="flex-1 min-w-0" style="margin-top: 2px;">
                         <!-- Compact one-line view -->
                         <div class="activity-log-header cursor-pointer hover:bg-muted/30 pl-1 pr-2 py-1 rounded transition-all duration-150" data-log-id="${log.id}">
                             <div class="flex items-center gap-1.5 text-xs">
