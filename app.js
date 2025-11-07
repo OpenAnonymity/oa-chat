@@ -1092,6 +1092,12 @@ class ChatApp {
                 }
             }
 
+            // Cmd/Ctrl + Shift + F for search focus
+            if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'f' || e.key === 'F')) {
+                e.preventDefault();
+                this.elements.searchRoomsInput?.focus();
+            }
+
             // Cmd/Ctrl + Shift + Backspace for clear chat
             if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'Backspace') {
                 e.preventDefault();

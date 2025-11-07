@@ -115,15 +115,22 @@
 
                 <div class="flex-1 min-h-0 overflow-hidden py-px">
                     <div class="flex h-full min-h-0 w-full flex-col gap-2">
-                        <input
-                            id="search-rooms"
-                            class="appearance-none px-3 py-2 text-foreground transition duration-150 ease-in-out rounded-lg placeholder:text-muted-foreground shadow-sm focus:shadow-inner focus:outline-none h-9 w-full border bg-background border-border focus:bg-background focus:border-input shrink-0"
-                            autocomplete="off"
-                            autocorrect="off"
-                            autocapitalize="off"
-                            spellcheck="false"
-                            placeholder="Search chats..."
-                            value="">
+                        <div class="relative shrink-0">
+                            <input
+                                id="search-rooms"
+                                class="appearance-none px-3 py-2 pr-16 text-foreground transition duration-150 ease-in-out rounded-lg placeholder:text-muted-foreground shadow-sm focus:shadow-inner focus:outline-none h-9 w-full border bg-background border-border focus:bg-background focus:border-input"
+                                autocomplete="off"
+                                autocorrect="off"
+                                autocapitalize="off"
+                                spellcheck="false"
+                                placeholder="Search chats..."
+                                value="">
+                            <div class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5 pointer-events-none text-muted-foreground text-xs">
+                                <span class="opacity-60">⌘</span>
+                                <span class="opacity-60">⇧</span>
+                                <span class="opacity-60">F</span>
+                            </div>
+                        </div>
 
                         <div id="sessions-scroll-area" class="flex-1 min-h-0 overflow-y-auto">
                             <div id="sessions-list" class="flex flex-col gap-0.5"></div>
