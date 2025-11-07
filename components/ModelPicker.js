@@ -79,7 +79,7 @@ export default class ModelPicker {
     }
 
     /**
-     * Filters models based on search term.
+     * Filters models based on search term using fuzzy matching.
      * @param {string} searchTerm - Search query
      * @returns {Array} Filtered models
      */
@@ -88,9 +88,9 @@ export default class ModelPicker {
         if (!term) return this.app.state.models;
 
         return this.app.state.models.filter(model =>
-            model.name.toLowerCase().includes(term) ||
-            model.provider.toLowerCase().includes(term) ||
-            model.category.toLowerCase().includes(term)
+            this.app.fuzzyMatch(term, model.name.toLowerCase()) ||
+            this.app.fuzzyMatch(term, model.provider.toLowerCase()) ||
+            this.app.fuzzyMatch(term, model.category.toLowerCase())
         );
     }
 
