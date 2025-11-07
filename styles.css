@@ -383,6 +383,15 @@ textarea:focus {
     color: hsl(215.4 16.3% 46.9%);
 }
 
+/* Dark mode hover fixes for better contrast */
+.dark .model-option:hover {
+    background-color: hsl(217.2 32.6% 25%) !important;
+}
+
+.dark .session-menu-btn:hover {
+    background-color: hsl(217.2 32.6% 30%) !important;
+}
+
 /* Model picker styles */
 [cmdk-input-wrapper] {
     position: relative;
