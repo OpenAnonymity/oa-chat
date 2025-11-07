@@ -611,6 +611,9 @@ class ChatApp {
             // Show typing indicator
             const typingId = this.showTypingIndicator(modelNameToUse);
 
+            // Declare streaming message outside try block so it's accessible in catch
+            let streamingMessage = null;
+
             try {
                 // Get AI response from OpenRouter with streaming
                 const messages = await chatDB.getSessionMessages(session.id);
@@ -621,7 +624,7 @@ class ChatApp {
                 let streamingTokenCount = 0;
 
                 // Add empty assistant message that we'll update
-                const streamingMessage = {
+                streamingMessage = {
                     id: streamingMessageId,
                     sessionId: session.id,
                     role: 'assistant',
@@ -689,8 +692,19 @@ class ChatApp {
 
             } catch (error) {
                 console.error('Error getting AI response:', error);
-                await this.addMessage('assistant', 'Sorry, I encountered an error while processing your request.');
                 this.removeTypingIndicator(typingId);
+
+                // Update the streaming message with error instead of creating a new one
+                if (streamingMessage) {
+                    streamingMessage.content = 'Sorry, I encountered an error while processing your request.';
+                    streamingMessage.tokenCount = null;
+                    streamingMessage.streamingTokens = null;
+                    await chatDB.saveMessage(streamingMessage);
+                    this.renderMessages();
+                } else {
+                    // If streaming message wasn't created yet, add a new error message
+                    await this.addMessage('assistant', 'Sorry, I encountered an error while processing your request.');
+                }
             }
         } finally {
             this.isWaitingForResponse = false;
