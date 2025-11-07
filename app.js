@@ -970,6 +970,25 @@ class ChatApp {
             });
         }
 
+        // File upload button - triggers file input
+        if (this.elements.fileUploadBtn) {
+            this.elements.fileUploadBtn.addEventListener('click', () => {
+                this.elements.fileUploadInput.click();
+            });
+        }
+
+        // File input change - handles file selection
+        if (this.elements.fileUploadInput) {
+            this.elements.fileUploadInput.addEventListener('change', async (e) => {
+                const files = Array.from(e.target.files);
+                if (files.length > 0) {
+                    await this.handleFileUpload(files);
+                    // Reset the input value to allow re-selecting the same files
+                    e.target.value = '';
+                }
+            });
+        }
+
         // Keyboard shortcuts
         document.addEventListener('keydown', (e) => {
             // Cmd/Ctrl + / for new chat
