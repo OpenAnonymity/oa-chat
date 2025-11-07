@@ -118,6 +118,17 @@ class ChatDatabase {
         });
     }
 
+    async deleteMessage(messageId) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['messages'], 'readwrite');
+            const store = transaction.objectStore('messages');
+            const request = store.delete(messageId);
+
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        });
+    }
+
     // Settings
     async saveSetting(key, value) {
         return new Promise((resolve, reject) => {

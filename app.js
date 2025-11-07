@@ -68,7 +68,7 @@ class ChatApp {
         this.chatArea = null;
         this.chatInput = null;
         this.modelPicker = null;
-        this.isWaitingForResponse = false;
+        this.sessionStreamingStates = new Map(); // Track streaming state per session
 
         this.init();
     }
@@ -363,6 +363,9 @@ class ChatApp {
         this.renderMessages();
         this.renderCurrentModel();
 
+        // Update input state for new session
+        this.updateInputState();
+
         // Notify right panel of session change
         if (this.rightPanel) {
             this.rightPanel.onSessionChange(session);
@@ -390,6 +393,9 @@ class ChatApp {
         this.renderMessages();
         this.renderCurrentModel();
 
+        // Update UI based on new session's streaming state
+        this.updateInputState();
+
         // Notify right panel of session change
         if (this.rightPanel && session) {
             this.rightPanel.onSessionChange(session);
@@ -410,6 +416,61 @@ class ChatApp {
      */
     getCurrentSession() {
         return this.state.sessions.find(s => s.id === this.state.currentSessionId);
+    }
+
+    /**
+     * Gets the streaming state for a session
+     * @param {string} sessionId - Session ID
+     * @returns {Object} Streaming state object with isStreaming and abortController
+     */
+    getSessionStreamingState(sessionId) {
+        if (!this.sessionStreamingStates.has(sessionId)) {
+            this.sessionStreamingStates.set(sessionId, {
+                isStreaming: false,
+                abortController: null
+            });
+        }
+        return this.sessionStreamingStates.get(sessionId);
+    }
+
+    /**
+     * Updates streaming state for a session
+     * @param {string} sessionId - Session ID
+     * @param {boolean} isStreaming - Whether session is streaming
+     * @param {AbortController} abortController - Abort controller for the stream
+     */
+    setSessionStreamingState(sessionId, isStreaming, abortController = null) {
+        this.sessionStreamingStates.set(sessionId, {
+            isStreaming,
+            abortController
+        });
+        // Update UI when streaming state changes
+        this.updateInputState();
+    }
+
+    /**
+     * Checks if current session is streaming
+     * @returns {boolean}
+     */
+    isCurrentSessionStreaming() {
+        const session = this.getCurrentSession();
+        if (!session) return false;
+        const state = this.getSessionStreamingState(session.id);
+        return state.isStreaming;
+    }
+
+    /**
+     * Stops streaming for the current session
+     */
+    stopCurrentSessionStreaming() {
+        const session = this.getCurrentSession();
+        if (!session) return;
+        
+        const state = this.getSessionStreamingState(session.id);
+        if (state.isStreaming && state.abortController) {
+            state.abortController.abort();
+            // The finally block in sendMessage will handle cleanup
+        }
     }
 
     /**
@@ -498,14 +559,20 @@ class ChatApp {
      * Handles API key acquisition, model selection, and streaming updates.
      */
     async sendMessage() {
-        if (this.isWaitingForResponse) return;
+        const session = this.getCurrentSession();
+        if (!session) return;
+
+        // Check if current session is already streaming
+        const streamingState = this.getSessionStreamingState(session.id);
+        if (streamingState.isStreaming) return;
 
         const content = this.elements.messageInput.value.trim();
         const hasFiles = this.uploadedFiles.length > 0;
         if (!content && !hasFiles) return;
 
-        this.isWaitingForResponse = true;
-        this.updateInputState();
+        // Create abort controller for this stream
+        const abortController = new AbortController();
+        this.setSessionStreamingState(session.id, true, abortController);
 
         // Store current files and search state before clearing
         const currentFiles = [...this.uploadedFiles];
@@ -679,7 +746,8 @@ class ChatApp {
                         }
                     },
                     currentFiles,
-                    searchEnabled
+                    searchEnabled,
+                    abortController
                 );
 
                 // Save the final message content with token data
@@ -696,21 +764,40 @@ class ChatApp {
                 console.error('Error getting AI response:', error);
                 this.removeTypingIndicator(typingId);
 
-                // Update the streaming message with error instead of creating a new one
-                if (streamingMessage) {
-                    streamingMessage.content = 'Sorry, I encountered an error while processing your request.';
-                    streamingMessage.tokenCount = null;
-                    streamingMessage.streamingTokens = null;
-                    await chatDB.saveMessage(streamingMessage);
-                    this.renderMessages();
+                // Check if error was due to cancellation
+                if (error.isCancelled) {
+                    // Keep the partial message if there's content, otherwise remove it
+                    if (streamingMessage) {
+                        if (streamedContent.trim()) {
+                            // Save the partial content with a note
+                            streamingMessage.content = streamedContent;
+                            streamingMessage.tokenCount = null;
+                            streamingMessage.streamingTokens = null;
+                            await chatDB.saveMessage(streamingMessage);
+                            this.renderMessages();
+                        } else {
+                            // Remove empty message if no content was generated
+                            await chatDB.deleteMessage(streamingMessage.id);
+                            this.renderMessages();
+                        }
+                    }
                 } else {
-                    // If streaming message wasn't created yet, add a new error message
-                    await this.addMessage('assistant', 'Sorry, I encountered an error while processing your request.');
+                    // Update the streaming message with error instead of creating a new one
+                    if (streamingMessage) {
+                        streamingMessage.content = 'Sorry, I encountered an error while processing your request.';
+                        streamingMessage.tokenCount = null;
+                        streamingMessage.streamingTokens = null;
+                        await chatDB.saveMessage(streamingMessage);
+                        this.renderMessages();
+                    } else {
+                        // If streaming message wasn't created yet, add a new error message
+                        await this.addMessage('assistant', 'Sorry, I encountered an error while processing your request.');
+                    }
                 }
             }
         } finally {
-            this.isWaitingForResponse = false;
-            this.updateInputState();
+            // Clear streaming state for this session
+            this.setSessionStreamingState(session.id, false, null);
             this.elements.messageInput.focus();
         }
     }
@@ -1050,7 +1137,11 @@ class ChatApp {
                 !this.elements.sendBtn.disabled &&
                 this.elements.modelPickerModal.classList.contains('hidden')) {
                 e.preventDefault();
-                this.sendMessage();
+                if (this.isCurrentSessionStreaming()) {
+                    this.stopCurrentSessionStreaming();
+                } else {
+                    this.sendMessage();
+                }
                 return;
             }
 
@@ -1084,20 +1175,44 @@ class ChatApp {
 
     updateInputState() {
         const hasContent = this.elements.messageInput.value.trim() || this.uploadedFiles.length > 0;
-        const shouldBeDisabled = !hasContent || this.isWaitingForResponse;
+        const isStreaming = this.isCurrentSessionStreaming();
+        const shouldBeDisabled = !isStreaming && !hasContent;
 
-        this.elements.messageInput.disabled = this.isWaitingForResponse;
+        // Don't disable input during streaming - allow typing
+        this.elements.messageInput.disabled = false;
         this.elements.sendBtn.disabled = shouldBeDisabled;
 
         this.elements.sendBtn.classList.toggle('opacity-40', shouldBeDisabled);
         this.elements.sendBtn.classList.toggle('opacity-100', !shouldBeDisabled);
 
-        if (this.isWaitingForResponse) {
+        // Update button icon based on streaming state
+        if (isStreaming) {
+            // Change to stop icon
+            this.elements.sendBtn.innerHTML = `
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5">
+                    <rect x="6" y="6" width="12" height="12" rx="2" ry="2"/>
+                </svg>
+            `;
+            // Change button style to indicate stop
+            this.elements.sendBtn.classList.add('bg-destructive', 'hover:bg-destructive/90');
+            this.elements.sendBtn.classList.remove('bg-primary', 'hover:bg-primary/90');
             this.elements.messageInput.placeholder = "Waiting for response...";
-        } else if (this.searchEnabled) {
-            this.elements.messageInput.placeholder = "Search the web anonymously";
         } else {
-            this.elements.messageInput.placeholder = "Ask anonymously";
+            // Restore send icon
+            this.elements.sendBtn.innerHTML = `
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 10.5 12 3m0 0 7.5 7.5M12 3v18" />
+                </svg>
+            `;
+            // Restore primary button style
+            this.elements.sendBtn.classList.add('bg-primary', 'hover:bg-primary/90');
+            this.elements.sendBtn.classList.remove('bg-destructive', 'hover:bg-destructive/90');
+            
+            if (this.searchEnabled) {
+                this.elements.messageInput.placeholder = "Search the web anonymously";
+            } else {
+                this.elements.messageInput.placeholder = "Ask anonymously";
+            }
         }
     }
 
