@@ -87,6 +87,11 @@
     border-color: hsl(var(--color-input) / var(--tw-border-opacity, 1)) !important;
 }
 
+.border-foreground {
+    --tw-border-opacity: 1;
+    border-color: hsl(var(--color-foreground) / var(--tw-border-opacity, 1)) !important;
+}
+
 .bg-secondary {
     --tw-bg-opacity: 1;
     background-color: hsl(var(--color-secondary) / var(--tw-bg-opacity, 1)) !important;

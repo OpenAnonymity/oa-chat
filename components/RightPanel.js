@@ -68,8 +68,8 @@ class RightPanel {
         this.apiKeyInfo = this.currentSession.apiKeyInfo || null;
         this.expiresAt = this.currentSession.expiresAt || null;
 
-        // Load network logs for this session
-        this.networkLogs = networkLogger.getLogsBySession(this.currentSession.id);
+        // Load ALL network logs globally (not just for this session)
+        this.networkLogs = networkLogger.getAllLogs();
 
         this.render();
         this.startExpirationTimer();
@@ -117,22 +117,20 @@ class RightPanel {
 
         // Subscribe to network logger
         networkLogger.subscribe(() => {
-            // Reload logs for current session
-            if (this.currentSession) {
-                // Collapse all logs before adding a new one
-                this.expandedLogIds.clear();
+            // Reload ALL logs globally
+            // Collapse all logs before adding a new one
+            this.expandedLogIds.clear();
 
-                this.networkLogs = networkLogger.getLogsBySession(this.currentSession.id);
-                this.render();
+            this.networkLogs = networkLogger.getAllLogs();
+            this.render();
 
-                // Auto-scroll to bottom to show newest activity
-                this.scrollToBottom();
+            // Auto-scroll to bottom to show newest activity
+            this.scrollToBottom();
 
-                // Notify app about new log for floating panel
-                if (this.app.floatingPanel && this.networkLogs.length > 0) {
-                    const latestLog = this.networkLogs[0];
-                    this.app.floatingPanel.updateWithLog(latestLog);
-                }
+            // Notify app about new log for floating panel
+            if (this.app.floatingPanel && this.networkLogs.length > 0) {
+                const latestLog = this.networkLogs[0];
+                this.app.floatingPanel.updateWithLog(latestLog);
             }
         });
     }
@@ -480,6 +478,13 @@ class RightPanel {
         setTimeout(() => this.handleRequestApiKey(), 100);
     }
 
+    async handleClearActivityTimeline() {
+        if (window.networkLogger) {
+            await window.networkLogger.clearAllLogs();
+            this.render();
+        }
+    }
+
     escapeHtml(text) {
         const div = document.createElement('div');
         div.textContent = text;
@@ -488,7 +493,8 @@ class RightPanel {
 
     maskApiKey(key) {
         if (!key) return '';
-        return `${key.slice(0, 12)}...${key.slice(-8)}`;
+        // Show sk-or-v1-xxxx...yyyy (first 4 chars after prefix, last 4 chars)
+        return `${key.slice(0, 13)}...${key.slice(-4)}`;
     }
 
     toggleLogExpand(logId) {
@@ -569,6 +575,28 @@ class RightPanel {
         return 'text-gray-600';
     }
 
+    getSessionInfo(sessionId) {
+        if (!this.app || !sessionId) return null;
+        const session = this.app.state.sessions.find(s => s.id === sessionId);
+        return session;
+    }
+
+    getSessionTitle(sessionId) {
+        const session = this.getSessionInfo(sessionId);
+        if (!session) return 'Unknown Session';
+        return session.title;
+    }
+
+    isCurrentSession(sessionId) {
+        return this.currentSession && this.currentSession.id === sessionId;
+    }
+
+    getSessionKey(sessionId) {
+        const session = this.getSessionInfo(sessionId);
+        if (!session) return null;
+        return session.apiKey;
+    }
+
     renderNetworkLogs() {
         if (this.networkLogs.length === 0) {
             return `
@@ -576,13 +604,16 @@ class RightPanel {
                     <svg class="w-12 h-12 mx-auto mb-3 text-muted-foreground/30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
                     </svg>
-                    <p class="text-xs text-muted-foreground">No activity for this session yet</p>
+                    <p class="text-xs text-muted-foreground">No activity yet</p>
                 </div>
             `;
         }
 
         // Reverse order: oldest first, newest last
         const logsToShow = [...this.networkLogs].reverse();
+
+        // Track session changes for separators
+        let lastSessionId = null;
 
         return logsToShow.map((log, index) => {
             const isExpanded = this.expandedLogIds.has(log.id);
@@ -591,11 +622,60 @@ class RightPanel {
             const dotClass = getStatusDotClass(log.status);
             const isFirst = index === 0;
             const isLast = index === logsToShow.length - 1;
-            // Dim all but the latest (last in reversed array)
-            const opacityClass = isLast ? '' : 'opacity-60';
+            // Highlight the latest (last in reversed array) with a more visible background
+            const highlightClass = isLast ? 'bg-accent' : '';
+            const hoverClass = isLast ? 'hover:brightness-125' : 'hover:bg-muted/30';
 
-            return `
-                <div class="activity-log-entry relative flex ${opacityClass}" data-log-id="${log.id}">
+            // Check if this is a system-level event (tickets/privacy pass)
+            const isSystemEvent = (log.type === 'local' && log.method === 'LOCAL') || log.type === 'ticket';
+
+            // For grouping purposes, treat system events as a special "system" session
+            const effectiveSessionId = isSystemEvent ? 'system' : log.sessionId;
+
+            // Check if we need a session separator
+            const needsSeparator = effectiveSessionId !== lastSessionId;
+            const sessionTitle = this.getSessionTitle(log.sessionId);
+            const isCurrentSess = this.isCurrentSession(log.sessionId);
+            const sessionKey = this.getSessionKey(log.sessionId);
+            lastSessionId = effectiveSessionId;
+
+            let sessionSeparator = '';
+            if (needsSeparator) {
+                if (isSystemEvent) {
+                    // System-level separator for ticket/privacy operations
+                    sessionSeparator = `
+                        <div class="session-separator mb-2 mt-2">
+                            <div class="flex items-center gap-2 px-2 py-1.5 rounded-md border whitespace-nowrap border-muted-foreground/30 bg-muted/20">
+                                <svg class="w-3 h-3 text-muted-foreground flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z"></path>
+                                </svg>
+                                <span class="text-[10px] font-medium whitespace-nowrap text-muted-foreground">
+                                    System
+                                </span>
+                            </div>
+                        </div>
+                    `;
+                } else if (log.sessionId) {
+                    // Chat session separator
+                    const keyDisplay = sessionKey ? `<span class="text-[10px] font-mono whitespace-nowrap ${isCurrentSess ? 'text-foreground' : 'text-muted-foreground'} ml-auto">${this.maskApiKey(sessionKey)}</span>` : '';
+                    sessionSeparator = `
+                        <div class="session-separator mb-2 mt-2">
+                            <div class="flex items-center gap-2 px-2 py-1.5 rounded-md border whitespace-nowrap ${isCurrentSess ? 'border-foreground bg-primary/10' : 'border-border'}">
+                                <svg class="w-3 h-3 ${isCurrentSess ? 'text-foreground' : 'text-muted-foreground'} flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path>
+                                </svg>
+                                <span class="text-[10px] font-medium whitespace-nowrap ${isCurrentSess ? 'text-foreground' : 'text-muted-foreground'}" title="${sessionTitle}">
+                                    ${sessionTitle.length > 14 ? sessionTitle.substring(0, 14) + '...' : sessionTitle}
+                                </span>
+                                ${keyDisplay}
+                            </div>
+                        </div>
+                    `;
+                }
+            }
+
+            return `${sessionSeparator}
+                <div class="activity-log-entry relative flex" data-log-id="${log.id}">
                     <!-- Timeline visualization column -->
                     <div class="flex flex-col items-center" style="width: 24px; flex-shrink: 0;">
                         <!-- Top line -->
@@ -613,8 +693,8 @@ class RightPanel {
                     <!-- Content column -->
                     <div class="flex-1 min-w-0" style="margin-top: 2px;">
                         <!-- Compact one-line view -->
-                        <div class="activity-log-header cursor-pointer hover:bg-muted/30 pl-1 pr-2 py-1 rounded transition-all duration-150" data-log-id="${log.id}">
-                            <div class="flex items-center gap-1.5 text-xs">
+                        <div class="activity-log-header cursor-pointer ${hoverClass} pl-1 pr-2 py-1 rounded transition-all duration-150 text-[10px] ${highlightClass}" data-log-id="${log.id}">
+                            <div class="flex items-center gap-1.5">
                                 <span class="flex-shrink-0 text-muted-foreground">
                                     ${icon}
                                 </span>
@@ -624,9 +704,6 @@ class RightPanel {
                                 <span class="text-muted-foreground font-mono ml-auto" style="font-size: 10px;">
                                     ${formatTimestamp(log.timestamp)}
                                 </span>
-                                <svg class="w-3 h-3 flex-shrink-0 text-muted-foreground transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
-                                </svg>
                             </div>
                         </div>
 
@@ -883,7 +960,7 @@ class RightPanel {
                             <svg class="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
                             </svg>
-                            <span class="text-xs font-medium">OpenRouter API Key</span>
+                            <span class="text-xs font-medium">Ephemeral OpenRouter API Key</span>
                         </div>
                         <div class="flex items-center justify-between text-[10px] font-mono bg-muted/20 p-2 rounded-md border border-border break-all text-foreground">
                             <span>${this.maskApiKey(this.apiKey)}</span>
@@ -934,11 +1011,18 @@ class RightPanel {
             <!-- Activity Timeline (scrollable) -->
             <div class="border-t border-border flex flex-col bg-background flex-1 min-h-0">
                 <div class="p-3 border-b border-border bg-muted/10">
-                    <div class="flex items-center gap-1.5">
-                        <svg class="w-3.5 h-3.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                        </svg>
-                        <h3 class="text-xs font-medium text-foreground">Activity Timeline</h3>
+                    <div class="flex items-center justify-between gap-1.5">
+                        <div class="flex items-center gap-1.5">
+                            <svg class="w-3.5 h-3.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                            <h3 class="text-xs font-medium text-foreground">Activity Timeline</h3>
+                        </div>
+                        <button id="clear-activity-timeline-btn" class="inline-flex items-center justify-center rounded-md transition-colors hover:bg-accent/30 text-muted-foreground hover:text-foreground h-6 w-6" title="Clear activity timeline">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                            </svg>
+                        </button>
                     </div>
                 </div>
                 <div id="network-logs-container" class="flex-1 overflow-y-auto px-3 py-2">
@@ -1006,6 +1090,12 @@ class RightPanel {
         const clearBtn = document.getElementById('clear-key-btn');
         if (clearBtn) {
             clearBtn.onclick = () => this.handleClearApiKey();
+        }
+
+        // Clear activity timeline button
+        const clearActivityBtn = document.getElementById('clear-activity-timeline-btn');
+        if (clearActivityBtn) {
+            clearActivityBtn.onclick = () => this.handleClearActivityTimeline();
         }
 
         // Activity log expand/collapse

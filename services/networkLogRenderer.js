@@ -54,7 +54,42 @@ export function getStatusDotClass(status) {
  * Get user-friendly activity description based on log type and endpoint
  */
 export function getActivityDescription(log, detailed = false) {
-    const { type, url, method, status, response, request } = log;
+    const { type, url, method, status, response, request, action, message } = log;
+
+    // Handle local events (non-network operations)
+    if (type === 'local' && method === 'LOCAL') {
+        if (!detailed) {
+            // Simple descriptions for local events
+            if (action === 'ticket-select') {
+                return 'Redeeming unblinded ticket';
+            } else if (action === 'tickets-blind') {
+                return `Blinded ${response?.ticket_count || 0} tickets locally`;
+            } else if (action === 'tickets-signed') {
+                return `Received ${response?.signed_tickets_received || 0} signed tickets`;
+            } else if (action === 'tickets-unblind') {
+                return `Unblinded ${response?.tickets_finalized || 0} tickets`;
+            }
+            return message || 'Local operation completed';
+        } else {
+            // Detailed descriptions for local events
+            if (action === 'ticket-select') {
+                const ticketIndex = response?.ticket_index || 0;
+                const unusedTickets = response?.unused_tickets || 0;
+                return `Selected inference ticket #${ticketIndex} from your local storage. You have ${unusedTickets} unused ticket${unusedTickets !== 1 ? 's' : ''} remaining. This ticket will be exchanged with a station for an anonymous API key.`;
+            } else if (action === 'tickets-blind') {
+                const count = response?.ticket_count || 0;
+                return `Created ${count} blinded inference ticket${count !== 1 ? 's' : ''} locally using Privacy Pass cryptography. These blinded tokens hide your identity from the server while allowing it to sign them. The blinded tickets are now ready to be sent to the server for signing.`;
+            } else if (action === 'tickets-signed') {
+                const count = response?.signed_tickets_received || 0;
+                return `Received ${count} signed ticket${count !== 1 ? 's' : ''} from the server. The server has signed your blinded tokens without learning anything about your identity. These signed tickets now need to be unblinded locally to become usable.`;
+            } else if (action === 'tickets-unblind') {
+                const count = response?.tickets_finalized || 0;
+                const ready = response?.tickets_ready || 0;
+                return `Successfully unblinded and finalized ${count} inference ticket${count !== 1 ? 's' : ''}. You now have ${ready} ready-to-use ticket${ready !== 1 ? 's' : ''} stored locally. Each ticket can be exchanged for one temporary anonymous API key.`;
+            }
+            return message || 'Local cryptographic operation completed successfully.';
+        }
+    }
 
     try {
         const urlObj = new URL(url);
@@ -84,11 +119,11 @@ export function getActivityDescription(log, detailed = false) {
         if (type === 'api-key' && path.includes('request_key')) {
             if (!detailed) {
                 if (status >= 200 && status < 300) {
-                    return 'Anonymous API access granted';
+                    return 'Ephemeral API key granted';
                 } else if (status === 0) {
-                    return 'Failed to obtain API access';
+                    return 'Failed to obtain ephemeral key';
                 }
-                return 'Requesting anonymous API access';
+                return 'Requesting ephemeral anonymous key';
             } else {
                 if (status >= 200 && status < 300) {
                     const duration = response?.duration_minutes || 60;
@@ -106,11 +141,11 @@ export function getActivityDescription(log, detailed = false) {
             if (path.includes('/models')) {
                 if (!detailed) {
                     if (status >= 200 && status < 300) {
-                        return 'AI models catalog loaded';
+                        return 'Model catalog loaded';
                     } else if (status === 0) {
-                        return 'Failed to fetch AI models';
+                        return 'Failed to fetch models';
                     }
-                    return 'Fetching AI models catalog';
+                    return 'Fetching model catalog';
                 } else {
                     if (status >= 200 && status < 300) {
                         const modelCount = response?.data?.length || 0;
@@ -126,17 +161,17 @@ export function getActivityDescription(log, detailed = false) {
             if (path.includes('/chat/completions')) {
                 if (!detailed) {
                     if (status >= 200 && status < 300) {
-                        return 'AI response received';
+                        return 'Response received';
                     } else if (status === 0) {
-                        return 'AI inference request failed';
+                        return 'Inference request failed';
                     }
-                    return 'Processing AI inference request';
+                    return 'Processing inference request';
                 } else {
                     if (status >= 200 && status < 300) {
                         const model = request?.body?.model || 'Unknown model';
-                        return `AI successfully processed your request using ${model}. Response received and displayed in chat.`;
+                        return `Successfully processed your request using ${model}. Response received and displayed in chat.`;
                     } else if (status === 0) {
-                        return 'AI inference request failed. This may be due to network issues, invalid API key, or model availability.';
+                        return 'Inference request failed. This may be due to network issues, invalid API key, or model availability.';
                     }
                     const model = request?.body?.model || 'AI model';
                     return `Sending your message to ${model} for processing through the anonymized inference service...`;
@@ -170,7 +205,36 @@ export function getActivityDescription(log, detailed = false) {
  * Get activity type icon
  */
 export function getActivityIcon(log) {
-    const { type, url } = log;
+    const { type, url, action } = log;
+
+    // Handle local events
+    if (type === 'local') {
+        if (action === 'ticket-select') {
+            // Checkmark/select icon for ticket selection
+            return `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path>
+            </svg>`;
+        } else if (action === 'tickets-blind') {
+            // Shield/encrypt icon for blinding
+            return `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
+            </svg>`;
+        } else if (action === 'tickets-signed') {
+            // Signature/pen icon for signing
+            return `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+            </svg>`;
+        } else if (action === 'tickets-unblind') {
+            // Unlock/reveal icon for unblinding
+            return `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z"></path>
+            </svg>`;
+        }
+        // Default local event icon (processor/chip)
+        return `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"></path>
+        </svg>`;
+    }
 
     try {
         const urlObj = new URL(url);

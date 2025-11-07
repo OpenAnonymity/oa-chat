@@ -2,7 +2,7 @@
 class ChatDatabase {
     constructor() {
         this.dbName = 'openrouter-chat';
-        this.version = 1;
+        this.version = 2;
         this.db = null;
     }
 
@@ -35,6 +35,13 @@ class ChatDatabase {
                 // Create settings store
                 if (!db.objectStoreNames.contains('settings')) {
                     db.createObjectStore('settings', { keyPath: 'key' });
+                }
+
+                // Create network logs store
+                if (!db.objectStoreNames.contains('networkLogs')) {
+                    const logsStore = db.createObjectStore('networkLogs', { keyPath: 'id' });
+                    logsStore.createIndex('timestamp', 'timestamp', { unique: false });
+                    logsStore.createIndex('sessionId', 'sessionId', { unique: false });
                 }
             };
         });
@@ -148,6 +155,74 @@ class ChatDatabase {
             const request = store.get(key);
 
             request.onsuccess = () => resolve(request.result?.value);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    // Network logs
+    async saveNetworkLog(log) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['networkLogs'], 'readwrite');
+            const store = transaction.objectStore('networkLogs');
+            const request = store.put(log);
+
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async getAllNetworkLogs() {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['networkLogs'], 'readonly');
+            const store = transaction.objectStore('networkLogs');
+            const index = store.index('timestamp');
+            const request = index.openCursor(null, 'prev'); // Reverse order by timestamp
+            const logs = [];
+
+            request.onsuccess = (event) => {
+                const cursor = event.target.result;
+                if (cursor) {
+                    logs.push(cursor.value);
+                    cursor.continue();
+                } else {
+                    resolve(logs);
+                }
+            };
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async clearOldNetworkLogs(maxLogs = 200) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['networkLogs'], 'readwrite');
+            const store = transaction.objectStore('networkLogs');
+            const index = store.index('timestamp');
+            const request = index.openCursor(null, 'prev');
+            let count = 0;
+
+            request.onsuccess = (event) => {
+                const cursor = event.target.result;
+                if (cursor) {
+                    count++;
+                    if (count > maxLogs) {
+                        cursor.delete();
+                    }
+                    cursor.continue();
+                } else {
+                    resolve();
+                }
+            };
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async clearAllNetworkLogs() {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['networkLogs'], 'readwrite');
+            const store = transaction.objectStore('networkLogs');
+            const request = store.clear();
+
+            request.onsuccess = () => resolve();
             request.onerror = () => reject(request.error);
         });
     }

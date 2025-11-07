@@ -166,6 +166,9 @@ class ChatApp {
         // Initialize IndexedDB
         await chatDB.init();
 
+        // Load network logs from database
+        await networkLogger.loadLogs();
+
         // Initialize theme management first
         themeManager.init();
 

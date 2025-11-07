@@ -178,6 +178,19 @@ class StationClient {
                 }
             }
 
+            // Log blinded tickets creation
+            networkLogger.logRequest({
+                type: 'local',
+                method: 'LOCAL',
+                status: 200,
+                message: `Created ${ticketCount} blinded inference tickets ready for server signing`,
+                action: 'tickets-blind',
+                response: {
+                    ticket_count: ticketCount,
+                    blinded_requests_created: indexedBlindedRequests.length
+                }
+            });
+
             if (progressCallback) progressCallback('Sending blinded tickets to server for signing...', 50);
 
             const registerUrl = `${ORG_API_BASE}/api/alpha-register`;
@@ -239,6 +252,18 @@ class StationClient {
                 throw new Error('Station did not return signed responses');
             }
 
+            // Log receipt of signed tickets
+            networkLogger.logRequest({
+                type: 'local',
+                method: 'LOCAL',
+                status: 200,
+                message: `Received ${indexedSignedResponses.length} signed tickets from server`,
+                action: 'tickets-signed',
+                response: {
+                    signed_tickets_received: indexedSignedResponses.length
+                }
+            });
+
             const responseMap = {};
             indexedSignedResponses.forEach(([idx, signedResp]) => {
                 responseMap[idx] = signedResp;
@@ -280,6 +305,19 @@ class StationClient {
 
             if (progressCallback) progressCallback('Saving tickets...', 90);
 
+            // Log ticket unblinding completion
+            networkLogger.logRequest({
+                type: 'local',
+                method: 'LOCAL',
+                status: 200,
+                message: `Successfully unblinded and stored ${tickets.length} inference tickets locally`,
+                action: 'tickets-unblind',
+                response: {
+                    tickets_finalized: tickets.length,
+                    tickets_ready: tickets.filter(t => !t.used).length
+                }
+            });
+
             this.saveTickets(tickets);
 
             if (progressCallback) progressCallback('Registration complete!', 100);
@@ -306,6 +344,20 @@ class StationClient {
             if (!ticket) {
                 throw new Error('No inference tickets available. Please register with an invitation code first.');
             }
+
+            // Log ticket selection as a local event
+            networkLogger.logRequest({
+                type: 'local',
+                method: 'LOCAL',
+                status: 200,
+                message: 'Selected next unused inference ticket from local storage',
+                action: 'ticket-select',
+                response: {
+                    ticket_index: this.tickets.findIndex(t => t.finalized_ticket === ticket.finalized_ticket) + 1,
+                    total_tickets: this.tickets.length,
+                    unused_tickets: this.tickets.filter(t => !t.used).length
+                }
+            });
 
             const onlineStations = await this.getOnlineStations();
             const selectedStation = this.selectRandomStation(onlineStations);

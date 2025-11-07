@@ -10,7 +10,7 @@ class NetworkLogger {
         this.listeners = [];
         this.currentSessionId = null; // Track current session for logging
     }
-    
+
     /**
      * Set the current session ID for tagging requests
      */
@@ -19,16 +19,18 @@ class NetworkLogger {
     }
 
     /**
-     * Log a network request
-     * @param {Object} details - Request details
-     * @param {string} details.type - Type of request (ticket, api-key, openrouter)
-     * @param {string} details.method - HTTP method
-     * @param {string} details.url - Request URL
-     * @param {number} details.status - HTTP status code
+     * Log a network request or local event
+     * @param {Object} details - Event details
+     * @param {string} details.type - Type of event (ticket, api-key, openrouter, local)
+     * @param {string} details.method - HTTP method or 'LOCAL' for local events
+     * @param {string} details.url - Request URL (optional for local events)
+     * @param {number} details.status - HTTP status code or event status
      * @param {Object} details.request - Request details (headers, body)
      * @param {Object} details.response - Response details
      * @param {Error} details.error - Error if request failed
      * @param {string} details.sessionId - Optional session ID (uses current if not provided)
+     * @param {string} details.message - Human-readable message for local events
+     * @param {string} details.action - Specific action type for local events
      */
     logRequest(details) {
         const logEntry = {
@@ -42,6 +44,8 @@ class NetworkLogger {
             request: details.request || {},
             response: details.response || {},
             error: details.error || null,
+            message: details.message || '',
+            action: details.action || '',
         };
 
         // Add to beginning of array (most recent first)
@@ -52,10 +56,29 @@ class NetworkLogger {
             this.logs = this.logs.slice(0, this.maxLogs);
         }
 
+        // Save to database
+        if (typeof chatDB !== 'undefined' && chatDB.db) {
+            chatDB.saveNetworkLog(logEntry).catch(err => console.error('Failed to save log:', err));
+            chatDB.clearOldNetworkLogs(this.maxLogs).catch(err => console.error('Failed to clear old logs:', err));
+        }
+
         // Notify listeners
         this.notifyListeners();
 
         return logEntry;
+    }
+
+    /**
+     * Load logs from database
+     */
+    async loadLogs() {
+        if (typeof chatDB !== 'undefined' && chatDB.db) {
+            try {
+                this.logs = await chatDB.getAllNetworkLogs();
+            } catch (err) {
+                console.error('Failed to load logs:', err);
+            }
+        }
     }
 
     /**
@@ -72,7 +95,7 @@ class NetworkLogger {
     getAllLogs() {
         return [...this.logs];
     }
-    
+
     /**
      * Get logs for a specific session
      * @param {string} sessionId - Session ID to filter by
@@ -83,11 +106,28 @@ class NetworkLogger {
     }
 
     /**
-     * Clear all logs
+     * Clear all logs (memory only)
      */
     clearLogs() {
         this.logs = [];
         this.notifyListeners();
+    }
+
+    /**
+     * Clear all logs (both memory and database)
+     */
+    async clearAllLogs() {
+        this.logs = [];
+        this.notifyListeners();
+
+        // Clear from database
+        if (typeof chatDB !== 'undefined' && chatDB.db) {
+            try {
+                await chatDB.clearAllNetworkLogs();
+            } catch (err) {
+                console.error('Failed to clear logs from database:', err);
+            }
+        }
     }
 
     /**
@@ -140,7 +180,7 @@ class NetworkLogger {
      */
     sanitizeHeaders(headers) {
         const sanitized = { ...headers };
-        
+
         // Mask authorization headers
         if (sanitized.Authorization) {
             const auth = sanitized.Authorization;
@@ -153,7 +193,7 @@ class NetworkLogger {
                 sanitized.Authorization = 'InferenceTicket token=***';
             }
         }
-        
+
         return sanitized;
     }
 
@@ -162,15 +202,15 @@ class NetworkLogger {
      */
     getRequestSummary(request) {
         if (!request) return '';
-        
+
         const parts = [];
-        
+
         if (request.body) {
             try {
-                const body = typeof request.body === 'string' 
-                    ? JSON.parse(request.body) 
+                const body = typeof request.body === 'string'
+                    ? JSON.parse(request.body)
                     : request.body;
-                
+
                 if (body.messages) {
                     parts.push(`${body.messages.length} messages`);
                 }
@@ -181,7 +221,7 @@ class NetworkLogger {
                 parts.push('body: [data]');
             }
         }
-        
+
         return parts.join(', ');
     }
 
@@ -190,29 +230,29 @@ class NetworkLogger {
      */
     getResponseSummary(response, status) {
         if (!response) return status ? `Status: ${status}` : '';
-        
+
         try {
-            const data = typeof response === 'string' 
-                ? JSON.parse(response) 
+            const data = typeof response === 'string'
+                ? JSON.parse(response)
                 : response;
-            
+
             if (data.choices && data.choices.length > 0) {
                 const content = data.choices[0].message?.content || '';
                 return content.substring(0, 100) + (content.length > 100 ? '...' : '');
             }
-            
+
             if (data.key) {
                 return 'API key received';
             }
-            
+
             if (data.data && Array.isArray(data.data)) {
                 return `${data.data.length} items`;
             }
-            
+
             if (data.error) {
                 return `Error: ${data.error.message || data.error}`;
             }
-            
+
             return JSON.stringify(data).substring(0, 100);
         } catch {
             return String(response).substring(0, 100);
@@ -227,32 +267,32 @@ class NetworkLogger {
             `%c[Network Log] ${logEntry.method} ${this.getEndpointName(logEntry.url)} (${logEntry.status})`,
             `color: ${logEntry.status >= 200 && logEntry.status < 300 ? '#22c55e' : '#ef4444'}; font-weight: bold;`
         );
-        
+
         console.log('Timestamp:', new Date(logEntry.timestamp).toLocaleString());
         console.log('Type:', logEntry.type);
         console.log('Method:', logEntry.method);
         console.log('URL:', logEntry.url);
         console.log('Status:', logEntry.status);
-        
+
         if (logEntry.request) {
             console.group('Request');
             console.log('Headers:', logEntry.request.headers);
             console.log('Body:', logEntry.request.body);
             console.groupEnd();
         }
-        
+
         if (logEntry.response) {
             console.group('Response');
             console.log('Data:', logEntry.response);
             console.groupEnd();
         }
-        
+
         if (logEntry.error) {
             console.group('Error');
             console.error(logEntry.error);
             console.groupEnd();
         }
-        
+
         console.groupEnd();
     }
 }
