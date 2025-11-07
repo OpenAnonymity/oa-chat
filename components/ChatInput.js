@@ -30,14 +30,22 @@ export default class ChatInput {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 if (!this.app.elements.sendBtn.disabled) {
-                    this.app.sendMessage();
+                    if (this.app.isCurrentSessionStreaming()) {
+                        this.app.stopCurrentSessionStreaming();
+                    } else {
+                        this.app.sendMessage();
+                    }
                 }
             }
         });
 
-        // Send button click
+        // Send button click - handles both send and stop
         this.app.elements.sendBtn.addEventListener('click', () => {
-            this.app.sendMessage();
+            if (this.app.isCurrentSessionStreaming()) {
+                this.app.stopCurrentSessionStreaming();
+            } else {
+                this.app.sendMessage();
+            }
         });
 
         // Search toggle functionality
