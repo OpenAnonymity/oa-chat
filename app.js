@@ -3,9 +3,18 @@ import RightPanel from './components/RightPanel.js';
 // FEATURE DISABLED: Status indicator and activity banner - uncomment to re-enable
 import FloatingPanel from './components/FloatingPanel.js';
 import MessageNavigation from './components/MessageNavigation.js';
+import Sidebar from './components/Sidebar.js';
+import ChatArea from './components/ChatArea.js';
+import ChatInput from './components/ChatInput.js';
+import ModelPicker from './components/ModelPicker.js';
+import { buildTypingIndicator } from './components/MessageTemplates.js';
 import apiKeyStore from './services/apiKeyStore.js';
 import themeManager from './services/themeManager.js';
 
+/**
+ * ChatApp - Main application controller
+ * Manages application state, coordinates UI components, and handles business logic.
+ */
 class ChatApp {
     constructor() {
         this.state = {
@@ -48,17 +57,15 @@ class ChatApp {
             fileCountBadge: document.getElementById('file-count-badge'),
         };
 
-        themeManager.init();
-        this.updateThemeControls(themeManager.getPreference(), themeManager.getEffectiveTheme());
-        this.themeUnsubscribe = themeManager.onChange((preference, effectiveTheme) => {
-            this.updateThemeControls(preference, effectiveTheme);
-        });
-
         this.searchEnabled = false;
         this.uploadedFiles = [];
         this.rightPanel = null;
         this.floatingPanel = null;
         this.messageNavigation = null;
+        this.sidebar = null;
+        this.chatArea = null;
+        this.chatInput = null;
+        this.modelPicker = null;
         this.isWaitingForResponse = false;
 
         this.init();
@@ -150,13 +157,29 @@ class ChatApp {
         });
     }
 
+    /**
+     * Initializes the application: loads data, sets up components, and renders initial state.
+     */
     async init() {
         // Initialize IndexedDB
         await chatDB.init();
 
-        // Initialize right panel with app context
+        // Initialize theme management first
+        themeManager.init();
+
+        // Initialize UI components
+        this.sidebar = new Sidebar(this);
+        this.chatArea = new ChatArea(this);
+        this.chatInput = new ChatInput(this);
+        this.modelPicker = new ModelPicker(this);
         this.rightPanel = new RightPanel(this);
         this.rightPanel.mount();
+
+        // Now set up theme controls after chatInput is initialized
+        this.updateThemeControls(themeManager.getPreference(), themeManager.getEffectiveTheme());
+        this.themeUnsubscribe = themeManager.onChange((preference, effectiveTheme) => {
+            this.updateThemeControls(preference, effectiveTheme);
+        });
 
         // FEATURE DISABLED: Status indicator and activity banner - uncomment to re-enable
         // Initialize floating panel
@@ -283,10 +306,19 @@ class ChatApp {
         }
     }
 
+    /**
+     * Generates a unique ID for sessions and messages.
+     * @returns {string} Unique ID
+     */
     generateId() {
         return Date.now().toString(36) + Math.random().toString(36).substr(2);
     }
 
+    /**
+     * Formats a timestamp for display.
+     * @param {number} timestamp - Unix timestamp
+     * @returns {string} Formatted time string (HH:MM:SS)
+     */
     formatTime(timestamp) {
         const messageTime = new Date(timestamp);
         return messageTime.toLocaleTimeString('en-US', {
@@ -297,6 +329,11 @@ class ChatApp {
         });
     }
 
+    /**
+     * Creates a new chat session.
+     * @param {string} title - Session title
+     * @returns {Promise<Object>} The created session
+     */
     async createSession(title = 'New Chat') {
         const session = {
             id: this.generateId(),
@@ -332,6 +369,10 @@ class ChatApp {
         return session;
     }
 
+    /**
+     * Switches to a different session.
+     * @param {string} sessionId - ID of the session to switch to
+     */
     switchSession(sessionId) {
         this.state.currentSessionId = sessionId;
         chatDB.saveSetting('currentSessionId', sessionId);
@@ -361,10 +402,17 @@ class ChatApp {
         }
     }
 
+    /**
+     * Gets the current active session.
+     * @returns {Object|undefined} Current session or undefined
+     */
     getCurrentSession() {
         return this.state.sessions.find(s => s.id === this.state.currentSessionId);
     }
 
+    /**
+     * Handles new chat request with validation (prevents empty duplicate sessions).
+     */
     async handleNewChatRequest() {
         const current = this.getCurrentSession();
         if (current) {
@@ -399,6 +447,13 @@ class ChatApp {
         }
     }
 
+    /**
+     * Adds a message to the current session.
+     * @param {string} role - Message role ('user' or 'assistant')
+     * @param {string} content - Message content
+     * @param {Object} metadata - Optional metadata (model, tokenCount, etc.)
+     * @returns {Promise<Object>} The created message
+     */
     async addMessage(role, content, metadata = {}) {
         const session = this.getCurrentSession();
         if (!session) return;
@@ -436,6 +491,10 @@ class ChatApp {
         return message;
     }
 
+    /**
+     * Sends a user message and streams the AI response.
+     * Handles API key acquisition, model selection, and streaming updates.
+     */
     async sendMessage() {
         if (this.isWaitingForResponse) return;
 
@@ -602,41 +661,16 @@ class ChatApp {
                             lastSaveLength = streamedContent.length;
                         }
 
-                        // Update the message content in real-time
-                        const messageEl = document.querySelector(`[data-message-id="${streamingMessageId}"]`);
-                        if (messageEl) {
-                            const contentEl = messageEl.querySelector('.message-content');
-                            if (contentEl) {
-                                // Use our LaTeX-safe processor
-                                contentEl.innerHTML = this.processContentWithLatex(streamedContent);
-                                // Re-render LaTeX for the updated content
-                                if (typeof renderMathInElement !== 'undefined') {
-                                    renderMathInElement(contentEl, {
-                                        delimiters: [
-                                            {left: '$$', right: '$$', display: true},
-                                            {left: '\\[', right: '\\]', display: true},
-                                            {left: '\\(', right: '\\)', display: false},
-                                            {left: '$', right: '$', display: false}
-                                        ],
-                                        throwOnError: false,
-                                        errorColor: '#cc0000',
-                                        strict: false
-                                    });
-                                }
-                            }
+                        // Delegate to ChatArea for streaming message updates
+                        if (this.chatArea) {
+                            this.chatArea.updateStreamingMessage(streamingMessageId, streamedContent);
                         }
-                        // Auto-scroll if user is already at bottom
-                        this.scrollToBottom();
                     },
                     (tokenUpdate) => {
                         // Update streaming token count in real-time
                         streamingTokenCount = tokenUpdate.completionTokens || 0;
-                        const messageEl = document.querySelector(`[data-message-id="${streamingMessageId}"]`);
-                        if (messageEl && tokenUpdate.isStreaming) {
-                            const tokenEl = messageEl.querySelector('.streaming-token-count');
-                            if (tokenEl) {
-                                tokenEl.textContent = streamingTokenCount;
-                            }
+                        if (tokenUpdate.isStreaming && this.chatArea) {
+                            this.chatArea.updateStreamingTokens(streamingMessageId, streamingTokenCount);
                         }
                     },
                     currentFiles,
@@ -665,34 +699,25 @@ class ChatApp {
         }
     }
 
+    /**
+     * Shows a typing indicator at the bottom of the message list.
+     * @param {string} modelName - Name of the model that's "typing"
+     * @returns {string} ID of the typing indicator element
+     */
     showTypingIndicator(modelName) {
         const model = this.state.models.find(m => m.name === modelName);
         const providerInitial = model ? model.provider.charAt(0) : 'A';
         const id = 'typing-' + Date.now();
-        const typingHtml = `
-            <div id="${id}" class="w-full px-2 md:px-3 fade-in">
-                <div class="flex items-center gap-2">
-                    <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow bg-muted p-0.5">
-                        <span class="text-xs font-semibold">${providerInitial}</span>
-                    </div>
-                    <div class="flex items-center gap-2">
-                        <div class="flex gap-1">
-                            <div class="w-2 h-2 bg-primary rounded-full animate-bounce" style="animation-delay: 0s"></div>
-                            <div class="w-2 h-2 bg-primary rounded-full animate-bounce" style="animation-delay: 0.15s"></div>
-                            <div class="w-2 h-2 bg-primary rounded-full animate-bounce" style="animation-delay: 0.3s"></div>
-                        </div>
-                        <span class="text-sm text-muted-foreground animate-pulse">
-                            Processing...
-                        </span>
-                    </div>
-                </div>
-            </div>
-        `;
+        const typingHtml = buildTypingIndicator(id, providerInitial);
         this.elements.messagesContainer.insertAdjacentHTML('beforeend', typingHtml);
         this.scrollToBottom(true);
         return id;
     }
 
+    /**
+     * Removes a typing indicator from the DOM.
+     * @param {string} id - ID of the typing indicator element
+     */
     removeTypingIndicator(id) {
         const indicator = document.getElementById(id);
         if (indicator) {
@@ -700,6 +725,10 @@ class ChatApp {
         }
     }
 
+    /**
+     * Deletes a session and its messages.
+     * @param {string} sessionId - ID of the session to delete
+     */
     async deleteSession(sessionId) {
         const index = this.state.sessions.findIndex(s => s.id === sessionId);
         if (index > -1) {
@@ -725,425 +754,44 @@ class ChatApp {
         }
     }
 
+    /**
+     * Escapes HTML special characters in text.
+     * @param {string} text - The text to escape
+     * @returns {string} HTML-safe text
+     */
     escapeHtml(text) {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
     }
 
-    getSessionDateGroup(timestamp) {
-        const now = new Date();
-        const sessionDate = new Date(timestamp);
-
-        const nowDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        const sessionDay = new Date(sessionDate.getFullYear(), sessionDate.getMonth(), sessionDate.getDate());
-        const diffDays = Math.floor((nowDay - sessionDay) / (1000 * 60 * 60 * 24));
-
-        if (diffDays === 0) return 'TODAY';
-        if (diffDays === 1) return 'YESTERDAY';
-        if (diffDays <= 7) return 'PREVIOUS 7 DAYS';
-        if (diffDays <= 30) return 'PREVIOUS 30 DAYS';
-        return 'OLDER';
-    }
-
+    /**
+     * Renders the sessions list (delegated to Sidebar component).
+     */
     renderSessions() {
-        // Group sessions by date (using updatedAt so active sessions move to TODAY)
-        const grouped = {};
-        const groupOrder = ['TODAY', 'YESTERDAY', 'PREVIOUS 7 DAYS', 'PREVIOUS 30 DAYS', 'OLDER'];
-
-        this.state.sessions.forEach(session => {
-            // Use updatedAt if available, otherwise fall back to createdAt
-            const timestamp = session.updatedAt || session.createdAt;
-            const group = this.getSessionDateGroup(timestamp);
-            if (!grouped[group]) {
-                grouped[group] = [];
-            }
-            grouped[group].push(session);
-        });
-
-        // Sort sessions within each group by updatedAt (most recent first)
-        Object.keys(grouped).forEach(groupName => {
-            grouped[groupName].sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt));
-        });
-
-        // Render grouped sessions
-        const html = groupOrder.map(groupName => {
-            const sessions = grouped[groupName];
-            if (!sessions || sessions.length === 0) return '';
-
-            return `
-                <div class="mb-3">
-                    <div class="model-category-header px-3 flex items-center h-9">${groupName}</div>
-                    ${sessions.map(session => `
-                        <div class="group relative flex h-9 items-center rounded-lg ${session.id === this.state.currentSessionId ? 'chat-session active' : 'hover:bg-accent/30'} transition-colors pl-3 chat-session" data-session-id="${session.id}">
-                            <a class="flex flex-1 items-center justify-between h-full min-w-0 text-foreground hover:text-foreground cursor-pointer">
-                                <div class="flex min-w-0 flex-1 items-center">
-                                    <input class="w-full cursor-pointer truncate bg-transparent text-sm leading-5 focus:outline-none text-foreground ${session.title === 'New Chat' ? 'italic text-muted-foreground' : ''}" placeholder="Untitled Chat" readonly value="${session.title}">
-                                </div>
-                            </a>
-                            <div class="flex shrink-0 items-center relative">
-                                <button class="session-menu-btn inline-flex items-center justify-center whitespace-nowrap rounded-md font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 gap-2 leading-6 text-muted-foreground hover:bg-accent hover:text-accent-foreground border border-transparent h-9 w-9 group-hover:opacity-100 md:opacity-0" aria-label="Session options" data-session-id="${session.id}">
-                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5ZM12 12.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5ZM12 18.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5Z" />
-                                    </svg>
-                                </button>
-                                <div class="session-menu hidden absolute right-0 top-10 z-[100] rounded-lg border border-border bg-popover shadow-lg p-1 min-w-[140px]" data-session-id="${session.id}">
-                                    <button class="delete-session-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent/30 hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">Delete</button>
-                                </div>
-                            </div>
-                        </div>
-                    `).join('')}
-                </div>
-            `;
-        }).join('');
-
-        this.elements.sessionsList.innerHTML = html;
-
-        // Add click handlers
-        document.querySelectorAll('.chat-session').forEach(el => {
-            el.addEventListener('click', (e) => {
-                if (!e.target.closest('.session-menu-btn') && !e.target.closest('.session-menu')) {
-                    this.switchSession(el.dataset.sessionId);
-                }
-            });
-        });
-
-        // Session menu toggle
-        document.querySelectorAll('.session-menu-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const sessionId = btn.dataset.sessionId;
-                const menu = document.querySelector(`.session-menu[data-session-id="${sessionId}"]`);
-
-                // Close all other session menus
-                document.querySelectorAll('.session-menu').forEach(m => {
-                    if (m !== menu) m.classList.add('hidden');
-                });
-
-                menu.classList.toggle('hidden');
-            });
-        });
-
-        // Delete session action
-        document.querySelectorAll('.delete-session-action').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const sessionId = btn.dataset.sessionId;
-                this.deleteSession(sessionId);
-                // Menu will be removed when sessions are re-rendered
-            });
-        });
+        if (this.sidebar) {
+            this.sidebar.render();
+        }
     }
 
+    /**
+     * Renders the current model display (delegated to ModelPicker component).
+     */
     renderCurrentModel() {
-        const session = this.getCurrentSession();
-        const modelName = session ? session.model : null;
-
-        if (modelName) {
-            const model = this.state.models.find(m => m.name === modelName);
-            const providerInitial = model ? model.provider.charAt(0) : '';
-            this.elements.modelPickerBtn.innerHTML = `
-                <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 bg-muted">
-                    <span class="text-[10px] font-semibold">${providerInitial}</span>
-                </div>
-                <span class="truncate">${modelName}</span>
-            `;
-            this.elements.modelPickerBtn.classList.add('gap-1.5');
-        } else {
-            const shortcutHtml = `
-                <div class="flex items-center gap-0.5 ml-2">
-                    <kbd class="flex items-center justify-center h-4 w-4 p-1 rounded-sm bg-muted border border-border text-foreground text-xs">⌘</kbd>
-                    <kbd class="flex items-center justify-center h-4 w-4 p-1 rounded-sm bg-muted border border-border text-foreground text-xs">K</kbd>
-                </div>
-            `;
-            this.elements.modelPickerBtn.innerHTML = `
-                <span>Select Model</span>
-                ${shortcutHtml}
-            `;
-            this.elements.modelPickerBtn.classList.remove('gap-1.5');
+        if (this.modelPicker) {
+            this.modelPicker.renderCurrentModel();
         }
     }
 
+    /**
+     * Renders all messages for the current session (delegated to ChatArea component).
+     */
     async renderMessages() {
-        const session = this.getCurrentSession();
-        if (!session) {
-            this.elements.messagesContainer.innerHTML = `
-                <div class="text-center text-muted-foreground mt-20 flex flex-col items-center">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="w-16 h-16 mb-4 opacity-40" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3-3c-1.354 0-2.694-.055-4.02-.163a2.115 2.115 0 0 1-.825-.242m9.345-8.334a2.126 2.126 0 0 0-.476-.095 48.64 48.64 0 0 0-8.048 0c-1.131.094-1.976 1.057-1.976 2.192v4.286c0 .837.46 1.58 1.155 1.951m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.455 48.455 0 0 0 11.25 3c-2.115 0-4.198.137-6.24.402-1.608.209-2.76 1.614-2.76 3.235v6.226c0 1.621 1.152 3.026 2.76 3.235.577.075 1.157.14 1.74.194V21l4.155-4.155" />
-                    </svg>
-                    <p class="text-lg">Ask anonymously</p>
-                    <p class="text-sm mt-2">Type a message below to get started</p>
-                </div>
-            `;
-            return;
-        }
-
-        // Load messages from IndexedDB
-        const messages = await chatDB.getSessionMessages(session.id);
-
-        if (messages.length === 0) {
-            this.elements.messagesContainer.innerHTML = `
-                <div class="text-center text-muted-foreground mt-20 flex flex-col items-center">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="w-16 h-16 mb-4 opacity-40" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3-3c-1.354 0-2.694-.055-4.02-.163a2.115 2.115 0 0 1-.825-.242m9.345-8.334a2.126 2.126 0 0 0-.476-.095 48.64 48.64 0 0 0-8.048 0c-1.131.094-1.976 1.057-1.976 2.192v4.286c0 .837.46 1.58 1.155 1.951m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.455 48.455 0 0 0 11.25 3c-2.115 0-4.198.137-6.24.402-1.608.209-2.76 1.614-2.76 3.235v6.226c0 1.621 1.152 3.026 2.76 3.235.577.075 1.157.14 1.74.194V21l4.155-4.155" />
-                    </svg>
-                    <p class="text-lg">Ask anonymously</p>
-                    <p class="text-sm mt-2">Type a message below to get started</p>
-                </div>
-            `;
-            return;
-        }
-
-        this.elements.messagesContainer.innerHTML = messages.map(message => {
-            if (message.role === 'user') {
-                // Check for file attachments
-                const hasFiles = message.files && message.files.length > 0;
-
-                const filePreview = hasFiles ? `
-                    <div class="flex flex-wrap gap-2 mt-3">
-                        ${message.files.map(fileData => {
-                            // Handle both old format (string) and new format (object)
-                            const fileName = typeof fileData === 'string' ? fileData : fileData.name;
-                            const fileType = typeof fileData === 'string' ? '' : fileData.type;
-                            const dataUrl = typeof fileData === 'string' ? null : fileData.dataUrl;
-
-                            const isPdf = fileType === 'application/pdf' || fileName.toLowerCase().endsWith('.pdf');
-                            const isImage = fileType.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp)$/i.test(fileName);
-                            const isAudio = fileType.startsWith('audio/') || /\.(wav|mp3|ogg|webm)$/i.test(fileName);
-
-                            if (isPdf) {
-                                return `
-                                    <div class="bg-background relative h-32 w-48 cursor-pointer select-none overflow-hidden rounded-lg border border-border shadow-sm hover:shadow-md transition-shadow">
-                                        <div class="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-red-50 to-red-100 dark:from-red-900/20 dark:to-red-800/20">
-                                            <div class="flex flex-col items-center justify-center text-red-600 dark:text-red-400">
-                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-10 h-10 mb-1">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
-                                                </svg>
-                                                <span class="text-xs font-semibold">PDF</span>
-                                            </div>
-                                        </div>
-                                        <div class="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/60 to-transparent">
-                                            <div class="text-xs font-medium text-white truncate" title="${fileName}">
-                                                ${fileName}
-                                            </div>
-                                        </div>
-                                    </div>
-                                `;
-                            } else if (isImage && dataUrl) {
-                                return `
-                                    <div class="bg-background relative h-32 w-48 cursor-pointer select-none overflow-hidden rounded-lg border border-border shadow-sm hover:shadow-md transition-shadow">
-                                        <img src="${dataUrl}" class="absolute inset-0 w-full h-full object-cover" alt="${fileName}">
-                                        <div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>
-                                        <div class="absolute bottom-0 left-0 right-0 p-2">
-                                            <div class="text-xs font-medium text-white truncate" title="${fileName}">
-                                                ${fileName}
-                                            </div>
-                                        </div>
-                                    </div>
-                                `;
-                            } else if (isImage) {
-                                // Fallback for old messages without dataUrl
-                                return `
-                                    <div class="bg-background relative h-32 w-48 cursor-pointer select-none overflow-hidden rounded-lg border border-border shadow-sm hover:shadow-md transition-shadow">
-                                        <div class="p-3 h-full flex flex-col">
-                                            <div class="flex items-center gap-2 mb-2">
-                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4 text-primary flex-shrink-0">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" />
-                                                </svg>
-                                                <span class="font-medium text-foreground text-xs truncate">${fileName}</span>
-                                            </div>
-                                            <div class="text-muted-foreground text-xs leading-relaxed">
-                                                Image
-                                            </div>
-                                        </div>
-                                    </div>
-                                `;
-                            } else if (isAudio) {
-                                return `
-                                    <div class="bg-background relative h-32 w-48 cursor-pointer select-none overflow-hidden rounded-lg border border-border text-xs shadow-sm hover:shadow-md transition-shadow">
-                                        <div class="p-3 h-full flex flex-col">
-                                            <div class="flex items-center gap-2 mb-2">
-                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4 text-green-600 flex-shrink-0">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" d="m9 9 10.5-3m0 6.553v3.75a2.25 2.25 0 0 1-1.632 2.163l-1.32.377a1.803 1.803 0 1 1-.99-3.467l2.31-.66a2.25 2.25 0 0 0 1.632-2.163Zm0 0V2.25L9 5.25v10.303m0 0v3.75a2.25 2.25 0 0 1-1.632 2.163l-1.32.377a1.803 1.803 0 0 1-.99-3.467l2.31-.66A2.25 2.25 0 0 0 9 15.553Z" />
-                                                </svg>
-                                                <span class="font-medium text-foreground truncate">${fileName}</span>
-                                            </div>
-                                            <div class="text-muted-foreground leading-relaxed">
-                                                Audio File
-                                            </div>
-                                        </div>
-                                    </div>
-                                `;
-                            } else {
-                                return `
-                                    <div class="bg-background relative h-32 w-48 cursor-pointer select-none overflow-hidden rounded-lg border border-border text-xs shadow-sm hover:shadow-md transition-shadow">
-                                        <div class="p-3 h-full flex flex-col">
-                                            <div class="flex items-center gap-2 mb-2">
-                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4 text-muted-foreground flex-shrink-0">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
-                                                </svg>
-                                                <span class="font-medium text-foreground truncate">${fileName}</span>
-                                            </div>
-                                            <div class="text-muted-foreground leading-relaxed">
-                                                File
-                                            </div>
-                                        </div>
-                                    </div>
-                                `;
-                            }
-                        }).join('')}
-                    </div>
-                ` : '';
-
-                return `
-                    <div class="w-full px-2 md:px-3 fade-in self-end" data-message-id="${message.id}">
-                        <div class="group my-2 flex w-full flex-col gap-2 justify-end items-end">
-                            ${filePreview}
-                            <div class="py-3 px-4 font-normal rounded-lg message-user max-w-full">
-                                <div class="min-w-0 w-full overflow-hidden break-words">
-                                    <p class="mb-0">${this.escapeHtml(message.content)}</p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                `;
-            } else {
-                const session = this.getCurrentSession();
-                // Use the model from the session for displaying the message bubble info
-                const modelName = session ? session.model : 'GPT-5 Chat';
-                const model = this.state.models.find(m => m.name === modelName);
-                const providerInitial = model ? model.provider.charAt(0) : 'A';
-
-                // Display token count if available
-                const tokenDisplay = message.tokenCount
-                    ? `<span class="text-xs text-muted-foreground ml-auto" style="font-size: 0.7rem;">${message.tokenCount}</span>`
-                    : (message.streamingTokens !== null && message.streamingTokens !== undefined
-                        ? `<span class="text-xs text-muted-foreground ml-auto streaming-token-count" style="font-size: 0.7rem;">${message.streamingTokens}</span>`
-                        : '');
-
-                return `
-                    <div class="w-full px-2 md:px-3 fade-in self-start" data-message-id="${message.id}">
-                        <div class="group flex w-full flex-col items-start justify-start gap-2">
-                            <div class="flex w-full items-center justify-start gap-2">
-                                <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow bg-muted">
-                                    <span class="text-xs font-semibold text-foreground">${providerInitial}</span>
-                                </div>
-                                <span class="text-xs text-foreground font-medium" style="font-size: 0.7rem;">${modelName}</span>
-                                <span class="text-xs text-muted-foreground" style="font-size: 0.7rem;">${this.formatTime(message.timestamp)}</span>
-                                ${tokenDisplay}
-                            </div>
-                            <div class="py-3 px-4 font-normal rounded-lg message-assistant w-full flex items-center">
-                                <div class="min-w-0 w-full overflow-hidden message-content prose">
-                                    ${this.processContentWithLatex(message.content || '')}
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                `;
-            }
-        }).join('');
-
-        // Render LaTeX
-        if (typeof renderMathInElement !== 'undefined') {
-            document.querySelectorAll('.message-content').forEach(el => {
-                renderMathInElement(el, {
-                    delimiters: [
-                        {left: '$$', right: '$$', display: true},
-                        {left: '\\[', right: '\\]', display: true},
-                        {left: '\\(', right: '\\)', display: false},
-                        {left: '$', right: '$', display: false}
-                    ],
-                    throwOnError: false,
-                    errorColor: '#cc0000',
-                    strict: false
-                });
-            });
-        }
-
-        // Scroll to bottom after rendering is complete
-        this.scrollToBottom(true);
-
-        // Update message navigation if it exists
-        if (this.messageNavigation) {
-            this.messageNavigation.update();
+        if (this.chatArea) {
+            await this.chatArea.render();
         }
     }
 
-    filterModels(searchTerm = '') {
-        const term = searchTerm.toLowerCase();
-        if (!term) return this.state.models;
-
-        return this.state.models.filter(model =>
-            model.name.toLowerCase().includes(term) ||
-            model.provider.toLowerCase().includes(term) ||
-            model.category.toLowerCase().includes(term)
-        );
-    }
-
-    renderModels(searchTerm = '') {
-        const filteredModels = this.filterModels(searchTerm);
-        const categories = [...new Set(filteredModels.map(m => m.category))];
-
-        this.elements.modelsList.innerHTML = categories.map(category => `
-            <div class="mb-3">
-                <div class="model-category-header px-2 py-1 text-xs font-medium text-muted-foreground">${category}</div>
-                <div class="space-y-0">
-                    ${filteredModels
-                        .filter(m => m.category === category)
-                        .map(model => {
-                            const session = this.getCurrentSession();
-                            const isSelected = session && session.model === model.name;
-                            return `
-                                <div class="model-option px-2 py-1.5 rounded-sm cursor-pointer transition-colors hover:bg-accent ${isSelected ? 'bg-accent' : ''}" data-model="${model.name}">
-                                    <div class="flex items-center gap-2">
-                                        <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 bg-muted">
-                                            <span class="text-[10px] font-semibold">${model.provider.charAt(0)}</span>
-                                        </div>
-                                        <div class="flex-1 min-w-0">
-                                            <div class="font-medium text-sm text-foreground truncate">${model.name}</div>
-                                        </div>
-                                        ${isSelected ? '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-4 h-4 text-primary flex-shrink-0"><path fill-rule="evenodd" d="M19.916 4.626a.75.75 0 0 1 .208 1.04l-9 13.5a.75.75 0 0 1-1.154.114l-6-6a.75.75 0 0 1 1.06-1.06l5.353 5.353 8.493-12.74a.75.75 0 0 1 1.04-.207Z" clip-rule="evenodd" /></svg>' : ''}
-                                    </div>
-                                </div>
-                            `;
-                        }).join('')}
-                </div>
-            </div>
-        `).join('');
-
-        // Add click handlers
-        document.querySelectorAll('.model-option').forEach(el => {
-            el.addEventListener('click', () => {
-                this.selectModel(el.dataset.model);
-            });
-        });
-    }
-
-    async selectModel(modelName) {
-        const session = this.getCurrentSession();
-        if (session) {
-            session.model = modelName;
-            await chatDB.saveSession(session);
-            this.renderCurrentModel();
-            this.closeModelPicker();
-        }
-    }
-
-    openModelPicker() {
-        this.elements.modelPickerModal.classList.remove('hidden');
-        this.renderModels();
-        // Focus search input
-        setTimeout(() => {
-            this.elements.modelSearch.focus();
-        }, 100);
-    }
-
-    closeModelPicker() {
-        this.elements.modelPickerModal.classList.add('hidden');
-        // Clear search
-        this.elements.modelSearch.value = '';
-    }
 
     hideSidebar() {
         const sidebar = this.elements.sidebar;
@@ -1190,138 +838,22 @@ class ChatApp {
         return window.innerWidth <= 768;
     }
 
+    /**
+     * Sets up all event listeners. Delegates component-specific listeners to respective components.
+     */
     setupEventListeners() {
-        this.setupThemeControls();
+        // Delegate to components for their specific listeners
+        if (this.chatInput) {
+            this.chatInput.setupEventListeners();
+        }
+        if (this.modelPicker) {
+            this.modelPicker.setupEventListeners();
+        }
 
         // New chat button
         this.elements.newChatBtn.addEventListener('click', () => {
             this.handleNewChatRequest();
         });
-
-        // Auto-resize textarea
-        this.elements.messageInput.addEventListener('input', () => {
-            this.elements.messageInput.style.height = '24px';
-            this.elements.messageInput.style.height = Math.min(this.elements.messageInput.scrollHeight, 384) + 'px';
-            this.updateInputState();
-        });
-
-        // Send on Enter
-        this.elements.messageInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                if (!this.elements.sendBtn.disabled) {
-                    this.sendMessage();
-                }
-            }
-        });
-
-        // Send button
-        this.elements.sendBtn.addEventListener('click', () => {
-            this.sendMessage();
-        });
-
-        // Model picker
-        this.elements.modelPickerBtn.addEventListener('click', () => {
-            this.openModelPicker();
-        });
-
-        this.elements.closeModalBtn.addEventListener('click', () => {
-            this.closeModelPicker();
-        });
-
-        // Close modal on backdrop click
-        this.elements.modelPickerModal.addEventListener('click', (e) => {
-            if (e.target === this.elements.modelPickerModal) {
-                this.closeModelPicker();
-            }
-        });
-
-        // Model search
-        this.elements.modelSearch.addEventListener('input', (e) => {
-            this.renderModels(e.target.value);
-        });
-
-        // Settings menu toggle
-        this.elements.settingsBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            this.elements.settingsMenu.classList.toggle('hidden');
-        });
-
-        this.elements.settingsMenu.addEventListener('click', async (e) => {
-            if (e.target.tagName === 'BUTTON') {
-                const action = e.target.textContent.trim();
-                if (action === 'Clear Models') {
-                    const session = this.getCurrentSession();
-                    if (session) {
-                        session.model = null;
-                        await chatDB.saveSession(session);
-                        this.renderCurrentModel();
-                    }
-                }
-                this.elements.settingsMenu.classList.add('hidden');
-            }
-        });
-
-        // Close settings menu and session menus when clicking outside
-        document.addEventListener('click', () => {
-            if (!this.elements.settingsMenu.classList.contains('hidden')) {
-                this.elements.settingsMenu.classList.add('hidden');
-            }
-            // Close all session menus
-            document.querySelectorAll('.session-menu').forEach(menu => {
-                menu.classList.add('hidden');
-            });
-        });
-
-        // Clear chat functionality
-        this.elements.clearChatBtn.addEventListener('click', async () => {
-            const session = this.getCurrentSession();
-            if (session) {
-                await chatDB.deleteSessionMessages(session.id);
-                this.renderMessages();
-                this.elements.settingsMenu.classList.add('hidden');
-            }
-        });
-
-        // Search toggle functionality
-        this.elements.searchToggle.addEventListener('click', async () => {
-            this.searchEnabled = !this.searchEnabled;
-            this.elements.searchSwitch.setAttribute('aria-checked', this.searchEnabled);
-
-            const thumb = this.elements.searchSwitch.querySelector('.search-switch-thumb');
-            if (this.searchEnabled) {
-                this.elements.searchSwitch.classList.remove('bg-muted', 'hover:bg-muted/80');
-                this.elements.searchSwitch.classList.add('search-switch-active');
-                thumb.classList.remove('translate-x-[2px]', 'bg-background/80');
-                thumb.classList.add('translate-x-[19px]', 'search-switch-thumb-active');
-            } else {
-                this.elements.searchSwitch.classList.remove('search-switch-active');
-                this.elements.searchSwitch.classList.add('bg-muted', 'hover:bg-muted/80');
-                thumb.classList.remove('translate-x-[19px]', 'search-switch-thumb-active');
-                thumb.classList.add('translate-x-[2px]', 'bg-background/80');
-            }
-
-            // Save to current session
-            const session = this.getCurrentSession();
-            if (session) {
-                session.searchEnabled = this.searchEnabled;
-                await chatDB.saveSession(session);
-            }
-            this.updateInputState();
-        });
-
-        // File upload button
-        if (this.elements.fileUploadBtn && this.elements.fileUploadInput) {
-            this.elements.fileUploadBtn.addEventListener('click', () => {
-                this.elements.fileUploadInput.click();
-            });
-
-            this.elements.fileUploadInput.addEventListener('change', async (e) => {
-                const files = Array.from(e.target.files);
-                await this.handleFileUpload(files);
-                e.target.value = ''; // Reset input
-            });
-        }
 
         // Status dot button handler - toggles floating panel
         const statusDotBtn = document.getElementById('status-dot-btn');
@@ -1388,7 +920,9 @@ class ChatApp {
             // Cmd/Ctrl + K for model picker
             if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
                 e.preventDefault();
-                this.openModelPicker();
+                if (this.modelPicker) {
+                    this.modelPicker.open();
+                }
             }
 
             // Cmd/Ctrl + Shift + Backspace for clear chat
@@ -1403,7 +937,9 @@ class ChatApp {
 
             // Escape to close modal
             if (e.key === 'Escape' && !this.elements.modelPickerModal.classList.contains('hidden')) {
-                this.closeModelPicker();
+                if (this.modelPicker) {
+                    this.modelPicker.close();
+                }
             }
 
             // Escape to close settings menu and session menus
@@ -1440,58 +976,15 @@ class ChatApp {
         });
     }
 
-    setupThemeControls() {
-        if (!this.elements.themeOptionButtons || this.elements.themeOptionButtons.length === 0) {
-            return;
-        }
-
-        this.elements.themeOptionButtons.forEach((button) => {
-            button.addEventListener('click', (event) => {
-                event.preventDefault();
-                event.stopPropagation();
-
-                const preference = button.dataset.themeOption || 'system';
-                themeManager.setPreference(preference);
-
-                if (this.elements.settingsMenu) {
-                    this.elements.settingsMenu.classList.add('hidden');
-                }
-                document.querySelectorAll('.session-menu').forEach(menu => {
-                    menu.classList.add('hidden');
-                });
-            });
-        });
-    }
-
+    /**
+     * Updates theme controls based on current preference (delegated to ChatInput).
+     * @param {string} preference - Theme preference
+     * @param {string} effectiveTheme - Actual theme being used
+     */
     updateThemeControls(preference, effectiveTheme) {
-        if (this.elements.themeOptionButtons && this.elements.themeOptionButtons.length > 0) {
-            this.elements.themeOptionButtons.forEach((button) => {
-                const option = button.dataset.themeOption;
-                const isActive = option === preference;
-
-                button.classList.toggle('theme-option-active', isActive);
-                button.setAttribute('aria-checked', String(isActive));
-
-                const checkIcon = button.querySelector('.theme-option-check');
-                if (checkIcon) {
-                    checkIcon.classList.toggle('opacity-100', isActive);
-                    checkIcon.classList.toggle('opacity-0', !isActive);
-                }
-            });
+        if (this.chatInput) {
+            this.chatInput.updateThemeControls(preference, effectiveTheme);
         }
-
-        if (this.elements.themeEffectiveLabel) {
-            if (preference === 'system') {
-                this.elements.themeEffectiveLabel.textContent = `Follows system appearance (${this.formatThemeName(effectiveTheme)})`;
-            } else {
-                this.elements.themeEffectiveLabel.textContent = `Using ${this.formatThemeName(preference)} theme`;
-            }
-        }
-    }
-
-    formatThemeName(theme) {
-        if (!theme) return '';
-        return theme.charAt(0).toUpperCase() + theme.slice(1);
     }
 
     updateInputState() {
