@@ -37,6 +37,7 @@ class RightPanel {
         // Network logs state
         this.networkLogs = [];
         this.expandedLogIds = new Set();
+        this.previousLogCount = 0;
 
         // Invitation code dropdown state
         this.showInvitationForm = false;
@@ -70,9 +71,16 @@ class RightPanel {
 
         // Load ALL network logs globally (not just for this session)
         this.networkLogs = networkLogger.getAllLogs();
+        this.previousLogCount = this.networkLogs.length;
 
-        this.render();
+        // Only update the top section (API key/tickets) without re-rendering logs
+        this.renderTopSectionOnly();
         this.startExpirationTimer();
+
+        // Ensure scroll is at bottom when switching sessions
+        requestAnimationFrame(() => {
+            this.scrollToBottomInstant();
+        });
     }
 
     onSessionChange(session) {
@@ -111,21 +119,23 @@ class RightPanel {
         window.addEventListener('tickets-updated', () => {
             this.ticketCount = stationClient.getTicketCount();
             this.loadNextTicket();
-            this.render();
+            this.renderTopSectionOnly(); // Only update top section, not logs
             this.updateStatusIndicator();
         });
 
         // Subscribe to network logger
         networkLogger.subscribe(() => {
             // Reload ALL logs globally
-            // Collapse all logs before adding a new one
-            this.expandedLogIds.clear();
-
+            // DON'T clear expandedLogIds - preserve expansion state
+            const previousCount = this.previousLogCount;
             this.networkLogs = networkLogger.getAllLogs();
-            this.render();
+            this.previousLogCount = this.networkLogs.length;
 
-            // Auto-scroll to bottom to show newest activity
-            this.scrollToBottom();
+            // Use incremental update to preserve scroll and expansion state
+            this.renderLogsOnly(false, previousCount); // Don't preserve scroll - we'll scroll to bottom
+
+            // Auto-scroll to bottom to show newest activity (instant for immediate feedback)
+            this.scrollToBottomInstant();
 
             // Notify app about new log for floating panel
             if (this.app.floatingPanel && this.networkLogs.length > 0) {
@@ -291,14 +301,14 @@ class RightPanel {
     async handleRegister(invitationCode) {
         if (!invitationCode || invitationCode.length !== 24) {
             this.registrationError = 'Invalid invitation code (must be 24 characters)';
-            this.render();
+            this.renderTopSectionOnly();
             return;
         }
 
         this.isRegistering = true;
         this.registrationError = null;
         this.registrationProgress = { message: 'Starting...', percent: 0 };
-        this.render();
+        this.renderTopSectionOnly();
 
         // Set current session for network logging
         if (this.currentSession && window.networkLogger) {
@@ -308,7 +318,7 @@ class RightPanel {
         try {
             await stationClient.alphaRegister(invitationCode, (message, percent) => {
                 this.registrationProgress = { message, percent };
-                this.render();
+                this.renderTopSectionOnly();
             });
 
             this.ticketCount = stationClient.getTicketCount();
@@ -320,13 +330,13 @@ class RightPanel {
             // Auto-close progress after success
             setTimeout(() => {
                 this.registrationProgress = null;
-                this.render();
+                this.renderTopSectionOnly();
             }, 2000);
         } catch (error) {
             this.registrationError = error.message;
         } finally {
             this.isRegistering = false;
-            this.render();
+            this.renderTopSectionOnly();
         }
     }
 
@@ -341,21 +351,21 @@ class RightPanel {
 
             // Start the animation
             this.isTransitioning = true;
-            this.render();
+            this.renderTopSectionOnly();
 
             // Wait a bit for the animation to start
             await new Promise(resolve => setTimeout(resolve, 500));
 
             // Show the finalized version
             this.showFinalized = true;
-            this.render();
+            this.renderTopSectionOnly();
 
             // Wait for the transformation animation
             await new Promise(resolve => setTimeout(resolve, 1000));
 
             // Actually request the API key
             this.isRequestingKey = true;
-            this.render();
+            this.renderTopSectionOnly();
 
             const result = await stationClient.requestApiKey();
 
@@ -375,7 +385,7 @@ class RightPanel {
             // Success - reset for next ticket
             setTimeout(() => {
                 this.loadNextTicket();
-                this.render();
+                this.renderTopSectionOnly();
                 this.startExpirationTimer();
                 this.updateStatusIndicator();
 
@@ -391,7 +401,7 @@ class RightPanel {
             // Reset state even on error
             setTimeout(() => {
                 this.loadNextTicket();
-                this.render();
+                this.renderTopSectionOnly();
             }, 500);
         } finally {
             this.isRequestingKey = false;
@@ -468,7 +478,7 @@ class RightPanel {
                 this.timerInterval = null;
             }
 
-            this.render();
+            this.renderTopSectionOnly();
             this.updateStatusIndicator(); // Ensure dot updates
         }
     }
@@ -481,7 +491,9 @@ class RightPanel {
     async handleClearActivityTimeline() {
         if (window.networkLogger) {
             await window.networkLogger.clearAllLogs();
-            this.render();
+            this.networkLogs = [];
+            this.previousLogCount = 0;
+            this.renderLogsOnly(false); // Re-render logs only (empty state)
         }
     }
 
@@ -505,7 +517,8 @@ class RightPanel {
             this.expandedLogIds.clear();
             this.expandedLogIds.add(logId);
         }
-        this.render();
+        // Use incremental update to preserve scroll position
+        this.renderLogsOnly(true);
     }
 
     scrollToBottom() {
@@ -519,6 +532,14 @@ class RightPanel {
                 });
             }
         });
+    }
+
+    scrollToBottomInstant() {
+        // Instantly scroll to bottom (no animation delay)
+        const container = document.getElementById('network-logs-container');
+        if (container) {
+            container.scrollTop = container.scrollHeight;
+        }
     }
 
     formatTimestamp(timestamp) {
@@ -597,7 +618,91 @@ class RightPanel {
         return session.apiKey;
     }
 
-    renderNetworkLogs() {
+    /**
+     * Re-renders only the top section (tickets/API key) without re-rendering logs.
+     */
+    renderTopSectionOnly() {
+        const panel = document.getElementById('right-panel-content');
+        if (!panel) return;
+
+        // Find the network logs section
+        const logsSection = panel.querySelector('.border-t.border-border.flex.flex-col.bg-background.flex-1.min-h-0');
+        if (!logsSection) {
+            // If logs section doesn't exist yet, do a full render
+            this.render();
+            return;
+        }
+
+        // Save the logs section and its scroll position
+        const logsSectionClone = logsSection.cloneNode(true);
+        const logsScrollTop = document.getElementById('network-logs-container')?.scrollTop || 0;
+
+        // Do a full render
+        this.render();
+
+        // Replace the newly rendered logs section with the saved one
+        const newLogsSection = document.getElementById('right-panel-content')?.querySelector('.border-t.border-border.flex.flex-col.bg-background.flex-1.min-h-0');
+        if (newLogsSection && logsSectionClone) {
+            newLogsSection.replaceWith(logsSectionClone);
+            // Restore scroll position
+            const container = document.getElementById('network-logs-container');
+            if (container) {
+                container.scrollTop = logsScrollTop;
+            }
+            // Re-attach log row handlers to the restored section
+            this.attachLogRowHandlers();
+            // Re-attach the clear button handler (cloneNode doesn't copy event listeners)
+            this.attachClearActivityButtonHandler();
+        }
+    }
+
+    /**
+     * Re-renders only the network logs container without re-rendering the entire panel.
+     * @param {boolean} preserveScroll - Whether to preserve scroll position
+     * @param {number} previousLogCount - Previous count of logs (to mark new entries)
+     */
+    renderLogsOnly(preserveScroll = true, previousLogCount = 0) {
+        const container = document.getElementById('network-logs-container');
+        if (!container) return;
+
+        // Capture current scroll position
+        const scrollTop = preserveScroll ? container.scrollTop : 0;
+
+        // Re-render the logs
+        container.innerHTML = this.renderNetworkLogs(previousLogCount);
+
+        // Restore scroll position if requested
+        if (preserveScroll) {
+            container.scrollTop = scrollTop;
+        }
+
+        // Re-attach event handlers to log rows
+        this.attachLogRowHandlers();
+    }
+
+    /**
+     * Attaches click handlers to activity log headers for expand/collapse.
+     */
+    attachLogRowHandlers() {
+        document.querySelectorAll('.activity-log-header').forEach(header => {
+            header.onclick = (e) => {
+                const logId = e.currentTarget.dataset.logId;
+                this.toggleLogExpand(logId);
+            };
+        });
+    }
+
+    /**
+     * Attaches click handler to the clear activity timeline button.
+     */
+    attachClearActivityButtonHandler() {
+        const clearActivityBtn = document.getElementById('clear-activity-timeline-btn');
+        if (clearActivityBtn) {
+            clearActivityBtn.onclick = () => this.handleClearActivityTimeline();
+        }
+    }
+
+    renderNetworkLogs(previousLogCount = 0) {
         if (this.networkLogs.length === 0) {
             return `
                 <div class="p-8 text-center">
@@ -612,6 +717,9 @@ class RightPanel {
         // Reverse order: oldest first, newest last
         const logsToShow = [...this.networkLogs].reverse();
 
+        // Calculate how many new logs were added
+        const newLogsCount = this.networkLogs.length - previousLogCount;
+
         // Track session changes for separators
         let lastSessionId = null;
 
@@ -625,6 +733,9 @@ class RightPanel {
             // Highlight the latest (last in reversed array) with a more visible background
             const highlightClass = isLast ? 'bg-accent' : '';
             const hoverClass = isLast ? 'hover:brightness-125' : 'hover:bg-muted/30';
+            // Only animate items that are truly new (last N items where N = newLogsCount)
+            const isNewEntry = newLogsCount > 0 && index >= logsToShow.length - newLogsCount;
+            const animationClass = isNewEntry ? 'new-entry' : '';
 
             // Check if this is a system-level event (tickets/privacy pass)
             const isSystemEvent = (log.type === 'local' && log.method === 'LOCAL') || log.type === 'ticket';
@@ -645,7 +756,7 @@ class RightPanel {
                     // System-level separator for ticket/privacy operations
                     sessionSeparator = `
                         <div class="session-separator mb-2 mt-2">
-                            <div class="flex items-center gap-2 px-2 py-1.5 rounded-md border whitespace-nowrap border-muted-foreground/30 bg-muted/20">
+                            <div class="flex items-center gap-2 px-2 py-1.5 rounded-md border whitespace-nowrap border-border">
                                 <svg class="w-3 h-3 text-muted-foreground flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z"></path>
                                 </svg>
@@ -675,7 +786,7 @@ class RightPanel {
             }
 
             return `${sessionSeparator}
-                <div class="activity-log-entry relative flex" data-log-id="${log.id}">
+                <div class="activity-log-entry ${animationClass} relative flex" data-log-id="${log.id}">
                     <!-- Timeline visualization column -->
                     <div class="flex flex-col items-center" style="width: 24px; flex-shrink: 0;">
                         <!-- Top line -->
@@ -1054,7 +1165,7 @@ class RightPanel {
         if (toggleFormBtn) {
             toggleFormBtn.onclick = () => {
                 this.showInvitationForm = !this.showInvitationForm;
-                this.render();
+                this.renderTopSectionOnly();
             };
         }
 
@@ -1093,18 +1204,10 @@ class RightPanel {
         }
 
         // Clear activity timeline button
-        const clearActivityBtn = document.getElementById('clear-activity-timeline-btn');
-        if (clearActivityBtn) {
-            clearActivityBtn.onclick = () => this.handleClearActivityTimeline();
-        }
+        this.attachClearActivityButtonHandler();
 
-        // Activity log expand/collapse
-        document.querySelectorAll('.activity-log-header').forEach(header => {
-            header.onclick = (e) => {
-                const logId = e.currentTarget.dataset.logId;
-                this.toggleLogExpand(logId);
-            };
-        });
+        // Activity log expand/collapse - handled by attachLogRowHandlers
+        this.attachLogRowHandlers();
     }
 
     mount() {
@@ -1125,6 +1228,14 @@ class RightPanel {
         if (oldToggleBtn) {
             oldToggleBtn.style.display = 'none';
         }
+
+        // Initialize log count tracking
+        this.previousLogCount = this.networkLogs.length;
+
+        // Ensure initial scroll is at bottom
+        requestAnimationFrame(() => {
+            this.scrollToBottomInstant();
+        });
     }
 
     destroy() {

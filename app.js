@@ -468,7 +468,7 @@ class ChatApp {
     stopCurrentSessionStreaming() {
         const session = this.getCurrentSession();
         if (!session) return;
-        
+
         const state = this.getSessionStreamingState(session.id);
         if (state.isStreaming && state.abortController) {
             state.abortController.abort();
@@ -552,7 +552,10 @@ class ChatApp {
             }
         }
 
-        this.renderMessages();
+        // Use incremental update instead of full re-render
+        if (this.chatArea) {
+            await this.chatArea.appendMessage(message);
+        }
         this.renderSessions(); // Re-render sessions to update sorting
         return message;
     }
@@ -695,7 +698,7 @@ class ChatApp {
                 let streamedContent = '';
                 let streamingTokenCount = 0;
 
-                // Add empty assistant message that we'll update
+                // Prepare assistant message object (don't save to DB yet - wait for first chunk)
                 streamingMessage = {
                     id: streamingMessageId,
                     sessionId: session.id,
@@ -706,7 +709,6 @@ class ChatApp {
                     tokenCount: null,
                     streamingTokens: 0
                 };
-                await chatDB.saveMessage(streamingMessage);
 
                 // Track progress for periodic saves
                 let lastSaveLength = 0;
@@ -719,14 +721,24 @@ class ChatApp {
                     modelId,
                     session.apiKey,
                     async (chunk) => {
-                        // Remove typing indicator on first chunk
+                        // Remove typing indicator on first chunk BEFORE adding content
                         if (firstChunk) {
                             this.removeTypingIndicator(typingId);
-                            await this.renderMessages();
                             firstChunk = false;
+                            // First add the chunk content
+                            streamedContent += chunk;
+                            // Update message with first chunk content before saving to DB
+                            streamingMessage.content = streamedContent;
+                            streamingMessage.streamingTokens = Math.ceil(streamedContent.length / 4);
+                            // Save message to DB and append to UI on first chunk
+                            await chatDB.saveMessage(streamingMessage);
+                            if (this.chatArea) {
+                                await this.chatArea.appendMessage(streamingMessage);
+                            }
+                        } else {
+                            // Not first chunk - just accumulate content
+                            streamedContent += chunk;
                         }
-
-                        streamedContent += chunk;
 
                         // Periodically save partial content to handle refresh during streaming
                         if (streamedContent.length - lastSaveLength >= SAVE_INTERVAL_CHARS) {
@@ -760,8 +772,10 @@ class ChatApp {
                 streamingMessage.streamingTokens = null; // Clear streaming tokens after completion
                 await chatDB.saveMessage(streamingMessage);
 
-                // Re-render to show final token count
-                this.renderMessages();
+                // Update final token count incrementally instead of full re-render
+                if (this.chatArea && streamingMessage.tokenCount) {
+                    this.chatArea.updateFinalTokens(streamingMessageId, streamingMessage.tokenCount);
+                }
 
             } catch (error) {
                 console.error('Error getting AI response:', error);
@@ -770,30 +784,55 @@ class ChatApp {
                 // Check if error was due to cancellation
                 if (error.isCancelled) {
                     // Keep the partial message if there's content, otherwise remove it
-                    if (streamingMessage) {
+                    // Only handle if message was already added to UI (firstChunk was false)
+                    if (streamingMessage && !firstChunk) {
                         if (streamedContent.trim()) {
                             // Save the partial content with a note
                             streamingMessage.content = streamedContent;
                             streamingMessage.tokenCount = null;
                             streamingMessage.streamingTokens = null;
                             await chatDB.saveMessage(streamingMessage);
-                            this.renderMessages();
+                            // Update in place - the message is already visible, just update streaming status
+                            if (this.chatArea) {
+                                const messageEl = document.querySelector(`[data-message-id="${streamingMessage.id}"]`);
+                                if (messageEl) {
+                                    const tokenEl = messageEl.querySelector('.streaming-token-count');
+                                    if (tokenEl) {
+                                        tokenEl.remove(); // Remove streaming token indicator
+                                    }
+                                }
+                            }
                         } else {
                             // Remove empty message if no content was generated
                             await chatDB.deleteMessage(streamingMessage.id);
-                            this.renderMessages();
+                            const messageEl = document.querySelector(`[data-message-id="${streamingMessage.id}"]`);
+                            if (messageEl) {
+                                messageEl.remove();
+                            }
                         }
                     }
+                    // If firstChunk is still true, message was never added to UI or DB, nothing to clean up
                 } else {
-                    // Update the streaming message with error instead of creating a new one
-                    if (streamingMessage) {
+                    // Non-cancellation error
+                    if (!firstChunk && streamingMessage) {
+                        // Message was already added to UI, update it with error
                         streamingMessage.content = 'Sorry, I encountered an error while processing your request.';
                         streamingMessage.tokenCount = null;
                         streamingMessage.streamingTokens = null;
                         await chatDB.saveMessage(streamingMessage);
-                        this.renderMessages();
+                        // Update message content in place
+                        if (this.chatArea) {
+                            this.chatArea.updateStreamingMessage(streamingMessage.id, streamingMessage.content);
+                            const messageEl = document.querySelector(`[data-message-id="${streamingMessage.id}"]`);
+                            if (messageEl) {
+                                const tokenEl = messageEl.querySelector('.streaming-token-count');
+                                if (tokenEl) {
+                                    tokenEl.remove(); // Remove streaming token indicator
+                                }
+                            }
+                        }
                     } else {
-                        // If streaming message wasn't created yet, add a new error message
+                        // Error before first chunk - message never added to UI, add new error message
                         await this.addMessage('assistant', 'Sorry, I encountered an error while processing your request.');
                     }
                 }
@@ -1216,7 +1255,7 @@ class ChatApp {
             // Restore primary button style
             this.elements.sendBtn.classList.add('bg-primary', 'hover:bg-primary/90');
             this.elements.sendBtn.classList.remove('bg-destructive', 'hover:bg-destructive/90');
-            
+
             if (this.searchEnabled) {
                 this.elements.messageInput.placeholder = "Search the web anonymously";
             } else {

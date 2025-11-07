@@ -470,7 +470,7 @@ textarea:focus {
 }
 
 /* Activity Log Timeline Styles */
-.activity-log-entry {
+.activity-log-entry.new-entry {
     animation: slideInFromBottom 0.3s ease-out;
 }
 

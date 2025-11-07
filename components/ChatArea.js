@@ -130,5 +130,75 @@ export default class ChatArea {
             }
         }
     }
+
+    /**
+     * Appends a single message to the chat area without re-rendering the entire list.
+     * @param {Object} message - The message object to append
+     */
+    async appendMessage(message) {
+        const messagesContainer = this.app.elements.messagesContainer;
+        const session = this.app.getCurrentSession();
+
+        if (!session) return;
+
+        // Check if we need to clear the empty state
+        const emptyState = messagesContainer.querySelector('.text-center.text-muted-foreground');
+        if (emptyState) {
+            messagesContainer.innerHTML = '';
+        }
+
+        // Build HTML for the new message
+        const helpers = {
+            processContentWithLatex: this.app.processContentWithLatex.bind(this.app),
+            formatTime: this.app.formatTime.bind(this.app)
+        };
+
+        const messageHtml = buildMessageHTML(message, helpers, this.app.state.models, session.model);
+
+        // Append the message
+        messagesContainer.insertAdjacentHTML('beforeend', messageHtml);
+
+        // Render LaTeX only for the new message
+        const newMessageEl = messagesContainer.querySelector(`[data-message-id="${message.id}"]`);
+        if (newMessageEl && typeof renderMathInElement !== 'undefined') {
+            const contentEl = newMessageEl.querySelector('.message-content');
+            if (contentEl) {
+                renderMathInElement(contentEl, {
+                    delimiters: [
+                        {left: '$$', right: '$$', display: true},
+                        {left: '\\[', right: '\\]', display: true},
+                        {left: '\\(', right: '\\)', display: false},
+                        {left: '$', right: '$', display: false}
+                    ],
+                    throwOnError: false
+                });
+            }
+        }
+
+        // Scroll to bottom
+        this.scrollToBottom();
+
+        // Update message navigation
+        if (this.app.messageNavigation) {
+            this.app.messageNavigation.update();
+        }
+    }
+
+    /**
+     * Updates the final token count for a message after streaming completes.
+     * @param {string} messageId - The message ID
+     * @param {number} tokenCount - Final token count
+     */
+    updateFinalTokens(messageId, tokenCount) {
+        const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
+        if (messageEl) {
+            const tokenEl = messageEl.querySelector('.streaming-token-count');
+            if (tokenEl) {
+                // Replace streaming token count with final count
+                tokenEl.textContent = tokenCount;
+                tokenEl.classList.remove('streaming-token-count');
+            }
+        }
+    }
 }
 
