@@ -706,9 +706,9 @@ class ChatApp {
      */
     showTypingIndicator(modelName) {
         const model = this.state.models.find(m => m.name === modelName);
-        const providerInitial = model ? model.provider.charAt(0) : 'A';
+        const providerName = model ? model.provider : 'OpenAI';
         const id = 'typing-' + Date.now();
-        const typingHtml = buildTypingIndicator(id, providerInitial);
+        const typingHtml = buildTypingIndicator(id, providerName);
         this.elements.messagesContainer.insertAdjacentHTML('beforeend', typingHtml);
         this.scrollToBottom(true);
         return id;

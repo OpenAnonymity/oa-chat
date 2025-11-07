@@ -32,7 +32,7 @@ class OpenRouterAPI {
             'HTTP-Referer': window.location.origin,
             'X-Title': 'chat'
         };
-        
+
         try {
             const response = await fetch(url, {
                 method: 'GET',
@@ -40,7 +40,7 @@ class OpenRouterAPI {
             });
 
             const data = await response.json();
-            
+
             // Log successful request
             if (window.networkLogger) {
                 window.networkLogger.logRequest({
@@ -60,7 +60,7 @@ class OpenRouterAPI {
             return this.formatModels(data.data);
         } catch (error) {
             console.error('Error fetching models from OpenRouter:', error);
-            
+
             // Log failed request
             if (window.networkLogger) {
                 window.networkLogger.logRequest({
@@ -72,7 +72,7 @@ class OpenRouterAPI {
                     error: error.message
                 });
             }
-            
+
             // Return a fallback list of models
             return [
                 { name: 'GPT-5 Chat', id: 'openrouter/gpt-5-chat', category: 'OpenRouter', provider: 'OpenRouter' },
@@ -92,31 +92,43 @@ class OpenRouterAPI {
             // Extract provider from model ID (e.g., "openai/gpt-4" -> "OpenAI")
             const provider = model.id.split('/')[0];
             const providerName = this.capitalizeProvider(provider);
-            
+
             // Categorize models
             let category = 'Other models';
+            let categoryPriority = 5; // Default priority
+
             if (model.id.includes('gpt') || model.id.includes('claude') || model.id.includes('gemini')) {
                 category = 'Flagship models';
+                categoryPriority = 1;
             } else if (model.id.includes('llama') || model.id.includes('mistral')) {
                 category = 'Best roleplay models';
+                categoryPriority = 2;
             } else if (model.id.includes('code') || model.id.includes('deepseek')) {
                 category = 'Best coding models';
+                categoryPriority = 3;
             } else if (model.id.includes('o1')) {
                 category = 'Reasoning models';
+                categoryPriority = 4;
             }
 
             return {
                 id: model.id,
                 name: model.name || model.id,
                 category: category,
+                categoryPriority: categoryPriority,
                 provider: providerName,
                 context_length: model.context_length,
                 pricing: model.pricing
             };
         });
 
-        // Sort by popularity/pricing
+        // Sort by category priority first, then by pricing within each category
         return formattedModels.sort((a, b) => {
+            // First sort by category priority
+            if (a.categoryPriority !== b.categoryPriority) {
+                return a.categoryPriority - b.categoryPriority;
+            }
+            // Within same category, sort by price
             const priceA = a.pricing?.prompt || 0;
             const priceB = b.pricing?.prompt || 0;
             return priceA - priceB;
@@ -153,11 +165,11 @@ class OpenRouterAPI {
     async sendCompletion(messages, modelId, apiKey) {
         const url = `${this.baseUrl}/chat/completions`;
         const key = apiKey || this.getApiKey();
-        
+
         if (!key) {
             throw new Error('No API key available. Please obtain an API key first.');
         }
-        
+
         const headers = {
             'Authorization': `Bearer ${key}`,
             'HTTP-Referer': window.location.origin,
@@ -171,7 +183,7 @@ class OpenRouterAPI {
                 content: msg.content
             }))
         };
-        
+
         try {
             const response = await fetch(url, {
                 method: 'POST',
@@ -180,7 +192,7 @@ class OpenRouterAPI {
             });
 
             const data = await response.json();
-            
+
             // Log successful request
             if (window.networkLogger) {
                 window.networkLogger.logRequest({
@@ -188,7 +200,7 @@ class OpenRouterAPI {
                     method: 'POST',
                     url: url,
                     status: response.status,
-                    request: { 
+                    request: {
                         headers: window.networkLogger.sanitizeHeaders(headers),
                         body: body
                     },
@@ -203,7 +215,7 @@ class OpenRouterAPI {
             return data.choices[0]?.message?.content || 'No response received';
         } catch (error) {
             console.error('Error sending completion:', error);
-            
+
             // Log failed request
             if (window.networkLogger) {
                 window.networkLogger.logRequest({
@@ -211,14 +223,14 @@ class OpenRouterAPI {
                     method: 'POST',
                     url: url,
                     status: 0,
-                    request: { 
+                    request: {
                         headers: window.networkLogger.sanitizeHeaders(headers),
                         body: body
                     },
                     error: error.message
                 });
             }
-            
+
             return `Error: ${error.message}. Using simulated response instead: This is a fallback response since the API call failed.`;
         }
     }
@@ -227,30 +239,30 @@ class OpenRouterAPI {
     async streamCompletion(messages, modelId, apiKey, onChunk, onTokenUpdate, files = [], searchEnabled = false, abortController = null) {
         const url = `${this.baseUrl}/chat/completions`;
         const key = apiKey || this.getApiKey();
-        
+
         if (!key) {
             throw new Error('No API key available. Please obtain an API key first.');
         }
-        
+
         // Handle web search - append :online suffix if enabled
         let effectiveModelId = modelId;
         if (searchEnabled && !modelId.includes(':online')) {
             effectiveModelId = `${modelId}:online`;
         }
-        
+
         // Check if there are PDF files
         let hasPdfFiles = false;
-        
+
         // Process files if provided
         let processedMessages = messages;
         if (files && files.length > 0) {
             try {
                 const { filesToMultimodalContent } = await import('./services/fileUtils.js');
                 const multimodalContent = await filesToMultimodalContent(files);
-                
+
                 // Check if any files are PDFs
                 hasPdfFiles = files.some(file => file.type === 'application/pdf');
-                
+
                 // Get the last user message
                 const lastUserMsg = messages[messages.length - 1];
                 if (lastUserMsg && lastUserMsg.role === 'user') {
@@ -259,7 +271,7 @@ class OpenRouterAPI {
                         { type: 'text', text: lastUserMsg.content },
                         ...multimodalContent
                     ];
-                    
+
                     // Update the last message with multimodal content
                     processedMessages = [
                         ...messages.slice(0, -1),
@@ -271,21 +283,21 @@ class OpenRouterAPI {
                 throw new Error(`Failed to process files: ${error.message}`);
             }
         }
-        
+
         const headers = {
             'Authorization': `Bearer ${key}`,
             'HTTP-Referer': window.location.origin,
             'X-Title': 'chat',
             'Content-Type': 'application/json'
         };
-        
+
         let totalTokens = 0;
         let promptTokens = 0;
         let completionTokens = 0;
         let modelUsed = effectiveModelId;
         let accumulatedContent = '';
         let hasReceivedFirstToken = false;
-        
+
         try {
             // Build request body
             const requestBody = {
@@ -298,7 +310,7 @@ class OpenRouterAPI {
                 // Request usage information in stream
                 stream_options: { include_usage: true }
             };
-            
+
             // Add PDF plugin configuration if PDFs are present
             // Default to mistral-ocr as per OpenRouter documentation
             if (hasPdfFiles) {
@@ -311,18 +323,18 @@ class OpenRouterAPI {
                     }
                 ];
             }
-            
+
             const fetchOptions = {
                 method: 'POST',
                 headers: headers,
                 body: JSON.stringify(requestBody)
             };
-            
+
             // Add abort signal if provided
             if (abortController) {
                 fetchOptions.signal = abortController.signal;
             }
-            
+
             const response = await fetch(url, fetchOptions);
 
             // Handle pre-stream errors
@@ -342,7 +354,7 @@ class OpenRouterAPI {
                     method: 'POST',
                     url: url,
                     status: response.status,
-                    request: { 
+                    request: {
                         headers: window.networkLogger.sanitizeHeaders(headers),
                         body: { model: modelId, messages: messages.length + ' messages', stream: true }
                     },
@@ -365,7 +377,7 @@ class OpenRouterAPI {
                 for (const line of lines) {
                     // Skip empty lines
                     if (line.trim() === '') continue;
-                    
+
                     // Handle SSE comments (OpenRouter processing indicators)
                     if (line.startsWith(':')) {
                         // These are SSE comments, we can optionally use them for UI feedback
@@ -373,14 +385,14 @@ class OpenRouterAPI {
                         console.debug('SSE comment:', line);
                         continue;
                     }
-                    
+
                     if (line.startsWith('data: ')) {
                         const data = line.slice(6);
                         if (data === '[DONE]') continue;
 
                         try {
                             const parsed = JSON.parse(data);
-                            
+
                             // Check for mid-stream errors
                             if (parsed.error) {
                                 const errorMessage = parsed.error.message || 'Stream error occurred';
@@ -388,52 +400,52 @@ class OpenRouterAPI {
                                 error.code = parsed.error.code;
                                 error.isStreamError = true;
                                 error.hasReceivedTokens = hasReceivedFirstToken;
-                                
+
                                 // Check if this is a terminal error
                                 if (parsed.choices?.[0]?.finish_reason === 'error') {
                                     throw error;
                                 }
                             }
-                            
+
                             const content = parsed.choices?.[0]?.delta?.content;
                             if (content) {
                                 hasReceivedFirstToken = true;
                                 accumulatedContent += content;
                                 onChunk(content);
-                                
+
                                 // Improved token estimation during streaming
                                 completionTokens = Math.ceil(accumulatedContent.length / 4);
                                 if (onTokenUpdate) {
-                                    onTokenUpdate({ 
-                                        completionTokens, 
-                                        isStreaming: true 
+                                    onTokenUpdate({
+                                        completionTokens,
+                                        isStreaming: true
                                     });
                                 }
                             }
-                            
+
                             // Check for finish reason
                             const finishReason = parsed.choices?.[0]?.finish_reason;
                             if (finishReason && finishReason !== 'stop') {
                                 console.warn('Stream finished with reason:', finishReason);
                             }
-                            
+
                             // Check for usage info in the stream
                             if (parsed.usage) {
                                 totalTokens = parsed.usage.total_tokens || 0;
                                 promptTokens = parsed.usage.prompt_tokens || 0;
                                 completionTokens = parsed.usage.completion_tokens || 0;
-                                
+
                                 // Update token count with final accurate values
                                 if (onTokenUpdate) {
-                                    onTokenUpdate({ 
+                                    onTokenUpdate({
                                         totalTokens,
                                         promptTokens,
-                                        completionTokens, 
-                                        isStreaming: false 
+                                        completionTokens,
+                                        isStreaming: false
                                     });
                                 }
                             }
-                            
+
                             // Check for model info
                             if (parsed.model) {
                                 modelUsed = parsed.model;
@@ -445,7 +457,7 @@ class OpenRouterAPI {
                     }
                 }
             }
-            
+
             // Return token usage data
             return {
                 totalTokens,
@@ -459,9 +471,9 @@ class OpenRouterAPI {
                 console.log('Stream cancelled by user');
                 error.isCancelled = true;
             }
-            
+
             console.error('Error streaming completion:', error);
-            
+
             // Log failed request
             if (window.networkLogger) {
                 window.networkLogger.logRequest({
@@ -469,14 +481,14 @@ class OpenRouterAPI {
                     method: 'POST',
                     url: url,
                     status: error.status || 0,
-                    request: { 
+                    request: {
                         headers: window.networkLogger.sanitizeHeaders(headers),
                         body: { model: modelId, messages: messages.length + ' messages', stream: true }
                     },
                     error: error.message
                 });
             }
-            
+
             throw error;
         }
     }

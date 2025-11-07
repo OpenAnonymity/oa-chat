@@ -4,6 +4,8 @@
  * No DOM manipulation; only generates HTML strings.
  */
 
+import { getProviderIcon } from '../services/providerIcons.js';
+
 // Shared class constants (copied verbatim from existing markup)
 const CLASSES = {
     userWrapper: 'w-full px-2 md:px-3 fade-in self-end',
@@ -84,20 +86,22 @@ function buildTokenDisplay(message) {
  * Builds HTML for an assistant message bubble.
  * @param {Object} message - Message object
  * @param {Object} helpers - Helper functions { processContentWithLatex, formatTime }
- * @param {string} providerInitial - Provider initial letter
+ * @param {string} providerName - Provider name (e.g., "OpenAI", "Anthropic")
  * @param {string} modelName - Model display name
  * @returns {string} HTML string
  */
-function buildAssistantMessage(message, helpers, providerInitial, modelName) {
+function buildAssistantMessage(message, helpers, providerName, modelName) {
     const { processContentWithLatex, formatTime } = helpers;
     const tokenDisplay = buildTokenDisplay(message);
+    const iconData = getProviderIcon(providerName, 'w-3.5 h-3.5');
+    const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
 
     return `
         <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}">
             <div class="${CLASSES.assistantGroup}">
                 <div class="${CLASSES.assistantHeader}">
-                    <div class="${CLASSES.assistantAvatar}">
-                        <span class="${CLASSES.assistantAvatarText}">${providerInitial}</span>
+                    <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow ${bgClass}">
+                        ${iconData.html}
                     </div>
                     <span class="${CLASSES.assistantModelName}" style="font-size: 0.7rem;">${modelName}</span>
                     <span class="${CLASSES.assistantTime}" style="font-size: 0.7rem;">${formatTime(message.timestamp)}</span>
@@ -116,15 +120,17 @@ function buildAssistantMessage(message, helpers, providerInitial, modelName) {
 /**
  * Builds HTML for a typing indicator.
  * @param {string} id - Unique ID for the indicator element
- * @param {string} providerInitial - Provider initial letter
+ * @param {string} providerName - Provider name (e.g., "OpenAI", "Anthropic")
  * @returns {string} HTML string
  */
-function buildTypingIndicator(id, providerInitial) {
+function buildTypingIndicator(id, providerName) {
+    const iconData = getProviderIcon(providerName, 'w-3.5 h-3.5');
+    const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
     return `
         <div id="${id}" class="${CLASSES.typingWrapper}">
             <div class="${CLASSES.typingGroup}">
-                <div class="${CLASSES.typingAvatar}">
-                    <span class="${CLASSES.typingAvatarText}">${providerInitial}</span>
+                <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow ${bgClass} p-0.5">
+                    ${iconData.html}
                 </div>
                 <div class="${CLASSES.typingDots}">
                     <div class="${CLASSES.typingDot}"></div>
@@ -164,12 +170,12 @@ export function buildMessageHTML(message, helpers, models, sessionModelName) {
     if (message.role === 'user') {
         return buildUserMessage(message);
     } else {
-        // Determine provider initial and model name
+        // Determine provider name and model name
         const modelName = sessionModelName || 'GPT-5 Chat';
         const model = models.find(m => m.name === modelName);
-        const providerInitial = model ? model.provider.charAt(0) : 'A';
+        const providerName = model ? model.provider : 'OpenAI';
 
-        return buildAssistantMessage(message, helpers, providerInitial, modelName);
+        return buildAssistantMessage(message, helpers, providerName, modelName);
     }
 }
 

@@ -2,7 +2,14 @@
  * ModelPicker Component
  * Manages the model selection modal including search, filtering,
  * and model selection interactions.
+ *
+ * CONFIGURATION:
+ * To pin specific models to the top of the list, edit the pinnedModels array in the constructor.
+ * Add model IDs (e.g., 'openai/gpt-4o', 'anthropic/claude-3.5-sonnet') in the order you want them to appear.
+ * Pinned models will appear in a separate "Pinned" section at the top.
  */
+
+import { getProviderIcon } from '../services/providerIcons.js';
 
 export default class ModelPicker {
     /**
@@ -10,6 +17,17 @@ export default class ModelPicker {
      */
     constructor(app) {
         this.app = app;
+
+        // Configuration: Pin specific models to the top
+        // Add model IDs here to always show them first
+        this.pinnedModels = [
+            // Example: Uncomment to pin specific models
+            'openai/gpt-5-chat',
+            'openai/gpt-5',
+            'anthropic/claude-sonnet-4.5',
+            'anthropic/claude-opus-4.1',
+            'google/gemini-2.5-pro',
+        ];
     }
 
     /**
@@ -82,19 +100,55 @@ export default class ModelPicker {
      */
     renderModels(searchTerm = '') {
         const filteredModels = this.filterModels(searchTerm);
-        const categories = [...new Set(filteredModels.map(m => m.category))];
 
-        this.app.elements.modelsList.innerHTML = categories.map(category => `
+        // Separate pinned models from the rest
+        const pinnedModelsList = [];
+        const unpinnedModels = [];
+
+        filteredModels.forEach(model => {
+            if (this.pinnedModels.includes(model.id)) {
+                pinnedModelsList.push(model);
+            } else {
+                unpinnedModels.push(model);
+            }
+        });
+
+        // Sort pinned models according to the pinnedModels array order
+        pinnedModelsList.sort((a, b) => {
+            return this.pinnedModels.indexOf(a.id) - this.pinnedModels.indexOf(b.id);
+        });
+
+        let html = '';
+
+        // Render pinned models section if there are any
+        if (pinnedModelsList.length > 0) {
+            html += `
+                <div class="mb-3">
+                    <div class="model-category-header px-2 py-1 text-xs font-medium text-muted-foreground">Pinned</div>
+                    <div class="space-y-0">
+                        ${pinnedModelsList
+                            .map(model => this.buildModelOptionHTML(model))
+                            .join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        // Render categories for unpinned models
+        const categories = [...new Set(unpinnedModels.map(m => m.category))];
+        html += categories.map(category => `
             <div class="mb-3">
                 <div class="model-category-header px-2 py-1 text-xs font-medium text-muted-foreground">${category}</div>
                 <div class="space-y-0">
-                    ${filteredModels
+                    ${unpinnedModels
                         .filter(m => m.category === category)
                         .map(model => this.buildModelOptionHTML(model))
                         .join('')}
                 </div>
             </div>
         `).join('');
+
+        this.app.elements.modelsList.innerHTML = html;
 
         // Wire up click handlers
         this.attachModelClickListeners();
@@ -108,12 +162,14 @@ export default class ModelPicker {
     buildModelOptionHTML(model) {
         const session = this.app.getCurrentSession();
         const isSelected = session && session.model === model.name;
+        const iconData = getProviderIcon(model.provider, 'w-3.5 h-3.5');
+        const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
 
         return `
             <div class="model-option px-2 py-1.5 rounded-sm cursor-pointer transition-colors hover:bg-accent ${isSelected ? 'bg-accent' : ''}" data-model="${model.name}">
                 <div class="flex items-center gap-2">
-                    <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 bg-muted">
-                        <span class="text-[10px] font-semibold">${model.provider.charAt(0)}</span>
+                    <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 ${bgClass}">
+                        ${iconData.html}
                     </div>
                     <div class="flex-1 min-w-0">
                         <div class="font-medium text-sm text-foreground truncate">${model.name}</div>
@@ -163,10 +219,11 @@ export default class ModelPicker {
 
         if (modelName) {
             const model = this.app.state.models.find(m => m.name === modelName);
-            const providerInitial = model ? model.provider.charAt(0) : '';
+            const iconData = model ? getProviderIcon(model.provider, 'w-3 h-3') : { html: '', hasIcon: false };
+            const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
             this.app.elements.modelPickerBtn.innerHTML = `
-                <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 bg-muted">
-                    <span class="text-[10px] font-semibold">${providerInitial}</span>
+                <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 ${bgClass}">
+                    ${iconData.html}
                 </div>
                 <span class="truncate">${modelName}</span>
             `;
