@@ -27,6 +27,7 @@ class ChatApp {
         this.elements = {
             newChatBtn: document.getElementById('new-chat-btn'),
             sessionsList: document.getElementById('sessions-list'),
+            searchRoomsInput: document.getElementById('search-rooms'),
             chatArea: document.getElementById('chat-area'),
             messagesContainer: document.getElementById('messages-container'),
             messageInput: document.getElementById('message-input'),
@@ -58,6 +59,7 @@ class ChatApp {
         };
 
         this.searchEnabled = false;
+        this.sessionSearchQuery = '';
         this.uploadedFiles = [];
         this.rightPanel = null;
         this.floatingPanel = null;
@@ -780,6 +782,43 @@ class ChatApp {
     }
 
     /**
+     * Filters sessions based on search query using fuzzy subsequence matching.
+     * @returns {Array} Filtered sessions array
+     */
+    getFilteredSessions() {
+        if (!this.sessionSearchQuery.trim()) {
+            return this.state.sessions;
+        }
+
+        const query = this.sessionSearchQuery.toLowerCase();
+        return this.state.sessions.filter(session => {
+            const title = session.title.toLowerCase();
+            return this.fuzzyMatch(query, title);
+        });
+    }
+
+    /**
+     * Performs fuzzy subsequence matching.
+     * Returns true if all characters in query appear in text in order.
+     * @param {string} query - Search query
+     * @param {string} text - Text to search in
+     * @returns {boolean} True if match found
+     */
+    fuzzyMatch(query, text) {
+        let queryIndex = 0;
+        let textIndex = 0;
+
+        while (queryIndex < query.length && textIndex < text.length) {
+            if (query[queryIndex] === text[textIndex]) {
+                queryIndex++;
+            }
+            textIndex++;
+        }
+
+        return queryIndex === query.length;
+    }
+
+    /**
      * Renders the sessions list (delegated to Sidebar component).
      */
     renderSessions() {
@@ -923,6 +962,14 @@ class ChatApp {
             });
         }
 
+        // Session search input
+        if (this.elements.searchRoomsInput) {
+            this.elements.searchRoomsInput.addEventListener('input', (e) => {
+                this.sessionSearchQuery = e.target.value;
+                this.renderSessions();
+            });
+        }
+
         // Keyboard shortcuts
         document.addEventListener('keydown', (e) => {
             // Cmd/Ctrl + / for new chat
@@ -966,7 +1013,7 @@ class ChatApp {
                 });
             }
 
-            // Auto-focus message input when typing
+            // Check if any input field is currently focused
             const activeElement = document.activeElement;
             const isInputFocused = activeElement && (
                 activeElement.tagName === 'INPUT' ||
@@ -974,6 +1021,21 @@ class ChatApp {
                 activeElement.isContentEditable
             );
 
+            // Send message on Enter if no input is focused and there's unsent text
+            if (e.key === 'Enter' &&
+                !isInputFocused &&
+                !e.shiftKey &&
+                !e.metaKey &&
+                !e.ctrlKey &&
+                !e.altKey &&
+                !this.elements.sendBtn.disabled &&
+                this.elements.modelPickerModal.classList.contains('hidden')) {
+                e.preventDefault();
+                this.sendMessage();
+                return;
+            }
+
+            // Auto-focus message input when typing
             // Only auto-focus if:
             // - No input/textarea is currently focused
             // - Not using modifier keys (Cmd/Ctrl/Alt)

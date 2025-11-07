@@ -48,11 +48,14 @@ export default class Sidebar {
      * Wires up event listeners for session clicks, menu toggles, and delete actions.
      */
     render() {
+        // Get filtered sessions based on search query
+        const sessionsToRender = this.app.getFilteredSessions();
+
         // Group sessions by date (using updatedAt so active sessions move to TODAY)
         const grouped = {};
         const groupOrder = ['TODAY', 'YESTERDAY', 'PREVIOUS 7 DAYS', 'PREVIOUS 30 DAYS', 'OLDER'];
 
-        this.app.state.sessions.forEach(session => {
+        sessionsToRender.forEach(session => {
             // Use updatedAt if available, otherwise fall back to createdAt
             const timestamp = session.updatedAt || session.createdAt;
             const group = this.getSessionDateGroup(timestamp);
