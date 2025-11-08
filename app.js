@@ -362,6 +362,11 @@ class ChatApp {
         await chatDB.saveSession(session);
         await chatDB.saveSetting('currentSessionId', session.id);
 
+        // Hide message navigation immediately for new empty session
+        if (this.messageNavigation) {
+            this.messageNavigation.hide();
+        }
+
         this.renderSessions();
         this.renderMessages();
         this.renderCurrentModel();
@@ -390,6 +395,11 @@ class ChatApp {
         if (session) {
             this.searchEnabled = session.searchEnabled || false;
             this.updateSearchToggle();
+        }
+
+        // Clear message navigation immediately before switching to prevent showing stale data
+        if (this.messageNavigation) {
+            this.messageNavigation.hide();
         }
 
         this.renderSessions();

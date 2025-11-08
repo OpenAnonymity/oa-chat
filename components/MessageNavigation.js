@@ -6,7 +6,7 @@ export default class MessageNavigation {
         this.messages = [];
         this.container = null;
         this.isVisible = false;
-        
+
         this.init();
     }
 
@@ -33,7 +33,7 @@ export default class MessageNavigation {
                 </svg>
             </button>
         `;
-        
+
         // Add to chat area
         const chatArea = document.getElementById('chat-area');
         if (chatArea) {
@@ -45,11 +45,11 @@ export default class MessageNavigation {
     setupEventListeners() {
         const prevBtn = document.getElementById('prev-message-btn');
         const nextBtn = document.getElementById('next-message-btn');
-        
+
         if (prevBtn) {
             prevBtn.addEventListener('click', () => this.navigateToPrevious());
         }
-        
+
         if (nextBtn) {
             nextBtn.addEventListener('click', () => this.navigateToNext());
         }
@@ -57,7 +57,7 @@ export default class MessageNavigation {
         // Keyboard navigation
         document.addEventListener('keydown', (e) => {
             // Only handle when navigation is visible and no input is focused
-            if (!this.isVisible || document.activeElement.tagName === 'TEXTAREA' || 
+            if (!this.isVisible || document.activeElement.tagName === 'TEXTAREA' ||
                 document.activeElement.tagName === 'INPUT') {
                 return;
             }
@@ -67,7 +67,7 @@ export default class MessageNavigation {
                 e.preventDefault();
                 this.navigateToPrevious();
             }
-            
+
             // Arrow Down - Next message
             if (e.key === 'ArrowDown') {
                 e.preventDefault();
@@ -85,10 +85,10 @@ export default class MessageNavigation {
 
         // Get messages from database
         const messages = await chatDB.getSessionMessages(session.id);
-        
+
         // Filter to only assistant messages for navigation
         this.messages = messages.filter(m => m.role === 'assistant');
-        
+
         // Hide if fewer than 2 assistant messages
         if (this.messages.length < 2) {
             this.hide();
@@ -110,8 +110,8 @@ export default class MessageNavigation {
             // Calculate bar width based on message length
             const barWidth = this.calculateBarWidth(msg.content || '');
             return `
-                <button 
-                    class="message-indicator ${isCurrent ? 'active' : ''}" 
+                <button
+                    class="message-indicator ${isCurrent ? 'active' : ''}"
                     data-message-index="${index}"
                     data-message-id="${msg.id}"
                     aria-label="Jump to message ${index + 1}"
@@ -140,7 +140,7 @@ export default class MessageNavigation {
             });
         });
     }
-    
+
     calculateBarWidth(content) {
         const length = content.length;
         // Define width categories with more varied lengths for better visual distinction
@@ -165,26 +165,26 @@ export default class MessageNavigation {
         const popover = document.createElement('div');
         popover.id = 'message-preview-popover';
         popover.className = 'message-preview-popover';
-        
+
         // Get preview text (first 200 chars for left positioning)
         const previewText = message.content.substring(0, 200) + (message.content.length > 200 ? '…' : '');
-        
+
         popover.innerHTML = `
             <div class="popover-header">Message ${messageIndex + 1}</div>
             <div class="popover-content">${this.escapeHtml(previewText)}</div>
         `;
-        
+
         document.body.appendChild(popover);
-        
+
         // Position popover to the left of navigation
         const navRect = this.container.getBoundingClientRect();
         const popoverRect = popover.getBoundingClientRect();
-        
+
         popover.style.position = 'fixed';
         popover.style.right = (window.innerWidth - navRect.left + 16) + 'px';
         popover.style.top = navRect.top + (navRect.height / 2) + 'px';
         popover.style.transform = 'translateY(-50%)';
-        
+
         // Ensure popover doesn't go off-screen
         const finalRect = popover.getBoundingClientRect();
         if (finalRect.top < 10) {
@@ -215,30 +215,30 @@ export default class MessageNavigation {
         // Get the currently visible message in viewport
         const messageElements = document.querySelectorAll('[data-message-id]');
         const chatArea = document.getElementById('chat-area');
-        
+
         if (!chatArea || messageElements.length === 0) return;
 
         const viewportMiddle = chatArea.scrollTop + (chatArea.clientHeight / 2);
-        
+
         let closestIndex = 0;
         let closestDistance = Infinity;
-        
+
         messageElements.forEach((el, index) => {
             const messageId = el.dataset.messageId;
             const msgIndex = this.messages.findIndex(m => m.id === messageId);
-            
+
             if (msgIndex !== -1) {
                 const rect = el.getBoundingClientRect();
                 const elementMiddle = el.offsetTop + (rect.height / 2);
                 const distance = Math.abs(elementMiddle - viewportMiddle);
-                
+
                 if (distance < closestDistance) {
                     closestDistance = distance;
                     closestIndex = msgIndex;
                 }
             }
         });
-        
+
         this.currentMessageIndex = closestIndex;
         this.updateIndicators();
     }
@@ -270,19 +270,19 @@ export default class MessageNavigation {
 
     navigateToMessage(index) {
         if (index < 0 || index >= this.messages.length) return;
-        
+
         this.currentMessageIndex = index;
         const message = this.messages[index];
-        
+
         // Scroll to message
         const messageElement = document.querySelector(`[data-message-id="${message.id}"]`);
         if (messageElement) {
-            messageElement.scrollIntoView({ 
-                behavior: 'smooth', 
+            messageElement.scrollIntoView({
+                behavior: 'smooth',
                 block: 'center'
             });
         }
-        
+
         this.updateIndicators();
     }
 
@@ -299,6 +299,13 @@ export default class MessageNavigation {
             this.isVisible = false;
         }
         this.hidePreview();
+        // Clear indicators when hiding to prevent showing stale data
+        const indicatorsContainer = document.getElementById('message-indicators');
+        if (indicatorsContainer) {
+            indicatorsContainer.innerHTML = '';
+        }
+        this.messages = [];
+        this.currentMessageIndex = 0;
     }
 
     // Track scroll position to update current message
