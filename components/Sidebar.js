@@ -99,7 +99,7 @@ export default class Sidebar {
         const titleClass = session.title === 'New Chat' ? 'italic text-muted-foreground' : '';
 
         return `
-            <div class="group relative flex h-9 items-center rounded-lg ${isActive ? 'chat-session active' : 'hover:bg-accent/30'} transition-colors pl-3 chat-session" data-session-id="${session.id}">
+            <div class="group relative flex h-9 items-center rounded-lg ${isActive ? 'chat-session active' : 'hover-highlight'} transition-colors pl-3 chat-session" data-session-id="${session.id}">
                 <a class="flex flex-1 items-center justify-between h-full min-w-0 text-foreground hover:text-foreground cursor-pointer">
                     <div class="flex min-w-0 flex-1 items-center">
                         <input class="w-full cursor-pointer truncate bg-transparent text-sm leading-5 focus:outline-none text-foreground ${titleClass}" placeholder="Untitled Chat" readonly value="${this.escapeHtml(session.title)}">
@@ -112,7 +112,7 @@ export default class Sidebar {
                         </svg>
                     </button>
                     <div class="session-menu hidden absolute right-0 top-10 z-[100] rounded-lg border border-border bg-popover shadow-lg p-1 min-w-[140px]" data-session-id="${session.id}">
-                        <button class="delete-session-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent/30 hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">Delete</button>
+                        <button class="delete-session-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">Delete</button>
                     </div>
                 </div>
             </div>
