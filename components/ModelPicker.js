@@ -192,19 +192,22 @@ export default class ModelPicker {
     }
 
     /**
-     * Selects a model and updates the session.
+     * Selects a model and updates the session or stores as pending.
      * @param {string} modelName - Name of the model to select
      */
     async selectModel(modelName) {
-        // Create session if none exists (e.g., at app startup)
-        if (!this.app.getCurrentSession()) {
-            await this.app.createSession();
+        const session = this.app.getCurrentSession();
+
+        if (!session) {
+            // No session exists - store as pending model
+            // Will be used when session is created (e.g., when first message is sent)
+            this.app.state.pendingModel = modelName;
+            this.app.renderCurrentModel();
+            this.close();
+            return;
         }
 
-        const session = this.app.getCurrentSession();
-        if (!session) return; // Safety check
-
-        // Update the model
+        // Update existing session
         session.model = modelName;
         await chatDB.saveSession(session);
         this.app.renderCurrentModel();
@@ -216,7 +219,8 @@ export default class ModelPicker {
      */
     renderCurrentModel() {
         const session = this.app.getCurrentSession();
-        const modelName = session ? session.model : null;
+        // Show model from session if exists, otherwise show pending model
+        const modelName = session ? session.model : this.app.state.pendingModel;
 
         // Guard against elements not being available
         if (!this.app.elements.modelPickerBtn) {

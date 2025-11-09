@@ -21,7 +21,8 @@ class ChatApp {
             sessions: [],
             currentSessionId: null,
             models: [],
-            modelsLoading: false
+            modelsLoading: false,
+            pendingModel: null // Model selected before session is created
         };
 
         this.elements = {
@@ -340,12 +341,15 @@ class ChatApp {
             title,
             createdAt: Date.now(),
             updatedAt: Date.now(),
-            model: null,
+            model: this.state.pendingModel || null, // Use pending model if available
             apiKey: null,
             apiKeyInfo: null,
             expiresAt: null,
             searchEnabled: this.searchEnabled
         };
+
+        // Clear pending model since it's now part of the session
+        this.state.pendingModel = null;
 
         this.state.sessions.unshift(session);
         this.state.currentSessionId = session.id;
@@ -498,6 +502,7 @@ class ChatApp {
      */
     clearCurrentSession() {
         this.state.currentSessionId = null;
+        this.state.pendingModel = null; // Clear any pending model selection
 
         // Update UI to reflect no session selected
         this.renderSessions();
