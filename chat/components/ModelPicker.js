@@ -28,6 +28,9 @@ export default class ModelPicker {
             'anthropic/claude-opus-4.1',
             'google/gemini-2.5-pro',
         ];
+
+        // Keyboard navigation state
+        this.highlightedIndex = -1;
     }
 
     /**
@@ -55,6 +58,11 @@ export default class ModelPicker {
         this.app.elements.modelSearch.addEventListener('input', (e) => {
             this.renderModels(e.target.value);
         });
+
+        // Keyboard navigation
+        this.app.elements.modelSearch.addEventListener('keydown', (e) => {
+            this.handleKeyboardNavigation(e);
+        });
     }
 
     /**
@@ -62,6 +70,7 @@ export default class ModelPicker {
      */
     open() {
         this.app.elements.modelPickerModal.classList.remove('hidden');
+        this.highlightedIndex = -1;
         this.renderModels();
         // Focus search input after a brief delay to ensure modal is visible
         setTimeout(() => {
@@ -100,6 +109,9 @@ export default class ModelPicker {
      */
     renderModels(searchTerm = '') {
         const filteredModels = this.filterModels(searchTerm);
+
+        // Reset keyboard highlight when rendering
+        this.highlightedIndex = -1;
 
         // Separate pinned models from the rest
         const pinnedModelsList = [];
@@ -250,6 +262,64 @@ export default class ModelPicker {
                 ${shortcutHtml}
             `;
             this.app.elements.modelPickerBtn.classList.remove('gap-1.5');
+        }
+    }
+
+    /**
+     * Handles keyboard navigation within the model picker.
+     * @param {KeyboardEvent} e - Keyboard event
+     */
+    handleKeyboardNavigation(e) {
+        const modelOptions = this.getModelOptions();
+        if (modelOptions.length === 0) return;
+
+        switch (e.key) {
+            case 'ArrowDown':
+                e.preventDefault();
+                this.highlightedIndex = Math.min(this.highlightedIndex + 1, modelOptions.length - 1);
+                this.updateHighlight(modelOptions);
+                break;
+
+            case 'ArrowUp':
+                e.preventDefault();
+                this.highlightedIndex = Math.max(this.highlightedIndex - 1, -1);
+                this.updateHighlight(modelOptions);
+                break;
+
+            case 'Enter':
+                if (this.highlightedIndex >= 0 && this.highlightedIndex < modelOptions.length) {
+                    e.preventDefault();
+                    const selectedModel = modelOptions[this.highlightedIndex].dataset.model;
+                    this.selectModel(selectedModel);
+                }
+                break;
+        }
+    }
+
+    /**
+     * Gets all visible model option elements.
+     * @returns {Array} Array of model option elements
+     */
+    getModelOptions() {
+        return Array.from(document.querySelectorAll('.model-option'));
+    }
+
+    /**
+     * Updates the visual highlight for keyboard navigation.
+     * @param {Array} modelOptions - Array of model option elements
+     */
+    updateHighlight(modelOptions) {
+        // Remove keyboard highlight from all options
+        modelOptions.forEach(el => {
+            el.classList.remove('keyboard-highlight');
+        });
+
+        // Add keyboard highlight to current option
+        if (this.highlightedIndex >= 0 && this.highlightedIndex < modelOptions.length) {
+            const currentOption = modelOptions[this.highlightedIndex];
+            currentOption.classList.add('keyboard-highlight');
+            // Scroll into view
+            currentOption.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
         }
     }
 }
