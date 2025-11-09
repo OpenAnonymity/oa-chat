@@ -1,182 +1,43 @@
-# OA Chat
+## `oa-fastchat`
 
-A minimal, fully-functional chat web application that replicates OpenRouter's chat interface design and core functionality.
+A minimal, fast chat client that talks directly to OpenRouter using ephemeral, anonymous API keys obtained via the Open Anonymity network. Everything runs directly in the browser; no backend, no build step — just open and chat.
 
-## Features
+### Highlights
+- **Standalone**: Pure ES modules loaded in the browser; no server required.
+- **Provably anonymity**: Keys are ephemeral and acquired via Privacy Pass–backed inference tickets.
+- **Persistent locally**: Sessions, messages, settings, and everything else are all *locally* stored in IndexedDB.
+- **Streaming UX**: Incremental token updates with reliable auto‑scroll.
+- **Markdown + LaTeX**: Rendered with Marked and KaTeX (from CDNs).
+- **Model picker**: Fuzzy search, pinned models, and per‑session selection.
+- **Multimodal**: Images, PDFs, and audio attachments (converted to OpenRouter formats).
+- **Right panel**: Ticket registration, key issuance/expiry, and an activity timeline (logs are memory‑only per tab).
 
-### Core Functionality
-- ✅ **Chat Sessions**: Create, switch between, and manage multiple chat sessions
-- ✅ **Model Selection**: Select from multiple AI models with searchable picker (⌘K)
-- ✅ **Message Display**: Clean message bubbles for user and AI responses
-- ✅ **Markdown Rendering**: Full markdown support using Marked.js
-- ✅ **LaTeX Rendering**: Mathematical equations with KaTeX
-- ✅ **IndexedDB Storage**: Persistent sessions and messages in browser database
-- ✅ **Auto-scrolling**: Messages automatically scroll to bottom
-- ✅ **Keyboard Shortcuts**:
-  - ⌘/ - New chat
-  - ⌘K - Open model picker
-  - ⌘⇧⌫ - Clear chat
-  - Enter - Send message
-  - Escape - Close modals
-
-### Advanced Features
-- 🔍 **Live Model Search**: Filter models by name, provider, or category
-- ⚙️ **Settings Menu**:
-  - Auto-expand
-  - Export/Import
-  - Get Markdown
-  - Clear Models
-  - Clear Chat
-  - Share Models
-- 🔄 **Search Toggle**: Enable/disable search functionality
-- 📁 **File Upload**: Attach files to messages (UI ready)
-- 💾 **Memory System**: Context management (UI ready)
-
-### User Interface
-- Clean three-panel layout (sidebar, chat area, input)
-- OpenRouter-inspired design with Tailwind CSS
-- Responsive and accessible
-- Smooth animations and transitions
-- Auto-resizing textarea
-- Session search functionality
-
-### Model Selection
-The app includes 13 pre-configured models across 4 categories:
-- **Flagship models**: GPT-4, GPT-4 Turbo, GPT-3.5 Turbo, Claude 3 (Opus, Sonnet, Haiku)
-- **Best roleplay models**: Mistral Large, Mixtral 8x7B, Llama 3 70B
-- **Best coding models**: DeepSeek Coder, CodeLlama 70B
-- **Reasoning models**: O1 Preview, O1 Mini
-
-## Technical Details
-
-### Architecture
-- **Single HTML File**: All code (HTML, CSS, JavaScript) in one file for simplicity
-- **No Backend**: Runs entirely in the browser with simulated AI responses
-- **No Build Process**: Just open index.html in a browser
-
-### Dependencies (loaded from CDN)
-- Tailwind CSS - Styling framework
-- Marked.js - Markdown parsing
-- KaTeX - LaTeX rendering
-
-### Code Structure
-```javascript
-// State Management
-- Sessions array with messages
-- Selected models array
-- Model definitions
-
-// Rendering Functions
-- renderSessions() - Updates sidebar
-- renderMessages() - Displays chat messages
-- renderSelectedModels() - Shows active models
-- renderModels() - Modal model picker
-
-// Core Functions
-- createSession() - New chat
-- switchSession() - Change active chat
-- addMessage() - Add to conversation
-- sendMessage() - Send user message
-- deleteSession() - Remove chat
-
-// Storage
-- saveToLocalStorage() - Persist state
-- loadFromLocalStorage() - Restore state
-```
-
-## Usage
-
-### Running Locally
-1. Open `index.html` in a web browser
-2. Or serve with a local server:
+### Quick start
+1. Clone the repo.
+2. Serve the repo root (ensures correct module MIME types):
    ```bash
    python3 -m http.server 8080
-   # Open http://localhost:8080
+   # visit http://localhost:8080
    ```
+   For quick checks you can also open `index.html` directly in a browser.
 
-### Key Features Demo
-1. **Creating a New Chat**:
-   - Click "New Chat" button
-   - Or press ⌘/ (Cmd+/)
+### Architecture (1‑minute overview)
+- `index.html` bootstraps Tailwind, Marked, KaTeX, then loads ES modules.
+- `app.js` coordinates state, components, streaming, and CRUD through `chatDB`.
+- `api.js` handles OpenRouter calls (fetch models, stream completions).
+- `db.js` provides an IndexedDB wrapper for sessions/messages/settings.
+- `components/` contain UI pieces (sidebar, chat area, input, model picker, right panel, templates, message navigation).
+- `services/` provide logging, key storage, file utilities, ticket/key flows, provider icons, and theme management.
+- `wasm/` holds artifacts for the Privacy Pass/ticket logic.
 
-2. **Sending Messages**:
-   - Type in the input area
-   - Press Enter or click send button
-   - Shift+Enter for new line
+For a deeper breakdown, see `AGENTS.md`.
 
-3. **Selecting Models**:
-   - Click "+ Add Model" button
-   - Select from available models
-   - Models show as chips above chat
+### Privacy & security
+- No server in this repo. The browser requests an ephemeral OpenRouter key using a redeemable ticket, then talks to OpenRouter directly over HTTPS.
+- Keys are stored in session state and `localStorage` only; do not hard‑code secrets.
+- Network logs are memory‑only (per tab) to avoid persistence.
 
-4. **Markdown Support**:
-   ```
-   **bold text**
-   *italic text*
-   # Heading
-   - List item
-   \`\`\`javascript
-   code block
-   \`\`\`
-   ```
-
-5. **LaTeX Support**:
-   ```
-   Inline: $E = mc^2$
-   Display: $$\int_0^\infty e^{-x^2} dx = \frac{\sqrt{\pi}}{2}$$
-   ```
-
-## Customization
-
-### Adding More Models
-Edit the `state.models` array in the HTML file:
-```javascript
-state.models.push({
-    id: 'model-id',
-    name: 'Model Name',
-    category: 'Category',
-    provider: 'Provider'
-});
-```
-
-### Styling
-- Colors are defined in Tailwind config
-- Custom styles in `<style>` tag
-- Modify as needed for your theme
-
-### AI Response Simulation
-The `sendMessage()` function contains simulated responses.
-Replace with actual API calls:
-```javascript
-// Replace this simulation
-setTimeout(() => {
-    const responses = [...];
-    addMessage('assistant', randomResponse);
-}, 1000);
-
-// With actual API call
-fetch('https://api.example.com/chat', {
-    method: 'POST',
-    body: JSON.stringify({ message: content })
-})
-.then(response => response.json())
-.then(data => addMessage('assistant', data.message));
-```
-
-## Browser Support
-- Modern browsers (Chrome, Firefox, Safari, Edge)
-- Requires ES6+ JavaScript support
-- Local storage for persistence
-
-## Notes
-- This is a frontend-only demo with simulated AI responses
-- To connect to real AI models, implement API integration
-- Session data persists in browser's local storage
-- No server-side code required
-
-## License
-Educational/demonstration purposes
-
-## Credits
-Interface inspired by OpenRouter
+### Development
+- Keep devtools open — console warnings surface integration issues early.
+- No bundler required; modules are authored as standard ES modules with 4‑space indentation and trailing semicolons.
 
