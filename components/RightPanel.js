@@ -832,7 +832,7 @@ class RightPanel {
 
                         ${this.apiKeyInfo?.station_name ? `
                             <div class="flex items-center justify-between p-2 bg-background rounded-md border border-border">
-                                <span class="text-[10px] text-muted-foreground">Station</span>
+                                <span class="text-[10px] text-muted-foreground">Issuing Station</span>
                                 <span class="text-[10px] font-medium">${this.escapeHtml(this.apiKeyInfo.station_name)}</span>
                             </div>
                         ` : ''}
