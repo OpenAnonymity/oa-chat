@@ -1,11 +1,4 @@
 {
-  "redirects": [
-    {
-      "source": "/",
-      "destination": "/chat",
-      "permanent": false
-    }
-  ],
   "rewrites": [
     {
       "source": "/chat",
