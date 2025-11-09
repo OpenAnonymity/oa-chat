@@ -10,10 +10,10 @@ import { getProviderIcon } from '../services/providerIcons.js';
 const CLASSES = {
     userWrapper: 'w-full px-2 md:px-3 fade-in self-end',
     userGroup: 'group my-2 flex w-full flex-col gap-2 justify-end items-end',
-    userBubble: 'py-3 px-4 font-normal rounded-lg message-user max-w-full',
+    userBubble: 'py-3 px-4 font-normal message-user max-w-full',
     userContent: 'min-w-0 w-full overflow-hidden break-words',
 
-    assistantWrapper: 'w-full px-2 md:px-3 fade-in self-start',
+    assistantWrapper: 'w-full px-2 md:px-3 self-start',
     assistantGroup: 'group flex w-full flex-col items-start justify-start gap-2',
     assistantHeader: 'flex w-full items-center justify-start gap-2',
     assistantAvatar: 'flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow bg-muted',
@@ -21,7 +21,7 @@ const CLASSES = {
     assistantModelName: 'text-xs text-foreground font-medium',
     assistantTime: 'text-xs text-muted-foreground',
     assistantTokens: 'text-xs text-muted-foreground ml-auto',
-    assistantBubble: 'py-3 px-4 font-normal rounded-lg message-assistant w-full flex items-center',
+    assistantBubble: 'py-3 px-4 font-normal message-assistant w-full flex items-center',
     assistantContent: 'min-w-0 w-full overflow-hidden message-content prose',
 
     typingWrapper: 'w-full px-2 md:px-3 fade-in',
@@ -55,12 +55,12 @@ function escapeHtml(text) {
  */
 function buildFileAttachments(files) {
     if (!files || files.length === 0) return '';
-    
+
     const fileCards = files.map(file => {
         const isImage = file.type.startsWith('image/');
         const isPdf = file.type === 'application/pdf';
         const isAudio = file.type.startsWith('audio/');
-        
+
         let preview = '';
         if (isImage && file.dataUrl) {
             preview = `
@@ -88,12 +88,12 @@ function buildFileAttachments(files) {
                 </div>
             `;
         }
-        
+
         const fileSizeKB = (file.size / 1024).toFixed(1);
-        const fileSize = file.size > 1024 * 1024 
+        const fileSize = file.size > 1024 * 1024
             ? `${(file.size / (1024 * 1024)).toFixed(1)} MB`
             : `${fileSizeKB} KB`;
-        
+
         return `
             <div class="bg-background relative h-28 w-40 overflow-hidden rounded-xl border border-border shadow-md">
                 ${preview}
@@ -108,7 +108,7 @@ function buildFileAttachments(files) {
             </div>
         `;
     }).join('');
-    
+
     return `<div class="flex flex-wrap gap-3 mb-2">${fileCards}</div>`;
 }
 
@@ -119,7 +119,7 @@ function buildFileAttachments(files) {
  */
 function buildUserMessage(message) {
     const fileAttachments = buildFileAttachments(message.files);
-    
+
     return `
         <div class="${CLASSES.userWrapper}" data-message-id="${message.id}">
             <div class="${CLASSES.userGroup}">

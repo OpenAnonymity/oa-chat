@@ -227,8 +227,7 @@
 .message-user {
     background-color: hsl(217.2 91.2% 59.8%);
     color: white;
-    border-radius: 0.75rem;
-    border-top-right-radius: 0.25rem;
+    border-radius: 0.875rem;
     font-size: 0.875rem;
 }
 
@@ -241,8 +240,7 @@
 .message-assistant {
     background-color: var(--slate-2);
     border: 1px solid var(--slate-4);
-    border-radius: 0.75rem;
-    border-top-left-radius: 0.25rem;
+    border-radius: 0.875rem;
     font-size: 0.875rem;
 }
 
