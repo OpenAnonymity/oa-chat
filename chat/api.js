@@ -149,6 +149,19 @@ class OpenRouterAPI {
         return providerMap[provider] || provider.charAt(0).toUpperCase() + provider.slice(1);
     }
 
+    // Get model-specific max_tokens
+    getMaxTokensForModel(modelId) {
+        // Check for Opus 4.1
+        if (modelId.includes('claude-opus-4.1')) {
+            return 13333;
+        }
+        // Check for GPT-5 Thinking (not GPT-5 Chat)
+        if (modelId.includes('gpt-5') && !modelId.includes('gpt-5-chat')) {
+            return 100000;
+        }
+        return undefined; // Use API default for other models
+    }
+
     // Fallback models if API fails
     getFallbackModels() {
         return [
@@ -310,6 +323,12 @@ class OpenRouterAPI {
                 // Request usage information in stream
                 stream_options: { include_usage: true }
             };
+
+            // Add model-specific max_tokens if applicable
+            const maxTokens = this.getMaxTokensForModel(effectiveModelId);
+            if (maxTokens !== undefined) {
+                requestBody.max_tokens = maxTokens;
+            }
 
             // Add PDF plugin configuration if PDFs are present
             // Default to mistral-ocr as per OpenRouter documentation
