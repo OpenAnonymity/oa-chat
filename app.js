@@ -1270,7 +1270,8 @@ class ChatApp {
             this.elements.sendBtn.classList.remove('bg-destructive', 'hover:bg-destructive/90');
 
             if (this.searchEnabled) {
-                this.elements.messageInput.placeholder = "Search the web anonymously";
+                // For now, use the same placeholder as the default when search is enabled
+                this.elements.messageInput.placeholder = "Ask anonymously";
             } else {
                 this.elements.messageInput.placeholder = "Ask anonymously";
             }
