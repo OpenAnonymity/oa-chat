@@ -352,7 +352,7 @@ export function renderNetworkLog(log, isExpanded = false, isMinimal = false) {
                     </div>
 
                     ${log.error ? `
-                        <div class="text-[10px] text-red-600 bg-red-50/50 p-1.5 rounded">
+                        <div class="text-[10px] text-red-600 dark:text-red-400 bg-red-50/50 dark:bg-red-900/30 p-1.5 rounded border border-red-200/50 dark:border-red-800/50">
                             ${log.error}
                         </div>
                     ` : ''}

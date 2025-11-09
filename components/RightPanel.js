@@ -1184,8 +1184,8 @@ class RightPanel {
                                     <!-- Error or Success Message -->
                                     ${log.error ? `
                                         <div class="space-y-1">
-                                            <div class="text-[10px] text-red-600 font-medium">Error Details</div>
-                                            <div class="text-[10px] text-red-600 bg-red-50/50 p-2 rounded border border-red-200/50">
+                                            <div class="text-[10px] text-red-600 dark:text-red-400 font-medium">Error Details</div>
+                                            <div class="text-[10px] text-red-600 dark:text-red-400 bg-red-50/50 dark:bg-red-900/30 p-2 rounded border border-red-200/50 dark:border-red-800/50">
                                                 ${this.escapeHtml(log.error)}
                                             </div>
                                         </div>
