@@ -9,11 +9,11 @@ import { getProviderIcon } from '../services/providerIcons.js';
 // Shared class constants (copied verbatim from existing markup)
 const CLASSES = {
     userWrapper: 'w-full px-2 md:px-3 fade-in self-end',
-    userGroup: 'group my-2 flex w-full flex-col gap-2 justify-end items-end',
+    userGroup: 'group my-1 flex w-full flex-col gap-2 justify-end items-end',
     userBubble: 'py-3 px-4 font-normal message-user max-w-full',
     userContent: 'min-w-0 w-full overflow-hidden break-words',
 
-    assistantWrapper: 'w-full px-2 md:px-3 self-start',
+    assistantWrapper: 'w-full px-2 md:px-3 self-start pb-3',
     assistantGroup: 'group flex w-full flex-col items-start justify-start gap-2',
     assistantHeader: 'flex w-full items-center justify-start gap-2',
     assistantAvatar: 'flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow bg-muted',
@@ -24,8 +24,8 @@ const CLASSES = {
     assistantBubble: 'py-3 px-4 font-normal message-assistant w-full flex items-center',
     assistantContent: 'min-w-0 w-full overflow-hidden message-content prose',
 
-    typingWrapper: 'w-full px-2 md:px-3 fade-in',
-    typingGroup: 'flex items-center gap-2',
+    typingWrapper: 'w-full px-2 md:px-3 fade-in pb-4',
+    typingGroup: 'flex items-center gap-4',
     typingAvatar: 'flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow bg-muted p-0.5',
     typingAvatarText: 'text-xs font-semibold',
     typingDots: 'flex gap-1',
