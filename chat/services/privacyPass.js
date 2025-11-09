@@ -14,17 +14,17 @@ class WasmDirectProvider {
 
         try {
             console.log('Loading OA Inference Ticket WASM module...');
-            
+
             // Import the WASM module dynamically
             const wasmModule = await import('../wasm/oa_inference_ticket.js');
-            
+
             // Initialize the WASM - fetch and load the .wasm file
-            await wasmModule.default('/wasm/oa_inference_ticket_bg.wasm');
-            
+            await wasmModule.default('/chat/wasm/oa_inference_ticket_bg.wasm');
+
             // Store reference to WASM functions
             this.wasm = wasmModule;
             this.initialized = true;
-            
+
             console.log('✅ OA Inference Ticket WASM initialized');
             return true;
         } catch (error) {
@@ -42,7 +42,7 @@ class WasmDirectProvider {
         await this.initialize();
 
         console.log('Creating token request with WASM');
-        
+
         if (!publicKey) {
             throw new Error('Missing required parameter: publicKey');
         }
@@ -50,29 +50,29 @@ class WasmDirectProvider {
         try {
             // Create WWW-Authenticate header for PublicToken (RSA)
             const wwwAuthenticate = `PublicToken token-key="${publicKey}"`;
-            
-            const headerJson = JSON.stringify({ 
+
+            const headerJson = JSON.stringify({
                 header: wwwAuthenticate,
-                error: "" 
+                error: ""
             });
 
             // Call WASM token_request function
             const responseJson = await this.wasm.token_request(headerJson, 1);
             const response = JSON.parse(responseJson);
-            
+
             // Check for errors
             if (response.error && response.error !== "") {
                 throw new Error(`Token request failed: ${response.error}`);
             }
-            
+
             // Extract client state and token request
             const clientState = response[0];
             const tokenRequestObj = response[1];
-            
+
             if (!tokenRequestObj) {
                 throw new Error('Invalid token request response from WASM');
             }
-            
+
             // Extract blinded request
             let blindedRequest = '';
             if (typeof tokenRequestObj === 'string') {
@@ -105,9 +105,9 @@ class WasmDirectProvider {
         try {
             // Prepare data for finalization
             const headerJson = JSON.stringify({ header: "", error: "" });
-            const clientStateJson = JSON.stringify({ 
+            const clientStateJson = JSON.stringify({
                 state: state,
-                error: "" 
+                error: ""
             });
             const tokenResponseJson = JSON.stringify({
                 token_response: signedResponse,
@@ -120,9 +120,9 @@ class WasmDirectProvider {
                 clientStateJson,
                 tokenResponseJson
             );
-            
+
             const result = JSON.parse(resultJson);
-            
+
             if (!result.tokens || result.tokens.length === 0) {
                 throw new Error('Token finalization failed');
             }

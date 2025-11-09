@@ -17,37 +17,37 @@
 const PROVIDER_ICONS = {
     'OpenAI': {
         type: 'url',
-        url: '/img/chatgpt.svg'
+        url: '/chat/img/chatgpt.svg'
     },
 
     'Anthropic': {
         type: 'url',
-        url: '/img/claude.svg'
+        url: '/chat/img/claude.svg'
     },
 
     'Google': {
         type: 'url',
-        url: '/img/gemini.svg'
+        url: '/chat/img/gemini.svg'
     },
 
     'Meta': {
         type: 'url',
-        url: '/img/meta.svg'
+        url: '/chat/img/meta.svg'
     },
 
     'Mistral': {
         type: 'url',
-        url: '/img/mistral.svg'
+        url: '/chat/img/mistral.svg'
     },
 
     'DeepSeek': {
         type: 'url',
-        url: '/img/deepseek.svg'
+        url: '/chat/img/deepseek.svg'
     },
 
     'Qwen': {
         type: 'url',
-        url: '/img/qwen.svg'
+        url: '/chat/img/qwen.svg'
     },
 
     'Cohere': {
@@ -57,7 +57,7 @@ const PROVIDER_ICONS = {
 
     'Perplexity': {
         type: 'url',
-        url: '/img/perplexity.png'
+        url: '/chat/img/perplexity.png'
     },
 
     'OpenRouter': {
@@ -67,7 +67,7 @@ const PROVIDER_ICONS = {
 
     'Nvidia': {
         type: 'url',
-        url: '/img/nvidia.svg'
+        url: '/chat/img/nvidia.svg'
     }
 
     // Or use local files (download icons to public/assets/ folder):
