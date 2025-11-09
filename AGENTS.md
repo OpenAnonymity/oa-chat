@@ -4,6 +4,7 @@
 The app runs entirely in the browser and is organized as ES modules:
 
 - `index.html`: Boots the app and pre-applies theme and right-panel visibility to avoid FOUC.
+  - Uses `<base href="/chat/">` to resolve all relative paths for deployment flexibility.
   - Loads CDNs: Tailwind, Marked, KaTeX (+ auto-render).
   - Loads modules in this order: `db.js` (global), `services/*` (logger, keys, privacy/tickets, station), `components/*` (navigation, right panel), then `app.js`.
 - `app.js`: Main controller (`ChatApp`).
@@ -37,16 +38,17 @@ The app runs entirely in the browser and is organized as ES modules:
 - `README.md`: Legacy, not the source of truth for architecture; see this file.
 
 ## Build, Test, and Development Commands
-No bundler is required: open `index.html` directly in a browser for quick checks. For a consistent local server with correct module MIME types, serve from the repo root:
+No bundler is required. For local development, serve from the repo root:
 ```bash
 python3 -m http.server 8080
-# visit http://localhost:8080
+# visit http://localhost:8080/chat
 ```
-Keep the tab’s devtools open; console warnings often highlight integration issues early.
+The app uses a `<base href="/chat/">` tag to resolve all relative asset paths, so always access via `/chat` path. Keep the tab's devtools open; console warnings often highlight integration issues early.
 
 ## Coding Style & Naming Conventions
 - ES modules, 4-space indentation, trailing semicolons.
 - Prefer `const`/`let`; class components in PascalCase; methods/helpers in camelCase.
+- Use relative paths for all assets (resolved via `<base href="/chat/">` in `index.html`). Never hardcode `/chat/` in asset URLs.
 - Reuse Tailwind utility patterns established in `index.html`; put tweaks in `styles.css` with concise rationale.
 - Persisted data goes through `chatDB` in `db.js`; follow existing object store patterns and keep transactions minimal and readable.
 - Keep code small and modular; avoid duplicating functionality already encapsulated in components/services.
