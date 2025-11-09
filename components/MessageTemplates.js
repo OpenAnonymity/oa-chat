@@ -14,11 +14,11 @@ const WELCOME_CONTENT = {
     title: '`oa-fastchat`',
     content: `
 1. **Chats are end-to-end anonymous and mixed with other users.**\\
-   Every chat requests an ephemeral & cryptographically unlinkable OpenRouter API key from a random proxy (*oa-stations*), exchanged by blind-signed access tokens (*inference tickets*).
-2. **Chat history is local.**\\
-   Because every chat takes a random anonymous path to reach the model, only you have your full chat history, stored locally.
-3. **Chat prompts and responses *never* go through Open Anonymity.**\\
+   Every chat requests an ephemeral, cryptographically unlinkable OpenRouter API key from a random proxy (*oa-stations*) by paying blind-signed tokens (*inference tickets*). Users hit different oa-stations and oa-stations issue keys to many users.
+2. **Chat prompts and responses *never* go through Open Anonymity.**\\
    Because the API key itself is issued to *you*, your browser talks to OpenRouter directly and anonymously via an encrypted channel. Open Anonymity simply handles the API key issuance, rotation, and secure tunneling.
+3. **Chat history is local.**\\
+   Because every chat takes a random anonymous path to the model, *only you* have your full chat history, [stored locally](#download-chats-link). Models only see mixed & aggregated traffic.
     `.trim(),
     // Future: Add diagram/image support
     // diagram: null,

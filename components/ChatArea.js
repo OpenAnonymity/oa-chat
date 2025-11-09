@@ -5,6 +5,7 @@
  */
 
 import { buildMessageHTML, buildEmptyState } from './MessageTemplates.js';
+import { downloadAllChats } from '../services/fileUtils.js';
 
 export default class ChatArea {
     /**
@@ -24,6 +25,7 @@ export default class ChatArea {
 
         if (!session) {
             messagesContainer.innerHTML = buildEmptyState();
+            this.attachDownloadHandler();
             return;
         }
 
@@ -32,6 +34,7 @@ export default class ChatArea {
 
         if (messages.length === 0) {
             messagesContainer.innerHTML = buildEmptyState();
+            this.attachDownloadHandler();
             return;
         }
 
@@ -198,6 +201,22 @@ export default class ChatArea {
                 tokenEl.textContent = tokenCount;
                 tokenEl.classList.remove('streaming-token-count');
             }
+        }
+    }
+
+    /**
+     * Attaches click handler to the download chats link in the empty state.
+     */
+    attachDownloadHandler() {
+        const downloadLink = document.querySelector('a[href="#download-chats-link"]');
+        if (downloadLink) {
+            downloadLink.addEventListener('click', async (e) => {
+                e.preventDefault();
+                const success = await downloadAllChats();
+                if (!success) {
+                    console.error('Failed to download chat history');
+                }
+            });
         }
     }
 }
