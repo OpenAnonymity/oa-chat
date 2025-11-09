@@ -482,26 +482,44 @@ class ChatApp {
      * Handles new chat request with validation (prevents empty duplicate sessions).
      */
     async handleNewChatRequest() {
-        const current = this.getCurrentSession();
-        if (current) {
-            const messages = await chatDB.getSessionMessages(current.id);
-            const isEmptyNoKey = messages.length === 0 && !current.apiKey;
-            if (isEmptyNoKey) {
-                if (this.floatingPanel) {
-                    this.floatingPanel.showMessage(
-                        "You're already in a new chat. Send a message or acquire a key first.",
-                        'plain',
-                        3000
-                    );
-                }
-                return; // Block creating another new session
-            }
-        }
-        await this.createSession();
+        // Clear current session - no session is selected
+        // The session will be created when the user sends their first message
+        this.clearCurrentSession();
 
         // Close sidebar on mobile after creating new chat
         if (this.isMobileView()) {
             this.hideSidebar();
+        }
+    }
+
+    /**
+     * Clears the current session, returning to the startup state.
+     * No session is selected until the user sends their first message.
+     */
+    clearCurrentSession() {
+        this.state.currentSessionId = null;
+
+        // Update UI to reflect no session selected
+        this.renderSessions();
+        this.renderMessages();
+        this.renderCurrentModel();
+
+        // Clear input
+        if (this.elements.messageInput) {
+            this.elements.messageInput.value = '';
+        }
+
+        // Update input state
+        this.updateInputState();
+
+        // Hide message navigation
+        if (this.messageNavigation) {
+            this.messageNavigation.hide();
+        }
+
+        // Clear right panel
+        if (this.rightPanel) {
+            this.rightPanel.onSessionChange(null);
         }
     }
 

@@ -69,7 +69,20 @@ class RightPanel {
     }
 
     loadSessionData() {
-        if (!this.currentSession) return;
+        if (!this.currentSession) {
+            // No session selected - clear session data and show next ticket
+            this.apiKey = null;
+            this.apiKeyInfo = null;
+            this.expiresAt = null;
+
+            // Load next available ticket
+            this.loadNextTicket();
+
+            // Render to show ticket panel instead of API key panel
+            this.renderTopSectionOnly();
+
+            return;
+        }
 
         // Load API key from current session
         this.apiKey = this.currentSession.apiKey || null;
@@ -368,7 +381,15 @@ class RightPanel {
     }
 
     async handleRequestApiKey() {
-        if (!this.currentTicket || this.isRequestingKey || !this.currentSession) return;
+        if (!this.currentTicket || this.isRequestingKey) return;
+
+        // Create session if none exists (e.g., at app startup)
+        if (!this.currentSession) {
+            await this.app.createSession();
+            this.currentSession = this.app.getCurrentSession();
+        }
+
+        if (!this.currentSession) return; // Safety check
 
         try {
             // Set current session for network logging

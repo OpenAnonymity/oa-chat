@@ -196,13 +196,19 @@ export default class ModelPicker {
      * @param {string} modelName - Name of the model to select
      */
     async selectModel(modelName) {
-        const session = this.app.getCurrentSession();
-        if (session) {
-            session.model = modelName;
-            await chatDB.saveSession(session);
-            this.app.renderCurrentModel();
-            this.close();
+        // Create session if none exists (e.g., at app startup)
+        if (!this.app.getCurrentSession()) {
+            await this.app.createSession();
         }
+
+        const session = this.app.getCurrentSession();
+        if (!session) return; // Safety check
+
+        // Update the model
+        session.model = modelName;
+        await chatDB.saveSession(session);
+        this.app.renderCurrentModel();
+        this.close();
     }
 
     /**

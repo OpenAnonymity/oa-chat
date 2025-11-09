@@ -210,13 +210,9 @@
     transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
-/* Custom hover highlight - brighter in light mode, dimmer in dark mode */
+/* Custom hover highlight - matches model picker contrast */
 .hover-highlight:hover {
-    background-color: hsl(var(--color-accent) / 0.75) !important;
-}
-
-.dark .hover-highlight:hover {
-    background-color: hsl(var(--color-accent) / 0.4) !important;
+    background-color: hsl(var(--color-accent)) !important;
 }
 
 /* Session list styles */
