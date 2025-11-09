@@ -619,41 +619,271 @@ class RightPanel {
     }
 
     /**
+     * Generates HTML for the top section (tickets and API key) only.
+     */
+    generateTopSectionHTML() {
+        const hasTickets = this.ticketCount > 0;
+        const hasApiKey = !!this.apiKey;
+
+        return `
+                <!-- Invitation Code Section -->
+                <div class="p-3">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-1.5">
+                        <svg class="w-3.5 h-3.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z"></path>
+                        </svg>
+                        <span class="text-xs font-medium">Inference Tickets: <span class="font-semibold">${this.ticketCount}</span></span>
+                    </div>
+                    <button
+                        id="toggle-invitation-form-btn"
+                        class="inline-flex items-center gap-1 px-2 py-1 text-[10px] rounded-md border border-border bg-background hover:bg-accent transition-all duration-200 shadow-sm hover:shadow"
+                    >
+                        <span>${this.showInvitationForm || this.ticketCount === 0 ? 'Hide' : 'Add'}</span>
+                        <svg class="w-2.5 h-2.5 transition-transform ${this.showInvitationForm || this.ticketCount === 0 ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                        </svg>
+                    </button>
+                </div>
+
+                ${this.showInvitationForm || this.ticketCount === 0 ? `
+                    <form id="invitation-code-form" class="space-y-2 mt-3 p-3 bg-muted/20 rounded-lg">
+                        <input
+                            id="invitation-code-input"
+                            type="text"
+                            placeholder="Enter 24-char invitation code"
+                            maxlength="24"
+                            class="w-full px-3 py-2 text-xs border border-border rounded-md bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-all"
+                            ${this.isRegistering ? 'disabled' : ''}
+                        />
+                        <button
+                            type="submit"
+                            class="w-full inline-flex items-center justify-center rounded-md text-xs font-medium transition-all duration-200 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 bg-accent text-accent-foreground hover:bg-accent/70 h-8 px-3 shadow-sm hover:shadow border border-border"
+                            ${this.isRegistering ? 'disabled' : ''}
+                        >
+                            ${this.isRegistering ? 'Registering...' : 'Register Code'}
+                        </button>
+                        <p class="text-[10px] text-muted-foreground leading-relaxed">Register with an invitation code to obtain inference tickets. Each ticket can be used to request a temporary OpenRouter API key.</p>
+                    </form>
+
+                    ${this.registrationProgress ? `
+                        <div class="mt-2 text-[10px] space-y-1">
+                            <div class="text-foreground">${this.escapeHtml(this.registrationProgress.message)}</div>
+                            <div class="w-full bg-muted rounded-full h-1.5">
+                                <div class="bg-primary h-1.5 rounded-full transition-all" style="width: ${this.registrationProgress.percent}%"></div>
+                            </div>
+                        </div>
+                    ` : ''}
+
+                    ${this.registrationError ? `
+                        <div class="mt-2 text-[10px] text-destructive">
+                            ${this.escapeHtml(this.registrationError)}
+                        </div>
+                    ` : ''}
+                ` : ''}
+            </div>
+
+            <!-- Ticket Visualization Section -->
+            ${hasTickets && !hasApiKey && this.currentTicket ? `
+                <div class="mx-3 mb-3 p-3 bg-muted/10 rounded-lg border border-border">
+                    <div class="mb-3">
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-semibold text-foreground">Next Inference Ticket</span>
+                            <span class="text-[10px] text-foreground font-medium px-1.5 py-0.5 bg-primary/10 border border-border/30 rounded-full">#${this.ticketIndex + 1} of ${this.ticketCount}</span>
+                        </div>
+                    </div>
+
+                    <div class="space-y-2">
+                        <!-- Ticket Data Display -->
+                        <div class="relative min-h-[60px]">
+                            ${!this.showFinalized ? `
+                                <div class="space-y-1 transition-all duration-500 ${
+                                    this.isTransitioning ? 'opacity-50 scale-95' : 'opacity-100 scale-100'
+                                }">
+                                    <div class="text-[10px] text-muted-foreground mb-1">
+                                        Signed Response (from server):
+                                    </div>
+                                    <div class="bg-background border border-dashed border-border rounded p-1.5 text-[10px] font-mono break-all text-muted-foreground">
+                                        ${this.formatTicketData(this.currentTicket.signed_response)}
+                                    </div>
+                                </div>
+                            ` : `
+                                <div class="space-y-1 transition-all duration-500 ${
+                                    this.showFinalized ? 'opacity-100 scale-100' : 'opacity-0 scale-110'
+                                }">
+                                    <div class="text-[10px] text-foreground mb-1 flex items-center gap-1">
+                                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                        </svg>
+                                        Finalized Token (ready to use):
+                                    </div>
+                                    <div class="bg-accent/50 border border-primary rounded p-1.5 text-[10px] font-mono break-all text-foreground animate-pulse">
+                                        ${this.formatTicketData(this.currentTicket.finalized_ticket)}
+                                    </div>
+                                </div>
+                            `}
+                        </div>
+
+                        <!-- Use Ticket Button -->
+                        <button
+                            id="use-ticket-btn"
+                            class="w-full inline-flex items-center justify-center gap-1.5 rounded-md text-xs font-medium transition-all focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 h-7 px-3 ${
+                                this.isTransitioning
+                                    ? 'bg-accent text-accent-foreground border border-border'
+                                    : 'bg-accent text-accent-foreground hover:bg-accent/70 border border-border'
+                            }"
+                            ${this.isRequestingKey || this.isTransitioning ? 'disabled' : ''}
+                        >
+                            <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
+                            </svg>
+                            <span>${this.isRequestingKey ? 'Requesting...' : this.isTransitioning ? 'Transforming...' : 'Use This Ticket'}</span>
+                        </button>
+
+                        <!-- Ticket Status -->
+                        <div class="flex items-center justify-between text-xs">
+                            <span class="text-muted-foreground">Status:</span>
+                            <span class="${this.currentTicket.used ? 'text-destructive' : 'text-foreground'}">
+                                ${this.currentTicket.used ? 'Used' : 'Available'}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            ` : hasTickets && !hasApiKey && !this.currentTicket ? `
+                <div class="mx-3 mb-3 p-4">
+                    <div class="text-center text-xs text-muted-foreground">
+                        <svg class="w-8 h-8 mx-auto mb-2 text-muted-foreground/30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                        </svg>
+                        No tickets available
+                    </div>
+                </div>
+            ` : ''}
+
+            <!-- API Key Panel -->
+            ${hasApiKey ? `
+                <div class="p-3">
+                    <div class="mb-3">
+                        <div class="flex items-center gap-1.5 mb-2">
+                            <svg class="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
+                            </svg>
+                            <span class="text-xs font-medium">Untraceable OpenRouter API Key</span>
+                        </div>
+                        <div class="flex items-center justify-between text-[10px] font-mono bg-muted/20 p-2 rounded-md border border-border break-all text-foreground">
+                            <span>${this.maskApiKey(this.apiKey)}</span>
+                            <span id="api-key-expiry" class="font-medium px-2 py-0.5 rounded-full text-[10px] flex-shrink-0 ml-2 ${
+                                this.isExpired ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' : 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                            }">
+                                ${this.timeRemaining || 'Loading...'}
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="space-y-2 mb-3">
+
+                        ${this.apiKeyInfo?.station_name ? `
+                            <div class="flex items-center justify-between p-2 bg-background rounded-md border border-border">
+                                <span class="text-[10px] text-muted-foreground">Station</span>
+                                <span class="text-[10px] font-medium">${this.escapeHtml(this.apiKeyInfo.station_name)}</span>
+                            </div>
+                        ` : ''}
+                    </div>
+
+                    <div class="grid grid-cols-3 gap-1.5">
+                        <button
+                            id="verify-key-btn"
+                            class="text-[10px] px-2 py-1.5 rounded-md border border-border bg-background text-foreground hover:bg-accent/50 hover:border-border transition-all duration-200 hover:shadow-sm"
+                            ${this.isExpired ? 'disabled' : ''}
+                        >
+                            Verify
+                        </button>
+                        <button
+                            id="renew-key-btn"
+                            class="text-[10px] px-2 py-1.5 rounded-md border border-border bg-background text-foreground hover:bg-accent/50 hover:border-border transition-all duration-200 hover:shadow-sm"
+                        >
+                            Renew
+                        </button>
+                        <button
+                            id="clear-key-btn"
+                            class="text-[10px] px-2 py-1.5 rounded-md border border-destructive/30 text-destructive bg-destructive/10 hover:bg-destructive/30 hover:border-destructive/60 transition-all duration-200"
+                        >
+                            Remove
+                        </button>
+                    </div>
+                </div>
+            ` : ''}
+        `;
+    }
+
+    /**
+     * Attaches event listeners to the top section elements only.
+     */
+    attachTopSectionEventListeners() {
+        // Toggle invitation form button
+        const toggleFormBtn = document.getElementById('toggle-invitation-form-btn');
+        if (toggleFormBtn) {
+            toggleFormBtn.onclick = () => {
+                this.showInvitationForm = !this.showInvitationForm;
+                this.renderTopSectionOnly();
+            };
+        }
+
+        // Invitation code form
+        const form = document.getElementById('invitation-code-form');
+        if (form) {
+            form.onsubmit = (e) => {
+                e.preventDefault();
+                const input = document.getElementById('invitation-code-input');
+                if (input) {
+                    this.handleRegister(input.value.trim());
+                }
+            };
+        }
+
+        // Use ticket button
+        const useTicketBtn = document.getElementById('use-ticket-btn');
+        if (useTicketBtn) {
+            useTicketBtn.onclick = () => this.handleRequestApiKey();
+        }
+
+        // API key management buttons
+        const verifyBtn = document.getElementById('verify-key-btn');
+        if (verifyBtn) {
+            verifyBtn.onclick = () => this.handleVerifyApiKey();
+        }
+
+        const renewBtn = document.getElementById('renew-key-btn');
+        if (renewBtn) {
+            renewBtn.onclick = () => this.handleRenewApiKey();
+        }
+
+        const clearBtn = document.getElementById('clear-key-btn');
+        if (clearBtn) {
+            clearBtn.onclick = () => this.handleClearApiKey();
+        }
+    }
+
+    /**
      * Re-renders only the top section (tickets/API key) without re-rendering logs.
      */
     renderTopSectionOnly() {
         const panel = document.getElementById('right-panel-content');
         if (!panel) return;
 
-        // Find the network logs section
-        const logsSection = panel.querySelector('.border-t.border-border.flex.flex-col.bg-background.flex-1.min-h-0');
-        if (!logsSection) {
-            // If logs section doesn't exist yet, do a full render
+        // Find the top section container
+        const topSection = panel.querySelector('.flex-shrink-0');
+        if (!topSection) {
+            // If top section doesn't exist yet, do a full render
             this.render();
             return;
         }
 
-        // Save the logs section and its scroll position
-        const logsSectionClone = logsSection.cloneNode(true);
-        const logsScrollTop = document.getElementById('network-logs-container')?.scrollTop || 0;
+        // Generate and update only the top section HTML
+        topSection.innerHTML = this.generateTopSectionHTML();
 
-        // Do a full render
-        this.render();
-
-        // Replace the newly rendered logs section with the saved one
-        const newLogsSection = document.getElementById('right-panel-content')?.querySelector('.border-t.border-border.flex.flex-col.bg-background.flex-1.min-h-0');
-        if (newLogsSection && logsSectionClone) {
-            newLogsSection.replaceWith(logsSectionClone);
-            // Restore scroll position
-            const container = document.getElementById('network-logs-container');
-            if (container) {
-                container.scrollTop = logsScrollTop;
-            }
-            // Re-attach log row handlers to the restored section
-            this.attachLogRowHandlers();
-            // Re-attach the clear button handler (cloneNode doesn't copy event listeners)
-            this.attachClearActivityButtonHandler();
-        }
+        // Re-attach event listeners for the top section only
+        this.attachTopSectionEventListeners();
     }
 
     /**
@@ -910,7 +1140,6 @@ class RightPanel {
         const panel = document.getElementById('right-panel-content');
         if (!panel) return;
 
-        const hasTickets = this.ticketCount > 0;
         const hasApiKey = !!this.apiKey;
 
         panel.innerHTML = `
@@ -929,193 +1158,7 @@ class RightPanel {
             <div class="flex flex-col h-full overflow-hidden">
             <!-- Top Section: Tickets and API Key (non-scrollable) -->
             <div class="flex-shrink-0">
-                <!-- Invitation Code Section -->
-                <div class="p-3">
-                <div class="flex items-center justify-between">
-                    <div class="flex items-center gap-1.5">
-                        <svg class="w-3.5 h-3.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z"></path>
-                        </svg>
-                        <span class="text-xs font-medium">Inference Tickets: <span class="font-semibold">${this.ticketCount}</span></span>
-                    </div>
-                    <button
-                        id="toggle-invitation-form-btn"
-                        class="inline-flex items-center gap-1 px-2 py-1 text-[10px] rounded-md border border-border bg-background hover:bg-accent transition-all duration-200 shadow-sm hover:shadow"
-                    >
-                        <span>${this.showInvitationForm || this.ticketCount === 0 ? 'Hide' : 'Add'}</span>
-                        <svg class="w-2.5 h-2.5 transition-transform ${this.showInvitationForm || this.ticketCount === 0 ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
-                        </svg>
-                    </button>
-                </div>
-
-                ${this.showInvitationForm || this.ticketCount === 0 ? `
-                    <form id="invitation-code-form" class="space-y-2 mt-3 p-3 bg-muted/20 rounded-lg">
-                        <input
-                            id="invitation-code-input"
-                            type="text"
-                            placeholder="Enter 24-char invitation code"
-                            maxlength="24"
-                            class="w-full px-3 py-2 text-xs border border-border rounded-md bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-all"
-                            ${this.isRegistering ? 'disabled' : ''}
-                        />
-                        <button
-                            type="submit"
-                            class="w-full inline-flex items-center justify-center rounded-md text-xs font-medium transition-all duration-200 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 bg-accent text-accent-foreground hover:bg-accent/70 h-8 px-3 shadow-sm hover:shadow border border-border"
-                            ${this.isRegistering ? 'disabled' : ''}
-                        >
-                            ${this.isRegistering ? 'Registering...' : 'Register Code'}
-                        </button>
-                        <p class="text-[10px] text-muted-foreground leading-relaxed">Register with an invitation code to obtain inference tickets. Each ticket can be used to request a temporary OpenRouter API key.</p>
-                    </form>
-
-                    ${this.registrationProgress ? `
-                        <div class="mt-2 text-[10px] space-y-1">
-                            <div class="text-foreground">${this.escapeHtml(this.registrationProgress.message)}</div>
-                            <div class="w-full bg-muted rounded-full h-1.5">
-                                <div class="bg-primary h-1.5 rounded-full transition-all" style="width: ${this.registrationProgress.percent}%"></div>
-                            </div>
-                        </div>
-                    ` : ''}
-
-                    ${this.registrationError ? `
-                        <div class="mt-2 text-[10px] text-destructive">
-                            ${this.escapeHtml(this.registrationError)}
-                        </div>
-                    ` : ''}
-                ` : ''}
-            </div>
-
-            <!-- Ticket Visualization Section -->
-            ${hasTickets && !hasApiKey && this.currentTicket ? `
-                <div class="mx-3 mb-3 p-3 bg-muted/10 rounded-lg border border-border">
-                    <div class="mb-3">
-                        <div class="flex items-center justify-between">
-                            <span class="text-xs font-semibold text-foreground">Next Inference Ticket</span>
-                            <span class="text-[10px] text-foreground font-medium px-1.5 py-0.5 bg-primary/10 border border-border/30 rounded-full">#${this.ticketIndex + 1} of ${this.ticketCount}</span>
-                        </div>
-                    </div>
-
-                    <div class="space-y-2">
-                        <!-- Ticket Data Display -->
-                        <div class="relative min-h-[60px]">
-                            ${!this.showFinalized ? `
-                                <div class="space-y-1 transition-all duration-500 ${
-                                    this.isTransitioning ? 'opacity-50 scale-95' : 'opacity-100 scale-100'
-                                }">
-                                    <div class="text-[10px] text-muted-foreground mb-1">
-                                        Signed Response (from server):
-                                    </div>
-                                    <div class="bg-background border border-dashed border-border rounded p-1.5 text-[10px] font-mono break-all text-muted-foreground">
-                                        ${this.formatTicketData(this.currentTicket.signed_response)}
-                                    </div>
-                                </div>
-                            ` : `
-                                <div class="space-y-1 transition-all duration-500 ${
-                                    this.showFinalized ? 'opacity-100 scale-100' : 'opacity-0 scale-110'
-                                }">
-                                    <div class="text-[10px] text-foreground mb-1 flex items-center gap-1">
-                                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                                        </svg>
-                                        Finalized Token (ready to use):
-                                    </div>
-                                    <div class="bg-accent/50 border border-primary rounded p-1.5 text-[10px] font-mono break-all text-foreground animate-pulse">
-                                        ${this.formatTicketData(this.currentTicket.finalized_ticket)}
-                                    </div>
-                                </div>
-                            `}
-                        </div>
-
-                        <!-- Use Ticket Button -->
-                        <button
-                            id="use-ticket-btn"
-                            class="w-full inline-flex items-center justify-center gap-1.5 rounded-md text-xs font-medium transition-all focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 h-7 px-3 ${
-                                this.isTransitioning
-                                    ? 'bg-accent text-accent-foreground border border-border'
-                                    : 'bg-accent text-accent-foreground hover:bg-accent/70 border border-border'
-                            }"
-                            ${this.isRequestingKey || this.isTransitioning ? 'disabled' : ''}
-                        >
-                            <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
-                            </svg>
-                            <span>${this.isRequestingKey ? 'Requesting...' : this.isTransitioning ? 'Transforming...' : 'Use This Ticket'}</span>
-                        </button>
-
-                        <!-- Ticket Status -->
-                        <div class="flex items-center justify-between text-xs">
-                            <span class="text-muted-foreground">Status:</span>
-                            <span class="${this.currentTicket.used ? 'text-destructive' : 'text-foreground'}">
-                                ${this.currentTicket.used ? 'Used' : 'Available'}
-                            </span>
-                        </div>
-                    </div>
-                </div>
-            ` : hasTickets && !hasApiKey && !this.currentTicket ? `
-                <div class="mx-3 mb-3 p-4">
-                    <div class="text-center text-xs text-muted-foreground">
-                        <svg class="w-8 h-8 mx-auto mb-2 text-muted-foreground/30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                        </svg>
-                        No tickets available
-                    </div>
-                </div>
-            ` : ''}
-
-            <!-- API Key Panel -->
-            ${hasApiKey ? `
-                <div class="p-3">
-                    <div class="mb-3">
-                        <div class="flex items-center gap-1.5 mb-2">
-                            <svg class="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
-                            </svg>
-                            <span class="text-xs font-medium">Untraceable OpenRouter API Key</span>
-                        </div>
-                        <div class="flex items-center justify-between text-[10px] font-mono bg-muted/20 p-2 rounded-md border border-border break-all text-foreground">
-                            <span>${this.maskApiKey(this.apiKey)}</span>
-                            <span id="api-key-expiry" class="font-medium px-2 py-0.5 rounded-full text-[10px] flex-shrink-0 ml-2 ${
-                                this.isExpired ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' : 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                            }">
-                                ${this.timeRemaining || 'Load   ing...'}
-                            </span>
-                        </div>
-                    </div>
-
-                    <div class="space-y-2 mb-3">
-
-                        ${this.apiKeyInfo?.station_name ? `
-                            <div class="flex items-center justify-between p-2 bg-background rounded-md border border-border">
-                                <span class="text-[10px] text-muted-foreground">Station</span>
-                                <span class="text-[10px] font-medium">${this.escapeHtml(this.apiKeyInfo.station_name)}</span>
-                            </div>
-                        ` : ''}
-                    </div>
-
-                    <div class="grid grid-cols-3 gap-1.5">
-                        <button
-                            id="verify-key-btn"
-                            class="text-[10px] px-2 py-1.5 rounded-md border border-border bg-background text-foreground hover:bg-accent/50 hover:border-border transition-all duration-200 hover:shadow-sm"
-                            ${this.isExpired ? 'disabled' : ''}
-                        >
-                            Verify
-                        </button>
-                        <button
-                            id="renew-key-btn"
-                            class="text-[10px] px-2 py-1.5 rounded-md border border-border bg-background text-foreground hover:bg-accent/50 hover:border-border transition-all duration-200 hover:shadow-sm"
-                        >
-                            Renew
-                        </button>
-                        <button
-                            id="clear-key-btn"
-                            class="text-[10px] px-2 py-1.5 rounded-md border border-destructive/30 text-destructive bg-destructive/10 hover:bg-destructive/30 hover:border-destructive/60 transition-all duration-200"
-                        >
-                            Remove
-                        </button>
-                    </div>
-                </div>
-            ` : ''}
+                ${this.generateTopSectionHTML()}
             </div>
             <!-- End of Top Section -->
 
@@ -1136,7 +1179,7 @@ class RightPanel {
                         </button>
                     </div>
                 </div>
-                <div id="network-logs-container" class="flex-1 overflow-y-auto px-3 py-2">
+                <div id="network-logs-container" class="flex-1 overflow-y-auto px-3 pt-2 pb-4">
                     ${this.renderNetworkLogs()}
                 </div>
 
@@ -1160,48 +1203,8 @@ class RightPanel {
             closeBtn.onclick = () => this.closeRightPanel();
         }
 
-        // Toggle invitation form button
-        const toggleFormBtn = document.getElementById('toggle-invitation-form-btn');
-        if (toggleFormBtn) {
-            toggleFormBtn.onclick = () => {
-                this.showInvitationForm = !this.showInvitationForm;
-                this.renderTopSectionOnly();
-            };
-        }
-
-        // Invitation code form
-        const form = document.getElementById('invitation-code-form');
-        if (form) {
-            form.onsubmit = (e) => {
-                e.preventDefault();
-                const input = document.getElementById('invitation-code-input');
-                if (input) {
-                    this.handleRegister(input.value.trim());
-                }
-            };
-        }
-
-        // Use ticket button
-        const useTicketBtn = document.getElementById('use-ticket-btn');
-        if (useTicketBtn) {
-            useTicketBtn.onclick = () => this.handleRequestApiKey();
-        }
-
-        // API key management buttons
-        const verifyBtn = document.getElementById('verify-key-btn');
-        if (verifyBtn) {
-            verifyBtn.onclick = () => this.handleVerifyApiKey();
-        }
-
-        const renewBtn = document.getElementById('renew-key-btn');
-        if (renewBtn) {
-            renewBtn.onclick = () => this.handleRenewApiKey();
-        }
-
-        const clearBtn = document.getElementById('clear-key-btn');
-        if (clearBtn) {
-            clearBtn.onclick = () => this.handleClearApiKey();
-        }
+        // Attach top section event listeners (tickets/API key)
+        this.attachTopSectionEventListeners();
 
         // Clear activity timeline button
         this.attachClearActivityButtonHandler();
