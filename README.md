@@ -16,7 +16,7 @@ A minimal, fast chat client that talks directly to OpenRouter using ephemeral, a
 1. Clone the repo.
 2. Serve the repo root (ensures correct module MIME types):
    ```bash
-   python3 -m http.server 8080
+   cd chat && python3 -m http.server 8080
    # visit http://localhost:8080
    ```
    For quick checks you can also open `index.html` directly in a browser.
