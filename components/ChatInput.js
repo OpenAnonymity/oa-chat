@@ -67,14 +67,22 @@ export default class ChatInput {
         this.app.elements.settingsMenu.addEventListener('click', async (e) => {
             if (e.target.tagName === 'BUTTON') {
                 const action = e.target.textContent.trim();
-                if (action === 'Clear Models') {
-                    const session = this.app.getCurrentSession();
-                    if (session) {
-                        session.model = null;
-                        await chatDB.saveSession(session);
-                        this.app.renderCurrentModel();
-                    }
+
+                // Copy Markdown functionality
+                if (action === 'Copy Markdown') {
+                    await this.copyLatestMarkdown(e.target);
+                    return; // Don't close menu immediately
                 }
+
+                // TODO: Re-enable when implementing Clear Models functionality
+                // if (action === 'Clear Models') {
+                //     const session = this.app.getCurrentSession();
+                //     if (session) {
+                //         session.model = null;
+                //         await chatDB.saveSession(session);
+                //         this.app.renderCurrentModel();
+                //     }
+                // }
                 this.app.elements.settingsMenu.classList.add('hidden');
             }
         });
@@ -86,6 +94,14 @@ export default class ChatInput {
                 await chatDB.deleteSessionMessages(session.id);
                 this.app.renderMessages();
                 this.app.elements.settingsMenu.classList.add('hidden');
+            }
+        });
+
+        // Keyboard shortcut for Copy Markdown (Cmd+Shift+C)
+        document.addEventListener('keydown', async (e) => {
+            if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'c') {
+                e.preventDefault();
+                await this.copyLatestMarkdown();
             }
         });
 
@@ -191,6 +207,52 @@ export default class ChatInput {
     formatThemeName(theme) {
         if (!theme) return '';
         return theme.charAt(0).toUpperCase() + theme.slice(1);
+    }
+
+    /**
+     * Copies the latest assistant message's markdown to clipboard.
+     * @param {HTMLElement} buttonElement - Optional button element for visual feedback
+     */
+    async copyLatestMarkdown(buttonElement = null) {
+        const session = this.app.getCurrentSession();
+        if (!session) {
+            alert('No active session');
+            return;
+        }
+
+        const messages = await chatDB.getSessionMessages(session.id);
+        const assistantMessages = messages.filter(m => m.role === 'assistant');
+
+        if (assistantMessages.length === 0) {
+            alert('No assistant responses to copy');
+            if (buttonElement) {
+                this.app.elements.settingsMenu.classList.add('hidden');
+            }
+            return;
+        }
+
+        // Get the latest assistant message
+        const latestMessage = assistantMessages[assistantMessages.length - 1];
+
+        try {
+            await navigator.clipboard.writeText(latestMessage.content);
+
+            // Provide visual feedback if button element is provided
+            if (buttonElement) {
+                const originalText = buttonElement.textContent;
+                buttonElement.textContent = '✓ Copied!';
+                setTimeout(() => {
+                    buttonElement.textContent = originalText;
+                    this.app.elements.settingsMenu.classList.add('hidden');
+                }, 1500);
+            }
+        } catch (err) {
+            console.error('Failed to copy markdown:', err);
+            alert('Failed to copy to clipboard');
+            if (buttonElement) {
+                this.app.elements.settingsMenu.classList.add('hidden');
+            }
+        }
     }
 }
 

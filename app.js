@@ -42,6 +42,7 @@ class ChatApp {
             searchToggle: document.getElementById('search-toggle'),
             searchSwitch: document.getElementById('search-switch'),
             clearChatBtn: document.getElementById('clear-chat-btn'),
+            copyMarkdownBtn: document.getElementById('copy-markdown-btn'),
             toggleRightPanelBtn: document.getElementById('toggle-right-panel-btn'), // This might be legacy, but let's keep it for now.
             showRightPanelBtn: document.getElementById('show-right-panel-btn'),
             sidebar: document.getElementById('sidebar'),

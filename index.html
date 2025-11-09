@@ -199,11 +199,11 @@
                                 <!-- Textarea Container -->
                                 <div class="relative w-full flex flex-col">
                                     <div class="rounded-md w-full focus-within:bg-accent text-muted-foreground focus-within:text-foreground transition-colors bg-card">
-                                        <div class="flex h-max py-1.5 max-h-96 bg-card px-2">
+                                        <div class="flex h-max py-1.5 max-h-96 bg-card px-2 overflow-y-auto">
                                             <textarea
                                                 id="message-input"
                                                 rows="1"
-                                                class="w-full bg-transparent text-sm leading-6 focus:outline-none resize-none overflow-y-hidden text-foreground placeholder:text-muted-foreground"
+                                                class="w-full bg-transparent text-sm leading-6 focus:outline-none resize-none overflow-y-auto text-foreground placeholder:text-muted-foreground"
                                                 placeholder="Ask anonymously"
                                                 style="height: 24px; min-height: 24px; max-height: 200px;"
                                             ></textarea>
@@ -242,16 +242,24 @@
                                             </button>
                                             <!-- Settings Dropdown Menu (hidden by default) -->
                                             <div id="settings-menu" class="hidden absolute bottom-full mb-2 left-0 z-[100] rounded-lg border border-border bg-popover shadow-lg p-2 min-w-[220px]">
-                                                <button class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent/30 hover:text-accent-foreground rounded-md transition-colors">Auto-expand</button>
-                                                <button class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent/30 hover:text-accent-foreground rounded-md transition-colors">Export</button>
-                                                <button class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent/30 hover:text-accent-foreground rounded-md transition-colors">Import</button>
-                                                <button class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent/30 hover:text-accent-foreground rounded-md transition-colors">Get Markdown</button>
-                                                <button class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent/30 hover:text-accent-foreground rounded-md transition-colors">Clear Models</button>
+                                                <!-- TODO: Implement Auto-expand functionality -->
+                                                <!-- <button class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent/30 hover:text-accent-foreground rounded-md transition-colors">Auto-expand</button> -->
+                                                <!-- TODO: Implement Export functionality -->
+                                                <!-- <button class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent/30 hover:text-accent-foreground rounded-md transition-colors">Export</button> -->
+                                                <!-- TODO: Implement Import functionality -->
+                                                <!-- <button class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent/30 hover:text-accent-foreground rounded-md transition-colors">Import</button> -->
+                                                <button id="copy-markdown-btn" class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent/30 hover:text-accent-foreground rounded-md flex items-center justify-between transition-colors">
+                                                    <span>Copy Markdown</span>
+                                                    <span class="text-xs text-muted-foreground">⌘ ⇧ C</span>
+                                                </button>
+                                                <!-- TODO: Implement Clear Models functionality -->
+                                                <!-- <button class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent/30 hover:text-accent-foreground rounded-md transition-colors">Clear Models</button> -->
                                                 <button id="clear-chat-btn" class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent/30 hover:text-accent-foreground rounded-md flex items-center justify-between transition-colors">
                                                     <span>Clear Chat</span>
                                                     <span class="text-xs text-muted-foreground">⌘ ⇧ ⌫</span>
                                                 </button>
-                                                <button class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent/30 hover:text-accent-foreground rounded-md transition-colors">Share Models</button>
+                                                <!-- TODO: Implement Share Models functionality -->
+                                                <!-- <button class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-accent/30 hover:text-accent-foreground rounded-md transition-colors">Share Models</button> -->
 
                                                 <div class="mt-2 border-t border-border pt-2">
                                                     <p class="px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Theme</p>
