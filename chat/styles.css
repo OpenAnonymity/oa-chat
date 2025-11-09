@@ -400,6 +400,15 @@ textarea:focus {
     background-color: hsl(217.2 32.6% 30%) !important;
 }
 
+/* Keyboard navigation highlight for model picker */
+.keyboard-highlight {
+    background-color: hsl(210 40% 96.1%) !important;
+}
+
+.dark .keyboard-highlight {
+    background-color: hsl(217.2 32.6% 25%) !important;
+}
+
 /* Model picker styles */
 [cmdk-input-wrapper] {
     position: relative;
