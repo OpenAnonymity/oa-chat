@@ -10,10 +10,6 @@
     {
       "source": "/chat",
       "destination": "/chat/index.html"
-    },
-    {
-      "source": "/chat/:path*",
-      "destination": "/chat/:path*"
     }
   ]
 }
