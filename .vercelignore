@@ -1,0 +1,9 @@
+# Deploy only /chat directory and Vercel config
+# This prevents root-level files (README.md, AGENTS.md, etc.) from being accessible
+
+/*
+!/chat
+!/chat/**
+!/vercel.json
+!/.vercelignore
+
