@@ -17,37 +17,37 @@
 const PROVIDER_ICONS = {
     'OpenAI': {
         type: 'url',
-        url: '/chat/img/chatgpt.svg'
+        url: 'img/chatgpt.svg'
     },
 
     'Anthropic': {
         type: 'url',
-        url: '/chat/img/claude.svg'
+        url: 'img/claude.svg'
     },
 
     'Google': {
         type: 'url',
-        url: '/chat/img/gemini.svg'
+        url: 'img/gemini.svg'
     },
 
     'Meta': {
         type: 'url',
-        url: '/chat/img/meta.svg'
+        url: 'img/meta.svg'
     },
 
     'Mistral': {
         type: 'url',
-        url: '/chat/img/mistral.svg'
+        url: 'img/mistral.svg'
     },
 
     'DeepSeek': {
         type: 'url',
-        url: '/chat/img/deepseek.svg'
+        url: 'img/deepseek.svg'
     },
 
     'Qwen': {
         type: 'url',
-        url: '/chat/img/qwen.svg'
+        url: 'img/qwen.svg'
     },
 
     'Cohere': {
@@ -57,7 +57,7 @@ const PROVIDER_ICONS = {
 
     'Perplexity': {
         type: 'url',
-        url: '/chat/img/perplexity.png'
+        url: 'img/perplexity.png'
     },
 
     'OpenRouter': {
@@ -67,13 +67,13 @@ const PROVIDER_ICONS = {
 
     'Nvidia': {
         type: 'url',
-        url: '/chat/img/nvidia.svg'
+        url: 'img/nvidia.svg'
     }
 
-    // Or use local files (download icons to public/assets/ folder):
+    // Or use local files (download icons to img/ folder):
     // 'ProviderName': {
     //     type: 'url',
-    //     url: '/assets/provider-icon.png'
+    //     url: 'img/provider-icon.png'
     // }
 };
 

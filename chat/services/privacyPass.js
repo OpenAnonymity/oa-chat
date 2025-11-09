@@ -19,7 +19,7 @@ class WasmDirectProvider {
             const wasmModule = await import('../wasm/oa_inference_ticket.js');
 
             // Initialize the WASM - fetch and load the .wasm file
-            await wasmModule.default('/chat/wasm/oa_inference_ticket_bg.wasm');
+            await wasmModule.default('wasm/oa_inference_ticket_bg.wasm');
 
             // Store reference to WASM functions
             this.wasm = wasmModule;
