@@ -137,25 +137,25 @@ export function getActivityDescription(log, detailed = false) {
 
         // OpenRouter API calls
         if (type === 'openrouter') {
-            // Models fetch
-            if (path.includes('/models')) {
-                if (!detailed) {
-                    if (status >= 200 && status < 300) {
-                        return 'Model catalog loaded';
-                    } else if (status === 0) {
-                        return 'Failed to fetch models';
-                    }
-                    return 'Fetching model catalog';
-                } else {
-                    if (status >= 200 && status < 300) {
-                        const modelCount = response?.data?.length || 0;
-                        return `Successfully loaded catalog of ${modelCount} available AI models including GPT, Claude, and open-source alternatives.`;
-                    } else if (status === 0) {
-                        return 'Failed to fetch AI model catalog. Check your internet connection or API key validity.';
-                    }
-                    return 'Retrieving list of available AI models from OpenRouter...';
-                }
-            }
+            // Models fetch - TEMPORARILY COMMENTED OUT
+            // if (path.includes('/models')) {
+            //     if (!detailed) {
+            //         if (status >= 200 && status < 300) {
+            //             return 'Model catalog loaded';
+            //         } else if (status === 0) {
+            //             return 'Failed to fetch models';
+            //         }
+            //         return 'Fetching model catalog';
+            //     } else {
+            //         if (status >= 200 && status < 300) {
+            //             const modelCount = response?.data?.length || 0;
+            //             return `Successfully loaded catalog of ${modelCount} available AI models including GPT, Claude, and open-source alternatives.`;
+            //         } else if (status === 0) {
+            //             return 'Failed to fetch AI model catalog. Check your internet connection or API key validity.';
+            //         }
+            //         return 'Retrieving list of available AI models from OpenRouter...';
+            //     }
+            // }
 
             // Chat completions
             if (path.includes('/chat/completions')) {
@@ -254,12 +254,12 @@ export function getActivityIcon(log) {
             </svg>`;
         }
 
-        // OpenRouter - models
-        if (type === 'openrouter' && path.includes('/models')) {
-            return `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"></path>
-            </svg>`;
-        }
+        // OpenRouter - models - TEMPORARILY COMMENTED OUT
+        // if (type === 'openrouter' && path.includes('/models')) {
+        //     return `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        //         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"></path>
+        //     </svg>`;
+        // }
 
         // OpenRouter - chat (AI brain icon)
         if (type === 'openrouter') {
