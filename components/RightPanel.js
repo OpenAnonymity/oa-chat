@@ -248,10 +248,8 @@ class RightPanel {
     }
 
     show() {
-        if (this.isDesktop) {
-            this.isVisible = true;
-            this.updatePanelVisibility();
-        }
+        this.isVisible = true;
+        this.updatePanelVisibility();
     }
 
     toggle() {
@@ -261,11 +259,9 @@ class RightPanel {
     }
 
     closeRightPanel() {
-        // Close the desktop right panel
-        if (this.isDesktop) {
-            this.isVisible = false;
-            this.updatePanelVisibility();
-        }
+        // Close the right panel (works in both desktop and mobile)
+        this.isVisible = false;
+        this.updatePanelVisibility();
     }
 
     updatePanelVisibility() {
@@ -289,11 +285,16 @@ class RightPanel {
                 if (appContainer) appContainer.classList.remove('right-panel-open');
             }
         } else {
-            // Mobile mode: clear width styles and use transform
+            // Mobile mode: use transform to slide panel in/out as overlay
             panel.style.width = '';
             panel.style.borderLeftWidth = '';
-            panel.style.transform = 'translateX(100%)';
-            if (showBtn) showBtn.classList.add('hidden');
+            if (this.isVisible) {
+                panel.style.transform = 'translateX(0)';
+                if (showBtn) showBtn.classList.add('hidden');
+            } else {
+                panel.style.transform = 'translateX(100%)';
+                if (showBtn) showBtn.classList.remove('hidden');
+            }
             if (appContainer) appContainer.classList.remove('right-panel-open');
         }
     }
