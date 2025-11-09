@@ -1,0 +1,19 @@
+{
+  "redirects": [
+    {
+      "source": "/",
+      "destination": "/chat",
+      "permanent": false
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/chat",
+      "destination": "/chat/index.html"
+    },
+    {
+      "source": "/chat/:path*",
+      "destination": "/chat/:path*"
+    }
+  ]
+}
