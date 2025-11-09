@@ -49,10 +49,12 @@ export default class ChatInput {
         });
 
         // Search toggle functionality
-        this.app.elements.searchToggle.addEventListener('click', () => {
+        this.app.elements.searchToggle.addEventListener('click', async () => {
             this.app.searchEnabled = !this.app.searchEnabled;
             this.updateSearchToggleUI();
             this.app.updateInputState();
+            // Persist search state globally
+            await chatDB.saveSetting('searchEnabled', this.app.searchEnabled);
         });
 
         // Settings menu toggle

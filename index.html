@@ -29,6 +29,22 @@
             }
         })();
     </script>
+    <script>
+        // Apply right panel state immediately to prevent flash
+        (function () {
+            try {
+                const isDesktop = window.innerWidth >= 1024;
+                const savedState = localStorage.getItem('oa-right-panel-visible');
+                const isVisible = savedState !== null ? savedState === 'true' : isDesktop;
+
+                if (!isVisible) {
+                    document.documentElement.setAttribute('data-right-panel-hidden', 'true');
+                }
+            } catch (error) {
+                console.warn('Unable to apply right panel state:', error);
+            }
+        })();
+    </script>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
 

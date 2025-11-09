@@ -14,7 +14,14 @@ class RightPanel {
 
         // Responsive behavior
         this.isDesktop = window.innerWidth >= 1024;
-        this.isVisible = this.isDesktop; // Show by default on desktop
+
+        // Load saved panel state from localStorage
+        const savedState = localStorage.getItem('oa-right-panel-visible');
+        if (savedState !== null) {
+            this.isVisible = savedState === 'true';
+        } else {
+            this.isVisible = this.isDesktop; // Show by default on desktop
+        }
 
         this.ticketCount = 0;
         this.apiKey = null;
@@ -107,11 +114,18 @@ class RightPanel {
 
     formatTicketData(data) {
         if (!data) return '';
-        // Show first and last 20 characters
-        if (data.length > 50) {
-            return `${data.substring(0, 20)}...${data.substring(data.length - 20)}`;
+        // Show first and last 12 characters with ellipsis
+        if (data.length > 28) {
+            const truncated = `${data.substring(0, 12)}...${data.substring(data.length - 12)}`;
+            return truncated;
         }
         return data;
+    }
+
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
     }
 
     setupEventListeners() {
@@ -153,11 +167,13 @@ class RightPanel {
 
             if (wasDesktop !== this.isDesktop) {
                 if (this.isDesktop) {
-                    // Switched to desktop
-                    this.isVisible = true;
+                    // Switched to desktop - restore saved state
+                    const savedState = localStorage.getItem('oa-right-panel-visible');
+                    this.isVisible = savedState !== null ? savedState === 'true' : true;
                 } else {
                     // Switched to mobile - hide panel
                     this.isVisible = false;
+                    localStorage.setItem('oa-right-panel-visible', 'false');
                 }
                 this.updatePanelVisibility();
                 this.updateStatusIndicator();
@@ -249,18 +265,21 @@ class RightPanel {
 
     show() {
         this.isVisible = true;
+        localStorage.setItem('oa-right-panel-visible', 'true');
         this.updatePanelVisibility();
     }
 
     toggle() {
         // Toggle the right panel visibility
         this.isVisible = !this.isVisible;
+        localStorage.setItem('oa-right-panel-visible', this.isVisible.toString());
         this.updatePanelVisibility();
     }
 
     closeRightPanel() {
         // Close the right panel (works in both desktop and mobile)
         this.isVisible = false;
+        localStorage.setItem('oa-right-panel-visible', 'false');
         this.updatePanelVisibility();
     }
 
@@ -269,6 +288,13 @@ class RightPanel {
         const showBtn = document.getElementById('show-right-panel-btn');
         const appContainer = document.getElementById('app');
         if (!panel) return;
+
+        // Update data attribute to control CSS-based hiding
+        if (this.isVisible) {
+            document.documentElement.removeAttribute('data-right-panel-hidden');
+        } else {
+            document.documentElement.setAttribute('data-right-panel-hidden', 'true');
+        }
 
         if (this.isDesktop) {
             // Desktop mode: clear transform and use width for show/hide
@@ -704,7 +730,7 @@ class RightPanel {
                                     <div class="text-[10px] text-muted-foreground mb-1">
                                         Signed Response (from server):
                                     </div>
-                                    <div class="bg-background border border-dashed border-border rounded p-1.5 text-[10px] font-mono break-all text-muted-foreground">
+                                    <div class="ticket-data-display bg-background border border-dashed border-border rounded p-1.5 text-[10px] font-mono break-all text-muted-foreground cursor-pointer hover:bg-accent/30 transition-colors" data-full="${this.escapeHtml(this.currentTicket.signed_response)}" data-expanded="false">
                                         ${this.formatTicketData(this.currentTicket.signed_response)}
                                     </div>
                                 </div>
@@ -718,7 +744,7 @@ class RightPanel {
                                         </svg>
                                         Finalized Token (ready to use):
                                     </div>
-                                    <div class="bg-accent/50 border border-primary rounded p-1.5 text-[10px] font-mono break-all text-foreground animate-pulse">
+                                    <div class="ticket-data-display bg-accent/50 border border-primary rounded p-1.5 text-[10px] font-mono break-all text-foreground animate-pulse cursor-pointer hover:bg-accent/70 transition-colors" data-full="${this.escapeHtml(this.currentTicket.finalized_ticket)}" data-expanded="false">
                                         ${this.formatTicketData(this.currentTicket.finalized_ticket)}
                                     </div>
                                 </div>
@@ -847,6 +873,25 @@ class RightPanel {
         if (useTicketBtn) {
             useTicketBtn.onclick = () => this.handleRequestApiKey();
         }
+
+        // Ticket data click handler - toggle between truncated and full view
+        const ticketDataDisplays = document.querySelectorAll('.ticket-data-display');
+        ticketDataDisplays.forEach(display => {
+            display.onclick = () => {
+                const fullData = display.getAttribute('data-full');
+                const isExpanded = display.getAttribute('data-expanded') === 'true';
+
+                if (isExpanded) {
+                    // Show truncated version
+                    display.textContent = this.formatTicketData(fullData);
+                    display.setAttribute('data-expanded', 'false');
+                } else {
+                    // Show full version
+                    display.textContent = fullData;
+                    display.setAttribute('data-expanded', 'true');
+                }
+            };
+        });
 
         // API key management buttons
         const verifyBtn = document.getElementById('verify-key-btn');

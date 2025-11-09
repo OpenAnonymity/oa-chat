@@ -643,6 +643,19 @@ textarea:focus {
     }
 }
 
+/* Right panel hidden state - prevent flash on load */
+html[data-right-panel-hidden="true"] #right-panel {
+    transform: translateX(100%) !important;
+}
+
+@media (min-width: 1024px) {
+    html[data-right-panel-hidden="true"] #right-panel {
+        width: 0 !important;
+        border-left-width: 0 !important;
+        transform: none !important;
+    }
+}
+
 /* Sidebar hidden state */
 #sidebar.sidebar-hidden {
     width: 0 !important;

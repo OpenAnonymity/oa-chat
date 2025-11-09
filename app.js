@@ -218,9 +218,10 @@ class ChatApp {
             this.floatingPanel.render();
         }
 
-        // Restore search state from current session
+        // Restore search state from global setting
+        const savedSearchEnabled = await chatDB.getSetting('searchEnabled');
+        this.searchEnabled = savedSearchEnabled !== undefined ? savedSearchEnabled : false;
         if (currentSession) {
-            this.searchEnabled = currentSession.searchEnabled || false;
             this.updateSearchToggle();
         }
 
@@ -352,14 +353,12 @@ class ChatApp {
             apiKey: null,
             apiKeyInfo: null,
             expiresAt: null,
-            searchEnabled: false
+            searchEnabled: this.searchEnabled
         };
 
         this.state.sessions.unshift(session);
         this.state.currentSessionId = session.id;
 
-        // Reset search toggle for new session
-        this.searchEnabled = false;
         this.updateSearchToggle();
 
         await chatDB.saveSession(session);
@@ -393,10 +392,9 @@ class ChatApp {
         this.state.currentSessionId = sessionId;
         chatDB.saveSetting('currentSessionId', sessionId);
 
-        // Load session-specific search state
+        // Keep current search state (global setting)
         const session = this.getCurrentSession();
         if (session) {
-            this.searchEnabled = session.searchEnabled || false;
             this.updateSearchToggle();
         }
 
