@@ -249,6 +249,9 @@ class ChatApp {
         setTimeout(() => {
             this.scrollToBottom(true);
         }, 100);
+
+        // Auto-focus input field on startup
+        this.elements.messageInput.focus();
     }
 
     setupInputAreaObserver() {
