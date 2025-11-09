@@ -6,6 +6,24 @@
 
 import { getProviderIcon } from '../services/providerIcons.js';
 
+// Welcome message content configuration
+// Edit this markdown string to customize the intro message shown on new chat sessions
+// Supports full markdown: **bold**, *italic*, lists, links, etc.
+// Title also supports markdown - use backticks for monospace: `code`
+const WELCOME_CONTENT = {
+    title: '`oa-fastchat`',
+    content: `
+1. **Chats are end-to-end anonymous and mixed with other users.**\\
+   Every chat requests an ephemeral & cryptographically unlinkable OpenRouter API key from a random proxy (oa-stations), exchanged by blind-signed tokens known as *inference tickets*.
+2. **Chat history is local.**\\
+   Because every chat takes a random anonymous path to reach the model, only you have your full chat history, stored locally.
+3. **Prompts and responses *never* go through Open Anonymity.**\\
+   Because the API key itself is issued to *you*, your browser talks to OpenRouter directly and anonymously via an encrypted channel. Open Anonymity simply handles the API key issuance, rotation, and secure tunneling.
+    `.trim(),
+    // Future: Add diagram/image support
+    // diagram: null,
+};
+
 // Shared class constants (copied verbatim from existing markup)
 const CLASSES = {
     userWrapper: 'w-full px-2 md:px-3 fade-in self-end',
@@ -211,16 +229,48 @@ function buildTypingIndicator(id, providerName) {
 
 /**
  * Builds HTML for the empty state (no messages).
+ * Uses WELCOME_CONTENT configuration for customizable intro text.
+ * Parses markdown content using marked.js for rich formatting support.
  * @returns {string} HTML string
  */
 function buildEmptyState() {
+    // Parse markdown content using marked (loaded from CDN)
+    const contentHtml = typeof marked !== 'undefined'
+        ? marked.parse(WELCOME_CONTENT.content)
+        : escapeHtml(WELCOME_CONTENT.content);
+
+    // Parse title as inline markdown (for monospace/bold/italic support)
+    const titleHtml = typeof marked !== 'undefined' && marked.parseInline
+        ? marked.parseInline(WELCOME_CONTENT.title)
+        : escapeHtml(WELCOME_CONTENT.title);
+
     return `
         <div class="${CLASSES.emptyStateWrapper}">
-            <svg xmlns="http://www.w3.org/2000/svg" class="${CLASSES.emptyStateIcon}" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3-3c-1.354 0-2.694-.055-4.02-.163a2.115 2.115 0 0 1-.825-.242m9.345-8.334a2.126 2.126 0 0 0-.476-.095 48.64 48.64 0 0 0-8.048 0c-1.131.094-1.976 1.057-1.976 2.192v4.286c0 .837.46 1.58 1.155 1.951m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.455 48.455 0 0 0 11.25 3c-2.115 0-4.198.137-6.24.402-1.608.209-2.76 1.614-2.76 3.235v6.226c0 1.621 1.152 3.026 2.76 3.235.577.075 1.157.14 1.74.194V21l4.155-4.155" />
+            <svg xmlns="http://www.w3.org/2000/svg" class="${CLASSES.emptyStateIcon}" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M8.7,14.2C8,14.7,7.1,15,6.2,15H4c-0.6,0-1,0.4-1,1s0.4,1,1,1h2.2c1.3,0,2.6-0.4,3.7-1.2c0.4-0.3,0.5-1,0.2-1.4C9.7,13.9,9.1,13.8,8.7,14.2z"/>
+                <path d="M13,10.7c0.3,0,0.6-0.1,0.8-0.3C14.5,9.5,15.6,9,16.8,9h0.8l-0.3,0.3c-0.4,0.4-0.4,1,0,1.4c0.2,0.2,0.5,0.3,0.7,0.3s0.5-0.1,0.7-0.3l2-2c0.1-0.1,0.2-0.2,0.2-0.3c0.1-0.2,0.1-0.5,0-0.8c-0.1-0.1-0.1-0.2-0.2-0.3l-2-2c-0.4-0.4-1-0.4-1.4,0s-0.4,1,0,1.4L17.6,7h-0.8c-1.8,0-3.4,0.8-4.6,2.1c-0.4,0.4-0.3,1,0.1,1.4C12.5,10.7,12.8,10.7,13,10.7z"/>
+                <path d="M20.7,15.3l-2-2c-0.4-0.4-1-0.4-1.4,0s-0.4,1,0,1.4l0.3,0.3h-1.5c-1.6,0-2.9-0.9-3.6-2.3l-1.2-2.4C10.3,8.3,8.2,7,5.9,7H4C3.4,7,3,7.4,3,8s0.4,1,1,1h1.9c1.6,0,2.9,0.9,3.6,2.3l1.2,2.4c1,2.1,3.1,3.4,5.4,3.4h1.5l-0.3,0.3c-0.4,0.4-0.4,1,0,1.4c0.2,0.2,0.5,0.3,0.7,0.3s0.5-0.1,0.7-0.3l2-2C21.1,16.3,21.1,15.7,20.7,15.3z"/>
             </svg>
-            <p class="${CLASSES.emptyStateTitle}">Ask anonymously</p>
-            <p class="${CLASSES.emptyStateSubtitle}">Type a message below to get started</p>
+            <p class="${CLASSES.emptyStateTitle}">${titleHtml}</p>
+            <div class="max-w-2xl px-20 mx-auto mt-4 prose prose-sm text-left" style="font-size: 0.75rem !important;">
+                <style>
+                    .welcome-content p,
+                    .welcome-content li,
+                    .welcome-content a,
+                    .welcome-content strong,
+                    .welcome-content em,
+                    .welcome-content ol,
+                    .welcome-content ul {
+                        font-size: 0.75rem !important;
+                    }
+                    .welcome-content a {
+                        text-decoration: underline;
+                    }
+                </style>
+                <div class="welcome-content">
+                    ${contentHtml}
+                </div>
+            </div>
         </div>
     `;
 }
