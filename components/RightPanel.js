@@ -716,7 +716,7 @@ class RightPanel {
                     <div class="mb-3">
                         <div class="flex items-center justify-between">
                             <span class="text-xs font-semibold text-foreground">Next Inference Ticket</span>
-                            <span class="text-[10px] text-foreground font-medium px-1.5 py-0.5 bg-primary/10 border border-border/30 rounded-full">#${this.ticketIndex + 1} of ${this.ticketCount}</span>
+                            <span class="text-[10px] text-foreground font-medium px-1.5 py-0.5 bg-primary/10 border border-border/30 rounded-full">#${this.ticketIndex + 1}</span>
                         </div>
                     </div>
 
