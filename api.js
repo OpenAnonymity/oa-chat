@@ -41,17 +41,17 @@ class OpenRouterAPI {
 
             const data = await response.json();
 
-            // Log successful request
-            if (window.networkLogger) {
-                window.networkLogger.logRequest({
-                    type: 'openrouter',
-                    method: 'GET',
-                    url: url,
-                    status: response.status,
-                    request: { headers: window.networkLogger.sanitizeHeaders(headers) },
-                    response: { data: data.data ? `${data.data.length} models` : data }
-                });
-            }
+            // Log successful request - TEMPORARILY DISABLED for model catalog
+            // if (window.networkLogger) {
+            //     window.networkLogger.logRequest({
+            //         type: 'openrouter',
+            //         method: 'GET',
+            //         url: url,
+            //         status: response.status,
+            //         request: { headers: window.networkLogger.sanitizeHeaders(headers) },
+            //         response: { data: data.data ? `${data.data.length} models` : data }
+            //     });
+            // }
 
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
@@ -61,17 +61,17 @@ class OpenRouterAPI {
         } catch (error) {
             console.error('Error fetching models from OpenRouter:', error);
 
-            // Log failed request
-            if (window.networkLogger) {
-                window.networkLogger.logRequest({
-                    type: 'openrouter',
-                    method: 'GET',
-                    url: url,
-                    status: 0,
-                    request: { headers: window.networkLogger.sanitizeHeaders(headers) },
-                    error: error.message
-                });
-            }
+            // Log failed request - TEMPORARILY DISABLED for model catalog
+            // if (window.networkLogger) {
+            //     window.networkLogger.logRequest({
+            //         type: 'openrouter',
+            //         method: 'GET',
+            //         url: url,
+            //         status: 0,
+            //         request: { headers: window.networkLogger.sanitizeHeaders(headers) },
+            //         error: error.message
+            //     });
+            // }
 
             // Return a fallback list of models
             return [

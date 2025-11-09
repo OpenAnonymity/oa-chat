@@ -56,11 +56,11 @@ class NetworkLogger {
             this.logs = this.logs.slice(0, this.maxLogs);
         }
 
-        // Save to database
-        if (typeof chatDB !== 'undefined' && chatDB.db) {
-            chatDB.saveNetworkLog(logEntry).catch(err => console.error('Failed to save log:', err));
-            chatDB.clearOldNetworkLogs(this.maxLogs).catch(err => console.error('Failed to clear old logs:', err));
-        }
+        // Save to database - DISABLED (logs are now memory-only, ephemeral per tab)
+        // if (typeof chatDB !== 'undefined' && chatDB.db) {
+        //     chatDB.saveNetworkLog(logEntry).catch(err => console.error('Failed to save log:', err));
+        //     chatDB.clearOldNetworkLogs(this.maxLogs).catch(err => console.error('Failed to clear old logs:', err));
+        // }
 
         // Notify listeners
         this.notifyListeners();
@@ -69,16 +69,17 @@ class NetworkLogger {
     }
 
     /**
-     * Load logs from database
+     * Load logs from database - DISABLED (logs are now memory-only, ephemeral per tab)
      */
     async loadLogs() {
-        if (typeof chatDB !== 'undefined' && chatDB.db) {
-            try {
-                this.logs = await chatDB.getAllNetworkLogs();
-            } catch (err) {
-                console.error('Failed to load logs:', err);
-            }
-        }
+        // Database persistence disabled - logs start fresh on each tab/app startup
+        // if (typeof chatDB !== 'undefined' && chatDB.db) {
+        //     try {
+        //         this.logs = await chatDB.getAllNetworkLogs();
+        //     } catch (err) {
+        //         console.error('Failed to load logs:', err);
+        //     }
+        // }
     }
 
     /**
@@ -114,20 +115,20 @@ class NetworkLogger {
     }
 
     /**
-     * Clear all logs (both memory and database)
+     * Clear all logs (memory-only, database persistence disabled)
      */
     async clearAllLogs() {
         this.logs = [];
         this.notifyListeners();
 
-        // Clear from database
-        if (typeof chatDB !== 'undefined' && chatDB.db) {
-            try {
-                await chatDB.clearAllNetworkLogs();
-            } catch (err) {
-                console.error('Failed to clear logs from database:', err);
-            }
-        }
+        // Clear from database - DISABLED (logs are now memory-only, ephemeral per tab)
+        // if (typeof chatDB !== 'undefined' && chatDB.db) {
+        //     try {
+        //         await chatDB.clearAllNetworkLogs();
+        //     } catch (err) {
+        //         console.error('Failed to clear logs from database:', err);
+        //     }
+        // }
     }
 
     /**
@@ -189,9 +190,8 @@ class NetworkLogger {
                 if (token && token.length > 20) {
                     sanitized.Authorization = `Bearer ${token.slice(0, 12)}...${token.slice(-8)}`;
                 }
-            } else if (auth.includes('InferenceTicket')) {
-                sanitized.Authorization = 'InferenceTicket token=***';
             }
+            // InferenceTicket tokens are single-use and already consumed, so no need to mask them
         }
 
         return sanitized;

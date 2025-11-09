@@ -167,8 +167,8 @@ class ChatApp {
         // Initialize IndexedDB
         await chatDB.init();
 
-        // Load network logs from database
-        await networkLogger.loadLogs();
+        // Load network logs from database - DISABLED (logs are now memory-only, ephemeral per tab)
+        // await networkLogger.loadLogs();
 
         // Initialize theme management first
         themeManager.init();
@@ -194,13 +194,11 @@ class ChatApp {
         // Initialize message navigation
         this.messageNavigation = new MessageNavigation(this);
 
-        // Load data from IndexedDB FIRST (to get session)
+        // Load data from IndexedDB FIRST (to get existing sessions for sidebar)
         await this.loadFromDB();
 
-        // Create initial session if none exist
-        if (this.state.sessions.length === 0) {
-            await this.createSession();
-        }
+        // Don't create or select any session on startup
+        // A new session will be created when the user sends their first message
 
         // Load models from OpenRouter API (now we have a session)
         await this.loadModels();
@@ -222,9 +220,7 @@ class ChatApp {
         // Restore search state from global setting
         const savedSearchEnabled = await chatDB.getSetting('searchEnabled');
         this.searchEnabled = savedSearchEnabled !== undefined ? savedSearchEnabled : false;
-        if (currentSession) {
-            this.updateSearchToggle();
-        }
+        this.updateSearchToggle();
 
         // Set up event listeners
         this.setupEventListeners();
@@ -295,7 +291,7 @@ class ChatApp {
     }
 
     async loadFromDB() {
-        // Load sessions
+        // Load sessions (for display in sidebar)
         this.state.sessions = await chatDB.getAllSessions();
 
         // Migrate old sessions to add updatedAt if missing
@@ -307,13 +303,7 @@ class ChatApp {
             }
         }
 
-        // Load current session
-        const currentId = await chatDB.getSetting('currentSessionId');
-        if (currentId && this.state.sessions.find(s => s.id === currentId)) {
-            this.state.currentSessionId = currentId;
-        } else if (this.state.sessions.length > 0) {
-            this.state.currentSessionId = this.state.sessions[0].id;
-        }
+        // Don't restore currentSessionId - we always create a new session on startup
     }
 
     /**
@@ -577,16 +567,22 @@ class ChatApp {
      * Handles API key acquisition, model selection, and streaming updates.
      */
     async sendMessage() {
-        const session = this.getCurrentSession();
-        if (!session) return;
+        // Check if there's content to send
+        const content = this.elements.messageInput.value.trim();
+        const hasFiles = this.uploadedFiles.length > 0;
+        if (!content && !hasFiles) return;
+
+        // Create session if none exists (first message creates the session)
+        if (!this.getCurrentSession()) {
+            await this.createSession();
+        }
+
+        let session = this.getCurrentSession();
+        if (!session) return; // Safety check
 
         // Check if current session is already streaming
         const streamingState = this.getSessionStreamingState(session.id);
         if (streamingState.isStreaming) return;
-
-        const content = this.elements.messageInput.value.trim();
-        const hasFiles = this.uploadedFiles.length > 0;
-        if (!content && !hasFiles) return;
 
         // Create abort controller for this stream
         const abortController = new AbortController();
@@ -597,10 +593,6 @@ class ChatApp {
         const searchEnabled = this.searchEnabled;
 
         try {
-            // Create session if none exists
-            if (!this.getCurrentSession()) {
-                await this.createSession();
-            }
 
             // Add user message with file metadata
             const metadata = {};
@@ -629,8 +621,6 @@ class ChatApp {
             this.updateFileCountBadge();
             this.updateInputState();
             this.elements.messageInput.style.height = '24px';
-
-            let session = this.getCurrentSession();
 
             // Automatically acquire API key if needed
             const isKeyExpired = session.expiresAt ? new Date(session.expiresAt) <= new Date() : true;

@@ -1013,8 +1013,8 @@ class RightPanel {
             const isNewEntry = newLogsCount > 0 && index >= logsToShow.length - newLogsCount;
             const animationClass = isNewEntry ? 'new-entry' : '';
 
-            // Check if this is a system-level event (tickets/privacy pass)
-            const isSystemEvent = (log.type === 'local' && log.method === 'LOCAL') || log.type === 'ticket';
+            // Check if this is a system-level event (tickets/privacy pass/api-key requests)
+            const isSystemEvent = (log.type === 'local' && log.method === 'LOCAL') || log.type === 'ticket' || log.type === 'api-key';
 
             // For grouping purposes, treat system events as a special "system" session
             const effectiveSessionId = isSystemEvent ? 'system' : log.sessionId;
@@ -1132,28 +1132,31 @@ class RightPanel {
 
                                     <!-- Key Headers (if any) -->
                                     ${log.request?.headers && Object.keys(log.request.headers).length > 0 ? `
-                                        <div class="space-y-1">
-                                            <div class="text-[10px] text-muted-foreground font-medium">Key Headers</div>
-                                            <div class="space-y-1">
-                                                ${log.request.headers.Authorization && log.method === 'POST' ? `
-                                                    <div class="flex text-[10px]">
-                                                        <span class="text-muted-foreground" style="min-width: 96px;">Authorization:</span>
-                                                        <span class="font-mono text-muted-foreground">${networkLogger.sanitizeHeaders({ Authorization: log.request.headers.Authorization }).Authorization}</span>
+                                        <div class="space-y-2">
+                                            ${log.request.headers.Authorization && (log.method === 'POST' || log.type === 'api-key') ? `
+                                                <div class="space-y-1">
+                                                    <div class="text-[10px] text-muted-foreground font-medium">Authorization</div>
+                                                    <div class="text-[10px] font-mono text-muted-foreground bg-background p-2 rounded border border-border/50 break-words">
+                                                        ${networkLogger.sanitizeHeaders({ Authorization: log.request.headers.Authorization }).Authorization}
                                                     </div>
-                                                ` : ''}
-                                                ${log.request.headers['X-Title'] ? `
-                                                    <div class="flex text-[10px]">
-                                                        <span class="text-muted-foreground" style="min-width: 96px;">Application:</span>
-                                                        <span class="font-mono">${log.request.headers['X-Title']}</span>
+                                                </div>
+                                            ` : ''}
+                                            ${log.request.headers['X-Title'] ? `
+                                                <div class="space-y-1">
+                                                    <div class="text-[10px] text-muted-foreground font-medium">Application</div>
+                                                    <div class="text-[10px] font-mono text-muted-foreground bg-background p-2 rounded border border-border/50">
+                                                        ${log.request.headers['X-Title']}
                                                     </div>
-                                                ` : ''}
-                                                ${log.request.headers['Content-Type'] ? `
-                                                    <div class="flex text-[10px]">
-                                                        <span class="text-muted-foreground" style="min-width: 96px;">Content Type:</span>
-                                                        <span class="font-mono">${log.request.headers['Content-Type']}</span>
+                                                </div>
+                                            ` : ''}
+                                            ${log.request.headers['Content-Type'] ? `
+                                                <div class="space-y-1">
+                                                    <div class="text-[10px] text-muted-foreground font-medium">Content Type</div>
+                                                    <div class="text-[10px] font-mono text-muted-foreground bg-background p-2 rounded border border-border/50">
+                                                        ${log.request.headers['Content-Type']}
                                                     </div>
-                                                ` : ''}
-                                            </div>
+                                                </div>
+                                            ` : ''}
                                         </div>
                                     ` : ''}
 
@@ -1168,7 +1171,7 @@ class RightPanel {
                                     ` : log.response ? `
                                         <div class="space-y-1">
                                             <div class="text-[10px] text-muted-foreground font-medium">Response Summary</div>
-                                            <div class="text-[10px] text-muted-foreground bg-background p-2 rounded border border-border/50">
+                                            <div class="text-[10px] text-muted-foreground bg-background p-2 rounded border border-border/50 break-words">
                                                 ${networkLogger.getResponseSummary(log.response, log.status) || 'Request completed successfully'}
                                             </div>
                                         </div>
