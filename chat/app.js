@@ -593,6 +593,225 @@ class ChatApp {
     }
 
     /**
+     * Regenerates the last assistant response without creating a new user message.
+     * Used when the regenerate button is clicked on an assistant message.
+     */
+    async regenerateResponse() {
+        let session = this.getCurrentSession();
+        if (!session) return;
+
+        // Check if current session is already streaming
+        const streamingState = this.getSessionStreamingState(session.id);
+        if (streamingState.isStreaming) return;
+
+        // Create abort controller for this stream
+        const abortController = new AbortController();
+        this.setSessionStreamingState(session.id, true, abortController);
+
+        try {
+            // Automatically acquire API key if needed
+            const isKeyExpired = session.expiresAt ? new Date(session.expiresAt) <= new Date() : true;
+            if (!session.apiKey || isKeyExpired) {
+                try {
+                    if (this.floatingPanel) {
+                        this.floatingPanel.showMessage('Acquiring API key...', 'info');
+                    }
+                    await this.acquireAndSetApiKey(session);
+                    if (this.floatingPanel) {
+                        this.floatingPanel.showMessage('Successfully acquired API key!', 'success', 2000);
+                    }
+                } catch (error) {
+                    if (this.floatingPanel) {
+                        this.floatingPanel.showMessage(error.message, 'error', 5000);
+                    }
+                    await this.addMessage('assistant', `**Error:** ${error.message}`);
+                    return;
+                }
+            }
+
+            // Set current session for network logging
+            if (window.networkLogger) {
+                window.networkLogger.setCurrentSession(session.id);
+            }
+
+            let modelNameToUse = session.model;
+
+            if (!modelNameToUse) {
+                const gpt5Model = this.state.models.find(m => m.name.toLowerCase().includes('gpt-5 chat'));
+                if (gpt5Model) {
+                    modelNameToUse = gpt5Model.name;
+                } else {
+                    const gpt4oModel = this.state.models.find(m => m.name.toLowerCase().includes('gpt-4o'));
+                    if (gpt4oModel) {
+                        modelNameToUse = gpt4oModel.name;
+                    } else if (this.state.models.length > 0) {
+                        modelNameToUse = this.state.models[0].name;
+                    }
+                }
+
+                if (modelNameToUse) {
+                    session.model = modelNameToUse;
+                    await chatDB.saveSession(session);
+                    this.renderCurrentModel();
+                }
+            }
+
+            if (!modelNameToUse) {
+                console.warn('No available models to send message.');
+                await this.addMessage('assistant', 'No models are available right now. Please add a model and try again.');
+                return;
+            }
+
+            let selectedModel = this.state.models.find(m => m.name === modelNameToUse);
+            let modelId;
+
+            if (selectedModel) {
+                modelId = selectedModel.id;
+            } else {
+                modelId = 'openai/gpt-4o';
+            }
+
+            // Show typing indicator
+            const typingId = this.showTypingIndicator(modelNameToUse);
+
+            let streamingMessage = null;
+            let streamedContent = '';
+            let firstChunk = true;
+
+            try {
+                // Get AI response from OpenRouter with streaming
+                const messages = await chatDB.getSessionMessages(session.id);
+
+                // Create a placeholder message for streaming
+                const streamingMessageId = this.generateId();
+                let streamingTokenCount = 0;
+
+                streamingMessage = {
+                    id: streamingMessageId,
+                    sessionId: session.id,
+                    role: 'assistant',
+                    content: '',
+                    timestamp: Date.now(),
+                    model: modelNameToUse,
+                    tokenCount: null,
+                    streamingTokens: 0
+                };
+
+                let lastSaveLength = 0;
+                const SAVE_INTERVAL_CHARS = 100;
+                firstChunk = true;
+
+                // Stream the response with token tracking
+                const tokenData = await openRouterAPI.streamCompletion(
+                    messages,
+                    modelId,
+                    session.apiKey,
+                    async (chunk) => {
+                        if (firstChunk) {
+                            this.removeTypingIndicator(typingId);
+                            firstChunk = false;
+                            streamedContent += chunk;
+                            streamingMessage.content = streamedContent;
+                            streamingMessage.streamingTokens = Math.ceil(streamedContent.length / 4);
+                            await chatDB.saveMessage(streamingMessage);
+                            if (this.chatArea) {
+                                await this.chatArea.appendMessage(streamingMessage);
+                            }
+                        } else {
+                            streamedContent += chunk;
+                        }
+
+                        if (streamedContent.length - lastSaveLength >= SAVE_INTERVAL_CHARS) {
+                            streamingMessage.content = streamedContent;
+                            streamingMessage.streamingTokens = Math.ceil(streamedContent.length / 4);
+                            await chatDB.saveMessage(streamingMessage);
+                            lastSaveLength = streamedContent.length;
+                        }
+
+                        if (this.chatArea) {
+                            this.chatArea.updateStreamingMessage(streamingMessageId, streamedContent);
+                        }
+                    },
+                    (tokenUpdate) => {
+                        streamingTokenCount = tokenUpdate.completionTokens || 0;
+                        if (tokenUpdate.isStreaming && this.chatArea) {
+                            this.chatArea.updateStreamingTokens(streamingMessageId, streamingTokenCount);
+                        }
+                    },
+                    [], // No files for regeneration
+                    false, // No search for regeneration
+                    abortController
+                );
+
+                // Save the final message content with token data
+                streamingMessage.content = streamedContent;
+                streamingMessage.tokenCount = tokenData.totalTokens || tokenData.completionTokens || streamingTokenCount;
+                streamingMessage.model = tokenData.model || modelNameToUse;
+                streamingMessage.streamingTokens = null;
+                await chatDB.saveMessage(streamingMessage);
+
+                if (this.chatArea && streamingMessage.tokenCount) {
+                    this.chatArea.updateFinalTokens(streamingMessageId, streamingMessage.tokenCount);
+                }
+
+            } catch (error) {
+                console.error('Error getting AI response:', error);
+                this.removeTypingIndicator(typingId);
+
+                if (error.isCancelled) {
+                    if (streamingMessage && !firstChunk) {
+                        if (streamedContent.trim()) {
+                            streamingMessage.content = streamedContent;
+                            streamingMessage.tokenCount = null;
+                            streamingMessage.streamingTokens = null;
+                            await chatDB.saveMessage(streamingMessage);
+                            if (this.chatArea) {
+                                const messageEl = document.querySelector(`[data-message-id="${streamingMessage.id}"]`);
+                                if (messageEl) {
+                                    const tokenEl = messageEl.querySelector('.streaming-token-count');
+                                    if (tokenEl) {
+                                        tokenEl.remove();
+                                    }
+                                }
+                            }
+                        } else {
+                            await chatDB.deleteMessage(streamingMessage.id);
+                            const messageEl = document.querySelector(`[data-message-id="${streamingMessage.id}"]`);
+                            if (messageEl) {
+                                messageEl.remove();
+                            }
+                        }
+                    }
+                } else {
+                    if (!firstChunk && streamingMessage) {
+                        streamingMessage.content = 'Sorry, I encountered an error while processing your request.';
+                        streamingMessage.tokenCount = null;
+                        streamingMessage.streamingTokens = null;
+                        await chatDB.saveMessage(streamingMessage);
+                        if (this.chatArea) {
+                            this.chatArea.updateStreamingMessage(streamingMessage.id, streamingMessage.content);
+                            const messageEl = document.querySelector(`[data-message-id="${streamingMessage.id}"]`);
+                            if (messageEl) {
+                                const tokenEl = messageEl.querySelector('.streaming-token-count');
+                                if (tokenEl) {
+                                    tokenEl.remove();
+                                }
+                            }
+                        }
+                    } else {
+                        await this.addMessage('assistant', 'Sorry, I encountered an error while processing your request.');
+                    }
+                }
+            }
+        } finally {
+            this.setSessionStreamingState(session.id, false, null);
+            requestAnimationFrame(() => {
+                this.elements.messageInput.focus();
+            });
+        }
+    }
+
+    /**
      * Sends a user message and streams the AI response.
      * Handles API key acquisition, model selection, and streaming updates.
      */
@@ -799,7 +1018,7 @@ class ChatApp {
 
                 // Save the final message content with token data
                 streamingMessage.content = streamedContent;
-                streamingMessage.tokenCount = tokenData.totalTokens || tokenData.completionTokens || streamingTokenCount;
+                streamingMessage.tokenCount = tokenData.completionTokens || streamingTokenCount;
                 streamingMessage.model = tokenData.model || modelNameToUse;
                 streamingMessage.streamingTokens = null; // Clear streaming tokens after completion
                 await chatDB.saveMessage(streamingMessage);

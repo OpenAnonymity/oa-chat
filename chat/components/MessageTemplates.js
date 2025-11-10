@@ -34,7 +34,7 @@ const CLASSES = {
     userBubble: 'py-3 px-4 font-normal message-user max-w-full',
     userContent: 'min-w-0 w-full overflow-hidden break-words',
 
-    assistantWrapper: 'w-full px-2 md:px-3 self-start pb-3',
+    assistantWrapper: 'w-full px-2 md:px-3 self-start pb-1',
     assistantGroup: 'group flex w-full flex-col items-start justify-start gap-2',
     assistantHeader: 'flex w-full items-center justify-start gap-2',
     assistantAvatar: 'flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow bg-muted',
@@ -199,6 +199,24 @@ function buildAssistantMessage(message, helpers, providerName, modelName) {
                     <div class="${CLASSES.assistantContent}">
                         ${processContentWithLatex(message.content || '')}
                     </div>
+                </div>
+                <div class="flex items-center gap-1 -mt-1">
+                    <button
+                        class="message-action-btn copy-message-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+                        data-message-id="${message.id}"
+                        title="Copy message">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
+                        </svg>
+                    </button>
+                    <button
+                        class="message-action-btn regenerate-message-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+                        data-message-id="${message.id}"
+                        title="Regenerate response">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                        </svg>
+                    </button>
                 </div>
             </div>
         </div>

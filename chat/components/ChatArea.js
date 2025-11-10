@@ -13,6 +13,108 @@ export default class ChatArea {
      */
     constructor(app) {
         this.app = app;
+        this.setupEventListeners();
+    }
+
+    /**
+     * Sets up event listeners for message actions (copy, regenerate)
+     * Uses event delegation for dynamically added messages
+     */
+    setupEventListeners() {
+        const messagesContainer = this.app.elements.messagesContainer;
+
+        // Event delegation for copy button
+        messagesContainer.addEventListener('click', async (e) => {
+            const copyBtn = e.target.closest('.copy-message-btn');
+            if (copyBtn) {
+                const messageId = copyBtn.dataset.messageId;
+                await this.handleCopyMessage(messageId);
+            }
+
+            const regenerateBtn = e.target.closest('.regenerate-message-btn');
+            if (regenerateBtn) {
+                const messageId = regenerateBtn.dataset.messageId;
+                await this.handleRegenerateMessage(messageId);
+            }
+        });
+    }
+
+    /**
+     * Handles copying the raw markdown/latex content of a message
+     * @param {string} messageId - The message ID to copy
+     */
+    async handleCopyMessage(messageId) {
+        const session = this.app.getCurrentSession();
+        if (!session) return;
+
+        const messages = await chatDB.getSessionMessages(session.id);
+        const message = messages.find(m => m.id === messageId);
+
+        if (message && message.content) {
+            try {
+                await navigator.clipboard.writeText(message.content);
+                // Show brief visual feedback with icon change
+                const btn = document.querySelector(`.copy-message-btn[data-message-id="${messageId}"]`);
+                if (btn) {
+                    const originalTitle = btn.title;
+                    const svg = btn.querySelector('svg');
+                    const originalSvgContent = svg.innerHTML;
+
+                    // Replace with checkmark icon
+                    svg.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />';
+                    btn.title = 'Copied!';
+                    btn.classList.add('text-green-600');
+
+                    setTimeout(() => {
+                        // Restore original icon
+                        svg.innerHTML = originalSvgContent;
+                        btn.title = originalTitle;
+                        btn.classList.remove('text-green-600');
+                    }, 2000);
+                }
+            } catch (error) {
+                console.error('Failed to copy message:', error);
+            }
+        }
+    }
+
+    /**
+     * Handles regenerating an assistant message
+     * @param {string} messageId - The assistant message ID to regenerate
+     */
+    async handleRegenerateMessage(messageId) {
+        const session = this.app.getCurrentSession();
+        if (!session) return;
+
+        // Check if currently streaming
+        if (this.app.isCurrentSessionStreaming()) {
+            return;
+        }
+
+        const messages = await chatDB.getSessionMessages(session.id);
+        const messageIndex = messages.findIndex(m => m.id === messageId);
+
+        if (messageIndex === -1 || messages[messageIndex].role !== 'assistant') {
+            return;
+        }
+
+        // Find the previous user message
+        const userMessage = messageIndex > 0 ? messages[messageIndex - 1] : null;
+        if (!userMessage || userMessage.role !== 'user') {
+            return;
+        }
+
+        // Delete the assistant message and all messages after it
+        const messagesToDelete = messages.slice(messageIndex);
+        for (const msg of messagesToDelete) {
+            await chatDB.deleteMessage(msg.id);
+        }
+
+        // Re-render messages to remove deleted messages from UI
+        await this.render();
+
+        // Trigger regeneration by calling the app's regenerateResponse method
+        await this.app.regenerateResponse();
     }
 
     /**

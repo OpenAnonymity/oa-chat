@@ -927,3 +927,23 @@ html {
         opacity: 0.5;
     }
 }
+
+/* Message action buttons */
+.message-action-btn {
+    opacity: 0.6;
+    transition: opacity 0.2s ease, background-color 0.15s ease, color 0.15s ease;
+}
+
+.group:hover .message-action-btn,
+.message-action-btn:hover {
+    opacity: 1;
+}
+
+.message-action-btn:focus {
+    opacity: 1;
+}
+
+/* Dark mode: reduce hover brightness for better contrast */
+.dark .message-action-btn:hover {
+    background-color: hsl(var(--color-muted) / 0.4) !important;
+}
