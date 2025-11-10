@@ -234,8 +234,8 @@ export default class ModelPicker {
      */
     renderCurrentModel() {
         const session = this.app.getCurrentSession();
-        // Show model from session if exists, otherwise show pending model or default
-        const modelName = session ? session.model : (this.app.state.pendingModel || this.defaultModelName);
+        // Show model from session if exists and not null, otherwise show pending model or default
+        const modelName = (session && session.model) || this.app.state.pendingModel || this.defaultModelName;
 
         // Guard against elements not being available
         if (!this.app.elements.modelPickerBtn) {
