@@ -25,7 +25,7 @@ The privacy guarantees are simple:
 3. **Chat history is entirely local.**\\
    Because every chat takes a random anonymous path to the model, *only you* have your full chat history, [stored locally](#download-chats-link).
 
-This client is currently in alpha testing. We appreciate any [feedback](https://forms.gle/HEmvxnJpN1jQC7CfA)!
+The OA project is developed at Stanford and Michigan. This client is currently in alpha testing and more details coming soon. We appreciate your [feedback](https://forms.gle/HEmvxnJpN1jQC7CfA)!
     `.trim(),
     // Future: Add diagram/image support
     // diagram: null,
