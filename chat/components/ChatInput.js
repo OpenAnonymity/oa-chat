@@ -128,17 +128,15 @@ export default class ChatInput {
 
         const thumb = this.app.elements.searchSwitch.querySelector('.search-switch-thumb');
         if (this.app.searchEnabled) {
-            this.app.elements.searchSwitch.style.backgroundColor = 'hsl(217.2 91.2% 59.8%)';
             this.app.elements.searchSwitch.classList.remove('bg-muted', 'hover:bg-muted/80');
+            this.app.elements.searchSwitch.classList.add('search-switch-active');
             thumb.classList.remove('translate-x-[2px]', 'bg-background/80');
-            thumb.classList.add('translate-x-[19px]');
-            thumb.style.backgroundColor = 'white';
+            thumb.classList.add('translate-x-[19px]', 'search-switch-thumb-active');
         } else {
-            this.app.elements.searchSwitch.style.backgroundColor = '';
+            this.app.elements.searchSwitch.classList.remove('search-switch-active');
             this.app.elements.searchSwitch.classList.add('bg-muted', 'hover:bg-muted/80');
-            thumb.classList.remove('translate-x-[19px]');
+            thumb.classList.remove('translate-x-[19px]', 'search-switch-thumb-active');
             thumb.classList.add('translate-x-[2px]', 'bg-background/80');
-            thumb.style.backgroundColor = '';
         }
     }
 

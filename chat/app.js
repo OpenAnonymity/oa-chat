@@ -221,7 +221,7 @@ class ChatApp {
         // Restore search state from global setting
         const savedSearchEnabled = await chatDB.getSetting('searchEnabled');
         this.searchEnabled = savedSearchEnabled !== undefined ? savedSearchEnabled : false;
-        this.updateSearchToggle();
+        this.chatInput.updateSearchToggleUI();
 
         // Set up event listeners
         this.setupEventListeners();
@@ -354,7 +354,7 @@ class ChatApp {
         this.state.sessions.unshift(session);
         this.state.currentSessionId = session.id;
 
-        this.updateSearchToggle();
+        this.chatInput.updateSearchToggleUI();
 
         await chatDB.saveSession(session);
         await chatDB.saveSetting('currentSessionId', session.id);
@@ -390,7 +390,7 @@ class ChatApp {
         // Keep current search state (global setting)
         const session = this.getCurrentSession();
         if (session) {
-            this.updateSearchToggle();
+            this.chatInput.updateSearchToggleUI();
         }
 
         // Clear message navigation immediately before switching to prevent showing stale data
@@ -1476,22 +1476,6 @@ class ChatApp {
         this.updateInputState();
     }
 
-    updateSearchToggle() {
-        this.elements.searchSwitch.setAttribute('aria-checked', this.searchEnabled);
-
-        const thumb = this.elements.searchSwitch.querySelector('.search-switch-thumb');
-        if (this.searchEnabled) {
-            this.elements.searchSwitch.classList.remove('bg-muted', 'hover:bg-muted/80');
-            this.elements.searchSwitch.classList.add('search-switch-active');
-            thumb.classList.remove('translate-x-[2px]', 'bg-background/80');
-            thumb.classList.add('translate-x-[19px]', 'search-switch-thumb-active');
-        } else {
-            this.elements.searchSwitch.classList.remove('search-switch-active');
-            this.elements.searchSwitch.classList.add('bg-muted', 'hover:bg-muted/80');
-            thumb.classList.remove('translate-x-[19px]', 'search-switch-thumb-active');
-            thumb.classList.add('translate-x-[2px]', 'bg-background/80');
-        }
-    }
 
     async acquireAndSetApiKey(session) {
         if (!session) throw new Error("No active session found.");
