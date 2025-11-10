@@ -383,6 +383,19 @@
         </div>
     </div>
 
+    <!-- Prerender exact landing content early to avoid cold-start blank/flicker -->
+    <script type="module">
+        try {
+            const container = document.getElementById('messages-container');
+            if (container && container.childElementCount === 0) {
+                const { buildEmptyState } = await import('./components/MessageTemplates.js');
+                container.innerHTML = buildEmptyState();
+            }
+        } catch (error) {
+            console.warn('Failed to prerender welcome content:', error);
+        }
+    </script>
+
     <!-- Load external scripts -->
     <script src="db.js"></script>
     <script type="module" src="services/networkLogger.js"></script>
