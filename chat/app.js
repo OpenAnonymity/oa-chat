@@ -42,8 +42,8 @@ class ChatApp {
             settingsMenu: document.getElementById('settings-menu'),
             searchToggle: document.getElementById('search-toggle'),
             searchSwitch: document.getElementById('search-switch'),
-            clearChatBtn: document.getElementById('clear-chat-btn'),
-            copyMarkdownBtn: document.getElementById('copy-markdown-btn'),
+            // clearChatBtn: document.getElementById('clear-chat-btn'), // Temporarily removed
+            // copyMarkdownBtn: document.getElementById('copy-markdown-btn'), // Temporarily removed
             toggleRightPanelBtn: document.getElementById('toggle-right-panel-btn'), // This might be legacy, but let's keep it for now.
             showRightPanelBtn: document.getElementById('show-right-panel-btn'),
             sidebar: document.getElementById('sidebar'),
@@ -1175,15 +1175,15 @@ class ChatApp {
                 this.elements.searchRoomsInput?.focus();
             }
 
-            // Cmd/Ctrl + Shift + Backspace for clear chat
-            if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'Backspace') {
-                e.preventDefault();
-                const session = this.getCurrentSession();
-                if (session) {
-                    chatDB.deleteSessionMessages(session.id);
-                    this.renderMessages();
-                }
-            }
+            // Cmd/Ctrl + Shift + Backspace for clear chat (temporarily disabled)
+            // if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'Backspace') {
+            //     e.preventDefault();
+            //     const session = this.getCurrentSession();
+            //     if (session) {
+            //         chatDB.deleteSessionMessages(session.id);
+            //         this.renderMessages();
+            //     }
+            // }
 
             // Escape to close modal
             if (e.key === 'Escape' && !this.elements.modelPickerModal.classList.contains('hidden')) {

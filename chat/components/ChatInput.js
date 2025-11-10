@@ -68,11 +68,11 @@ export default class ChatInput {
             if (e.target.tagName === 'BUTTON') {
                 const action = e.target.textContent.trim();
 
-                // Copy Markdown functionality
-                if (action === 'Copy Markdown') {
-                    await this.copyLatestMarkdown(e.target);
-                    return; // Don't close menu immediately
-                }
+                // Copy Markdown functionality (temporarily disabled)
+                // if (action === 'Copy Markdown') {
+                //     await this.copyLatestMarkdown(e.target);
+                //     return; // Don't close menu immediately
+                // }
 
                 // TODO: Re-enable when implementing Clear Models functionality
                 // if (action === 'Clear Models') {
@@ -87,23 +87,23 @@ export default class ChatInput {
             }
         });
 
-        // Clear chat functionality
-        this.app.elements.clearChatBtn.addEventListener('click', async () => {
-            const session = this.app.getCurrentSession();
-            if (session) {
-                await chatDB.deleteSessionMessages(session.id);
-                this.app.renderMessages();
-                this.app.elements.settingsMenu.classList.add('hidden');
-            }
-        });
+        // Clear chat functionality (temporarily disabled)
+        // this.app.elements.clearChatBtn.addEventListener('click', async () => {
+        //     const session = this.app.getCurrentSession();
+        //     if (session) {
+        //         await chatDB.deleteSessionMessages(session.id);
+        //         this.app.renderMessages();
+        //         this.app.elements.settingsMenu.classList.add('hidden');
+        //     }
+        // });
 
-        // Keyboard shortcut for Copy Markdown (Cmd+Shift+C)
-        document.addEventListener('keydown', async (e) => {
-            if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'c') {
-                e.preventDefault();
-                await this.copyLatestMarkdown();
-            }
-        });
+        // Keyboard shortcut for Copy Markdown (Cmd+Shift+C) (temporarily disabled)
+        // document.addEventListener('keydown', async (e) => {
+        //     if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'c') {
+        //         e.preventDefault();
+        //         await this.copyLatestMarkdown();
+        //     }
+        // });
 
         // Close settings menu when clicking outside
         document.addEventListener('click', () => {
