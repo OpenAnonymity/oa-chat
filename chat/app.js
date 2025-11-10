@@ -526,6 +526,13 @@ class ChatApp {
         if (this.rightPanel) {
             this.rightPanel.onSessionChange(null);
         }
+
+        // Focus input after UI updates complete
+        requestAnimationFrame(() => {
+            if (this.elements.messageInput) {
+                this.elements.messageInput.focus();
+            }
+        });
     }
 
     async updateSessionTitle(sessionId, title) {
@@ -865,7 +872,10 @@ class ChatApp {
         } finally {
             // Clear streaming state for this session
             this.setSessionStreamingState(session.id, false, null);
-            this.elements.messageInput.focus();
+            // Use requestAnimationFrame to ensure focus happens after UI updates
+            requestAnimationFrame(() => {
+                this.elements.messageInput.focus();
+            });
         }
     }
 
