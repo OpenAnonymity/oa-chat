@@ -29,6 +29,9 @@ export default class ModelPicker {
             'google/gemini-2.5-pro',
         ];
 
+        // Default model to show when no model is selected
+        this.defaultModelName = 'OpenAI: GPT-5 Chat';
+
         // Keyboard navigation state
         this.highlightedIndex = -1;
     }
@@ -231,38 +234,34 @@ export default class ModelPicker {
      */
     renderCurrentModel() {
         const session = this.app.getCurrentSession();
-        // Show model from session if exists, otherwise show pending model
-        const modelName = session ? session.model : this.app.state.pendingModel;
+        // Show model from session if exists, otherwise show pending model or default
+        const modelName = session ? session.model : (this.app.state.pendingModel || this.defaultModelName);
 
         // Guard against elements not being available
         if (!this.app.elements.modelPickerBtn) {
             return;
         }
 
-        if (modelName) {
-            const model = this.app.state.models.find(m => m.name === modelName);
-            const iconData = model ? getProviderIcon(model.provider, 'w-3 h-3') : { html: '', hasIcon: false };
-            const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
-            this.app.elements.modelPickerBtn.innerHTML = `
-                <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 ${bgClass}">
-                    ${iconData.html}
-                </div>
-                <span class="truncate">${modelName}</span>
-            `;
-            this.app.elements.modelPickerBtn.classList.add('gap-1.5');
-        } else {
-            const shortcutHtml = `
-                <div class="flex items-center gap-0.5 ml-2">
-                    <kbd class="flex items-center justify-center h-4 w-4 p-1 rounded-sm bg-muted border border-border text-foreground text-xs">⌘</kbd>
-                    <kbd class="flex items-center justify-center h-4 w-4 p-1 rounded-sm bg-muted border border-border text-foreground text-xs">K</kbd>
-                </div>
-            `;
-            this.app.elements.modelPickerBtn.innerHTML = `
-                <span>Select Model</span>
-                ${shortcutHtml}
-            `;
-            this.app.elements.modelPickerBtn.classList.remove('gap-1.5');
-        }
+        // Always show shortcut HTML
+        const shortcutHtml = `
+            <div class="flex items-center gap-0.5 ml-2">
+                <kbd class="flex items-center justify-center h-4 w-4 p-1 rounded-sm bg-muted border border-border text-foreground text-xs">⌘</kbd>
+                <kbd class="flex items-center justify-center h-4 w-4 p-1 rounded-sm bg-muted border border-border text-foreground text-xs">K</kbd>
+            </div>
+        `;
+
+        const model = this.app.state.models.find(m => m.name === modelName);
+        const iconData = model ? getProviderIcon(model.provider, 'w-3 h-3') : { html: '', hasIcon: false };
+        const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
+
+        this.app.elements.modelPickerBtn.innerHTML = `
+            <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 ${bgClass}">
+                ${iconData.html}
+            </div>
+            <span class="truncate">${modelName}</span>
+            ${shortcutHtml}
+        `;
+        this.app.elements.modelPickerBtn.classList.add('gap-1.5');
     }
 
     /**
