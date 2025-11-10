@@ -1,4 +1,25 @@
 // OpenRouter API integration
+
+// System prompt to prepend to all conversations
+// Modify this function to change the default AI behavior
+// Use template literals (backticks) for multi-line prompts
+// This is a function so dynamic values (like date) are evaluated per request
+const getSystemPrompt = () => `
+You are a highly capable, thoughtful, and precise assistant. Your goal is to deeply understand the user's intent, ask clarifying questions when needed, think step-by-step through complex problems, provide clear, direct, and concise answers, and proactively anticipate helpful follow-up information. Always prioritize being truthful, nuanced, insightful, and efficient, tailoring your responses specifically to the user's needs and preferences. Importantly, be privacy-aware: never request user data and, when appropriate, remind users not to share sensitive information or that their inputs may be revealing their identity.
+
+Current date: ${new Date().toLocaleDateString()}.
+`.trim();
+// To disable system prompt, return an empty string:
+// const getSystemPrompt = () => '';
+// Example:
+// const getSystemPrompt = () => `You are a helpful AI assistant.
+//
+// Follow these guidelines:
+// - Be concise and clear
+// - Provide accurate information
+// - Be respectful and professional`.trim();
+
+
 class OpenRouterAPI {
     constructor() {
         this.baseUrl = 'https://openrouter.ai/api/v1';
@@ -189,9 +210,16 @@ class OpenRouterAPI {
             'X-Title': 'chat',
             'Content-Type': 'application/json'
         };
+
+        // Prepend system prompt if it exists
+        const systemPrompt = getSystemPrompt();
+        const messagesWithSystem = systemPrompt
+            ? [{ role: 'system', content: systemPrompt }, ...messages]
+            : messages;
+
         const body = {
             model: modelId,
-            messages: messages.map(msg => ({
+            messages: messagesWithSystem.map(msg => ({
                 role: msg.role,
                 content: msg.content
             }))
@@ -312,10 +340,16 @@ class OpenRouterAPI {
         let hasReceivedFirstToken = false;
 
         try {
+            // Prepend system prompt if it exists
+            const systemPrompt = getSystemPrompt();
+            const messagesWithSystem = systemPrompt
+                ? [{ role: 'system', content: systemPrompt }, ...processedMessages]
+                : processedMessages;
+
             // Build request body
             const requestBody = {
                 model: effectiveModelId,
-                messages: processedMessages.map(msg => ({
+                messages: messagesWithSystem.map(msg => ({
                     role: msg.role,
                     content: msg.content
                 })),
