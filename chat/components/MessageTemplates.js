@@ -9,16 +9,17 @@ import { getProviderIcon } from '../services/providerIcons.js';
 // Welcome message content configuration
 // Edit this markdown string to customize the intro message shown on new chat sessions
 // Supports full markdown: **bold**, *italic*, lists, links, etc.
-// Title also supports markdown - use backticks for monospace: `code`
+// Title and subtitle support inline markdown - use backticks for monospace: `code`
 const WELCOME_CONTENT = {
     title: '`oa-fastchat`',
+    subtitle: 'A minimal, fast, and anonymous chat client by The Open Anonymity Project', // Optional subtitle that appears centered below the title
     content: `
 1. **Chats are end-to-end anonymous.**\\
-   Every chat requests an *disposable, cryptographically unlinkable* OpenRouter API key from a random proxy (*oa-stations*) with blind-signed tokens (*inference tickets*).\\
-   Because users hit different oa-stations who issue ephemeral keys to many users, OpenRouter and model owners only see mixed and aggregated traffic.
+   Every chat requests a *disposable and mathematically unlinkable* OpenRouter API key from a random proxy (*oa-stations*) with blind-signed tokens (*inference tickets*).\\
+   Because users hit different oa-stations who issue such ephemeral keys to many users, OpenRouter and providers only see anonymous and mixed traffic.
 2. **Chat prompts and responses *never* go through Open Anonymity.**\\
-   Because the ephemeral API key itself is issued to *you*, your browser talks to models on OpenRouter directly and anonymously via an encrypted channel.
-   Open Anonymity simply handles the key issuance, rotation, and encrypted tunneling.
+   Because the ephemeral API key itself is unlinkably issued to *you*, your browser talks to models on OpenRouter *directly* via encrypted HTTPS, not through Open Anonymity.
+   OA simply handles the key issuance, rotation, and encrypted tunneling.
 3. **Chat history is entirely local.**\\
    Because every chat takes a random anonymous path to the model, *only you* have your full chat history, [stored locally](#download-chats-link).
     `.trim(),
@@ -246,6 +247,13 @@ function buildEmptyState() {
         ? marked.parseInline(WELCOME_CONTENT.title)
         : escapeHtml(WELCOME_CONTENT.title);
 
+    // Parse optional subtitle as inline markdown
+    const subtitleHtml = WELCOME_CONTENT.subtitle
+        ? (typeof marked !== 'undefined' && marked.parseInline
+            ? marked.parseInline(WELCOME_CONTENT.subtitle)
+            : escapeHtml(WELCOME_CONTENT.subtitle))
+        : '';
+
     return `
         <div class="${CLASSES.emptyStateWrapper}">
             <svg xmlns="http://www.w3.org/2000/svg" class="${CLASSES.emptyStateIcon}" viewBox="0 0 24 24" fill="currentColor">
@@ -254,6 +262,7 @@ function buildEmptyState() {
                 <path d="M20.7,15.3l-2-2c-0.4-0.4-1-0.4-1.4,0s-0.4,1,0,1.4l0.3,0.3h-1.5c-1.6,0-2.9-0.9-3.6-2.3l-1.2-2.4C10.3,8.3,8.2,7,5.9,7H4C3.4,7,3,7.4,3,8s0.4,1,1,1h1.9c1.6,0,2.9,0.9,3.6,2.3l1.2,2.4c1,2.1,3.1,3.4,5.4,3.4h1.5l-0.3,0.3c-0.4,0.4-0.4,1,0,1.4c0.2,0.2,0.5,0.3,0.7,0.3s0.5-0.1,0.7-0.3l2-2C21.1,16.3,21.1,15.7,20.7,15.3z"/>
             </svg>
             <p class="${CLASSES.emptyStateTitle}">${titleHtml}</p>
+            ${subtitleHtml ? `<p class="${CLASSES.emptyStateSubtitle}">${subtitleHtml}</p>` : ''}
             <div class="max-w-2xl px-20 mx-auto mt-4 prose prose-sm text-left" style="font-size: 0.75rem !important;">
                 <style>
                     .welcome-content p,
