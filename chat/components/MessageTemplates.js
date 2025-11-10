@@ -14,14 +14,18 @@ const WELCOME_CONTENT = {
     title: '`oa-fastchat`',
     subtitle: 'A minimal, fast, and anonymous chat client by The Open Anonymity Project', // Optional subtitle that appears centered below the title
     content: `
+The privacy guarantees are simple:
+
 1. **Chats are end-to-end anonymous.**\\
    Every chat requests a *disposable and mathematically unlinkable* OpenRouter API key from a random proxy (*oa-stations*) with blind-signed tokens (*inference tickets*).\\
    Because users hit different oa-stations who issue such ephemeral keys to many users, OpenRouter and providers only see anonymous and mixed traffic.
 2. **Chat prompts and responses *never* go through Open Anonymity.**\\
-   Because the ephemeral API key itself is unlinkably issued to *you*, your browser talks to models on OpenRouter *directly* via encrypted HTTPS, not through Open Anonymity.
-   OA simply handles the key issuance, rotation, and encrypted tunneling.
+   Because the ephemeral API key itself is unlinkably issued to *you*, your browser talks to models on OpenRouter *directly* via encrypted HTTPS.
+   Open Anonymity simply handles the disposable key issuance, rotation, and encrypted tunneling.
 3. **Chat history is entirely local.**\\
    Because every chat takes a random anonymous path to the model, *only you* have your full chat history, [stored locally](#download-chats-link).
+
+This client is currently in alpha testing. We appreciate any [feedback](https://forms.gle/HEmvxnJpN1jQC7CfA)!
     `.trim(),
     // Future: Add diagram/image support
     // diagram: null,
