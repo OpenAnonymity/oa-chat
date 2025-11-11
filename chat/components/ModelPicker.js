@@ -27,6 +27,7 @@ export default class ModelPicker {
             'anthropic/claude-sonnet-4.5',
             'anthropic/claude-opus-4.1',
             'google/gemini-2.5-pro',
+            'google/gemini-2.5-flash-image-preview', // Nano Banana
         ];
 
         // Default model to show when no model is selected
