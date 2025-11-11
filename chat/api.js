@@ -480,7 +480,9 @@ class OpenRouterAPI {
                                 }
                             }
 
-                            const content = parsed.choices?.[0]?.delta?.content;
+                            const delta = parsed.choices?.[0]?.delta;
+                            const content = delta?.content;
+                            
                             if (content) {
                                 hasReceivedFirstToken = true;
                                 accumulatedContent += content;
@@ -493,6 +495,32 @@ class OpenRouterAPI {
                                         completionTokens,
                                         isStreaming: true
                                     });
+                                }
+                            }
+                            
+                            // Check for images in the delta (standard OpenRouter format)
+                            if (delta?.images) {
+                                hasReceivedFirstToken = true;
+                                console.log('Standard format images detected:', delta.images.length);
+                                onChunk(null, { images: delta.images });
+                            }
+                            
+                            // Check for image data in reasoning_details (gpt-5-image-mini format)
+                            if (delta?.reasoning_details) {
+                                for (const detail of delta.reasoning_details) {
+                                    if (detail.type === 'reasoning.encrypted' && detail.data) {
+                                        hasReceivedFirstToken = true;
+                                        // Create a base64 image data URL from the encrypted data
+                                        // The data appears to already be base64 encoded PNG data based on the "SUVORK5CYII=" ending
+                                        const imageDataUrl = `data:image/png;base64,${detail.data}`;
+                                        console.log('Encrypted image detected, length:', detail.data.length);
+                                        onChunk(null, { 
+                                            images: [{
+                                                type: 'image_url',
+                                                image_url: { url: imageDataUrl }
+                                            }]
+                                        });
+                                    }
                                 }
                             }
 

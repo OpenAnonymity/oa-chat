@@ -74,6 +74,44 @@ function escapeHtml(text) {
 }
 
 /**
+ * Builds HTML for generated images in a message.
+ * @param {Array} images - Array of image objects with type and image_url
+ * @returns {string} HTML string for image display
+ */
+function buildGeneratedImages(images) {
+    if (!images || images.length === 0) return '';
+    
+    let imagesHtml = images.map((image, index) => {
+        if (image.type === 'image_url' && image.image_url?.url) {
+            const imageId = `image-${Date.now()}-${index}`;
+            return `
+                <div class="relative inline-block">
+                    <img 
+                        src="${escapeHtml(image.image_url.url)}" 
+                        alt="Generated image"
+                        class="aspect-auto h-96 max-w-xl rounded-lg border object-cover cursor-pointer hover:opacity-95 transition-opacity"
+                        data-image-id="${imageId}"
+                        onclick="window.expandImage('${imageId}')"
+                    />
+                    <button
+                        class="absolute bottom-2 right-2 inline-flex items-center justify-center whitespace-nowrap rounded-md font-medium transition-colors bg-white/90 hover:bg-white text-gray-700 shadow-lg border border-gray-200 p-1.5"
+                        aria-label="Expand image"
+                        onclick="event.stopPropagation(); window.expandImage('${imageId}')"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
+                        </svg>
+                    </button>
+                </div>
+            `;
+        }
+        return '';
+    }).join('');
+    
+    return imagesHtml || '';
+}
+
+/**
  * Builds HTML for file attachments in a message.
  * @param {Array} files - Array of file objects with name, type, size, dataUrl
  * @returns {string} HTML string for file previews
@@ -187,6 +225,22 @@ function buildAssistantMessage(message, helpers, providerName, modelName) {
     const tokenDisplay = buildTokenDisplay(message);
     const iconData = getProviderIcon(providerName, 'w-3.5 h-3.5');
     const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
+    
+    // Build text bubble if there's content
+    const textBubble = message.content ? `
+        <div class="${CLASSES.assistantBubble}">
+            <div class="${CLASSES.assistantContent}">
+                ${processContentWithLatex(message.content)}
+            </div>
+        </div>
+    ` : '';
+    
+    // Build image bubble if there are images
+    const imageBubble = (message.images && message.images.length > 0) ? `
+        <div class="font-normal message-assistant-images w-full">
+            ${buildGeneratedImages(message.images)}
+        </div>
+    ` : '';
 
     return `
         <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}">
@@ -199,11 +253,8 @@ function buildAssistantMessage(message, helpers, providerName, modelName) {
                     <span class="${CLASSES.assistantTime}" style="font-size: 0.7rem;">${formatTime(message.timestamp)}</span>
                     ${tokenDisplay}
                 </div>
-                <div class="${CLASSES.assistantBubble}">
-                    <div class="${CLASSES.assistantContent}">
-                        ${processContentWithLatex(message.content || '')}
-                    </div>
-                </div>
+                ${textBubble}
+                ${imageBubble}
                 <div class="flex items-center gap-1 -mt-1">
                     <button
                         class="message-action-btn copy-message-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
@@ -332,6 +383,13 @@ export function buildMessageHTML(message, helpers, models, sessionModelName) {
 export {
     buildTypingIndicator,
     buildEmptyState,
+    buildGeneratedImages,
     CLASSES
 };
+
+// Make buildGeneratedImages available globally for ChatArea
+if (typeof window !== 'undefined') {
+    window.MessageTemplates = window.MessageTemplates || {};
+    window.MessageTemplates.buildGeneratedImages = buildGeneratedImages;
+}
 

@@ -235,6 +235,54 @@ export default class ChatArea {
             }
         }
     }
+    
+    /**
+     * Updates images for a streaming message.
+     * @param {string} messageId - The message ID
+     * @param {Array} images - Array of image objects
+     */
+    updateStreamingImages(messageId, images) {
+        console.log('updateStreamingImages called:', messageId, images.length);
+        const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
+        if (!messageEl || !images || images.length === 0) {
+            console.log('Early return:', !messageEl ? 'no messageEl' : 'no images');
+            return;
+        }
+        
+        // Find the group element (assistantGroup class)
+        const groupEl = messageEl.querySelector('.group.flex.w-full.flex-col');
+        if (!groupEl) {
+            console.log('No groupEl found');
+            return;
+        }
+        console.log('groupEl found, updating images');
+        
+        // Find or create the image bubble container
+        let imageBubble = messageEl.querySelector('.message-assistant-images');
+        
+        if (!imageBubble) {
+            // Create the image bubble after text bubble but before action buttons
+            const actionButtons = groupEl.querySelector('.flex.items-center.gap-1');
+            
+            imageBubble = document.createElement('div');
+            imageBubble.className = 'font-normal message-assistant-images w-full';
+            
+            if (actionButtons) {
+                groupEl.insertBefore(imageBubble, actionButtons);
+            } else {
+                groupEl.appendChild(imageBubble);
+            }
+        }
+        
+        // Update images using the template function
+        const { buildGeneratedImages } = window.MessageTemplates || {};
+        if (buildGeneratedImages) {
+            imageBubble.innerHTML = buildGeneratedImages(images);
+        }
+        
+        // Keep scrolling to bottom during streaming
+        this.scrollToBottom();
+    }
 
     /**
      * Appends a single message to the chat area without re-rendering the entire list.

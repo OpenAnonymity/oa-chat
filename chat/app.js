@@ -165,6 +165,53 @@ class ChatApp {
      * Initializes the application: loads data, sets up components, and renders initial state.
      */
     async init() {
+        // Setup image expand functionality
+        window.expandImage = (imageId) => {
+            const img = document.querySelector(`[data-image-id="${imageId}"]`);
+            if (!img) return;
+            
+            // Create modal overlay
+            const modal = document.createElement('div');
+            modal.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/80 animate-fade-in cursor-pointer p-4';
+            modal.onclick = () => modal.remove();
+            
+            // Create image container
+            const container = document.createElement('div');
+            container.className = 'relative max-w-[90vw] max-h-[90vh] flex flex-col items-center';
+            container.onclick = (e) => e.stopPropagation();
+            
+            // Create full-size image
+            const fullImg = document.createElement('img');
+            fullImg.src = img.src;
+            fullImg.alt = img.alt;
+            fullImg.className = 'max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl';
+            
+            // Create close button
+            const closeBtn = document.createElement('button');
+            closeBtn.className = 'absolute top-2 right-2 p-2 rounded-md bg-white/90 hover:bg-white text-gray-700 shadow-lg border border-gray-200 transition-colors';
+            closeBtn.innerHTML = `
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+            `;
+            closeBtn.onclick = () => modal.remove();
+            
+            // Assemble modal
+            container.appendChild(fullImg);
+            container.appendChild(closeBtn);
+            modal.appendChild(container);
+            document.body.appendChild(modal);
+            
+            // Add escape key handler
+            const escHandler = (e) => {
+                if (e.key === 'Escape') {
+                    modal.remove();
+                    document.removeEventListener('keydown', escHandler);
+                }
+            };
+            document.addEventListener('keydown', escHandler);
+        };
+        
         // Initialize IndexedDB
         await chatDB.init();
 
@@ -984,28 +1031,59 @@ class ChatApp {
                     messages,
                     modelId,
                     session.apiKey,
-                    async (chunk) => {
+                    async (chunk, imageData) => {
                         // Remove typing indicator on first chunk BEFORE adding content
                         if (firstChunk) {
                             this.removeTypingIndicator(typingId);
                             firstChunk = false;
-                            // First add the chunk content
-                            streamedContent += chunk;
-                            // Update message with first chunk content before saving to DB
-                            streamingMessage.content = streamedContent;
-                            streamingMessage.streamingTokens = Math.ceil(streamedContent.length / 4);
-                            // Save message to DB and append to UI on first chunk
-                            await chatDB.saveMessage(streamingMessage);
-                            if (this.chatArea) {
-                                await this.chatArea.appendMessage(streamingMessage);
+                            
+                            // Handle text content
+                            if (chunk) {
+                                streamedContent += chunk;
+                                streamingMessage.content = streamedContent;
+                                streamingMessage.streamingTokens = Math.ceil(streamedContent.length / 4);
+                            }
+                            
+                            // Handle image data
+                            if (imageData && imageData.images) {
+                                if (!streamingMessage.images) {
+                                    streamingMessage.images = [];
+                                }
+                                streamingMessage.images.push(...imageData.images);
+                                console.log('First chunk images:', streamingMessage.images.length);
+                            }
+                            
+                            // Save message to DB and append to UI on first chunk (only if there's content or images)
+                            if (chunk || (imageData && imageData.images)) {
+                                await chatDB.saveMessage(streamingMessage);
+                                if (this.chatArea) {
+                                    await this.chatArea.appendMessage(streamingMessage);
+                                }
                             }
                         } else {
-                            // Not first chunk - just accumulate content
-                            streamedContent += chunk;
+                            // Not first chunk
+                            if (chunk) {
+                                streamedContent += chunk;
+                            }
+                            
+                            // Handle additional images
+                            if (imageData && imageData.images) {
+                                if (!streamingMessage.images) {
+                                    streamingMessage.images = [];
+                                }
+                                streamingMessage.images.push(...imageData.images);
+                                console.log('Additional images received:', imageData.images.length, 'Total:', streamingMessage.images.length);
+                                // Save to DB when new images arrive
+                                await chatDB.saveMessage(streamingMessage);
+                                // Update UI with new images
+                                if (this.chatArea) {
+                                    this.chatArea.updateStreamingImages(streamingMessageId, streamingMessage.images);
+                                }
+                            }
                         }
 
                         // Periodically save partial content to handle refresh during streaming
-                        if (streamedContent.length - lastSaveLength >= SAVE_INTERVAL_CHARS) {
+                        if (chunk && streamedContent.length - lastSaveLength >= SAVE_INTERVAL_CHARS) {
                             streamingMessage.content = streamedContent;
                             streamingMessage.streamingTokens = Math.ceil(streamedContent.length / 4);
                             await chatDB.saveMessage(streamingMessage);
@@ -1013,7 +1091,7 @@ class ChatApp {
                         }
 
                         // Delegate to ChatArea for streaming message updates
-                        if (this.chatArea) {
+                        if (chunk && this.chatArea) {
                             this.chatArea.updateStreamingMessage(streamingMessageId, streamedContent);
                         }
                     },
