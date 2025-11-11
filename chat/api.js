@@ -23,6 +23,16 @@ Current date: ${new Date().toLocaleDateString()}.
 class OpenRouterAPI {
     constructor() {
         this.baseUrl = 'https://openrouter.ai/api/v1';
+
+        // Custom display name overrides
+        // Map model ID or default name to custom display name
+        this.displayNameOverrides = {
+            'openai/gpt-5': 'OpenAI: GPT-5 Thinking',
+            // Add more customizations here as needed
+            // Examples:
+            // 'anthropic/claude-opus-4.1': 'Anthropic: Claude Opus 4.1 Extended',
+            // 'google/gemini-2.5-pro': 'Google: Gemini 2.5 Pro Ultra',
+        };
     }
 
     // Get API key - only use ticket-based key
@@ -107,6 +117,12 @@ class OpenRouterAPI {
         }
     }
 
+    // Get custom display name for a model, or return the default name
+    getDisplayName(modelId, defaultName) {
+        // Check if there's a custom override for this model ID
+        return this.displayNameOverrides[modelId] || defaultName;
+    }
+
     // Format models to our structure
     formatModels(models) {
         const formattedModels = models.map(model => {
@@ -132,9 +148,13 @@ class OpenRouterAPI {
                 categoryPriority = 4;
             }
 
+            // Apply custom display name if one exists
+            const defaultName = model.name || model.id;
+            const displayName = this.getDisplayName(model.id, defaultName);
+
             return {
                 id: model.id,
-                name: model.name || model.id,
+                name: displayName,
                 category: category,
                 categoryPriority: categoryPriority,
                 provider: providerName,
