@@ -190,6 +190,38 @@ class OpenRouterAPI {
         return providerMap[provider] || provider.charAt(0).toUpperCase() + provider.slice(1);
     }
 
+    isReasoningDetailImage(detail) {
+        if (!detail || !detail.data) {
+            return false;
+        }
+
+        const mimeType = detail.mime_type || detail.content_type;
+        if (mimeType && mimeType.startsWith('image/')) {
+            return true;
+        }
+
+        const base64Data = typeof detail.data === 'string' ? detail.data.trim() : '';
+        if (!base64Data) {
+            return false;
+        }
+
+        const knownImagePrefixes = [
+            'iVBORw0KGgo', // PNG
+            '/9j/',        // JPEG
+            'R0lGOD',      // GIF
+            'UklGR',       // WebP
+            'Qk0'          // BMP
+        ];
+
+        return knownImagePrefixes.some(prefix => base64Data.startsWith(prefix));
+    }
+
+    buildImageUrlFromReasoningDetail(detail) {
+        const mimeType = (detail && (detail.mime_type || detail.content_type));
+        const type = mimeType && mimeType.startsWith('image/') ? mimeType : 'image/png';
+        return `data:${type};base64,${detail.data}`;
+    }
+
     // Get model-specific max_tokens
     getMaxTokensForModel(modelId) {
         // Check for Opus 4.1
@@ -482,7 +514,7 @@ class OpenRouterAPI {
 
                             const delta = parsed.choices?.[0]?.delta;
                             const content = delta?.content;
-                            
+
                             if (content) {
                                 hasReceivedFirstToken = true;
                                 accumulatedContent += content;
@@ -497,30 +529,24 @@ class OpenRouterAPI {
                                     });
                                 }
                             }
-                            
+
                             // Check for images in the delta (standard OpenRouter format)
                             if (delta?.images) {
                                 hasReceivedFirstToken = true;
                                 console.log('Standard format images detected:', delta.images.length);
                                 onChunk(null, { images: delta.images });
                             }
-                            
-                            // Check for image data in reasoning_details (gpt-5-image-mini format)
+
+                            // Check for image data in reasoning_details (only treat recognised image payloads)
                             if (delta?.reasoning_details) {
-                                for (const detail of delta.reasoning_details) {
-                                    if (detail.type === 'reasoning.encrypted' && detail.data) {
-                                        hasReceivedFirstToken = true;
-                                        // Create a base64 image data URL from the encrypted data
-                                        // The data appears to already be base64 encoded PNG data based on the "SUVORK5CYII=" ending
-                                        const imageDataUrl = `data:image/png;base64,${detail.data}`;
-                                        console.log('Encrypted image detected, length:', detail.data.length);
-                                        onChunk(null, { 
-                                            images: [{
-                                                type: 'image_url',
-                                                image_url: { url: imageDataUrl }
-                                            }]
-                                        });
-                                    }
+                                const imageDetails = delta.reasoning_details.filter(detail => this.isReasoningDetailImage(detail));
+                                if (imageDetails.length > 0) {
+                                    hasReceivedFirstToken = true;
+                                    const images = imageDetails.map(detail => ({
+                                        type: 'image_url',
+                                        image_url: { url: this.buildImageUrlFromReasoningDetail(detail) }
+                                    }));
+                                    onChunk(null, { images });
                                 }
                             }
 
