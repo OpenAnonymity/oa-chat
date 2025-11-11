@@ -119,18 +119,38 @@ function buildGeneratedImages(images) {
 function buildFileAttachments(files) {
     if (!files || files.length === 0) return '';
 
-    const fileCards = files.map(file => {
+    const fileCards = files.map((file, index) => {
         const isImage = file.type.startsWith('image/');
         const isPdf = file.type === 'application/pdf';
         const isAudio = file.type.startsWith('audio/');
 
-        let preview = '';
+        const fileSizeKB = (file.size / 1024).toFixed(1);
+        const fileSize = file.size > 1024 * 1024
+            ? `${(file.size / (1024 * 1024)).toFixed(1)} MB`
+            : `${fileSizeKB} KB`;
+
+        // Compact card with modal for images
         if (isImage && file.dataUrl) {
-            preview = `
-                <img src="${file.dataUrl}" class="absolute inset-0 w-full h-full object-cover" alt="${escapeHtml(file.name)}">
-                <div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>
+            const imageId = `uploaded-image-${Date.now()}-${index}`;
+            return `
+                <div class="bg-background relative h-28 w-40 overflow-hidden rounded-xl border border-border shadow-md cursor-pointer hover:shadow-lg transition-shadow" onclick="window.expandImage('${imageId}')">
+                    <img src="${file.dataUrl}" class="absolute inset-0 w-full h-full object-cover" alt="${escapeHtml(file.name)}" data-image-id="${imageId}">
+                    <div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent pointer-events-none"></div>
+                    <div class="absolute bottom-0 left-0 right-0 p-2 text-white pointer-events-none">
+                        <div class="text-xs font-medium truncate" title="${escapeHtml(file.name)}">
+                            ${escapeHtml(file.name)}
+                        </div>
+                        <div class="text-xs text-white/80">
+                            ${fileSize}
+                        </div>
+                    </div>
+                </div>
             `;
-        } else if (isPdf) {
+        }
+
+        // Compact card for non-image files (PDF, audio, etc.)
+        let preview = '';
+        if (isPdf) {
             preview = `
                 <div class="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-red-50 to-red-100 dark:from-red-900/20 dark:to-red-800/20">
                     <div class="flex flex-col items-center justify-center text-red-600 dark:text-red-400">
@@ -152,19 +172,14 @@ function buildFileAttachments(files) {
             `;
         }
 
-        const fileSizeKB = (file.size / 1024).toFixed(1);
-        const fileSize = file.size > 1024 * 1024
-            ? `${(file.size / (1024 * 1024)).toFixed(1)} MB`
-            : `${fileSizeKB} KB`;
-
         return `
             <div class="bg-background relative h-28 w-40 overflow-hidden rounded-xl border border-border shadow-md">
                 ${preview}
-                <div class="absolute bottom-0 left-0 right-0 p-2 ${isImage || isPdf ? 'text-white' : 'text-foreground'}">
+                <div class="absolute bottom-0 left-0 right-0 p-2 ${isPdf ? 'text-white' : 'text-foreground'}">
                     <div class="text-xs font-medium truncate" title="${escapeHtml(file.name)}">
                         ${escapeHtml(file.name)}
                     </div>
-                    <div class="text-xs ${isImage || isPdf ? 'text-white/80' : 'text-muted-foreground'}">
+                    <div class="text-xs ${isPdf ? 'text-white/80' : 'text-muted-foreground'}">
                         ${fileSize}
                     </div>
                 </div>

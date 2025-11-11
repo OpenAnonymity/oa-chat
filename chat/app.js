@@ -1696,11 +1696,18 @@ class ChatApp {
 
             let preview = '';
             if (isImage) {
-                // Create image preview
+                // Create image preview with modal functionality
                 const imageUrl = await this.createImagePreview(file);
+                const imageId = `preview-image-${Date.now()}-${index}`;
                 preview = `
-                    <img src="${imageUrl}" class="absolute inset-0 w-full h-full object-cover" alt="${file.name}">
-                    <div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>
+                    <img 
+                        src="${imageUrl}" 
+                        class="absolute inset-0 w-full h-full object-cover cursor-pointer" 
+                        alt="${file.name}"
+                        data-image-id="${imageId}"
+                        onclick="window.expandImage('${imageId}')"
+                    >
+                    <div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent pointer-events-none"></div>
                 `;
             } else if (isPdf) {
                 // Create PDF preview
@@ -1727,16 +1734,16 @@ class ChatApp {
             }
 
             return `
-                <div class="bg-background relative h-28 w-40 cursor-default select-none overflow-hidden rounded-xl border border-border shadow-md hover:shadow-lg transition-shadow">
+                <div class="bg-background relative h-28 w-40 select-none overflow-hidden rounded-xl border border-border shadow-md hover:shadow-lg transition-shadow ${isImage ? 'cursor-pointer' : 'cursor-default'}">
                     ${preview}
                     <div class="absolute top-2 right-2 z-10">
-                        <button class="flex items-center justify-center w-5 h-5 rounded-full bg-destructive/90 hover:bg-destructive text-white transition-colors shadow-sm" onclick="app.removeFile(${index})" title="Remove file">
+                        <button class="flex items-center justify-center w-5 h-5 rounded-full bg-destructive/90 hover:bg-destructive text-white transition-colors shadow-sm" onclick="event.stopPropagation(); app.removeFile(${index})" title="Remove file">
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-3 h-3">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
                             </svg>
                         </button>
                     </div>
-                    <div class="absolute bottom-0 left-0 right-0 p-2 ${isImage || isPdf ? 'text-white' : 'text-foreground'}">
+                    <div class="absolute bottom-0 left-0 right-0 p-2 ${isImage || isPdf ? 'text-white' : 'text-foreground'} pointer-events-none">
                         <div class="text-xs font-medium truncate" title="${file.name}">
                             ${file.name}
                         </div>
