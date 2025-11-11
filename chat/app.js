@@ -921,7 +921,7 @@ class ChatApp {
             if (searchEnabled) {
                 metadata.searchEnabled = true;
             }
-            await this.addMessage('user', content || 'Please analyze these files:', metadata);
+            await this.addMessage('user', content || '', metadata);
 
             // Clear input and files
             this.elements.messageInput.value = '';
@@ -1635,6 +1635,19 @@ class ChatApp {
         if (errors.length > 0) {
             this.showErrorNotification(errors.join('\n\n'));
         }
+    }
+
+    /**
+     * Converts a Blob (from clipboard) to a File object with proper metadata.
+     * @param {Blob} blob - The image blob from clipboard
+     * @param {string} filename - The filename to assign
+     * @returns {File} File object
+     */
+    convertBlobToFile(blob, filename) {
+        return new File([blob], filename, {
+            type: blob.type,
+            lastModified: Date.now()
+        });
     }
 
     showErrorNotification(message) {
