@@ -25,7 +25,7 @@ The privacy guarantees are simple:
 3. **Chat history is entirely local.**\\
    Because every chat takes a random anonymous path to the model, *only you* have your full chat history, [stored locally](#download-chats-link).
 
-The OA project is developed at Stanford and Michigan. This client is currently in alpha testing and more details coming soon. We appreciate your [feedback](https://forms.gle/HEmvxnJpN1jQC7CfA)!
+The OA project is actively developed at Stanford and Michigan. This client is currently in alpha testing and more details coming soon. We appreciate your [feedback](https://forms.gle/HEmvxnJpN1jQC7CfA)!
     `.trim(),
     // Future: Add diagram/image support
     // diagram: null,
@@ -80,14 +80,14 @@ function escapeHtml(text) {
  */
 function buildGeneratedImages(images) {
     if (!images || images.length === 0) return '';
-    
+
     let imagesHtml = images.map((image, index) => {
         if (image.type === 'image_url' && image.image_url?.url) {
             const imageId = `image-${Date.now()}-${index}`;
             return `
                 <div class="relative inline-block">
-                    <img 
-                        src="${escapeHtml(image.image_url.url)}" 
+                    <img
+                        src="${escapeHtml(image.image_url.url)}"
                         alt="Generated image"
                         class="aspect-auto h-96 max-w-xl rounded-lg border object-cover cursor-pointer hover:opacity-95 transition-opacity"
                         data-image-id="${imageId}"
@@ -107,7 +107,7 @@ function buildGeneratedImages(images) {
         }
         return '';
     }).join('');
-    
+
     return imagesHtml || '';
 }
 
@@ -240,7 +240,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName) {
     const tokenDisplay = buildTokenDisplay(message);
     const iconData = getProviderIcon(providerName, 'w-3.5 h-3.5');
     const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
-    
+
     // Build text bubble if there's content
     const textBubble = message.content ? `
         <div class="${CLASSES.assistantBubble}">
@@ -249,7 +249,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName) {
             </div>
         </div>
     ` : '';
-    
+
     // Build image bubble if there are images
     const imageBubble = (message.images && message.images.length > 0) ? `
         <div class="font-normal message-assistant-images w-full">
