@@ -7,6 +7,8 @@
  * To pin specific models to the top of the list, edit the pinnedModels array in the constructor.
  * Add model IDs (e.g., 'openai/gpt-4o', 'anthropic/claude-3.5-sonnet') in the order you want them to appear.
  * Pinned models will appear in a separate "Pinned" section at the top.
+ *
+ * To block models from appearing, add their model IDs to the blockedModels array in the constructor.
  */
 
 import { getProviderIcon } from '../services/providerIcons.js';
@@ -29,6 +31,16 @@ export default class ModelPicker {
             'google/gemini-2.5-pro',
             'google/gemini-2.5-flash-image-preview', // Nano Banana
         ];
+
+        // Configuration: Block specific models from appearing
+        // Add model IDs here to exclude them from the picker
+        this.blockedModels = new Set([
+            'openai/o4-mini-deep-research',
+            'openai/o3-deep-research',
+            'alibaba/tongyi-deepresearch-30b-a3b',
+            'perplexity/sonar-deep-research'
+            // Add more model IDs to block as needed
+        ]);
 
         // Default model to show when no model is selected
         this.defaultModelName = 'OpenAI: GPT-5 Chat';
@@ -99,14 +111,20 @@ export default class ModelPicker {
 
     /**
      * Filters models based on search term using fuzzy matching.
+     * Also excludes blocked models from the list.
      * @param {string} searchTerm - Search query
      * @returns {Array} Filtered models
      */
     filterModels(searchTerm = '') {
-        const term = searchTerm.toLowerCase();
-        if (!term) return this.app.state.models;
+        // First filter out blocked models
+        const allowedModels = this.app.state.models.filter(model =>
+            !this.blockedModels.has(model.id)
+        );
 
-        return this.app.state.models.filter(model =>
+        const term = searchTerm.toLowerCase();
+        if (!term) return allowedModels;
+
+        return allowedModels.filter(model =>
             this.app.fuzzyMatch(term, model.name.toLowerCase()) ||
             this.app.fuzzyMatch(term, model.provider.toLowerCase()) ||
             this.app.fuzzyMatch(term, model.category.toLowerCase())
