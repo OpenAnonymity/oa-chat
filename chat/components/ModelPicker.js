@@ -214,6 +214,9 @@ export default class ModelPicker {
     async selectModel(modelName) {
         const session = this.app.getCurrentSession();
 
+        // Always save as selected model for future sessions
+        await chatDB.saveSetting('selectedModel', modelName);
+
         if (!session) {
             // No session exists - store as pending model
             // Will be used when session is created (e.g., when first message is sent)

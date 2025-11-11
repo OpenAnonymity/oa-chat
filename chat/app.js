@@ -201,6 +201,12 @@ class ChatApp {
         // Don't create or select any session on startup
         // A new session will be created when the user sends their first message
 
+        // Load selected model from settings
+        const selectedModel = await chatDB.getSetting('selectedModel');
+        if (selectedModel) {
+            this.state.pendingModel = selectedModel;
+        }
+
         // Load models from OpenRouter API (now we have a session)
         await this.loadModels();
 
@@ -336,12 +342,16 @@ class ChatApp {
      * @returns {Promise<Object>} The created session
      */
     async createSession(title = 'New Chat') {
+        // Use pending model if available, otherwise fall back to selected model
+        const selectedModel = await chatDB.getSetting('selectedModel');
+        const modelToUse = this.state.pendingModel || selectedModel || null;
+
         const session = {
             id: this.generateId(),
             title,
             createdAt: Date.now(),
             updatedAt: Date.now(),
-            model: this.state.pendingModel || null, // Use pending model if available
+            model: modelToUse,
             apiKey: null,
             apiKeyInfo: null,
             expiresAt: null,
@@ -488,7 +498,7 @@ class ChatApp {
     async handleNewChatRequest() {
         // Clear current session - no session is selected
         // The session will be created when the user sends their first message
-        this.clearCurrentSession();
+        await this.clearCurrentSession();
 
         // Close sidebar on mobile after creating new chat
         if (this.isMobileView()) {
@@ -500,9 +510,12 @@ class ChatApp {
      * Clears the current session, returning to the startup state.
      * No session is selected until the user sends their first message.
      */
-    clearCurrentSession() {
+    async clearCurrentSession() {
         this.state.currentSessionId = null;
-        this.state.pendingModel = null; // Clear any pending model selection
+
+        // Load the selected model from settings so UI shows correct model
+        const selectedModel = await chatDB.getSetting('selectedModel');
+        this.state.pendingModel = selectedModel || null;
 
         // Update UI to reflect no session selected
         this.renderSessions();
