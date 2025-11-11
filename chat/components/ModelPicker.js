@@ -223,6 +223,12 @@ export default class ModelPicker {
             this.app.state.pendingModel = modelName;
             this.app.renderCurrentModel();
             this.close();
+            // Focus input after model selection
+            requestAnimationFrame(() => {
+                if (this.app.elements.messageInput) {
+                    this.app.elements.messageInput.focus();
+                }
+            });
             return;
         }
 
@@ -231,6 +237,12 @@ export default class ModelPicker {
         await chatDB.saveSession(session);
         this.app.renderCurrentModel();
         this.close();
+        // Focus input after model selection
+        requestAnimationFrame(() => {
+            if (this.app.elements.messageInput) {
+                this.app.elements.messageInput.focus();
+            }
+        });
     }
 
     /**
