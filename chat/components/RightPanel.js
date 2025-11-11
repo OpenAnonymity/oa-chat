@@ -557,16 +557,133 @@ class RightPanel {
         return `${key.slice(0, 13)}...${key.slice(-4)}`;
     }
 
+    /**
+     * Generate the expanded details HTML for a log entry
+     */
+    generateExpandedDetailsHTML(log) {
+        return `
+            <div class="activity-log-details mt-2 text-xs bg-muted/10 rounded-lg border border-border/50 overflow-hidden" style="animation: slideDown 0.2s ease-out;">
+                    <!-- Detailed description -->
+                    <div class="px-3 pt-2.5 pb-2 bg-muted/5 border-b border-border/50">
+                        <div class="text-foreground leading-relaxed">${getActivityDescription(log, true)}</div>
+                    </div>
+
+                <!-- Technical Details -->
+                <div class="p-3 space-y-2.5">
+                    <!-- Status and Method -->
+                    <div class="flex items-center gap-3">
+                        <div class="flex items-center gap-1.5">
+                            <span class="text-[10px] text-muted-foreground">Status:</span>
+                            <span class="text-[10px] font-medium px-1.5 py-0.5 rounded ${
+                                log.status >= 200 && log.status < 300 ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' :
+                                log.status === 0 ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' :
+                                'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
+                            }">
+                                ${log.status || 'ERROR'}
+                            </span>
+                        </div>
+                        <div class="flex items-center gap-1.5">
+                            <span class="text-[10px] text-muted-foreground">Method:</span>
+                            <span class="text-[10px] font-medium px-1.5 py-0.5 bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 rounded">${log.method}</span>
+                        </div>
+                    </div>
+
+                    <!-- URL -->
+                    <div class="space-y-1">
+                        <div class="text-[10px] text-muted-foreground font-medium">Destination</div>
+                        <div class="text-[10px] font-mono bg-background p-2 rounded border border-border/50 break-all">
+                            ${log.url}
+                        </div>
+                    </div>
+
+                    <!-- Key Headers (if any) -->
+                    ${log.request?.headers && Object.keys(log.request.headers).length > 0 ? `
+                        <div class="space-y-2">
+                            ${log.request.headers.Authorization && (log.method === 'POST' || log.type === 'api-key') ? `
+                                <div class="space-y-1">
+                                    <div class="text-[10px] text-muted-foreground font-medium">Authorization</div>
+                                    <div class="text-[10px] font-mono text-muted-foreground bg-background p-2 rounded border border-border/50 break-words">
+                                        ${networkLogger.sanitizeHeaders({ Authorization: log.request.headers.Authorization }).Authorization}
+                                    </div>
+                                </div>
+                            ` : ''}
+                            ${log.request.headers['X-Title'] ? `
+                                <div class="space-y-1">
+                                    <div class="text-[10px] text-muted-foreground font-medium">Application</div>
+                                    <div class="text-[10px] font-mono text-muted-foreground bg-background p-2 rounded border border-border/50">
+                                        ${log.request.headers['X-Title']}
+                                    </div>
+                                </div>
+                            ` : ''}
+                            ${log.request.headers['Content-Type'] ? `
+                                <div class="space-y-1">
+                                    <div class="text-[10px] text-muted-foreground font-medium">Content Type</div>
+                                    <div class="text-[10px] font-mono text-muted-foreground bg-background p-2 rounded border border-border/50">
+                                        ${log.request.headers['Content-Type']}
+                                    </div>
+                                </div>
+                            ` : ''}
+                        </div>
+                    ` : ''}
+
+                    <!-- Error or Success Message -->
+                    ${log.error ? `
+                        <div class="space-y-1">
+                            <div class="text-[10px] text-red-600 dark:text-red-400 font-medium">Error Details</div>
+                            <div class="text-[10px] text-red-600 dark:text-red-400 bg-red-50/50 dark:bg-red-900/30 p-2 rounded border border-red-200/50 dark:border-red-800/50">
+                                ${this.escapeHtml(log.error)}
+                            </div>
+                        </div>
+                    ` : log.response ? `
+                        <div class="space-y-1">
+                            <div class="text-[10px] text-muted-foreground font-medium">Response Summary</div>
+                            <div class="text-[10px] text-muted-foreground bg-background p-2 rounded border border-border/50 break-words">
+                                ${networkLogger.getResponseSummary(log.response, log.status) || 'Request completed successfully'}
+                            </div>
+                        </div>
+                    ` : ''}
+                </div>
+            </div>
+        `;
+    }
+
     toggleLogExpand(logId) {
-        if (this.expandedLogIds.has(logId)) {
+        const wasExpanded = this.expandedLogIds.has(logId);
+        
+        // Close all currently expanded logs first
+        if (!wasExpanded) {
+            // Remove all existing expanded details
+            document.querySelectorAll('.activity-log-details').forEach(details => {
+                details.remove();
+            });
+            this.expandedLogIds.clear();
+        }
+        
+        // Find the log entry element
+        const logEntry = document.querySelector(`.activity-log-entry[data-log-id="${logId}"]`);
+        if (!logEntry) return;
+        
+        if (wasExpanded) {
+            // Collapse: remove the details element
+            const details = logEntry.querySelector('.activity-log-details');
+            if (details) {
+                details.remove();
+            }
             this.expandedLogIds.delete(logId);
         } else {
-            // Only allow one log to be expanded at a time
-            this.expandedLogIds.clear();
+            // Expand: find the log data and insert the details HTML
+            const log = this.networkLogs.find(l => l.id === logId);
+            if (!log) return;
+            
+            // Generate and insert the expanded details HTML
+            const detailsHTML = this.generateExpandedDetailsHTML(log);
+            const contentColumn = logEntry.querySelector('.flex-1.min-w-0');
+            if (contentColumn) {
+                contentColumn.insertAdjacentHTML('beforeend', detailsHTML);
+            }
+            
             this.expandedLogIds.add(logId);
         }
-        // Use incremental update to preserve scroll position
-        this.renderLogsOnly(true);
     }
 
     scrollToBottom() {
@@ -1116,90 +1233,7 @@ class RightPanel {
                         </div>
 
                         <!-- Expanded details -->
-                        ${isExpanded ? `
-                            <div class="activity-log-details mt-2 text-xs bg-muted/10 rounded-lg border border-border/50 overflow-hidden" style="animation: slideDown 0.2s ease-out;">
-                                    <!-- Detailed description -->
-                                    <div class="px-3 pt-2.5 pb-2 bg-muted/5 border-b border-border/50">
-                                        <div class="text-foreground leading-relaxed">${getActivityDescription(log, true)}</div>
-                                    </div>
-
-                                <!-- Technical Details -->
-                                <div class="p-3 space-y-2.5">
-                                    <!-- Status and Method -->
-                                    <div class="flex items-center gap-3">
-                                        <div class="flex items-center gap-1.5">
-                                            <span class="text-[10px] text-muted-foreground">Status:</span>
-                                            <span class="text-[10px] font-medium px-1.5 py-0.5 rounded ${
-                                                log.status >= 200 && log.status < 300 ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' :
-                                                log.status === 0 ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' :
-                                                'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
-                                            }">
-                                                ${log.status || 'ERROR'}
-                                            </span>
-                                        </div>
-                                        <div class="flex items-center gap-1.5">
-                                            <span class="text-[10px] text-muted-foreground">Method:</span>
-                                            <span class="text-[10px] font-medium px-1.5 py-0.5 bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 rounded">${log.method}</span>
-                                        </div>
-                                    </div>
-
-                                    <!-- URL -->
-                                    <div class="space-y-1">
-                                        <div class="text-[10px] text-muted-foreground font-medium">Destination</div>
-                                        <div class="text-[10px] font-mono bg-background p-2 rounded border border-border/50 break-all">
-                                            ${log.url}
-                                        </div>
-                                    </div>
-
-                                    <!-- Key Headers (if any) -->
-                                    ${log.request?.headers && Object.keys(log.request.headers).length > 0 ? `
-                                        <div class="space-y-2">
-                                            ${log.request.headers.Authorization && (log.method === 'POST' || log.type === 'api-key') ? `
-                                                <div class="space-y-1">
-                                                    <div class="text-[10px] text-muted-foreground font-medium">Authorization</div>
-                                                    <div class="text-[10px] font-mono text-muted-foreground bg-background p-2 rounded border border-border/50 break-words">
-                                                        ${networkLogger.sanitizeHeaders({ Authorization: log.request.headers.Authorization }).Authorization}
-                                                    </div>
-                                                </div>
-                                            ` : ''}
-                                            ${log.request.headers['X-Title'] ? `
-                                                <div class="space-y-1">
-                                                    <div class="text-[10px] text-muted-foreground font-medium">Application</div>
-                                                    <div class="text-[10px] font-mono text-muted-foreground bg-background p-2 rounded border border-border/50">
-                                                        ${log.request.headers['X-Title']}
-                                                    </div>
-                                                </div>
-                                            ` : ''}
-                                            ${log.request.headers['Content-Type'] ? `
-                                                <div class="space-y-1">
-                                                    <div class="text-[10px] text-muted-foreground font-medium">Content Type</div>
-                                                    <div class="text-[10px] font-mono text-muted-foreground bg-background p-2 rounded border border-border/50">
-                                                        ${log.request.headers['Content-Type']}
-                                                    </div>
-                                                </div>
-                                            ` : ''}
-                                        </div>
-                                    ` : ''}
-
-                                    <!-- Error or Success Message -->
-                                    ${log.error ? `
-                                        <div class="space-y-1">
-                                            <div class="text-[10px] text-red-600 dark:text-red-400 font-medium">Error Details</div>
-                                            <div class="text-[10px] text-red-600 dark:text-red-400 bg-red-50/50 dark:bg-red-900/30 p-2 rounded border border-red-200/50 dark:border-red-800/50">
-                                                ${this.escapeHtml(log.error)}
-                                            </div>
-                                        </div>
-                                    ` : log.response ? `
-                                        <div class="space-y-1">
-                                            <div class="text-[10px] text-muted-foreground font-medium">Response Summary</div>
-                                            <div class="text-[10px] text-muted-foreground bg-background p-2 rounded border border-border/50 break-words">
-                                                ${networkLogger.getResponseSummary(log.response, log.status) || 'Request completed successfully'}
-                                            </div>
-                                        </div>
-                                    ` : ''}
-                                </div>
-                            </div>
-                        ` : ''}
+                        ${isExpanded ? this.generateExpandedDetailsHTML(log) : ''}
                     </div>
                 </div>
             `;
