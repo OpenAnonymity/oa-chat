@@ -89,6 +89,12 @@ export default class ModelPicker {
         this.app.elements.modelPickerModal.classList.add('hidden');
         // Clear search
         this.app.elements.modelSearch.value = '';
+        // Focus input after closing modal
+        requestAnimationFrame(() => {
+            if (this.app.elements.messageInput) {
+                this.app.elements.messageInput.focus();
+            }
+        });
     }
 
     /**
@@ -222,13 +228,7 @@ export default class ModelPicker {
             // Will be used when session is created (e.g., when first message is sent)
             this.app.state.pendingModel = modelName;
             this.app.renderCurrentModel();
-            this.close();
-            // Focus input after model selection
-            requestAnimationFrame(() => {
-                if (this.app.elements.messageInput) {
-                    this.app.elements.messageInput.focus();
-                }
-            });
+            this.close(); // close() handles input focus
             return;
         }
 
@@ -236,13 +236,7 @@ export default class ModelPicker {
         session.model = modelName;
         await chatDB.saveSession(session);
         this.app.renderCurrentModel();
-        this.close();
-        // Focus input after model selection
-        requestAnimationFrame(() => {
-            if (this.app.elements.messageInput) {
-                this.app.elements.messageInput.focus();
-            }
-        });
+        this.close(); // close() handles input focus
     }
 
     /**
