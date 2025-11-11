@@ -177,6 +177,36 @@ export default class ModelPicker {
     }
 
     /**
+     * Builds HTML for modality badges based on model architecture.
+     * @param {Object} model - Model object with architecture data
+     * @returns {string} HTML string for modality badges
+     */
+    buildModalityBadges(model) {
+        if (!model.architecture) {
+            return '';
+        }
+
+        const badges = [];
+        const inputModalities = model.architecture.input_modalities || [];
+        const outputModalities = model.architecture.output_modalities || [];
+
+        // Check for input modality support
+        if (inputModalities.includes('image')) {
+            badges.push('<span class="modality-badge" title="Supports image input">🖼️</span>');
+        }
+        if (inputModalities.includes('audio')) {
+            badges.push('<span class="modality-badge" title="Supports audio input">🎵</span>');
+        }
+        
+        // Check for image generation capability from output modalities
+        if (outputModalities.includes('image')) {
+            badges.push('<span class="modality-badge" title="Can generate images">🎨</span>');
+        }
+
+        return badges.length > 0 ? `<div class="flex items-center gap-0.5 ml-1">${badges.join('')}</div>` : '';
+    }
+
+    /**
      * Builds HTML for a single model option.
      * @param {Object} model - Model object
      * @returns {string} HTML string
@@ -186,6 +216,7 @@ export default class ModelPicker {
         const isSelected = session && session.model === model.name;
         const iconData = getProviderIcon(model.provider, 'w-3.5 h-3.5');
         const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
+        const modalityBadges = this.buildModalityBadges(model);
 
         return `
             <div class="model-option px-2 py-1.5 rounded-sm cursor-pointer transition-colors hover:bg-accent ${isSelected ? 'bg-accent' : ''}" data-model="${model.name}">
@@ -193,8 +224,9 @@ export default class ModelPicker {
                     <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 ${bgClass}">
                         ${iconData.html}
                     </div>
-                    <div class="flex-1 min-w-0">
+                    <div class="flex-1 min-w-0 flex items-center">
                         <div class="font-medium text-sm text-foreground truncate">${model.name}</div>
+                        ${modalityBadges}
                     </div>
                     ${isSelected ? '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-4 h-4 text-primary flex-shrink-0"><path fill-rule="evenodd" d="M19.916 4.626a.75.75 0 0 1 .208 1.04l-9 13.5a.75.75 0 0 1-1.154.114l-6-6a.75.75 0 0 1 1.06-1.06l5.353 5.353 8.493-12.74a.75.75 0 0 1 1.04-.207Z" clip-rule="evenodd" /></svg>' : ''}
                 </div>
@@ -263,15 +295,44 @@ export default class ModelPicker {
         const model = this.app.state.models.find(m => m.name === modelName);
         const iconData = model ? getProviderIcon(model.provider, 'w-3 h-3') : { html: '', hasIcon: false };
         const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
+        
+        // Build compact modality icons for the button
+        const modalityIcons = this.buildCompactModalityIcons(model);
 
         this.app.elements.modelPickerBtn.innerHTML = `
             <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 ${bgClass}">
                 ${iconData.html}
             </div>
             <span class="truncate">${modelName}</span>
+            ${modalityIcons}
             ${shortcutHtml}
         `;
         this.app.elements.modelPickerBtn.classList.add('gap-1.5');
+    }
+
+    /**
+     * Builds compact modality icons for the model selection button.
+     * @param {Object} model - Model object with architecture data
+     * @returns {string} HTML string for compact modality icons
+     */
+    buildCompactModalityIcons(model) {
+        if (!model || !model.architecture) {
+            return '';
+        }
+
+        const icons = [];
+        const inputModalities = model.architecture.input_modalities || [];
+        const outputModalities = model.architecture.output_modalities || [];
+
+        // Only show key modality indicators in compact mode
+        if (inputModalities.includes('image')) {
+            icons.push('🖼️');
+        }
+        if (outputModalities.includes('image')) {
+            icons.push('🎨');
+        }
+
+        return icons.length > 0 ? `<span class="text-xs opacity-60">${icons.join('')}</span>` : '';
     }
 
     /**
