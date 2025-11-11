@@ -39,6 +39,28 @@ export default class ChatInput {
             }
         });
 
+        // Handle paste events for images
+        this.app.elements.messageInput.addEventListener('paste', async (e) => {
+            const items = e.clipboardData?.items;
+            if (!items) return;
+
+            const imageItems = [];
+            for (let i = 0; i < items.length; i++) {
+                if (items[i].type.indexOf('image') !== -1) {
+                    imageItems.push(items[i]);
+                }
+            }
+
+            if (imageItems.length > 0) {
+                e.preventDefault();
+                const files = imageItems.map(item => {
+                    const blob = item.getAsFile();
+                    return this.app.convertBlobToFile(blob, `pasted-image-${Date.now()}.${this.getExtensionFromMimeType(blob.type)}`);
+                });
+                await this.app.handleFileUpload(files);
+            }
+        });
+
         // Send button click - handles both send and stop
         this.app.elements.sendBtn.addEventListener('click', () => {
             if (this.app.isCurrentSessionStreaming()) {
@@ -205,6 +227,22 @@ export default class ChatInput {
     formatThemeName(theme) {
         if (!theme) return '';
         return theme.charAt(0).toUpperCase() + theme.slice(1);
+    }
+
+    /**
+     * Gets file extension from MIME type for pasted images.
+     * @param {string} mimeType - MIME type (e.g., 'image/png')
+     * @returns {string} File extension
+     */
+    getExtensionFromMimeType(mimeType) {
+        const typeMap = {
+            'image/png': 'png',
+            'image/jpeg': 'jpg',
+            'image/jpg': 'jpg',
+            'image/gif': 'gif',
+            'image/webp': 'webp'
+        };
+        return typeMap[mimeType] || 'png';
     }
 
     /**
