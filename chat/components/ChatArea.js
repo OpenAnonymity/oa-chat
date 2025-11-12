@@ -235,6 +235,226 @@ export default class ChatArea {
             }
         }
     }
+
+    /**
+     * Updates the reasoning trace content during streaming.
+     * @param {string} messageId - The message ID
+     * @param {string} reasoning - The reasoning content
+     */
+    updateStreamingReasoning(messageId, reasoning) {
+        const reasoningContentEl = document.getElementById(`reasoning-content-${messageId}`);
+        if (reasoningContentEl) {
+            // During streaming, use plain text to avoid expensive markdown processing
+            // Trim to avoid extra whitespace at the beginning/end
+            // Markdown will be applied when streaming completes
+            reasoningContentEl.textContent = reasoning.trim();
+        }
+
+        // Update the subtitle with the last meaningful line and ensure animation is active
+        const subtitleEl = document.getElementById(`reasoning-subtitle-${messageId}`);
+        if (subtitleEl) {
+            const subtitle = this.extractReasoningSubtitle(reasoning);
+            subtitleEl.textContent = subtitle;
+            // Ensure streaming animation class is present
+            if (!subtitleEl.classList.contains('reasoning-subtitle-streaming')) {
+                subtitleEl.classList.add('reasoning-subtitle-streaming');
+            }
+        }
+
+        // Keep scrolling to bottom during reasoning streaming
+        this.app.elements.chatArea.scrollTop = this.app.elements.chatArea.scrollHeight;
+    }
+    
+    /**
+     * Parses reasoning content to extract structure (headings, summaries, bold text).
+     * @param {string} reasoning - The reasoning content
+     * @returns {Object} Parsed structure with summaries array and sections
+     */
+    parseReasoningStructure(reasoning) {
+        if (!reasoning) return { summaries: [], sections: [] };
+        
+        const lines = reasoning.trim().split('\n');
+        const summaries = [];
+        const sections = [];
+        let currentSection = null;
+        
+        for (const line of lines) {
+            const trimmedLine = line.trim();
+            if (!trimmedLine) continue;
+            
+            // Check for markdown headings
+            const headingMatch = trimmedLine.match(/^(#+)\s*(.+)$/);
+            if (headingMatch) {
+                const level = headingMatch[1].length;
+                const text = headingMatch[2].trim();
+                summaries.push({ type: 'heading', level, text });
+                
+                // Start a new section
+                if (currentSection) sections.push(currentSection);
+                currentSection = { heading: text, level, content: [] };
+                continue;
+            }
+            
+            // Check for bold text (potential summary markers)
+            // Match bold text that appears at the start or middle of a line
+            const boldMatches = trimmedLine.matchAll(/\*\*(.+?)\*\*/g);
+            for (const match of boldMatches) {
+                const boldText = match[1].trim();
+                // Only treat as summary if it's reasonably short and looks like a title
+                if (boldText.length > 5 && boldText.length < 100 && !boldText.includes('.')) {
+                    summaries.push({ type: 'bold', text: boldText });
+                }
+            }
+            
+            // Add line to current section
+            if (currentSection) {
+                currentSection.content.push(trimmedLine);
+            }
+        }
+        
+        if (currentSection) sections.push(currentSection);
+        
+        return { summaries, sections };
+    }
+    
+    /**
+     * Extracts a meaningful subtitle from reasoning content.
+     * Shows only the latest/current step, not all steps combined.
+     * @param {string} reasoning - The reasoning content
+     * @returns {string} The subtitle text
+     */
+    extractReasoningSubtitle(reasoning) {
+        if (!reasoning || reasoning.trim().length === 0) {
+            return 'Thinking...';
+        }
+        
+        const MAX_LENGTH = 150;
+        const structure = this.parseReasoningStructure(reasoning);
+        
+        // If we have summaries, use ONLY the last one (current step)
+        if (structure.summaries.length > 0) {
+            const lastSummary = structure.summaries[structure.summaries.length - 1];
+            const summaryText = lastSummary.text;
+            
+            return summaryText.length > MAX_LENGTH 
+                ? summaryText.substring(0, MAX_LENGTH - 3) + '...' 
+                : summaryText;
+        }
+        
+        // Fallback: look for the last substantial line that isn't too detailed
+        const lines = reasoning.trim().split('\n');
+        for (let i = lines.length - 1; i >= 0; i--) {
+            const line = lines[i].trim();
+            if (!line) continue;
+            
+            // Skip lines that look like detailed explanations (containing certain patterns)
+            if (line.includes('I see that') || 
+                line.includes('I think') || 
+                line.includes('I should') ||
+                line.includes('I might') ||
+                line.length > 200) {
+                continue;
+            }
+            
+            // Use this line if it's a reasonable length
+            if (line.length > 10 && line.length < 150) {
+                return line.length > MAX_LENGTH 
+                    ? line.substring(0, MAX_LENGTH - 3) + '...' 
+                    : line;
+            }
+        }
+        
+        // Final fallback
+        const lastLine = lines[lines.length - 1].trim();
+        if (lastLine) {
+            return lastLine.length > MAX_LENGTH 
+                ? lastLine.substring(0, MAX_LENGTH - 3) + '...' 
+                : lastLine;
+        }
+        
+        return 'Thinking...';
+    }
+    
+    /**
+     * Formats a duration in milliseconds to a human-readable string.
+     * @param {number} durationMs - Duration in milliseconds
+     * @returns {string} Formatted duration string
+     */
+    formatReasoningDuration(durationMs) {
+        if (!durationMs) return '';
+        
+        const seconds = Math.round(durationMs / 1000);
+        
+        if (seconds < 60) {
+            return `Thought for ${seconds}s`;
+        } else {
+            const minutes = Math.floor(seconds / 60);
+            const remainingSeconds = seconds % 60;
+            if (remainingSeconds === 0) {
+                return `Thought for ${minutes}m`;
+            }
+            return `Thought for ${minutes}m ${remainingSeconds}s`;
+        }
+    }
+    
+    /**
+     * Finalizes the reasoning display after streaming completes.
+     * Applies markdown processing to the final content and updates the subtitle with timing.
+     * @param {string} messageId - The message ID
+     * @param {string} reasoning - The final reasoning content
+     * @param {number} reasoningDuration - Duration in milliseconds (optional)
+     */
+    finalizeReasoningDisplay(messageId, reasoning, reasoningDuration) {
+        if (!reasoning) return;
+        
+        const reasoningContentEl = document.getElementById(`reasoning-content-${messageId}`);
+        if (reasoningContentEl) {
+            // Trim and apply full markdown processing now that streaming is complete
+            const trimmedReasoning = reasoning.trim();
+            reasoningContentEl.innerHTML = this.app.processContentWithLatex(trimmedReasoning);
+            
+            // Remove any leading/trailing empty paragraphs that markdown might have added
+            while (reasoningContentEl.firstChild && 
+                   reasoningContentEl.firstChild.nodeType === Node.ELEMENT_NODE &&
+                   reasoningContentEl.firstChild.tagName === 'P' &&
+                   !reasoningContentEl.firstChild.textContent.trim()) {
+                reasoningContentEl.removeChild(reasoningContentEl.firstChild);
+            }
+            while (reasoningContentEl.lastChild && 
+                   reasoningContentEl.lastChild.nodeType === Node.ELEMENT_NODE &&
+                   reasoningContentEl.lastChild.tagName === 'P' &&
+                   !reasoningContentEl.lastChild.textContent.trim()) {
+                reasoningContentEl.removeChild(reasoningContentEl.lastChild);
+            }
+            
+            // Render LaTeX in the reasoning content
+            if (typeof renderMathInElement !== 'undefined') {
+                renderMathInElement(reasoningContentEl, {
+                    delimiters: [
+                        {left: '$$', right: '$$', display: true},
+                        {left: '\\[', right: '\\]', display: true},
+                        {left: '\\(', right: '\\)', display: false},
+                        {left: '$', right: '$', display: false}
+                    ],
+                    throwOnError: false
+                });
+            }
+        }
+        
+        // Update the subtitle to show timing instead of the summary
+        const subtitleEl = document.getElementById(`reasoning-subtitle-${messageId}`);
+        if (subtitleEl) {
+            // Remove streaming animation class
+            subtitleEl.classList.remove('reasoning-subtitle-streaming');
+            
+            if (reasoningDuration) {
+                subtitleEl.textContent = this.formatReasoningDuration(reasoningDuration);
+            } else {
+                // Fallback if no duration is available
+                subtitleEl.textContent = 'Reasoning complete';
+            }
+        }
+    }
     
     /**
      * Updates images for a streaming message.
@@ -242,20 +462,16 @@ export default class ChatArea {
      * @param {Array} images - Array of image objects
      */
     updateStreamingImages(messageId, images) {
-        console.log('updateStreamingImages called:', messageId, images.length);
         const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
         if (!messageEl || !images || images.length === 0) {
-            console.log('Early return:', !messageEl ? 'no messageEl' : 'no images');
             return;
         }
         
         // Find the group element (assistantGroup class)
         const groupEl = messageEl.querySelector('.group.flex.w-full.flex-col');
         if (!groupEl) {
-            console.log('No groupEl found');
             return;
         }
-        console.log('groupEl found, updating images');
         
         // Find or create the image bubble container
         let imageBubble = messageEl.querySelector('.message-assistant-images');
@@ -345,11 +561,66 @@ export default class ChatArea {
     updateFinalTokens(messageId, tokenCount) {
         const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
         if (messageEl) {
-            const tokenEl = messageEl.querySelector('.streaming-token-count');
-            if (tokenEl) {
-                // Replace streaming token count with final count
-                tokenEl.textContent = tokenCount;
-                tokenEl.classList.remove('streaming-token-count');
+            // Remove streaming indicator
+            const streamingTokenEl = messageEl.querySelector('.streaming-token-count');
+            if (streamingTokenEl) {
+                streamingTokenEl.remove();
+            }
+
+            // Create and append final token count
+            const tokenDisplayHtml = `<span class="text-xs text-muted-foreground ml-auto" style="font-size: 0.7rem;">${tokenCount}</span>`;
+            const headerEl = messageEl.querySelector('.flex.w-full.items-center');
+            if (headerEl) {
+                headerEl.insertAdjacentHTML('beforeend', tokenDisplayHtml);
+            }
+        }
+    }
+
+    /**
+     * Re-renders a message to its final state after streaming is complete.
+     * This ensures reasoning traces are collapsed and tokens are correctly displayed.
+     * @param {Object} message - The completed message object
+     */
+    async finalizeStreamingMessage(message) {
+        const messageEl = document.querySelector(`[data-message-id="${message.id}"]`);
+        if (messageEl) {
+            // Find model details from the app state - try by ID first, then by name
+            let model = this.app.state.models.find(m => m.id === message.model);
+            if (!model) {
+                model = this.app.state.models.find(m => m.name === message.model);
+            }
+            const modelName = model ? model.name : (message.model || 'Unknown Model');
+
+            const helpers = {
+                processContentWithLatex: this.app.processContentWithLatex.bind(this.app),
+                formatTime: this.app.formatTime.bind(this.app)
+            };
+            
+            // We need to get the provider name
+            const providerName = model ? model.provider : 'Unknown';
+
+            // Re-build the entire message HTML to reflect its final state
+            const newMessageHtml = window.buildMessageHTML(message, helpers, this.app.state.models, modelName, providerName);
+            
+            // Create a temporary container to parse the new HTML
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = newMessageHtml;
+            const newMessageEl = tempDiv.firstElementChild;
+
+            if (newMessageEl) {
+                messageEl.parentElement.replaceChild(newMessageEl, messageEl);
+                // Re-run KaTeX rendering on the new element
+                if (typeof renderMathInElement !== 'undefined') {
+                    renderMathInElement(newMessageEl, {
+                        delimiters: [
+                            {left: '$$', right: '$$', display: true},
+                            {left: '\\[', right: '\\]', display: true},
+                            {left: '\\(', right: '\\)', display: false},
+                            {left: '$', right: '$', display: false}
+                        ],
+                        throwOnError: false
+                    });
+                }
             }
         }
     }

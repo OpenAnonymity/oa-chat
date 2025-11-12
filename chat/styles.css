@@ -249,6 +249,177 @@
     font-size: 0.875rem;
 }
 
+/* Reasoning trace styles for thinking models */
+.reasoning-trace {
+    animation: fadeIn 0.3s ease-in;
+    margin-bottom: 0;
+}
+
+/* Shimmer animation for reasoning subtitle during streaming */
+@keyframes reasoningShimmer {
+    0% {
+        background-position: -200% center;
+    }
+    100% {
+        background-position: 200% center;
+    }
+}
+
+.reasoning-subtitle-streaming {
+    background: linear-gradient(
+        90deg,
+        hsl(var(--color-muted-foreground)) 0%,
+        hsl(var(--color-foreground)) 50%,
+        hsl(var(--color-muted-foreground)) 100%
+    );
+    background-size: 200% auto;
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: reasoningShimmer 4.5s ease-in-out infinite;
+}
+
+.reasoning-content {
+    padding: 0.5rem 0 0 0;
+    margin-left: 1.75rem;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    opacity: 0.85;
+}
+
+/* Remove extra margins and whitespace from markdown elements in reasoning */
+.reasoning-content > *:first-child {
+    margin-top: 0 !important;
+}
+
+.reasoning-content > *:last-child {
+    margin-bottom: 0 !important;
+}
+
+/* Spacing between paragraphs and headings */
+.reasoning-content p {
+    margin: 0.5em 0;
+}
+
+/* Enhanced heading styles for clear visual hierarchy */
+.reasoning-content h1,
+.reasoning-content h2,
+.reasoning-content h3,
+.reasoning-content h4,
+.reasoning-content h5,
+.reasoning-content h6 {
+    margin: 0.75em 0 0.5em 0;
+    font-weight: 600;
+    color: hsl(var(--color-foreground));
+    opacity: 1;
+}
+
+.reasoning-content h1 {
+    font-size: 1.1em;
+    border-bottom: 1px solid hsl(var(--color-border) / 0.3);
+    padding-bottom: 0.25em;
+}
+
+.reasoning-content h2 {
+    font-size: 1.05em;
+}
+
+.reasoning-content h3 {
+    font-size: 1em;
+}
+
+.reasoning-content h4,
+.reasoning-content h5,
+.reasoning-content h6 {
+    font-size: 0.95em;
+}
+
+.reasoning-content h1:first-child,
+.reasoning-content h2:first-child,
+.reasoning-content h3:first-child,
+.reasoning-content h4:first-child,
+.reasoning-content h5:first-child,
+.reasoning-content h6:first-child {
+    margin-top: 0;
+}
+
+/* Make bold text (summaries) stand out more clearly */
+.reasoning-content strong {
+    font-weight: 600;
+    color: hsl(var(--color-foreground));
+    opacity: 1;
+}
+
+/* Add subtle indentation for content following headings */
+.reasoning-content h1 + p,
+.reasoning-content h2 + p,
+.reasoning-content h3 + p {
+    margin-left: 0.5em;
+    opacity: 0.85;
+}
+
+/* Improve list styling within reasoning */
+.reasoning-content ul,
+.reasoning-content ol {
+    margin: 0.5em 0;
+    padding-left: 1.5em;
+}
+
+.reasoning-content li {
+    margin: 0.25em 0;
+}
+
+/* Code blocks within reasoning */
+.reasoning-content code {
+    background: hsl(var(--color-muted) / 0.3);
+    padding: 0.125em 0.25em;
+    border-radius: 0.25em;
+    font-size: 0.9em;
+}
+
+.reasoning-content pre {
+    background: hsl(var(--color-muted) / 0.3);
+    padding: 0.5em;
+    border-radius: 0.375em;
+    overflow-x: auto;
+    margin: 0.5em 0;
+}
+
+.reasoning-content pre code {
+    background: transparent;
+    padding: 0;
+}
+
+.reasoning-content::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+.reasoning-content::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.reasoning-content::-webkit-scrollbar-thumb {
+    background: hsl(var(--color-border));
+    border-radius: 4px;
+}
+
+.reasoning-content::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--color-muted-foreground) / 0.3);
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-4px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
 /* Prose styles for markdown */
 .prose {
     max-width: none;

@@ -228,6 +228,185 @@ function buildTokenDisplay(message) {
 }
 
 /**
+ * Extracts summaries from reasoning content (headings and bold text).
+ * @param {string} reasoning - The reasoning content
+ * @returns {Array} Array of summary objects
+ */
+function extractReasoningSummaries(reasoning) {
+    if (!reasoning) return [];
+    
+    const lines = reasoning.trim().split('\n');
+    const summaries = [];
+    
+    for (const line of lines) {
+        const trimmedLine = line.trim();
+        if (!trimmedLine) continue;
+        
+        // Check for markdown headings
+        const headingMatch = trimmedLine.match(/^(#+)\s*(.+)$/);
+        if (headingMatch) {
+            const level = headingMatch[1].length;
+            const text = headingMatch[2].trim();
+            summaries.push({ type: 'heading', level, text });
+            continue;
+        }
+        
+        // Check for bold text (potential summary markers)
+        // Match bold text that appears at the start or middle of a line
+        const boldMatches = trimmedLine.matchAll(/\*\*(.+?)\*\*/g);
+        for (const match of boldMatches) {
+            const boldText = match[1].trim();
+            // Only treat as summary if it's reasonably short and looks like a title
+            if (boldText.length > 5 && boldText.length < 100 && !boldText.includes('.')) {
+                summaries.push({ type: 'bold', text: boldText });
+            }
+        }
+    }
+    
+    return summaries;
+}
+
+/**
+ * Formats a duration in milliseconds to a human-readable string.
+ * @param {number} durationMs - Duration in milliseconds
+ * @returns {string} Formatted duration string
+ */
+function formatReasoningDuration(durationMs) {
+    if (!durationMs) return '';
+    
+    const seconds = Math.round(durationMs / 1000);
+    
+    if (seconds < 60) {
+        return `Thought for ${seconds}s`;
+    } else {
+        const minutes = Math.floor(seconds / 60);
+        const remainingSeconds = seconds % 60;
+        if (remainingSeconds === 0) {
+            return `Thought for ${minutes}m`;
+        }
+        return `Thought for ${minutes}m ${remainingSeconds}s`;
+    }
+}
+
+/**
+ * Generates a subtitle for reasoning content.
+ * @param {string} reasoning - The reasoning content
+ * @param {number} reasoningDuration - Duration in milliseconds (optional)
+ * @returns {string} The subtitle text
+ */
+function generateReasoningSubtitle(reasoning, reasoningDuration) {
+    // If duration is available, show timing
+    if (reasoningDuration) {
+        return formatReasoningDuration(reasoningDuration);
+    }
+    
+    if (!reasoning || reasoning.trim().length === 0) {
+        return 'Thinking...';
+    }
+    
+    const MAX_LENGTH = 150;
+    const summaries = extractReasoningSummaries(reasoning);
+    
+    // If we have summaries, use ONLY the last one (current step)
+    if (summaries.length > 0) {
+        const lastSummary = summaries[summaries.length - 1];
+        const summaryText = lastSummary.text;
+        
+        return summaryText.length > MAX_LENGTH 
+            ? summaryText.substring(0, MAX_LENGTH - 3) + '...' 
+            : summaryText;
+    }
+    
+    // Fallback: look for the last substantial line that isn't too detailed
+    const lines = reasoning.trim().split('\n');
+    for (let i = lines.length - 1; i >= 0; i--) {
+        const line = lines[i].trim();
+        if (!line) continue;
+        
+        // Skip lines that look like detailed explanations
+        if (line.includes('I see that') || 
+            line.includes('I think') || 
+            line.includes('I should') ||
+            line.includes('I might') ||
+            line.length > 200) {
+            continue;
+        }
+        
+        // Use this line if it's a reasonable length
+        if (line.length > 10 && line.length < 150) {
+            return line.length > MAX_LENGTH 
+                ? line.substring(0, MAX_LENGTH - 3) + '...' 
+                : line;
+        }
+    }
+    
+    // Final fallback
+    const lastLine = lines[lines.length - 1].trim();
+    if (lastLine) {
+        return lastLine.length > MAX_LENGTH 
+            ? lastLine.substring(0, MAX_LENGTH - 3) + '...' 
+            : lastLine;
+    }
+    
+    return 'Reasoning complete';
+}
+
+/**
+ * Builds HTML for a reasoning trace display (for thinking models like o1, o4).
+ * @param {string} reasoning - The reasoning content
+ * @param {string} messageId - The message ID for unique identification
+ * @param {boolean} isStreaming - Whether reasoning is currently streaming
+ * @param {function} processContent - Function to process and render reasoning content as HTML
+ * @param {number} reasoningDuration - Duration in milliseconds (optional)
+ * @returns {string} HTML string or empty string
+ */
+function buildReasoningTrace(reasoning, messageId, isStreaming = false, processContent, reasoningDuration) {
+    if (!reasoning && !isStreaming) return '';
+    
+    const reasoningId = `reasoning-${messageId}`;
+    const contentId = `reasoning-content-${messageId}`;
+    const toggleId = `reasoning-toggle-${messageId}`;
+    const subtitleId = `reasoning-subtitle-${messageId}`;
+
+    const contentVisibilityClass = 'hidden';
+    const chevronRotation = '';
+    
+    // Trim whitespace and process content appropriately
+    // During streaming, reasoning will be plain text
+    // After streaming, it will be processed with markdown
+    const trimmedReasoning = (reasoning || '').trim();
+    const reasoningHtml = processContent ? processContent(trimmedReasoning) : trimmedReasoning;
+    
+    // Generate subtitle - show timing for completed reasoning, summary during streaming
+    const subtitle = isStreaming ? 'Thinking...' : generateReasoningSubtitle(reasoning, reasoningDuration);
+    
+    // Full-width during streaming to show more subtitle, compact when finished
+    const buttonWidthClass = isStreaming ? 'w-full' : '';
+    const buttonFlexClass = isStreaming ? 'flex' : 'inline-flex';
+    const spanFlexClass = isStreaming ? 'flex-1 truncate' : '';
+    const spanAnimationClass = isStreaming ? 'reasoning-subtitle-streaming' : '';
+
+    return `
+        <div class="reasoning-trace w-full" id="${reasoningId}">
+            <button 
+                class="reasoning-toggle ${buttonFlexClass} items-center gap-2 ${buttonWidthClass} px-2 py-1 text-left hover:bg-slate-2 rounded transition-colors"
+                id="${toggleId}"
+                onclick="window.toggleReasoning('${messageId}')"
+            >
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5 text-muted-foreground flex-shrink-0">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567 16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z" />
+                </svg>
+                <span id="${subtitleId}" class="text-xs text-muted-foreground ${spanFlexClass} ${spanAnimationClass}">${subtitle}</span>
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5 text-muted-foreground reasoning-chevron transition-transform flex-shrink-0" ${chevronRotation}>
+                    <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+                </svg>
+            </button>
+            <div class="reasoning-content ${contentVisibilityClass} text-xs text-muted-foreground overflow-auto max-h-96" id="${contentId}">${reasoningHtml}</div>
+        </div>
+    `;
+}
+
+/**
  * Builds HTML for an assistant message bubble.
  * @param {Object} message - Message object
  * @param {Object} helpers - Helper functions { processContentWithLatex, formatTime }
@@ -240,6 +419,15 @@ function buildAssistantMessage(message, helpers, providerName, modelName) {
     const tokenDisplay = buildTokenDisplay(message);
     const iconData = getProviderIcon(providerName, 'w-3.5 h-3.5');
     const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
+
+    // Build reasoning trace if present
+    const reasoningBubble = buildReasoningTrace(
+        message.reasoning, 
+        message.id, 
+        message.streamingReasoning || false,
+        processContentWithLatex,
+        message.reasoningDuration
+    );
 
     // Build text bubble if there's content
     const textBubble = message.content ? `
@@ -268,6 +456,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName) {
                     <span class="${CLASSES.assistantTime}" style="font-size: 0.7rem;">${formatTime(message.timestamp)}</span>
                     ${tokenDisplay}
                 </div>
+                ${reasoningBubble}
                 ${textBubble}
                 ${imageBubble}
                 <div class="flex items-center gap-1 -mt-1">
@@ -399,12 +588,32 @@ export {
     buildTypingIndicator,
     buildEmptyState,
     buildGeneratedImages,
+    buildReasoningTrace,
     CLASSES
 };
 
-// Make buildGeneratedImages available globally for ChatArea
+// Make functions available globally for ChatArea and reasoning toggle
 if (typeof window !== 'undefined') {
     window.MessageTemplates = window.MessageTemplates || {};
     window.MessageTemplates.buildGeneratedImages = buildGeneratedImages;
+    window.MessageTemplates.buildReasoningTrace = buildReasoningTrace;
+    window.buildMessageHTML = buildMessageHTML; // Make buildMessageHTML globally available
+    
+    // Global function to toggle reasoning trace visibility
+    window.toggleReasoning = function(messageId) {
+        const contentEl = document.getElementById(`reasoning-content-${messageId}`);
+        const chevronEl = document.querySelector(`#reasoning-toggle-${messageId} .reasoning-chevron`);
+        
+        if (contentEl && chevronEl) {
+            const isHidden = contentEl.classList.contains('hidden');
+            if (isHidden) {
+                contentEl.classList.remove('hidden');
+                chevronEl.style.transform = 'rotate(180deg)';
+            } else {
+                contentEl.classList.add('hidden');
+                chevronEl.style.transform = 'rotate(0deg)';
+            }
+        }
+    };
 }
 

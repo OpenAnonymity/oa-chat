@@ -53,7 +53,6 @@ class OpenRouterAPI {
                     // Check if not expired
                     const expiryDate = new Date(data.expires_at);
                     if (expiryDate > new Date()) {
-                        console.log('Using ticket-based API key');
                         return data.key;
                     }
                 }
@@ -330,9 +329,8 @@ class OpenRouterAPI {
         }
     }
 
-    // Stream chat completion with support for multimodal content and web search
-    async streamCompletion(messages, modelId, apiKey, onChunk, onTokenUpdate, files = [], searchEnabled = false, abortController = null) {
-        const url = `${this.baseUrl}/chat/completions`;
+    // Stream chat completion with support for multimodal content, web search, and reasoning traces
+    async streamCompletion(messages, modelId, apiKey, onChunk, onTokenUpdate, files = [], searchEnabled = false, abortController = null, onReasoningChunk = null) {
         const key = apiKey || this.getApiKey();
 
         if (!key) {
@@ -344,6 +342,10 @@ class OpenRouterAPI {
         if (searchEnabled && !modelId.includes(':online')) {
             effectiveModelId = `${modelId}:online`;
         }
+
+        // Always use chat/completions endpoint
+        // We'll handle reasoning SSE events if they come through
+        const url = `${this.baseUrl}/chat/completions`;
 
         // Check if there are PDF files
         let hasPdfFiles = false;
@@ -391,7 +393,26 @@ class OpenRouterAPI {
         let completionTokens = 0;
         let modelUsed = effectiveModelId;
         let accumulatedContent = '';
+        let accumulatedReasoning = '';
         let hasReceivedFirstToken = false;
+        
+        // Buffering for reasoning chunks to reduce UI updates
+        let reasoningBuffer = '';
+        let reasoningBufferTimer = null;
+        const REASONING_BUFFER_DELAY = 50; // ms - flush buffer after this delay
+        const REASONING_BUFFER_SIZE = 20; // chars - flush when buffer reaches this size
+
+        // Helper to flush reasoning buffer
+        const flushReasoningBuffer = () => {
+            if (reasoningBuffer && onReasoningChunk) {
+                onReasoningChunk(reasoningBuffer);
+                reasoningBuffer = '';
+            }
+            if (reasoningBufferTimer) {
+                clearTimeout(reasoningBufferTimer);
+                reasoningBufferTimer = null;
+            }
+        };
 
         try {
             // Prepend system prompt if it exists
@@ -400,7 +421,8 @@ class OpenRouterAPI {
                 ? [{ role: 'system', content: systemPrompt }, ...processedMessages]
                 : processedMessages;
 
-            // Build request body
+            // Build request body - use standard format for now
+            // OpenRouter might handle reasoning internally with the same endpoint
             const requestBody = {
                 model: effectiveModelId,
                 messages: messagesWithSystem.map(msg => ({
@@ -456,6 +478,8 @@ class OpenRouterAPI {
 
             // Log the streaming request
             if (window.networkLogger) {
+                const logBody = { model: modelId, messages: messages.length + ' messages', stream: true };
+                
                 window.networkLogger.logRequest({
                     type: 'openrouter',
                     method: 'POST',
@@ -463,7 +487,7 @@ class OpenRouterAPI {
                     status: response.status,
                     request: {
                         headers: window.networkLogger.sanitizeHeaders(headers),
-                        body: { model: modelId, messages: messages.length + ' messages', stream: true }
+                        body: logBody
                     },
                     response: { streaming: true }
                 });
@@ -500,6 +524,44 @@ class OpenRouterAPI {
                         try {
                             const parsed = JSON.parse(data);
 
+                            
+                            
+                            // Check for reasoning in various possible formats
+                            // OpenRouter might send reasoning in different ways
+                            if (parsed.type === 'response.reasoning.delta' || 
+                                parsed.reasoning_delta ||
+                                (parsed.choices?.[0]?.delta?.reasoning)) {
+                                
+                                const reasoningContent = parsed.delta || 
+                                                       parsed.reasoning_delta || 
+                                                       parsed.choices?.[0]?.delta?.reasoning || '';
+                                
+                                if (reasoningContent && onReasoningChunk) {
+                                    hasReceivedFirstToken = true;
+                                    accumulatedReasoning += reasoningContent;
+                                    
+                                    // Buffer reasoning chunks to reduce UI updates
+                                    reasoningBuffer += reasoningContent;
+                                    
+                                    // Clear existing timer
+                                    if (reasoningBufferTimer) {
+                                        clearTimeout(reasoningBufferTimer);
+                                    }
+                                    
+                                    // Flush buffer if it's large enough or on newline
+                                    if (reasoningBuffer.length >= REASONING_BUFFER_SIZE || 
+                                        reasoningContent.includes('\n')) {
+                                        flushReasoningBuffer();
+                                    } else {
+                                        // Otherwise, set a timer to flush after delay
+                                        reasoningBufferTimer = setTimeout(flushReasoningBuffer, REASONING_BUFFER_DELAY);
+                                    }
+                                }
+                                
+                                // Skip normal content processing if this was a reasoning event
+                                if (parsed.type === 'response.reasoning.delta') continue;
+                            }
+
                             // Check for mid-stream errors
                             if (parsed.error) {
                                 const errorMessage = parsed.error.message || 'Stream error occurred';
@@ -512,6 +574,25 @@ class OpenRouterAPI {
                                 if (parsed.choices?.[0]?.finish_reason === 'error') {
                                     throw error;
                                 }
+                            }
+
+                            // Handle message content delta events from reasoning API (if using separate endpoint)
+                            if (parsed.type === 'response.output_text.delta') {
+                                const contentDelta = parsed.delta || '';
+                                if (contentDelta) {
+                                    hasReceivedFirstToken = true;
+                                    accumulatedContent += contentDelta;
+                                    onChunk(contentDelta);
+
+                                    completionTokens = Math.ceil(accumulatedContent.length / 4);
+                                    if (onTokenUpdate) {
+                                        onTokenUpdate({
+                                            completionTokens,
+                                            isStreaming: true
+                                        });
+                                    }
+                                }
+                                continue;
                             }
 
                             const delta = parsed.choices?.[0]?.delta;
@@ -535,7 +616,6 @@ class OpenRouterAPI {
                             // Check for images in the delta (standard OpenRouter format)
                             if (delta?.images) {
                                 hasReceivedFirstToken = true;
-                                console.log('Standard format images detected:', delta.images.length);
                                 onChunk(null, { images: delta.images });
                             }
 
@@ -563,6 +643,7 @@ class OpenRouterAPI {
                                 totalTokens = parsed.usage.total_tokens || 0;
                                 promptTokens = parsed.usage.prompt_tokens || 0;
                                 completionTokens = parsed.usage.completion_tokens || 0;
+                                
 
                                 // Update token count with final accurate values
                                 if (onTokenUpdate) {
@@ -587,17 +668,23 @@ class OpenRouterAPI {
                 }
             }
 
-            // Return token usage data
+            // Flush any remaining reasoning buffer
+            flushReasoningBuffer();
+
+            // Return token usage data and reasoning content
             return {
                 totalTokens,
                 promptTokens,
                 completionTokens,
-                model: modelUsed
+                model: modelUsed,
+                reasoning: accumulatedReasoning || null
             };
         } catch (error) {
+            // Flush any remaining reasoning buffer before handling error
+            flushReasoningBuffer();
+            
             // Handle abort errors
             if (error.name === 'AbortError') {
-                console.log('Stream cancelled by user');
                 error.isCancelled = true;
             }
 
@@ -605,6 +692,8 @@ class OpenRouterAPI {
 
             // Log failed request
             if (window.networkLogger) {
+                const logBody = { model: modelId, messages: messages.length + ' messages', stream: true };
+                
                 window.networkLogger.logRequest({
                     type: 'openrouter',
                     method: 'POST',
@@ -612,7 +701,7 @@ class OpenRouterAPI {
                     status: error.status || 0,
                     request: {
                         headers: window.networkLogger.sanitizeHeaders(headers),
-                        body: { model: modelId, messages: messages.length + ' messages', stream: true }
+                        body: logBody
                     },
                     error: error.message
                 });

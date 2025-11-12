@@ -807,20 +807,25 @@ class ChatApp {
                 // Create a placeholder message for streaming
                 const streamingMessageId = this.generateId();
                 let streamingTokenCount = 0;
+                let streamedReasoning = '';
 
                 streamingMessage = {
                     id: streamingMessageId,
                     sessionId: session.id,
                     role: 'assistant',
                     content: '',
+                    reasoning: '',
                     timestamp: Date.now(),
                     model: modelNameToUse,
                     tokenCount: null,
-                    streamingTokens: 0
+                    streamingTokens: 0,
+                    streamingReasoning: false
                 };
 
                 let lastSaveLength = 0;
                 const SAVE_INTERVAL_CHARS = 100;
+                let firstReasoningChunk = true;
+                let reasoningStartTime = null;
                 firstChunk = true;
 
                 // Stream the response with token tracking
@@ -829,8 +834,7 @@ class ChatApp {
                     modelId,
                     session.apiKey,
                     async (chunk) => {
-                        if (firstChunk) {
-                            this.removeTypingIndicator(typingId);
+                        if (!firstChunk) {
                             firstChunk = false;
                             streamedContent += chunk;
                             streamingMessage.content = streamedContent;
@@ -839,9 +843,10 @@ class ChatApp {
                             if (this.chatArea) {
                                 await this.chatArea.appendMessage(streamingMessage);
                             }
-                        } else {
-                            streamedContent += chunk;
+                            return;
                         }
+                        
+                        streamedContent += chunk;
 
                         if (streamedContent.length - lastSaveLength >= SAVE_INTERVAL_CHARS) {
                             streamingMessage.content = streamedContent;
@@ -862,18 +867,54 @@ class ChatApp {
                     },
                     [], // No files for regeneration
                     false, // No search for regeneration
-                    abortController
+                    abortController,
+                    async (reasoningChunk) => {
+                        // Handle reasoning trace streaming
+                        if (firstReasoningChunk) {
+                            firstReasoningChunk = false;
+                            reasoningStartTime = Date.now();
+                            streamingMessage.reasoning = reasoningChunk;
+                            streamingMessage.streamingReasoning = true;
+                            streamedReasoning = reasoningChunk;
+                            await chatDB.saveMessage(streamingMessage);
+                            if (this.chatArea) {
+                                await this.chatArea.appendMessage(streamingMessage);
+                            }
+                        } else {
+                            streamedReasoning += reasoningChunk;
+                            streamingMessage.reasoning = streamedReasoning;
+                        }
+
+                        if (this.chatArea) {
+                            this.chatArea.updateStreamingReasoning(streamingMessageId, streamedReasoning);
+                        }
+                    }
                 );
 
-                // Save the final message content with token data
+                // Save the final message content with token data and reasoning
                 streamingMessage.content = streamedContent;
+                streamingMessage.reasoning = tokenData.reasoning || streamedReasoning || null;
                 streamingMessage.tokenCount = tokenData.totalTokens || tokenData.completionTokens || streamingTokenCount;
                 streamingMessage.model = tokenData.model || modelNameToUse;
                 streamingMessage.streamingTokens = null;
+                streamingMessage.streamingReasoning = false;
+                
+                // Calculate reasoning duration if reasoning was used
+                if (streamingMessage.reasoning && reasoningStartTime) {
+                    const reasoningEndTime = Date.now();
+                    streamingMessage.reasoningDuration = reasoningEndTime - reasoningStartTime;
+                }
+                
                 await chatDB.saveMessage(streamingMessage);
 
-                if (this.chatArea && streamingMessage.tokenCount) {
-                    this.chatArea.updateFinalTokens(streamingMessageId, streamingMessage.tokenCount);
+                if (this.chatArea) {
+                    if (streamingMessage.tokenCount) {
+                        this.chatArea.updateFinalTokens(streamingMessageId, streamingMessage.tokenCount);
+                    }
+                    // Finalize reasoning display with markdown processing and timing
+                    if (streamingMessage.reasoning) {
+                        this.chatArea.finalizeReasoningDisplay(streamingMessageId, streamingMessage.reasoning, streamingMessage.reasoningDuration);
+                    }
                 }
 
             } catch (error) {
@@ -881,19 +922,19 @@ class ChatApp {
                 this.removeTypingIndicator(typingId);
 
                 if (error.isCancelled) {
-                    if (streamingMessage && !firstChunk) {
-                        if (streamedContent.trim()) {
+                    if (streamingMessage && firstChunk) {
+                        if (streamedContent.trim() || streamedReasoning.trim()) {
                             streamingMessage.content = streamedContent;
+                            streamingMessage.reasoning = streamedReasoning;
                             streamingMessage.tokenCount = null;
                             streamingMessage.streamingTokens = null;
+                            streamingMessage.streamingReasoning = false;
                             await chatDB.saveMessage(streamingMessage);
                             if (this.chatArea) {
-                                const messageEl = document.querySelector(`[data-message-id="${streamingMessage.id}"]`);
-                                if (messageEl) {
-                                    const tokenEl = messageEl.querySelector('.streaming-token-count');
-                                    if (tokenEl) {
-                                        tokenEl.remove();
-                                    }
+                                await this.chatArea.finalizeStreamingMessage(streamingMessage);
+                                // Finalize reasoning display with markdown processing
+                                if (streamingMessage.reasoning) {
+                                    this.chatArea.finalizeReasoningDisplay(streamingMessage.id, streamingMessage.reasoning);
                                 }
                             }
                         } else {
@@ -905,20 +946,14 @@ class ChatApp {
                         }
                     }
                 } else {
-                    if (!firstChunk && streamingMessage) {
+                    if (firstChunk && streamingMessage) {
                         streamingMessage.content = 'Sorry, I encountered an error while processing your request.';
                         streamingMessage.tokenCount = null;
                         streamingMessage.streamingTokens = null;
+                        streamingMessage.streamingReasoning = false;
                         await chatDB.saveMessage(streamingMessage);
                         if (this.chatArea) {
-                            this.chatArea.updateStreamingMessage(streamingMessage.id, streamingMessage.content);
-                            const messageEl = document.querySelector(`[data-message-id="${streamingMessage.id}"]`);
-                            if (messageEl) {
-                                const tokenEl = messageEl.querySelector('.streaming-token-count');
-                                if (tokenEl) {
-                                    tokenEl.remove();
-                                }
-                            }
+                            await this.chatArea.finalizeStreamingMessage(streamingMessage);
                         }
                     } else {
                         await this.addMessage('assistant', 'Sorry, I encountered an error while processing your request.');
@@ -1074,6 +1109,7 @@ class ChatApp {
                 // Create a placeholder message for streaming
                 const streamingMessageId = this.generateId();
                 let streamedContent = '';
+                let streamedReasoning = '';
                 let streamingTokenCount = 0;
 
                 // Prepare assistant message object (don't save to DB yet - wait for first chunk)
@@ -1082,16 +1118,19 @@ class ChatApp {
                     sessionId: session.id,
                     role: 'assistant',
                     content: '',
+                    reasoning: '',
                     timestamp: Date.now(),
                     model: modelNameToUse,
                     tokenCount: null,
-                    streamingTokens: 0
+                    streamingTokens: 0,
+                    streamingReasoning: false
                 };
 
                 // Track progress for periodic saves
                 let lastSaveLength = 0;
                 const SAVE_INTERVAL_CHARS = 100; // Save every 100 characters
-                let firstChunk = true;
+                let firstChunkReceived = false;
+                let reasoningStartTime = null;
 
                 // Stream the response with token tracking
                 const tokenData = await openRouterAPI.streamCompletion(
@@ -1099,11 +1138,11 @@ class ChatApp {
                     modelId,
                     session.apiKey,
                     async (chunk, imageData) => {
-                        // Remove typing indicator on first chunk BEFORE adding content
-                        if (firstChunk) {
+                        // On first chunk (of any kind), remove typing indicator and append message
+                        if (!firstChunkReceived) {
+                            firstChunkReceived = true;
                             this.removeTypingIndicator(typingId);
-                            firstChunk = false;
-
+                            
                             // Handle text content
                             if (chunk) {
                                 streamedContent += chunk;
@@ -1113,43 +1152,33 @@ class ChatApp {
 
                             // Handle image data
                             if (imageData && imageData.images) {
-                                if (!streamingMessage.images) {
-                                    streamingMessage.images = [];
-                                }
+                                if (!streamingMessage.images) streamingMessage.images = [];
                                 streamingMessage.images.push(...imageData.images);
-                                console.log('First chunk images:', streamingMessage.images.length);
                             }
-
-                            // Save message to DB and append to UI on first chunk (only if there's content or images)
+                            
+                            // Save message to DB and append to UI
                             if (chunk || (imageData && imageData.images)) {
                                 await chatDB.saveMessage(streamingMessage);
                                 if (this.chatArea) {
                                     await this.chatArea.appendMessage(streamingMessage);
                                 }
                             }
-                        } else {
-                            // Not first chunk
-                            if (chunk) {
-                                streamedContent += chunk;
-                            }
+                            return; // Exit after first chunk handling
+                        }
 
-                            // Handle additional images
-                            if (imageData && imageData.images) {
-                                if (!streamingMessage.images) {
-                                    streamingMessage.images = [];
-                                }
-                                streamingMessage.images.push(...imageData.images);
-                                console.log('Additional images received:', imageData.images.length, 'Total:', streamingMessage.images.length);
-                                // Save to DB when new images arrive
-                                await chatDB.saveMessage(streamingMessage);
-                                // Update UI with new images
-                                if (this.chatArea) {
-                                    this.chatArea.updateStreamingImages(streamingMessageId, streamingMessage.images);
-                                }
+                        // Handle subsequent chunks
+                        if (chunk) streamedContent += chunk;
+                        
+                        if (imageData && imageData.images) {
+                            if (!streamingMessage.images) streamingMessage.images = [];
+                            streamingMessage.images.push(...imageData.images);
+                            await chatDB.saveMessage(streamingMessage);
+                            if (this.chatArea) {
+                                this.chatArea.updateStreamingImages(streamingMessageId, streamingMessage.images);
                             }
                         }
 
-                        // Periodically save partial content to handle refresh during streaming
+                        // Periodically save partial content
                         if (chunk && streamedContent.length - lastSaveLength >= SAVE_INTERVAL_CHARS) {
                             streamingMessage.content = streamedContent;
                             streamingMessage.streamingTokens = Math.ceil(streamedContent.length / 4);
@@ -1157,7 +1186,7 @@ class ChatApp {
                             lastSaveLength = streamedContent.length;
                         }
 
-                        // Delegate to ChatArea for streaming message updates
+                        // Update UI with new content
                         if (chunk && this.chatArea) {
                             this.chatArea.updateStreamingMessage(streamingMessageId, streamedContent);
                         }
@@ -1171,19 +1200,55 @@ class ChatApp {
                     },
                     currentFiles,
                     searchEnabled,
-                    abortController
+                    abortController,
+                    async (reasoningChunk) => {
+                        // Handle reasoning trace streaming
+                        if (!firstChunkReceived) {
+                            firstChunkReceived = true;
+                            reasoningStartTime = Date.now();
+                            this.removeTypingIndicator(typingId);
+                            streamingMessage.reasoning = reasoningChunk;
+                            streamingMessage.streamingReasoning = true;
+                            streamedReasoning = reasoningChunk;
+                            await chatDB.saveMessage(streamingMessage);
+                            if (this.chatArea) {
+                                await this.chatArea.appendMessage(streamingMessage);
+                            }
+                        } else {
+                            streamedReasoning += reasoningChunk;
+                            streamingMessage.reasoning = streamedReasoning;
+                        }
+
+                        // Update UI with new reasoning content
+                        if (this.chatArea) {
+                            this.chatArea.updateStreamingReasoning(streamingMessageId, streamedReasoning);
+                        }
+                    }
                 );
 
-                // Save the final message content with token data
+                // Save the final message content with token data and reasoning
                 streamingMessage.content = streamedContent;
+                streamingMessage.reasoning = tokenData.reasoning || streamedReasoning || null;
                 streamingMessage.tokenCount = tokenData.completionTokens || streamingTokenCount;
                 streamingMessage.model = tokenData.model || modelNameToUse;
                 streamingMessage.streamingTokens = null; // Clear streaming tokens after completion
+                streamingMessage.streamingReasoning = false; // Clear streaming reasoning flag
+                
+                // Calculate reasoning duration if reasoning was used
+                if (streamingMessage.reasoning && reasoningStartTime) {
+                    const reasoningEndTime = Date.now();
+                    streamingMessage.reasoningDuration = reasoningEndTime - reasoningStartTime;
+                }
+                
                 await chatDB.saveMessage(streamingMessage);
 
-                // Update final token count incrementally instead of full re-render
-                if (this.chatArea && streamingMessage.tokenCount) {
-                    this.chatArea.updateFinalTokens(streamingMessageId, streamingMessage.tokenCount);
+                // Re-render the message to finalize its state (e.g., collapse reasoning)
+                if (this.chatArea) {
+                    await this.chatArea.finalizeStreamingMessage(streamingMessage);
+                    // Finalize reasoning display with markdown processing and timing
+                    if (streamingMessage.reasoning) {
+                        this.chatArea.finalizeReasoningDisplay(streamingMessage.id, streamingMessage.reasoning, streamingMessage.reasoningDuration);
+                    }
                 }
 
             } catch (error) {
@@ -1193,22 +1258,20 @@ class ChatApp {
                 // Check if error was due to cancellation
                 if (error.isCancelled) {
                     // Keep the partial message if there's content, otherwise remove it
-                    // Only handle if message was already added to UI (firstChunk was false)
-                    if (streamingMessage && !firstChunk) {
-                        if (streamedContent.trim()) {
+                    if (streamingMessage && firstChunkReceived) {
+                        if (streamedContent.trim() || streamedReasoning.trim()) {
                             // Save the partial content with a note
                             streamingMessage.content = streamedContent;
+                            streamingMessage.reasoning = streamedReasoning;
                             streamingMessage.tokenCount = null;
                             streamingMessage.streamingTokens = null;
+                            streamingMessage.streamingReasoning = false;
                             await chatDB.saveMessage(streamingMessage);
-                            // Update in place - the message is already visible, just update streaming status
                             if (this.chatArea) {
-                                const messageEl = document.querySelector(`[data-message-id="${streamingMessage.id}"]`);
-                                if (messageEl) {
-                                    const tokenEl = messageEl.querySelector('.streaming-token-count');
-                                    if (tokenEl) {
-                                        tokenEl.remove(); // Remove streaming token indicator
-                                    }
+                                await this.chatArea.finalizeStreamingMessage(streamingMessage);
+                                // Finalize reasoning display with markdown processing
+                                if (streamingMessage.reasoning) {
+                                    this.chatArea.finalizeReasoningDisplay(streamingMessage.id, streamingMessage.reasoning);
                                 }
                             }
                         } else {
@@ -1220,25 +1283,18 @@ class ChatApp {
                             }
                         }
                     }
-                    // If firstChunk is still true, message was never added to UI or DB, nothing to clean up
+                    // If firstChunkReceived is false, message was never added to UI or DB, nothing to clean up
                 } else {
                     // Non-cancellation error
-                    if (!firstChunk && streamingMessage) {
+                    if (firstChunkReceived && streamingMessage) {
                         // Message was already added to UI, update it with error
                         streamingMessage.content = 'Sorry, I encountered an error while processing your request.';
                         streamingMessage.tokenCount = null;
                         streamingMessage.streamingTokens = null;
+                        streamingMessage.streamingReasoning = false;
                         await chatDB.saveMessage(streamingMessage);
-                        // Update message content in place
                         if (this.chatArea) {
-                            this.chatArea.updateStreamingMessage(streamingMessage.id, streamingMessage.content);
-                            const messageEl = document.querySelector(`[data-message-id="${streamingMessage.id}"]`);
-                            if (messageEl) {
-                                const tokenEl = messageEl.querySelector('.streaming-token-count');
-                                if (tokenEl) {
-                                    tokenEl.remove(); // Remove streaming token indicator
-                                }
-                            }
+                            await this.chatArea.finalizeStreamingMessage(streamingMessage);
                         }
                     } else {
                         // Error before first chunk - message never added to UI, add new error message
