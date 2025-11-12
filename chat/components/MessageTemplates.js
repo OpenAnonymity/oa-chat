@@ -16,8 +16,7 @@ const WELCOME_CONTENT = {
     content: `
 How it works:
 1. **Chats are end-to-end anonymous.**\\
-   Every chat requests an *ephemeral and cryptographically unlinkable* OpenRouter API key from a random proxy (*oa-stations*) with blind-signed tokens (*inference tickets*).\\
-   Because users hit different oa-stations who issue such ephemeral keys to many users, OpenRouter and providers only see anonymous and mixed traffic.
+   Every chat requests an *ephemeral and cryptographically unlinkable* OpenRouter API key from a random proxy (*oa-stations*) with blind-signed tokens (*inference tickets*). Because users hit different oa-stations who issue such ephemeral keys to many users, OpenRouter and providers only see anonymous and mixed traffic.
 2. **Chat prompts and responses *never* go through Open Anonymity.**\\
    Because the ephemeral API key itself is unlinkably issued to *you*, your browser talks to models on OpenRouter *directly* via encrypted HTTPS.
    Open Anonymity simply handles the key issuance, rotation, and encrypted tunneling.
