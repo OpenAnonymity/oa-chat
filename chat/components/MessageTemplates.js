@@ -16,11 +16,11 @@ const WELCOME_CONTENT = {
     content: `
 How it works:
 1. **Chats are end-to-end anonymous.**\\
-   Every chat requests a *disposable and mathematically unlinkable* OpenRouter API key from a random proxy (*oa-stations*) with blind-signed tokens (*inference tickets*).\\
+   Every chat requests an *ephemeral and cryptographically unlinkable* OpenRouter API key from a random proxy (*oa-stations*) with blind-signed tokens (*inference tickets*).\\
    Because users hit different oa-stations who issue such ephemeral keys to many users, OpenRouter and providers only see anonymous and mixed traffic.
 2. **Chat prompts and responses *never* go through Open Anonymity.**\\
    Because the ephemeral API key itself is unlinkably issued to *you*, your browser talks to models on OpenRouter *directly* via encrypted HTTPS.
-   Open Anonymity simply handles the disposable key issuance, rotation, and encrypted tunneling.
+   Open Anonymity simply handles the key issuance, rotation, and encrypted tunneling.
 3. **Chat history is entirely local.**\\
    Because every chat takes a random anonymous path to the model, *only you* have your full chat history, [saved locally](#download-chats-link).
 4. **This chat client is lightweight, fast, and disposable.**\\
@@ -388,7 +388,7 @@ export function buildMessageHTML(message, helpers, models, sessionModelName) {
         return buildUserMessage(message);
     } else {
         // Determine provider name and model name
-        const modelName = sessionModelName || 'GPT-5 Chat';
+        const modelName = sessionModelName || 'OpenAI: GPT-5 Instant';
         const model = models.find(m => m.name === modelName);
         const providerName = model ? model.provider : 'OpenAI';
 

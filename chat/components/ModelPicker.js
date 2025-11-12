@@ -43,7 +43,7 @@ export default class ModelPicker {
         ]);
 
         // Default model to show when no model is selected
-        this.defaultModelName = 'OpenAI: GPT-5 Chat';
+        this.defaultModelName = 'OpenAI: GPT-5 Instant';
 
         // Keyboard navigation state
         this.highlightedIndex = -1;
@@ -236,22 +236,25 @@ export default class ModelPicker {
      * @param {string} modelName - Name of the model to select
      */
     async selectModel(modelName) {
+        const normalizedModelName = this.app.normalizeModelName
+            ? this.app.normalizeModelName(modelName)
+            : modelName;
         const session = this.app.getCurrentSession();
 
         // Always save as selected model for future sessions
-        await chatDB.saveSetting('selectedModel', modelName);
+        await chatDB.saveSetting('selectedModel', normalizedModelName);
 
         if (!session) {
             // No session exists - store as pending model
             // Will be used when session is created (e.g., when first message is sent)
-            this.app.state.pendingModel = modelName;
+            this.app.state.pendingModel = normalizedModelName;
             this.app.renderCurrentModel();
             this.close(); // close() handles input focus
             return;
         }
 
         // Update existing session
-        session.model = modelName;
+        session.model = normalizedModelName;
         await chatDB.saveSession(session);
         this.app.renderCurrentModel();
         this.close(); // close() handles input focus

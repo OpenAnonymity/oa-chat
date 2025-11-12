@@ -12,6 +12,10 @@ import apiKeyStore from './services/apiKeyStore.js';
 import themeManager from './services/themeManager.js';
 import { downloadInferenceTickets } from './services/fileUtils.js';
 
+const GPT5_CHAT_MODEL_ID = 'openai/gpt-5-chat';
+const GPT5_CHAT_DISPLAY_NAME = 'OpenAI: GPT-5 Instant';
+const LEGACY_GPT5_DISPLAY_NAMES = new Set(['OpenAI: GPT-5 Chat', 'GPT-5 Chat']);
+
 /**
  * ChatApp - Main application controller
  * Manages application state, coordinates UI components, and handles business logic.
@@ -263,8 +267,12 @@ class ChatApp {
 
         // Load selected model from settings
         const selectedModel = await chatDB.getSetting('selectedModel');
-        if (selectedModel) {
-            this.state.pendingModel = selectedModel;
+        const normalizedSelectedModel = this.normalizeModelName(selectedModel);
+        if (normalizedSelectedModel && normalizedSelectedModel !== selectedModel) {
+            await chatDB.saveSetting('selectedModel', normalizedSelectedModel);
+        }
+        if (normalizedSelectedModel) {
+            this.state.pendingModel = normalizedSelectedModel;
         }
 
         // Load models from OpenRouter API (now we have a session)
@@ -370,6 +378,19 @@ class ChatApp {
             }
         }
 
+        const sessionsNeedingModelUpdate = [];
+        for (const session of this.state.sessions) {
+            const normalizedModel = this.normalizeModelName(session.model);
+            if (normalizedModel !== session.model) {
+                session.model = normalizedModel;
+                sessionsNeedingModelUpdate.push(session);
+            }
+        }
+
+        for (const session of sessionsNeedingModelUpdate) {
+            await chatDB.saveSession(session);
+        }
+
         // Don't restore currentSessionId - we always create a new session on startup
     }
 
@@ -396,6 +417,16 @@ class ChatApp {
         });
     }
 
+    normalizeModelName(name) {
+        if (!name) {
+            return name;
+        }
+        if (LEGACY_GPT5_DISPLAY_NAMES.has(name)) {
+            return GPT5_CHAT_DISPLAY_NAME;
+        }
+        return name;
+    }
+
     /**
      * Creates a new chat session.
      * @param {string} title - Session title
@@ -404,7 +435,17 @@ class ChatApp {
     async createSession(title = 'New Chat') {
         // Use pending model if available, otherwise fall back to selected model
         const selectedModel = await chatDB.getSetting('selectedModel');
-        const modelToUse = this.state.pendingModel || selectedModel || null;
+        const normalizedSelectedModel = this.normalizeModelName(selectedModel);
+        if (normalizedSelectedModel && normalizedSelectedModel !== selectedModel) {
+            await chatDB.saveSetting('selectedModel', normalizedSelectedModel);
+        }
+
+        const pendingModel = this.normalizeModelName(this.state.pendingModel);
+        if (pendingModel !== this.state.pendingModel) {
+            this.state.pendingModel = pendingModel;
+        }
+
+        const modelToUse = pendingModel || normalizedSelectedModel || null;
 
         const session = {
             id: this.generateId(),
@@ -575,7 +616,11 @@ class ChatApp {
 
         // Load the selected model from settings so UI shows correct model
         const selectedModel = await chatDB.getSetting('selectedModel');
-        this.state.pendingModel = selectedModel || null;
+        const normalizedSelectedModel = this.normalizeModelName(selectedModel);
+        if (normalizedSelectedModel && normalizedSelectedModel !== selectedModel) {
+            await chatDB.saveSetting('selectedModel', normalizedSelectedModel);
+        }
+        this.state.pendingModel = normalizedSelectedModel || null;
 
         // Update UI to reflect no session selected
         this.renderSessions();
@@ -707,18 +752,22 @@ class ChatApp {
                 window.networkLogger.setCurrentSession(session.id);
             }
 
-            let modelNameToUse = session.model;
+            let modelNameToUse = this.normalizeModelName(session.model);
+            if (modelNameToUse !== session.model) {
+                session.model = modelNameToUse;
+                await chatDB.saveSession(session);
+            }
 
             if (!modelNameToUse) {
-                const gpt5Model = this.state.models.find(m => m.name.toLowerCase().includes('gpt-5 chat'));
+                const gpt5Model = this.state.models.find(m => m.id === GPT5_CHAT_MODEL_ID);
                 if (gpt5Model) {
-                    modelNameToUse = gpt5Model.name;
+                    modelNameToUse = this.normalizeModelName(gpt5Model.name);
                 } else {
                     const gpt4oModel = this.state.models.find(m => m.name.toLowerCase().includes('gpt-4o'));
                     if (gpt4oModel) {
-                        modelNameToUse = gpt4oModel.name;
+                        modelNameToUse = this.normalizeModelName(gpt4oModel.name);
                     } else if (this.state.models.length > 0) {
-                        modelNameToUse = this.state.models[0].name;
+                        modelNameToUse = this.normalizeModelName(this.state.models[0].name);
                     }
                 }
 
@@ -969,18 +1018,23 @@ class ChatApp {
                 window.networkLogger.setCurrentSession(session.id);
             }
 
-            let modelNameToUse = session.model;
+            let modelNameToUse = this.normalizeModelName(session.model);
+            if (modelNameToUse !== session.model) {
+                session.model = modelNameToUse;
+                await chatDB.saveSession(session);
+            }
 
+            // Use GPT-5 Chat as default
             if (!modelNameToUse) {
-                const gpt5Model = this.state.models.find(m => m.name.toLowerCase().includes('gpt-5 chat'));
+                const gpt5Model = this.state.models.find(m => m.id === GPT5_CHAT_MODEL_ID);
                 if (gpt5Model) {
-                    modelNameToUse = gpt5Model.name;
+                    modelNameToUse = this.normalizeModelName(gpt5Model.name);
                 } else {
                     const gpt4oModel = this.state.models.find(m => m.name.toLowerCase().includes('gpt-4o'));
                     if (gpt4oModel) {
-                        modelNameToUse = gpt4oModel.name;
+                        modelNameToUse = this.normalizeModelName(gpt4oModel.name);
                     } else if (this.state.models.length > 0) {
-                        modelNameToUse = this.state.models[0].name;
+                        modelNameToUse = this.normalizeModelName(this.state.models[0].name);
                     }
                 }
 

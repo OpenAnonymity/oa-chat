@@ -27,6 +27,7 @@ class OpenRouterAPI {
         // Custom display name overrides
         // Map model ID or default name to custom display name
         this.displayNameOverrides = {
+            'openai/gpt-5-chat': 'OpenAI: GPT-5 Instant',
             'openai/gpt-5': 'OpenAI: GPT-5 Thinking',
             // Add more customizations here as needed
             // Examples:
@@ -106,13 +107,7 @@ class OpenRouterAPI {
 
             // Return a fallback list of models
             return [
-                { name: 'GPT-5 Chat', id: 'openrouter/gpt-5-chat', category: 'OpenRouter', provider: 'OpenRouter' },
-                { name: 'GPT-4o', id: 'openai/gpt-4o', category: 'OpenAI', provider: 'OpenAI' },
-                { name: 'GPT-4', id: 'openai/gpt-4', category: 'OpenAI', provider: 'OpenAI' },
-                { name: 'GPT-3.5 Turbo', id: 'openai/gpt-3.5-turbo', category: 'OpenAI', provider: 'OpenAI' },
-                { id: 'anthropic/claude-3-opus', name: 'Claude 3 Opus', category: 'Flagship models', provider: 'Anthropic' },
-                { id: 'anthropic/claude-3-sonnet', name: 'Claude 3 Sonnet', category: 'Flagship models', provider: 'Anthropic' },
-                { id: 'anthropic/claude-3-haiku', name: 'Claude 3 Haiku', category: 'Flagship models', provider: 'Anthropic' },
+                { name: 'OpenAI: GPT-5 Instant', id: 'openai/gpt-5-chat', category: 'OpenAI', provider: 'OpenAI' },
             ];
         }
     }
@@ -228,7 +223,7 @@ class OpenRouterAPI {
         if (modelId.includes('claude-opus-4.1')) {
             return 13333;
         }
-        // Check for GPT-5 Thinking (not GPT-5 Chat)
+        // Check for GPT-5 Thinking (exclude chat variant)
         if (modelId.includes('gpt-5') && !modelId.includes('gpt-5-chat')) {
             return 100000;
         }
