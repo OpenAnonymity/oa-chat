@@ -168,3 +168,45 @@ export async function downloadAllChats() {
     }
 }
 
+/**
+ * Exports all inference tickets from localStorage as a downloadable JSON file
+ */
+export function downloadInferenceTickets() {
+    try {
+        // Get tickets from localStorage
+        const ticketsJson = localStorage.getItem('inference_tickets');
+        const tickets = ticketsJson ? JSON.parse(ticketsJson) : [];
+
+        // Create the export object
+        const exportData = {
+            exportDate: new Date().toISOString(),
+            version: '1.0',
+            totalTickets: tickets.length,
+            unusedTickets: tickets.filter(t => !t.used).length,
+            usedTickets: tickets.filter(t => t.used).length,
+            tickets: tickets
+        };
+
+        // Convert to JSON and create a blob
+        const jsonString = JSON.stringify(exportData, null, 2);
+        const blob = new Blob([jsonString], { type: 'application/json' });
+
+        // Create download link and trigger download
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `oa-fastchat-inference-tickets-${new Date().toISOString().split('T')[0]}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        console.log(`✅ Exported ${tickets.length} inference tickets`);
+        return true;
+    } catch (error) {
+        console.error('Error exporting inference tickets:', error);
+        alert('Failed to export inference tickets. Please check the console for details.');
+        return false;
+    }
+}
+

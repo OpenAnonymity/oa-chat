@@ -10,6 +10,7 @@ import ModelPicker from './components/ModelPicker.js';
 import { buildTypingIndicator } from './components/MessageTemplates.js';
 import apiKeyStore from './services/apiKeyStore.js';
 import themeManager from './services/themeManager.js';
+import { downloadInferenceTickets } from './services/fileUtils.js';
 
 /**
  * ChatApp - Main application controller
@@ -169,23 +170,23 @@ class ChatApp {
         window.expandImage = (imageId) => {
             const img = document.querySelector(`[data-image-id="${imageId}"]`);
             if (!img) return;
-            
+
             // Create modal overlay
             const modal = document.createElement('div');
             modal.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/80 animate-fade-in cursor-pointer p-4';
             modal.onclick = () => modal.remove();
-            
+
             // Create image container
             const container = document.createElement('div');
             container.className = 'relative max-w-[90vw] max-h-[90vh] flex flex-col items-center';
             container.onclick = (e) => e.stopPropagation();
-            
+
             // Create full-size image
             const fullImg = document.createElement('img');
             fullImg.src = img.src;
             fullImg.alt = img.alt;
             fullImg.className = 'max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl';
-            
+
             // Create close button
             const closeBtn = document.createElement('button');
             closeBtn.className = 'absolute top-2 right-2 p-2 rounded-md bg-white/90 hover:bg-white text-gray-700 shadow-lg border border-gray-200 transition-colors';
@@ -195,13 +196,13 @@ class ChatApp {
                 </svg>
             `;
             closeBtn.onclick = () => modal.remove();
-            
+
             // Assemble modal
             container.appendChild(fullImg);
             container.appendChild(closeBtn);
             modal.appendChild(container);
             document.body.appendChild(modal);
-            
+
             // Add escape key handler
             const escHandler = (e) => {
                 if (e.key === 'Escape') {
@@ -211,7 +212,19 @@ class ChatApp {
             };
             document.addEventListener('keydown', escHandler);
         };
-        
+
+        // Setup global function to download inference tickets
+        window.downloadInferenceTickets = () => {
+            downloadInferenceTickets();
+        };
+
+        // // Setup global function to open right panel
+        // window.openRightPanel = () => {
+        //     if (this.rightPanel) {
+        //         this.rightPanel.show();
+        //     }
+        // };
+
         // Initialize IndexedDB
         await chatDB.init();
 
@@ -1036,14 +1049,14 @@ class ChatApp {
                         if (firstChunk) {
                             this.removeTypingIndicator(typingId);
                             firstChunk = false;
-                            
+
                             // Handle text content
                             if (chunk) {
                                 streamedContent += chunk;
                                 streamingMessage.content = streamedContent;
                                 streamingMessage.streamingTokens = Math.ceil(streamedContent.length / 4);
                             }
-                            
+
                             // Handle image data
                             if (imageData && imageData.images) {
                                 if (!streamingMessage.images) {
@@ -1052,7 +1065,7 @@ class ChatApp {
                                 streamingMessage.images.push(...imageData.images);
                                 console.log('First chunk images:', streamingMessage.images.length);
                             }
-                            
+
                             // Save message to DB and append to UI on first chunk (only if there's content or images)
                             if (chunk || (imageData && imageData.images)) {
                                 await chatDB.saveMessage(streamingMessage);
@@ -1065,7 +1078,7 @@ class ChatApp {
                             if (chunk) {
                                 streamedContent += chunk;
                             }
-                            
+
                             // Handle additional images
                             if (imageData && imageData.images) {
                                 if (!streamingMessage.images) {
@@ -1700,9 +1713,9 @@ class ChatApp {
                 const imageUrl = await this.createImagePreview(file);
                 const imageId = `preview-image-${Date.now()}-${index}`;
                 preview = `
-                    <img 
-                        src="${imageUrl}" 
-                        class="absolute inset-0 w-full h-full object-cover cursor-pointer" 
+                    <img
+                        src="${imageUrl}"
+                        class="absolute inset-0 w-full h-full object-cover cursor-pointer"
                         alt="${file.name}"
                         data-image-id="${imageId}"
                         onclick="window.expandImage('${imageId}')"

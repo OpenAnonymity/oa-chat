@@ -14,8 +14,7 @@ const WELCOME_CONTENT = {
     title: '`oa-fastchat`',
     subtitle: 'A minimal, fast, and anonymous chat client by The Open Anonymity Project', // Optional subtitle that appears centered below the title
     content: `
-The privacy guarantees are simple:
-
+How it works:
 1. **Chats are end-to-end anonymous.**\\
    Every chat requests a *disposable and mathematically unlinkable* OpenRouter API key from a random proxy (*oa-stations*) with blind-signed tokens (*inference tickets*).\\
    Because users hit different oa-stations who issue such ephemeral keys to many users, OpenRouter and providers only see anonymous and mixed traffic.
@@ -23,9 +22,11 @@ The privacy guarantees are simple:
    Because the ephemeral API key itself is unlinkably issued to *you*, your browser talks to models on OpenRouter *directly* via encrypted HTTPS.
    Open Anonymity simply handles the disposable key issuance, rotation, and encrypted tunneling.
 3. **Chat history is entirely local.**\\
-   Because every chat takes a random anonymous path to the model, *only you* have your full chat history, [stored locally](#download-chats-link).
+   Because every chat takes a random anonymous path to the model, *only you* have your full chat history, [saved locally](#download-chats-link).
+4. **This chat client is lightweight, fast, and disposable.**\\
+    The entire client is less than 1MB. All it does is fetching API keys, sending prompts, and streaming responses on your behalf. You can (and should) <a href="javascript:void(0)" onclick="window.downloadInferenceTickets()">export</a> your tickets to make the same API calls without this client.
 
-The OA project is actively developed at Stanford and Michigan. This client is currently in alpha testing and more details coming soon. We appreciate your [feedback](https://forms.gle/HEmvxnJpN1jQC7CfA)!
+**The OA project is actively developed at Stanford and Michigan.** This client is currently in alpha testing and more details coming soon. We appreciate your [feedback](https://forms.gle/HEmvxnJpN1jQC7CfA)!
     `.trim(),
     // Future: Add diagram/image support
     // diagram: null,
