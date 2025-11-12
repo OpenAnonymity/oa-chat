@@ -1615,24 +1615,10 @@ class ChatApp {
 
         const validFiles = [];
         const errors = [];
-        const warnings = [];
-
-        // Check model compatibility
-        const session = this.getCurrentSession();
-        const modelName = (session && session.model) || this.state.pendingModel;
-        const model = this.state.models.find(m => m.name === modelName);
 
         for (const file of files) {
             const validation = validateFile(file);
             if (validation.valid) {
-                // Check if model supports this file type
-                const fileType = validation.fileType;
-                const isCompatible = this.isFileTypeCompatibleWithModel(fileType, model);
-                
-                if (!isCompatible) {
-                    warnings.push(`⚠️ ${file.name}: Current model may not support ${fileType} files. Consider switching to a multimodal model.`);
-                }
-                
                 validFiles.push(file);
             } else {
                 errors.push(validation.error);
@@ -1649,43 +1635,6 @@ class ChatApp {
         if (errors.length > 0) {
             this.showErrorNotification(errors.join('\n\n'));
         }
-
-        if (warnings.length > 0) {
-            this.showWarningNotification(warnings.join('\n\n'));
-        }
-    }
-
-    /**
-     * Checks if a file type is compatible with the given model's input modalities.
-     * @param {string} fileType - File type (image, pdf, audio)
-     * @param {Object} model - Model object with architecture data
-     * @returns {boolean} True if compatible
-     */
-    isFileTypeCompatibleWithModel(fileType, model) {
-        if (!model || !model.architecture || !model.architecture.input_modalities) {
-            // If we don't have modality info, assume basic compatibility
-            return true;
-        }
-
-        const inputModalities = model.architecture.input_modalities;
-        
-        // Map file types to modality names
-        if (fileType === 'image' && inputModalities.includes('image')) {
-            return true;
-        }
-        if (fileType === 'pdf' && inputModalities.includes('pdf')) {
-            return true;
-        }
-        if (fileType === 'audio' && inputModalities.includes('audio')) {
-            return true;
-        }
-
-        // Text-only models don't support any files
-        if (inputModalities.length === 1 && inputModalities[0] === 'text') {
-            return false;
-        }
-
-        return false;
     }
 
     /**
@@ -1728,35 +1677,6 @@ class ChatApp {
         setTimeout(() => {
             notification.remove();
         }, 6000);
-    }
-
-    showWarningNotification(message) {
-        // Create notification element with warning styling (amber/yellow)
-        const notification = document.createElement('div');
-        notification.className = 'fixed top-4 right-4 z-50 max-w-md bg-amber-500/90 text-white px-4 py-3 rounded-lg shadow-lg border border-amber-600 animate-in slide-in-from-top-5 fade-in';
-        notification.innerHTML = `
-            <div class="flex items-start gap-3">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 flex-shrink-0 mt-0.5">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
-                </svg>
-                <div class="flex-1">
-                    <div class="font-semibold text-sm mb-1">Model Compatibility</div>
-                    <div class="text-sm opacity-90 whitespace-pre-line">${message}</div>
-                </div>
-                <button onclick="this.parentElement.parentElement.remove()" class="flex-shrink-0 hover:opacity-70 transition-opacity">
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                </button>
-            </div>
-        `;
-
-        document.body.appendChild(notification);
-
-        // Auto-remove after 8 seconds (slightly longer for warnings so users can read)
-        setTimeout(() => {
-            notification.remove();
-        }, 8000);
     }
 
     async renderFilePreviews() {

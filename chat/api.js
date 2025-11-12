@@ -159,8 +159,7 @@ class OpenRouterAPI {
                 categoryPriority: categoryPriority,
                 provider: providerName,
                 context_length: model.context_length,
-                pricing: model.pricing,
-                architecture: model.architecture || {}
+                pricing: model.pricing
             };
         });
 
