@@ -395,7 +395,9 @@ class OpenRouterAPI {
         let accumulatedContent = '';
         let accumulatedReasoning = '';
         let hasReceivedFirstToken = false;
-
+        let citations = []; // Track citations for web search results
+        let annotations = []; // Track annotations from OpenRouter response
+        
         // Buffering for reasoning chunks to reduce UI updates
         let reasoningBuffer = '';
         let reasoningBufferTimer = null;
@@ -412,6 +414,109 @@ class OpenRouterAPI {
                 clearTimeout(reasoningBufferTimer);
                 reasoningBufferTimer = null;
             }
+        };
+
+        // Helper to parse citations from annotations
+        const parseCitationsFromAnnotations = (annotationsList) => {
+            const citationsList = [];
+            let citationIndex = 1;
+            
+            if (!annotationsList || !Array.isArray(annotationsList)) return citationsList;
+            
+            // Extract url_citation annotations
+            const urlCitations = annotationsList.filter(ann => ann.type === 'url_citation');
+            
+            if (urlCitations.length > 0) {
+                console.log('Found web search citations:', urlCitations.length);
+            }
+            
+            urlCitations.forEach(annotation => {
+                citationsList.push({
+                    url: annotation.url || '',
+                    title: annotation.title || null,
+                    content: annotation.content || null,
+                    index: citationIndex++,
+                    // OpenRouter uses snake_case: start_index, end_index
+                    startIndex: annotation.start_index ?? annotation.startIndex ?? null,
+                    endIndex: annotation.end_index ?? annotation.endIndex ?? null
+                });
+            });
+            
+            return citationsList;
+        };
+
+        // Helper to parse citations from content (fallback for when no annotations)
+        // Extracts URLs and numbered references like [1], [2] etc.
+        const parseCitations = (content) => {
+            const citationMap = new Map();
+            let citationIndex = 1;
+            
+            // First, look for existing numbered citations [1], [2], etc.
+            const existingCitationPattern = /\[(\d+)\]/g;
+            const existingNumbers = new Set();
+            let match;
+            while ((match = existingCitationPattern.exec(content)) !== null) {
+                existingNumbers.add(parseInt(match[1]));
+            }
+            
+            // Pattern 1: Markdown-style references [text](url)
+            const markdownUrlPattern = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
+            while ((match = markdownUrlPattern.exec(content)) !== null) {
+                const url = match[2];
+                if (!citationMap.has(url)) {
+                    citationMap.set(url, {
+                        url: url,
+                        title: match[1],
+                        index: citationIndex++
+                    });
+                }
+            }
+            
+            // Pattern 2: References/Sources section at the end
+            // Matches patterns like: [1] https://example.com or Sources: 1. https://example.com
+            const referencesPattern = /(?:^|\n)(?:References?|Sources?|Citations?):?\s*\n((?:(?:\[\d+\]|\d+\.)\s*https?:\/\/[^\s]+\s*\n?)+)/gmi;
+            const referencesMatch = referencesPattern.exec(content);
+            if (referencesMatch) {
+                const referencesSection = referencesMatch[1];
+                const citationPattern = /(?:\[(\d+)\]|(\d+)\.)\s*(https?:\/\/[^\s]+)/g;
+                while ((match = citationPattern.exec(referencesSection)) !== null) {
+                    const url = match[3];
+                    const num = parseInt(match[1] || match[2]);
+                    if (!citationMap.has(url)) {
+                        citationMap.set(url, {
+                            url: url,
+                            title: null,
+                            index: num || citationIndex++
+                        });
+                    }
+                }
+            }
+            
+            // Pattern 3: Plain URLs in the content that look like sources
+            // More conservative - only match URLs that appear to be references
+            const plainUrlPattern = /(?:(?:^|\n)(?:[-•*]|\d+\.?)\s+)?(https?:\/\/(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&\/\/=]*))/g;
+            while ((match = plainUrlPattern.exec(content)) !== null) {
+                const url = match[1];
+                // Only add if not already captured and looks like a real source
+                if (!citationMap.has(url) && 
+                    !url.match(/\.(png|jpg|jpeg|gif|svg|css|js|ico|woff|ttf|eot)$/i) &&
+                    url.length < 200) {
+                    citationMap.set(url, {
+                        url: url,
+                        title: null,
+                        index: citationIndex++
+                    });
+                }
+            }
+            
+            // If we have existing citation numbers in text but found URLs, ensure they match
+            if (existingNumbers.size > 0 && citationMap.size > 0) {
+                // The content has numbered citations, so we found the sources
+                return Array.from(citationMap.values()).sort((a, b) => a.index - b.index);
+            }
+            
+            // Only return citations if we found some
+            return citationMap.size > 0 ? Array.from(citationMap.values()).sort((a, b) => a.index - b.index) : [];
         };
 
         try {
@@ -524,8 +629,58 @@ class OpenRouterAPI {
                         try {
                             const parsed = JSON.parse(data);
 
-
-
+                            // Check for annotations in various possible locations in the response
+                            // Format 1: Direct annotations array
+                            if (parsed.annotations && Array.isArray(parsed.annotations)) {
+                                console.log('Found annotations (format 1 - direct):', parsed.annotations.length);
+                                annotations = annotations.concat(parsed.annotations);
+                            }
+                            
+                            // Format 2: In choices[0].message.annotations (chat completions format)
+                            if (parsed.choices?.[0]?.message?.annotations && Array.isArray(parsed.choices[0].message.annotations)) {
+                                console.log('Found annotations (format 2 - choices[0].message):', parsed.choices[0].message.annotations.length);
+                                annotations = annotations.concat(parsed.choices[0].message.annotations);
+                            }
+                            
+                            // Format 3: In choices[0].message.content[] (if content is array with annotations)
+                            const messageContent = parsed.choices?.[0]?.message?.content;
+                            if (Array.isArray(messageContent)) {
+                                messageContent.forEach(item => {
+                                    if (item.annotations && Array.isArray(item.annotations)) {
+                                        annotations = annotations.concat(item.annotations);
+                                    }
+                                });
+                            }
+                            
+                            // Format 4: /responses API format - check output[].content[].annotations[]
+                            if (parsed.output && Array.isArray(parsed.output)) {
+                                parsed.output.forEach(output => {
+                                    if (output.content && Array.isArray(output.content)) {
+                                        output.content.forEach(contentItem => {
+                                            if (contentItem.annotations && Array.isArray(contentItem.annotations)) {
+                                                annotations = annotations.concat(contentItem.annotations);
+                                            }
+                                        });
+                                    }
+                                });
+                            }
+                            
+                            // Format 5: response.completed event format
+                            if (parsed.type === 'response.completed' && parsed.response) {
+                                const output = parsed.response.output;
+                                if (output && Array.isArray(output)) {
+                                    output.forEach(outputItem => {
+                                        if (outputItem.content && Array.isArray(outputItem.content)) {
+                                            outputItem.content.forEach(contentItem => {
+                                                if (contentItem.annotations && Array.isArray(contentItem.annotations)) {
+                                                    annotations = annotations.concat(contentItem.annotations);
+                                                }
+                                            });
+                                        }
+                                    });
+                                }
+                            }
+                            
                             // Check for reasoning in various possible formats
                             // OpenRouter might send reasoning in different ways
                             if (parsed.type === 'response.reasoning.delta' ||
@@ -671,13 +826,31 @@ class OpenRouterAPI {
             // Flush any remaining reasoning buffer
             flushReasoningBuffer();
 
-            // Return token usage data and reasoning content
+            // Parse citations - prefer annotations over content parsing
+            if (searchEnabled) {
+                if (annotations.length > 0) {
+                    // Use citations from annotations if available
+                    console.log('Processing annotations for citations:', annotations.length, 'annotations');
+                    citations = parseCitationsFromAnnotations(annotations);
+                    console.log('Parsed citations:', citations.length, 'citations');
+                } else if (accumulatedContent) {
+                    // Fallback to parsing from content
+                    console.log('No annotations found, attempting to parse citations from content');
+                    citations = parseCitations(accumulatedContent);
+                    if (citations.length > 0) {
+                        console.log('Parsed citations from content:', citations.length);
+                    }
+                }
+            }
+
+            // Return token usage data, reasoning content, and citations
             return {
                 totalTokens,
                 promptTokens,
                 completionTokens,
                 model: modelUsed,
-                reasoning: accumulatedReasoning || null
+                reasoning: accumulatedReasoning || null,
+                citations: citations.length > 0 ? citations : null
             };
         } catch (error) {
             // Flush any remaining reasoning buffer before handling error
@@ -710,6 +883,7 @@ class OpenRouterAPI {
             throw error;
         }
     }
+
 }
 
 // Export for use in app.js

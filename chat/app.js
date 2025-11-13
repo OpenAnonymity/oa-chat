@@ -12,6 +12,7 @@ import apiKeyStore from './services/apiKeyStore.js';
 import themeManager from './services/themeManager.js';
 import { downloadInferenceTickets } from './services/fileUtils.js';
 import { parseReasoningContent } from './services/reasoningParser.js';
+import { fetchUrlMetadata } from './services/urlMetadata.js';
 
 const GPT5_CHAT_MODEL_ID = 'openai/gpt-5-chat';
 const GPT5_CHAT_DISPLAY_NAME = 'OpenAI: GPT-5 Instant';
@@ -80,6 +81,11 @@ class ChatApp {
         this.isAutoScrollPaused = false; // Track if auto-scroll is paused during streaming
         this.scrollToBottomButton = null; // Reference to the floating scroll-to-bottom button
         this.scrollButtonCheckInterval = null; // Interval for checking button visibility during streaming
+        
+        // Link preview state
+        this.linkPreviewCard = document.getElementById('link-preview-card');
+        this.linkPreviewTimeout = null;
+        this.currentPreviewLink = null;
 
         this.init();
     }
@@ -309,6 +315,226 @@ class ChatApp {
     }
 
     /**
+     * Shows the link preview card with metadata.
+     * @param {HTMLElement} linkElement - The link element being hovered
+     * @param {Object} metadata - URL metadata object
+     */
+    showLinkPreview(linkElement, metadata) {
+        if (!this.linkPreviewCard) return;
+
+        const loader = this.linkPreviewCard.querySelector('.link-preview-loader');
+        const content = this.linkPreviewCard.querySelector('.link-preview-content');
+
+        if (metadata.loading) {
+            // Show loading state
+            loader.classList.remove('hidden');
+            content.classList.add('hidden');
+        } else {
+            // Show content
+            loader.classList.add('hidden');
+            content.classList.remove('hidden');
+
+            // Populate metadata
+            const favicon = content.querySelector('.link-preview-favicon');
+            const domain = content.querySelector('.link-preview-domain');
+            const title = content.querySelector('.link-preview-title');
+            const description = content.querySelector('.link-preview-description');
+
+            favicon.src = metadata.favicon || '';
+            favicon.alt = metadata.domain || '';
+            domain.textContent = metadata.domain || '';
+            title.textContent = metadata.title || metadata.domain || '';
+            description.textContent = metadata.description || '';
+        }
+
+        // Position the preview card
+        this.positionLinkPreview(linkElement);
+
+        // Show the card
+        this.linkPreviewCard.classList.remove('hidden');
+        this.linkPreviewCard.classList.add('visible');
+    }
+
+    /**
+     * Positions the link preview card relative to the link element.
+     * @param {HTMLElement} linkElement - The link element
+     */
+    positionLinkPreview(linkElement) {
+        if (!this.linkPreviewCard) return;
+
+        const linkRect = linkElement.getBoundingClientRect();
+        
+        // Get actual rendered dimensions of the preview card
+        this.linkPreviewCard.style.visibility = 'hidden';
+        this.linkPreviewCard.classList.remove('hidden');
+        const cardRect = this.linkPreviewCard.getBoundingClientRect();
+        const cardWidth = cardRect.width;
+        const cardHeight = cardRect.height;
+        this.linkPreviewCard.style.visibility = '';
+        
+        const gap = 6; // Gap between link and card
+        const viewportPadding = 12;
+
+        // Always position below the link for consistency
+        let top = linkRect.bottom + gap;
+        
+        // Center horizontally relative to the link
+        let left = linkRect.left + (linkRect.width / 2) - (cardWidth / 2);
+
+        // Horizontal adjustments for viewport edges
+        if (left + cardWidth > window.innerWidth - viewportPadding) {
+            // Align to right edge if would overflow
+            left = window.innerWidth - cardWidth - viewportPadding;
+        } else if (left < viewportPadding) {
+            // Align to left edge if would overflow
+            left = viewportPadding;
+        }
+
+        // Vertical adjustment if card would go below viewport
+        const spaceBelow = window.innerHeight - linkRect.bottom;
+        if (spaceBelow < cardHeight + gap + viewportPadding) {
+            // If not enough space below, position above the link instead
+            top = linkRect.top - cardHeight - gap;
+            
+            // But if that would go above viewport, keep below and scroll-align
+            if (top < viewportPadding) {
+                top = linkRect.bottom + gap;
+                // Let it extend below viewport if necessary - browser will handle scrolling
+            }
+        }
+
+        this.linkPreviewCard.style.top = `${top}px`;
+        this.linkPreviewCard.style.left = `${left}px`;
+    }
+
+    /**
+     * Hides the link preview card.
+     */
+    hideLinkPreview() {
+        if (!this.linkPreviewCard) return;
+        
+        this.linkPreviewCard.classList.remove('visible');
+        this.linkPreviewCard.classList.add('hidden');
+        this.currentPreviewLink = null;
+    }
+
+    /**
+     * Handles mouse enter on inline link buttons.
+     * @param {MouseEvent} event - Mouse event
+     */
+    async handleLinkMouseEnter(event) {
+        const linkButton = event.target.closest('.inline-link-button');
+        if (!linkButton) return;
+
+        const url = linkButton.getAttribute('data-url');
+        if (!url) return;
+
+        this.currentPreviewLink = linkButton;
+
+        // Clear any existing timeout
+        if (this.linkPreviewTimeout) {
+            clearTimeout(this.linkPreviewTimeout);
+        }
+
+        // Show preview after a short delay
+        this.linkPreviewTimeout = setTimeout(async () => {
+            if (this.currentPreviewLink !== linkButton) return;
+
+            // Show loading state
+            this.showLinkPreview(linkButton, { loading: true });
+
+            try {
+                // Fetch metadata
+                const metadata = await fetchUrlMetadata(url);
+                
+                // Check if we're still hovering this link
+                if (this.currentPreviewLink === linkButton) {
+                    this.showLinkPreview(linkButton, metadata);
+                }
+            } catch (error) {
+                console.debug('Failed to load link preview:', error);
+                if (this.currentPreviewLink === linkButton) {
+                    this.hideLinkPreview();
+                }
+            }
+        }, 200); // 200ms delay
+    }
+
+    /**
+     * Handles mouse leave on inline link buttons.
+     * @param {MouseEvent} event - Mouse event
+     */
+    handleLinkMouseLeave(event) {
+        const linkButton = event.target.closest('.inline-link-button');
+        if (!linkButton) return;
+
+        // Clear timeout
+        if (this.linkPreviewTimeout) {
+            clearTimeout(this.linkPreviewTimeout);
+            this.linkPreviewTimeout = null;
+        }
+
+        // Hide preview after a short delay to allow moving to the preview card
+        setTimeout(() => {
+            // Check if mouse is over preview card
+            const previewRect = this.linkPreviewCard?.getBoundingClientRect();
+            if (previewRect) {
+                const mouseX = event.clientX;
+                const mouseY = event.clientY;
+                const isOverPreview = mouseX >= previewRect.left && mouseX <= previewRect.right &&
+                                     mouseY >= previewRect.top && mouseY <= previewRect.bottom;
+                if (!isOverPreview) {
+                    this.hideLinkPreview();
+                }
+            }
+        }, 100);
+    }
+
+    /**
+     * Sets up event delegation for inline link previews.
+     */
+    setupLinkPreviewListeners() {
+        // Use event delegation on messages container
+        const messagesContainer = this.elements.messagesContainer;
+        if (!messagesContainer) return;
+
+        messagesContainer.addEventListener('mouseenter', (e) => {
+            this.handleLinkMouseEnter(e);
+        }, true);
+
+        messagesContainer.addEventListener('mouseleave', (e) => {
+            this.handleLinkMouseLeave(e);
+        }, true);
+        
+        // Handle citation clicks
+        messagesContainer.addEventListener('click', (e) => {
+            // Handle citation toggle button
+            const toggleBtn = e.target.closest('.citations-toggle-btn');
+            if (toggleBtn) {
+                const messageId = toggleBtn.getAttribute('data-message-id');
+                this.toggleCitations(messageId);
+                return;
+            }
+            
+            // Handle inline citation clicks
+            const citation = e.target.closest('.inline-citation');
+            if (citation) {
+                const messageId = citation.getAttribute('data-message-id');
+                const citationNum = citation.getAttribute('data-citation');
+                this.scrollToCitation(messageId, citationNum);
+                return;
+            }
+        });
+
+        // Hide preview when mouse leaves preview card
+        if (this.linkPreviewCard) {
+            this.linkPreviewCard.addEventListener('mouseleave', () => {
+                this.hideLinkPreview();
+            });
+        }
+    }
+
+    /**
      * Initializes the application: loads data, sets up components, and renders initial state.
      */
     async init() {
@@ -457,6 +683,10 @@ class ChatApp {
 
         // Set up ResizeObserver to adjust chat area padding when input area expands
         this.setupInputAreaObserver();
+        
+        // Set up link preview event listeners
+        this.setupLinkPreviewListeners();
+        
         // Handle mobile view on initial load
         if (this.isMobileView()) {
             this.hideSidebar();
@@ -839,7 +1069,8 @@ class ChatApp {
             tokenCount: metadata.tokenCount || null,
             streamingTokens: metadata.streamingTokens || null,
             files: metadata.files || null,
-            searchEnabled: metadata.searchEnabled || false
+            searchEnabled: metadata.searchEnabled || false,
+            citations: metadata.citations || null
         };
 
         await chatDB.saveMessage(message);
@@ -1066,7 +1297,7 @@ class ChatApp {
                     }
                 );
 
-                // Save the final message content with token data and reasoning
+                // Save the final message content with token data, reasoning, and citations
                 streamingMessage.content = streamedContent;
                 const rawReasoning = tokenData.reasoning || streamedReasoning || null;
                 // Parse and save the cleaned reasoning
@@ -1075,7 +1306,8 @@ class ChatApp {
                 streamingMessage.model = tokenData.model || modelNameToUse;
                 streamingMessage.streamingTokens = null;
                 streamingMessage.streamingReasoning = false;
-
+                streamingMessage.citations = tokenData.citations || null;
+                
                 // Calculate reasoning duration if reasoning was used
                 if (streamingMessage.reasoning && reasoningStartTime) {
                     const reasoningEndTime = Date.now();
@@ -1083,6 +1315,11 @@ class ChatApp {
                 }
 
                 await chatDB.saveMessage(streamingMessage);
+                
+                // Fetch metadata for citations asynchronously and update UI
+                if (streamingMessage.citations && streamingMessage.citations.length > 0) {
+                    this.enrichCitationsAndUpdateUI(streamingMessage);
+                }
 
                 if (this.chatArea) {
                     if (streamingMessage.tokenCount) {
@@ -1424,7 +1661,7 @@ class ChatApp {
                     }
                 );
 
-                // Save the final message content with token data and reasoning
+                // Save the final message content with token data, reasoning, and citations
                 streamingMessage.content = streamedContent;
                 const rawReasoning = tokenData.reasoning || streamedReasoning || null;
                 // Parse and save the cleaned reasoning
@@ -1433,7 +1670,8 @@ class ChatApp {
                 streamingMessage.model = tokenData.model || modelNameToUse;
                 streamingMessage.streamingTokens = null; // Clear streaming tokens after completion
                 streamingMessage.streamingReasoning = false; // Clear streaming reasoning flag
-
+                streamingMessage.citations = tokenData.citations || null;
+                
                 // Calculate reasoning duration if reasoning was used
                 if (streamingMessage.reasoning && reasoningStartTime) {
                     const reasoningEndTime = Date.now();
@@ -1441,6 +1679,11 @@ class ChatApp {
                 }
 
                 await chatDB.saveMessage(streamingMessage);
+                
+                // Fetch metadata for citations asynchronously and update UI
+                if (streamingMessage.citations && streamingMessage.citations.length > 0) {
+                    this.enrichCitationsAndUpdateUI(streamingMessage);
+                }
 
                 // Re-render the message to finalize its state (e.g., collapse reasoning)
                 if (this.chatArea) {
@@ -1895,6 +2138,46 @@ class ChatApp {
         }
     }
 
+    /**
+     * Enriches citations with metadata and updates the UI.
+     * @param {Object} message - The message containing citations
+     */
+    async enrichCitationsAndUpdateUI(message) {
+        if (!message.citations || message.citations.length === 0) return;
+        
+        try {
+            // Import the URL metadata service
+            const { fetchUrlMetadata } = await import('./services/urlMetadata.js');
+            
+            // Fetch metadata for all citations in parallel
+            const metadataPromises = message.citations.map(citation => 
+                fetchUrlMetadata(citation.url)
+                    .then(metadata => {
+                        // Update citation with metadata
+                        citation.title = metadata.title || citation.title;
+                        citation.description = metadata.description;
+                        citation.favicon = metadata.favicon;
+                        citation.domain = metadata.domain;
+                    })
+                    .catch(err => {
+                        console.debug('Failed to fetch metadata for', citation.url);
+                    })
+            );
+            
+            await Promise.all(metadataPromises);
+            
+            // Save updated message with enriched citations
+            await chatDB.saveMessage(message);
+            
+            // Re-render the message to show updated citations
+            if (this.chatArea) {
+                await this.chatArea.finalizeStreamingMessage(message);
+            }
+        } catch (error) {
+            console.debug('Error enriching citations:', error);
+        }
+    }
+
     updateInputState() {
         const hasContent = this.elements.messageInput.value.trim() || this.uploadedFiles.length > 0;
         const isStreaming = this.isCurrentSessionStreaming();
@@ -2177,6 +2460,68 @@ class ChatApp {
         } catch (error) {
             console.error('Failed to automatically acquire API key:', error);
             throw new Error(`A network error occurred while trying to get an API key: ${error.message}`);
+        }
+    }
+    
+    /**
+     * Toggles citation visibility for a message.
+     * @param {string} messageId - The message ID
+     */
+    toggleCitations(messageId) {
+        const contentEl = document.getElementById(`citations-content-${messageId}`);
+        const chevronEl = document.querySelector(`#citations-toggle-${messageId} .citations-chevron`);
+        
+        if (contentEl && chevronEl) {
+            const isHidden = contentEl.classList.contains('hidden');
+            if (isHidden) {
+                contentEl.classList.remove('hidden');
+                chevronEl.style.transform = 'rotate(180deg)';
+            } else {
+                contentEl.classList.add('hidden');
+                chevronEl.style.transform = 'rotate(0deg)';
+            }
+        }
+    }
+    
+    /**
+     * Scrolls to a specific citation.
+     * @param {string} messageId - The message ID
+     * @param {string} citationNum - The citation number
+     */
+    scrollToCitation(messageId, citationNum) {
+        // First expand the citations if collapsed
+        const carousel = document.getElementById(`citations-content-${messageId}`);
+        const chevronEl = document.querySelector(`#citations-toggle-${messageId} .citations-chevron`);
+        
+        if (carousel && carousel.classList.contains('hidden')) {
+            carousel.classList.remove('hidden');
+            if (chevronEl) {
+                chevronEl.style.transform = 'rotate(180deg)';
+            }
+        }
+        
+        // Then find and scroll to the citation
+        const citationEl = document.getElementById(`citation-${messageId}-${citationNum}`);
+        if (citationEl && carousel) {
+            // Add a brief highlight effect
+            citationEl.classList.add('citation-highlight');
+            setTimeout(() => {
+                citationEl.classList.remove('citation-highlight');
+            }, 2000);
+            
+            // Calculate scroll position to center the citation
+            const citationLeft = citationEl.offsetLeft;
+            const citationWidth = citationEl.offsetWidth;
+            const carouselWidth = carousel.offsetWidth;
+            const scrollPosition = citationLeft - (carouselWidth / 2) + (citationWidth / 2);
+            
+            carousel.scrollTo({
+                left: scrollPosition,
+                behavior: 'smooth'
+            });
+            
+            // Also scroll the citation section into view if needed
+            citationEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
     }
 }

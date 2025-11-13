@@ -5,6 +5,7 @@
  */
 
 import { getProviderIcon } from '../services/providerIcons.js';
+import { extractDomain } from '../services/urlMetadata.js';
 
 // Welcome message content configuration
 // Edit this markdown string to customize the intro message shown on new chat sessions
@@ -410,6 +411,249 @@ function buildReasoningTrace(reasoning, messageId, isStreaming = false, processC
     `;
 }
 
+
+/**
+ * Inserts plain text citation markers [1], [2] into raw content at specified positions.
+ * This should be called BEFORE HTML/Markdown processing.
+ * @param {string} content - The raw message content
+ * @param {Array} citations - Array of citation objects with startIndex/endIndex
+ * @returns {string} Content with [1], [2] markers inserted
+ */
+function insertRawCitationMarkers(content, citations) {
+    if (!content || !citations || citations.length === 0) return content;
+    
+    // Filter citations that have valid text ranges
+    const citationsWithRanges = citations.filter(c => 
+        c.startIndex !== null && 
+        c.endIndex !== null && 
+        c.startIndex >= 0 && 
+        c.endIndex <= content.length
+    );
+    
+    if (citationsWithRanges.length === 0) return content;
+    
+    // Sort by startIndex in reverse order to avoid offset issues
+    const sortedCitations = [...citationsWithRanges].sort((a, b) => b.startIndex - a.startIndex);
+    
+    let markedContent = content;
+    sortedCitations.forEach(citation => {
+        // Insert plain text marker [1], [2], etc.
+        const marker = `[${citation.index}]`;
+        markedContent = markedContent.slice(0, citation.endIndex) + 
+                       marker + 
+                       markedContent.slice(citation.endIndex);
+    });
+    
+    return markedContent;
+}
+
+/**
+ * Converts citation markers like [1], [2] into styled, clickable elements.
+ * This should be called AFTER HTML/Markdown processing.
+ * @param {string} content - The HTML-processed message content
+ * @param {string} messageId - The message ID
+ * @returns {string} Content with styled citation markers
+ */
+function addInlineCitationMarkers(content, messageId) {
+    if (!content) return content;
+    
+    // Replace citation markers [1], [2], etc. with styled spans
+    return content.replace(/\[(\d+)\]/g, (match, num) => {
+        return `<sup class="inline-citation" data-citation="${num}" data-message-id="${messageId}" title="View source ${num}">[${num}]</sup>`;
+    });
+}
+
+
+/**
+ * Transforms regular anchor links into elegant button-style citations with hover previews.
+ * This should be called AFTER HTML/Markdown processing.
+ * @param {string} content - The HTML-processed message content
+ * @param {string} messageId - The message ID for unique identification
+ * @returns {string} Content with enhanced inline links
+ */
+function enhanceInlineLinks(content, messageId) {
+    if (!content) return content;
+    
+    // Parse HTML to find all <a> tags
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(content, 'text/html');
+    const links = doc.querySelectorAll('a[href]');
+    
+    if (links.length === 0) return content;
+    
+    // Transform each link
+    links.forEach((link, index) => {
+        const url = link.href;
+        const originalText = link.textContent;
+        const domain = extractDomain(url);
+        
+        // Skip javascript: and internal links
+        if (url.startsWith('javascript:') || url.startsWith('#')) {
+            return;
+        }
+        
+        // Check for surrounding parentheses and remove them
+        const prevSibling = link.previousSibling;
+        const nextSibling = link.nextSibling;
+        
+        if (prevSibling && prevSibling.nodeType === Node.TEXT_NODE && 
+            prevSibling.textContent.endsWith('(')) {
+            prevSibling.textContent = prevSibling.textContent.slice(0, -1);
+        }
+        
+        if (nextSibling && nextSibling.nodeType === Node.TEXT_NODE && 
+            nextSibling.textContent.startsWith(')')) {
+            nextSibling.textContent = nextSibling.textContent.slice(1);
+        }
+        
+        // Create the enhanced link button with space before
+        const linkId = `inline-link-${messageId}-${index}`;
+        const enhancedLink = doc.createElement('span');
+        enhancedLink.className = 'inline-link-citation';
+        
+        // Get favicon URL
+        const faviconUrl = `https://www.google.com/s2/favicons?domain=${domain}&sz=16`;
+        
+        enhancedLink.innerHTML = ` <a href="${escapeHtml(url)}" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            class="inline-link-button"
+            data-link-id="${linkId}"
+            data-url="${escapeHtml(url)}"
+            data-domain="${escapeHtml(domain)}"
+            title="${escapeHtml(originalText || domain)}">
+            <img class="inline-link-icon" 
+                 src="${escapeHtml(faviconUrl)}" 
+                 alt="${escapeHtml(domain)}"
+                 onerror="this.style.display='none'; this.nextElementSibling.style.display='inline-block';" />
+            <svg class="inline-link-icon-fallback" style="display: none;" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244" />
+            </svg>
+            <span class="inline-link-domain">${escapeHtml(domain)}</span>
+        </a>`;
+        
+        // Replace the original link
+        link.parentNode.replaceChild(enhancedLink, link);
+    });
+    
+    return doc.body.innerHTML;
+}
+
+/**
+ * Builds HTML for citations toggle button.
+ * @param {Array} citations - Array of citation objects
+ * @param {string} messageId - The message ID for unique identification
+ * @returns {string} HTML string for toggle button
+ */
+function buildCitationsToggleButton(citations, messageId) {
+    if (!citations || citations.length === 0) return '';
+    
+    const toggleId = `citations-toggle-${messageId}`;
+    
+    return `
+        <button 
+            class="citations-toggle-btn inline-flex items-center gap-2 px-2 py-1 text-left hover:bg-muted/50 rounded transition-colors"
+            id="${toggleId}"
+            data-message-id="${messageId}"
+        >
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4 text-muted-foreground">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 0 0 8.716-6.747M12 21a9.004 9.004 0 0 1-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 0 1 7.843 4.582M12 3a8.997 8.997 0 0 0-7.843 4.582m15.686 0A11.953 11.953 0 0 1 12 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0 1 21 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0 1 12 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 0 1 3 12c0-1.605.42-3.113 1.157-4.418" />
+            </svg>
+            <span class="text-xs text-muted-foreground font-medium">${citations.length} source${citations.length > 1 ? 's' : ''}</span>
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5 text-muted-foreground citations-chevron transition-transform flex-shrink-0">
+                <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+            </svg>
+        </button>
+    `;
+}
+
+/**
+ * Builds HTML for web search citations carousel.
+ * @param {Array} citations - Array of citation objects with url, title, description, favicon, index
+ * @param {string} messageId - The message ID for unique identification
+ * @returns {string} HTML string or empty string
+ */
+function buildCitationsSection(citations, messageId) {
+    if (!citations || citations.length === 0) return '';
+    
+    const citationsId = `citations-${messageId}`;
+    
+    // Build modern horizontal citation cards with proper metadata
+    const citationCards = citations.map((citation, idx) => {
+        const displayIndex = idx + 1;
+        const domain = citation.domain || extractDomain(citation.url);
+        
+        // Use actual title from annotations or metadata
+        let title = citation.title;
+        
+        // Clean up title - remove "Page not found", empty strings, etc.
+        if (title && (title.toLowerCase().includes('page not found') || 
+                     title.toLowerCase().includes('404') ||
+                     title.toLowerCase().includes('error') ||
+                     title.trim().length < 3)) {
+            title = null;
+        }
+        
+        // If no title or title is just the domain/URL, create a descriptive title
+        if (!title || title === domain || title === citation.url || title.toLowerCase() === domain.toLowerCase()) {
+            // If we have content snippet, use first part of it
+            if (citation.content && citation.content.trim().length > 10) {
+                // Clean up content and use as title
+                let contentTitle = citation.content.trim();
+                // Remove citation markers [1], [2], etc.
+                contentTitle = contentTitle.replace(/\[\d+\]/g, '').trim();
+                // Take first sentence or 60 chars
+                const firstSentence = contentTitle.match(/^[^.!?]+[.!?]?/);
+                title = firstSentence ? firstSentence[0] : contentTitle.substring(0, 60);
+                if (contentTitle.length > 60 && !firstSentence) {
+                    title += '...';
+                }
+            } else {
+                // Last resort - use domain name with proper formatting
+                title = domain.charAt(0).toUpperCase() + domain.slice(1);
+            }
+        }
+        
+        const favicon = citation.favicon || `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
+        
+        return `
+            <a href="${escapeHtml(citation.url)}" 
+               target="_blank" 
+               rel="noopener noreferrer"
+               id="citation-${messageId}-${displayIndex}"
+               class="citation-card-modern group"
+               data-citation-index="${displayIndex}"
+               title="View source">
+                <div class="citation-card-header">
+                    <img src="${escapeHtml(favicon)}" 
+                         alt="${escapeHtml(domain)}" 
+                         class="citation-favicon"
+                         loading="lazy"
+                         onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />
+                    <div class="citation-favicon-fallback">
+                        ${displayIndex}
+                    </div>
+                    <span class="citation-domain">${escapeHtml(domain)}</span>
+                </div>
+                <div class="citation-title">
+                    ${escapeHtml(title.substring(0, 80))}${title.length > 80 ? '...' : ''}
+                </div>
+                <div class="citation-number">
+                    ${displayIndex}
+                </div>
+            </a>
+        `;
+    }).join('');
+    
+    return `
+        <div class="citations-section w-full" id="${citationsId}">
+            <div class="citations-carousel hidden" id="citations-content-${messageId}">
+                ${citationCards}
+            </div>
+        </div>
+    `;
+}
+
 /**
  * Builds HTML for an assistant message bubble.
  * @param {Object} message - Message object
@@ -434,10 +678,29 @@ function buildAssistantMessage(message, helpers, providerName, modelName) {
     );
 
     // Build text bubble if there's content
-    const textBubble = message.content ? `
+    let processedContent = message.content;
+    if (processedContent) {
+        // First insert raw citation markers [1], [2] at correct positions (before HTML processing)
+        if (message.citations && message.citations.length > 0) {
+            processedContent = insertRawCitationMarkers(processedContent, message.citations);
+        }
+        
+        // Then process with LaTeX/Markdown
+        processedContent = processContentWithLatex(processedContent);
+        
+        // Style the citation markers [1], [2] into clickable elements
+        if (message.citations && message.citations.length > 0) {
+            processedContent = addInlineCitationMarkers(processedContent, message.id);
+        }
+        
+        // Finally, enhance inline links into elegant button-style citations
+        processedContent = enhanceInlineLinks(processedContent, message.id);
+    }
+    
+    const textBubble = processedContent ? `
         <div class="${CLASSES.assistantBubble}">
             <div class="${CLASSES.assistantContent}">
-                ${processContentWithLatex(message.content)}
+                ${processedContent}
             </div>
         </div>
     ` : '';
@@ -448,6 +711,9 @@ function buildAssistantMessage(message, helpers, providerName, modelName) {
             ${buildGeneratedImages(message.images)}
         </div>
     ` : '';
+
+    // Build citations section if there are citations
+    const citationsBubble = buildCitationsSection(message.citations, message.id);
 
     return `
         <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}">
@@ -463,24 +729,28 @@ function buildAssistantMessage(message, helpers, providerName, modelName) {
                 ${reasoningBubble}
                 ${textBubble}
                 ${imageBubble}
-                <div class="flex items-center gap-1 -mt-1">
-                    <button
-                        class="message-action-btn copy-message-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
-                        data-message-id="${message.id}"
-                        title="Copy message">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
-                        </svg>
-                    </button>
-                    <button
-                        class="message-action-btn regenerate-message-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
-                        data-message-id="${message.id}"
-                        title="Regenerate response">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
-                        </svg>
-                    </button>
+                <div class="flex items-center justify-between gap-2 w-full -mt-1">
+                    <div class="flex items-center gap-1">
+                        <button
+                            class="message-action-btn copy-message-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+                            data-message-id="${message.id}"
+                            title="Copy message">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
+                            </svg>
+                        </button>
+                        <button
+                            class="message-action-btn regenerate-message-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+                            data-message-id="${message.id}"
+                            title="Regenerate response">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                            </svg>
+                        </button>
+                    </div>
+                    ${buildCitationsToggleButton(message.citations, message.id)}
                 </div>
+                ${citationsBubble}
             </div>
         </div>
     `;
@@ -593,6 +863,8 @@ export {
     buildEmptyState,
     buildGeneratedImages,
     buildReasoningTrace,
+    buildCitationsSection,
+    buildCitationsToggleButton,
     CLASSES
 };
 
@@ -601,6 +873,8 @@ if (typeof window !== 'undefined') {
     window.MessageTemplates = window.MessageTemplates || {};
     window.MessageTemplates.buildGeneratedImages = buildGeneratedImages;
     window.MessageTemplates.buildReasoningTrace = buildReasoningTrace;
+    window.MessageTemplates.buildCitationsSection = buildCitationsSection;
+    window.MessageTemplates.buildCitationsToggleButton = buildCitationsToggleButton;
     window.buildMessageHTML = buildMessageHTML; // Make buildMessageHTML globally available
 
     // Global function to toggle reasoning trace visibility

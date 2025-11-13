@@ -456,6 +456,365 @@
     }
 }
 
+/* Citations section styles */
+.citations-section {
+    animation: fadeIn 0.3s ease-in;
+    margin-top: 0.5rem;
+    margin-bottom: 0;
+}
+
+.citations-toggle-btn {
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    font-size: 0.75rem;
+}
+
+.citations-toggle-btn:hover {
+    background: hsl(var(--color-muted) / 0.5);
+}
+
+.citations-carousel {
+    display: flex;
+    gap: 0.5rem;
+    overflow-x: auto;
+    padding: 0.25rem 0.5rem;
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+}
+
+/* Hide scrollbar but keep functionality */
+.citations-carousel::-webkit-scrollbar {
+    height: 3px;
+}
+
+.citations-carousel::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.citations-carousel::-webkit-scrollbar-thumb {
+    background: hsl(var(--color-border));
+    border-radius: 1.5px;
+}
+
+.citations-carousel::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--color-muted-foreground) / 0.3);
+}
+
+/* Modern citation card design */
+.citation-card-modern {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-width: 140px;
+    max-width: 200px;
+    height: 80px;
+    padding: 0.5rem;
+    background: hsl(var(--color-background));
+    border: 1px solid hsl(var(--color-border));
+    border-radius: 0.75rem;
+    text-decoration: none;
+    transition: all 0.2s ease;
+    cursor: pointer;
+    flex-shrink: 0;
+    overflow: hidden;
+}
+
+.citation-card-modern:hover {
+    background: hsl(var(--color-muted) / 0.3);
+    border-color: hsl(var(--color-primary) / 0.3);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.citation-card-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.25rem;
+}
+
+.citation-favicon {
+    width: 16px;
+    height: 16px;
+    object-fit: contain;
+    border-radius: 0.25rem;
+}
+
+.citation-favicon-fallback {
+    display: none;
+    width: 16px;
+    height: 16px;
+    background: hsl(var(--color-primary) / 0.1);
+    color: hsl(var(--color-primary));
+    font-size: 0.65rem;
+    font-weight: 600;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0.25rem;
+}
+
+.citation-domain {
+    font-size: 0.65rem;
+    color: hsl(var(--color-muted-foreground));
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+}
+
+.citation-title {
+    font-size: 0.7rem;
+    line-height: 1.2;
+    color: hsl(var(--color-foreground));
+    font-weight: 500;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+}
+
+.citation-number {
+    position: absolute;
+    top: 0.25rem;
+    right: 0.25rem;
+    width: 18px;
+    height: 18px;
+    background: hsl(var(--color-primary) / 0.1);
+    color: hsl(var(--color-primary));
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.65rem;
+    font-weight: 600;
+}
+
+/* Highlight animation for citation cards */
+@keyframes citationHighlight {
+    0% {
+        background: hsl(var(--color-primary) / 0.2);
+        border-color: hsl(var(--color-primary) / 0.5);
+    }
+    100% {
+        background: hsl(var(--color-background));
+        border-color: hsl(var(--color-border));
+    }
+}
+
+.citation-highlight {
+    animation: citationHighlight 2s ease-out;
+}
+
+/* Inline citation markers */
+.inline-citation {
+    cursor: pointer;
+    color: hsl(var(--color-primary));
+    font-weight: 600;
+    font-size: 0.75em;
+    margin-left: 0.1em;
+    margin-right: 0.1em;
+    padding: 0.1em 0.2em;
+    border-radius: 0.2em;
+    transition: all 0.15s ease;
+    text-decoration: none;
+    line-height: 0;
+    vertical-align: super;
+}
+
+.inline-citation:hover {
+    background: hsl(var(--color-primary) / 0.1);
+    color: hsl(var(--color-primary));
+}
+
+/* Inline Link Citations (Button Style) */
+.inline-link-citation {
+    display: inline;
+    vertical-align: baseline;
+}
+
+.inline-link-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.15rem;
+    padding: 0.05rem 0.3rem;
+    background: hsl(var(--color-muted) / 0.3);
+    border: 1px solid hsl(var(--color-border) / 0.8);
+    border-radius: 0.75rem;
+    color: hsl(var(--color-primary));
+    font-size: 0.65rem;
+    font-weight: 500;
+    text-decoration: none;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.2;
+    vertical-align: middle;
+}
+
+.inline-link-button:hover {
+    background: hsl(var(--color-primary) / 0.08);
+    border-color: hsl(var(--color-primary) / 0.25);
+    transform: translateY(-0.5px);
+    box-shadow: 0 1px 4px hsl(var(--color-foreground) / 0.08);
+}
+
+.inline-link-icon {
+    width: 0.7rem;
+    height: 0.7rem;
+    flex-shrink: 0;
+    border-radius: 0.125rem;
+    object-fit: contain;
+}
+
+.inline-link-icon-fallback {
+    width: 0.65rem;
+    height: 0.65rem;
+    flex-shrink: 0;
+    opacity: 0.6;
+}
+
+.inline-link-domain {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Link Preview Card */
+.link-preview-card {
+    position: fixed;
+    width: 260px;
+    max-width: calc(100vw - 32px);
+    background: hsl(var(--color-card));
+    border: 1px solid hsl(var(--color-border));
+    border-radius: 0.5rem;
+    box-shadow: 0 2px 8px hsl(var(--color-foreground) / 0.06);
+    padding: 0.625rem;
+    z-index: 9999;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.12s ease, transform 0.12s ease;
+    transform: translateY(-3px);
+}
+
+.link-preview-card.visible {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0);
+}
+
+.link-preview-loader {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem;
+    padding: 0.5rem;
+    color: hsl(var(--color-muted-foreground));
+    font-size: 0.6875rem;
+}
+
+.link-preview-spinner {
+    width: 0.875rem;
+    height: 0.875rem;
+    border: 1.5px solid hsl(var(--color-border));
+    border-top-color: hsl(var(--color-primary));
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.link-preview-content {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    min-height: 50px;
+}
+
+.link-preview-header {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding-bottom: 0.375rem;
+    border-bottom: 1px solid hsl(var(--color-border) / 0.4);
+}
+
+.link-preview-favicon {
+    width: 0.875rem;
+    height: 0.875rem;
+    flex-shrink: 0;
+    border-radius: 0.125rem;
+    object-fit: contain;
+}
+
+.link-preview-domain {
+    font-size: 0.625rem;
+    color: hsl(var(--color-muted-foreground));
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    text-transform: lowercase;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.link-preview-title {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: hsl(var(--color-foreground));
+    line-height: 1.25;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+}
+
+.link-preview-description {
+    font-size: 0.6875rem;
+    color: hsl(var(--color-muted-foreground));
+    line-height: 1.3;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+}
+
+/* Dark mode adjustments for link previews */
+.dark .link-preview-card {
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+}
+
+.dark .inline-link-button {
+    background: hsl(var(--color-muted) / 0.2);
+    border-color: hsl(var(--color-border) / 0.6);
+}
+
+.dark .inline-link-button:hover {
+    background: hsl(var(--color-primary) / 0.1);
+    border-color: hsl(var(--color-primary) / 0.2);
+}
+
+/* Mobile responsiveness for citations */
+@media (max-width: 640px) {
+    .citation-card-modern {
+        min-width: 120px;
+        max-width: 160px;
+        height: 70px;
+    }
+    
+    .citations-carousel {
+        padding: 0.25rem;
+    }
+}
+
 /* Prose styles for markdown */
 .prose {
     max-width: none;

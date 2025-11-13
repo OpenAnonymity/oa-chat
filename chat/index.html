@@ -357,6 +357,22 @@
         </div>
     </div>
 
+    <!-- Inline Link Preview Card -->
+    <div id="link-preview-card" class="link-preview-card hidden">
+        <div class="link-preview-loader">
+            <div class="link-preview-spinner"></div>
+            <span>Loading preview...</span>
+        </div>
+        <div class="link-preview-content">
+            <div class="link-preview-header">
+                <img class="link-preview-favicon" src="" alt="" />
+                <span class="link-preview-domain"></span>
+            </div>
+            <div class="link-preview-title"></div>
+            <div class="link-preview-description"></div>
+        </div>
+    </div>
+
     <!-- Model Picker Modal -->
     <div id="model-picker-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
         <div role="dialog" aria-modal="true" tabindex="-1" data-slot="dialog-content" class="cursor-default relative w-full max-w-lg border border-border bg-background shadow-lg rounded-lg duration-0 overflow-hidden flex flex-col m-4" data-state="open">
@@ -404,6 +420,7 @@
     <script type="module" src="services/apiKeyStore.js"></script>
     <script type="module" src="services/privacyPass.js"></script>
     <script type="module" src="services/station.js"></script>
+    <script type="module" src="services/urlMetadata.js"></script>
     <script type="module" src="components/MessageNavigation.js"></script>
     <script type="module" src="components/RightPanel.js"></script>
     <script type="module" src="app.js"></script>
