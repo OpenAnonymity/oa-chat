@@ -1019,7 +1019,7 @@ class ChatApp {
                             }
                             return;
                         }
-                        
+
                         streamedContent += chunk;
 
                         if (streamedContent.length - lastSaveLength >= SAVE_INTERVAL_CHARS) {
@@ -1072,13 +1072,13 @@ class ChatApp {
                 streamingMessage.model = tokenData.model || modelNameToUse;
                 streamingMessage.streamingTokens = null;
                 streamingMessage.streamingReasoning = false;
-                
+
                 // Calculate reasoning duration if reasoning was used
                 if (streamingMessage.reasoning && reasoningStartTime) {
                     const reasoningEndTime = Date.now();
                     streamingMessage.reasoningDuration = reasoningEndTime - reasoningStartTime;
                 }
-                
+
                 await chatDB.saveMessage(streamingMessage);
 
                 if (this.chatArea) {
@@ -1336,7 +1336,7 @@ class ChatApp {
                         if (!firstChunkReceived) {
                             firstChunkReceived = true;
                             this.removeTypingIndicator(typingId);
-                            
+
                             // Handle text content
                             if (chunk) {
                                 streamedContent += chunk;
@@ -1349,7 +1349,7 @@ class ChatApp {
                                 if (!streamingMessage.images) streamingMessage.images = [];
                                 streamingMessage.images.push(...imageData.images);
                             }
-                            
+
                             // Save message to DB and append to UI
                             if (chunk || (imageData && imageData.images)) {
                                 await chatDB.saveMessage(streamingMessage);
@@ -1362,7 +1362,7 @@ class ChatApp {
 
                         // Handle subsequent chunks
                         if (chunk) streamedContent += chunk;
-                        
+
                         if (imageData && imageData.images) {
                             if (!streamingMessage.images) streamingMessage.images = [];
                             streamingMessage.images.push(...imageData.images);
@@ -1427,13 +1427,13 @@ class ChatApp {
                 streamingMessage.model = tokenData.model || modelNameToUse;
                 streamingMessage.streamingTokens = null; // Clear streaming tokens after completion
                 streamingMessage.streamingReasoning = false; // Clear streaming reasoning flag
-                
+
                 // Calculate reasoning duration if reasoning was used
                 if (streamingMessage.reasoning && reasoningStartTime) {
                     const reasoningEndTime = Date.now();
                     streamingMessage.reasoningDuration = reasoningEndTime - reasoningStartTime;
                 }
-                
+
                 await chatDB.saveMessage(streamingMessage);
 
                 // Re-render the message to finalize its state (e.g., collapse reasoning)
@@ -1909,8 +1909,8 @@ class ChatApp {
                 </svg>
             `;
             // Change button style to indicate stop
-            this.elements.sendBtn.classList.add('bg-destructive', 'hover:bg-destructive/90');
-            this.elements.sendBtn.classList.remove('bg-primary', 'hover:bg-primary/90');
+            this.elements.sendBtn.classList.add('bg-destructive', 'hover:bg-destructive/90', 'text-destructive-foreground');
+            this.elements.sendBtn.classList.remove('bg-primary', 'hover:bg-primary/90', 'text-primary-foreground');
             this.elements.messageInput.placeholder = "Waiting for response...";
         } else {
             // Restore send icon
@@ -1920,8 +1920,8 @@ class ChatApp {
                 </svg>
             `;
             // Restore primary button style
-            this.elements.sendBtn.classList.add('bg-primary', 'hover:bg-primary/90');
-            this.elements.sendBtn.classList.remove('bg-destructive', 'hover:bg-destructive/90');
+            this.elements.sendBtn.classList.add('bg-primary', 'hover:bg-primary/90', 'text-primary-foreground');
+            this.elements.sendBtn.classList.remove('bg-destructive', 'hover:bg-destructive/90', 'text-destructive-foreground');
 
             if (this.searchEnabled) {
                 // For now, use the same placeholder as the default when search is enabled
