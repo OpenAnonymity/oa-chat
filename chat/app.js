@@ -849,6 +849,9 @@ class ChatApp {
             this.messageNavigation.hide();
         }
 
+        // Hide scroll-to-bottom button for new session
+        this.hideScrollToBottomButton();
+
         this.renderSessions();
         this.renderMessages();
         this.renderCurrentModel();
@@ -882,6 +885,9 @@ class ChatApp {
         if (this.messageNavigation) {
             this.messageNavigation.hide();
         }
+
+        // Hide scroll-to-bottom button immediately to prevent it from persisting
+        this.hideScrollToBottomButton();
 
         this.renderSessions();
         this.renderMessages();
@@ -1024,6 +1030,9 @@ class ChatApp {
         if (this.messageNavigation) {
             this.messageNavigation.hide();
         }
+
+        // Hide scroll-to-bottom button when clearing session
+        this.hideScrollToBottomButton();
 
         // Clear right panel
         if (this.rightPanel) {
@@ -2480,6 +2489,9 @@ class ChatApp {
                 contentEl.classList.add('hidden');
                 chevronEl.style.transform = 'rotate(0deg)';
             }
+
+            // Update scroll button visibility after content change
+            this.updateScrollButtonVisibility();
         }
     }
     
@@ -2498,6 +2510,9 @@ class ChatApp {
             if (chevronEl) {
                 chevronEl.style.transform = 'rotate(180deg)';
             }
+
+            // Update scroll button visibility after content change
+            this.updateScrollButtonVisibility();
         }
         
         // Then find and scroll to the citation

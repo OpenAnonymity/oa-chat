@@ -156,7 +156,11 @@ export default class ChatArea {
 
         // Scroll to bottom after rendering
         this.scrollToBottom(true);
-        this.app.updateScrollButtonVisibility();
+        
+        // Defer button visibility check to allow DOM to settle after render
+        requestAnimationFrame(() => {
+            this.app.updateScrollButtonVisibility();
+        });
 
         // Update message navigation if it exists
         if (this.app.messageNavigation) {
@@ -225,8 +229,6 @@ export default class ChatArea {
                 }
             }
         }
-        // Update scroll button visibility based on content overflow
-        this.app.updateScrollButtonVisibility();
     }
 
     /**

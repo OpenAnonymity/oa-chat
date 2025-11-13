@@ -891,6 +891,11 @@ if (typeof window !== 'undefined') {
                 contentEl.classList.add('hidden');
                 chevronEl.style.transform = 'rotate(0deg)';
             }
+
+            // Update scroll button visibility after content change
+            if (window.app && window.app.updateScrollButtonVisibility) {
+                window.app.updateScrollButtonVisibility();
+            }
         }
     };
 }
