@@ -76,6 +76,9 @@ class ChatApp {
         this.chatInput = null;
         this.modelPicker = null;
         this.sessionStreamingStates = new Map(); // Track streaming state per session
+        this.isAutoScrollPaused = false; // Track if auto-scroll is paused during streaming
+        this.scrollToBottomButton = null; // Reference to the floating scroll-to-bottom button
+        this.scrollButtonCheckInterval = null; // Interval for checking button visibility during streaming
 
         this.init();
     }
@@ -142,6 +145,10 @@ class ChatApp {
         const chatArea = this.elements.chatArea;
         if (!chatArea) return;
 
+        if (!force && this.isAutoScrollPaused) {
+            return;
+        }
+
         // Check if user is near bottom (unless forced)
         if (!force) {
             const isNearBottom = chatArea.scrollHeight - chatArea.scrollTop - chatArea.clientHeight < 150;
@@ -164,6 +171,140 @@ class ChatApp {
                 });
             });
         });
+    }
+
+    /**
+     * Scrolls a user message to the top of the chat area
+     * @param {string} messageId - The message ID to scroll to top
+     */
+    scrollUserMessageToTop(messageId) {
+        const chatArea = this.elements.chatArea;
+        const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
+
+        console.log('[Scroll To Top]', { messageId, chatArea: !!chatArea, messageEl: !!messageEl });
+
+        if (!chatArea || !messageEl) {
+            console.warn('[Scroll To Top] Failed - missing elements');
+            return;
+        }
+
+        const padding = 20;
+        const messageTop = messageEl.offsetTop - chatArea.offsetTop - padding;
+
+        console.log('[Scroll To Top] Scrolling to:', messageTop);
+
+        chatArea.scrollTo({
+            top: messageTop,
+            behavior: 'smooth'
+        });
+    }
+
+    /**
+     * Creates the scroll-to-bottom button element
+     */
+    createScrollToBottomButton() {
+        if (this.scrollToBottomButton) return; // Already created
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.id = 'scroll-to-bottom-btn';
+        button.className = 'scroll-to-bottom-btn hidden';
+        button.setAttribute('aria-label', 'Scroll to bottom');
+        button.innerHTML = `
+            <span class="scroll-btn-label">Scroll to bottom</span>
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 12.75 12 20.25 4.5 12.75M12 3.75v16.5" />
+            </svg>
+        `;
+
+        // Add click handler
+        button.addEventListener('click', () => {
+            this.isAutoScrollPaused = false;
+            this.scrollToBottom(true);
+            this.hideScrollToBottomButton();
+        });
+
+        // Insert before the input area
+        const inputContainer = document.querySelector('.absolute.bottom-0.left-0.right-0');
+        if (inputContainer) {
+            const anchor = inputContainer.querySelector('.rounded-lg') || inputContainer;
+            if (anchor.classList) {
+                anchor.classList.add('relative');
+            }
+            if (getComputedStyle(anchor).position === 'static') {
+                anchor.style.position = 'relative';
+            }
+            anchor.appendChild(button);
+        }
+
+        this.scrollToBottomButton = button;
+    }
+
+    /**
+     * Shows the scroll-to-bottom button with fade-in animation
+     */
+    showScrollToBottomButton() {
+        if (!this.scrollToBottomButton) {
+            this.createScrollToBottomButton();
+        }
+
+        if (this.scrollToBottomButton && this.scrollToBottomButton.classList.contains('hidden')) {
+            this.scrollToBottomButton.classList.remove('hidden');
+            // Trigger reflow to ensure animation plays
+            void this.scrollToBottomButton.offsetWidth;
+            this.scrollToBottomButton.classList.add('visible');
+        }
+    }
+
+    /**
+     * Hides the scroll-to-bottom button with fade-out animation
+     */
+    hideScrollToBottomButton() {
+        if (this.scrollToBottomButton && !this.scrollToBottomButton.classList.contains('hidden')) {
+            this.scrollToBottomButton.classList.remove('visible');
+            // Wait for fade-out animation before hiding
+            setTimeout(() => {
+                if (this.scrollToBottomButton) {
+                    this.scrollToBottomButton.classList.add('hidden');
+                }
+            }, 200);
+        }
+    }
+
+    /**
+     * Checks scroll position and updates button visibility
+     */
+    updateScrollButtonVisibility() {
+        const chatArea = this.elements.chatArea;
+        if (!chatArea) return;
+
+        const inputContainer = document.querySelector('.absolute.bottom-0.left-0.right-0');
+        const lastMessage = this.elements.messagesContainer ? this.elements.messagesContainer.lastElementChild : null;
+
+        if (!inputContainer || !lastMessage) {
+            this.hideScrollToBottomButton();
+            return;
+        }
+
+        const hiddenDistance = chatArea.scrollHeight - chatArea.scrollTop - chatArea.clientHeight;
+        const isAtBottom = hiddenDistance <= 4;
+
+        if (isAtBottom) {
+            this.isAutoScrollPaused = false;
+            this.hideScrollToBottomButton();
+            return;
+        }
+
+        const inputTop = inputContainer.getBoundingClientRect().top;
+        const lastMessageBottom = lastMessage.getBoundingClientRect().bottom;
+        const overlapsInput = lastMessageBottom > inputTop - 8;
+        const shouldShow = overlapsInput || hiddenDistance > 12;
+
+        if (shouldShow) {
+            this.showScrollToBottomButton();
+        } else {
+            this.hideScrollToBottomButton();
+        }
     }
 
     /**
@@ -304,11 +445,13 @@ class ChatApp {
         this.initScrollAwareScrollbars(this.elements.sessionsScrollArea);
         this.initScrollAwareScrollbars(this.elements.modelListScrollArea);
 
-        // Set up scroll listener for message navigation
+        // Set up scroll listener for message navigation and scroll button
         this.elements.chatArea.addEventListener('scroll', () => {
             if (this.messageNavigation) {
                 this.messageNavigation.handleScroll();
             }
+            // Update scroll button visibility based on scroll position
+            this.updateScrollButtonVisibility();
         });
 
         // Set up ResizeObserver to adjust chat area padding when input area expands
@@ -564,6 +707,17 @@ class ChatApp {
             isStreaming,
             abortController
         });
+        
+        // Start periodic button visibility check when streaming starts
+        if (isStreaming && !this.scrollButtonCheckInterval) {
+            this.scrollButtonCheckInterval = setInterval(() => {
+                this.updateScrollButtonVisibility();
+            }, 200); // Check every 200ms during streaming
+        } else if (!isStreaming && this.scrollButtonCheckInterval) {
+            clearInterval(this.scrollButtonCheckInterval);
+            this.scrollButtonCheckInterval = null;
+        }
+        
         // Update UI when streaming state changes
         this.updateInputState();
     }
@@ -722,9 +876,29 @@ class ChatApp {
         const streamingState = this.getSessionStreamingState(session.id);
         if (streamingState.isStreaming) return;
 
+        // Get the last user message to scroll to top
+        const messages = await chatDB.getSessionMessages(session.id);
+        const lastUserMessage = messages.reverse().find(m => m.role === 'user');
+
         // Create abort controller for this stream
         const abortController = new AbortController();
         this.setSessionStreamingState(session.id, true, abortController);
+
+        // Pause auto-scroll for streaming (set immediately)
+        this.isAutoScrollPaused = true;
+
+        // Scroll last user message to top after a brief delay
+        if (lastUserMessage && lastUserMessage.id) {
+            setTimeout(() => {
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(() => {
+                        this.scrollUserMessageToTop(lastUserMessage.id);
+                        // Check button visibility after scrolling
+                        setTimeout(() => this.updateScrollButtonVisibility(), 100);
+                    });
+                });
+            }, 50);
+        }
 
         try {
             // Automatically acquire API key if needed
@@ -962,6 +1136,9 @@ class ChatApp {
             }
         } finally {
             this.setSessionStreamingState(session.id, false, null);
+            // Reset auto-scroll state and hide button
+            this.isAutoScrollPaused = false;
+            this.updateScrollButtonVisibility();
             requestAnimationFrame(() => {
                 this.elements.messageInput.focus();
             });
@@ -1018,7 +1195,8 @@ class ChatApp {
             if (searchEnabled) {
                 metadata.searchEnabled = true;
             }
-            await this.addMessage('user', content || '', metadata);
+            this.isAutoScrollPaused = true;
+            const userMessage = await this.addMessage('user', content || '', metadata);
 
             // Clear input and files
             this.elements.messageInput.value = '';
@@ -1027,6 +1205,22 @@ class ChatApp {
             this.updateFileCountBadge();
             this.updateInputState();
             this.elements.messageInput.style.height = '24px';
+
+            // Auto-scroll remains paused while the response streams
+
+            // Scroll user message to top after a brief delay to ensure rendering
+            if (userMessage && userMessage.id) {
+                // Use setTimeout with RAF to ensure message is fully rendered
+                setTimeout(() => {
+                    requestAnimationFrame(() => {
+                        requestAnimationFrame(() => {
+                            this.scrollUserMessageToTop(userMessage.id);
+                            // Check button visibility after scrolling
+                            setTimeout(() => this.updateScrollButtonVisibility(), 100);
+                        });
+                    });
+                }, 50);
+            }
 
             // Automatically acquire API key if needed
             const isKeyExpired = session.expiresAt ? new Date(session.expiresAt) <= new Date() : true;
@@ -1305,6 +1499,9 @@ class ChatApp {
         } finally {
             // Clear streaming state for this session
             this.setSessionStreamingState(session.id, false, null);
+            // Reset auto-scroll state and hide button
+            this.isAutoScrollPaused = false;
+            this.updateScrollButtonVisibility();
             // Use requestAnimationFrame to ensure focus happens after UI updates
             requestAnimationFrame(() => {
                 this.elements.messageInput.focus();
@@ -1323,7 +1520,9 @@ class ChatApp {
         const id = 'typing-' + Date.now();
         const typingHtml = buildTypingIndicator(id, providerName);
         this.elements.messagesContainer.insertAdjacentHTML('beforeend', typingHtml);
-        this.scrollToBottom(true);
+        if (!this.isAutoScrollPaused) {
+            this.scrollToBottom(true);
+        }
         return id;
     }
 

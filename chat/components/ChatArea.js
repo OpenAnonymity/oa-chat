@@ -154,7 +154,8 @@ export default class ChatArea {
         this.renderLatex();
 
         // Scroll to bottom after rendering
-        this.scrollToBottom();
+        this.scrollToBottom(true);
+        this.app.updateScrollButtonVisibility();
 
         // Update message navigation if it exists
         if (this.app.messageNavigation) {
@@ -185,9 +186,15 @@ export default class ChatArea {
      * Scrolls the chat area to the bottom.
      * Uses requestAnimationFrame to ensure rendering is complete.
      */
-    scrollToBottom() {
+    scrollToBottom(force = false) {
+        if (!force && this.app.isAutoScrollPaused) {
+            return;
+        }
         requestAnimationFrame(() => {
-            this.app.elements.chatArea.scrollTop = this.app.elements.chatArea.scrollHeight;
+            const chatArea = this.app.elements.chatArea;
+            if (chatArea) {
+                chatArea.scrollTop = chatArea.scrollHeight;
+            }
         });
     }
 
@@ -217,8 +224,8 @@ export default class ChatArea {
                 }
             }
         }
-        // Keep scrolling to bottom during streaming
-        this.app.elements.chatArea.scrollTop = this.app.elements.chatArea.scrollHeight;
+        // Update scroll button visibility based on content overflow
+        this.app.updateScrollButtonVisibility();
     }
 
     /**
@@ -261,8 +268,8 @@ export default class ChatArea {
             }
         }
 
-        // Keep scrolling to bottom during reasoning streaming
-        this.app.elements.chatArea.scrollTop = this.app.elements.chatArea.scrollHeight;
+        // Update scroll button visibility based on content overflow
+        this.app.updateScrollButtonVisibility();
     }
     
     /**
@@ -496,8 +503,8 @@ export default class ChatArea {
             imageBubble.innerHTML = buildGeneratedImages(images);
         }
         
-        // Keep scrolling to bottom during streaming
-        this.scrollToBottom();
+        // Update scroll button visibility based on content overflow
+        this.app.updateScrollButtonVisibility();
     }
 
     /**
@@ -546,6 +553,7 @@ export default class ChatArea {
 
         // Scroll to bottom
         this.scrollToBottom();
+        this.app.updateScrollButtonVisibility();
 
         // Update message navigation
         if (this.app.messageNavigation) {
