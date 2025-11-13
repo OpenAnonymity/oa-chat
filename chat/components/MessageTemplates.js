@@ -234,14 +234,14 @@ function buildTokenDisplay(message) {
  */
 function extractReasoningSummaries(reasoning) {
     if (!reasoning) return [];
-    
+
     const lines = reasoning.trim().split('\n');
     const summaries = [];
-    
+
     for (const line of lines) {
         const trimmedLine = line.trim();
         if (!trimmedLine) continue;
-        
+
         // Check for markdown headings
         const headingMatch = trimmedLine.match(/^(#+)\s*(.+)$/);
         if (headingMatch) {
@@ -250,7 +250,7 @@ function extractReasoningSummaries(reasoning) {
             summaries.push({ type: 'heading', level, text });
             continue;
         }
-        
+
         // Check for bold text (potential summary markers)
         // Match bold text that appears at the start or middle of a line
         const boldMatches = trimmedLine.matchAll(/\*\*(.+?)\*\*/g);
@@ -262,7 +262,7 @@ function extractReasoningSummaries(reasoning) {
             }
         }
     }
-    
+
     return summaries;
 }
 
@@ -273,9 +273,9 @@ function extractReasoningSummaries(reasoning) {
  */
 function formatReasoningDuration(durationMs) {
     if (!durationMs) return '';
-    
+
     const seconds = Math.round(durationMs / 1000);
-    
+
     if (seconds < 60) {
         return `Thought for ${seconds}s`;
     } else {
@@ -299,55 +299,55 @@ function generateReasoningSubtitle(reasoning, reasoningDuration) {
     if (reasoningDuration) {
         return formatReasoningDuration(reasoningDuration);
     }
-    
+
     if (!reasoning || reasoning.trim().length === 0) {
         return 'Thinking...';
     }
-    
+
     const MAX_LENGTH = 150;
     const summaries = extractReasoningSummaries(reasoning);
-    
+
     // If we have summaries, use ONLY the last one (current step)
     if (summaries.length > 0) {
         const lastSummary = summaries[summaries.length - 1];
         const summaryText = lastSummary.text;
-        
-        return summaryText.length > MAX_LENGTH 
-            ? summaryText.substring(0, MAX_LENGTH - 3) + '...' 
+
+        return summaryText.length > MAX_LENGTH
+            ? summaryText.substring(0, MAX_LENGTH - 3) + '...'
             : summaryText;
     }
-    
+
     // Fallback: look for the last substantial line that isn't too detailed
     const lines = reasoning.trim().split('\n');
     for (let i = lines.length - 1; i >= 0; i--) {
         const line = lines[i].trim();
         if (!line) continue;
-        
+
         // Skip lines that look like detailed explanations
-        if (line.includes('I see that') || 
-            line.includes('I think') || 
+        if (line.includes('I see that') ||
+            line.includes('I think') ||
             line.includes('I should') ||
             line.includes('I might') ||
             line.length > 200) {
             continue;
         }
-        
+
         // Use this line if it's a reasonable length
         if (line.length > 10 && line.length < 150) {
-            return line.length > MAX_LENGTH 
-                ? line.substring(0, MAX_LENGTH - 3) + '...' 
+            return line.length > MAX_LENGTH
+                ? line.substring(0, MAX_LENGTH - 3) + '...'
                 : line;
         }
     }
-    
+
     // Final fallback
     const lastLine = lines[lines.length - 1].trim();
     if (lastLine) {
-        return lastLine.length > MAX_LENGTH 
-            ? lastLine.substring(0, MAX_LENGTH - 3) + '...' 
+        return lastLine.length > MAX_LENGTH
+            ? lastLine.substring(0, MAX_LENGTH - 3) + '...'
             : lastLine;
     }
-    
+
     return 'Reasoning complete';
 }
 
@@ -362,7 +362,7 @@ function generateReasoningSubtitle(reasoning, reasoningDuration) {
  */
 function buildReasoningTrace(reasoning, messageId, isStreaming = false, processContent, reasoningDuration) {
     if (!reasoning && !isStreaming) return '';
-    
+
     const reasoningId = `reasoning-${messageId}`;
     const contentId = `reasoning-content-${messageId}`;
     const toggleId = `reasoning-toggle-${messageId}`;
@@ -370,25 +370,29 @@ function buildReasoningTrace(reasoning, messageId, isStreaming = false, processC
 
     const contentVisibilityClass = 'hidden';
     const chevronRotation = '';
-    
+
     // Trim whitespace and process content appropriately
     // During streaming, reasoning will be plain text
     // After streaming, it will be processed with markdown
     const trimmedReasoning = (reasoning || '').trim();
-    const reasoningHtml = processContent ? processContent(trimmedReasoning) : trimmedReasoning;
-    
+    // For streaming, start with empty content (will be filled as plain text by ChatArea updates)
+    const reasoningHtml = isStreaming
+        ? ''
+        : (processContent ? processContent(trimmedReasoning) : trimmedReasoning);
+
     // Generate subtitle - show timing for completed reasoning, summary during streaming
     const subtitle = isStreaming ? 'Thinking...' : generateReasoningSubtitle(reasoning, reasoningDuration);
-    
+
     // Full-width during streaming to show more subtitle, compact when finished
     const buttonWidthClass = isStreaming ? 'w-full' : '';
     const buttonFlexClass = isStreaming ? 'flex' : 'inline-flex';
     const spanFlexClass = isStreaming ? 'flex-1 truncate' : '';
     const spanAnimationClass = isStreaming ? 'reasoning-subtitle-streaming' : '';
+    const contentStreamingClass = isStreaming ? 'streaming' : '';
 
     return `
         <div class="reasoning-trace w-full" id="${reasoningId}">
-            <button 
+            <button
                 class="reasoning-toggle ${buttonFlexClass} items-center gap-2 ${buttonWidthClass} px-2 py-1 text-left hover:bg-slate-2 rounded transition-colors"
                 id="${toggleId}"
                 onclick="window.toggleReasoning('${messageId}')"
@@ -401,7 +405,7 @@ function buildReasoningTrace(reasoning, messageId, isStreaming = false, processC
                     <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
                 </svg>
             </button>
-            <div class="reasoning-content ${contentVisibilityClass} text-xs text-muted-foreground overflow-auto max-h-96" id="${contentId}">${reasoningHtml}</div>
+            <div class="reasoning-content ${contentStreamingClass} ${contentVisibilityClass} text-xs text-muted-foreground overflow-auto max-h-96" id="${contentId}">${reasoningHtml}</div>
         </div>
     `;
 }
@@ -422,8 +426,8 @@ function buildAssistantMessage(message, helpers, providerName, modelName) {
 
     // Build reasoning trace if present
     const reasoningBubble = buildReasoningTrace(
-        message.reasoning, 
-        message.id, 
+        message.reasoning,
+        message.id,
         message.streamingReasoning || false,
         processContentWithLatex,
         message.reasoningDuration
@@ -598,12 +602,12 @@ if (typeof window !== 'undefined') {
     window.MessageTemplates.buildGeneratedImages = buildGeneratedImages;
     window.MessageTemplates.buildReasoningTrace = buildReasoningTrace;
     window.buildMessageHTML = buildMessageHTML; // Make buildMessageHTML globally available
-    
+
     // Global function to toggle reasoning trace visibility
     window.toggleReasoning = function(messageId) {
         const contentEl = document.getElementById(`reasoning-content-${messageId}`);
         const chevronEl = document.querySelector(`#reasoning-toggle-${messageId} .reasoning-chevron`);
-        
+
         if (contentEl && chevronEl) {
             const isHidden = contentEl.classList.contains('hidden');
             if (isHidden) {

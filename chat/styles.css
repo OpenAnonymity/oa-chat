@@ -280,26 +280,60 @@
 }
 
 .reasoning-content {
-    padding: 0.5rem 0 0 0;
+    padding: 0.25rem 0 0 0;
     margin-left: 1.75rem;
     line-height: 1.6;
-    white-space: pre-wrap;
+    white-space: normal; /* avoid rendering inter-element newlines as extra lines */
     word-wrap: break-word;
     opacity: 0.85;
 }
 
+/* During streaming we show plain text with preserved newlines */
+.reasoning-content.streaming {
+    white-space: pre-line;
+}
+
 /* Remove extra margins and whitespace from markdown elements in reasoning */
 .reasoning-content > *:first-child {
-    margin-top: 0 !important;
+    margin-top: 0;
 }
 
 .reasoning-content > *:last-child {
     margin-bottom: 0 !important;
 }
 
-/* Spacing between paragraphs and headings */
+/* Spacing between paragraphs */
 .reasoning-content p {
-    margin: 0.5em 0;
+    margin: 0.75em 0;
+}
+
+/* First paragraph has no top margin */
+.reasoning-content p:first-child {
+    margin-top: 0;
+}
+
+/* Bold subtitles as standalone paragraphs */
+.reasoning-content p:has(> strong:only-child) {
+    /* Create more space before the subtitle and tighten after it */
+    margin-top: 0.8em;
+    margin-bottom: 0.35em;
+}
+
+/* Style the inner strong but let the paragraph carry spacing */
+.reasoning-content p > strong:only-child {
+    display: block;
+    font-weight: 600;
+    color: hsl(var(--color-foreground));
+}
+
+/* If the very first paragraph is a subtitle (bold-only), allow top spacing */
+.reasoning-content > p:first-child:has(> strong:only-child) {
+    margin-top: 0.5em;
+}
+
+/* Compact the element immediately following a bold-only subtitle */
+.reasoning-content p:has(> strong:only-child) + * {
+    margin-top: 2px;  /* this adds space before paragraphs */
 }
 
 /* Enhanced heading styles for clear visual hierarchy */
@@ -309,7 +343,8 @@
 .reasoning-content h4,
 .reasoning-content h5,
 .reasoning-content h6 {
-    margin: 0.75em 0 0.5em 0;
+    /* Consistent spacing before headings, slightly tighter after */
+    margin: 0.8em 0 0.3em 0;
     font-weight: 600;
     color: hsl(var(--color-foreground));
     opacity: 1;
@@ -341,7 +376,8 @@
 .reasoning-content h4:first-child,
 .reasoning-content h5:first-child,
 .reasoning-content h6:first-child {
-    margin-top: 0;
+    /* Slightly less space before the first heading */
+    margin-top: 0.5em;
 }
 
 /* Make bold text (summaries) stand out more clearly */

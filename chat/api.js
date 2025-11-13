@@ -395,7 +395,7 @@ class OpenRouterAPI {
         let accumulatedContent = '';
         let accumulatedReasoning = '';
         let hasReceivedFirstToken = false;
-        
+
         // Buffering for reasoning chunks to reduce UI updates
         let reasoningBuffer = '';
         let reasoningBufferTimer = null;
@@ -479,7 +479,7 @@ class OpenRouterAPI {
             // Log the streaming request
             if (window.networkLogger) {
                 const logBody = { model: modelId, messages: messages.length + ' messages', stream: true };
-                
+
                 window.networkLogger.logRequest({
                     type: 'openrouter',
                     method: 'POST',
@@ -524,32 +524,32 @@ class OpenRouterAPI {
                         try {
                             const parsed = JSON.parse(data);
 
-                            
-                            
+
+
                             // Check for reasoning in various possible formats
                             // OpenRouter might send reasoning in different ways
-                            if (parsed.type === 'response.reasoning.delta' || 
+                            if (parsed.type === 'response.reasoning.delta' ||
                                 parsed.reasoning_delta ||
                                 (parsed.choices?.[0]?.delta?.reasoning)) {
-                                
-                                const reasoningContent = parsed.delta || 
-                                                       parsed.reasoning_delta || 
+
+                                const reasoningContent = parsed.delta ||
+                                                       parsed.reasoning_delta ||
                                                        parsed.choices?.[0]?.delta?.reasoning || '';
-                                
+
                                 if (reasoningContent && onReasoningChunk) {
                                     hasReceivedFirstToken = true;
                                     accumulatedReasoning += reasoningContent;
-                                    
+
                                     // Buffer reasoning chunks to reduce UI updates
                                     reasoningBuffer += reasoningContent;
-                                    
+
                                     // Clear existing timer
                                     if (reasoningBufferTimer) {
                                         clearTimeout(reasoningBufferTimer);
                                     }
-                                    
+
                                     // Flush buffer if it's large enough or on newline
-                                    if (reasoningBuffer.length >= REASONING_BUFFER_SIZE || 
+                                    if (reasoningBuffer.length >= REASONING_BUFFER_SIZE ||
                                         reasoningContent.includes('\n')) {
                                         flushReasoningBuffer();
                                     } else {
@@ -557,7 +557,7 @@ class OpenRouterAPI {
                                         reasoningBufferTimer = setTimeout(flushReasoningBuffer, REASONING_BUFFER_DELAY);
                                     }
                                 }
-                                
+
                                 // Skip normal content processing if this was a reasoning event
                                 if (parsed.type === 'response.reasoning.delta') continue;
                             }
@@ -643,7 +643,7 @@ class OpenRouterAPI {
                                 totalTokens = parsed.usage.total_tokens || 0;
                                 promptTokens = parsed.usage.prompt_tokens || 0;
                                 completionTokens = parsed.usage.completion_tokens || 0;
-                                
+
 
                                 // Update token count with final accurate values
                                 if (onTokenUpdate) {
@@ -682,7 +682,7 @@ class OpenRouterAPI {
         } catch (error) {
             // Flush any remaining reasoning buffer before handling error
             flushReasoningBuffer();
-            
+
             // Handle abort errors
             if (error.name === 'AbortError') {
                 error.isCancelled = true;
@@ -693,7 +693,7 @@ class OpenRouterAPI {
             // Log failed request
             if (window.networkLogger) {
                 const logBody = { model: modelId, messages: messages.length + ' messages', stream: true };
-                
+
                 window.networkLogger.logRequest({
                     type: 'openrouter',
                     method: 'POST',

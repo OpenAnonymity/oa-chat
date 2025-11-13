@@ -11,6 +11,7 @@ import { buildTypingIndicator } from './components/MessageTemplates.js';
 import apiKeyStore from './services/apiKeyStore.js';
 import themeManager from './services/themeManager.js';
 import { downloadInferenceTickets } from './services/fileUtils.js';
+import { parseReasoningContent } from './services/reasoningParser.js';
 
 const GPT5_CHAT_MODEL_ID = 'openai/gpt-5-chat';
 const GPT5_CHAT_DISPLAY_NAME = 'OpenAI: GPT-5 Instant';
@@ -1067,7 +1068,9 @@ class ChatApp {
 
                 // Save the final message content with token data and reasoning
                 streamingMessage.content = streamedContent;
-                streamingMessage.reasoning = tokenData.reasoning || streamedReasoning || null;
+                const rawReasoning = tokenData.reasoning || streamedReasoning || null;
+                // Parse and save the cleaned reasoning
+                streamingMessage.reasoning = rawReasoning ? parseReasoningContent(rawReasoning) : null;
                 streamingMessage.tokenCount = tokenData.totalTokens || tokenData.completionTokens || streamingTokenCount;
                 streamingMessage.model = tokenData.model || modelNameToUse;
                 streamingMessage.streamingTokens = null;
@@ -1099,7 +1102,8 @@ class ChatApp {
                     if (streamingMessage && firstChunk) {
                         if (streamedContent.trim() || streamedReasoning.trim()) {
                             streamingMessage.content = streamedContent;
-                            streamingMessage.reasoning = streamedReasoning;
+                            // Parse and save the cleaned reasoning
+                            streamingMessage.reasoning = streamedReasoning ? parseReasoningContent(streamedReasoning) : null;
                             streamingMessage.tokenCount = null;
                             streamingMessage.streamingTokens = null;
                             streamingMessage.streamingReasoning = false;
@@ -1422,7 +1426,9 @@ class ChatApp {
 
                 // Save the final message content with token data and reasoning
                 streamingMessage.content = streamedContent;
-                streamingMessage.reasoning = tokenData.reasoning || streamedReasoning || null;
+                const rawReasoning = tokenData.reasoning || streamedReasoning || null;
+                // Parse and save the cleaned reasoning
+                streamingMessage.reasoning = rawReasoning ? parseReasoningContent(rawReasoning) : null;
                 streamingMessage.tokenCount = tokenData.completionTokens || streamingTokenCount;
                 streamingMessage.model = tokenData.model || modelNameToUse;
                 streamingMessage.streamingTokens = null; // Clear streaming tokens after completion
@@ -1456,7 +1462,8 @@ class ChatApp {
                         if (streamedContent.trim() || streamedReasoning.trim()) {
                             // Save the partial content with a note
                             streamingMessage.content = streamedContent;
-                            streamingMessage.reasoning = streamedReasoning;
+                            // Parse and save the cleaned reasoning
+                            streamingMessage.reasoning = streamedReasoning ? parseReasoningContent(streamedReasoning) : null;
                             streamingMessage.tokenCount = null;
                             streamingMessage.streamingTokens = null;
                             streamingMessage.streamingReasoning = false;
