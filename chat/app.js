@@ -21,7 +21,7 @@ const DELETE_HISTORY_COPY = {
     title: 'Delete all chat history',
     body: 'Past chat history is stored locally on this browser. Prompts and responses are end-to-end encrypted to and from the model providers who only see anonymous traffic and cannot identify, link, or otherwise track you.',
     highlightHeading: 'Deletion is irreversible!',
-    highlightBody: 'This is the only copy of your chat history. Deletion cannot be undone. You can <a href="#download-chats-link" class="text-primary underline-offset-2 hover:underline focus-visible:underline">download a copy</a> of your chat history before proceeding.',
+    highlightBody: 'This is the only copy of your chat history. Deletion cannot be undone. You can <a href="#download-chats-link" class="text-primary underline-offset-2 hover:underline focus-visible:underline dark:text-blue-300">download a copy</a> of your chat history before proceeding.',
     cancelLabel: 'Cancel',
     confirmLabel: 'Delete everything'
 };
