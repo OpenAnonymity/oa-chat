@@ -20,12 +20,6 @@ Current date: ${new Date().toLocaleDateString()}.
 // const getSystemPrompt = () => '';
 // Example:
 // const getSystemPrompt = () => `You are a helpful AI assistant.
-//
-// Follow these guidelines:
-// - Be concise and clear
-// - Provide accurate information
-// - Be respectful and professional`.trim();
-
 
 class OpenRouterAPI {
     constructor() {
