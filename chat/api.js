@@ -11,7 +11,7 @@ Formatting Rules:
 - Use Markdown for lists, tables, and styling.
 - Use \`\`\`code fences\`\`\` for all code blocks.
 - Format file names, paths, and function names with \`inline code\` backticks.
-- **For all mathematical expressions, you must use \(...\) for inline math and \[...\] for block math.**
+- **For all mathematical expressions, you must use \\(...\\) for inline math and \\[...\\] for block math.**
 
 Current date: ${new Date().toLocaleDateString()}.
 `.trim();
