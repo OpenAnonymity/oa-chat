@@ -850,7 +850,7 @@ export function buildMessageHTML(message, helpers, models, sessionModelName) {
         return buildUserMessage(message);
     } else {
         // Determine provider name and model name
-        const modelName = sessionModelName || 'OpenAI: GPT-5 Instant';
+        const modelName = sessionModelName || 'OpenAI: GPT-5.1 Instant';
         const model = models.find(m => m.name === modelName);
         const providerName = model ? model.provider : 'OpenAI';
 

@@ -4,14 +4,14 @@
 // Modify this function to change the default AI behavior
 // Use template literals (backticks) for multi-line prompts
 // This is a function so dynamic values (like date) are evaluated per request
-const getSystemPrompt = () => `
-You are a highly capable, thoughtful, and precise assistant. Your goal is to deeply understand the user's intent, ask clarifying questions when needed, think step-by-step through complex problems, provide clear, direct, and concise answers, and proactively anticipate helpful follow-up information. Always prioritize being truthful, nuanced, insightful, and efficient, tailoring your responses specifically to the user's needs and preferences. Importantly, be privacy-aware: never request user data and, when appropriate, remind users not to share sensitive information or that their inputs may be revealing their identity.
+const getSystemPrompt = (modelId) => `
+You are ${modelId ? `${modelId}, ` : ''}a highly capable, thoughtful, and precise assistant. Your goal is to deeply understand the user's intent, ask clarifying questions when needed, think step-by-step through complex problems, provide clear, direct, and concise answers, and proactively anticipate helpful follow-up information. Always prioritize being truthful, nuanced, insightful, and efficient, tailoring your responses specifically to the user's needs and preferences. Importantly, be privacy-aware: never request user data and, when appropriate, remind users not to share sensitive information or that their inputs may be revealing their identity.
 
 Formatting Rules:
 - Use Markdown for lists, tables, and styling.
 - Use \`\`\`code fences\`\`\` for all code blocks.
 - Format file names, paths, and function names with \`inline code\` backticks.
-- **For all mathematical expressions, you must use dollar-sign delimiters. Use $...$ for inline math and $$...$$ for block math.**
+- **For all mathematical expressions, you must use \(...\) for inline math and \[...\] for block math.**
 
 Current date: ${new Date().toLocaleDateString()}.
 `.trim();
@@ -34,7 +34,9 @@ class OpenRouterAPI {
         // Custom display name overrides
         // Map model ID or default name to custom display name
         this.displayNameOverrides = {
+            'openai/gpt-5.1-chat': 'OpenAI: GPT-5.1 Instant',
             'openai/gpt-5-chat': 'OpenAI: GPT-5 Instant',
+            'openai/gpt-5.1': 'OpenAI: GPT-5.1 Thinking',
             'openai/gpt-5': 'OpenAI: GPT-5 Thinking',
             // Add more customizations here as needed
             // Examples:
@@ -113,7 +115,7 @@ class OpenRouterAPI {
 
             // Return a fallback list of models
             return [
-                { name: 'OpenAI: GPT-5 Instant', id: 'openai/gpt-5-chat', category: 'OpenAI', provider: 'OpenAI' },
+                { name: 'OpenAI: GPT-5.1 Instant', id: 'openai/gpt-5.1-chat', category: 'OpenAI', provider: 'OpenAI' },
             ];
         }
     }
@@ -230,7 +232,11 @@ class OpenRouterAPI {
             return 13333;
         }
         // Check for GPT-5 Thinking (exclude chat variant)
-        if (modelId.includes('gpt-5') && !modelId.includes('gpt-5-chat')) {
+        if (
+            modelId.includes('gpt-5') &&
+            !modelId.includes('gpt-5-chat') &&
+            !modelId.includes('gpt-5.1-chat')
+        ) {
             return 100000;
         }
         return undefined; // Use API default for other models
@@ -239,6 +245,7 @@ class OpenRouterAPI {
     // Fallback models if API fails
     getFallbackModels() {
         return [
+            { id: 'openai/gpt-5.1-chat', name: 'OpenAI: GPT-5.1 Instant', category: 'Flagship models', provider: 'OpenAI' },
             { id: 'openai/gpt-4', name: 'GPT-4', category: 'Flagship models', provider: 'OpenAI' },
             { id: 'openai/gpt-4-turbo', name: 'GPT-4 Turbo', category: 'Flagship models', provider: 'OpenAI' },
             { id: 'openai/gpt-3.5-turbo', name: 'GPT-3.5 Turbo', category: 'Flagship models', provider: 'OpenAI' },
@@ -265,7 +272,7 @@ class OpenRouterAPI {
         };
 
         // Prepend system prompt if it exists
-        const systemPrompt = getSystemPrompt();
+        const systemPrompt = getSystemPrompt(modelId);
         const messagesWithSystem = systemPrompt
             ? [{ role: 'system', content: systemPrompt }, ...messages]
             : messages;
@@ -521,7 +528,7 @@ class OpenRouterAPI {
 
         try {
             // Prepend system prompt if it exists
-            const systemPrompt = getSystemPrompt();
+            const systemPrompt = getSystemPrompt(effectiveModelId);
             const messagesWithSystem = systemPrompt
                 ? [{ role: 'system', content: systemPrompt }, ...processedMessages]
                 : processedMessages;

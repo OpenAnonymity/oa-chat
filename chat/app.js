@@ -14,9 +14,9 @@ import { downloadInferenceTickets } from './services/fileUtils.js';
 import { parseReasoningContent } from './services/reasoningParser.js';
 import { fetchUrlMetadata } from './services/urlMetadata.js';
 
-const GPT5_CHAT_MODEL_ID = 'openai/gpt-5-chat';
-const GPT5_CHAT_DISPLAY_NAME = 'OpenAI: GPT-5 Instant';
-const LEGACY_GPT5_DISPLAY_NAMES = new Set(['OpenAI: GPT-5 Chat', 'GPT-5 Chat']);
+const DEFAULT_MODEL_ID = 'openai/gpt-5.1-chat';
+const DEFAULT_MODEL_DISPLAY_NAME = 'OpenAI: GPT-5.1 Instant';
+const DEFAULT_MODEL_ALIASES = new Set(['OpenAI: GPT-5.1 Chat', 'GPT-5.1 Chat']);
 
 /**
  * ChatApp - Main application controller
@@ -795,9 +795,18 @@ class ChatApp {
         if (!name) {
             return name;
         }
-        if (LEGACY_GPT5_DISPLAY_NAMES.has(name)) {
-            return GPT5_CHAT_DISPLAY_NAME;
+
+        if (name.includes('/')) {
+            if (typeof openRouterAPI !== 'undefined' && typeof openRouterAPI.getDisplayName === 'function') {
+                return openRouterAPI.getDisplayName(name, name);
+            }
+            return name;
         }
+
+        if (DEFAULT_MODEL_ALIASES.has(name)) {
+            return DEFAULT_MODEL_DISPLAY_NAME;
+        }
+
         return name;
     }
 
@@ -944,7 +953,7 @@ class ChatApp {
             isStreaming,
             abortController
         });
-        
+
         // Start periodic button visibility check when streaming starts
         if (isStreaming && !this.scrollButtonCheckInterval) {
             this.scrollButtonCheckInterval = setInterval(() => {
@@ -954,7 +963,7 @@ class ChatApp {
             clearInterval(this.scrollButtonCheckInterval);
             this.scrollButtonCheckInterval = null;
         }
-        
+
         // Update UI when streaming state changes
         this.updateInputState();
     }
@@ -1174,9 +1183,9 @@ class ChatApp {
             }
 
             if (!modelNameToUse) {
-                const gpt5Model = this.state.models.find(m => m.id === GPT5_CHAT_MODEL_ID);
-                if (gpt5Model) {
-                    modelNameToUse = this.normalizeModelName(gpt5Model.name);
+                const defaultModel = this.state.models.find(m => m.id === DEFAULT_MODEL_ID);
+                if (defaultModel) {
+                    modelNameToUse = this.normalizeModelName(defaultModel.name);
                 } else {
                     const gpt4oModel = this.state.models.find(m => m.name.toLowerCase().includes('gpt-4o'));
                     if (gpt4oModel) {
@@ -1503,11 +1512,11 @@ class ChatApp {
                 await chatDB.saveSession(session);
             }
 
-            // Use GPT-5 Chat as default
+            // Use GPT-5.1 Chat as default
             if (!modelNameToUse) {
-                const gpt5Model = this.state.models.find(m => m.id === GPT5_CHAT_MODEL_ID);
-                if (gpt5Model) {
-                    modelNameToUse = this.normalizeModelName(gpt5Model.name);
+                const defaultModel = this.state.models.find(m => m.id === DEFAULT_MODEL_ID);
+                if (defaultModel) {
+                    modelNameToUse = this.normalizeModelName(defaultModel.name);
                 } else {
                     const gpt4oModel = this.state.models.find(m => m.name.toLowerCase().includes('gpt-4o'));
                     if (gpt4oModel) {
