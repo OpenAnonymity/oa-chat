@@ -479,7 +479,6 @@
     gap: 0.5rem;
     overflow-x: auto;
     padding: 0.25rem 0.5rem;
-    scroll-behavior: smooth;
     -webkit-overflow-scrolling: touch;
 }
 
@@ -525,6 +524,26 @@
     border-color: hsl(var(--color-primary) / 0.3);
     transform: translateY(-2px);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+/* During active wheel scrolling, optimize for smooth scrolling */
+.citations-carousel.wheel-active .citation-card-modern {
+    pointer-events: none;
+    will-change: transform;
+}
+
+/* Disable transform animations during carousel scrolling for smooth experience */
+.citations-carousel.is-scrolling .citation-card-modern {
+    transition: none;
+}
+
+.citations-carousel.is-scrolling .citation-card-modern:hover {
+    transform: none;
+}
+
+/* Optimize carousel for smooth scrolling */
+.citations-carousel {
+    will-change: scroll-position;
 }
 
 .citation-card-header {

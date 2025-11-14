@@ -154,6 +154,9 @@ export default class ChatArea {
         // Render LaTeX in all message content elements
         this.renderLatex();
 
+        // Setup citation carousel scrolling
+        this.setupCitationCarouselScroll();
+
         // Scroll to bottom after rendering
         this.scrollToBottom(true);
 
@@ -184,6 +187,96 @@ export default class ChatArea {
                 });
             });
         }
+    }
+
+    /**
+     * Sets up horizontal mouse wheel scrolling for citation carousels.
+     * Converts vertical wheel events to horizontal scrolling when hovering over carousels.
+     */
+    setupCitationCarouselScroll() {
+        const carousels = document.querySelectorAll('.citations-carousel');
+        carousels.forEach(carousel => {
+            // Remove any existing listeners to prevent duplicates
+            if (carousel._wheelHandler) {
+                carousel.removeEventListener('wheel', carousel._wheelHandler);
+            }
+            if (carousel._mouseEnterHandler) {
+                carousel.removeEventListener('mouseenter', carousel._mouseEnterHandler);
+            }
+            if (carousel._mouseLeaveHandler) {
+                carousel.removeEventListener('mouseleave', carousel._mouseLeaveHandler);
+            }
+            
+            // Mouse enter handler
+            carousel._mouseEnterHandler = () => {
+                // Add a class to indicate mouse is over carousel
+                carousel.classList.add('hover-active');
+            };
+            
+            // Mouse leave handler
+            carousel._mouseLeaveHandler = () => {
+                carousel.classList.remove('hover-active');
+                carousel.classList.remove('is-scrolling');
+                carousel.classList.remove('wheel-active');
+                if (carousel._scrollTimeout) {
+                    clearTimeout(carousel._scrollTimeout);
+                }
+            };
+            
+            // Wheel event handler
+            carousel._wheelHandler = (e) => {
+                // Only handle if we have scroll delta
+                if (e.deltaY === 0 && e.deltaX === 0) return;
+                
+                // Check if this carousel has horizontal overflow
+                if (carousel.scrollWidth <= carousel.clientWidth) return;
+                
+                // Prevent default vertical scrolling only if we have vertical delta
+                if (e.deltaY !== 0) {
+                    e.preventDefault();
+                }
+                
+                // Add scrolling classes
+                carousel.classList.add('is-scrolling');
+                carousel.classList.add('wheel-active');
+                
+                // Clear existing timeout
+                if (carousel._scrollTimeout) {
+                    clearTimeout(carousel._scrollTimeout);
+                }
+                
+                // Calculate scroll amount
+                // Support both vertical wheel (converted to horizontal) and native horizontal wheel
+                const verticalDelta = e.deltaY * 0.8;
+                const horizontalDelta = e.deltaX * 0.8;
+                
+                // Use horizontal delta if available, otherwise use vertical
+                const scrollAmount = horizontalDelta !== 0 ? horizontalDelta : verticalDelta;
+                
+                // Apply scroll
+                carousel.scrollLeft += scrollAmount;
+                
+                // Remove scrolling classes after a brief delay
+                carousel._scrollTimeout = setTimeout(() => {
+                    carousel.classList.remove('is-scrolling');
+                    carousel.classList.remove('wheel-active');
+                }, 100);
+            };
+            
+            // Add event listeners
+            carousel.addEventListener('mouseenter', carousel._mouseEnterHandler);
+            carousel.addEventListener('mouseleave', carousel._mouseLeaveHandler);
+            carousel.addEventListener('wheel', carousel._wheelHandler, { passive: false });
+            
+            // Also add wheel handlers to all citation cards to ensure smooth scrolling
+            const cards = carousel.querySelectorAll('.citation-card-modern');
+            cards.forEach(card => {
+                card.addEventListener('wheel', (e) => {
+                    // Forward the wheel event to the carousel's handler
+                    carousel._wheelHandler(e);
+                }, { passive: false });
+            });
+        });
     }
 
     /**
@@ -634,6 +727,8 @@ export default class ChatArea {
                         throwOnError: false
                     });
                 }
+                // Setup citation carousel scrolling for the updated message
+                this.setupCitationCarouselScroll();
             }
         }
     }
