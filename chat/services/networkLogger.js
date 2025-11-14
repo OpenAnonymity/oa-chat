@@ -46,6 +46,7 @@ class NetworkLogger {
             error: details.error || null,
             message: details.message || '',
             action: details.action || '',
+            isAborted: details.isAborted || false,
         };
 
         // Add to beginning of array (most recent first)

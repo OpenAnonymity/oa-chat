@@ -17,8 +17,10 @@ export function getHostFromUrl(url) {
     }
 }
 
-export function getStatusIcon(status) {
-    if (status >= 200 && status < 300) {
+export function getStatusIcon(status, isAborted = false) {
+    if (isAborted) {
+        return '⊗'; // Interrupted/stopped icon
+    } else if (status >= 200 && status < 300) {
         return '✓';
     } else if (status === 0) {
         return '✗';
@@ -28,8 +30,10 @@ export function getStatusIcon(status) {
     return '•';
 }
 
-export function getStatusClass(status) {
-    if (status >= 200 && status < 300) {
+export function getStatusClass(status, isAborted = false) {
+    if (isAborted) {
+        return 'text-orange-600'; // Orange for user-interrupted
+    } else if (status >= 200 && status < 300) {
         return 'text-green-600';
     } else if (status === 0) {
         return 'text-red-600';
@@ -39,8 +43,10 @@ export function getStatusClass(status) {
     return 'text-gray-600';
 }
 
-export function getStatusDotClass(status) {
-    if (status >= 200 && status < 300) {
+export function getStatusDotClass(status, isAborted = false) {
+    if (isAborted) {
+        return 'bg-orange-500'; // Orange dot for user-interrupted
+    } else if (status >= 200 && status < 300) {
         return 'bg-green-500';
     } else if (status === 0) {
         return 'bg-red-500';
@@ -159,6 +165,15 @@ export function getActivityDescription(log, detailed = false) {
 
             // Chat completions
             if (path.includes('/chat/completions')) {
+                // Check if this was a user-interrupted request
+                if (log.isAborted) {
+                    if (!detailed) {
+                        return 'Response interrupted by user';
+                    } else {
+                        return 'The model response was stopped by the user. The partial response has been saved and can be continued or regenerated.';
+                    }
+                }
+                
                 if (!detailed) {
                     if (status >= 200 && status < 300) {
                         return 'Response received';
@@ -333,11 +348,12 @@ export function renderNetworkLog(log, isExpanded = false, isMinimal = false) {
                         <div class="flex items-center gap-1">
                             <span class="text-muted-foreground">Status:</span>
                             <span class="font-medium px-1.5 py-0.5 rounded text-[10px] ${
+                                log.isAborted ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400' :
                                 log.status >= 200 && log.status < 300 ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' :
                                 log.status === 0 ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' :
                                 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
                             }">
-                                ${log.status || 'ERROR'}
+                                ${log.isAborted ? 'INTERRUPTED' : (log.status || 'ERROR')}
                             </span>
                         </div>
                         <div class="flex items-center gap-1">

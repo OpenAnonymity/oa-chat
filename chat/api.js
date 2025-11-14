@@ -876,7 +876,8 @@ class OpenRouterAPI {
                         headers: window.networkLogger.sanitizeHeaders(headers),
                         body: logBody
                     },
-                    error: error.message
+                    error: error.message,
+                    isAborted: error.isCancelled === true // Flag user-initiated cancellation
                 });
             }
 

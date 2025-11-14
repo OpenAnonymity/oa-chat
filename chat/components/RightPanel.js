@@ -575,11 +575,12 @@ class RightPanel {
                         <div class="flex items-center gap-1.5">
                             <span class="text-[10px] text-muted-foreground">Status:</span>
                             <span class="text-[10px] font-medium px-1.5 py-0.5 rounded ${
+                                log.isAborted ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400' :
                                 log.status >= 200 && log.status < 300 ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' :
                                 log.status === 0 ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' :
                                 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
                             }">
-                                ${log.status || 'ERROR'}
+                                ${log.isAborted ? 'INTERRUPTED' : (log.status || 'ERROR')}
                             </span>
                         </div>
                         <div class="flex items-center gap-1.5">
@@ -1141,7 +1142,7 @@ class RightPanel {
             const isExpanded = this.expandedLogIds.has(log.id);
             const description = getActivityDescription(log);
             const icon = getActivityIcon(log);
-            const dotClass = getStatusDotClass(log.status);
+            const dotClass = getStatusDotClass(log.status, log.isAborted);
             const isFirst = index === 0;
             const isLast = index === logsToShow.length - 1;
             // Highlight the latest (last in reversed array) with a more visible background
