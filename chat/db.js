@@ -81,6 +81,25 @@ class ChatDatabase {
         });
     }
 
+    async clearAllChats() {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['sessions', 'messages'], 'readwrite');
+            const sessionsStore = transaction.objectStore('sessions');
+            const messagesStore = transaction.objectStore('messages');
+
+            const handleError = (event) => reject(event.target.error);
+
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = handleError;
+
+            const sessionClearRequest = sessionsStore.clear();
+            const messageClearRequest = messagesStore.clear();
+
+            sessionClearRequest.onerror = handleError;
+            messageClearRequest.onerror = handleError;
+        });
+    }
+
     // Messages
     async saveMessage(message) {
         return new Promise((resolve, reject) => {

@@ -65,6 +65,10 @@ class ChatApp {
             fileUploadInput: document.getElementById('file-upload-input'),
             filePreviewsContainer: document.getElementById('file-previews-container'),
             fileCountBadge: document.getElementById('file-count-badge'),
+            deleteHistoryBtn: document.getElementById('delete-history-btn'),
+            deleteHistoryModal: document.getElementById('delete-history-modal'),
+            deleteHistoryConfirmBtn: document.getElementById('confirm-delete-history'),
+            deleteHistoryCancelBtn: document.getElementById('cancel-delete-history'),
         };
 
         this.searchEnabled = false;
@@ -81,6 +85,8 @@ class ChatApp {
         this.isAutoScrollPaused = false; // Track if auto-scroll is paused during streaming
         this.scrollToBottomButton = null; // Reference to the floating scroll-to-bottom button
         this.scrollButtonCheckInterval = null; // Interval for checking button visibility during streaming
+        this.deleteHistoryReturnFocusEl = null;
+        this.isDeletingAllChats = false;
 
         // Link preview state
         this.linkPreviewCard = document.getElementById('link-preview-card');
@@ -1851,6 +1857,133 @@ class ChatApp {
         }
     }
 
+    async deleteAllChats() {
+        // Stop any in-flight streaming to prevent inconsistent state
+        this.sessionStreamingStates.forEach((state) => {
+            if (state?.abortController) {
+                state.abortController.abort();
+            }
+        });
+        this.sessionStreamingStates.clear();
+
+        this.state.sessions = [];
+        this.state.currentSessionId = null;
+
+        if (typeof chatDB.clearAllChats === 'function') {
+            await chatDB.clearAllChats();
+        } else {
+            await this.clearAllChatsIncompatFallback();
+        }
+        await chatDB.saveSetting('currentSessionId', null);
+
+        // Render empty state while the new session is created
+        this.renderSessions();
+        this.renderMessages();
+
+        await this.createSession();
+    }
+
+    async clearAllChatsIncompatFallback() {
+        const sessions = await chatDB.getAllSessions();
+
+        for (const session of sessions) {
+            await chatDB.deleteSession(session.id);
+            await chatDB.deleteSessionMessages(session.id);
+        }
+    }
+
+    openDeleteHistoryModal() {
+        const modal = this.elements.deleteHistoryModal;
+        if (!modal) return;
+
+        this.deleteHistoryReturnFocusEl = document.activeElement;
+        modal.classList.remove('hidden');
+
+        requestAnimationFrame(() => {
+            this.elements.deleteHistoryConfirmBtn?.focus();
+        });
+    }
+
+    closeDeleteHistoryModal() {
+        const modal = this.elements.deleteHistoryModal;
+        if (!modal) return;
+
+        modal.classList.add('hidden');
+
+        if (this.deleteHistoryReturnFocusEl && typeof this.deleteHistoryReturnFocusEl.focus === 'function') {
+            this.deleteHistoryReturnFocusEl.focus();
+        }
+        this.deleteHistoryReturnFocusEl = null;
+    }
+
+    isDeleteHistoryModalOpen() {
+        const modal = this.elements.deleteHistoryModal;
+        if (!modal) return false;
+        return !modal.classList.contains('hidden');
+    }
+
+    async handleConfirmDeleteHistory() {
+        if (this.isDeletingAllChats) return;
+        this.isDeletingAllChats = true;
+
+        const confirmBtn = this.elements.deleteHistoryConfirmBtn;
+        const defaultLabel = confirmBtn?.dataset.originalText || confirmBtn?.textContent?.trim() || 'Delete everything';
+
+        if (confirmBtn) {
+            confirmBtn.dataset.originalText = defaultLabel;
+            confirmBtn.textContent = 'Deleting...';
+            confirmBtn.disabled = true;
+        }
+
+        try {
+            await this.deleteAllChats();
+            this.closeDeleteHistoryModal();
+        } catch (error) {
+            console.error('Failed to delete chat history:', error);
+            window.alert('Unable to delete chat history. Please try again.');
+        } finally {
+            if (confirmBtn) {
+                confirmBtn.disabled = false;
+                confirmBtn.textContent = defaultLabel;
+            }
+            this.isDeletingAllChats = false;
+        }
+    }
+
+    setupDeleteHistoryControls() {
+        const {
+            deleteHistoryBtn,
+            deleteHistoryCancelBtn,
+            deleteHistoryConfirmBtn,
+            deleteHistoryModal
+        } = this.elements;
+
+        if (!deleteHistoryBtn || !deleteHistoryCancelBtn || !deleteHistoryConfirmBtn || !deleteHistoryModal) {
+            return;
+        }
+
+        deleteHistoryBtn.addEventListener('click', () => {
+            this.openDeleteHistoryModal();
+        });
+
+        deleteHistoryCancelBtn.addEventListener('click', () => {
+            this.closeDeleteHistoryModal();
+        });
+
+        if (!deleteHistoryConfirmBtn.dataset.originalText) {
+            deleteHistoryConfirmBtn.dataset.originalText = deleteHistoryConfirmBtn.textContent.trim();
+        }
+        deleteHistoryConfirmBtn.addEventListener('click', () => {
+            this.handleConfirmDeleteHistory();
+        });
+
+        deleteHistoryModal.addEventListener('click', (event) => {
+            if (event.target === deleteHistoryModal) {
+                this.closeDeleteHistoryModal();
+            }
+        });
+    }
+
     /**
      * Escapes HTML special characters in text.
      * @param {string} text - The text to escape
@@ -1984,6 +2117,8 @@ class ChatApp {
             this.modelPicker.setupEventListeners();
         }
 
+        this.setupDeleteHistoryControls();
+
         // New chat button
         this.elements.newChatBtn.addEventListener('click', () => {
             this.handleNewChatRequest();
@@ -2107,6 +2242,10 @@ class ChatApp {
                 if (this.modelPicker) {
                     this.modelPicker.close();
                 }
+            }
+
+            if (e.key === 'Escape' && this.isDeleteHistoryModalOpen()) {
+                this.closeDeleteHistoryModal();
             }
 
             // Escape to close settings menu and session menus
