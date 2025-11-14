@@ -42,7 +42,7 @@ export default class ModelPicker {
             // Add more model IDs to block as needed
         ]);
 
-        // Default model to show when no model is selected
+        // Default model name to show when no model is selected
         this.defaultModelName = 'OpenAI: GPT-5.1 Instant';
 
         // Keyboard navigation state
@@ -206,7 +206,7 @@ export default class ModelPicker {
         const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
 
         return `
-            <div class="model-option px-2 py-1.5 rounded-sm cursor-pointer transition-colors hover:bg-accent ${isSelected ? 'bg-accent' : ''}" data-model="${model.name}">
+            <div class="model-option px-2 py-1.5 rounded-sm cursor-pointer transition-colors hover:bg-accent ${isSelected ? 'bg-accent' : ''}" data-model-name="${model.name}">
                 <div class="flex items-center gap-2">
                     <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 ${bgClass}">
                         ${iconData.html}
@@ -226,14 +226,14 @@ export default class ModelPicker {
     attachModelClickListeners() {
         document.querySelectorAll('.model-option').forEach(el => {
             el.addEventListener('click', () => {
-                this.selectModel(el.dataset.model);
+                this.selectModel(el.dataset.modelName);
             });
         });
     }
 
     /**
-     * Selects a model and updates the session or stores as pending.
-     * @param {string} modelName - Name of the model to select
+     * Selects a model by name and updates the session or stores as pending.
+     * @param {string} modelName - Display name chosen by the user
      */
     async selectModel(modelName) {
         const normalizedModelName = this.app.normalizeModelName
@@ -247,7 +247,7 @@ export default class ModelPicker {
         if (!session) {
             // No session exists - store as pending model
             // Will be used when session is created (e.g., when first message is sent)
-            this.app.state.pendingModel = normalizedModelName;
+            this.app.state.pendingModelName = normalizedModelName;
             this.app.renderCurrentModel();
             this.close(); // close() handles input focus
             return;
@@ -266,7 +266,7 @@ export default class ModelPicker {
     renderCurrentModel() {
         const session = this.app.getCurrentSession();
         // Show model from session if exists and not null, otherwise show pending model or default
-        const modelName = (session && session.model) || this.app.state.pendingModel || this.defaultModelName;
+        const currentModelName = (session && session.model) || this.app.state.pendingModelName || this.defaultModelName;
 
         // Guard against elements not being available
         if (!this.app.elements.modelPickerBtn) {
@@ -281,7 +281,7 @@ export default class ModelPicker {
             </div>
         `;
 
-        const model = this.app.state.models.find(m => m.name === modelName);
+        const model = this.app.state.models.find(m => m.name === currentModelName);
         const iconData = model ? getProviderIcon(model.provider, 'w-3 h-3') : { html: '', hasIcon: false };
         const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
 
@@ -289,7 +289,7 @@ export default class ModelPicker {
             <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 ${bgClass}">
                 ${iconData.html}
             </div>
-            <span class="truncate">${modelName}</span>
+            <span class="truncate">${currentModelName}</span>
             ${shortcutHtml}
         `;
         this.app.elements.modelPickerBtn.classList.add('gap-1.5');
@@ -319,7 +319,7 @@ export default class ModelPicker {
             case 'Enter':
                 if (this.highlightedIndex >= 0 && this.highlightedIndex < modelOptions.length) {
                     e.preventDefault();
-                    const selectedModel = modelOptions[this.highlightedIndex].dataset.model;
+                    const selectedModel = modelOptions[this.highlightedIndex].dataset.modelName;
                     this.selectModel(selectedModel);
                 }
                 break;

@@ -156,7 +156,7 @@ export default class ChatArea {
 
         // Scroll to bottom after rendering
         this.scrollToBottom(true);
-        
+
         // Defer button visibility check to allow DOM to settle after render
         requestAnimationFrame(() => {
             this.app.updateScrollButtonVisibility();
@@ -613,11 +613,8 @@ export default class ChatArea {
                 formatTime: this.app.formatTime.bind(this.app)
             };
 
-            // We need to get the provider name
-            const providerName = model ? model.provider : 'Unknown';
-
             // Re-build the entire message HTML to reflect its final state
-            const newMessageHtml = window.buildMessageHTML(message, helpers, this.app.state.models, modelName, providerName);
+            const newMessageHtml = window.buildMessageHTML(message, helpers, this.app.state.models, modelName);
 
             // Create a temporary container to parse the new HTML
             const tempDiv = document.createElement('div');

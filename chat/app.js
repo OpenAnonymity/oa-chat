@@ -15,8 +15,8 @@ import { parseReasoningContent } from './services/reasoningParser.js';
 import { fetchUrlMetadata } from './services/urlMetadata.js';
 
 const DEFAULT_MODEL_ID = 'openai/gpt-5.1-chat';
-const DEFAULT_MODEL_DISPLAY_NAME = 'OpenAI: GPT-5.1 Instant';
-const DEFAULT_MODEL_ALIASES = new Set(['OpenAI: GPT-5.1 Chat', 'GPT-5.1 Chat']);
+const DEFAULT_MODEL_NAME = 'OpenAI: GPT-5.1 Instant';
+const DEFAULT_MODEL_NAME_ALIASES = new Set(['OpenAI: GPT-5.1 Chat', 'GPT-5.1 Chat']);
 
 /**
  * ChatApp - Main application controller
@@ -29,7 +29,7 @@ class ChatApp {
             currentSessionId: null,
             models: [],
             modelsLoading: false,
-            pendingModel: null // Model selected before session is created
+            pendingModelName: null // Model selected before session is created (display name)
         };
 
         this.elements = {
@@ -81,7 +81,7 @@ class ChatApp {
         this.isAutoScrollPaused = false; // Track if auto-scroll is paused during streaming
         this.scrollToBottomButton = null; // Reference to the floating scroll-to-bottom button
         this.scrollButtonCheckInterval = null; // Interval for checking button visibility during streaming
-        
+
         // Link preview state
         this.linkPreviewCard = document.getElementById('link-preview-card');
         this.linkPreviewTimeout = null;
@@ -363,7 +363,7 @@ class ChatApp {
         if (!this.linkPreviewCard) return;
 
         const linkRect = linkElement.getBoundingClientRect();
-        
+
         // Get actual rendered dimensions of the preview card
         this.linkPreviewCard.style.visibility = 'hidden';
         this.linkPreviewCard.classList.remove('hidden');
@@ -371,13 +371,13 @@ class ChatApp {
         const cardWidth = cardRect.width;
         const cardHeight = cardRect.height;
         this.linkPreviewCard.style.visibility = '';
-        
+
         const gap = 6; // Gap between link and card
         const viewportPadding = 12;
 
         // Always position below the link for consistency
         let top = linkRect.bottom + gap;
-        
+
         // Center horizontally relative to the link
         let left = linkRect.left + (linkRect.width / 2) - (cardWidth / 2);
 
@@ -395,7 +395,7 @@ class ChatApp {
         if (spaceBelow < cardHeight + gap + viewportPadding) {
             // If not enough space below, position above the link instead
             top = linkRect.top - cardHeight - gap;
-            
+
             // But if that would go above viewport, keep below and scroll-align
             if (top < viewportPadding) {
                 top = linkRect.bottom + gap;
@@ -412,7 +412,7 @@ class ChatApp {
      */
     hideLinkPreview() {
         if (!this.linkPreviewCard) return;
-        
+
         this.linkPreviewCard.classList.remove('visible');
         this.linkPreviewCard.classList.add('hidden');
         this.currentPreviewLink = null;
@@ -446,7 +446,7 @@ class ChatApp {
             try {
                 // Fetch metadata
                 const metadata = await fetchUrlMetadata(url);
-                
+
                 // Check if we're still hovering this link
                 if (this.currentPreviewLink === linkButton) {
                     this.showLinkPreview(linkButton, metadata);
@@ -505,7 +505,7 @@ class ChatApp {
         messagesContainer.addEventListener('mouseleave', (e) => {
             this.handleLinkMouseLeave(e);
         }, true);
-        
+
         // Handle citation clicks
         messagesContainer.addEventListener('click', (e) => {
             // Handle citation toggle button
@@ -515,7 +515,7 @@ class ChatApp {
                 this.toggleCitations(messageId);
                 return;
             }
-            
+
             // Handle inline citation clicks
             const citation = e.target.closest('.inline-citation');
             if (citation) {
@@ -634,13 +634,14 @@ class ChatApp {
         // A new session will be created when the user sends their first message
 
         // Load selected model from settings
-        const selectedModel = await chatDB.getSetting('selectedModel');
-        const normalizedSelectedModel = this.normalizeModelName(selectedModel);
-        if (normalizedSelectedModel && normalizedSelectedModel !== selectedModel) {
-            await chatDB.saveSetting('selectedModel', normalizedSelectedModel);
+        const storedModelPreference = await chatDB.getSetting('selectedModel');
+        const normalizedModelName = this.normalizeModelName(storedModelPreference);
+        // Save normalized model name to settings
+        if (normalizedModelName && normalizedModelName !== storedModelPreference) {
+            await chatDB.saveSetting('selectedModel', normalizedModelName);
         }
-        if (normalizedSelectedModel) {
-            this.state.pendingModel = normalizedSelectedModel;
+        if (normalizedModelName) {
+            this.state.pendingModelName = normalizedModelName;
         }
 
         // Load models from OpenRouter API (now we have a session)
@@ -683,10 +684,10 @@ class ChatApp {
 
         // Set up ResizeObserver to adjust chat area padding when input area expands
         this.setupInputAreaObserver();
-        
+
         // Set up link preview event listeners
         this.setupLinkPreviewListeners();
-        
+
         // Handle mobile view on initial load
         if (this.isMobileView()) {
             this.hideSidebar();
@@ -791,23 +792,40 @@ class ChatApp {
         });
     }
 
-    normalizeModelName(name) {
-        if (!name) {
-            return name;
+    /**
+     * Normalizes any stored model reference into the canonical display name
+     * used throughout the UI.
+     *
+     * Accepts:
+     * - A model ID (e.g. "openai/gpt-5.1-chat"), which is converted via
+     *   OpenRouter display-name overrides when available.
+     * - Legacy aliases (e.g. "OpenAI: GPT-5 Chat"), which are mapped to the
+     *   current default name.
+     *
+     * Returns the original value when no conversion is necessary so that
+     * newer/custom names remain untouched.
+     *
+     * @param {string|null} modelIdOrName
+     * @returns {string|null}
+     */
+    normalizeModelName(modelIdOrName) {
+        if (!modelIdOrName) {
+            return modelIdOrName;
         }
 
-        if (name.includes('/')) {
+        // If model ID, get display name from OpenRouter API
+        if (modelIdOrName.includes('/')) {
             if (typeof openRouterAPI !== 'undefined' && typeof openRouterAPI.getDisplayName === 'function') {
-                return openRouterAPI.getDisplayName(name, name);
+                return openRouterAPI.getDisplayName(modelIdOrName, modelIdOrName);
             }
-            return name;
+            return modelIdOrName;
         }
 
-        if (DEFAULT_MODEL_ALIASES.has(name)) {
-            return DEFAULT_MODEL_DISPLAY_NAME;
+        if (DEFAULT_MODEL_NAME_ALIASES.has(modelIdOrName)) {
+            return DEFAULT_MODEL_NAME;
         }
 
-        return name;
+        return modelIdOrName;
     }
 
     /**
@@ -817,25 +835,24 @@ class ChatApp {
      */
     async createSession(title = 'New Chat') {
         // Use pending model if available, otherwise fall back to selected model
-        const selectedModel = await chatDB.getSetting('selectedModel');
-        const normalizedSelectedModel = this.normalizeModelName(selectedModel);
-        if (normalizedSelectedModel && normalizedSelectedModel !== selectedModel) {
-            await chatDB.saveSetting('selectedModel', normalizedSelectedModel);
+        const storedModelPreference = await chatDB.getSetting('selectedModel');
+        const normalizedSelectedModelName = this.normalizeModelName(storedModelPreference);
+        if (normalizedSelectedModelName && normalizedSelectedModelName !== storedModelPreference) {
+            await chatDB.saveSetting('selectedModel', normalizedSelectedModelName);
         }
 
-        const pendingModel = this.normalizeModelName(this.state.pendingModel);
-        if (pendingModel !== this.state.pendingModel) {
-            this.state.pendingModel = pendingModel;
+        const pendingModelName = this.normalizeModelName(this.state.pendingModelName);
+        if (pendingModelName !== this.state.pendingModelName) {
+            this.state.pendingModelName = pendingModelName;
         }
-
-        const modelToUse = pendingModel || normalizedSelectedModel || null;
+        const modelNameForNewSession = pendingModelName || normalizedSelectedModelName || null;
 
         const session = {
             id: this.generateId(),
             title,
             createdAt: Date.now(),
             updatedAt: Date.now(),
-            model: modelToUse,
+            model: modelNameForNewSession,
             apiKey: null,
             apiKeyInfo: null,
             expiresAt: null,
@@ -843,7 +860,7 @@ class ChatApp {
         };
 
         // Clear pending model since it's now part of the session
-        this.state.pendingModel = null;
+        this.state.pendingModelName = null;
 
         this.state.sessions.unshift(session);
         this.state.currentSessionId = session.id;
@@ -1015,12 +1032,12 @@ class ChatApp {
         this.state.currentSessionId = null;
 
         // Load the selected model from settings so UI shows correct model
-        const selectedModel = await chatDB.getSetting('selectedModel');
-        const normalizedSelectedModel = this.normalizeModelName(selectedModel);
-        if (normalizedSelectedModel && normalizedSelectedModel !== selectedModel) {
-            await chatDB.saveSetting('selectedModel', normalizedSelectedModel);
+        const storedModelPreference = await chatDB.getSetting('selectedModel');
+        const normalizedSelectedModelName = this.normalizeModelName(storedModelPreference);
+        if (normalizedSelectedModelName && normalizedSelectedModelName !== storedModelPreference) {
+            await chatDB.saveSetting('selectedModel', normalizedSelectedModelName);
         }
-        this.state.pendingModel = normalizedSelectedModel || null;
+        this.state.pendingModelName = normalizedSelectedModelName || null;
 
         // Update UI to reflect no session selected
         this.renderSessions();
@@ -1208,13 +1225,13 @@ class ChatApp {
                 return;
             }
 
-            let selectedModel = this.state.models.find(m => m.name === modelNameToUse);
-            let modelId;
+            const selectedModelEntry = this.state.models.find(m => m.name === modelNameToUse);
+            let modelIdForRequest;
 
-            if (selectedModel) {
-                modelId = selectedModel.id;
+            if (selectedModelEntry) {
+                modelIdForRequest = selectedModelEntry.id;
             } else {
-                modelId = 'openai/gpt-4o';
+                modelIdForRequest = 'openai/gpt-4o';
             }
 
             // Show typing indicator
@@ -1255,7 +1272,7 @@ class ChatApp {
                 // Stream the response with token tracking
                 const tokenData = await openRouterAPI.streamCompletion(
                     messages,
-                    modelId,
+                    modelIdForRequest,
                     session.apiKey,
                     async (chunk) => {
                         if (!firstChunk) {
@@ -1325,7 +1342,7 @@ class ChatApp {
                 streamingMessage.streamingTokens = null;
                 streamingMessage.streamingReasoning = false;
                 streamingMessage.citations = tokenData.citations || null;
-                
+
                 // Calculate reasoning duration if reasoning was used
                 if (streamingMessage.reasoning && reasoningStartTime) {
                     const reasoningEndTime = Date.now();
@@ -1333,7 +1350,7 @@ class ChatApp {
                 }
 
                 await chatDB.saveMessage(streamingMessage);
-                
+
                 // Fetch metadata for citations asynchronously and update UI
                 if (streamingMessage.citations && streamingMessage.citations.length > 0) {
                     this.enrichCitationsAndUpdateUI(streamingMessage);
@@ -1539,14 +1556,14 @@ class ChatApp {
                 return; // Return early
             }
 
-            let selectedModel = this.state.models.find(m => m.name === modelNameToUse);
-            let modelId;
+            const selectedModelEntry = this.state.models.find(m => m.name === modelNameToUse);
+            let modelIdForRequest;
 
-            if (selectedModel) {
-                modelId = selectedModel.id;
+            if (selectedModelEntry) {
+                modelIdForRequest = selectedModelEntry.id;
             } else {
                 // Fallback if model from session is somehow not in the list anymore
-                modelId = 'openai/gpt-4o';
+                modelIdForRequest = 'openai/gpt-4o';
             }
 
             // Show typing indicator
@@ -1588,7 +1605,7 @@ class ChatApp {
                 // Stream the response with token tracking
                 const tokenData = await openRouterAPI.streamCompletion(
                     messages,
-                    modelId,
+                    modelIdForRequest,
                     session.apiKey,
                     async (chunk, imageData) => {
                         // On first chunk (of any kind), remove typing indicator and append message
@@ -1689,7 +1706,7 @@ class ChatApp {
                 streamingMessage.streamingTokens = null; // Clear streaming tokens after completion
                 streamingMessage.streamingReasoning = false; // Clear streaming reasoning flag
                 streamingMessage.citations = tokenData.citations || null;
-                
+
                 // Calculate reasoning duration if reasoning was used
                 if (streamingMessage.reasoning && reasoningStartTime) {
                     const reasoningEndTime = Date.now();
@@ -1697,7 +1714,7 @@ class ChatApp {
                 }
 
                 await chatDB.saveMessage(streamingMessage);
-                
+
                 // Fetch metadata for citations asynchronously and update UI
                 if (streamingMessage.citations && streamingMessage.citations.length > 0) {
                     this.enrichCitationsAndUpdateUI(streamingMessage);
@@ -1779,14 +1796,14 @@ class ChatApp {
 
     /**
      * Shows a typing indicator at the bottom of the message list.
-     * @param {string} modelName - Name of the model that's "typing"
+     * @param {string} modelName - Display name of the model that's "typing"
      * @returns {string} ID of the typing indicator element
      */
     showTypingIndicator(modelName) {
         const model = this.state.models.find(m => m.name === modelName);
         const providerName = model ? model.provider : 'OpenAI';
         const id = 'typing-' + Date.now();
-        const typingHtml = buildTypingIndicator(id, providerName);
+            const typingHtml = buildTypingIndicator(id, providerName);
         this.elements.messagesContainer.insertAdjacentHTML('beforeend', typingHtml);
         if (!this.isAutoScrollPaused) {
             this.scrollToBottom(true);
@@ -2162,13 +2179,13 @@ class ChatApp {
      */
     async enrichCitationsAndUpdateUI(message) {
         if (!message.citations || message.citations.length === 0) return;
-        
+
         try {
             // Import the URL metadata service
             const { fetchUrlMetadata } = await import('./services/urlMetadata.js');
-            
+
             // Fetch metadata for all citations in parallel
-            const metadataPromises = message.citations.map(citation => 
+            const metadataPromises = message.citations.map(citation =>
                 fetchUrlMetadata(citation.url)
                     .then(metadata => {
                         // Update citation with metadata
@@ -2181,12 +2198,12 @@ class ChatApp {
                         console.debug('Failed to fetch metadata for', citation.url);
                     })
             );
-            
+
             await Promise.all(metadataPromises);
-            
+
             // Save updated message with enriched citations
             await chatDB.saveMessage(message);
-            
+
             // Re-render the message to show updated citations
             if (this.chatArea) {
                 await this.chatArea.finalizeStreamingMessage(message);
@@ -2480,7 +2497,7 @@ class ChatApp {
             throw new Error(`A network error occurred while trying to get an API key: ${error.message}`);
         }
     }
-    
+
     /**
      * Toggles citation visibility for a message.
      * @param {string} messageId - The message ID
@@ -2488,7 +2505,7 @@ class ChatApp {
     toggleCitations(messageId) {
         const contentEl = document.getElementById(`citations-content-${messageId}`);
         const chevronEl = document.querySelector(`#citations-toggle-${messageId} .citations-chevron`);
-        
+
         if (contentEl && chevronEl) {
             const isHidden = contentEl.classList.contains('hidden');
             if (isHidden) {
@@ -2503,7 +2520,7 @@ class ChatApp {
             this.updateScrollButtonVisibility();
         }
     }
-    
+
     /**
      * Scrolls to a specific citation.
      * @param {string} messageId - The message ID
@@ -2513,7 +2530,7 @@ class ChatApp {
         // First expand the citations if collapsed
         const carousel = document.getElementById(`citations-content-${messageId}`);
         const chevronEl = document.querySelector(`#citations-toggle-${messageId} .citations-chevron`);
-        
+
         if (carousel && carousel.classList.contains('hidden')) {
             carousel.classList.remove('hidden');
             if (chevronEl) {
@@ -2523,7 +2540,7 @@ class ChatApp {
             // Update scroll button visibility after content change
             this.updateScrollButtonVisibility();
         }
-        
+
         // Then find and scroll to the citation
         const citationEl = document.getElementById(`citation-${messageId}-${citationNum}`);
         if (citationEl && carousel) {
@@ -2532,18 +2549,18 @@ class ChatApp {
             setTimeout(() => {
                 citationEl.classList.remove('citation-highlight');
             }, 2000);
-            
+
             // Calculate scroll position to center the citation
             const citationLeft = citationEl.offsetLeft;
             const citationWidth = citationEl.offsetWidth;
             const carouselWidth = carousel.offsetWidth;
             const scrollPosition = citationLeft - (carouselWidth / 2) + (citationWidth / 2);
-            
+
             carousel.scrollTo({
                 left: scrollPosition,
                 behavior: 'smooth'
             });
-            
+
             // Also scroll the citation section into view if needed
             citationEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }

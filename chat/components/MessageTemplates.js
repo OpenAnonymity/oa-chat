@@ -421,29 +421,29 @@ function buildReasoningTrace(reasoning, messageId, isStreaming = false, processC
  */
 function insertRawCitationMarkers(content, citations) {
     if (!content || !citations || citations.length === 0) return content;
-    
+
     // Filter citations that have valid text ranges
-    const citationsWithRanges = citations.filter(c => 
-        c.startIndex !== null && 
-        c.endIndex !== null && 
-        c.startIndex >= 0 && 
+    const citationsWithRanges = citations.filter(c =>
+        c.startIndex !== null &&
+        c.endIndex !== null &&
+        c.startIndex >= 0 &&
         c.endIndex <= content.length
     );
-    
+
     if (citationsWithRanges.length === 0) return content;
-    
+
     // Sort by startIndex in reverse order to avoid offset issues
     const sortedCitations = [...citationsWithRanges].sort((a, b) => b.startIndex - a.startIndex);
-    
+
     let markedContent = content;
     sortedCitations.forEach(citation => {
         // Insert plain text marker [1], [2], etc.
         const marker = `[${citation.index}]`;
-        markedContent = markedContent.slice(0, citation.endIndex) + 
-                       marker + 
+        markedContent = markedContent.slice(0, citation.endIndex) +
+                       marker +
                        markedContent.slice(citation.endIndex);
     });
-    
+
     return markedContent;
 }
 
@@ -456,7 +456,7 @@ function insertRawCitationMarkers(content, citations) {
  */
 function addInlineCitationMarkers(content, messageId) {
     if (!content) return content;
-    
+
     // Replace citation markers [1], [2], etc. with styled spans
     return content.replace(/\[(\d+)\]/g, (match, num) => {
         return `<sup class="inline-citation" data-citation="${num}" data-message-id="${messageId}" title="View source ${num}">[${num}]</sup>`;
@@ -473,57 +473,57 @@ function addInlineCitationMarkers(content, messageId) {
  */
 function enhanceInlineLinks(content, messageId) {
     if (!content) return content;
-    
+
     // Parse HTML to find all <a> tags
     const parser = new DOMParser();
     const doc = parser.parseFromString(content, 'text/html');
     const links = doc.querySelectorAll('a[href]');
-    
+
     if (links.length === 0) return content;
-    
+
     // Transform each link
     links.forEach((link, index) => {
         const url = link.href;
         const originalText = link.textContent;
         const domain = extractDomain(url);
-        
+
         // Skip javascript: and internal links
         if (url.startsWith('javascript:') || url.startsWith('#')) {
             return;
         }
-        
+
         // Check for surrounding parentheses and remove them
         const prevSibling = link.previousSibling;
         const nextSibling = link.nextSibling;
-        
-        if (prevSibling && prevSibling.nodeType === Node.TEXT_NODE && 
+
+        if (prevSibling && prevSibling.nodeType === Node.TEXT_NODE &&
             prevSibling.textContent.endsWith('(')) {
             prevSibling.textContent = prevSibling.textContent.slice(0, -1);
         }
-        
-        if (nextSibling && nextSibling.nodeType === Node.TEXT_NODE && 
+
+        if (nextSibling && nextSibling.nodeType === Node.TEXT_NODE &&
             nextSibling.textContent.startsWith(')')) {
             nextSibling.textContent = nextSibling.textContent.slice(1);
         }
-        
+
         // Create the enhanced link button with space before
         const linkId = `inline-link-${messageId}-${index}`;
         const enhancedLink = doc.createElement('span');
         enhancedLink.className = 'inline-link-citation';
-        
+
         // Get favicon URL
         const faviconUrl = `https://www.google.com/s2/favicons?domain=${domain}&sz=16`;
-        
-        enhancedLink.innerHTML = ` <a href="${escapeHtml(url)}" 
-            target="_blank" 
+
+        enhancedLink.innerHTML = ` <a href="${escapeHtml(url)}"
+            target="_blank"
             rel="noopener noreferrer"
             class="inline-link-button"
             data-link-id="${linkId}"
             data-url="${escapeHtml(url)}"
             data-domain="${escapeHtml(domain)}"
             title="${escapeHtml(originalText || domain)}">
-            <img class="inline-link-icon" 
-                 src="${escapeHtml(faviconUrl)}" 
+            <img class="inline-link-icon"
+                 src="${escapeHtml(faviconUrl)}"
                  alt="${escapeHtml(domain)}"
                  onerror="this.style.display='none'; this.nextElementSibling.style.display='inline-block';" />
             <svg class="inline-link-icon-fallback" style="display: none;" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
@@ -531,11 +531,11 @@ function enhanceInlineLinks(content, messageId) {
             </svg>
             <span class="inline-link-domain">${escapeHtml(domain)}</span>
         </a>`;
-        
+
         // Replace the original link
         link.parentNode.replaceChild(enhancedLink, link);
     });
-    
+
     return doc.body.innerHTML;
 }
 
@@ -547,11 +547,11 @@ function enhanceInlineLinks(content, messageId) {
  */
 function buildCitationsToggleButton(citations, messageId) {
     if (!citations || citations.length === 0) return '';
-    
+
     const toggleId = `citations-toggle-${messageId}`;
-    
+
     return `
-        <button 
+        <button
             class="citations-toggle-btn inline-flex items-center gap-2 px-2 py-1 text-left hover:bg-muted/50 rounded transition-colors"
             id="${toggleId}"
             data-message-id="${messageId}"
@@ -575,25 +575,25 @@ function buildCitationsToggleButton(citations, messageId) {
  */
 function buildCitationsSection(citations, messageId) {
     if (!citations || citations.length === 0) return '';
-    
+
     const citationsId = `citations-${messageId}`;
-    
+
     // Build modern horizontal citation cards with proper metadata
     const citationCards = citations.map((citation, idx) => {
         const displayIndex = idx + 1;
         const domain = citation.domain || extractDomain(citation.url);
-        
+
         // Use actual title from annotations or metadata
         let title = citation.title;
-        
+
         // Clean up title - remove "Page not found", empty strings, etc.
-        if (title && (title.toLowerCase().includes('page not found') || 
+        if (title && (title.toLowerCase().includes('page not found') ||
                      title.toLowerCase().includes('404') ||
                      title.toLowerCase().includes('error') ||
                      title.trim().length < 3)) {
             title = null;
         }
-        
+
         // If no title or title is just the domain/URL, create a descriptive title
         if (!title || title === domain || title === citation.url || title.toLowerCase() === domain.toLowerCase()) {
             // If we have content snippet, use first part of it
@@ -613,20 +613,20 @@ function buildCitationsSection(citations, messageId) {
                 title = domain.charAt(0).toUpperCase() + domain.slice(1);
             }
         }
-        
+
         const favicon = citation.favicon || `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
-        
+
         return `
-            <a href="${escapeHtml(citation.url)}" 
-               target="_blank" 
+            <a href="${escapeHtml(citation.url)}"
+               target="_blank"
                rel="noopener noreferrer"
                id="citation-${messageId}-${displayIndex}"
                class="citation-card-modern group"
                data-citation-index="${displayIndex}"
                title="View source">
                 <div class="citation-card-header">
-                    <img src="${escapeHtml(favicon)}" 
-                         alt="${escapeHtml(domain)}" 
+                    <img src="${escapeHtml(favicon)}"
+                         alt="${escapeHtml(domain)}"
                          class="citation-favicon"
                          loading="lazy"
                          onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />
@@ -644,7 +644,7 @@ function buildCitationsSection(citations, messageId) {
             </a>
         `;
     }).join('');
-    
+
     return `
         <div class="citations-section w-full" id="${citationsId}">
             <div class="citations-carousel hidden" id="citations-content-${messageId}">
@@ -684,19 +684,19 @@ function buildAssistantMessage(message, helpers, providerName, modelName) {
         if (message.citations && message.citations.length > 0) {
             processedContent = insertRawCitationMarkers(processedContent, message.citations);
         }
-        
+
         // Then process with LaTeX/Markdown
         processedContent = processContentWithLatex(processedContent);
-        
+
         // Style the citation markers [1], [2] into clickable elements
         if (message.citations && message.citations.length > 0) {
             processedContent = addInlineCitationMarkers(processedContent, message.id);
         }
-        
+
         // Finally, enhance inline links into elegant button-style citations
         processedContent = enhanceInlineLinks(processedContent, message.id);
     }
-    
+
     const textBubble = processedContent ? `
         <div class="${CLASSES.assistantBubble}">
             <div class="${CLASSES.assistantContent}">
@@ -851,8 +851,8 @@ export function buildMessageHTML(message, helpers, models, sessionModelName) {
     } else {
         // Determine provider name and model name
         const modelName = sessionModelName || 'OpenAI: GPT-5.1 Instant';
-        const model = models.find(m => m.name === modelName);
-        const providerName = model ? model.provider : 'OpenAI';
+        const modelOption = models.find(m => m.name === modelName);
+        const providerName = modelOption ? modelOption.provider : 'OpenAI';
 
         return buildAssistantMessage(message, helpers, providerName, modelName);
     }

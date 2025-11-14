@@ -404,7 +404,7 @@ class OpenRouterAPI {
         let hasReceivedFirstToken = false;
         let citations = []; // Track citations for web search results
         let annotations = []; // Track annotations from OpenRouter response
-        
+
         // Buffering for reasoning chunks to reduce UI updates
         let reasoningBuffer = '';
         let reasoningBufferTimer = null;
@@ -427,16 +427,16 @@ class OpenRouterAPI {
         const parseCitationsFromAnnotations = (annotationsList) => {
             const citationsList = [];
             let citationIndex = 1;
-            
+
             if (!annotationsList || !Array.isArray(annotationsList)) return citationsList;
-            
+
             // Extract url_citation annotations
             const urlCitations = annotationsList.filter(ann => ann.type === 'url_citation');
-            
+
             if (urlCitations.length > 0) {
                 console.log('Found web search citations:', urlCitations.length);
             }
-            
+
             urlCitations.forEach(annotation => {
                 citationsList.push({
                     url: annotation.url || '',
@@ -448,7 +448,7 @@ class OpenRouterAPI {
                     endIndex: annotation.end_index ?? annotation.endIndex ?? null
                 });
             });
-            
+
             return citationsList;
         };
 
@@ -457,7 +457,7 @@ class OpenRouterAPI {
         const parseCitations = (content) => {
             const citationMap = new Map();
             let citationIndex = 1;
-            
+
             // First, look for existing numbered citations [1], [2], etc.
             const existingCitationPattern = /\[(\d+)\]/g;
             const existingNumbers = new Set();
@@ -465,7 +465,7 @@ class OpenRouterAPI {
             while ((match = existingCitationPattern.exec(content)) !== null) {
                 existingNumbers.add(parseInt(match[1]));
             }
-            
+
             // Pattern 1: Markdown-style references [text](url)
             const markdownUrlPattern = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
             while ((match = markdownUrlPattern.exec(content)) !== null) {
@@ -478,7 +478,7 @@ class OpenRouterAPI {
                     });
                 }
             }
-            
+
             // Pattern 2: References/Sources section at the end
             // Matches patterns like: [1] https://example.com or Sources: 1. https://example.com
             const referencesPattern = /(?:^|\n)(?:References?|Sources?|Citations?):?\s*\n((?:(?:\[\d+\]|\d+\.)\s*https?:\/\/[^\s]+\s*\n?)+)/gmi;
@@ -498,14 +498,14 @@ class OpenRouterAPI {
                     }
                 }
             }
-            
+
             // Pattern 3: Plain URLs in the content that look like sources
             // More conservative - only match URLs that appear to be references
             const plainUrlPattern = /(?:(?:^|\n)(?:[-•*]|\d+\.?)\s+)?(https?:\/\/(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&\/\/=]*))/g;
             while ((match = plainUrlPattern.exec(content)) !== null) {
                 const url = match[1];
                 // Only add if not already captured and looks like a real source
-                if (!citationMap.has(url) && 
+                if (!citationMap.has(url) &&
                     !url.match(/\.(png|jpg|jpeg|gif|svg|css|js|ico|woff|ttf|eot)$/i) &&
                     url.length < 200) {
                     citationMap.set(url, {
@@ -515,13 +515,13 @@ class OpenRouterAPI {
                     });
                 }
             }
-            
+
             // If we have existing citation numbers in text but found URLs, ensure they match
             if (existingNumbers.size > 0 && citationMap.size > 0) {
                 // The content has numbered citations, so we found the sources
                 return Array.from(citationMap.values()).sort((a, b) => a.index - b.index);
             }
-            
+
             // Only return citations if we found some
             return citationMap.size > 0 ? Array.from(citationMap.values()).sort((a, b) => a.index - b.index) : [];
         };
@@ -642,13 +642,13 @@ class OpenRouterAPI {
                                 console.log('Found annotations (format 1 - direct):', parsed.annotations.length);
                                 annotations = annotations.concat(parsed.annotations);
                             }
-                            
+
                             // Format 2: In choices[0].message.annotations (chat completions format)
                             if (parsed.choices?.[0]?.message?.annotations && Array.isArray(parsed.choices[0].message.annotations)) {
                                 console.log('Found annotations (format 2 - choices[0].message):', parsed.choices[0].message.annotations.length);
                                 annotations = annotations.concat(parsed.choices[0].message.annotations);
                             }
-                            
+
                             // Format 3: In choices[0].message.content[] (if content is array with annotations)
                             const messageContent = parsed.choices?.[0]?.message?.content;
                             if (Array.isArray(messageContent)) {
@@ -658,7 +658,7 @@ class OpenRouterAPI {
                                     }
                                 });
                             }
-                            
+
                             // Format 4: /responses API format - check output[].content[].annotations[]
                             if (parsed.output && Array.isArray(parsed.output)) {
                                 parsed.output.forEach(output => {
@@ -671,7 +671,7 @@ class OpenRouterAPI {
                                     }
                                 });
                             }
-                            
+
                             // Format 5: response.completed event format
                             if (parsed.type === 'response.completed' && parsed.response) {
                                 const output = parsed.response.output;
@@ -687,7 +687,7 @@ class OpenRouterAPI {
                                     });
                                 }
                             }
-                            
+
                             // Check for reasoning in various possible formats
                             // OpenRouter might send reasoning in different ways
                             if (parsed.type === 'response.reasoning.delta' ||
