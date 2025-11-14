@@ -10,13 +10,21 @@ import ModelPicker from './components/ModelPicker.js';
 import { buildTypingIndicator } from './components/MessageTemplates.js';
 import apiKeyStore from './services/apiKeyStore.js';
 import themeManager from './services/themeManager.js';
-import { downloadInferenceTickets } from './services/fileUtils.js';
+import { downloadInferenceTickets, downloadAllChats } from './services/fileUtils.js';
 import { parseReasoningContent } from './services/reasoningParser.js';
 import { fetchUrlMetadata } from './services/urlMetadata.js';
 
 const DEFAULT_MODEL_ID = 'openai/gpt-5.1-chat';
 const DEFAULT_MODEL_NAME = 'OpenAI: GPT-5.1 Instant';
 const DEFAULT_MODEL_NAME_ALIASES = new Set(['OpenAI: GPT-5.1 Chat', 'GPT-5.1 Chat']);
+const DELETE_HISTORY_COPY = {
+    title: 'Delete all chat history',
+    body: 'Past chat history is stored locally on this browser. Prompts and responses are end-to-end encrypted to and from the model providers who only see anonymous traffic and cannot identify, link, or otherwise track you.',
+    highlightHeading: 'Deletion is irreversible!',
+    highlightBody: 'This is the only copy of your chat history. Deletion cannot be undone. You can <a href="#download-chats-link" class="text-primary underline-offset-2 hover:underline focus-visible:underline">download a copy</a> of your chat history before proceeding.',
+    cancelLabel: 'Cancel',
+    confirmLabel: 'Delete everything'
+};
 
 /**
  * ChatApp - Main application controller
@@ -67,8 +75,8 @@ class ChatApp {
             fileCountBadge: document.getElementById('file-count-badge'),
             deleteHistoryBtn: document.getElementById('delete-history-btn'),
             deleteHistoryModal: document.getElementById('delete-history-modal'),
-            deleteHistoryConfirmBtn: document.getElementById('confirm-delete-history'),
-            deleteHistoryCancelBtn: document.getElementById('cancel-delete-history'),
+            deleteHistoryConfirmBtn: null,
+            deleteHistoryCancelBtn: null,
         };
 
         this.searchEnabled = false;
@@ -94,6 +102,28 @@ class ChatApp {
         this.currentPreviewLink = null;
 
         this.init();
+    }
+
+    attachDownloadLinkHandler(rootEl) {
+        if (!rootEl) return;
+
+        const downloadLink = rootEl.querySelector('a[href="#download-chats-link"]');
+        if (!downloadLink || downloadLink.dataset.downloadChatsBound === 'true') {
+            return;
+        }
+
+        downloadLink.dataset.downloadChatsBound = 'true';
+        downloadLink.addEventListener('click', async (event) => {
+            event.preventDefault();
+            try {
+                const success = await downloadAllChats();
+                if (!success) {
+                    console.error('Failed to download chat history from modal link');
+                }
+            } catch (error) {
+                console.error('Error downloading chat history from modal link:', error);
+            }
+        });
     }
 
     /**
@@ -671,6 +701,8 @@ class ChatApp {
         const savedSearchEnabled = await chatDB.getSetting('searchEnabled');
         this.searchEnabled = savedSearchEnabled !== undefined ? savedSearchEnabled : false;
         this.chatInput.updateSearchToggleUI();
+
+        this.renderDeleteHistoryModalContent();
 
         // Set up event listeners
         this.setupEventListeners();
@@ -1890,6 +1922,38 @@ class ChatApp {
             await chatDB.deleteSession(session.id);
             await chatDB.deleteSessionMessages(session.id);
         }
+    }
+
+    renderDeleteHistoryModalContent() {
+        const modal = this.elements.deleteHistoryModal;
+        const template = document.getElementById('delete-history-modal-template');
+        if (!modal || !template) {
+            return;
+        }
+
+        modal.innerHTML = '';
+        modal.appendChild(template.content.cloneNode(true));
+
+        const htmlEnabledKeys = new Set(['body', 'highlightBody']);
+
+        modal.querySelectorAll('[data-delete-history]').forEach(el => {
+            const key = el.dataset.deleteHistory;
+            if (key && Object.prototype.hasOwnProperty.call(DELETE_HISTORY_COPY, key)) {
+                if (htmlEnabledKeys.has(key)) {
+                    el.innerHTML = DELETE_HISTORY_COPY[key];
+                } else {
+                    el.textContent = DELETE_HISTORY_COPY[key];
+                }
+            }
+        });
+
+        this.elements.deleteHistoryCancelBtn = document.getElementById('cancel-delete-history');
+        this.elements.deleteHistoryConfirmBtn = document.getElementById('confirm-delete-history');
+        if (this.elements.deleteHistoryConfirmBtn) {
+            this.elements.deleteHistoryConfirmBtn.dataset.originalText = DELETE_HISTORY_COPY.confirmLabel;
+        }
+
+        this.attachDownloadLinkHandler(modal);
     }
 
     openDeleteHistoryModal() {
