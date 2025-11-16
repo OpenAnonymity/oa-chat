@@ -131,8 +131,9 @@ class ChatApp {
      * This prevents marked from breaking LaTeX delimiters
      */
     processContentWithLatex(content) {
-        // Store block-level LaTeX to prevent wrapping in <p> tags
+        // Store block-level and inline LaTeX to prevent markdown from breaking them
         const blockLatexPlaceholders = [];
+        const inlineLatexPlaceholders = [];
         let processedContent = content;
 
         // Extract block LaTeX \[...\] and replace with placeholders
@@ -149,10 +150,12 @@ class ChatApp {
             return `\n\n${placeholder}\n\n`;
         });
 
-        // Escape inline LaTeX delimiters
-        processedContent = processedContent
-            .replace(/\\\(/g, '\\\\(')
-            .replace(/\\\)/g, '\\\\)');
+        // Extract inline LaTeX \(...\) and replace with placeholders
+        processedContent = processedContent.replace(/\\\(([\s\S]*?)\\\)/g, (match, latex) => {
+            const placeholder = `INLINELATEX${inlineLatexPlaceholders.length}PLACEHOLDER`;
+            inlineLatexPlaceholders.push(match);
+            return placeholder;
+        });
 
         // Process markdown
         let html = marked.parse(processedContent);
@@ -162,6 +165,12 @@ class ChatApp {
             const placeholder = `BLOCKLATEX${index}PLACEHOLDER`;
             // Remove <p> tags around placeholder and replace with the LaTeX
             html = html.replace(new RegExp(`<p>${placeholder}</p>|${placeholder}`, 'g'), latex);
+        });
+
+        // Restore inline LaTeX
+        inlineLatexPlaceholders.forEach((latex, index) => {
+            const placeholder = `INLINELATEX${index}PLACEHOLDER`;
+            html = html.replace(new RegExp(placeholder, 'g'), latex);
         });
 
         return html;
