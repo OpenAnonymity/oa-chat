@@ -157,8 +157,12 @@ export default class ChatArea {
         // Setup citation carousel scrolling
         this.setupCitationCarouselScroll();
 
-        // Scroll to bottom after rendering
-        this.scrollToBottom(true);
+        // Restore last seen scroll position or snap to bottom
+        const restored = this.app.restoreSessionScrollPosition(session.id);
+        if (!restored) {
+            this.app.scrollChatAreaToBottomInstant();
+            this.app.saveCurrentSessionScrollPosition();
+        }
 
         // Defer button visibility check to allow DOM to settle after render
         requestAnimationFrame(() => {
@@ -206,13 +210,13 @@ export default class ChatArea {
             if (carousel._mouseLeaveHandler) {
                 carousel.removeEventListener('mouseleave', carousel._mouseLeaveHandler);
             }
-            
+
             // Mouse enter handler
             carousel._mouseEnterHandler = () => {
                 // Add a class to indicate mouse is over carousel
                 carousel.classList.add('hover-active');
             };
-            
+
             // Mouse leave handler
             carousel._mouseLeaveHandler = () => {
                 carousel.classList.remove('hover-active');
@@ -222,52 +226,52 @@ export default class ChatArea {
                     clearTimeout(carousel._scrollTimeout);
                 }
             };
-            
+
             // Wheel event handler
             carousel._wheelHandler = (e) => {
                 // Only handle if we have scroll delta
                 if (e.deltaY === 0 && e.deltaX === 0) return;
-                
+
                 // Check if this carousel has horizontal overflow
                 if (carousel.scrollWidth <= carousel.clientWidth) return;
-                
+
                 // Prevent default vertical scrolling only if we have vertical delta
                 if (e.deltaY !== 0) {
                     e.preventDefault();
                 }
-                
+
                 // Add scrolling classes
                 carousel.classList.add('is-scrolling');
                 carousel.classList.add('wheel-active');
-                
+
                 // Clear existing timeout
                 if (carousel._scrollTimeout) {
                     clearTimeout(carousel._scrollTimeout);
                 }
-                
+
                 // Calculate scroll amount
                 // Support both vertical wheel (converted to horizontal) and native horizontal wheel
                 const verticalDelta = e.deltaY * 0.8;
                 const horizontalDelta = e.deltaX * 0.8;
-                
+
                 // Use horizontal delta if available, otherwise use vertical
                 const scrollAmount = horizontalDelta !== 0 ? horizontalDelta : verticalDelta;
-                
+
                 // Apply scroll
                 carousel.scrollLeft += scrollAmount;
-                
+
                 // Remove scrolling classes after a brief delay
                 carousel._scrollTimeout = setTimeout(() => {
                     carousel.classList.remove('is-scrolling');
                     carousel.classList.remove('wheel-active');
                 }, 100);
             };
-            
+
             // Add event listeners
             carousel.addEventListener('mouseenter', carousel._mouseEnterHandler);
             carousel.addEventListener('mouseleave', carousel._mouseLeaveHandler);
             carousel.addEventListener('wheel', carousel._wheelHandler, { passive: false });
-            
+
             // Also add wheel handlers to all citation cards to ensure smooth scrolling
             const cards = carousel.querySelectorAll('.citation-card-modern');
             cards.forEach(card => {

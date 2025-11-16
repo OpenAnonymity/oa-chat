@@ -90,6 +90,8 @@ class ChatApp {
         this.chatInput = null;
         this.modelPicker = null;
         this.sessionStreamingStates = new Map(); // Track streaming state per session
+        this.sessionScrollPositions = new Map(); // Track scrollTop per session in-memory
+        this.chatScrollSaveFrame = null;
         this.isAutoScrollPaused = false; // Track if auto-scroll is paused during streaming
         this.scrollToBottomButton = null; // Reference to the floating scroll-to-bottom button
         this.scrollButtonCheckInterval = null; // Interval for checking button visibility during streaming
@@ -222,6 +224,92 @@ class ChatApp {
                     }
                 });
             });
+        });
+    }
+
+    /**
+     * Temporarily disables smooth scrolling to jump the chat area instantly.
+     * @param {number} targetTop - Desired scrollTop value
+     */
+    setChatAreaScrollTopInstant(targetTop) {
+        const chatArea = this.elements.chatArea;
+        if (!chatArea || typeof targetTop !== 'number' || Number.isNaN(targetTop)) {
+            return;
+        }
+
+        const previousBehavior = chatArea.style.scrollBehavior;
+        chatArea.style.scrollBehavior = 'auto';
+        chatArea.scrollTop = targetTop;
+
+        if (previousBehavior) {
+            chatArea.style.scrollBehavior = previousBehavior;
+        } else {
+            chatArea.style.removeProperty('scroll-behavior');
+        }
+    }
+
+    /**
+     * Snaps the chat area to the bottom without animation.
+     */
+    scrollChatAreaToBottomInstant() {
+        const chatArea = this.elements.chatArea;
+        if (!chatArea) return;
+
+        const maxScrollTop = Math.max(0, chatArea.scrollHeight - chatArea.clientHeight);
+        this.setChatAreaScrollTopInstant(maxScrollTop);
+    }
+
+    /**
+     * Saves the current session's scroll position in-memory for this tab.
+     */
+    saveCurrentSessionScrollPosition() {
+        const chatArea = this.elements.chatArea;
+        const sessionId = this.state.currentSessionId;
+        if (!chatArea || !sessionId) return;
+
+        const maxScrollTop = Math.max(0, chatArea.scrollHeight - chatArea.clientHeight);
+        const atBottom = Math.abs(maxScrollTop - chatArea.scrollTop) <= 2;
+
+        this.sessionScrollPositions.set(sessionId, {
+            top: chatArea.scrollTop,
+            atBottom
+        });
+    }
+
+    /**
+     * Restores the scroll position for the provided session if available.
+     * @param {string} sessionId
+     * @returns {boolean} True when a stored scroll position was applied
+     */
+    restoreSessionScrollPosition(sessionId) {
+        const chatArea = this.elements.chatArea;
+        if (!chatArea || !sessionId) return false;
+
+        const stored = this.sessionScrollPositions.get(sessionId);
+        if (!stored) {
+            return false;
+        }
+
+        const maxScrollTop = Math.max(0, chatArea.scrollHeight - chatArea.clientHeight);
+        const targetTop = stored.atBottom ? maxScrollTop : Math.min(stored.top, maxScrollTop);
+        this.setChatAreaScrollTopInstant(Math.max(0, targetTop));
+        if (this.state.currentSessionId === sessionId) {
+            this.saveCurrentSessionScrollPosition();
+        }
+        return true;
+    }
+
+    /**
+     * Debounces scroll position persistence to avoid excessive writes.
+     */
+    scheduleScrollPositionSave() {
+        if (this.chatScrollSaveFrame) {
+            cancelAnimationFrame(this.chatScrollSaveFrame);
+        }
+
+        this.chatScrollSaveFrame = requestAnimationFrame(() => {
+            this.chatScrollSaveFrame = null;
+            this.saveCurrentSessionScrollPosition();
         });
     }
 
@@ -727,6 +815,7 @@ class ChatApp {
             }
             // Update scroll button visibility based on scroll position
             this.updateScrollButtonVisibility();
+            this.scheduleScrollPositionSave();
         });
 
         // Set up ResizeObserver to adjust chat area padding when input area expands
@@ -945,6 +1034,12 @@ class ChatApp {
      * @param {string} sessionId - ID of the session to switch to
      */
     switchSession(sessionId) {
+        if (!sessionId || sessionId === this.state.currentSessionId) {
+            return;
+        }
+
+        this.saveCurrentSessionScrollPosition();
+
         this.state.currentSessionId = sessionId;
         chatDB.saveSetting('currentSessionId', sessionId);
 
@@ -1076,6 +1171,7 @@ class ChatApp {
      * No session is selected until the user sends their first message.
      */
     async clearCurrentSession() {
+        this.saveCurrentSessionScrollPosition();
         this.state.currentSessionId = null;
 
         // Load the selected model from settings so UI shows correct model
@@ -1881,6 +1977,7 @@ class ChatApp {
             // Delete from DB
             await chatDB.deleteSession(sessionId);
             await chatDB.deleteSessionMessages(sessionId);
+            this.sessionScrollPositions.delete(sessionId);
 
             // Switch to another session if we deleted the current one
             if (this.state.currentSessionId === sessionId) {
@@ -1906,6 +2003,7 @@ class ChatApp {
             }
         });
         this.sessionStreamingStates.clear();
+        this.sessionScrollPositions.clear();
 
         this.state.sessions = [];
         this.state.currentSessionId = null;
