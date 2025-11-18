@@ -17,7 +17,21 @@ class StationClient {
         this.currentTicketIndex = 0;
         this.selectedStationUrl = null;
         this.selectedStationName = null;
-        console.log(`📊 StationClient ready with ${this.tickets.length} tickets`);
+        this.tabId = this.generateTabId();
+        console.log(`📊 StationClient ready with ${this.tickets.length} tickets (Tab ID: ${this.tabId})`);
+        
+        // Listen for cross-tab ticket changes via storage events
+        window.addEventListener('storage', (event) => {
+            if (event.key === 'inference_tickets' && event.newValue !== event.oldValue) {
+                console.log('🔄 Detected ticket changes from another tab, reloading...');
+                this.tickets = this.loadTickets();
+                window.dispatchEvent(new CustomEvent('tickets-updated'));
+            }
+        });
+    }
+
+    generateTabId() {
+        return `tab_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     }
 
     async getOnlineStations() {
@@ -94,14 +108,35 @@ class StationClient {
             return null;
         }
 
-        const unusedTickets = this.tickets.filter(t => !t.used);
+        const RESERVATION_TIMEOUT_MS = 5000; // 5 seconds
+        const now = Date.now();
 
-        if (unusedTickets.length === 0) {
-            console.log('❌ No unused tickets available');
+        // Filter for tickets that are not used and either not reserved or reservation has expired
+        const availableTickets = this.tickets.filter(t => {
+            if (t.used) return false;
+            
+            // Check if ticket is reserved by another tab and reservation is still valid
+            if (t.reserved && t.reserved_by !== this.tabId) {
+                const reservedAt = new Date(t.reserved_at).getTime();
+                const isExpired = (now - reservedAt) > RESERVATION_TIMEOUT_MS;
+                
+                if (!isExpired) {
+                    return false; // Skip tickets reserved by other tabs
+                }
+                
+                // Reservation expired, this ticket is available
+                console.log(`⏰ Ticket reservation expired (reserved ${Math.floor((now - reservedAt) / 1000)}s ago)`);
+            }
+            
+            return true;
+        });
+
+        if (availableTickets.length === 0) {
+            console.log('❌ No available tickets (all used or reserved)');
             return null;
         }
 
-        return unusedTickets[0];
+        return availableTickets[0];
     }
 
     getTicketCount() {
@@ -115,6 +150,57 @@ class StationClient {
         localStorage.removeItem('inference_tickets');
         console.log('🗑️  All tickets cleared');
         window.dispatchEvent(new CustomEvent('tickets-updated'));
+    }
+
+    reserveTicket(ticket) {
+        if (!ticket) return false;
+
+        // Re-read tickets from localStorage to ensure freshness
+        const freshTickets = this.loadTickets();
+        
+        const ticketIndex = freshTickets.findIndex(
+            t => t.finalized_ticket === ticket.finalized_ticket
+        );
+
+        if (ticketIndex === -1) {
+            console.log('❌ Ticket not found in storage');
+            return false;
+        }
+
+        const targetTicket = freshTickets[ticketIndex];
+
+        // Check if ticket is already used or reserved by another tab
+        if (targetTicket.used) {
+            console.log('❌ Ticket already used');
+            return false;
+        }
+
+        if (targetTicket.reserved && targetTicket.reserved_by !== this.tabId) {
+            const reservedAt = new Date(targetTicket.reserved_at).getTime();
+            const age = Date.now() - reservedAt;
+            
+            // Check if reservation is still valid (within 5 seconds)
+            if (age < 5000) {
+                console.log(`❌ Ticket reserved by another tab (${Math.floor(age / 1000)}s ago)`);
+                return false;
+            }
+        }
+
+        // Reserve the ticket atomically
+        freshTickets[ticketIndex].reserved = true;
+        freshTickets[ticketIndex].reserved_at = new Date().toISOString();
+        freshTickets[ticketIndex].reserved_by = this.tabId;
+
+        // Save to localStorage in a single atomic write
+        try {
+            localStorage.setItem('inference_tickets', JSON.stringify(freshTickets));
+            this.tickets = freshTickets;
+            console.log(`✅ Reserved ticket ${ticketIndex + 1}/${freshTickets.length} for this tab`);
+            return true;
+        } catch (error) {
+            console.error('❌ Error reserving ticket:', error);
+            return false;
+        }
     }
 
     async alphaRegister(invitationCode, progressCallback) {
@@ -335,14 +421,29 @@ class StationClient {
         }
     }
 
-    async requestApiKey(name = 'OA-WebApp-Key') {
+    async requestApiKey(name = 'OA-WebApp-Key', retryCount = 0) {
+        const MAX_RETRIES = 3;
         let ticket = null;
 
         try {
+            // Get next available ticket
             ticket = this.getNextTicket();
 
             if (!ticket) {
                 throw new Error('No inference tickets available. Please register with an invitation code first.');
+            }
+
+            // Try to reserve the ticket atomically
+            const reserved = this.reserveTicket(ticket);
+
+            if (!reserved) {
+                // Ticket was taken by another tab, try with next ticket
+                if (retryCount < MAX_RETRIES) {
+                    console.log(`🔄 Ticket conflict detected, retrying with next ticket (attempt ${retryCount + 1}/${MAX_RETRIES})...`);
+                    return await this.requestApiKey(name, retryCount + 1);
+                } else {
+                    throw new Error('Unable to reserve a ticket after multiple attempts. All tickets may be in use by other tabs.');
+                }
             }
 
             // Log ticket selection as a local event
@@ -350,12 +451,13 @@ class StationClient {
                 type: 'local',
                 method: 'LOCAL',
                 status: 200,
-                message: 'Selected next unused inference ticket from local storage',
-                action: 'ticket-select',
+                message: 'Reserved inference ticket for API key request',
+                action: 'ticket-reserve',
                 response: {
                     ticket_index: this.tickets.findIndex(t => t.finalized_ticket === ticket.finalized_ticket) + 1,
                     total_tickets: this.tickets.length,
-                    unused_tickets: this.tickets.filter(t => !t.used).length
+                    unused_tickets: this.tickets.filter(t => !t.used).length,
+                    tab_id: this.tabId
                 }
             });
 
@@ -435,6 +537,10 @@ class StationClient {
         if (ticketIndex !== -1) {
             this.tickets[ticketIndex].used = true;
             this.tickets[ticketIndex].used_at = new Date().toISOString();
+            // Clear reservation when marking as used
+            this.tickets[ticketIndex].reserved = false;
+            this.tickets[ticketIndex].reserved_at = null;
+            this.tickets[ticketIndex].reserved_by = null;
 
             this.saveTickets(this.tickets);
 
