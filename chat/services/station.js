@@ -269,7 +269,6 @@ class StationClient {
                 type: 'local',
                 method: 'LOCAL',
                 status: 200,
-                message: `Created ${ticketCount} blinded inference tickets ready for server signing`,
                 action: 'tickets-blind',
                 response: {
                     ticket_count: ticketCount,
@@ -343,7 +342,6 @@ class StationClient {
                 type: 'local',
                 method: 'LOCAL',
                 status: 200,
-                message: `Received ${indexedSignedResponses.length} signed tickets from server`,
                 action: 'tickets-signed',
                 response: {
                     signed_tickets_received: indexedSignedResponses.length
@@ -396,7 +394,6 @@ class StationClient {
                 type: 'local',
                 method: 'LOCAL',
                 status: 200,
-                message: `Successfully unblinded and stored ${tickets.length} inference tickets locally`,
                 action: 'tickets-unblind',
                 response: {
                     tickets_finalized: tickets.length,
@@ -451,8 +448,7 @@ class StationClient {
                 type: 'local',
                 method: 'LOCAL',
                 status: 200,
-                message: 'Reserved inference ticket for API key request',
-                action: 'ticket-reserve',
+                action: 'ticket-select',
                 response: {
                     ticket_index: this.tickets.findIndex(t => t.finalized_ticket === ticket.finalized_ticket) + 1,
                     total_tickets: this.tickets.length,
