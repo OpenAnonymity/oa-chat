@@ -25,9 +25,9 @@ export default class ChatInput {
             this.app.updateInputState();
         });
 
-        // Send on Enter (not Shift+Enter)
+        // Send on Enter (not Shift+Enter and not composing with IME)
         this.app.elements.messageInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
+            if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
                 e.preventDefault();
                 if (!this.app.elements.sendBtn.disabled) {
                     if (this.app.isCurrentSessionStreaming()) {
