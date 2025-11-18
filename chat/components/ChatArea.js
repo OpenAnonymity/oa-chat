@@ -306,22 +306,49 @@ export default class ChatArea {
      */
     updateStreamingMessage(messageId, content) {
         const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
-        if (messageEl) {
-            const contentEl = messageEl.querySelector('.message-content');
-            if (contentEl) {
-                // Use the app's LaTeX-safe processor
-                contentEl.innerHTML = this.app.processContentWithLatex(content);
-                // Re-render LaTeX for the updated content
-                if (typeof renderMathInElement !== 'undefined') {
-                    renderMathInElement(contentEl, {
-                        delimiters: [
-                            {left: '$$', right: '$$', display: true},
-                            {left: '\\[', right: '\\]', display: true},
-                            {left: '\\(', right: '\\)', display: false}
-                        ],
-                        throwOnError: false
-                    });
+        if (!messageEl) return;
+
+        let contentEl = messageEl.querySelector('.message-content');
+
+        // If content element doesn't exist (e.g., first output after reasoning), create it
+        if (!contentEl) {
+            const groupEl = messageEl.querySelector('.group.flex.w-full.flex-col');
+            if (groupEl) {
+                // Find the reasoning trace element to insert after it
+                const reasoningEl = groupEl.querySelector('.reasoning-trace');
+                const actionButtons = groupEl.querySelector('.flex.items-center.justify-between');
+
+                // Create the text bubble
+                const textBubble = document.createElement('div');
+                textBubble.className = 'py-3 px-4 font-normal message-assistant w-full flex items-center';
+                textBubble.innerHTML = '<div class="min-w-0 w-full overflow-hidden message-content prose"></div>';
+
+                // Insert after reasoning trace but before action buttons
+                if (reasoningEl && actionButtons) {
+                    groupEl.insertBefore(textBubble, actionButtons);
+                } else if (actionButtons) {
+                    groupEl.insertBefore(textBubble, actionButtons);
+                } else {
+                    groupEl.appendChild(textBubble);
                 }
+
+                contentEl = textBubble.querySelector('.message-content');
+            }
+        }
+
+        if (contentEl) {
+            // Use the app's LaTeX-safe processor
+            contentEl.innerHTML = this.app.processContentWithLatex(content);
+            // Re-render LaTeX for the updated content
+            if (typeof renderMathInElement !== 'undefined') {
+                renderMathInElement(contentEl, {
+                    delimiters: [
+                        {left: '$$', right: '$$', display: true},
+                        {left: '\\[', right: '\\]', display: true},
+                        {left: '\\(', right: '\\)', display: false}
+                    ],
+                    throwOnError: false
+                });
             }
         }
     }
@@ -509,6 +536,22 @@ export default class ChatArea {
     }
 
     /**
+     * Updates the reasoning subtitle to show duration when thinking completes.
+     * Called when output starts streaming after reasoning finishes.
+     * @param {string} messageId - The message ID
+     * @param {number} reasoningDuration - Duration in milliseconds
+     */
+    updateReasoningSubtitleToDuration(messageId, reasoningDuration) {
+        const subtitleEl = document.getElementById(`reasoning-subtitle-${messageId}`);
+        if (subtitleEl) {
+            // Remove streaming animation class
+            subtitleEl.classList.remove('reasoning-subtitle-streaming');
+            // Update text to show duration
+            subtitleEl.textContent = this.formatReasoningDuration(reasoningDuration);
+        }
+    }
+
+    /**
      * Finalizes the reasoning display after streaming completes.
      * Applies markdown processing to the final content and updates the subtitle with timing.
      * @param {string} messageId - The message ID
@@ -556,17 +599,23 @@ export default class ChatArea {
         }
 
         // Update the subtitle to show timing instead of the summary
+        // Only update if it hasn't already been updated (when output started streaming)
         const subtitleEl = document.getElementById(`reasoning-subtitle-${messageId}`);
         if (subtitleEl) {
-            // Remove streaming animation class
-            subtitleEl.classList.remove('reasoning-subtitle-streaming');
+            // Check if subtitle was already updated (no longer has streaming animation)
+            const alreadyUpdated = !subtitleEl.classList.contains('reasoning-subtitle-streaming');
 
-            if (reasoningDuration) {
-                subtitleEl.textContent = this.formatReasoningDuration(reasoningDuration);
-            } else {
-                // Fallback if no duration is available
-                subtitleEl.textContent = 'Reasoning complete';
+            if (!alreadyUpdated) {
+                // Subtitle hasn't been updated yet, update it now
+                subtitleEl.classList.remove('reasoning-subtitle-streaming');
+                if (reasoningDuration) {
+                    subtitleEl.textContent = this.formatReasoningDuration(reasoningDuration);
+                } else {
+                    // Fallback if no duration is available
+                    subtitleEl.textContent = 'Reasoning complete';
+                }
             }
+            // If already updated, we skip the re-render to avoid redundancy
         }
     }
 

@@ -1743,7 +1743,9 @@ class ChatApp {
                 let lastSaveLength = 0;
                 const SAVE_INTERVAL_CHARS = 100; // Save every 100 characters
                 let firstChunkReceived = false;
+                let firstContentChunk = true; // Track when content starts (after reasoning)
                 let reasoningStartTime = null;
+                let reasoningEndTime = null;
 
                 // Stream the response with token tracking
                 const tokenData = await openRouterAPI.streamCompletion(
@@ -1761,6 +1763,21 @@ class ChatApp {
                                 streamedContent += chunk;
                                 streamingMessage.content = streamedContent;
                                 streamingMessage.streamingTokens = Math.ceil(streamedContent.length / 4);
+
+                                // If reasoning happened before content, finalize reasoning display now
+                                if (reasoningStartTime && streamedReasoning.length > 0) {
+                                    reasoningEndTime = Date.now();
+                                    const reasoningDuration = reasoningEndTime - reasoningStartTime;
+
+                                    // Update the reasoning subtitle to show duration immediately
+                                    if (this.chatArea) {
+                                        this.chatArea.updateReasoningSubtitleToDuration(
+                                            streamingMessageId,
+                                            reasoningDuration
+                                        );
+                                    }
+                                    firstContentChunk = false; // Mark that we've handled the transition
+                                }
                             }
 
                             // Handle image data
@@ -1780,7 +1797,24 @@ class ChatApp {
                         }
 
                         // Handle subsequent chunks
-                        if (chunk) streamedContent += chunk;
+                        if (chunk) {
+                            streamedContent += chunk;
+
+                            // If this is the first content chunk after reasoning, finalize reasoning display
+                            if (firstContentChunk && reasoningStartTime && streamedReasoning.length > 0) {
+                                firstContentChunk = false;
+                                reasoningEndTime = Date.now();
+                                const reasoningDuration = reasoningEndTime - reasoningStartTime;
+
+                                // Update the reasoning subtitle to show duration immediately
+                                if (this.chatArea) {
+                                    this.chatArea.updateReasoningSubtitleToDuration(
+                                        streamingMessageId,
+                                        reasoningDuration
+                                    );
+                                }
+                            }
+                        }
 
                         if (imageData && imageData.images) {
                             if (!streamingMessage.images) streamingMessage.images = [];
@@ -1852,8 +1886,9 @@ class ChatApp {
 
                 // Calculate reasoning duration if reasoning was used
                 if (streamingMessage.reasoning && reasoningStartTime) {
-                    const reasoningEndTime = Date.now();
-                    streamingMessage.reasoningDuration = reasoningEndTime - reasoningStartTime;
+                    // Use already-calculated end time if available, otherwise calculate now
+                    const finalReasoningEndTime = reasoningEndTime || Date.now();
+                    streamingMessage.reasoningDuration = finalReasoningEndTime - reasoningStartTime;
                 }
 
                 await chatDB.saveMessage(streamingMessage);

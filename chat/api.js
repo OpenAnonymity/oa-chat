@@ -398,6 +398,7 @@ class OpenRouterAPI {
         let hasReceivedFirstToken = false;
         let citations = []; // Track citations for web search results
         let annotations = []; // Track annotations from OpenRouter response
+        let estimatedReasoningTokens = 0; // Track reasoning tokens for cumulative display
 
         // Buffering for reasoning chunks to reduce UI updates
         let reasoningBuffer = '';
@@ -712,6 +713,15 @@ class OpenRouterAPI {
                                         // Otherwise, set a timer to flush after delay
                                         reasoningBufferTimer = setTimeout(flushReasoningBuffer, REASONING_BUFFER_DELAY);
                                     }
+
+                                    // Update token count for reasoning (estimated)
+                                    estimatedReasoningTokens = Math.ceil(accumulatedReasoning.length / 4);
+                                    if (onTokenUpdate) {
+                                        onTokenUpdate({
+                                            completionTokens: estimatedReasoningTokens,
+                                            isStreaming: true
+                                        });
+                                    }
                                 }
 
                                 // Skip normal content processing if this was a reasoning event
@@ -740,7 +750,9 @@ class OpenRouterAPI {
                                     accumulatedContent += contentDelta;
                                     onChunk(contentDelta);
 
-                                    completionTokens = Math.ceil(accumulatedContent.length / 4);
+                                    // Add reasoning tokens to content tokens for cumulative display
+                                    const estimatedContentTokens = Math.ceil(accumulatedContent.length / 4);
+                                    completionTokens = estimatedReasoningTokens + estimatedContentTokens;
                                     if (onTokenUpdate) {
                                         onTokenUpdate({
                                             completionTokens,
@@ -759,8 +771,9 @@ class OpenRouterAPI {
                                 accumulatedContent += content;
                                 onChunk(content);
 
-                                // Improved token estimation during streaming
-                                completionTokens = Math.ceil(accumulatedContent.length / 4);
+                                // Add reasoning tokens to content tokens for cumulative display
+                                const estimatedContentTokens = Math.ceil(accumulatedContent.length / 4);
+                                completionTokens = estimatedReasoningTokens + estimatedContentTokens;
                                 if (onTokenUpdate) {
                                     onTokenUpdate({
                                         completionTokens,
