@@ -554,7 +554,7 @@ function buildCitationsToggleButton(citations, messageId) {
 
     return `
         <button
-            class="citations-toggle-btn inline-flex items-center gap-2 px-2 py-1 text-left hover:bg-muted/50 rounded transition-colors"
+            class="citations-toggle-btn inline-flex items-center gap-2 px-2 py-1 text-left hover:bg-muted/80 rounded transition-colors"
             id="${toggleId}"
             data-message-id="${messageId}"
         >

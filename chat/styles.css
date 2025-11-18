@@ -474,6 +474,10 @@
     background: hsl(var(--color-muted) / 0.5);
 }
 
+.dark .citations-toggle-btn:hover {
+    background-color: hsl(var(--color-muted) / 0.4) !important;
+}
+
 .citations-carousel {
     display: flex;
     gap: 0.5rem;
@@ -828,7 +832,7 @@
         max-width: 160px;
         height: 70px;
     }
-    
+
     .citations-carousel {
         padding: 0.25rem;
     }
@@ -1616,7 +1620,7 @@ html {
         gap: 0.35rem;
         font-size: 0.7rem;
     }
-    
+
     .scroll-to-bottom-btn svg {
         width: 0.85rem;
         height: 0.85rem;
