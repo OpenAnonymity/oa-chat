@@ -401,7 +401,10 @@ class StationClient {
                 }
             });
 
-            this.saveTickets(tickets);
+            // Load existing tickets and append new ones
+            const existingTickets = this.loadTickets();
+            const combinedTickets = [...existingTickets, ...tickets];
+            this.saveTickets(combinedTickets);
 
             if (progressCallback) progressCallback('Registration complete!', 100);
 
