@@ -231,7 +231,7 @@ class OpenRouterAPI {
             !modelId.includes('gpt-5-chat') &&
             !modelId.includes('gpt-5.1-chat')
         ) {
-            return 100000;
+            return 200000;
         }
         return undefined; // Use API default for other models
     }
