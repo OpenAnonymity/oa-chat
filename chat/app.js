@@ -2221,7 +2221,8 @@ class ChatApp {
             apiKey: session.apiKey, // Reuse the same ephemeral key
             apiKeyInfo: session.apiKeyInfo,
             expiresAt: session.expiresAt,
-            searchEnabled: this.searchEnabled
+            searchEnabled: this.searchEnabled,
+            forkedFrom: session.id
         };
 
         // Save new session
@@ -2241,6 +2242,18 @@ class ChatApp {
             await chatDB.saveMessage(newMessage);
         }
 
+        // Insert divider message
+        const dividerMessage = {
+            id: this.generateId(),
+            sessionId: newSessionId,
+            role: 'system',
+            type: 'divider',
+            content: 'Branched from past session',
+            forkedFromSessionId: session.id,
+            timestamp: baseTime + messagesToCopy.length
+        };
+        await chatDB.saveMessage(dividerMessage);
+
         // Log the fork action
         if (window.networkLogger) {
             window.networkLogger.logRequest({
@@ -2249,7 +2262,7 @@ class ChatApp {
                 status: 200,
                 sessionId: newSessionId,
                 action: 'session-fork',
-                message: 'Forked conversation from existing session',
+                message: 'Forked chat to new session',
                 response: {
                     sourceSessionId: session.id,
                     messagesCopied: messagesToCopy.length,

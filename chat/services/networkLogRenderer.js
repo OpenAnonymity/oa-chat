@@ -77,7 +77,7 @@ export function getActivityDescription(log, detailed = false) {
             } else if (action === 'prompt-edit') {
                 return 'Edited prompt and regenerated response';
             } else if (action === 'session-fork') {
-                return 'Forked conversation to new session';
+                return 'Forked chat to new session';
             }
             return message || 'Local operation completed';
         } else {
@@ -262,8 +262,8 @@ export function getActivityIcon(log) {
             </svg>`;
         } else if (action === 'session-fork') {
             // Branch/fork icon for conversation forking
-            return `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5"></path>
+            return `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M2 12h6c6 0 10-4 14-8m-4 0h4v4M8 12c6 0 10 4 14 8m-4 0h4v-4"></path>
             </svg>`;
         }
         // Default local event icon (processor/chip)

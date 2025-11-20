@@ -28,6 +28,7 @@ How it works:
 
 **The OA project is actively developed at Stanford and Michigan.** This client is currently in closed alpha and more details coming soon. We appreciate your [feedback](https://forms.gle/HEmvxnJpN1jQC7CfA)!
 
+[11/19/2025] Added prompt editing and chat branching + UI fixes
 [11/18/2025] Added Gemini 3 Pro and GPT-5.1 Instant and Thinking
     `.trim(),
     // Future: Add diagram/image support
@@ -907,6 +908,30 @@ function buildEmptyState() {
 }
 
 /**
+ * Builds HTML for a divider message (e.g., for forked sessions).
+ * @param {Object} message - Message object with content and metadata
+ * @returns {string} HTML string
+ */
+function buildDividerMessage(message) {
+    return `
+        <div class="w-full flex items-center justify-center gap-4 my-6 select-none fade-in opacity-80 hover:opacity-100 transition-opacity">
+            <div class="h-px bg-border/60 flex-1 max-w-[100px] sm:max-w-[140px]"></div>
+            <div class="flex items-center gap-1 text-xs text-muted-foreground">
+                <span class="opacity-70">Branched from</span>
+                <button
+                    onclick="window.app.switchSession('${message.forkedFromSessionId}')"
+                    class="hover:text-foreground font-medium underline underline-offset-2 transition-colors cursor-pointer"
+                    title="Go back to original session"
+                >
+                    this past session
+                </button>
+            </div>
+            <div class="h-px bg-border/60 flex-1 max-w-[100px] sm:max-w-[140px]"></div>
+        </div>
+    `;
+}
+
+/**
  * Builds HTML for a single message (user or assistant).
  * @param {Object} message - Message object with role, content, etc.
  * @param {Object} helpers - Helper functions { processContentWithLatex, formatTime }
@@ -916,7 +941,9 @@ function buildEmptyState() {
  * @returns {string} HTML string
  */
 export function buildMessageHTML(message, helpers, models, sessionModelName, options = {}) {
-    if (message.role === 'user') {
+    if (message.role === 'system' && message.type === 'divider') {
+        return buildDividerMessage(message);
+    } else if (message.role === 'user') {
         return buildUserMessage(message, options);
     } else {
         // Determine provider name and model name
