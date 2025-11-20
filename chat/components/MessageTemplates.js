@@ -914,19 +914,19 @@ function buildEmptyState() {
  */
 function buildDividerMessage(message) {
     return `
-        <div class="w-full flex items-center justify-center gap-4 my-6 select-none fade-in opacity-80 hover:opacity-100 transition-opacity">
-            <div class="h-px bg-border/60 flex-1 max-w-[100px] sm:max-w-[140px]"></div>
+        <div class="w-full flex items-center justify-center gap-4 select-none fade-in opacity-80">
+            <div class="h-px bg-muted-foreground/20 flex-1 max-w-[100px] sm:max-w-[140px]"></div>
             <div class="flex items-center gap-1 text-xs text-muted-foreground">
                 <span class="opacity-70">Branched from</span>
                 <button
                     onclick="window.app.switchSession('${message.forkedFromSessionId}')"
-                    class="hover:text-foreground font-medium underline underline-offset-2 transition-colors cursor-pointer"
+                    class="hover:text-foreground dark:hover:text-gray-200 font-medium underline underline-offset-2 transition-colors cursor-pointer"
                     title="Go back to original session"
                 >
                     this past session
                 </button>
             </div>
-            <div class="h-px bg-border/60 flex-1 max-w-[100px] sm:max-w-[140px]"></div>
+            <div class="h-px bg-muted-foreground/20 flex-1 max-w-[100px] sm:max-w-[140px]"></div>
         </div>
     `;
 }
