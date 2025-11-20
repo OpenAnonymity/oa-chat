@@ -103,6 +103,9 @@ class ChatApp {
         this.linkPreviewTimeout = null;
         this.currentPreviewLink = null;
 
+        // Edit mode state
+        this.editingMessageId = null; // Track which message is being edited
+
         this.init();
     }
 
@@ -796,7 +799,7 @@ class ChatApp {
 
         // Restore search state from global setting
         const savedSearchEnabled = await chatDB.getSetting('searchEnabled');
-        this.searchEnabled = savedSearchEnabled !== undefined ? savedSearchEnabled : false;
+        this.searchEnabled = savedSearchEnabled !== undefined ? savedSearchEnabled : true;
         this.chatInput.updateSearchToggleUI();
 
         this.renderDeleteHistoryModalContent();
@@ -1039,6 +1042,9 @@ class ChatApp {
         }
 
         this.saveCurrentSessionScrollPosition();
+
+        // Clear edit state when switching sessions
+        this.editingMessageId = null;
 
         this.state.currentSessionId = sessionId;
         chatDB.saveSetting('currentSessionId', sessionId);
@@ -1382,7 +1388,6 @@ class ChatApp {
 
             let streamingMessage = null;
             let streamedContent = '';
-            let firstChunk = true;
 
             try {
                 // Get AI response from OpenRouter with streaming
@@ -1408,29 +1413,39 @@ class ChatApp {
 
                 let lastSaveLength = 0;
                 const SAVE_INTERVAL_CHARS = 100;
-                let firstReasoningChunk = true;
+                let firstChunkReceived = false;
                 let reasoningStartTime = null;
-                firstChunk = true;
 
                 // Stream the response with token tracking
                 const tokenData = await openRouterAPI.streamCompletion(
                     messages,
                     modelIdForRequest,
                     session.apiKey,
-                    async (chunk) => {
-                        if (!firstChunk) {
-                            firstChunk = false;
-                            streamedContent += chunk;
-                            streamingMessage.content = streamedContent;
-                            streamingMessage.streamingTokens = Math.ceil(streamedContent.length / 4);
-                            await chatDB.saveMessage(streamingMessage);
-                            if (this.chatArea) {
-                                await this.chatArea.appendMessage(streamingMessage);
+                    async (chunk, imageData) => {
+                        // On first chunk (of any kind), remove typing indicator and append message
+                        if (!firstChunkReceived) {
+                            firstChunkReceived = true;
+                            this.removeTypingIndicator(typingId);
+
+                            // Handle text content
+                            if (chunk) {
+                                streamedContent += chunk;
+                                streamingMessage.content = streamedContent;
+                                streamingMessage.streamingTokens = Math.ceil(streamedContent.length / 4);
                             }
-                            return;
+
+                            // Save message to DB and append to UI
+                            if (chunk) {
+                                await chatDB.saveMessage(streamingMessage);
+                                if (this.chatArea) {
+                                    await this.chatArea.appendMessage(streamingMessage);
+                                }
+                            }
+                            return; // Exit after first chunk handling
                         }
 
-                        streamedContent += chunk;
+                        // Handle subsequent chunks
+                        if (chunk) streamedContent += chunk;
 
                         if (streamedContent.length - lastSaveLength >= SAVE_INTERVAL_CHARS) {
                             streamingMessage.content = streamedContent;
@@ -1454,9 +1469,10 @@ class ChatApp {
                     abortController,
                     async (reasoningChunk) => {
                         // Handle reasoning trace streaming
-                        if (firstReasoningChunk) {
-                            firstReasoningChunk = false;
+                        if (!firstChunkReceived) {
+                            firstChunkReceived = true;
                             reasoningStartTime = Date.now();
+                            this.removeTypingIndicator(typingId);
                             streamingMessage.reasoning = reasoningChunk;
                             streamingMessage.streamingReasoning = true;
                             streamedReasoning = reasoningChunk;
@@ -1514,7 +1530,7 @@ class ChatApp {
                 this.removeTypingIndicator(typingId);
 
                 if (error.isCancelled) {
-                    if (streamingMessage && firstChunk) {
+                    if (streamingMessage && firstChunkReceived) {
                         if (streamedContent.trim() || streamedReasoning.trim()) {
                             streamingMessage.content = streamedContent;
                             // Parse and save the cleaned reasoning
@@ -1539,7 +1555,7 @@ class ChatApp {
                         }
                     }
                 } else {
-                    if (firstChunk && streamingMessage) {
+                    if (firstChunkReceived && streamingMessage) {
                         streamingMessage.content = 'Sorry, I encountered an error while processing your request.';
                         streamingMessage.tokenCount = null;
                         streamingMessage.streamingTokens = null;
@@ -2014,6 +2030,11 @@ class ChatApp {
             await chatDB.deleteSessionMessages(sessionId);
             this.sessionScrollPositions.delete(sessionId);
 
+            // Clear edit state if deleting current session
+            if (this.state.currentSessionId === sessionId) {
+                this.editingMessageId = null;
+            }
+
             // Switch to another session if we deleted the current one
             if (this.state.currentSessionId === sessionId) {
                 this.state.currentSessionId = this.state.sessions.length > 0 ? this.state.sessions[0].id : null;
@@ -2027,6 +2048,228 @@ class ChatApp {
             if (this.state.sessions.length === 0) {
                 await this.createSession();
             }
+        }
+    }
+
+    /**
+     * Returns template options for rendering a specific message
+     * @param {string} messageId - Message ID
+     * @returns {Object} Template options
+     */
+    getMessageTemplateOptions(messageId) {
+        return {
+            isEditing: this.editingMessageId === messageId
+        };
+    }
+
+    /**
+     * Enters edit mode for a user message
+     * @param {string} messageId - Message ID to edit
+     */
+    async enterEditMode(messageId) {
+        const session = this.getCurrentSession();
+        if (!session) return;
+
+        // Prevent editing if streaming
+        if (this.isCurrentSessionStreaming()) {
+            return;
+        }
+
+        const messages = await chatDB.getSessionMessages(session.id);
+        const message = messages.find(m => m.id === messageId);
+
+        if (!message || message.role !== 'user') {
+            return;
+        }
+
+        this.editingMessageId = messageId;
+        await this.chatArea.render();
+
+        // Focus the textarea
+        requestAnimationFrame(() => {
+            const textarea = document.querySelector(`.edit-prompt-textarea[data-message-id="${messageId}"]`);
+            if (textarea) {
+                textarea.focus();
+                // Place cursor at end
+                textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+            }
+        });
+    }
+
+    /**
+     * Cancels edit mode
+     * @param {string} messageId - Message ID being edited
+     */
+    cancelEditMode(messageId) {
+        if (this.editingMessageId === messageId) {
+            this.editingMessageId = null;
+            this.chatArea.render();
+        }
+    }
+
+    /**
+     * Confirms and applies the edited prompt
+     * @param {string} messageId - Message ID being edited
+     */
+    async confirmEditPrompt(messageId) {
+        const session = this.getCurrentSession();
+        if (!session) return;
+
+        const textarea = document.querySelector(`.edit-prompt-textarea[data-message-id="${messageId}"]`);
+        if (!textarea) return;
+
+        const newContent = textarea.value.trim();
+        if (!newContent) return;
+
+        const messages = await chatDB.getSessionMessages(session.id);
+        const messageIndex = messages.findIndex(m => m.id === messageId);
+
+        if (messageIndex === -1) return;
+
+        const message = messages[messageIndex];
+
+        // Update the message content
+        message.content = newContent;
+        message.timestamp = Date.now();
+        await chatDB.saveMessage(message);
+
+        // Delete all messages after this one (truncate conversation)
+        const messagesToDelete = messages.slice(messageIndex + 1);
+        for (const msg of messagesToDelete) {
+            await chatDB.deleteMessage(msg.id);
+        }
+
+        // Update session timestamp
+        session.updatedAt = Date.now();
+
+        // Update session title if this was the first message
+        if (messageIndex === 0) {
+            const title = newContent.substring(0, 50) + (newContent.length > 50 ? '...' : '');
+            session.title = title;
+        }
+
+        await chatDB.saveSession(session);
+
+        // Clear edit mode
+        this.editingMessageId = null;
+
+        // Log the edit action
+        if (window.networkLogger) {
+            window.networkLogger.logRequest({
+                type: 'local',
+                method: 'LOCAL',
+                status: 200,
+                sessionId: session.id,
+                action: 'prompt-edit',
+                message: 'Edited prompt and truncated conversation',
+                response: {
+                    messageIndex: messageIndex,
+                    messagesDeleted: messagesToDelete.length
+                }
+            });
+        }
+
+        // Re-render to show updated message
+        await this.chatArea.render();
+        this.renderSessions();
+
+        // Trigger regeneration
+        await this.regenerateResponse();
+    }
+
+    /**
+     * Forks the conversation from a specific message
+     * @param {string} messageId - Message ID to fork from
+     */
+    async forkConversation(messageId) {
+        const session = this.getCurrentSession();
+        if (!session) return;
+
+        // Prevent forking if streaming
+        if (this.isCurrentSessionStreaming()) {
+            return;
+        }
+
+        const messages = await chatDB.getSessionMessages(session.id);
+        const messageIndex = messages.findIndex(m => m.id === messageId);
+
+        if (messageIndex === -1) return;
+
+        // Copy messages up to and including the fork point
+        const messagesToCopy = messages.slice(0, messageIndex + 1);
+
+        // Create new session with same model and API key
+        const newSessionId = this.generateId();
+        const firstUserMessage = messagesToCopy.find(m => m.role === 'user');
+        const title = firstUserMessage
+            ? firstUserMessage.content.substring(0, 50) + (firstUserMessage.content.length > 50 ? '...' : '')
+            : 'Forked Chat';
+
+        const newSession = {
+            id: newSessionId,
+            title: `${title} (fork)`,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            model: session.model,
+            apiKey: session.apiKey, // Reuse the same ephemeral key
+            apiKeyInfo: session.apiKeyInfo,
+            expiresAt: session.expiresAt,
+            searchEnabled: this.searchEnabled
+        };
+
+        // Save new session
+        await chatDB.saveSession(newSession);
+        this.state.sessions.unshift(newSession);
+
+        // Copy messages to new session
+        const baseTime = Date.now();
+        for (let i = 0; i < messagesToCopy.length; i++) {
+            const msg = messagesToCopy[i];
+            const newMessage = {
+                ...msg,
+                id: this.generateId(),
+                sessionId: newSessionId,
+                timestamp: baseTime + i // Ensure strictly increasing timestamps to preserve order
+            };
+            await chatDB.saveMessage(newMessage);
+        }
+
+        // Log the fork action
+        if (window.networkLogger) {
+            window.networkLogger.logRequest({
+                type: 'local',
+                method: 'LOCAL',
+                status: 200,
+                sessionId: newSessionId,
+                action: 'session-fork',
+                message: 'Forked conversation from existing session',
+                response: {
+                    sourceSessionId: session.id,
+                    messagesCopied: messagesToCopy.length,
+                    sharedApiKey: !!session.apiKey
+                }
+            });
+        }
+
+        // Switch to new session
+        this.state.currentSessionId = newSessionId;
+        await chatDB.saveSetting('currentSessionId', newSessionId);
+
+        // Clear edit state
+        this.editingMessageId = null;
+
+        this.renderSessions();
+        this.renderMessages();
+        this.renderCurrentModel();
+
+        // Notify right panel of session change
+        if (this.rightPanel) {
+            this.rightPanel.onSessionChange(newSession);
+        }
+
+        // Close sidebar on mobile
+        if (this.isMobileView()) {
+            this.hideSidebar();
         }
     }
 

@@ -74,6 +74,10 @@ export function getActivityDescription(log, detailed = false) {
                 return `Received ${response?.signed_tickets_received || 0} signed tickets`;
             } else if (action === 'tickets-unblind') {
                 return `Unblinded ${response?.tickets_finalized || 0} tickets`;
+            } else if (action === 'prompt-edit') {
+                return 'Edited prompt and regenerated response';
+            } else if (action === 'session-fork') {
+                return 'Forked conversation to new session';
             }
             return message || 'Local operation completed';
         } else {
@@ -92,6 +96,13 @@ export function getActivityDescription(log, detailed = false) {
                 const count = response?.tickets_finalized || 0;
                 const ready = response?.tickets_ready || 0;
                 return `Successfully unblinded and finalized ${count} inference ticket${count !== 1 ? 's' : ''}. You now have ${ready} ready-to-use ticket${ready !== 1 ? 's' : ''} stored locally. Each ticket can be exchanged for one temporary anonymous API key.`;
+            } else if (action === 'prompt-edit') {
+                const deletedCount = response?.messagesDeleted || 0;
+                return `Edited a user prompt and truncated ${deletedCount} subsequent message${deletedCount !== 1 ? 's' : ''}. The conversation continues from this point with a fresh response.`;
+            } else if (action === 'session-fork') {
+                const messageCount = response?.messagesCopied || 0;
+                const hasSharedKey = response?.sharedApiKey;
+                return `Created a new conversation branch with ${messageCount} message${messageCount !== 1 ? 's' : ''} from the original session${hasSharedKey ? ', reusing the same ephemeral API key' : ''}.`;
             }
             return message || 'Local cryptographic operation completed successfully.';
         }
@@ -173,7 +184,7 @@ export function getActivityDescription(log, detailed = false) {
                         return 'The model response was stopped by the user. The partial response has been saved and can be continued or regenerated.';
                     }
                 }
-                
+
                 if (!detailed) {
                     if (status >= 200 && status < 300) {
                         return 'Response received';
@@ -243,6 +254,16 @@ export function getActivityIcon(log) {
             // Unlock/reveal icon for unblinding
             return `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z"></path>
+            </svg>`;
+        } else if (action === 'prompt-edit') {
+            // Pencil/edit icon for prompt editing
+            return `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+            </svg>`;
+        } else if (action === 'session-fork') {
+            // Branch/fork icon for conversation forking
+            return `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5"></path>
             </svg>`;
         }
         // Default local event icon (processor/chip)

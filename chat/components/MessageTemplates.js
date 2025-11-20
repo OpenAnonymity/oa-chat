@@ -36,8 +36,8 @@ How it works:
 
 // Shared class constants (copied verbatim from existing markup)
 const CLASSES = {
-    userWrapper: 'w-full px-2 md:px-3 fade-in self-end',
-    userGroup: 'group my-1 flex w-full flex-col gap-2 justify-end items-end',
+    userWrapper: 'w-full px-2 md:px-3 fade-in self-end mb-2',
+    userGroup: 'group my-1 flex w-full flex-col gap-2 justify-end items-end relative',
     userBubble: 'py-3 px-4 font-normal message-user max-w-full',
     userContent: 'min-w-0 w-full overflow-hidden break-words',
 
@@ -196,11 +196,49 @@ function buildFileAttachments(files) {
 /**
  * Builds HTML for a user message bubble.
  * @param {Object} message - Message object with id, content, etc.
+ * @param {Object} options - Template options
+ * @param {boolean} options.isEditing - Whether this message is in edit mode
  * @returns {string} HTML string
  */
-function buildUserMessage(message) {
+function buildUserMessage(message, options = {}) {
     const fileAttachments = buildFileAttachments(message.files);
+    const { isEditing = false } = options;
 
+    // If in edit mode, show the edit form instead of the static message
+    if (isEditing) {
+        return `
+            <div class="${CLASSES.userWrapper}" data-message-id="${message.id}">
+                <div class="${CLASSES.userGroup}">
+                    <div class="edit-prompt-form w-full">
+                        <textarea
+                            class="edit-prompt-textarea w-full px-4 py-3 border border-border rounded-lg bg-background text-foreground resize-none focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
+                            rows="3"
+                            data-message-id="${message.id}"
+                        >${escapeHtml(message.content)}</textarea>
+                        <div class="flex items-center justify-between gap-2 mt-2">
+                            <span class="text-xs text-muted-foreground">Press Cmd/Ctrl+Enter to submit</span>
+                            <div class="flex items-center gap-2">
+                                <button
+                                    class="cancel-edit-btn inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors hover:bg-muted text-foreground px-3 py-1.5 border border-border"
+                                    data-message-id="${message.id}"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    class="confirm-edit-btn inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors bg-primary text-primary-foreground hover:bg-primary/90 px-3 py-1.5"
+                                    data-message-id="${message.id}"
+                                >
+                                    Save & Regenerate
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    // Normal display mode with action buttons (shown on hover)
     return `
         <div class="${CLASSES.userWrapper}" data-message-id="${message.id}">
             <div class="${CLASSES.userGroup}">
@@ -209,6 +247,26 @@ function buildUserMessage(message) {
                         ${fileAttachments}
                         <p class="mb-0">${escapeHtml(message.content)}</p>
                     </div>
+                </div>
+                <div class="message-user-actions absolute top-full right-0 mt-1 flex items-center gap-1 z-10">
+                    <button
+                        class="copy-user-message-btn message-action-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+                        data-message-id="${message.id}"
+                        title="Copy prompt"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
+                        </svg>
+                    </button>
+                    <button
+                        class="edit-prompt-btn message-action-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+                        data-message-id="${message.id}"
+                        title="Edit prompt"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+                        </svg>
+                    </button>
                 </div>
             </div>
         </div>
@@ -749,6 +807,14 @@ function buildAssistantMessage(message, helpers, providerName, modelName) {
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
                             </svg>
                         </button>
+                        <button
+                            class="message-action-btn fork-conversation-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+                            data-message-id="${message.id}"
+                            title="Fork conversation from here">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
+                            </svg>
+                        </button>
                     </div>
                     ${buildCitationsToggleButton(message.citations, message.id)}
                 </div>
@@ -845,11 +911,12 @@ function buildEmptyState() {
  * @param {Object} helpers - Helper functions { processContentWithLatex, formatTime }
  * @param {Array} models - Array of model objects for provider lookup
  * @param {string} sessionModelName - Current session's model name
+ * @param {Object} options - Template options (e.g., isEditing for user messages)
  * @returns {string} HTML string
  */
-export function buildMessageHTML(message, helpers, models, sessionModelName) {
+export function buildMessageHTML(message, helpers, models, sessionModelName, options = {}) {
     if (message.role === 'user') {
-        return buildUserMessage(message);
+        return buildUserMessage(message, options);
     } else {
         // Determine provider name and model name
         const modelName = sessionModelName || 'OpenAI: GPT-5.1 Instant';

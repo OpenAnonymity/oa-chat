@@ -119,7 +119,12 @@ class ChatDatabase {
             const index = store.index('sessionId');
             const request = index.getAll(sessionId);
 
-            request.onsuccess = () => resolve(request.result);
+            request.onsuccess = () => {
+                const messages = request.result || [];
+                // Ensure messages are sorted by timestamp
+                messages.sort((a, b) => a.timestamp - b.timestamp);
+                resolve(messages);
+            };
             request.onerror = () => reject(request.error);
         });
     }

@@ -18,24 +18,73 @@ export default class ChatArea {
     }
 
     /**
-     * Sets up event listeners for message actions (copy, regenerate)
+     * Sets up event listeners for message actions (copy, regenerate, edit, fork)
      * Uses event delegation for dynamically added messages
      */
     setupEventListeners() {
         const messagesContainer = this.app.elements.messagesContainer;
 
-        // Event delegation for copy button
+        // Event delegation for message action buttons
         messagesContainer.addEventListener('click', async (e) => {
             const copyBtn = e.target.closest('.copy-message-btn');
             if (copyBtn) {
                 const messageId = copyBtn.dataset.messageId;
                 await this.handleCopyMessage(messageId);
+                return;
+            }
+
+            const copyUserBtn = e.target.closest('.copy-user-message-btn');
+            if (copyUserBtn) {
+                const messageId = copyUserBtn.dataset.messageId;
+                await this.handleCopyMessage(messageId);
+                return;
             }
 
             const regenerateBtn = e.target.closest('.regenerate-message-btn');
             if (regenerateBtn) {
                 const messageId = regenerateBtn.dataset.messageId;
                 await this.handleRegenerateMessage(messageId);
+                return;
+            }
+
+            const editBtn = e.target.closest('.edit-prompt-btn');
+            if (editBtn) {
+                const messageId = editBtn.dataset.messageId;
+                await this.app.enterEditMode(messageId);
+                return;
+            }
+
+            const cancelEditBtn = e.target.closest('.cancel-edit-btn');
+            if (cancelEditBtn) {
+                const messageId = cancelEditBtn.dataset.messageId;
+                this.app.cancelEditMode(messageId);
+                return;
+            }
+
+            const confirmEditBtn = e.target.closest('.confirm-edit-btn');
+            if (confirmEditBtn) {
+                const messageId = confirmEditBtn.dataset.messageId;
+                await this.app.confirmEditPrompt(messageId);
+                return;
+            }
+
+            const forkBtn = e.target.closest('.fork-conversation-btn');
+            if (forkBtn) {
+                const messageId = forkBtn.dataset.messageId;
+                await this.app.forkConversation(messageId);
+                return;
+            }
+        });
+
+        // Add keyboard listener for Cmd/Ctrl+Enter in edit textarea
+        messagesContainer.addEventListener('keydown', async (e) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !e.shiftKey) {
+                const textarea = e.target.closest('.edit-prompt-textarea');
+                if (textarea) {
+                    e.preventDefault();
+                    const messageId = textarea.dataset.messageId;
+                    await this.app.confirmEditPrompt(messageId);
+                }
             }
         });
     }
@@ -54,29 +103,55 @@ export default class ChatArea {
         if (message && message.content) {
             try {
                 await navigator.clipboard.writeText(message.content);
-                // Show brief visual feedback with icon change
+
+                // Handle assistant copy button
                 const btn = document.querySelector(`.copy-message-btn[data-message-id="${messageId}"]`);
                 if (btn) {
-                    const originalTitle = btn.title;
-                    const svg = btn.querySelector('svg');
-                    const originalSvgContent = svg.innerHTML;
+                    this.animateCopyButton(btn);
+                }
 
-                    // Replace with checkmark icon
-                    svg.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />';
-                    btn.title = 'Copied!';
-                    btn.classList.add('text-green-600');
-
-                    setTimeout(() => {
-                        // Restore original icon
-                        svg.innerHTML = originalSvgContent;
-                        btn.title = originalTitle;
-                        btn.classList.remove('text-green-600');
-                    }, 2000);
+                // Handle user copy button
+                const userBtn = document.querySelector(`.copy-user-message-btn[data-message-id="${messageId}"]`);
+                if (userBtn) {
+                    this.animateCopyButton(userBtn);
+                    // Keep parent visible
+                    const actionsContainer = userBtn.closest('.message-user-actions');
+                    if (actionsContainer) {
+                        actionsContainer.classList.add('force-visible');
+                        setTimeout(() => {
+                            actionsContainer.classList.remove('force-visible');
+                        }, 2000);
+                    }
                 }
             } catch (error) {
                 console.error('Failed to copy message:', error);
             }
         }
+    }
+
+    /**
+     * Animates a copy button with tick icon
+     * @param {HTMLElement} btn - The button element
+     */
+    animateCopyButton(btn) {
+        const originalTitle = btn.title;
+        const svg = btn.querySelector('svg');
+        const originalSvgContent = svg.innerHTML;
+
+        // Replace with checkmark icon
+        svg.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />';
+        btn.title = 'Copied!';
+        btn.classList.add('text-green-600');
+
+        setTimeout(() => {
+            // Restore original icon
+            svg.innerHTML = originalSvgContent;
+            btn.title = originalTitle;
+            btn.classList.remove('text-green-600');
+
+            // Blur the button to ensure it hides if relying on focus state
+            btn.blur();
+        }, 2000);
     }
 
     /**
@@ -147,9 +222,10 @@ export default class ChatArea {
             formatTime: this.app.formatTime.bind(this.app)
         };
 
-        messagesContainer.innerHTML = messages.map(message =>
-            buildMessageHTML(message, helpers, this.app.state.models, session.model)
-        ).join('');
+        messagesContainer.innerHTML = messages.map(message => {
+            const options = this.app.getMessageTemplateOptions ? this.app.getMessageTemplateOptions(message.id) : {};
+            return buildMessageHTML(message, helpers, this.app.state.models, session.model, options);
+        }).join('');
 
         // Render LaTeX in all message content elements
         this.renderLatex();

@@ -1533,8 +1533,26 @@ html {
 
 /* Message action buttons */
 .message-action-btn {
-    opacity: 0.6;
+    opacity: 0.6; /* Default visible for assistant */
     transition: opacity 0.2s ease, background-color 0.15s ease, color 0.15s ease;
+}
+
+/* User Message Actions Container - Handle visibility as a group */
+.message-user-actions {
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+/* Show container on group hover, self hover, or forced visible */
+.group:hover .message-user-actions,
+.message-user-actions:hover,
+.message-user-actions.force-visible {
+    opacity: 1;
+}
+
+/* Inside the user container, buttons are always fully opaque (container handles fade) */
+.message-user-actions .message-action-btn {
+    opacity: 1;
 }
 
 .group:hover .message-action-btn,
@@ -1549,6 +1567,21 @@ html {
 /* Dark mode: reduce hover brightness for better contrast */
 .dark .message-action-btn:hover {
     background-color: hsl(var(--color-muted) / 0.4) !important;
+}
+
+/* Edit prompt form */
+.edit-prompt-form {
+    animation: fadeIn 0.2s ease-in-out;
+}
+
+.edit-prompt-textarea {
+    font-size: 0.875rem;
+    line-height: 1.5;
+    min-height: 80px;
+}
+
+.edit-prompt-textarea:focus {
+    box-shadow: 0 0 0 3px hsl(var(--color-ring) / 0.1);
 }
 
 /* Scroll to Bottom Button */

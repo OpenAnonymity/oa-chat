@@ -650,7 +650,7 @@ class RightPanel {
 
     toggleLogExpand(logId) {
         const wasExpanded = this.expandedLogIds.has(logId);
-        
+
         // Close all currently expanded logs first
         if (!wasExpanded) {
             // Remove all existing expanded details
@@ -659,11 +659,11 @@ class RightPanel {
             });
             this.expandedLogIds.clear();
         }
-        
+
         // Find the log entry element
         const logEntry = document.querySelector(`.activity-log-entry[data-log-id="${logId}"]`);
         if (!logEntry) return;
-        
+
         if (wasExpanded) {
             // Collapse: remove the details element
             const details = logEntry.querySelector('.activity-log-details');
@@ -675,14 +675,14 @@ class RightPanel {
             // Expand: find the log data and insert the details HTML
             const log = this.networkLogs.find(l => l.id === logId);
             if (!log) return;
-            
+
             // Generate and insert the expanded details HTML
             const detailsHTML = this.generateExpandedDetailsHTML(log);
             const contentColumn = logEntry.querySelector('.flex-1.min-w-0');
             if (contentColumn) {
                 contentColumn.insertAdjacentHTML('beforeend', detailsHTML);
             }
-            
+
             this.expandedLogIds.add(logId);
         }
     }
@@ -782,6 +782,16 @@ class RightPanel {
         const session = this.getSessionInfo(sessionId);
         if (!session) return null;
         return session.apiKey;
+    }
+
+    /**
+     * Counts how many sessions share the current API key
+     * @returns {number} Number of sessions with matching API key
+     */
+    getSharedKeyCount() {
+        if (!this.apiKey || !this.app) return 0;
+
+        return this.app.state.sessions.filter(s => s.apiKey === this.apiKey).length;
     }
 
     /**
@@ -952,6 +962,13 @@ class RightPanel {
                             <div class="flex items-center justify-between p-2 bg-background rounded-md border border-border">
                                 <span class="text-[10px] text-muted-foreground">Issuing Station</span>
                                 <span class="text-[10px] font-medium">${this.escapeHtml(this.apiKeyInfo.station_name)}</span>
+                            </div>
+                        ` : ''}
+
+                        ${this.getSharedKeyCount() > 1 ? `
+                            <div class="flex items-center justify-between p-2 bg-primary/5 rounded-md border border-primary/20">
+                                <span class="text-[10px] text-muted-foreground">Shared across</span>
+                                <span class="text-[10px] font-medium text-primary">${this.getSharedKeyCount()} sessions</span>
                             </div>
                         ` : ''}
                     </div>
