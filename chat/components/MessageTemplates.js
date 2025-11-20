@@ -211,26 +211,27 @@ function buildUserMessage(message, options = {}) {
                 <div class="${CLASSES.userGroup}">
                     <div class="edit-prompt-form w-full">
                         <textarea
-                            class="edit-prompt-textarea w-full px-4 py-3 border border-border rounded-lg bg-background text-foreground resize-none focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
+                            class="edit-prompt-textarea w-full px-4 py-3 border border-border rounded-lg bg-background text-foreground resize-none focus:outline-none shadow-sm"
                             rows="3"
                             data-message-id="${message.id}"
                         >${escapeHtml(message.content)}</textarea>
-                        <div class="flex items-center justify-between gap-2 mt-2">
-                            <span class="text-xs text-muted-foreground">Press Cmd/Ctrl+Enter to submit</span>
-                            <div class="flex items-center gap-2">
-                                <button
-                                    class="cancel-edit-btn inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors hover:bg-muted text-foreground px-3 py-1.5 border border-border"
-                                    data-message-id="${message.id}"
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    class="confirm-edit-btn inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors bg-primary text-primary-foreground hover:bg-primary/90 px-3 py-1.5"
-                                    data-message-id="${message.id}"
-                                >
-                                    Save & Regenerate
-                                </button>
-                            </div>
+                        <div class="flex items-center justify-end gap-2 mt-2">
+                            <button
+                                class="cancel-edit-btn inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors hover-highlight text-muted-foreground hover:text-foreground px-3 py-1.5 border border-transparent"
+                                data-message-id="${message.id}"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                class="confirm-edit-btn group inline-flex items-center justify-center gap-2 rounded-md text-xs font-medium transition-colors border border-border px-3 py-1.5 shadow-sm"
+                                data-message-id="${message.id}"
+                            >
+                                <span>Save</span>
+                                <span class="flex items-center gap-0.5 text-muted-foreground">
+                                    <kbd class="pointer-events-none inline-flex h-4 select-none items-center gap-1 rounded border border-border bg-muted px-1 font-mono text-[10px] font-medium opacity-100">⌘</kbd>
+                                    <kbd class="pointer-events-none inline-flex h-4 select-none items-center gap-1 rounded border border-border bg-muted px-1 font-mono text-[10px] font-medium opacity-100">↵</kbd>
+                                </span>
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -252,7 +253,7 @@ function buildUserMessage(message, options = {}) {
                     <button
                         class="copy-user-message-btn message-action-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
                         data-message-id="${message.id}"
-                        title="Copy prompt"
+                        data-tooltip="Copy prompt"
                     >
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
@@ -261,7 +262,7 @@ function buildUserMessage(message, options = {}) {
                     <button
                         class="edit-prompt-btn message-action-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
                         data-message-id="${message.id}"
-                        title="Edit prompt"
+                        data-tooltip="Edit prompt"
                     >
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
@@ -794,7 +795,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName) {
                         <button
                             class="message-action-btn copy-message-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
                             data-message-id="${message.id}"
-                            title="Copy message">
+                            data-tooltip="Copy message">
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
                             </svg>
@@ -802,7 +803,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName) {
                         <button
                             class="message-action-btn regenerate-message-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
                             data-message-id="${message.id}"
-                            title="Regenerate response">
+                            data-tooltip="Regenerate response">
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
                             </svg>
@@ -810,9 +811,9 @@ function buildAssistantMessage(message, helpers, providerName, modelName) {
                         <button
                             class="message-action-btn fork-conversation-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
                             data-message-id="${message.id}"
-                            title="Fork conversation from here">
+                            data-tooltip="Fork conversation from here">
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M2 12h6c6 0 10-4 14-8m-4 0h4v4M8 12c6 0 10 4 14 8m-4 0h4v-4" />
                             </svg>
                         </button>
                     </div>

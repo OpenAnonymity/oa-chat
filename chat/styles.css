@@ -1555,7 +1555,7 @@ html {
     opacity: 1;
 }
 
-.group:hover .message-action-btn,
+/* Only the specific button being hovered should be fully opaque */
 .message-action-btn:hover {
     opacity: 1;
 }
@@ -1564,9 +1564,77 @@ html {
     opacity: 1;
 }
 
+/* Custom Tooltip Styles */
+[data-tooltip] {
+    position: relative;
+}
+
+[data-tooltip]:hover::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%) translateY(8px);
+    background-color: hsl(var(--color-popover));
+    color: hsl(var(--color-popover-foreground));
+    border: 1px solid hsl(var(--color-border));
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    white-space: nowrap;
+    z-index: 9999;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    pointer-events: none;
+    animation: tooltipFadeIn 0.15s ease-out;
+}
+
+[data-tooltip]:hover::before {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%) translateY(0px);
+    border-width: 4px;
+    border-style: solid;
+    border-color: transparent transparent hsl(var(--color-border)) transparent;
+    z-index: 9999;
+    pointer-events: none;
+    animation: tooltipFadeIn 0.15s ease-out;
+}
+
+/* Cover the border arrow with background color to make it look seamless */
+[data-tooltip]:hover::after {
+    /* Ensure background covers border if needed, but popover usually fine */
+}
+
+@keyframes tooltipFadeIn {
+    from {
+        opacity: 0;
+        transform: translateX(-50%) translateY(4px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(-50%) translateY(8px);
+    }
+}
+
+/* Dark mode tooltip adjustment */
+.dark [data-tooltip]:hover::after {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    background-color: hsl(var(--color-popover));
+}
+
 /* Dark mode: reduce hover brightness for better contrast */
 .dark .message-action-btn:hover {
     background-color: hsl(var(--color-muted) / 0.4) !important;
+}
+
+/* Specific fix for delete history button tooltip alignment */
+#delete-history-btn[data-tooltip]:hover::after {
+    left: auto;
+    right: 0;
+    transform: translateY(8px);
 }
 
 /* Edit prompt form */
@@ -1581,7 +1649,18 @@ html {
 }
 
 .edit-prompt-textarea:focus {
-    box-shadow: 0 0 0 3px hsl(var(--color-ring) / 0.1);
+    border-color: hsl(var(--color-ring) / 0.6);
+    box-shadow: 0 0 0 1px hsl(var(--color-ring) / 0.4);
+}
+
+/* Confirm Edit Button */
+.confirm-edit-btn {
+    background-color: hsl(var(--color-background));
+}
+
+.confirm-edit-btn:hover {
+    background-color: hsl(var(--color-accent) / 0.5) !important;
+    border-color: hsl(var(--color-foreground) / 0.3) !important;
 }
 
 /* Scroll to Bottom Button */

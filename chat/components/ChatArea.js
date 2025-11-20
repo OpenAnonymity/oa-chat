@@ -252,11 +252,12 @@ export default class ChatArea {
     }
 
     /**
-     * Applies KaTeX rendering to all message content elements.
+     * Applies KaTeX rendering to message content elements.
+     * @param {HTMLElement} scope - The element to search within (default: document)
      */
-    renderLatex() {
+    renderLatex(scope = document) {
         if (typeof renderMathInElement !== 'undefined') {
-            document.querySelectorAll('.message-content').forEach(el => {
+            scope.querySelectorAll('.message-content').forEach(el => {
                 renderMathInElement(el, {
                     delimiters: [
                         {left: '$$', right: '$$', display: true},
@@ -266,6 +267,56 @@ export default class ChatArea {
                     throwOnError: false
                 });
             });
+        }
+    }
+
+    /**
+     * Updates a specific message in the DOM without full re-render.
+     * @param {Object} message - The message object to update
+     */
+    updateMessage(message) {
+        const messageEl = document.querySelector(`[data-message-id="${message.id}"]`);
+        if (messageEl) {
+            const session = this.app.getCurrentSession();
+            const helpers = {
+                processContentWithLatex: this.app.processContentWithLatex.bind(this.app),
+                formatTime: this.app.formatTime.bind(this.app)
+            };
+            const options = this.app.getMessageTemplateOptions ? this.app.getMessageTemplateOptions(message.id) : {};
+
+            // Build new HTML
+            const newHtml = buildMessageHTML(message, helpers, this.app.state.models, session.model, options);
+
+            // Create temp element to parse HTML
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = newHtml;
+            const newMessageEl = tempDiv.firstElementChild;
+
+            if (newMessageEl) {
+                messageEl.replaceWith(newMessageEl);
+                // Re-run LaTeX on just this element
+                this.renderLatex(newMessageEl);
+                // Re-setup listeners if needed (delegated listeners cover most)
+            }
+        }
+    }
+
+    /**
+     * Removes all messages that come after the specified message ID in the DOM.
+     * @param {string} messageId - The reference message ID
+     */
+    removeMessagesAfter(messageId) {
+        const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
+        if (!messageEl) return;
+
+        let nextEl = messageEl.nextElementSibling;
+        while (nextEl) {
+            const toRemove = nextEl;
+            nextEl = nextEl.nextElementSibling;
+            // Only remove message elements (check for data-message-id or typical classes)
+            if (toRemove.hasAttribute('data-message-id') || toRemove.classList.contains('w-full')) {
+                toRemove.remove();
+            }
         }
     }
 

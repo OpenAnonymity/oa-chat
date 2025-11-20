@@ -2169,8 +2169,14 @@ class ChatApp {
             });
         }
 
-        // Re-render to show updated message
-        await this.chatArea.render();
+        // Optimally update DOM instead of full re-render
+        if (this.chatArea) {
+            this.chatArea.updateMessage(message);
+            this.chatArea.removeMessagesAfter(message.id);
+        } else {
+            await this.chatArea.render();
+        }
+
         this.renderSessions();
 
         // Trigger regeneration
