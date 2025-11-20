@@ -76,7 +76,7 @@ export default class ChatArea {
             }
         });
 
-        // Add keyboard listener for Cmd/Ctrl+Enter in edit textarea
+        // Add keyboard listener for Cmd/Ctrl+Enter in edit textarea and Escape to cancel
         messagesContainer.addEventListener('keydown', async (e) => {
             if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !e.shiftKey) {
                 const textarea = e.target.closest('.edit-prompt-textarea');
@@ -84,6 +84,13 @@ export default class ChatArea {
                     e.preventDefault();
                     const messageId = textarea.dataset.messageId;
                     await this.app.confirmEditPrompt(messageId);
+                }
+            } else if (e.key === 'Escape') {
+                const textarea = e.target.closest('.edit-prompt-textarea');
+                if (textarea) {
+                    e.preventDefault();
+                    const messageId = textarea.dataset.messageId;
+                    this.app.cancelEditMode(messageId);
                 }
             }
         });

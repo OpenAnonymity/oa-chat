@@ -1631,11 +1631,11 @@ html {
 }
 
 /* Specific fix for delete history button tooltip alignment */
-#delete-history-btn[data-tooltip]:hover::after {
+/* #delete-history-btn[data-tooltip]:hover::after {
     left: auto;
     right: 0;
     transform: translateY(8px);
-}
+} */
 
 /* Edit prompt form */
 .edit-prompt-form {

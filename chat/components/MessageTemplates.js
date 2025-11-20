@@ -15,7 +15,6 @@ const WELCOME_CONTENT = {
     title: '`oa-fastchat`',
     subtitle: 'A minimal, fast, and anonymous chat client by The Open Anonymity Project', // Optional subtitle that appears centered below the title
     content: `
-How it works:
 1. **Chats are end-to-end anonymous.**\\
    Every chat requests an *ephemeral and cryptographically unlinkable* OpenRouter API key from a random proxy (*oa-stations*) with blind-signed tokens (*inference tickets*). Because users hit different oa-stations who issue such ephemeral keys to many users, model providers only see anonymous and mixed traffic.
 2. **Chat prompts and responses *never* go through Open Anonymity.**\\
@@ -218,10 +217,11 @@ function buildUserMessage(message, options = {}) {
                         >${escapeHtml(message.content)}</textarea>
                         <div class="flex items-center justify-end gap-2 mt-2">
                             <button
-                                class="cancel-edit-btn inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors hover-highlight text-muted-foreground hover:text-foreground px-3 py-1.5 border border-transparent"
+                                class="cancel-edit-btn group inline-flex items-center justify-center gap-2 rounded-md text-xs font-medium transition-colors hover-highlight text-muted-foreground hover:text-foreground px-3 py-1.5 border border-transparent"
                                 data-message-id="${message.id}"
                             >
-                                Cancel
+                                <span>Cancel</span>
+                                <kbd class="pointer-events-none inline-flex h-4 select-none items-center gap-1 rounded border border-border bg-muted px-1 font-mono text-[10px] font-medium opacity-100">Esc</kbd>
                             </button>
                             <button
                                 class="confirm-edit-btn group inline-flex items-center justify-center gap-2 rounded-md text-xs font-medium transition-colors border border-border px-3 py-1.5 shadow-sm"
