@@ -840,6 +840,15 @@ class ChatApp {
 
         // Auto-focus input field on startup
         this.elements.messageInput.focus();
+
+        // Check for pending send from early interaction
+        if (window.oaPendingSend) {
+            window.oaPendingSend = false;
+            // Small delay to ensure everything is settled
+            setTimeout(() => {
+                this.sendMessage();
+            }, 0);
+        }
     }
 
     setupInputAreaObserver() {

@@ -28,6 +28,7 @@ export default class ChatInput {
         // Send on Enter (not Shift+Enter and not composing with IME)
         this.app.elements.messageInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+                window.oaPendingSend = false; // Clear pending flag if we're handling it live
                 e.preventDefault();
                 if (!this.app.elements.sendBtn.disabled) {
                     if (this.app.isCurrentSessionStreaming()) {
@@ -140,6 +141,9 @@ export default class ChatInput {
 
         // Setup theme controls
         this.setupThemeControls();
+
+        // Mark input as ready for the inline script to defer handling
+        window.chatInputReady = true;
     }
 
     /**

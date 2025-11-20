@@ -217,6 +217,26 @@
                                                 style="height: 24px; min-height: 24px; max-height: 200px;"
                                                 autofocus
                                             ></textarea>
+                                            <script>
+                                                (function() {
+                                                    const input = document.getElementById('message-input');
+                                                    if (input) {
+                                                        // Focus immediately
+                                                        input.focus();
+
+                                                        // Capture early interactions
+                                                        window.oaPendingSend = false;
+                                                        const handleKeydown = (e) => {
+                                                            if (window.chatInputReady) return; // Let app handle it if ready
+                                                            if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+                                                                e.preventDefault();
+                                                                window.oaPendingSend = true;
+                                                            }
+                                                        };
+                                                        input.addEventListener('keydown', handleKeydown);
+                                                    }
+                                                })();
+                                            </script>
                                         </div>
                                     </div>
                                 </div>
