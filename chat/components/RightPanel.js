@@ -813,7 +813,7 @@ class RightPanel {
                     </div>
                     <button
                         id="toggle-invitation-form-btn"
-                        class="inline-flex items-center gap-1 px-2 py-1 text-[10px] rounded-md border border-border bg-background hover:bg-accent transition-all duration-200 shadow-sm hover:shadow"
+                        class="btn-ghost-hover inline-flex items-center gap-1 px-2 py-1 text-[10px] rounded-md border border-border bg-background transition-all duration-200 shadow-sm"
                     >
                         <span>${this.showInvitationForm || this.ticketCount === 0 ? 'Hide' : 'Add'}</span>
                         <svg class="w-2.5 h-2.5 transition-transform ${this.showInvitationForm || this.ticketCount === 0 ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -823,18 +823,18 @@ class RightPanel {
                 </div>
 
                 ${this.showInvitationForm || this.ticketCount === 0 ? `
-                    <form id="invitation-code-form" class="space-y-2 mt-3 p-3 bg-muted/20 rounded-lg">
+                    <form id="invitation-code-form" class="space-y-2 mt-3 p-3 bg-muted/10 rounded-lg">
                         <input
                             id="invitation-code-input"
                             type="text"
                             placeholder="Enter 24-char invitation code"
                             maxlength="24"
-                            class="w-full px-3 py-2 text-xs border border-border rounded-md bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-all"
+                            class="input-focus-clean w-full px-3 py-2 text-xs border border-border rounded-md bg-background text-foreground placeholder:text-muted-foreground transition-all"
                             ${this.isRegistering ? 'disabled' : ''}
                         />
                         <button
                             type="submit"
-                            class="w-full inline-flex items-center justify-center rounded-md text-xs font-medium transition-all duration-200 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 bg-accent text-accent-foreground hover:bg-accent/70 h-8 px-3 shadow-sm hover:shadow border border-border"
+                            class="btn-ghost-hover w-full inline-flex items-center justify-center rounded-md text-xs font-medium transition-all duration-200 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 bg-background text-foreground h-8 px-3 shadow-sm border border-border"
                             ${this.isRegistering ? 'disabled' : ''}
                         >
                             ${this.isRegistering ? 'Registering...' : 'Register Code'}
@@ -861,7 +861,7 @@ class RightPanel {
 
             <!-- Ticket Visualization Section -->
             ${hasTickets && !hasApiKey && this.currentTicket ? `
-                <div class="mx-3 mb-3 p-3 bg-muted/10 rounded-lg border border-border">
+                <div class="mx-3 mb-3 p-3 bg-muted/5 rounded-lg border border-border">
                     <div class="mb-3">
                         <div class="flex items-center justify-between">
                             <span class="text-xs font-semibold text-foreground">Next Inference Ticket</span>
@@ -905,8 +905,8 @@ class RightPanel {
                             id="use-ticket-btn"
                             class="w-full inline-flex items-center justify-center gap-1.5 rounded-md text-xs font-medium transition-all focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 h-7 px-3 ${
                                 this.isTransitioning
-                                    ? 'bg-accent text-accent-foreground border border-border'
-                                    : 'bg-accent text-accent-foreground hover:bg-accent/70 border border-border'
+                                    ? 'bg-background text-foreground border border-border'
+                                    : 'btn-ghost-hover bg-background text-foreground border border-border'
                             }"
                             ${this.isRequestingKey || this.isTransitioning ? 'disabled' : ''}
                         >
@@ -976,20 +976,20 @@ class RightPanel {
                     <div class="grid grid-cols-3 gap-1.5">
                         <button
                             id="verify-key-btn"
-                            class="text-[10px] px-2 py-1.5 rounded-md border border-border bg-background text-foreground hover:bg-accent/50 hover:border-border transition-all duration-200 hover:shadow-sm"
+                            class="btn-ghost-hover text-[10px] px-2 py-1.5 rounded-md border border-border bg-background text-foreground transition-all duration-200 hover:shadow-sm"
                             ${this.isExpired ? 'disabled' : ''}
                         >
                             Verify
                         </button>
                         <button
                             id="renew-key-btn"
-                            class="text-[10px] px-2 py-1.5 rounded-md border border-border bg-background text-foreground hover:bg-accent/50 hover:border-border transition-all duration-200 hover:shadow-sm"
+                            class="btn-ghost-hover text-[10px] px-2 py-1.5 rounded-md border border-border bg-background text-foreground transition-all duration-200 hover:shadow-sm"
                         >
                             Renew
                         </button>
                         <button
                             id="clear-key-btn"
-                            class="text-[10px] px-2 py-1.5 rounded-md border border-destructive/30 text-destructive bg-destructive/10 hover:bg-destructive/30 hover:border-destructive/60 transition-all duration-200"
+                            class="btn-destructive-hover text-[10px] px-2 py-1.5 rounded-md border border-destructive/30 text-destructive bg-destructive/10 transition-all duration-200"
                         >
                             Remove
                         </button>

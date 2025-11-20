@@ -42,6 +42,7 @@ class ChatApp {
 
         this.elements = {
             newChatBtn: document.getElementById('new-chat-btn'),
+            sessionsScrollArea: document.getElementById('sessions-scroll-area'),
             sessionsList: document.getElementById('sessions-list'),
             searchRoomsInput: document.getElementById('search-rooms'),
             chatArea: document.getElementById('chat-area'),
@@ -2265,6 +2266,10 @@ class ChatApp {
         this.editingMessageId = null;
 
         this.renderSessions();
+        // Scroll sidebar to top to show the new session
+        if (this.sidebar) {
+            this.sidebar.scrollToTop();
+        }
         this.renderMessages();
         this.renderCurrentModel();
 

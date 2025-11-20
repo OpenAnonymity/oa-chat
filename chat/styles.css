@@ -1648,9 +1648,12 @@ html {
     min-height: 80px;
 }
 
-.edit-prompt-textarea:focus {
+/* Shared focus style for textareas and inputs - clean, subtle, no heavy ring */
+.edit-prompt-textarea:focus,
+.input-focus-clean:focus {
     border-color: hsl(var(--color-ring) / 0.6);
     box-shadow: 0 0 0 1px hsl(var(--color-ring) / 0.4);
+    outline: none;
 }
 
 /* Confirm Edit Button */
@@ -1661,6 +1664,18 @@ html {
 .confirm-edit-btn:hover {
     background-color: hsl(var(--color-accent) / 0.5) !important;
     border-color: hsl(var(--color-foreground) / 0.3) !important;
+}
+
+/* Shared subtle hover effect for secondary buttons */
+.btn-ghost-hover:hover {
+    background-color: hsl(var(--color-accent) / 0.5) !important;
+    border-color: hsl(var(--color-foreground) / 0.3) !important;
+}
+
+/* Destructive ghost hover */
+.btn-destructive-hover:hover {
+    background-color: hsl(var(--color-destructive) / 0.2) !important;
+    border-color: hsl(var(--color-destructive) / 0.4) !important;
 }
 
 /* Scroll to Bottom Button */

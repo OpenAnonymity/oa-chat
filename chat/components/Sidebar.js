@@ -13,6 +13,15 @@ export default class Sidebar {
     }
 
     /**
+     * Scrolls the sessions list to the top.
+     */
+    scrollToTop() {
+        if (this.app.elements.sessionsScrollArea) {
+            this.app.elements.sessionsScrollArea.scrollTop = 0;
+        }
+    }
+
+    /**
      * Escapes HTML special characters in text.
      * @param {string} text - The text to escape
      * @returns {string} HTML-safe text
