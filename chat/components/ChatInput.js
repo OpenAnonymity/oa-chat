@@ -5,6 +5,7 @@
  */
 
 import themeManager from '../services/themeManager.js';
+import { getExtensionFromMimeType } from '../services/fileUtils.js';
 
 export default class ChatInput {
     /**
@@ -40,25 +41,57 @@ export default class ChatInput {
             }
         });
 
-        // Handle paste events for images
+        // Handle paste events for files (images, PDFs, audio, text)
         this.app.elements.messageInput.addEventListener('paste', async (e) => {
             const items = e.clipboardData?.items;
             if (!items) return;
 
-            const imageItems = [];
+            // Extract file blobs SYNCHRONOUSLY before any async operations
+            // (clipboard data becomes inaccessible after async operations)
+            const fileBlobsData = [];
             for (let i = 0; i < items.length; i++) {
-                if (items[i].type.indexOf('image') !== -1) {
-                    imageItems.push(items[i]);
+                if (items[i].kind === 'file') {
+                    const blob = items[i].getAsFile();
+                    if (blob) {
+                        fileBlobsData.push({ blob, type: items[i].type });
+                    }
                 }
             }
 
-            if (imageItems.length > 0) {
+            if (fileBlobsData.length > 0) {
+                // Prevent default paste behavior immediately
                 e.preventDefault();
-                const files = imageItems.map(item => {
-                    const blob = item.getAsFile();
-                    return this.app.convertBlobToFile(blob, `pasted-image-${Date.now()}.${this.getExtensionFromMimeType(blob.type)}`);
-                });
-                await this.app.handleFileUpload(files);
+
+                try {
+                    // Import validation function (getExtensionFromMimeType already imported at top)
+                    const { validateFile } = await import('../services/fileUtils.js');
+                    const filesToUpload = [];
+
+                    for (const { blob } of fileBlobsData) {
+                        // Generate a filename if blob doesn't have one
+                        let filename = blob.name;
+                        if (!filename) {
+                            const extension = getExtensionFromMimeType(blob.type);
+                            filename = `pasted-file-${Date.now()}.${extension || 'bin'}`;
+                        }
+
+                        const file = this.app.convertBlobToFile(blob, filename);
+
+                        // Validate the file using our smart detection
+                        const validation = await validateFile(file);
+                        if (validation.valid) {
+                            filesToUpload.push(file);
+                        } else {
+                            console.warn('File validation failed:', validation.error);
+                        }
+                    }
+
+                    if (filesToUpload.length > 0) {
+                        await this.app.handleFileUpload(filesToUpload);
+                    }
+                } catch (error) {
+                    console.error('Error handling pasted files in input:', error);
+                }
             }
         });
 
@@ -231,22 +264,6 @@ export default class ChatInput {
     formatThemeName(theme) {
         if (!theme) return '';
         return theme.charAt(0).toUpperCase() + theme.slice(1);
-    }
-
-    /**
-     * Gets file extension from MIME type for pasted images.
-     * @param {string} mimeType - MIME type (e.g., 'image/png')
-     * @returns {string} File extension
-     */
-    getExtensionFromMimeType(mimeType) {
-        const typeMap = {
-            'image/png': 'png',
-            'image/jpeg': 'jpg',
-            'image/jpg': 'jpg',
-            'image/gif': 'gif',
-            'image/webp': 'webp'
-        };
-        return typeMap[mimeType] || 'png';
     }
 
     /**

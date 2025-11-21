@@ -6,6 +6,7 @@
 
 import { getProviderIcon } from '../services/providerIcons.js';
 import { extractDomain } from '../services/urlMetadata.js';
+import { getFileIconSvg } from '../services/fileUtils.js';
 
 // Welcome message content configuration
 // Edit this markdown string to customize the intro message shown on new chat sessions
@@ -123,68 +124,69 @@ function buildFileAttachments(files) {
     if (!files || files.length === 0) return '';
 
     const fileCards = files.map((file, index) => {
-        const isImage = file.type.startsWith('image/');
-        const isPdf = file.type === 'application/pdf';
-        const isAudio = file.type.startsWith('audio/');
-
         const fileSizeKB = (file.size / 1024).toFixed(1);
         const fileSize = file.size > 1024 * 1024
             ? `${(file.size / (1024 * 1024)).toFixed(1)} MB`
             : `${fileSizeKB} KB`;
 
-        // Compact card with modal for images
+        const isImage = file.type.startsWith('image/');
+        let iconOrPreview = '';
+        let clickHandler = '';
+
         if (isImage && file.dataUrl) {
             const imageId = `uploaded-image-${Date.now()}-${index}`;
-            return `
-                <div class="bg-background relative h-28 w-40 overflow-hidden rounded-xl border border-border shadow-md cursor-pointer hover:shadow-lg transition-shadow" onclick="window.expandImage('${imageId}')">
-                    <img src="${file.dataUrl}" class="absolute inset-0 w-full h-full object-cover" alt="${escapeHtml(file.name)}" data-image-id="${imageId}">
-                    <div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent pointer-events-none"></div>
-                    <div class="absolute bottom-0 left-0 right-0 p-2 text-white pointer-events-none">
-                        <div class="text-xs font-medium truncate" title="${escapeHtml(file.name)}">
-                            ${escapeHtml(file.name)}
-                        </div>
-                        <div class="text-xs text-white/80">
-                            ${fileSize}
-                        </div>
-                    </div>
-                </div>
+            iconOrPreview = `
+                <img
+                    src="${file.dataUrl}"
+                    class="w-full h-full object-cover hover:opacity-90 transition-opacity"
+                    alt="${escapeHtml(file.name)}"
+                    data-image-id="${imageId}"
+                >
             `;
-        }
+            clickHandler = `onclick="window.expandImage('${imageId}')" style="cursor: pointer;"`;
+        } else {
+            const isPdf = file.type === 'application/pdf';
+            const isAudio = file.type.startsWith('audio/');
 
-        // Compact card for non-image files (PDF, audio, etc.)
-        let preview = '';
-        if (isPdf) {
-            preview = `
-                <div class="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-red-50 to-red-100 dark:from-red-900/20 dark:to-red-800/20">
-                    <div class="flex flex-col items-center justify-center text-red-600 dark:text-red-400">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-12 h-12 mb-1">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
-                        </svg>
-                        <span class="text-xs font-semibold">PDF</span>
-                    </div>
-                </div>
-                <div class="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent"></div>
-            `;
-        } else if (isAudio) {
-            preview = `
-                <div class="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-900/20 dark:to-purple-800/20">
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-12 h-12 text-purple-600 dark:text-purple-400">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M19.114 5.636a9 9 0 0 1 0 12.728M16.463 8.288a5.25 5.25 0 0 1 0 7.424M6.75 8.25l4.72-4.72a.75.75 0 0 1 1.28.53v15.88a.75.75 0 0 1-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.009 9.009 0 0 1 2.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75Z" />
-                    </svg>
-                </div>
-            `;
+            // Check if file is text-based by MIME type or common code file extensions
+            const isText = file.type.startsWith('text/') ||
+                          file.type.includes('json') ||
+                          file.type.includes('javascript') ||
+                          file.type.includes('xml') ||
+                          file.type.includes('sh') ||
+                          file.type.includes('yaml') ||
+                          file.type.includes('toml') ||
+                          // Also check by file extension for code files that might have generic MIME types
+                          /\.(go|py|js|ts|jsx|tsx|java|c|cpp|h|hpp|cs|rb|php|swift|kt|rs|scala|r|m|mm|sql|sh|bash|zsh|pl|lua|vim|el|clj|ex|exs|erl|hrl|hs|lhs|ml|mli|fs|fsx|fsi|v|sv|svh|vhd|vhdl|tcl|awk|sed|diff|patch|md|markdown|rst|tex|bib|csv|tsv|txt|log|cfg|conf|ini|toml|yaml|yml|xml|html|css|scss|sass|less|json|jsonl|proto|thrift)$/i.test(file.name);
+
+            let fileTypeForIcon = null;
+            if (isPdf) fileTypeForIcon = 'pdf';
+            else if (isAudio) fileTypeForIcon = 'audio';
+            else if (isText) fileTypeForIcon = 'text';
+
+            iconOrPreview = getFileIconSvg(fileTypeForIcon, file.type, 'w-6 h-6');
+
+            // For non-images, trigger download by creating a link from dataUrl
+            if (file.dataUrl) {
+                clickHandler = `onclick="(function() { const a = document.createElement('a'); a.href = '${file.dataUrl}'; a.download = '${escapeHtml(file.name)}'; a.click(); })()" style="cursor: pointer;"`;
+            }
         }
 
         return `
-            <div class="bg-background relative h-28 w-40 overflow-hidden rounded-xl border border-border shadow-md">
-                ${preview}
-                <div class="absolute bottom-0 left-0 right-0 p-2 ${isPdf ? 'text-white' : 'text-foreground'}">
-                    <div class="text-xs font-medium truncate" title="${escapeHtml(file.name)}">
+            <div class="group relative flex items-center p-2 gap-3 bg-white/10 hover:bg-white/20 dark:bg-white/5 dark:hover:bg-white/10 border border-white/20 dark:border-white/10 rounded-xl w-auto max-w-[240px] transition-all select-none overflow-hidden shadow-sm backdrop-blur-sm" ${clickHandler}>
+                <!-- Icon/Preview Container -->
+                <div class="flex-shrink-0 w-10 h-10 rounded-lg overflow-hidden flex items-center justify-center bg-white/90 dark:bg-white/10 border border-white/30 dark:border-white/20 shadow-sm">
+                    ${iconOrPreview}
+                </div>
+
+                <!-- Text Info -->
+                <div class="flex flex-col min-w-0 pr-2">
+                    <span class="text-xs font-medium text-white dark:text-white truncate leading-tight" title="${escapeHtml(file.name)}">
                         ${escapeHtml(file.name)}
-                    </div>
-                    <div class="text-xs ${isPdf ? 'text-white/80' : 'text-muted-foreground'}">
+                    </span>
+                    <span class="text-[10px] text-white/70 dark:text-white/60 truncate">
                         ${fileSize}
-                    </div>
+                    </span>
                 </div>
             </div>
         `;

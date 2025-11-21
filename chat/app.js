@@ -10,7 +10,7 @@ import ModelPicker from './components/ModelPicker.js';
 import { buildTypingIndicator } from './components/MessageTemplates.js';
 import apiKeyStore from './services/apiKeyStore.js';
 import themeManager from './services/themeManager.js';
-import { downloadInferenceTickets, downloadAllChats } from './services/fileUtils.js';
+import { downloadInferenceTickets, downloadAllChats, getFileIconSvg } from './services/fileUtils.js';
 import { parseReasoningContent } from './services/reasoningParser.js';
 import { fetchUrlMetadata } from './services/urlMetadata.js';
 
@@ -78,6 +78,7 @@ class ChatApp {
             deleteHistoryModal: document.getElementById('delete-history-modal'),
             deleteHistoryConfirmBtn: null,
             deleteHistoryCancelBtn: null,
+            dropZoneOverlay: document.getElementById('drop-zone-overlay'),
         };
 
         this.searchEnabled = false;
@@ -1300,11 +1301,35 @@ class ChatApp {
         return messages.map(msg => {
             // Only process user messages with files
             if (msg.role === 'user' && msg.files && msg.files.length > 0) {
+                // Separate text files from other media
+                let textContent = msg.content || '';
+                const mediaFiles = [];
+
+                msg.files.forEach(file => {
+                    // Use the detected file type that was stored during upload
+                    const isText = file.detectedType === 'text';
+
+                    if (isText) {
+                        // Extract content from base64 dataUrl
+                        try {
+                            // Data URL format: data:mime/type;base64,encodedData
+                            const base64Data = file.dataUrl.split(',')[1];
+                            const decodedContent = atob(base64Data);
+                            textContent += `\n\n--- File: ${file.name} ---\n${decodedContent}`;
+                        } catch (e) {
+                            console.error('Failed to decode text file:', file.name, e);
+                            textContent += `\n\n--- File: ${file.name} ---\n[Error reading file content]`;
+                        }
+                    } else {
+                        mediaFiles.push(file);
+                    }
+                });
+
                 // Convert to multimodal content array
                 const contentArray = [
-                    { type: 'text', text: msg.content || '' },
-                    ...msg.files.map(file => {
-                        if (file.type.startsWith('image/')) {
+                    { type: 'text', text: textContent },
+                    ...mediaFiles.map(file => {
+                        if (file.type.startsWith('image/') || file.detectedType === 'image') {
                             return {
                                 type: 'image_url',
                                 image_url: { url: file.dataUrl }
@@ -1321,9 +1346,9 @@ class ChatApp {
                         }
                     })
                 ];
-                return { 
-                    role: msg.role, 
-                    content: contentArray 
+                return {
+                    role: msg.role,
+                    content: contentArray
                 };
             }
             // For messages without files, return standard format
@@ -1672,14 +1697,17 @@ class ChatApp {
             // Add user message with file metadata
             const metadata = {};
             if (hasFiles) {
-                // Store file data for preview rendering
+                // Store file data for preview rendering and include detected file type
+                const { getFileType } = await import('./services/fileUtils.js');
                 const fileData = await Promise.all(currentFiles.map(async (file) => {
                     const dataUrl = await this.createImagePreview(file);
+                    const detectedType = await getFileType(file);
                     return {
                         name: file.name,
                         type: file.type,
                         size: file.size,
-                        dataUrl: dataUrl
+                        dataUrl: dataUrl,
+                        detectedType: detectedType  // Store the detected type (image, pdf, audio, text)
                     };
                 }));
                 metadata.files = fileData;
@@ -2703,6 +2731,8 @@ class ChatApp {
             }
         });
 
+        this.setupFileDragAndDrop();
+
         // Close sidebar when clicking backdrop
         if (this.elements.mobileSidebarBackdrop) {
             this.elements.mobileSidebarBackdrop.addEventListener('click', () => {
@@ -2831,6 +2861,118 @@ class ChatApp {
                 this.elements.messageInput.focus();
             }
         });
+
+        // Handle global paste events for files
+        document.addEventListener('paste', async (e) => {
+            // If the event target is the message input, let the specific handler in ChatInput deal with it
+            if (e.target === this.elements.messageInput) {
+                return;
+            }
+
+            const items = e.clipboardData?.items;
+            if (!items) return;
+
+            // Extract file blobs SYNCHRONOUSLY before any async operations
+            // (clipboard data becomes inaccessible after async operations)
+            const fileBlobsData = [];
+            for (let i = 0; i < items.length; i++) {
+                if (items[i].kind === 'file') {
+                    const blob = items[i].getAsFile();
+                    if (blob) {
+                        fileBlobsData.push({ blob, type: items[i].type });
+                    }
+                }
+            }
+
+            if (fileBlobsData.length > 0) {
+                // Prevent default paste behavior immediately
+                e.preventDefault();
+
+                try {
+                    // Import helpers
+                    const { getExtensionFromMimeType, validateFile } = await import('./services/fileUtils.js');
+                    const filesToUpload = [];
+
+                    for (const { blob } of fileBlobsData) {
+                        // Generate a filename if blob doesn't have one
+                        let filename = blob.name;
+                        if (!filename) {
+                            const extension = getExtensionFromMimeType(blob.type);
+                            filename = `pasted-file-${Date.now()}.${extension || 'bin'}`;
+                        }
+
+                        const file = this.convertBlobToFile(blob, filename);
+
+                        // Validate the file using our smart detection
+                        const validation = await validateFile(file);
+                        if (validation.valid) {
+                            filesToUpload.push(file);
+                        } else {
+                            console.warn('File validation failed:', validation.error);
+                        }
+                    }
+
+                    if (filesToUpload.length > 0) {
+                        await this.handleFileUpload(filesToUpload);
+
+                        // Focus input after successful paste
+                        requestAnimationFrame(() => {
+                            this.elements.messageInput.focus();
+                        });
+                    }
+                } catch (error) {
+                    console.error('Error handling global pasted files:', error);
+                }
+            }
+        });
+    }
+
+    /**
+     * Sets up file drag and drop events for the entire window.
+     * Shows an overlay when files are dragged over the window.
+     */
+    setupFileDragAndDrop() {
+        const overlay = this.elements.dropZoneOverlay;
+        if (!overlay) return;
+
+        let dragCounter = 0;
+
+        window.addEventListener('dragenter', (e) => {
+            e.preventDefault();
+            // Check if dragging files
+            if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files')) {
+                dragCounter++;
+                if (dragCounter === 1) {
+                    overlay.classList.remove('hidden');
+                }
+            }
+        });
+
+        window.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files')) {
+                dragCounter--;
+                if (dragCounter <= 0) {
+                    dragCounter = 0;
+                    overlay.classList.add('hidden');
+                }
+            }
+        });
+
+        window.addEventListener('dragover', (e) => {
+            e.preventDefault(); // Necessary to allow dropping
+        });
+
+        window.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            dragCounter = 0;
+            overlay.classList.add('hidden');
+
+            if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                const files = Array.from(e.dataTransfer.files);
+                await this.handleFileUpload(files);
+            }
+        });
     }
 
     /**
@@ -2935,7 +3077,7 @@ class ChatApp {
         const errors = [];
 
         for (const file of files) {
-            const validation = validateFile(file);
+            const validation = await validateFile(file);
             if (validation.valid) {
                 validFiles.push(file);
             } else {
@@ -3006,69 +3148,75 @@ class ChatApp {
 
         container.classList.remove('hidden');
 
-        // Generate previews with image and PDF thumbnails
+        // Generate previews with a horizontal card layout
         const previewPromises = this.uploadedFiles.map(async (file, index) => {
             const fileSize = this.formatFileSize(file.size);
             const isImage = file.type.startsWith('image/');
-            const isPdf = file.type === 'application/pdf';
 
-            let preview = '';
+            // Get icon or image preview
+            let iconOrPreview = '';
+
             if (isImage) {
-                // Create image preview with modal functionality
                 const imageUrl = await this.createImagePreview(file);
                 const imageId = `preview-image-${Date.now()}-${index}`;
-                preview = `
+                iconOrPreview = `
                     <img
                         src="${imageUrl}"
-                        class="absolute inset-0 w-full h-full object-cover cursor-pointer"
+                        class="w-full h-full object-cover cursor-pointer hover:opacity-90 transition-opacity"
                         alt="${file.name}"
                         data-image-id="${imageId}"
                         onclick="window.expandImage('${imageId}')"
                     >
-                    <div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent pointer-events-none"></div>
-                `;
-            } else if (isPdf) {
-                // Create PDF preview
-                const pdfUrl = await this.createImagePreview(file);
-                preview = `
-                    <div class="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-red-50 to-red-100 dark:from-red-900/20 dark:to-red-800/20">
-                        <div class="flex flex-col items-center justify-center text-red-600 dark:text-red-400">
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-12 h-12 mb-1">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
-                            </svg>
-                            <span class="text-xs font-semibold">PDF</span>
-                        </div>
-                    </div>
-                    <div class="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent"></div>
                 `;
             } else {
-                // Icon-based preview for other files
-                const icon = this.getFileTypeIcon(file);
-                preview = `
-                    <div class="absolute inset-0 flex items-center justify-center bg-muted/50">
-                        ${icon}
-                    </div>
-                `;
+                // For non-images, determine file type and use the appropriate SVG icon
+                const isPdf = file.type === 'application/pdf';
+                const isAudio = file.type.startsWith('audio/');
+                const isText = file.type.startsWith('text/') ||
+                              file.type.includes('json') ||
+                              file.type.includes('javascript') ||
+                              file.type.includes('xml') ||
+                              file.type.includes('sh') ||
+                              file.type.includes('yaml') ||
+                              file.type.includes('toml') ||
+                              // Also check by file extension for code files that might have generic MIME types
+                              /\.(go|py|js|ts|jsx|tsx|java|c|cpp|h|hpp|cs|rb|php|swift|kt|rs|scala|r|m|mm|sql|sh|bash|zsh|pl|lua|vim|el|clj|ex|exs|erl|hrl|hs|lhs|ml|mli|fs|fsx|fsi|v|sv|svh|vhd|vhdl|tcl|awk|sed|diff|patch|md|markdown|rst|tex|bib|csv|tsv|txt|log|cfg|conf|ini|toml|yaml|yml|xml|html|css|scss|sass|less|json|jsonl|proto|thrift)$/i.test(file.name);
+
+                let fileTypeForIcon = null;
+                if (isPdf) fileTypeForIcon = 'pdf';
+                else if (isAudio) fileTypeForIcon = 'audio';
+                else if (isText) fileTypeForIcon = 'text';
+
+                iconOrPreview = getFileIconSvg(fileTypeForIcon, file.type, 'w-8 h-8');
             }
 
             return `
-                <div class="bg-background relative h-28 w-40 select-none overflow-hidden rounded-xl border border-border shadow-md hover:shadow-lg transition-shadow ${isImage ? 'cursor-pointer' : 'cursor-default'}">
-                    ${preview}
-                    <div class="absolute top-2 right-2 z-10">
-                        <button class="flex items-center justify-center w-5 h-5 rounded-full bg-destructive/90 hover:bg-destructive text-white transition-colors shadow-sm" onclick="event.stopPropagation(); app.removeFile(${index})" title="Remove file">
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-3 h-3">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-                            </svg>
-                        </button>
+                <div class="group relative flex items-center p-2 gap-3 bg-muted/30 hover:bg-muted/50 dark:bg-secondary/10 dark:hover:bg-secondary/20 border border-border dark:border-border/50 rounded-xl w-auto max-w-[240px] transition-all select-none overflow-hidden">
+                    <!-- Icon/Preview Container -->
+                    <div class="flex-shrink-0 w-10 h-10 rounded-lg overflow-hidden flex items-center justify-center bg-background border border-border/50 shadow-sm">
+                        ${iconOrPreview}
                     </div>
-                    <div class="absolute bottom-0 left-0 right-0 p-2 ${isImage || isPdf ? 'text-white' : 'text-foreground'} pointer-events-none">
-                        <div class="text-xs font-medium truncate" title="${file.name}">
+
+                    <!-- Text Info -->
+                    <div class="flex flex-col min-w-0 pr-6">
+                        <span class="text-xs font-medium text-foreground truncate leading-tight" title="${file.name}">
                             ${file.name}
-                        </div>
-                        <div class="text-xs ${isImage || isPdf ? 'text-white/80' : 'text-muted-foreground'}">
+                        </span>
+                        <span class="text-[10px] text-muted-foreground truncate">
                             ${fileSize}
-                        </div>
+                        </span>
                     </div>
+
+                    <!-- Remove Button -->
+                    <button
+                        class="absolute top-1.5 right-1.5 p-1 rounded-full text-muted-foreground/70 hover:text-destructive hover:bg-destructive/10 transition-all opacity-0 group-hover:opacity-100"
+                        onclick="event.stopPropagation(); app.removeFile(${index})"
+                        title="Remove file"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-3 h-3">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
                 </div>
             `;
         });
@@ -3083,31 +3231,6 @@ class ChatApp {
             reader.onload = (e) => resolve(e.target.result);
             reader.readAsDataURL(file);
         });
-    }
-
-    getFileTypeIcon(file) {
-        const type = file.type;
-
-        if (type.startsWith('image/')) {
-            return `
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-8 h-8 text-primary">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" />
-                </svg>
-            `;
-        } else if (type === 'application/pdf') {
-            return `
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-8 h-8 text-destructive">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
-                </svg>
-            `;
-        } else if (type.startsWith('audio/')) {
-            return `
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-8 h-8 text-green-600">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="m9 9 10.5-3m0 6.553v3.75a2.25 2.25 0 0 1-1.632 2.163l-1.32.377a1.803 1.803 0 1 1-.99-3.467l2.31-.66a2.25 2.25 0 0 0 1.632-2.163Zm0 0V2.25L9 5.25v10.303m0 0v3.75a2.25 2.25 0 0 1-1.632 2.163l-1.32.377a1.803 1.803 0 0 1-.99-3.467l2.31-.66A2.25 2.25 0 0 0 9 15.553Z" />
-                </svg>
-            `;
-        }
-        return '';
     }
 
     formatFileSize(bytes) {

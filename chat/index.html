@@ -201,7 +201,17 @@
 
                     <!-- Input Area -->
                     <div class="absolute bottom-0 left-0 right-0 sm:mb-2 sm:mt-0 flex-shrink-0 md:px-4">
-                        <div class="rounded-lg p-1.5 border border-border w-full max-w-[42rem] mx-auto flex-shrink-0 bg-card shadow-lg" style="isolation: isolate;">
+                        <div id="input-card" class="rounded-lg p-1.5 border border-border w-full max-w-[42rem] mx-auto flex-shrink-0 bg-card shadow-lg relative" style="isolation: isolate;">
+                                <!-- Drop Zone Overlay -->
+                                <div id="drop-zone-overlay" class="hidden absolute inset-0 z-[60] rounded-lg border-2 border-dashed border-primary/30 bg-card flex items-center justify-center pointer-events-none transition-all duration-200">
+                                    <div class="flex flex-col items-center justify-center text-muted-foreground animate-in fade-in zoom-in duration-300">
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-10 h-10 mb-2">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
+                                        </svg>
+                                        <span class="text-sm font-semibold">Drop files to attach</span>
+                                    </div>
+                                </div>
+
                                 <!-- File Previews Container -->
                                 <div id="file-previews-container" class="hidden mb-3 flex flex-wrap gap-3"></div>
 
