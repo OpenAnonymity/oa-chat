@@ -1291,6 +1291,50 @@ class ChatApp {
     }
 
     /**
+     * Processes messages with file metadata to convert them to multimodal content format.
+     * This ensures files are included in conversation history for all API calls.
+     * @param {Array} messages - Array of messages from the database
+     * @returns {Array} Processed messages with multimodal content
+     */
+    processMessagesWithFiles(messages) {
+        return messages.map(msg => {
+            // Only process user messages with files
+            if (msg.role === 'user' && msg.files && msg.files.length > 0) {
+                // Convert to multimodal content array
+                const contentArray = [
+                    { type: 'text', text: msg.content || '' },
+                    ...msg.files.map(file => {
+                        if (file.type.startsWith('image/')) {
+                            return {
+                                type: 'image_url',
+                                image_url: { url: file.dataUrl }
+                            };
+                        } else {
+                            // For PDFs and audio files
+                            return {
+                                type: 'file',
+                                file: {
+                                    filename: file.name,
+                                    file_data: file.dataUrl
+                                }
+                            };
+                        }
+                    })
+                ];
+                return { 
+                    role: msg.role, 
+                    content: contentArray 
+                };
+            }
+            // For messages without files, return standard format
+            return {
+                role: msg.role,
+                content: msg.content
+            };
+        });
+    }
+
+    /**
      * Regenerates the last assistant response without creating a new user message.
      * Used when the regenerate button is clicked on an assistant message.
      */
@@ -1403,6 +1447,9 @@ class ChatApp {
                 // Get AI response from OpenRouter with streaming
                 const messages = await chatDB.getSessionMessages(session.id);
 
+                // Process messages to include file content from stored metadata
+                const processedMessages = this.processMessagesWithFiles(messages);
+
                 // Create a placeholder message for streaming
                 const streamingMessageId = this.generateId();
                 let streamingTokenCount = 0;
@@ -1428,7 +1475,7 @@ class ChatApp {
 
                 // Stream the response with token tracking
                 const tokenData = await openRouterAPI.streamCompletion(
-                    messages,
+                    processedMessages,
                     modelIdForRequest,
                     session.apiKey,
                     async (chunk, imageData) => {
@@ -1745,6 +1792,9 @@ class ChatApp {
                 // Get AI response from OpenRouter with streaming
                 const messages = await chatDB.getSessionMessages(session.id);
 
+                // Process messages to include file content from stored metadata
+                const processedMessages = this.processMessagesWithFiles(messages);
+
                 // Create a placeholder message for streaming
                 const streamingMessageId = this.generateId();
                 let streamedContent = '';
@@ -1775,7 +1825,7 @@ class ChatApp {
 
                 // Stream the response with token tracking
                 const tokenData = await openRouterAPI.streamCompletion(
-                    messages,
+                    processedMessages,
                     modelIdForRequest,
                     session.apiKey,
                     async (chunk, imageData) => {
@@ -1871,7 +1921,7 @@ class ChatApp {
                             this.chatArea.updateStreamingTokens(streamingMessageId, streamingTokenCount);
                         }
                     },
-                    currentFiles,
+                    [], // Files are now included in processedMessages, not passed separately
                     searchEnabled,
                     abortController,
                     async (reasoningChunk) => {
