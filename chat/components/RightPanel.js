@@ -464,47 +464,7 @@ class RightPanel {
             return;
         }
 
-        const verifyBtn = document.getElementById('verify-key-btn');
-        if (verifyBtn) {
-            verifyBtn.disabled = true;
-            verifyBtn.textContent = 'Verifying...';
-        }
-
-        try {
-            // Tag this request with session ID
-            networkLogger.setCurrentSession(this.currentSession.id);
-
-            const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${this.apiKey}`,
-                    'HTTP-Referer': window.location.origin,
-                    'X-Title': 'OA-WebApp',
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    model: 'openai/gpt-3.5-turbo',
-                    messages: [{ role: 'user', content: 'Hello' }],
-                    max_tokens: 10
-                })
-            });
-
-            if (response.ok) {
-                const data = await response.json();
-                alert(`✓ API Key Valid\nResponse: ${data.choices[0].message.content}`);
-            } else {
-                const error = await response.json();
-                alert(`✗ Verification Failed\n${error.error?.message || 'Unknown error'}`);
-            }
-        } catch (error) {
-            console.error('Verification error:', error);
-            alert(`✗ Verification Failed\n${error.message}`);
-        } finally {
-            if (verifyBtn) {
-                verifyBtn.disabled = false;
-                verifyBtn.textContent = 'Verify';
-            }
-        }
+        this.openVerifyKeyModal();
     }
 
     async handleClearApiKey() {
@@ -534,6 +494,274 @@ class RightPanel {
     handleRenewApiKey() {
         this.handleClearApiKey();
         setTimeout(() => this.handleRequestApiKey(), 100);
+    }
+
+    openVerifyKeyModal() {
+        const modal = document.getElementById('verify-key-modal');
+        if (!modal) return;
+
+        // Store return focus element
+        this.verifyModalReturnFocusEl = document.activeElement;
+
+        // Generate curl command with actual key and output truncation
+        const curlCommand = `curl https://openrouter.ai/api/v1/chat/completions \\
+  -H "Content-Type: application/json" \\
+  -H "Authorization: Bearer ${this.apiKey}" \\
+  -d '{"model":"openai/gpt-5.1-chat","messages":[{"role":"user","content":"Hi"}]}' \\
+  | grep -o '"content":"[^"]*"' | head -1`;
+
+        // Generate simplified modal content
+        modal.innerHTML = `
+            <div role="dialog" aria-modal="true" class="w-full max-w-2xl rounded-2xl border border-border bg-background shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+                <!-- Header -->
+                <div class="p-5 border-b border-border flex items-center justify-between">
+                    <div class="flex items-center gap-2.5">
+                        <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-100 dark:bg-blue-500/20">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-blue-600 dark:text-blue-400" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
+                            </svg>
+                        </div>
+                        <h2 class="text-lg font-semibold text-foreground">Verify API Key</h2>
+                    </div>
+                    <button id="close-verify-modal" class="text-muted-foreground hover:text-foreground transition-colors p-1.5 rounded-lg hover:bg-accent">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+
+                <!-- Content -->
+                <div class="overflow-y-auto flex-1 p-5 space-y-5">
+                    <!-- Key Display -->
+                    <div class="space-y-3">
+                        <h3 class="text-sm font-semibold text-foreground">Active Ephemeral API Key</h3>
+                        <div class="rounded-lg border border-border bg-card p-4">
+                            <div class="flex items-center gap-2">
+                                <code class="text-xs font-mono text-foreground flex-1 bg-muted/20 dark:bg-muted/30 px-3 py-2 rounded border border-border">${this.maskApiKey(this.apiKey)}</code>
+                                <button id="copy-full-key-btn" class="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-md border border-border bg-background hover:bg-accent transition-all flex-shrink-0" data-key="${this.escapeHtml(this.apiKey)}">
+                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                                    </svg>
+                                    Copy
+                                </button>
+                            </div>
+                            <p class="text-xs text-muted-foreground mt-2.5 flex items-center gap-1.5">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
+                                </svg>
+                                Obtained via blind signature - untraceable to your identity
+                            </p>
+                        </div>
+                    </div>
+
+                    <!-- Test with curl -->
+                    <div class="space-y-3">
+                        <div class="flex items-center justify-between">
+                            <h3 class="text-sm font-semibold text-foreground">Test with curl</h3>
+                            <button id="copy-curl-btn" class="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-md border border-border bg-background hover:bg-accent transition-all">
+                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                                </svg>
+                                Copy
+                            </button>
+                        </div>
+                        <div class="rounded-lg border border-border bg-card p-4">
+                            <pre id="curl-code" class="text-xs font-mono text-foreground overflow-x-auto whitespace-pre-wrap break-all">${this.escapeHtml(curlCommand)}</pre>
+                        </div>
+                        <div class="text-xs text-muted-foreground">
+                            <div class="font-medium mb-1">Expected output:</div>
+                        </div>
+                        <div class="rounded-lg border border-border bg-card p-4">
+                            <pre class="text-xs font-mono text-foreground">"content":"Hello! How can I help you?"</pre>
+                        </div>
+                    </div>
+
+                    <!-- Live Test -->
+                    <div class="space-y-3">
+                        <h3 class="text-sm font-semibold text-foreground">Test in Browser</h3>
+                        <div class="rounded-lg border border-border bg-card p-4">
+                            <div id="test-result">
+                                <div class="flex items-center gap-2 text-sm text-muted-foreground">
+                                    <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                    </svg>
+                                    <span>Testing API key...</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // Show modal
+        modal.classList.remove('hidden');
+
+        // Attach event listeners
+        this.attachVerifyModalListeners();
+
+        // Auto-run the test
+        this.runApiKeyTest();
+    }
+
+    closeVerifyKeyModal() {
+        const modal = document.getElementById('verify-key-modal');
+        if (!modal) return;
+        modal.classList.add('hidden');
+
+        // Restore focus
+        if (this.verifyModalReturnFocusEl && typeof this.verifyModalReturnFocusEl.focus === 'function') {
+            this.verifyModalReturnFocusEl.focus();
+        }
+        this.verifyModalReturnFocusEl = null;
+    }
+
+    attachVerifyModalListeners() {
+        // Close buttons
+        const closeBtn = document.getElementById('close-verify-modal');
+        const closeFooterBtn = document.getElementById('close-verify-modal-footer');
+        if (closeBtn) closeBtn.onclick = () => this.closeVerifyKeyModal();
+        if (closeFooterBtn) closeFooterBtn.onclick = () => this.closeVerifyKeyModal();
+
+        // Click outside to close
+        const modal = document.getElementById('verify-key-modal');
+        if (modal) {
+            modal.onclick = (e) => {
+                if (e.target === modal) {
+                    this.closeVerifyKeyModal();
+                }
+            };
+        }
+
+        // ESC key to close
+        const handleEsc = (e) => {
+            if (e.key === 'Escape') {
+                this.closeVerifyKeyModal();
+                document.removeEventListener('keydown', handleEsc);
+            }
+        };
+        document.addEventListener('keydown', handleEsc);
+
+        // Copy full key button
+        const copyKeyBtn = document.getElementById('copy-full-key-btn');
+        if (copyKeyBtn) {
+            copyKeyBtn.onclick = async () => {
+                const key = copyKeyBtn.dataset.key;
+                try {
+                    await navigator.clipboard.writeText(key);
+                    const originalHTML = copyKeyBtn.innerHTML;
+                    copyKeyBtn.innerHTML = `
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path>
+                        </svg>
+                        Copied!
+                    `;
+                    setTimeout(() => {
+                        copyKeyBtn.innerHTML = originalHTML;
+                    }, 2000);
+                } catch (error) {
+                    console.error('Failed to copy:', error);
+                }
+            };
+        }
+
+        // Copy curl button
+        const copyCurlBtn = document.getElementById('copy-curl-btn');
+        if (copyCurlBtn) {
+            copyCurlBtn.onclick = async () => {
+                const curlCode = document.getElementById('curl-code');
+                if (curlCode) {
+                    try {
+                        await navigator.clipboard.writeText(curlCode.textContent);
+                        const originalHTML = copyCurlBtn.innerHTML;
+                        copyCurlBtn.innerHTML = `
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path>
+                            </svg>
+                            Copied!
+                        `;
+                        setTimeout(() => {
+                            copyCurlBtn.innerHTML = originalHTML;
+                        }, 2000);
+                    } catch (error) {
+                        console.error('Failed to copy:', error);
+                    }
+                }
+            };
+        }
+    }
+
+    async runApiKeyTest() {
+        const testResult = document.getElementById('test-result');
+        if (!testResult) return;
+
+        try {
+            // Tag this request with session ID
+            if (this.currentSession && window.networkLogger) {
+                networkLogger.setCurrentSession(this.currentSession.id);
+            }
+
+            const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${this.apiKey}`,
+                    'HTTP-Referer': window.location.origin,
+                    'X-Title': 'OA-WebApp',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    model: 'openai/gpt-5.1-chat',
+                    messages: [{ role: 'user', content: 'Hi' }]
+                })
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                const content = data.choices[0].message.content;
+                const truncatedContent = content.length > 50 ? content.substring(0, 50) + '...' : content;
+                testResult.innerHTML = `
+                    <div class="flex items-center gap-2 text-sm font-semibold text-green-600 dark:text-green-400 mb-3">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                        <span>API Key is Valid</span>
+                    </div>
+                    <div class="bg-green-50 dark:bg-green-500/10 border border-green-200 dark:border-green-500/30 rounded-lg p-3">
+                        <div class="text-xs space-y-1.5">
+                            <div class="text-foreground"><strong class="text-green-700 dark:text-green-300">Response:</strong> ${this.escapeHtml(truncatedContent)}</div>
+                            <div class="text-foreground"><strong class="text-green-700 dark:text-green-300">Tokens:</strong> ${data.usage.total_tokens}</div>
+                        </div>
+                    </div>
+                `;
+            } else {
+                const error = await response.json();
+                testResult.innerHTML = `
+                    <div class="flex items-start gap-2 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 rounded-lg p-3">
+                        <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                        <div>
+                            <p class="font-semibold">Verification Failed</p>
+                            <p class="text-xs mt-1">Key expired or ${this.escapeHtml(error.error?.message || 'Unknown error')}</p>
+                        </div>
+                    </div>
+                `;
+            }
+        } catch (error) {
+            console.error('Verification error:', error);
+            testResult.innerHTML = `
+                <div class="flex items-start gap-2 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 rounded-lg p-3">
+                    <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    <div>
+                        <p class="font-semibold">Network Error</p>
+                        <p class="text-xs mt-1">${this.escapeHtml(error.message)}</p>
+                    </div>
+                </div>
+            `;
+        }
     }
 
     async handleClearActivityTimeline() {

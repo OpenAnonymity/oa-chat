@@ -175,7 +175,7 @@ function buildFileAttachments(files) {
         return `
             <div class="group relative flex items-center p-2 gap-3 bg-white/10 hover:bg-white/20 dark:bg-white/5 dark:hover:bg-white/10 border border-white/20 dark:border-white/10 rounded-xl w-auto max-w-[240px] transition-all select-none overflow-hidden shadow-sm backdrop-blur-sm" ${clickHandler}>
                 <!-- Icon/Preview Container -->
-                <div class="flex-shrink-0 w-10 h-10 rounded-lg overflow-hidden flex items-center justify-center bg-white/90 dark:bg-white/10 border border-white/30 dark:border-white/20 shadow-sm">
+                <div class="flex-shrink-0 w-10 h-10 rounded-lg overflow-hidden flex items-center justify-center bg-white/95 dark:bg-white/50 border border-white/50 dark:border-white/50 shadow-sm">
                     ${iconOrPreview}
                 </div>
 
