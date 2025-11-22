@@ -56,8 +56,19 @@ class ChatApp {
             modelSearch: document.getElementById('model-search'),
             settingsBtn: document.getElementById('settings-btn'),
             settingsMenu: document.getElementById('settings-menu'),
-            searchToggle: document.getElementById('search-toggle'),
+            toolsBtn: document.getElementById('tools-btn'),
+            toolsModal: document.getElementById('tools-modal'),
+            closeToolsModalBtn: document.getElementById('close-tools-modal-btn'),
+            toolsActiveIndicator: document.getElementById('tools-active-indicator'),
             searchSwitch: document.getElementById('search-switch'),
+            scrubberSwitch: document.getElementById('scrubber-switch'),
+            scrubberModelsSection: document.getElementById('scrubber-models-section'),
+            loadLlama32Inline: document.getElementById('load-llama-3-2-1b-inline'),
+            loadQwenInline: document.getElementById('load-qwen-0-6b-inline'),
+            llamaCheckInline: document.getElementById('llama-check-inline'),
+            qwenCheckInline: document.getElementById('qwen-check-inline'),
+            scrubberLoadingProgressInline: document.getElementById('scrubber-loading-progress-inline'),
+            scrubberProgressBarInline: document.getElementById('scrubber-progress-bar-inline'),
             // clearChatBtn: document.getElementById('clear-chat-btn'), // Temporarily removed
             // copyMarkdownBtn: document.getElementById('copy-markdown-btn'), // Temporarily removed
             toggleRightPanelBtn: document.getElementById('toggle-right-panel-btn'), // This might be legacy, but let's keep it for now.
@@ -82,6 +93,8 @@ class ChatApp {
         };
 
         this.searchEnabled = false;
+        this.scrubberEnabled = false;
+        this.currentScrubberModel = null; // Track currently loaded scrubber model
         this.sessionSearchQuery = '';
         this.uploadedFiles = [];
         this.rightPanel = null;
@@ -803,6 +816,36 @@ class ChatApp {
         const savedSearchEnabled = await chatDB.getSetting('searchEnabled');
         this.searchEnabled = savedSearchEnabled !== undefined ? savedSearchEnabled : true;
         this.chatInput.updateSearchToggleUI();
+
+        // Restore scrubber state from global setting
+        const savedScrubberEnabled = await chatDB.getSetting('scrubberEnabled');
+        this.scrubberEnabled = savedScrubberEnabled !== undefined ? savedScrubberEnabled : false;
+        
+        // Restore previously selected scrubber model
+        const savedScrubberModel = await chatDB.getSetting('currentScrubberModel');
+        if (savedScrubberModel) {
+            this.currentScrubberModel = savedScrubberModel;
+        }
+        
+        this.chatInput.updateScrubberToggleUI();
+        
+        // Update visual selection state if we have a saved model
+        if (savedScrubberModel) {
+            this.chatInput.updateScrubberModelStatus();
+        }
+        
+        // If scrubber is enabled, load the saved model or default to Qwen
+        if (this.scrubberEnabled) {
+            const modelToLoad = savedScrubberModel || 'Qwen2.5-0.5B-Instruct-q4f16_1-MLC';
+            const modelId = modelToLoad.includes('Qwen') ? 'qwen' : 'llama';
+            
+            setTimeout(async () => {
+                await this.chatInput.selectScrubberModel(modelToLoad, modelId);
+            }, 100);
+        }
+        
+        // Update tools indicator
+        this.chatInput.updateToolsIndicator();
 
         this.renderDeleteHistoryModalContent();
 

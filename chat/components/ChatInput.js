@@ -1,11 +1,12 @@
 /**
  * ChatInput Component
  * Manages the chat input area including textarea auto-resize,
- * send button state, search toggle UI, and settings dropdown.
+ * send button state, search toggle UI, scrubber toggle, and settings dropdown.
  */
 
 import themeManager from '../services/themeManager.js';
 import { getExtensionFromMimeType } from '../services/fileUtils.js';
+import { loadModel, unloadModel } from '../services/webllmService.js';
 
 export default class ChatInput {
     /**
@@ -104,14 +105,66 @@ export default class ChatInput {
             }
         });
 
-        // Search toggle functionality
-        this.app.elements.searchToggle.addEventListener('click', async () => {
-            this.app.searchEnabled = !this.app.searchEnabled;
-            this.updateSearchToggleUI();
-            this.app.updateInputState();
-            // Persist search state globally
-            await chatDB.saveSetting('searchEnabled', this.app.searchEnabled);
-        });
+        // Tools button - open tools modal
+        if (this.app.elements.toolsBtn) {
+            this.app.elements.toolsBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.openToolsModal();
+            });
+        }
+
+        // Search toggle functionality (in tools modal)
+        if (this.app.elements.searchSwitch) {
+            this.app.elements.searchSwitch.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                this.app.searchEnabled = !this.app.searchEnabled;
+                this.updateSearchToggleUI();
+                this.updateToolsIndicator();
+                this.app.updateInputState();
+                // Persist search state globally
+                await chatDB.saveSetting('searchEnabled', this.app.searchEnabled);
+            });
+        }
+
+        // Scrubber toggle functionality (in tools modal)
+        if (this.app.elements.scrubberSwitch) {
+            this.app.elements.scrubberSwitch.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const wasEnabled = this.app.scrubberEnabled;
+                this.app.scrubberEnabled = !this.app.scrubberEnabled;
+                this.updateScrubberToggleUI();
+                this.updateToolsIndicator();
+                // Persist scrubber state globally
+                await chatDB.saveSetting('scrubberEnabled', this.app.scrubberEnabled);
+                
+                // Auto-load Qwen when enabling scrubber for the first time
+                if (this.app.scrubberEnabled && !wasEnabled && !this.app.currentScrubberModel) {
+                    // Small delay to let UI update
+                    setTimeout(async () => {
+                        await this.selectScrubberModel('Qwen2.5-0.5B-Instruct-q4f16_1-MLC', 'qwen');
+                    }, 100);
+                }
+            });
+        }
+
+        // Select Llama 3.2 1B
+        if (this.app.elements.loadLlama32Inline) {
+            this.app.elements.loadLlama32Inline.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                await this.selectScrubberModel('Llama-3.2-1B-Instruct-q4f16_1-MLC', 'llama');
+            });
+        }
+
+        // Select Qwen 0.6B
+        if (this.app.elements.loadQwenInline) {
+            this.app.elements.loadQwenInline.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                await this.selectScrubberModel('Qwen2.5-0.5B-Instruct-q4f16_1-MLC', 'qwen');
+            });
+        }
+
+        // Tools modal controls
+        this.setupToolsModal();
 
         // Settings menu toggle
         this.app.elements.settingsBtn.addEventListener('click', (e) => {
@@ -172,6 +225,9 @@ export default class ChatInput {
             });
         });
 
+        // Scrubber menu modal controls
+        this.setupScrubberMenu();
+
         // Setup theme controls
         this.setupThemeControls();
 
@@ -180,22 +236,355 @@ export default class ChatInput {
     }
 
     /**
+     * Sets up tools modal event listeners.
+     */
+    setupToolsModal() {
+        const closeToolsBtn = this.app.elements.closeToolsModalBtn;
+        const toolsModal = this.app.elements.toolsModal;
+
+        // Close button
+        if (closeToolsBtn) {
+            closeToolsBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.closeToolsModal();
+            });
+        }
+
+        // Close modal when clicking backdrop
+        if (toolsModal) {
+            toolsModal.addEventListener('click', (e) => {
+                if (e.target === toolsModal) {
+                    this.closeToolsModal();
+                }
+            });
+        }
+
+        // Close on Escape key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && toolsModal && !toolsModal.classList.contains('hidden')) {
+                this.closeToolsModal();
+            }
+        });
+    }
+
+    /**
+     * Opens the tools modal.
+     */
+    openToolsModal() {
+        if (this.app.elements.toolsModal) {
+            this.app.elements.toolsModal.classList.remove('hidden');
+        }
+    }
+
+    /**
+     * Closes the tools modal.
+     */
+    closeToolsModal() {
+        if (this.app.elements.toolsModal) {
+            this.app.elements.toolsModal.classList.add('hidden');
+        }
+    }
+
+    /**
      * Updates the visual state of the search toggle switch.
      */
     updateSearchToggleUI() {
+        if (!this.app.elements.searchSwitch) return;
+        
         this.app.elements.searchSwitch.setAttribute('aria-checked', this.app.searchEnabled);
 
         const thumb = this.app.elements.searchSwitch.querySelector('.search-switch-thumb');
+        if (!thumb) return;
+        
         if (this.app.searchEnabled) {
             this.app.elements.searchSwitch.classList.remove('bg-muted', 'hover:bg-muted/80');
             this.app.elements.searchSwitch.classList.add('search-switch-active');
             thumb.classList.remove('translate-x-[2px]', 'bg-background/80');
-            thumb.classList.add('translate-x-[19px]', 'search-switch-thumb-active');
+            thumb.classList.add('translate-x-[22px]', 'search-switch-thumb-active');
         } else {
             this.app.elements.searchSwitch.classList.remove('search-switch-active');
             this.app.elements.searchSwitch.classList.add('bg-muted', 'hover:bg-muted/80');
-            thumb.classList.remove('translate-x-[19px]', 'search-switch-thumb-active');
+            thumb.classList.remove('translate-x-[22px]', 'search-switch-thumb-active');
             thumb.classList.add('translate-x-[2px]', 'bg-background/80');
+        }
+    }
+
+    /**
+     * Updates the visual state of the scrubber toggle switch.
+     */
+    updateScrubberToggleUI() {
+        if (!this.app.elements.scrubberSwitch) return;
+        
+        this.app.elements.scrubberSwitch.setAttribute('aria-checked', this.app.scrubberEnabled);
+
+        const thumb = this.app.elements.scrubberSwitch.querySelector('.scrubber-switch-thumb');
+        if (!thumb) return;
+        
+        if (this.app.scrubberEnabled) {
+            this.app.elements.scrubberSwitch.classList.remove('bg-muted', 'hover:bg-muted/80');
+            this.app.elements.scrubberSwitch.classList.add('scrubber-switch-active');
+            thumb.classList.remove('translate-x-[2px]', 'bg-background/80');
+            thumb.classList.add('translate-x-[22px]', 'scrubber-switch-thumb-active');
+            
+            // Show scrubber models section
+            if (this.app.elements.scrubberModelsSection) {
+                this.app.elements.scrubberModelsSection.classList.remove('hidden');
+                // Update model status
+                this.updateScrubberModelStatus();
+            }
+        } else {
+            this.app.elements.scrubberSwitch.classList.remove('scrubber-switch-active');
+            this.app.elements.scrubberSwitch.classList.add('bg-muted', 'hover:bg-muted/80');
+            thumb.classList.remove('translate-x-[22px]', 'scrubber-switch-thumb-active');
+            thumb.classList.add('translate-x-[2px]', 'bg-background/80');
+            
+            // Hide scrubber models section
+            if (this.app.elements.scrubberModelsSection) {
+                this.app.elements.scrubberModelsSection.classList.add('hidden');
+            }
+        }
+    }
+
+    /**
+     * Updates the tools button active indicator.
+     */
+    updateToolsIndicator() {
+        if (!this.app.elements.toolsActiveIndicator) return;
+        
+        // Show indicator if any tool is enabled
+        if (this.app.searchEnabled || this.app.scrubberEnabled) {
+            this.app.elements.toolsActiveIndicator.classList.remove('hidden');
+        } else {
+            this.app.elements.toolsActiveIndicator.classList.add('hidden');
+        }
+    }
+
+    /**
+     * Opens the scrubber menu modal.
+     */
+    openScrubberMenu() {
+        const modal = document.getElementById('scrubber-menu-modal');
+        if (modal) {
+            modal.classList.remove('hidden');
+            this.updateScrubberModelStatus();
+        }
+    }
+
+    /**
+     * Closes the scrubber menu modal.
+     */
+    closeScrubberMenu() {
+        const modal = document.getElementById('scrubber-menu-modal');
+        if (modal) {
+            modal.classList.add('hidden');
+        }
+    }
+
+    /**
+     * Updates the visual selection state of scrubber models.
+     */
+    updateScrubberModelStatus() {
+        const llamaBtn = this.app.elements.loadLlama32Inline;
+        const qwenBtn = this.app.elements.loadQwenInline;
+        const llamaCheck = this.app.elements.llamaCheckInline;
+        const qwenCheck = this.app.elements.qwenCheckInline;
+
+        // Clear all selections first
+        if (llamaBtn) {
+            llamaBtn.classList.remove('selected');
+        }
+        if (qwenBtn) {
+            qwenBtn.classList.remove('selected');
+        }
+        if (llamaCheck) {
+            llamaCheck.classList.add('hidden');
+        }
+        if (qwenCheck) {
+            qwenCheck.classList.add('hidden');
+        }
+
+        // Show selection for current model
+        if (this.app.currentScrubberModel === 'Llama-3.2-1B-Instruct-q4f16_1-MLC') {
+            if (llamaBtn) llamaBtn.classList.add('selected');
+            if (llamaCheck) llamaCheck.classList.remove('hidden');
+        } else if (this.app.currentScrubberModel === 'Qwen2.5-0.5B-Instruct-q4f16_1-MLC') {
+            if (qwenBtn) qwenBtn.classList.add('selected');
+            if (qwenCheck) qwenCheck.classList.remove('hidden');
+        }
+    }
+
+    /**
+     * Selects a scrubber model, automatically unloading the previous one if needed.
+     * @param {string} modelName - Name of the model to load
+     * @param {string} modelId - ID of the model (llama or qwen)
+     */
+    async selectScrubberModel(modelName, modelId) {
+        // If clicking the same model, do nothing
+        if (this.app.currentScrubberModel === modelName) {
+            return;
+        }
+
+        const progressDiv = this.app.elements.scrubberLoadingProgressInline;
+        const progressBar = this.app.elements.scrubberProgressBarInline;
+        const llamaBtn = this.app.elements.loadLlama32Inline;
+        const qwenBtn = this.app.elements.loadQwenInline;
+
+        if (!progressDiv || !progressBar) return;
+
+        // Add loading state to ALL model buttons
+        if (llamaBtn) llamaBtn.classList.add('loading');
+        if (qwenBtn) qwenBtn.classList.add('loading');
+
+        // Unload previous model if exists
+        if (this.app.currentScrubberModel) {
+            console.log(`Unloading previous model: ${this.app.currentScrubberModel}`);
+            unloadModel(this.app.currentScrubberModel);
+        }
+
+        // Show progress bar
+        progressDiv.classList.remove('hidden');
+        progressBar.style.width = '0%';
+        progressBar.style.backgroundColor = 'rgb(147, 51, 234)'; // purple-600
+
+        try {
+            await loadModel(modelName, (progressInfo) => {
+                const percentValue = progressInfo.progress ? (progressInfo.progress * 100) : 0;
+                progressBar.style.width = `${percentValue}%`;
+            });
+
+            // Success - set as current model
+            this.app.currentScrubberModel = modelName;
+            progressBar.style.width = '100%';
+
+            // Persist the selected model
+            await chatDB.saveSetting('currentScrubberModel', modelName);
+
+            // Update visual selection
+            this.updateScrubberModelStatus();
+
+            // Hide progress after 1 second
+            setTimeout(() => {
+                progressDiv.classList.add('hidden');
+                progressBar.style.width = '0%';
+            }, 1000);
+
+            console.log(`Scrubber model ${modelName} loaded successfully`);
+        } catch (error) {
+            console.error('Failed to load scrubber model:', error);
+            progressBar.style.backgroundColor = '#ef4444'; // red on error
+
+            // Hide progress after 2 seconds
+            setTimeout(() => {
+                progressDiv.classList.add('hidden');
+                progressBar.style.width = '0%';
+                progressBar.style.backgroundColor = 'rgb(147, 51, 234)';
+            }, 2000);
+        } finally {
+            // Remove loading state from ALL buttons
+            if (llamaBtn) llamaBtn.classList.remove('loading');
+            if (qwenBtn) qwenBtn.classList.remove('loading');
+        }
+    }
+
+
+    /**
+     * Sets up scrubber menu event listeners.
+     */
+    setupScrubberMenu() {
+        const closeScrubberBtn = document.getElementById('close-scrubber-modal-btn');
+        const scrubberModal = document.getElementById('scrubber-menu-modal');
+        const loadLlamaBtn = document.getElementById('load-llama-3-2-1b');
+        const loadQwenBtn = document.getElementById('load-qwen-0-6b');
+
+        // Close button
+        if (closeScrubberBtn) {
+            closeScrubberBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.closeScrubberMenu();
+            });
+        }
+
+        // Close modal when clicking backdrop
+        if (scrubberModal) {
+            scrubberModal.addEventListener('click', (e) => {
+                if (e.target === scrubberModal) {
+                    this.closeScrubberMenu();
+                }
+            });
+        }
+
+        // Load Llama 3.2 1B
+        if (loadLlamaBtn) {
+            loadLlamaBtn.addEventListener('click', async () => {
+                await this.loadScrubberModel('Llama-3.2-1B-Instruct-q4f16_1-MLC', 'llama-status');
+            });
+        }
+
+        // Load Qwen 0.6B
+        if (loadQwenBtn) {
+            loadQwenBtn.addEventListener('click', async () => {
+                await this.loadScrubberModel('Qwen2.5-0.5B-Instruct-q4f16_1-MLC', 'qwen-status');
+            });
+        }
+    }
+
+    /**
+     * Loads a scrubber model with progress feedback.
+     * @param {string} modelName - Name of the model to load
+     * @param {string} statusElementId - ID of the status element to update
+     */
+    async loadScrubberModel(modelName, statusElementId) {
+        const statusElement = document.getElementById(statusElementId);
+        const progressDiv = document.getElementById('scrubber-loading-progress');
+        const progressText = document.getElementById('scrubber-progress-text');
+        const progressBar = document.getElementById('scrubber-progress-bar');
+
+        if (!progressDiv || !progressText || !progressBar) return;
+
+        // Show progress
+        progressDiv.classList.remove('hidden');
+        progressText.textContent = 'Initializing...';
+        progressBar.style.width = '0%';
+
+        if (statusElement) {
+            statusElement.textContent = 'Loading...';
+        }
+
+        try {
+            await loadModel(modelName, (progressInfo) => {
+                const text = progressInfo.text || 'Loading model...';
+                const percentValue = progressInfo.progress ? (progressInfo.progress * 100) : 0;
+                
+                progressText.textContent = text;
+                progressBar.style.width = `${percentValue}%`;
+            });
+
+            // Success
+            progressText.textContent = '✓ Model loaded successfully!';
+            progressBar.style.width = '100%';
+            
+            if (statusElement) {
+                statusElement.textContent = '✓ Loaded';
+            }
+
+            // Hide progress after 2 seconds
+            setTimeout(() => {
+                progressDiv.classList.add('hidden');
+            }, 2000);
+
+            console.log(`Scrubber model ${modelName} loaded successfully`);
+        } catch (error) {
+            console.error('Failed to load scrubber model:', error);
+            progressText.textContent = `✗ Error: ${error.message}`;
+            
+            if (statusElement) {
+                statusElement.textContent = 'Failed';
+            }
+
+            // Hide progress after 3 seconds
+            setTimeout(() => {
+                progressDiv.classList.add('hidden');
+            }, 3000);
         }
     }
 

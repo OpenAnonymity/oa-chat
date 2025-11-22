@@ -1494,6 +1494,48 @@ html[data-right-panel-hidden="true"] #right-panel {
     background-color: white !important;
 }
 
+/* Scrubber switch active state - works in both light and dark mode */
+.scrubber-switch-active {
+    background-color: rgb(168, 85, 247) !important;
+}
+
+.scrubber-switch-thumb-active {
+    background-color: white !important;
+}
+
+/* Scrubber spinner animation */
+.scrubber-spinner {
+    border: 2px solid hsl(var(--color-muted));
+    border-top-color: rgb(168, 85, 247);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+/* Scrubber model selection */
+.scrubber-model-option {
+    cursor: pointer;
+}
+
+.scrubber-model-option:hover {
+    background-color: hsl(var(--color-accent));
+}
+
+.scrubber-model-option.selected {
+    border-color: rgb(168, 85, 247);
+    background-color: rgba(168, 85, 247, 0.05);
+}
+
+.scrubber-model-option.loading {
+    opacity: 0.6;
+    cursor: wait;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
 /* Image modal animation */
 @keyframes fadeIn {
     from {

@@ -352,16 +352,14 @@
                                             </div>
                                         </div>
 
-                                        <!-- Search Toggle -->
-                                        <div id="search-toggle" class="inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-7 px-2 gap-1 cursor-pointer select-none">
+                                        <!-- Tools Button -->
+                                        <button id="tools-btn" class="inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-7 px-2 gap-1" title="Tools">
                                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
-                                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 0 0 8.716-6.747M12 21a9.004 9.004 0 0 1-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 0 1 7.843 4.582M12 3a8.997 8.997 0 0 0-7.843 4.582m15.686 0A11.953 11.953 0 0 1 12 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0 1 21 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0 1 12 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 0 1 3 12c0-1.605.42-3.113 1.157-4.418" />
+                                                <path stroke-linecap="round" stroke-linejoin="round" d="M11.42 15.17 17.25 21A2.652 2.652 0 0 0 21 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 1 1-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 0 0 4.486-6.336l-3.276 3.277a3.004 3.004 0 0 1-2.25-2.25l3.276-3.276a4.5 4.5 0 0 0-6.336 4.486c.091 1.076-.071 2.264-.904 2.95l-.102.085m-1.745 1.437L5.909 7.5H4.5L2.25 3.75l1.5-1.5L7.5 4.5v1.409l4.26 4.26m-1.745 1.437 1.745-1.437m6.615 8.206L15.75 15.75M4.867 19.125h.008v.008h-.008v-.008Z" />
                                             </svg>
-                                            <span class="text-xs">Search</span>
-                                            <button type="button" id="search-switch" role="switch" aria-checked="false" class="group relative h-[18px] w-[36px] rounded-full inline-flex shrink-0 cursor-pointer items-center transition active:scale-105 border border-transparent text-xs focus-visible:ring-1 focus-visible:ring-offset-1 bg-muted hover:bg-muted/80">
-                                                <span class="search-switch-thumb h-[14px] w-[14px] rounded-full inline-block transform transition duration-200 ease-in-out bg-background/80 group-hover:bg-background translate-x-[2px]"></span>
-                                            </button>
-                                        </div>
+                                            <span class="text-xs">Tools</span>
+                                            <span id="tools-active-indicator" class="hidden w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                                        </button>
                                     </div>
 
                                     <div class="flex">
@@ -464,6 +462,168 @@
             </div>
             <div id="model-list-scroll-area" class="overflow-y-auto p-2" style="height: 270px;">
                 <div id="models-list" class="space-y-1"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tools Modal -->
+    <div id="tools-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div role="dialog" aria-modal="true" tabindex="-1" data-slot="dialog-content" class="cursor-default relative w-full max-w-sm border border-border bg-background shadow-lg rounded-lg duration-0 overflow-hidden flex flex-col m-4" data-state="open">
+            <!-- Header -->
+            <div class="flex items-center justify-between border-b border-border px-4 py-3">
+                <h3 class="text-sm font-semibold text-foreground">Tools</h3>
+                <button id="close-tools-modal-btn" class="text-muted-foreground hover:text-foreground transition-colors p-1">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+
+            <!-- Tools List -->
+            <div class="p-3 space-y-2">
+                <!-- Web Search Toggle -->
+                <div class="flex items-center justify-between px-4 py-3 rounded-md border border-border bg-background hover:bg-accent/50 transition-colors">
+                    <div class="flex items-center gap-3">
+                        <div class="flex items-center justify-center w-8 h-8 rounded-full bg-blue-500/10">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 text-blue-600 dark:text-blue-400">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 0 0 8.716-6.747M12 21a9.004 9.004 0 0 1-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 0 1 7.843 4.582M12 3a8.997 8.997 0 0 0-7.843 4.582m15.686 0A11.953 11.953 0 0 1 12 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0 1 21 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0 1 12 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 0 1 3 12c0-1.605.42-3.113 1.157-4.418" />
+                            </svg>
+                        </div>
+                        <div>
+                            <div class="text-sm font-medium text-foreground">Web Search</div>
+                            <div class="text-xs text-muted-foreground">Search the internet</div>
+                        </div>
+                    </div>
+                    <button type="button" id="search-switch" role="switch" aria-checked="false" class="group relative h-[20px] w-[40px] rounded-full inline-flex shrink-0 cursor-pointer items-center transition active:scale-105 border border-transparent focus-visible:ring-1 focus-visible:ring-offset-1 bg-muted hover:bg-muted/80">
+                        <span class="search-switch-thumb h-[16px] w-[16px] rounded-full inline-block transform transition duration-200 ease-in-out bg-background/80 group-hover:bg-background translate-x-[2px]"></span>
+                    </button>
+                </div>
+
+                <!-- Scrubber Toggle -->
+                <div class="rounded-md border border-border bg-background">
+                    <div class="flex items-center justify-between px-4 py-3">
+                        <div class="flex items-center gap-3">
+                            <div class="flex items-center justify-center w-8 h-8 rounded-full bg-purple-500/10">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 text-purple-600 dark:text-purple-400">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 0 0 2.25-2.25V6.75a2.25 2.25 0 0 0-2.25-2.25H6.75A2.25 2.25 0 0 0 4.5 6.75v10.5a2.25 2.25 0 0 0 2.25 2.25Zm.75-12h9v9h-9v-9Z" />
+                                </svg>
+                            </div>
+                            <div class="flex-1">
+                                <div class="text-sm font-medium text-foreground">Scrubber</div>
+                                <div class="text-xs text-muted-foreground">Remove PII from your prompts</div>
+                            </div>
+                        </div>
+                        <button type="button" id="scrubber-switch" role="switch" aria-checked="false" class="group relative h-[20px] w-[40px] rounded-full inline-flex shrink-0 cursor-pointer items-center transition active:scale-105 border border-transparent focus-visible:ring-1 focus-visible:ring-offset-1 bg-muted hover:bg-muted/80">
+                            <span class="scrubber-switch-thumb h-[16px] w-[16px] rounded-full inline-block transform transition duration-200 ease-in-out bg-background/80 group-hover:bg-background translate-x-[2px]"></span>
+                        </button>
+                    </div>
+
+                    <!-- Scrubber Models Section (hidden by default) -->
+                    <div id="scrubber-models-section" class="hidden border-t border-border bg-muted/20">
+                        <!-- Loading Progress - Bar Only -->
+                        <div id="scrubber-loading-progress-inline" class="hidden px-4 py-2 border-b border-border bg-purple-500/5">
+                            <div class="w-full h-2 bg-muted rounded-full overflow-hidden">
+                                <div id="scrubber-progress-bar-inline" class="h-full bg-purple-600 transition-all duration-300" style="width: 0%"></div>
+                            </div>
+                        </div>
+
+                        <!-- Model Options -->
+                        <div class="p-3 space-y-2">
+                            <!-- Qwen 0.6B - Default -->
+                            <button id="load-qwen-0-6b-inline" class="scrubber-model-option w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-left border-2 border-transparent transition-all" data-model="qwen">
+                                <img src="img/qwen.svg" alt="Qwen" class="w-6 h-6 object-contain flex-shrink-0" />
+                                <div class="flex-1">
+                                    <div class="text-sm font-medium text-foreground">Qwen 0.6B</div>
+                                    <div class="text-xs text-muted-foreground">Ultra lightweight</div>
+                                </div>
+                                <svg id="qwen-check-inline" class="hidden w-5 h-5 text-purple-600 dark:text-purple-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path>
+                                </svg>
+                            </button>
+
+                            <!-- Llama 3.2 1B -->
+                            <button id="load-llama-3-2-1b-inline" class="scrubber-model-option w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-left border-2 border-transparent transition-all" data-model="llama">
+                                <img src="img/meta.svg" alt="Meta" class="w-6 h-6 object-contain flex-shrink-0" />
+                                <div class="flex-1">
+                                    <div class="text-sm font-medium text-foreground">Llama 3.2 1B</div>
+                                    <div class="text-xs text-muted-foreground">Fast & lightweight</div>
+                                </div>
+                                <svg id="llama-check-inline" class="hidden w-5 h-5 text-purple-600 dark:text-purple-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scrubber Menu Modal -->
+    <div id="scrubber-menu-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div role="dialog" aria-modal="true" tabindex="-1" data-slot="dialog-content" class="cursor-default relative w-full max-w-md border border-border bg-background shadow-lg rounded-lg duration-0 overflow-hidden flex flex-col m-4" data-state="open">
+            <!-- Header -->
+            <div class="flex items-center justify-between border-b border-border px-4 py-3">
+                <h3 class="text-sm font-semibold text-foreground">Scrubber Models</h3>
+                <button id="close-scrubber-modal-btn" class="text-muted-foreground hover:text-foreground transition-colors p-1">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+            
+            <!-- Loading Progress -->
+            <div id="scrubber-loading-progress" class="hidden border-b border-border px-4 py-3 bg-muted/30">
+                <div class="flex items-center gap-2 mb-2">
+                    <div class="scrubber-spinner w-4 h-4"></div>
+                    <span id="scrubber-progress-text" class="text-sm text-foreground">Loading model...</span>
+                </div>
+                <div class="w-full h-2 bg-muted rounded-full overflow-hidden">
+                    <div id="scrubber-progress-bar" class="h-full bg-primary transition-all duration-300" style="width: 0%"></div>
+                </div>
+            </div>
+
+            <!-- Model List -->
+            <div class="p-3 space-y-2">
+                <button id="load-llama-3-2-1b" class="w-full flex items-center justify-between px-4 py-3 rounded-md border border-border bg-background hover:bg-accent transition-colors text-left">
+                    <div class="flex items-center gap-3">
+                        <div class="flex items-center justify-center w-8 h-8 rounded-full bg-primary/10">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 text-primary">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567 16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z" />
+                            </svg>
+                        </div>
+                        <div>
+                            <div class="text-sm font-medium text-foreground">Llama 3.2 1B</div>
+                            <div class="text-xs text-muted-foreground">Fast & lightweight</div>
+                        </div>
+                    </div>
+                    <span id="llama-status" class="text-xs text-muted-foreground">Load</span>
+                </button>
+
+                <button id="load-qwen-0-6b" class="w-full flex items-center justify-between px-4 py-3 rounded-md border border-border bg-background hover:bg-accent transition-colors text-left">
+                    <div class="flex items-center gap-3">
+                        <div class="flex items-center justify-center w-8 h-8 rounded-full bg-primary/10">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 text-primary">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567 16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z" />
+                            </svg>
+                        </div>
+                        <div>
+                            <div class="text-sm font-medium text-foreground">Qwen 0.6B</div>
+                            <div class="text-xs text-muted-foreground">Ultra lightweight</div>
+                        </div>
+                    </div>
+                    <span id="qwen-status" class="text-xs text-muted-foreground">Load</span>
+                </button>
+            </div>
+
+            <!-- Info Footer -->
+            <div class="border-t border-border px-4 py-3 bg-muted/20">
+                <p class="text-xs text-muted-foreground">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5 inline-block mr-1">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />
+                    </svg>
+                    First load downloads the model (~1-2GB). Cached after.
+                </p>
             </div>
         </div>
     </div>
