@@ -63,12 +63,9 @@ class ChatApp {
             searchSwitch: document.getElementById('search-switch'),
             scrubberSwitch: document.getElementById('scrubber-switch'),
             scrubberModelsSection: document.getElementById('scrubber-models-section'),
-            loadLlama32Inline: document.getElementById('load-llama-3-2-1b-inline'),
-            loadQwenInline: document.getElementById('load-qwen-0-6b-inline'),
-            llamaCheckInline: document.getElementById('llama-check-inline'),
-            qwenCheckInline: document.getElementById('qwen-check-inline'),
             scrubberLoadingProgressInline: document.getElementById('scrubber-loading-progress-inline'),
             scrubberProgressBarInline: document.getElementById('scrubber-progress-bar-inline'),
+            // Scrubber model buttons are now dynamically generated, accessed via document.getElementById() as needed
             // clearChatBtn: document.getElementById('clear-chat-btn'), // Temporarily removed
             // copyMarkdownBtn: document.getElementById('copy-markdown-btn'), // Temporarily removed
             toggleRightPanelBtn: document.getElementById('toggle-right-panel-btn'), // This might be legacy, but let's keep it for now.
@@ -95,6 +92,7 @@ class ChatApp {
         this.searchEnabled = false;
         this.scrubberEnabled = false;
         this.currentScrubberModel = null; // Track currently loaded scrubber model
+        this.lastOriginalPrompt = null; // Store original prompt before redaction
         this.sessionSearchQuery = '';
         this.uploadedFiles = [];
         this.rightPanel = null;
@@ -1308,7 +1306,8 @@ class ChatApp {
             streamingTokens: metadata.streamingTokens || null,
             files: metadata.files || null,
             searchEnabled: metadata.searchEnabled || false,
-            citations: metadata.citations || null
+            citations: metadata.citations || null,
+            originalContent: metadata.originalContent || null  // Store original un-redacted prompt
         };
 
         await chatDB.saveMessage(message);
@@ -1757,6 +1756,11 @@ class ChatApp {
             }
             if (searchEnabled) {
                 metadata.searchEnabled = true;
+            }
+            // Store original un-redacted prompt if it was anonymized
+            if (this.lastOriginalPrompt) {
+                metadata.originalContent = this.lastOriginalPrompt;
+                this.lastOriginalPrompt = null; // Clear after use
             }
             this.isAutoScrollPaused = true;
             const userMessage = await this.addMessage('user', content || '', metadata);
@@ -2312,6 +2316,100 @@ class ChatApp {
 
         // Trigger regeneration
         await this.regenerateResponse();
+    }
+
+    /**
+     * Reintegrates original private information into an assistant's response.
+     * Uses the local scrubber model to restore PII from the original prompt into the redacted response.
+     * @param {string} messageId - Assistant message ID to reintegrate
+     */
+    async reintegrateResponse(messageId) {
+        const session = this.getCurrentSession();
+        if (!session) return;
+
+        // Check if scrubber is enabled and model is loaded
+        if (!this.scrubberEnabled || !this.currentScrubberModel) {
+            console.warn('Scrubber is not enabled or model is not loaded');
+            return;
+        }
+
+        // Prevent reintegration if streaming
+        if (this.isCurrentSessionStreaming()) {
+            return;
+        }
+
+        const messages = await chatDB.getSessionMessages(session.id);
+        const assistantMessageIndex = messages.findIndex(m => m.id === messageId);
+
+        if (assistantMessageIndex === -1 || messages[assistantMessageIndex].role !== 'assistant') {
+            return;
+        }
+
+        const assistantMessage = messages[assistantMessageIndex];
+
+        // Find the previous user message
+        let userMessage = null;
+        for (let i = assistantMessageIndex - 1; i >= 0; i--) {
+            if (messages[i].role === 'user') {
+                userMessage = messages[i];
+                break;
+            }
+        }
+
+        // Check if user message has original content
+        if (!userMessage || !userMessage.originalContent) {
+            console.warn('No original prompt found for this message');
+            return;
+        }
+
+        try {
+            // Import the necessary modules
+            const { generateStream } = await import('./services/webllmService.js');
+            const { AGGREGATOR_PROMPT } = await import('./components/ChatInput.js');
+
+            // Prepare the prompt for the aggregator
+            const aggregatorPrompt = `Original query: ${userMessage.originalContent}\n\nRemote model response: ${assistantMessage.content}`;
+
+            // Show "Reintegrating..." before starting
+            assistantMessage.content = 'Reintegrating...';
+            let reintegratedContent = '';
+
+            // Update UI to show reintegration in progress
+            if (this.chatArea) {
+                this.chatArea.updateStreamingMessage(messageId, 'Reintegrating...');
+            }
+
+            // Stream the reintegrated response
+            await generateStream(
+                this.currentScrubberModel,
+                aggregatorPrompt,
+                AGGREGATOR_PROMPT,
+                (chunk, fullResponse) => {
+                    reintegratedContent = fullResponse;
+                    assistantMessage.content = fullResponse;
+
+                    // Update UI with streaming content
+                    if (this.chatArea) {
+                        this.chatArea.updateStreamingMessage(messageId, fullResponse);
+                    }
+                },
+                null // No loading progress callback
+            );
+
+            // Save the reintegrated content and mark as reintegrated
+            assistantMessage.content = reintegratedContent;
+            assistantMessage.reintegrated = true;
+            await chatDB.saveMessage(assistantMessage);
+
+            // Finalize the message display
+            if (this.chatArea) {
+                await this.chatArea.finalizeStreamingMessage(assistantMessage);
+            }
+
+            console.log('Response reintegrated successfully');
+        } catch (error) {
+            console.error('Failed to reintegrate response:', error);
+        }
     }
 
     /**

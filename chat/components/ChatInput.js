@@ -6,7 +6,80 @@
 
 import themeManager from '../services/themeManager.js';
 import { getExtensionFromMimeType } from '../services/fileUtils.js';
-import { loadModel, unloadModel } from '../services/webllmService.js';
+import { loadModel, unloadModel, generateStream } from '../services/webllmService.js';
+
+// Scrubber model configuration
+export const SCRUBBER_MODELS = [
+    {
+        id: 'qwen',
+        name: 'Qwen 0.6B',
+        modelName: 'Qwen2.5-0.5B-Instruct-q4f16_1-MLC',
+        description: 'Ultra lightweight',
+        icon: 'qwen.svg',
+        default: true
+    },
+    {
+        id: 'llama-1b',
+        name: 'Llama 3.2 1B',
+        modelName: 'Llama-3.2-1B-Instruct-q4f16_1-MLC',
+        description: 'Fast & lightweight',
+        icon: 'meta.svg',
+        default: false
+    },
+    {
+        id: 'llama-3b',
+        name: 'Llama 3.2 3B',
+        modelName: 'Llama-3.2-3B-Instruct-q4f16_1-MLC',
+        description: 'Better accuracy',
+        icon: 'meta.svg',
+        default: false
+    }
+];
+
+export const AGGREGATOR_PROMPT = (
+    "You are an expert assistant specializing in response reconstruction. You are running on a local machine and have access to a hypothetical user's original query and the remote model's response.\n"
+    + "Since you are running on the hypothetical user's machine, you have full permission to work with their private information.\n"
+    + "Your task:\n"
+    + "- Combine the two inputs to produce a final response that restores necessary private details from the original query into the remote model's response.\n"
+    + "- Return only the completed, privacy-restored response—no explanations, notes, or metadata.\n"
+    + "- If any redacted information cannot be confidently restored, leave the placeholder as-is (e.g., [NAME], [EMAIL]).\n"
+    + "- Only the finalized, reconstructed response ready to present to the user.\n"
+    + "\n"
+    + "For example:\n"
+    + "Input (original query): \"What's the best way to email Dr. John Smith at Johns Hopkins about my appointment on June 24th? My email is alice@myemail.com.\"\n"
+    + "Input (remote model response): \"To email Dr. [NAME] at [ORG] regarding your appointment on [DATE], you should write a concise, polite message stating your intentions and include your contact information.\"\n"
+    + "Your task: Reconstruct the final, privacy-restored response.\n"
+    + "Output: \"To email Dr. John Smith at Johns Hopkins regarding your appointment on June 24th, you should write a concise, polite message stating your intentions and include your contact information.\"\n"
+    + "\n"
+    + "Remember: Output ONLY the reconstructed response with NO prefix or explanation."
+);
+
+const PROMPT_CREATOR = (
+    "You are a privacy-focused text redactor. Your ONLY task is to remove personally identifiable information (PII) from text and return the redacted version.\n"
+    + "\n"
+    + "CRITICAL INSTRUCTIONS:\n"
+    + "- Do NOT include any preamble, prefix, or explanation (like 'Here is the redacted text:' or 'Sure, here's the rewritten prompt:').\n"
+    + "- Do NOT add any commentary or notes.\n"
+    + "- ONLY output the redacted text itself, nothing more.\n"
+    + "- Start your response immediately with the first word of the redacted prompt.\n"
+    + "\n"
+    + "For example:\n"
+    + "- Replace names with [NAME]\n"
+    + "- Replace locations with [LOCATION]\n"
+    + "- Replace email addresses with [EMAIL]\n"
+    + "- Replace phone numbers with [PHONE]\n"
+    + "- Replace IDs, account numbers, or codes with [ID]\n"
+    + "- Replace dates with [DATE]\n"
+    + "- Replace organization names with [ORG]\n"
+    + "- If PII doesn't fall into the above categories, create a new semantically understandable redaction token.\n"
+    + "\n"
+    + "Make sure to REDACT all PII, don't eliminate it completely. \n"
+    + "Example:\n"
+    + "Input: 'Hi, my name is John Smith and I live in Seattle. Email me at john@example.com. My phone number is 123-456-7890. My ID is 1234567890.'\n"
+    + "Output: 'Hi, my name is [NAME] and I live in [LOCATION]. Email me at [EMAIL]. My phone number is [PHONE]. My ID is [ID].'\n"
+    + "\n"
+    + "Remember: Output ONLY the redacted text with NO prefix or explanation."
+);
 
 export default class ChatInput {
     /**
@@ -14,6 +87,30 @@ export default class ChatInput {
      */
     constructor(app) {
         this.app = app;
+        this.isAnonymizing = false;
+        // Render scrubber model buttons
+        this.renderScrubberModels();
+    }
+
+    /**
+     * Dynamically renders scrubber model buttons in the Tools modal.
+     */
+    renderScrubberModels() {
+        const container = document.getElementById('scrubber-models-inline-container');
+        if (!container) return;
+
+        container.innerHTML = SCRUBBER_MODELS.map(model => `
+            <button id="load-${model.id}-inline" class="scrubber-model-option w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-left border-2 border-transparent transition-all" data-model="${model.id}">
+                <img src="img/${model.icon}" alt="${model.name}" class="w-6 h-6 object-contain flex-shrink-0" />
+                <div class="flex-1">
+                    <div class="text-sm font-medium text-foreground">${model.name}</div>
+                    <div class="text-xs text-muted-foreground">${model.description}</div>
+                </div>
+                <svg id="${model.id}-check-inline" class="hidden w-5 h-5 text-purple-600 dark:text-purple-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path>
+                </svg>
+            </button>
+        `).join('');
     }
 
     /**
@@ -39,6 +136,12 @@ export default class ChatInput {
                         this.app.sendMessage();
                     }
                 }
+            }
+            
+            // Ctrl+S for prompt anonymization (Cmd+S on Mac)
+            if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+                e.preventDefault();
+                this.handleAnonymizePrompt();
             }
         });
 
@@ -137,31 +240,29 @@ export default class ChatInput {
                 // Persist scrubber state globally
                 await chatDB.saveSetting('scrubberEnabled', this.app.scrubberEnabled);
                 
-                // Auto-load Qwen when enabling scrubber for the first time
+                // Auto-load default model when enabling scrubber for the first time
                 if (this.app.scrubberEnabled && !wasEnabled && !this.app.currentScrubberModel) {
-                    // Small delay to let UI update
-                    setTimeout(async () => {
-                        await this.selectScrubberModel('Qwen2.5-0.5B-Instruct-q4f16_1-MLC', 'qwen');
-                    }, 100);
+                    const defaultModel = SCRUBBER_MODELS.find(m => m.default);
+                    if (defaultModel) {
+                        // Small delay to let UI update
+                        setTimeout(async () => {
+                            await this.selectScrubberModel(defaultModel.modelName, defaultModel.id);
+                        }, 100);
+                    }
                 }
             });
         }
 
-        // Select Llama 3.2 1B
-        if (this.app.elements.loadLlama32Inline) {
-            this.app.elements.loadLlama32Inline.addEventListener('click', async (e) => {
-                e.stopPropagation();
-                await this.selectScrubberModel('Llama-3.2-1B-Instruct-q4f16_1-MLC', 'llama');
-            });
-        }
-
-        // Select Qwen 0.6B
-        if (this.app.elements.loadQwenInline) {
-            this.app.elements.loadQwenInline.addEventListener('click', async (e) => {
-                e.stopPropagation();
-                await this.selectScrubberModel('Qwen2.5-0.5B-Instruct-q4f16_1-MLC', 'qwen');
-            });
-        }
+        // Setup event listeners for all scrubber model buttons
+        SCRUBBER_MODELS.forEach(model => {
+            const btnInline = document.getElementById(`load-${model.id}-inline`);
+            if (btnInline) {
+                btnInline.addEventListener('click', async (e) => {
+                    e.stopPropagation();
+                    await this.selectScrubberModel(model.modelName, model.id);
+                });
+            }
+        });
 
         // Tools modal controls
         this.setupToolsModal();
@@ -384,39 +485,34 @@ export default class ChatInput {
      * Updates the visual selection state of scrubber models.
      */
     updateScrubberModelStatus() {
-        const llamaBtn = this.app.elements.loadLlama32Inline;
-        const qwenBtn = this.app.elements.loadQwenInline;
-        const llamaCheck = this.app.elements.llamaCheckInline;
-        const qwenCheck = this.app.elements.qwenCheckInline;
-
         // Clear all selections first
-        if (llamaBtn) {
-            llamaBtn.classList.remove('selected');
-        }
-        if (qwenBtn) {
-            qwenBtn.classList.remove('selected');
-        }
-        if (llamaCheck) {
-            llamaCheck.classList.add('hidden');
-        }
-        if (qwenCheck) {
-            qwenCheck.classList.add('hidden');
-        }
+        SCRUBBER_MODELS.forEach(model => {
+            const btn = document.getElementById(`load-${model.id}-inline`);
+            const check = document.getElementById(`${model.id}-check-inline`);
+            
+            if (btn) {
+                btn.classList.remove('selected');
+            }
+            if (check) {
+                check.classList.add('hidden');
+            }
+        });
 
         // Show selection for current model
-        if (this.app.currentScrubberModel === 'Llama-3.2-1B-Instruct-q4f16_1-MLC') {
-            if (llamaBtn) llamaBtn.classList.add('selected');
-            if (llamaCheck) llamaCheck.classList.remove('hidden');
-        } else if (this.app.currentScrubberModel === 'Qwen2.5-0.5B-Instruct-q4f16_1-MLC') {
-            if (qwenBtn) qwenBtn.classList.add('selected');
-            if (qwenCheck) qwenCheck.classList.remove('hidden');
+        const currentModel = SCRUBBER_MODELS.find(m => m.modelName === this.app.currentScrubberModel);
+        if (currentModel) {
+            const btn = document.getElementById(`load-${currentModel.id}-inline`);
+            const check = document.getElementById(`${currentModel.id}-check-inline`);
+            
+            if (btn) btn.classList.add('selected');
+            if (check) check.classList.remove('hidden');
         }
     }
 
     /**
      * Selects a scrubber model, automatically unloading the previous one if needed.
      * @param {string} modelName - Name of the model to load
-     * @param {string} modelId - ID of the model (llama or qwen)
+     * @param {string} modelId - ID of the model
      */
     async selectScrubberModel(modelName, modelId) {
         // If clicking the same model, do nothing
@@ -426,14 +522,14 @@ export default class ChatInput {
 
         const progressDiv = this.app.elements.scrubberLoadingProgressInline;
         const progressBar = this.app.elements.scrubberProgressBarInline;
-        const llamaBtn = this.app.elements.loadLlama32Inline;
-        const qwenBtn = this.app.elements.loadQwenInline;
 
         if (!progressDiv || !progressBar) return;
 
         // Add loading state to ALL model buttons
-        if (llamaBtn) llamaBtn.classList.add('loading');
-        if (qwenBtn) qwenBtn.classList.add('loading');
+        SCRUBBER_MODELS.forEach(model => {
+            const btn = document.getElementById(`load-${model.id}-inline`);
+            if (btn) btn.classList.add('loading');
+        });
 
         // Unload previous model if exists
         if (this.app.currentScrubberModel) {
@@ -481,8 +577,10 @@ export default class ChatInput {
             }, 2000);
         } finally {
             // Remove loading state from ALL buttons
-            if (llamaBtn) llamaBtn.classList.remove('loading');
-            if (qwenBtn) qwenBtn.classList.remove('loading');
+            SCRUBBER_MODELS.forEach(model => {
+                const btn = document.getElementById(`load-${model.id}-inline`);
+                if (btn) btn.classList.remove('loading');
+            });
         }
     }
 
@@ -653,6 +751,81 @@ export default class ChatInput {
     formatThemeName(theme) {
         if (!theme) return '';
         return theme.charAt(0).toUpperCase() + theme.slice(1);
+    }
+
+    /**
+     * Handles Ctrl+S/Cmd+S for prompt anonymization.
+     * Sends the current input to the local scrubber model to redact PII.
+     */
+    async handleAnonymizePrompt() {
+        // Check if scrubber is enabled
+        if (!this.app.scrubberEnabled) {
+            return;
+        }
+
+        // Check if a model is loaded
+        if (!this.app.currentScrubberModel) {
+            console.warn('No scrubber model loaded. Please select a model first.');
+            return;
+        }
+
+        // Get current input text
+        const currentText = this.app.elements.messageInput.value.trim();
+        if (!currentText) {
+            return;
+        }
+
+        // Prevent multiple simultaneous anonymizations
+        if (this.isAnonymizing) {
+            return;
+        }
+
+        this.isAnonymizing = true;
+
+        try {
+            // Store the original un-redacted prompt
+            this.app.lastOriginalPrompt = currentText;
+
+            // Clear the input and prepare for streaming
+            this.app.elements.messageInput.value = '';
+            this.app.elements.messageInput.placeholder = 'Anonymizing...';
+            this.app.elements.messageInput.disabled = true;
+
+            let anonymizedText = '';
+
+            // Stream the anonymized response
+            await generateStream(
+                this.app.currentScrubberModel,
+                "This is the text which you should redact:\n" + currentText,
+                PROMPT_CREATOR,
+                (chunk, fullResponse) => {
+                    // Update the input with each chunk
+                    anonymizedText = fullResponse;
+                    this.app.elements.messageInput.value = fullResponse;
+                    
+                    // Auto-resize the textarea
+                    this.app.elements.messageInput.style.height = '24px';
+                    this.app.elements.messageInput.style.height = Math.min(this.app.elements.messageInput.scrollHeight, 384) + 'px';
+                },
+                null // No loading progress callback needed since model is already loaded
+            );
+
+            console.log('Prompt anonymized successfully');
+        } catch (error) {
+            console.error('Failed to anonymize prompt:', error);
+            // Restore original text on error
+            this.app.elements.messageInput.value = currentText;
+            alert('Failed to anonymize prompt. Please try again.');
+        } finally {
+            // Re-enable input
+            this.app.elements.messageInput.disabled = false;
+            this.app.elements.messageInput.placeholder = 'Type a message...';
+            this.app.elements.messageInput.focus();
+            this.isAnonymizing = false;
+            
+            // Update input state (send button, etc.)
+            this.app.updateInputState();
+        }
     }
 
     /**

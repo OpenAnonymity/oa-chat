@@ -74,6 +74,13 @@ export default class ChatArea {
                 await this.app.forkConversation(messageId);
                 return;
             }
+
+            const reintegrateBtn = e.target.closest('.reintegrate-response-btn');
+            if (reintegrateBtn) {
+                const messageId = reintegrateBtn.dataset.messageId;
+                await this.app.reintegrateResponse(messageId);
+                return;
+            }
         });
 
         // Add keyboard listener for Cmd/Ctrl+Enter in edit textarea and Escape to cancel
@@ -229,8 +236,19 @@ export default class ChatArea {
             formatTime: this.app.formatTime.bind(this.app)
         };
 
-        messagesContainer.innerHTML = messages.map(message => {
+        messagesContainer.innerHTML = messages.map((message, index) => {
             const options = this.app.getMessageTemplateOptions ? this.app.getMessageTemplateOptions(message.id) : {};
+            
+            // For assistant messages, check if previous user message has originalContent
+            if (message.role === 'assistant') {
+                for (let i = index - 1; i >= 0; i--) {
+                    if (messages[i].role === 'user') {
+                        options.hasOriginalContent = !!messages[i].originalContent;
+                        break;
+                    }
+                }
+            }
+            
             return buildMessageHTML(message, helpers, this.app.state.models, session.model, options);
         }).join('');
 
@@ -819,7 +837,20 @@ export default class ChatArea {
             formatTime: this.app.formatTime.bind(this.app)
         };
 
-        const messageHtml = buildMessageHTML(message, helpers, this.app.state.models, session.model);
+        // Check if this is an assistant message and if previous user message has originalContent
+        const options = {};
+        if (message.role === 'assistant') {
+            const messages = await chatDB.getSessionMessages(session.id);
+            // Find the most recent user message before this assistant message
+            for (let i = messages.length - 1; i >= 0; i--) {
+                if (messages[i].role === 'user') {
+                    options.hasOriginalContent = !!messages[i].originalContent;
+                    break;
+                }
+            }
+        }
+
+        const messageHtml = buildMessageHTML(message, helpers, this.app.state.models, session.model, options);
 
         // Append the message
         messagesContainer.insertAdjacentHTML('beforeend', messageHtml);
@@ -881,6 +912,9 @@ export default class ChatArea {
     async finalizeStreamingMessage(message) {
         const messageEl = document.querySelector(`[data-message-id="${message.id}"]`);
         if (messageEl) {
+            const session = this.app.getCurrentSession();
+            if (!session) return;
+
             // Find model details from the app state - try by ID first, then by name
             let model = this.app.state.models.find(m => m.id === message.model);
             if (!model) {
@@ -893,8 +927,32 @@ export default class ChatArea {
                 formatTime: this.app.formatTime.bind(this.app)
             };
 
+            // Check if this is an assistant message and if previous user message has originalContent
+            const options = {};
+            if (message.role === 'assistant') {
+                const messages = await chatDB.getSessionMessages(session.id);
+                const currentIndex = messages.findIndex(m => m.id === message.id);
+                // Look backwards from the current message to find the previous user message
+                if (currentIndex !== -1) {
+                    for (let i = currentIndex - 1; i >= 0; i--) {
+                        if (messages[i].role === 'user') {
+                            options.hasOriginalContent = !!messages[i].originalContent;
+                            break;
+                        }
+                    }
+                } else {
+                    // If message not found in list (shouldn't happen, but fallback), check most recent user message
+                    for (let i = messages.length - 1; i >= 0; i--) {
+                        if (messages[i].role === 'user') {
+                            options.hasOriginalContent = !!messages[i].originalContent;
+                            break;
+                        }
+                    }
+                }
+            }
+
             // Re-build the entire message HTML to reflect its final state
-            const newMessageHtml = window.buildMessageHTML(message, helpers, this.app.state.models, modelName);
+            const newMessageHtml = window.buildMessageHTML(message, helpers, this.app.state.models, modelName, options);
 
             // Create a temporary container to parse the new HTML
             const tempDiv = document.createElement('div');

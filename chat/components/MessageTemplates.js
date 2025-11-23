@@ -726,7 +726,7 @@ function buildCitationsSection(citations, messageId) {
  * @param {string} modelName - Model display name
  * @returns {string} HTML string
  */
-function buildAssistantMessage(message, helpers, providerName, modelName) {
+function buildAssistantMessage(message, helpers, providerName, modelName, hasOriginalContent = false) {
     const { processContentWithLatex, formatTime } = helpers;
     const tokenDisplay = buildTokenDisplay(message);
     const iconData = getProviderIcon(providerName, 'w-3.5 h-3.5');
@@ -819,6 +819,17 @@ function buildAssistantMessage(message, helpers, providerName, modelName) {
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M2 12h6c6 0 10-4 14-8m-4 0h4v4M8 12c6 0 10 4 14 8m-4 0h4v-4" />
                             </svg>
                         </button>
+                        ${hasOriginalContent && !message.reintegrated ? `
+                        <button
+                            class="message-action-btn reintegrate-response-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+                            data-message-id="${message.id}"
+                            data-tooltip="Reintegrate private information">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                                <circle cx="9" cy="12" r="6" stroke-linecap="round" stroke-linejoin="round"/>
+                                <circle cx="15" cy="12" r="6" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                        </button>
+                        ` : ''}
                     </div>
                     ${buildCitationsToggleButton(message.citations, message.id)}
                 </div>
@@ -939,7 +950,7 @@ function buildDividerMessage(message) {
  * @param {Object} helpers - Helper functions { processContentWithLatex, formatTime }
  * @param {Array} models - Array of model objects for provider lookup
  * @param {string} sessionModelName - Current session's model name
- * @param {Object} options - Template options (e.g., isEditing for user messages)
+ * @param {Object} options - Template options (e.g., isEditing for user messages, hasOriginalContent for assistant messages)
  * @returns {string} HTML string
  */
 export function buildMessageHTML(message, helpers, models, sessionModelName, options = {}) {
@@ -953,7 +964,7 @@ export function buildMessageHTML(message, helpers, models, sessionModelName, opt
         const modelOption = models.find(m => m.name === modelName);
         const providerName = modelOption ? modelOption.provider : 'OpenAI';
 
-        return buildAssistantMessage(message, helpers, providerName, modelName);
+        return buildAssistantMessage(message, helpers, providerName, modelName, options.hasOriginalContent || false);
     }
 }
 
