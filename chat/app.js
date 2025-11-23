@@ -1265,7 +1265,8 @@ class ChatApp {
             streamingTokens: metadata.streamingTokens || null,
             files: metadata.files || null,
             searchEnabled: metadata.searchEnabled || false,
-            citations: metadata.citations || null
+            citations: metadata.citations || null,
+            isLocalOnly: Boolean(metadata.isLocalOnly)
         };
 
         await chatDB.saveMessage(message);
@@ -1298,7 +1299,9 @@ class ChatApp {
      * @returns {Array} Processed messages with multimodal content
      */
     processMessagesWithFiles(messages) {
-        return messages.map(msg => {
+        const filteredMessages = messages.filter(msg => !msg.isLocalOnly);
+
+        return filteredMessages.map(msg => {
             // Only process user messages with files
             if (msg.role === 'user' && msg.files && msg.files.length > 0) {
                 // Separate text files from other media
@@ -1411,7 +1414,7 @@ class ChatApp {
                     if (this.floatingPanel) {
                         this.floatingPanel.showMessage(error.message, 'error', 5000);
                     }
-                    await this.addMessage('assistant', `**Error:** ${error.message}`);
+                    await this.addMessage('assistant', `**Error:** ${error.message}`, { isLocalOnly: true });
                     return;
                 }
             }
@@ -1449,7 +1452,7 @@ class ChatApp {
 
             if (!modelNameToUse) {
                 console.warn('No available models to send message.');
-                await this.addMessage('assistant', 'No models are available right now. Please add a model and try again.');
+                await this.addMessage('assistant', 'No models are available right now. Please add a model and try again.', { isLocalOnly: true });
                 return;
             }
 
@@ -1471,9 +1474,10 @@ class ChatApp {
             try {
                 // Get AI response from OpenRouter with streaming
                 const messages = await chatDB.getSessionMessages(session.id);
+                const filteredMessages = messages.filter(msg => !msg.isLocalOnly);
 
                 // Process messages to include file content from stored metadata
-                const processedMessages = this.processMessagesWithFiles(messages);
+                const processedMessages = this.processMessagesWithFiles(filteredMessages);
 
                 // Create a placeholder message for streaming
                 const streamingMessageId = this.generateId();
@@ -1647,7 +1651,7 @@ class ChatApp {
                             await this.chatArea.finalizeStreamingMessage(streamingMessage);
                         }
                     } else {
-                        await this.addMessage('assistant', 'Sorry, I encountered an error while processing your request.');
+                        await this.addMessage('assistant', 'Sorry, I encountered an error while processing your request.', { isLocalOnly: true });
                     }
                 }
             }
@@ -1757,7 +1761,7 @@ class ChatApp {
                     if (this.floatingPanel) {
                         this.floatingPanel.showMessage(error.message, 'error', 5000);
                     }
-                    await this.addMessage('assistant', `**Error:** ${error.message}`);
+                    await this.addMessage('assistant', `**Error:** ${error.message}`, { isLocalOnly: true });
                     return; // Return early if key acquisition fails
                 }
             }
@@ -1796,7 +1800,7 @@ class ChatApp {
 
             if (!modelNameToUse) {
                 console.warn('No available models to send message.');
-                await this.addMessage('assistant', 'No models are available right now. Please add a model and try again.');
+                await this.addMessage('assistant', 'No models are available right now. Please add a model and try again.', { isLocalOnly: true });
                 return; // Return early
             }
 
@@ -1819,9 +1823,10 @@ class ChatApp {
             try {
                 // Get AI response from OpenRouter with streaming
                 const messages = await chatDB.getSessionMessages(session.id);
+                const filteredMessages = messages.filter(msg => !msg.isLocalOnly);
 
                 // Process messages to include file content from stored metadata
-                const processedMessages = this.processMessagesWithFiles(messages);
+                const processedMessages = this.processMessagesWithFiles(filteredMessages);
 
                 // Create a placeholder message for streaming
                 const streamingMessageId = this.generateId();
@@ -2053,13 +2058,14 @@ class ChatApp {
                         streamingMessage.tokenCount = null;
                         streamingMessage.streamingTokens = null;
                         streamingMessage.streamingReasoning = false;
+                        streamingMessage.isLocalOnly = true;
                         await chatDB.saveMessage(streamingMessage);
                         if (this.chatArea) {
                             await this.chatArea.finalizeStreamingMessage(streamingMessage);
                         }
                     } else {
                         // Error before first chunk - message never added to UI, add new error message
-                        await this.addMessage('assistant', 'Sorry, I encountered an error while processing your request.');
+                        await this.addMessage('assistant', 'Sorry, I encountered an error while processing your request.', { isLocalOnly: true });
                     }
                 }
             }
