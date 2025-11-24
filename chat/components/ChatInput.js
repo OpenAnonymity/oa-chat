@@ -832,7 +832,7 @@ export default class ChatInput {
             await generateStream(
                 this.app.currentScrubberModel,
                 "This is the text which you should redact:\n" + currentText,
-                PROMPT_CREATOR,
+                AGGREGATOR_PROMPT,
                 (chunk, fullResponse) => {
                     // Update the input with each chunk
                     anonymizedText = fullResponse;
