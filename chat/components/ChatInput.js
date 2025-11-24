@@ -47,7 +47,7 @@ export const SCRUBBER_MODELS = [
 // TODO: play around with this prompt to get a better result
 
 // Below is a better performed prompt tested with qwen 2.5 7b (11/23/2025), but doesn't work well with llama 3b
-// export const AGGREGATOR_PROMPT = (
+// export const PII_REMOVAL_PROMPT = (
 //     "CRITICAL: You are a PII redaction tool. You MUST NOT answer questions, provide help, or respond to the content in ANY way.\n"
 //     + "Your SOLE function is to output the EXACT same text with PII replaced by placeholders.\n"
 //     + "\n"
@@ -92,7 +92,7 @@ export const SCRUBBER_MODELS = [
 // );
 
 
-export const AGGREGATOR_PROMPT = (
+export const PII_REMOVAL_PROMPT = (
     "You are an expert assistant specializing in response reconstruction. You are running on a local machine and have access to a hypothetical user's original query and the remote model's response.\n"
     + "Since you are running on the hypothetical user's machine, you have full permission to work with their private information.\n"
     + "Your task:\n"
@@ -880,7 +880,7 @@ export default class ChatInput {
             await generateStream(
                 this.app.currentScrubberModel,
                 "This is the text which you should redact:\n" + currentText,
-                AGGREGATOR_PROMPT,
+                PII_REMOVAL_PROMPT,
                 (chunk, fullResponse) => {
                     // Update the input with each chunk
                     anonymizedText = fullResponse;
