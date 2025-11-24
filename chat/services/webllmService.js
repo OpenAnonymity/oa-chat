@@ -5,8 +5,9 @@
 
 import { CreateMLCEngine } from "https://esm.run/@mlc-ai/web-llm";
 
-// Cache for loaded engines
+// Cache for loaded engines and in-flight load promises
 const engineCache = new Map();
+const pendingLoads = new Map();
 
 /**
  * Load (pull) a model by name
@@ -21,6 +22,12 @@ export async function loadModel(modelName, progressCallback = null) {
         return engineCache.get(modelName);
     }
 
+    // If a load is already in progress for this model, reuse the promise
+    if (pendingLoads.has(modelName)) {
+        console.log(`Model ${modelName} load already in progress, waiting for completion`);
+        return pendingLoads.get(modelName);
+    }
+
     console.log(`Loading model: ${modelName}...`);
 
     // Default progress callback if none provided
@@ -28,24 +35,32 @@ export async function loadModel(modelName, progressCallback = null) {
         console.log(`Loading progress: ${progress.text || ''} ${progress.progress ? `(${(progress.progress * 100).toFixed(1)}%)` : ''}`);
     });
 
-    try {
-        // Create and load the engine
-        const engine = await CreateMLCEngine(
-            modelName,
-            {
-                initProgressCallback: initProgressCallback
-            }
-        );
+    const loadPromise = (async () => {
+        try {
+            // Create and load the engine
+            const engine = await CreateMLCEngine(
+                modelName,
+                {
+                    initProgressCallback: initProgressCallback
+                }
+            );
 
-        // Cache the loaded engine
-        engineCache.set(modelName, engine);
-        console.log(`Model ${modelName} loaded successfully`);
+            // Cache the loaded engine
+            engineCache.set(modelName, engine);
+            console.log(`Model ${modelName} loaded successfully`);
 
-        return engine;
-    } catch (error) {
-        console.error(`Failed to load model ${modelName}:`, error);
-        throw new Error(`Failed to load model ${modelName}: ${error.message}`);
-    }
+            return engine;
+        } catch (error) {
+            console.error(`Failed to load model ${modelName}:`, error);
+            throw new Error(`Failed to load model ${modelName}: ${error.message}`);
+        } finally {
+            pendingLoads.delete(modelName);
+        }
+    })();
+
+    pendingLoads.set(modelName, loadPromise);
+
+    return loadPromise;
 }
 
 /**

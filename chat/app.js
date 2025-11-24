@@ -13,6 +13,7 @@ import themeManager from './services/themeManager.js';
 import { downloadInferenceTickets, downloadAllChats, getFileIconSvg } from './services/fileUtils.js';
 import { parseReasoningContent } from './services/reasoningParser.js';
 import { fetchUrlMetadata } from './services/urlMetadata.js';
+import { loadModel } from './services/webllmService.js';
 
 const DEFAULT_MODEL_ID = 'openai/gpt-5.1-chat';
 const DEFAULT_MODEL_NAME = 'OpenAI: GPT-5.1 Instant';
@@ -93,6 +94,7 @@ class ChatApp {
         this.scrubberEnabled = false;
         this.currentScrubberModel = null; // Track currently loaded scrubber model
         this.lastOriginalPrompt = null; // Store original prompt before redaction
+        this.lastPiiMappings = null; // Store placeholder mapping for reintegration
         this.sessionSearchQuery = '';
         this.uploadedFiles = [];
         this.rightPanel = null;
@@ -830,6 +832,7 @@ class ChatApp {
         // Update visual selection state if we have a saved model
         if (savedScrubberModel) {
             this.chatInput.updateScrubberModelStatus();
+            this.preloadScrubberModel(savedScrubberModel);
         }
         
         // If scrubber is enabled, load the saved model or default to Qwen
@@ -929,6 +932,23 @@ class ChatApp {
             // Fallback models are already set in API
         }
         this.state.modelsLoading = false;
+    }
+
+    /**
+     * Preloads the current scrubber model so it is ready immediately after refresh.
+     * @param {string} [modelName] - Model name to preload. Defaults to currentScrubberModel.
+     */
+    async preloadScrubberModel(modelName = this.currentScrubberModel) {
+        if (!modelName) {
+            return;
+        }
+
+        try {
+            await loadModel(modelName);
+            console.log(`Scrubber model ${modelName} preloaded`);
+        } catch (error) {
+            console.error(`Failed to preload scrubber model ${modelName}:`, error);
+        }
     }
 
     async loadFromDB() {

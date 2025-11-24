@@ -6,7 +6,7 @@
 
 import themeManager from '../services/themeManager.js';
 import { getExtensionFromMimeType } from '../services/fileUtils.js';
-import { loadModel, unloadModel, generateStream } from '../services/webllmService.js';
+import { loadModel, unloadModel, generateStream, getLoadedModels } from '../services/webllmService.js';
 
 // Scrubber model configuration
 export const SCRUBBER_MODELS = [
@@ -518,13 +518,27 @@ export default class ChatInput {
     }
 
     /**
+     * Checks whether a scrubber model is already loaded in WebLLM.
+     * @param {string} modelName
+     * @returns {boolean}
+     */
+    isScrubberModelLoaded(modelName) {
+        if (!modelName) {
+            return false;
+        }
+        return getLoadedModels().includes(modelName);
+    }
+
+    /**
      * Selects a scrubber model, automatically unloading the previous one if needed.
      * @param {string} modelName - Name of the model to load
      * @param {string} modelId - ID of the model
      */
     async selectScrubberModel(modelName, modelId) {
-        // If clicking the same model, do nothing
-        if (this.app.currentScrubberModel === modelName) {
+        const modelAlreadyLoaded = this.isScrubberModelLoaded(modelName);
+
+        // If clicking the same model and it's already loaded, do nothing
+        if (this.app.currentScrubberModel === modelName && modelAlreadyLoaded) {
             return;
         }
 
@@ -646,6 +660,18 @@ export default class ChatInput {
         const progressBar = document.getElementById('scrubber-progress-bar');
 
         if (!progressDiv || !progressText || !progressBar) return;
+
+        if (this.isScrubberModelLoaded(modelName)) {
+            if (statusElement) {
+                statusElement.textContent = '✓ Loaded';
+            }
+            progressText.textContent = 'Model already loaded';
+            progressBar.style.width = '100%';
+            setTimeout(() => {
+                progressDiv.classList.add('hidden');
+            }, 1000);
+            return;
+        }
 
         // Show progress
         progressDiv.classList.remove('hidden');
