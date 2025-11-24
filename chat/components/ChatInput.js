@@ -33,6 +33,14 @@ export const SCRUBBER_MODELS = [
         description: 'Better accuracy',
         icon: 'meta.svg',
         default: false
+    },
+    {
+        id: 'qwen-7b',
+        name: 'Qwen 2.5 7B',
+        modelName: 'Qwen2.5-7B-Instruct-q4f16_1-MLC',
+        description: 'Better PII detection accuracy',
+        icon: 'qwen.svg',
+        default: false
     }
 ];
 
