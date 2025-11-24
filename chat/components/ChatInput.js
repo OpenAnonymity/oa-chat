@@ -815,6 +815,7 @@ export default class ChatInput {
         }
 
         this.isAnonymizing = true;
+        this.app.lastPiiMappings = null;
 
         try {
             // Store the original un-redacted prompt
@@ -843,6 +844,9 @@ export default class ChatInput {
                 },
                 null // No loading progress callback needed since model is already loaded
             );
+
+            const piiMappings = this.extractPiiMappings(currentText, anonymizedText);
+            this.app.lastPiiMappings = piiMappings || null;
 
             console.log('Prompt anonymized successfully');
         } catch (error) {
@@ -906,6 +910,83 @@ export default class ChatInput {
                 this.app.elements.settingsMenu.classList.add('hidden');
             }
         }
+    }
+
+    /**
+     * Generates a mapping of placeholder tokens to original text segments.
+     * @param {string} originalText
+     * @param {string} redactedText
+     * @returns {Object|null}
+     */
+    extractPiiMappings(originalText, redactedText) {
+        if (!originalText || !redactedText) {
+            return null;
+        }
+
+        const placeholderRegex = /\[[^\]]+\]/g;
+        const segments = [];
+        let lastIndex = 0;
+        let hasPlaceholder = false;
+
+        redactedText.replace(placeholderRegex, (match, index) => {
+            hasPlaceholder = true;
+            if (index > lastIndex) {
+                segments.push({ type: 'text', value: redactedText.slice(lastIndex, index) });
+            }
+            segments.push({ type: 'placeholder', value: match });
+            lastIndex = index + match.length;
+        });
+
+        if (!hasPlaceholder) {
+            return null;
+        }
+
+        if (lastIndex < redactedText.length) {
+            segments.push({ type: 'text', value: redactedText.slice(lastIndex) });
+        }
+
+        const mapping = {};
+        let originalIndex = 0;
+
+        for (let i = 0; i < segments.length; i++) {
+            const segment = segments[i];
+            if (segment.type === 'text') {
+                if (!segment.value) continue;
+                const matchIdx = originalText.indexOf(segment.value, originalIndex);
+                if (matchIdx === -1) {
+                    originalIndex += segment.value.length;
+                } else {
+                    originalIndex = matchIdx + segment.value.length;
+                }
+            } else {
+                const nextText = this.getNextTextSegment(segments, i + 1);
+                const nextIdx = nextText ? originalText.indexOf(nextText, originalIndex) : -1;
+                const endIndex = nextIdx === -1 ? originalText.length : nextIdx;
+                const originalValue = originalText.slice(originalIndex, endIndex);
+                if (!mapping[segment.value]) {
+                    mapping[segment.value] = [];
+                }
+                mapping[segment.value].push(originalValue);
+                originalIndex = endIndex;
+            }
+        }
+
+        return Object.keys(mapping).length > 0 ? mapping : null;
+    }
+
+    /**
+     * Finds the next non-empty text segment value.
+     * @param {Array} segments
+     * @param {number} startIndex
+     * @returns {string}
+     */
+    getNextTextSegment(segments, startIndex) {
+        for (let i = startIndex; i < segments.length; i++) {
+            if (segments[i].type === 'text' && segments[i].value) {
+                return segments[i].value;
+            }
+        }
+        return '';
     }
 }
 

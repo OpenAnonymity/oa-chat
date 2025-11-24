@@ -1327,7 +1327,8 @@ class ChatApp {
             files: metadata.files || null,
             searchEnabled: metadata.searchEnabled || false,
             citations: metadata.citations || null,
-            originalContent: metadata.originalContent || null  // Store original un-redacted prompt
+            originalContent: metadata.originalContent || null,  // Store original un-redacted prompt
+            piiMappings: metadata.piiMappings || null
         };
 
         await chatDB.saveMessage(message);
@@ -1754,6 +1755,8 @@ class ChatApp {
         const currentFiles = [...this.uploadedFiles];
         const searchEnabled = this.searchEnabled;
 
+        let userMessage = null;
+
         try {
 
             // Add user message with file metadata
@@ -1782,8 +1785,12 @@ class ChatApp {
                 metadata.originalContent = this.lastOriginalPrompt;
                 this.lastOriginalPrompt = null; // Clear after use
             }
+            if (this.lastPiiMappings) {
+                metadata.piiMappings = this.lastPiiMappings;
+                this.lastPiiMappings = null;
+            }
             this.isAutoScrollPaused = true;
-            const userMessage = await this.addMessage('user', content || '', metadata);
+            userMessage = await this.addMessage('user', content || '', metadata);
 
             // Clear input and files
             this.elements.messageInput.value = '';
@@ -2347,12 +2354,6 @@ class ChatApp {
         const session = this.getCurrentSession();
         if (!session) return;
 
-        // Check if scrubber is enabled and model is loaded
-        if (!this.scrubberEnabled || !this.currentScrubberModel) {
-            console.warn('Scrubber is not enabled or model is not loaded');
-            return;
-        }
-
         // Prevent reintegration if streaming
         if (this.isCurrentSessionStreaming()) {
             return;
@@ -2376,60 +2377,58 @@ class ChatApp {
             }
         }
 
-        // Check if user message has original content
-        if (!userMessage || !userMessage.originalContent) {
-            console.warn('No original prompt found for this message');
+        if (!userMessage || !userMessage.originalContent || !userMessage.piiMappings) {
+            console.warn('No original prompt or PII mappings found for this message');
             return;
         }
 
-        try {
-            // Import the necessary modules
-            const { generateStream } = await import('./services/webllmService.js');
-            const { AGGREGATOR_PROMPT } = await import('./components/ChatInput.js');
-
-            // Prepare the prompt for the aggregator
-            const aggregatorPrompt = `Original query: ${userMessage.originalContent}\n\nRemote model response: ${assistantMessage.content}`;
-
-            // Show "Reintegrating..." before starting
-            assistantMessage.content = 'Reintegrating...';
-            let reintegratedContent = '';
-
-            // Update UI to show reintegration in progress
-            if (this.chatArea) {
-                this.chatArea.updateStreamingMessage(messageId, 'Reintegrating...');
-            }
-
-            // Stream the reintegrated response
-            await generateStream(
-                this.currentScrubberModel,
-                aggregatorPrompt,
-                AGGREGATOR_PROMPT,
-                (chunk, fullResponse) => {
-                    reintegratedContent = fullResponse;
-                    assistantMessage.content = fullResponse;
-
-                    // Update UI with streaming content
-                    if (this.chatArea) {
-                        this.chatArea.updateStreamingMessage(messageId, fullResponse);
-                    }
-                },
-                null // No loading progress callback
-            );
-
-            // Save the reintegrated content and mark as reintegrated
-            assistantMessage.content = reintegratedContent;
-            assistantMessage.reintegrated = true;
-            await chatDB.saveMessage(assistantMessage);
-
-            // Finalize the message display
-            if (this.chatArea) {
-                await this.chatArea.finalizeStreamingMessage(assistantMessage);
-            }
-
-            console.log('Response reintegrated successfully');
-        } catch (error) {
-            console.error('Failed to reintegrate response:', error);
+        if (!assistantMessage.content) {
+            console.warn('Assistant message has no content to reintegrate');
+            return;
         }
+
+        const reintegratedContent = this.applyPiiMappings(assistantMessage.content, userMessage.piiMappings);
+
+        if (reintegratedContent === assistantMessage.content) {
+            console.warn('No placeholders were replaced during reintegration');
+            return;
+        }
+
+        assistantMessage.content = reintegratedContent;
+        assistantMessage.reintegrated = true;
+        await chatDB.saveMessage(assistantMessage);
+
+        if (this.chatArea) {
+            this.chatArea.updateMessage(assistantMessage);
+        }
+
+        console.log('Response reintegrated successfully');
+    }
+
+    /**
+     * Replaces placeholders using stored PII mappings.
+     * @param {string} content
+     * @param {Object} mappings
+     * @returns {string}
+     */
+    applyPiiMappings(content, mappings) {
+        if (!content || !mappings) {
+            return content;
+        }
+
+        const placeholderRegex = /\[[^\]]+\]/g;
+        const usageTracker = {};
+
+        return content.replace(placeholderRegex, (match) => {
+            const values = mappings[match];
+            if (!values || values.length === 0) {
+                return match;
+            }
+            const useIndex = usageTracker[match] || 0;
+            const clampedIndex = useIndex < values.length ? useIndex : values.length - 1;
+            usageTracker[match] = useIndex + 1;
+            return values[clampedIndex] || match;
+        });
     }
 
     /**
