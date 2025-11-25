@@ -7,7 +7,6 @@ import privacyPassProvider from './privacyPass.js';
 import networkLogger from './networkLogger.js';
 
 const ORG_API_BASE = 'https://org.openanonymity.ai';
-const FALLBACK_STATION_URL = '';
 
 // Retry configuration - tuned for snappy UX
 const RETRY_DEFAULTS = {
