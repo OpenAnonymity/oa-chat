@@ -29,7 +29,8 @@ const WELCOME_CONTENT = {
 **The OA project is actively developed at Stanford and Michigan.** This client is currently in closed alpha and more details coming soon. We appreciate your [feedback](https://forms.gle/HEmvxnJpN1jQC7CfA)!
 
 [11/19/2025] Added prompt editing and chat branching + UI fixes\\
-[11/18/2025] Added Gemini 3 Pro and GPT-5.1 Instant and Thinking
+[11/18/2025] Added Gemini 3 Pro and GPT-5.1 Instant and Thinking\\
+[11/25/2025] Staging: Added TLS-over-WebSocket proxy
     `.trim(),
     // Future: Add diagram/image support
     // diagram: null,
