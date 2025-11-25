@@ -5,6 +5,7 @@
 
 import privacyPassProvider from './privacyPass.js';
 import networkLogger from './networkLogger.js';
+import networkProxy, { ProxyFallbackError } from './networkProxy.js';
 
 const ORG_API_BASE = 'https://org.openanonymity.ai';
 
@@ -72,7 +73,7 @@ class StationClient {
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
                 
-                const response = await fetch(url, {
+                const response = await networkProxy.fetch(url, {
                     ...init,
                     signal: controller.signal
                 });
@@ -97,6 +98,41 @@ class StationClient {
                 return { response, data: null };
 
             } catch (error) {
+                // Handle proxy fallback - requires user confirmation
+                if (error instanceof ProxyFallbackError || error?.requiresConfirmation) {
+                    console.log(`🔒 ${context}: Proxy unavailable, requesting user confirmation for fallback`);
+                    
+                    // Show confirmation dialog
+                    const confirmed = await window.showProxyFallbackConfirmation?.({ 
+                        error: error.message, 
+                        url: url 
+                    });
+                    
+                    if (confirmed) {
+                        // User confirmed - retry with direct fetch
+                        console.log(`✅ ${context}: User confirmed fallback, using direct connection`);
+                        const controller = new AbortController();
+                        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+                        
+                        const response = await networkProxy.fetchWithFallback(url, {
+                            ...init,
+                            signal: controller.signal
+                        });
+                        
+                        clearTimeout(timeoutId);
+                        
+                        if (parseJson) {
+                            const { data, error: parseError } = await this.parseResponseBody(response, context);
+                            if (parseError) throw parseError;
+                            return { response, data };
+                        }
+                        return { response, data: null };
+                    } else {
+                        // User cancelled
+                        throw new Error(`${context} cancelled: User declined to send without proxy`);
+                    }
+                }
+
                 lastError = error;
                 const isRetryable = this.isRetryableError(error);
                 

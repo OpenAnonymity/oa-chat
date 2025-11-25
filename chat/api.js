@@ -1,4 +1,5 @@
 // OpenRouter API integration
+import networkProxy, { ProxyFallbackError } from './services/networkProxy.js';
 
 // System prompt to prepend to all conversations
 // Modify this function to change the default AI behavior
@@ -68,10 +69,11 @@ class OpenRouterAPI {
         };
 
         try {
-            const response = await fetch(url, {
+            // Models catalog is public data - bypass proxy to avoid blocking app startup
+            const response = await networkProxy.fetch(url, {
                 method: 'GET',
                 headers: headers
-            });
+            }, { bypassProxy: true });
 
             const data = await response.json();
 
@@ -280,11 +282,34 @@ class OpenRouterAPI {
         };
 
         try {
-            const response = await fetch(url, {
-                method: 'POST',
-                headers: headers,
-                body: JSON.stringify(body)
-            });
+            let response;
+            try {
+                response = await networkProxy.fetch(url, {
+                    method: 'POST',
+                    headers: headers,
+                    body: JSON.stringify(body)
+                });
+            } catch (fetchError) {
+                // Handle proxy fallback - requires user confirmation
+                if (fetchError instanceof ProxyFallbackError || fetchError?.requiresConfirmation) {
+                    const confirmed = await window.showProxyFallbackConfirmation?.({ 
+                        error: fetchError.message, 
+                        url: url 
+                    });
+                    
+                    if (confirmed) {
+                        response = await networkProxy.fetchWithFallback(url, {
+                            method: 'POST',
+                            headers: headers,
+                            body: JSON.stringify(body)
+                        });
+                    } else {
+                        throw new Error('Request cancelled: User declined to send without proxy');
+                    }
+                } else {
+                    throw fetchError;
+                }
+            }
 
             const data = await response.json();
 
@@ -571,7 +596,30 @@ class OpenRouterAPI {
                 fetchOptions.signal = abortController.signal;
             }
 
-            const response = await fetch(url, fetchOptions);
+            // Fetch with proxy fallback confirmation
+            let response;
+            try {
+                response = await networkProxy.fetch(url, fetchOptions);
+            } catch (error) {
+                // Handle proxy fallback - requires user confirmation
+                if (error instanceof ProxyFallbackError || error?.requiresConfirmation) {
+                    console.log('🔒 Chat: Proxy unavailable, requesting user confirmation for fallback');
+                    
+                    const confirmed = await window.showProxyFallbackConfirmation?.({ 
+                        error: error.message, 
+                        url: url 
+                    });
+                    
+                    if (confirmed) {
+                        console.log('✅ Chat: User confirmed fallback, using direct connection');
+                        response = await networkProxy.fetchWithFallback(url, fetchOptions);
+                    } else {
+                        throw new Error('Request cancelled: User declined to send without proxy');
+                    }
+                } else {
+                    throw error;
+                }
+            }
 
             // Handle pre-stream errors
             if (!response.ok) {

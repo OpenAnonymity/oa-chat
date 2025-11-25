@@ -13,6 +13,7 @@ import themeManager from './services/themeManager.js';
 import { downloadInferenceTickets, downloadAllChats, getFileIconSvg } from './services/fileUtils.js';
 import { parseReasoningContent } from './services/reasoningParser.js';
 import { fetchUrlMetadata } from './services/urlMetadata.js';
+import networkProxy from './services/networkProxy.js';
 
 const DEFAULT_MODEL_ID = 'openai/gpt-5.1-chat';
 const DEFAULT_MODEL_NAME = 'OpenAI: GPT-5.1 Instant';
@@ -737,6 +738,7 @@ class ChatApp {
 
         // Initialize IndexedDB
         await chatDB.init();
+        await networkProxy.syncWithDatabase();
 
         // Load network logs from database - DISABLED (logs are now memory-only, ephemeral per tab)
         // await networkLogger.loadLogs();

@@ -57,6 +57,42 @@
     <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
 
+    <!-- libcurl.js for encrypted proxying -->
+    <script defer src="https://cdn.jsdelivr.net/npm/libcurl.js@0.7.1/libcurl_full.js" onload="libcurl.load_wasm();"></script>
+    <script>
+        // Simple promise wrapper for libcurl initialization
+        window.libcurlReadyPromise = new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                reject(new Error('Timeout waiting for libcurl.js to load'));
+            }, 10000); // 10 second timeout
+            
+            document.addEventListener('libcurl_load', () => {
+                clearTimeout(timeout);
+                // Ensure libcurl is available globally
+                if (typeof libcurl === 'undefined' && !window.libcurl) {
+                    reject(new Error('libcurl_load event fired but libcurl is undefined'));
+                    return;
+                }
+                const lib = window.libcurl || libcurl;
+                console.log('[libcurl] ✅ Ready, version:', lib.version?.lib || 'unknown');
+                console.log('[libcurl] WASM bundled in libcurl_full.js (no separate download)');
+                console.log('[libcurl] Has set_websocket:', typeof lib.set_websocket);
+                console.log('[libcurl] Has fetch:', typeof lib.fetch);
+                // Ensure window.libcurl is set
+                if (!window.libcurl) {
+                    window.libcurl = lib;
+                }
+                resolve(lib);
+            }, { once: true });
+            
+            document.addEventListener('libcurl_abort', (e) => {
+                clearTimeout(timeout);
+                console.error('[libcurl] Aborted:', e.detail);
+                reject(new Error('libcurl.js runtime aborted'));
+            }, { once: true });
+        });
+    </script>
+
     <!-- Vercel Web Analytics -->
     <script defer src="/_vercel/insights/script.js"></script>
 
@@ -484,7 +520,7 @@
     <!-- Load external scripts -->
     <script src="db.js"></script>
     <script type="module" src="services/networkLogger.js"></script>
-    <script src="api.js"></script>
+    <script type="module" src="api.js"></script>
     <script type="module" src="services/apiKeyStore.js"></script>
     <script type="module" src="services/privacyPass.js"></script>
     <script type="module" src="services/station.js"></script>

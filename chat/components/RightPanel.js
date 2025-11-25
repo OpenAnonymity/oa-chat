@@ -5,6 +5,8 @@
 
 import stationClient from '../services/station.js';
 import networkLogger from '../services/networkLogger.js';
+import networkProxy from '../services/networkProxy.js';
+import tlsSecurityModal from './TLSSecurityModal.js';
 import { getActivityDescription, getActivityIcon, getStatusDotClass, formatTimestamp } from '../services/networkLogRenderer.js';
 
 class RightPanel {
@@ -46,8 +48,25 @@ class RightPanel {
         this.expandedLogIds = new Set();
         this.previousLogCount = 0;
 
+        // Proxy state
+        this.proxySettings = networkProxy.getSettings();
+        this.proxyStatus = networkProxy.getStatus();
+        this.proxyActionError = null;
+        this.proxyActionPending = false;
+        this.proxyUnsubscribe = networkProxy.onChange(({ settings, status }) => {
+            this.proxySettings = settings;
+            this.proxyStatus = status;
+            this.renderTopSectionOnly();
+        });
+        
+        // Expose fallback confirmation method globally for other modules
+        window.showProxyFallbackConfirmation = (detail) => this.showProxyFallbackConfirmation(detail);
+
         // Invitation code dropdown state
         this.showInvitationForm = false;
+        
+        // Proxy URL edit state
+        this.showProxyUrlEdit = false;
 
         this.initializeState();
         this.setupEventListeners();
@@ -702,7 +721,7 @@ class RightPanel {
                 networkLogger.setCurrentSession(this.currentSession.id);
             }
 
-            const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            const response = await networkProxy.fetch('https://openrouter.ai/api/v1/chat/completions', {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${this.apiKey}`,
@@ -1224,7 +1243,361 @@ class RightPanel {
                     </div>
                 </div>
             ` : ''}
+
+            ${this.generateProxySectionHTML()}
         `;
+    }
+
+    getActiveProxyUrl(settings = this.proxySettings, status = this.proxyStatus) {
+        if (status?.activeProxyUrl) return status.activeProxyUrl;
+        if (!settings) return null;
+        return settings.mode === 'local' ? settings.localUrl : settings.remoteUrl;
+    }
+
+    formatProxyUrl(url) {
+        if (!url) return '';
+        try {
+            const parsed = new URL(url);
+            const path = parsed.pathname === '/' ? '' : parsed.pathname;
+            return `${parsed.protocol.replace(':', '')}://${parsed.host}${path}`;
+        } catch {
+            return url;
+        }
+    }
+
+    formatProxyHostname(url) {
+        if (!url) return '';
+        try {
+            const parsed = new URL(url);
+            // For localhost, show port too
+            if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
+                return parsed.host;
+            }
+            // For remote URLs, show just the last two parts of hostname (e.g., "fly.dev")
+            const parts = parsed.hostname.split('.');
+            return parts.length > 2 ? parts.slice(-2).join('.') : parsed.hostname;
+        } catch {
+            return url;
+        }
+    }
+
+    getProxyStatusMeta(settings = this.proxySettings, status = this.proxyStatus) {
+        if (!settings || !settings.enabled) {
+            return { label: 'Disabled', textClass: 'text-muted-foreground', dotClass: 'bg-muted-foreground/40' };
+        }
+
+        // Show fallback first (user explicitly needs to know proxy isn't working)
+        if (status?.fallbackActive) {
+            return { label: 'Fallback (direct)', textClass: 'text-amber-500 dark:text-amber-300', dotClass: 'bg-amber-500' };
+        }
+
+        // Show error if there's a recent error
+        if (status?.lastError) {
+            const msg = status.lastError.message || 'Proxy error';
+            const shortMsg = msg.length > 25 ? msg.substring(0, 25) + '...' : msg;
+            return { label: shortMsg, textClass: 'text-destructive', dotClass: 'bg-destructive' };
+        }
+
+        // Connected and verified
+        if (status?.connectionVerified && status?.usingProxy) {
+            return { label: 'Connected', textClass: 'text-green-600 dark:text-green-400', dotClass: 'bg-green-500' };
+        }
+
+        // Ready but not yet verified
+        if (status?.ready) {
+            return { label: 'Verifying...', textClass: 'text-blue-600 dark:text-blue-300', dotClass: 'bg-blue-500 animate-pulse' };
+        }
+
+        return { label: 'Initializing...', textClass: 'text-muted-foreground', dotClass: 'bg-muted-foreground/60' };
+    }
+
+    // Show fallback confirmation dialog - returns Promise<boolean>
+    showProxyFallbackConfirmation({ error, url }) {
+        return new Promise((resolve) => {
+            // Remove existing dialog if any
+            document.querySelector('.proxy-fallback-dialog')?.remove();
+            
+            const overlay = document.createElement('div');
+            overlay.className = 'proxy-fallback-dialog fixed inset-0 z-50 flex items-center justify-center bg-black/50 animate-in fade-in';
+            overlay.innerHTML = `
+                <div class="bg-background border border-border rounded-lg shadow-xl max-w-sm mx-4 animate-in zoom-in-95">
+                    <div class="p-4 border-b border-border">
+                        <div class="flex items-center gap-2 text-amber-500">
+                            <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                            <span class="font-semibold">Proxy Unavailable</span>
+                        </div>
+                    </div>
+                    <div class="p-4 space-y-3">
+                        <p class="text-sm text-foreground">The secure proxy could not be reached. Your request will be sent directly without proxy encryption.</p>
+                        <p class="text-xs text-muted-foreground">This means your IP address will be visible to the destination server.</p>
+                    </div>
+                    <div class="p-4 border-t border-border flex justify-end gap-2">
+                        <button class="fallback-cancel px-3 py-1.5 text-sm rounded-md border border-border hover:bg-muted transition-colors">Cancel</button>
+                        <button class="fallback-confirm px-3 py-1.5 text-sm rounded-md bg-amber-500 text-white hover:bg-amber-600 transition-colors">Send Directly</button>
+                    </div>
+                </div>
+            `;
+            
+            const cleanup = (result) => {
+                overlay.remove();
+                resolve(result);
+            };
+            
+            overlay.querySelector('.fallback-cancel').onclick = () => cleanup(false);
+            overlay.querySelector('.fallback-confirm').onclick = () => cleanup(true);
+            overlay.onclick = (e) => { if (e.target === overlay) cleanup(false); };
+            
+            document.body.appendChild(overlay);
+            overlay.querySelector('.fallback-cancel').focus();
+        });
+    }
+
+    generateProxySectionHTML() {
+        const settings = this.proxySettings || networkProxy.getSettings();
+        const status = this.proxyStatus || networkProxy.getStatus();
+        const statusMeta = this.getProxyStatusMeta(settings, status);
+        const activeUrl = settings.enabled ? this.getActiveProxyUrl(settings, status) : null;
+        const pending = this.proxyActionPending;
+        const disableModes = !settings.enabled || pending;
+        const hasError = status?.lastError;
+        const tlsInfo = networkProxy.getTlsInfo();
+        const hasTlsInfo = tlsInfo.version !== null;
+        const isEncrypted = settings.enabled && status.usingProxy;
+
+        return `
+            <div class="p-3 border-t border-border/70 space-y-2.5">
+                <!-- Header: Title + Toggle -->
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-1.5">
+                        <span class="text-xs font-medium text-foreground">Proxy</span>
+                        ${isEncrypted ? `
+                            <span class="inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-medium ${hasTlsInfo ? 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400' : 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400'}" title="${hasTlsInfo ? 'TLS tunnel over WebSocket proxy' : 'Encrypted via WebSocket proxy'}">
+                                <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                                    <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                                </svg>
+                                TLS-over-WS
+                            </span>
+                        ` : ''}
+                    </div>
+                    <button
+                        id="proxy-toggle-btn"
+                        class="relative w-8 h-[18px] rounded-full transition-colors ${settings.enabled ? 'bg-green-500' : 'bg-muted-foreground/30'} ${pending ? 'opacity-50 cursor-wait' : 'cursor-pointer'}"
+                        ${pending ? 'disabled' : ''}
+                        title="${settings.enabled ? 'Disable proxy' : 'Enable proxy'}"
+                    >
+                        <span class="absolute top-0.5 ${settings.enabled ? 'right-0.5' : 'left-0.5'} w-3.5 h-3.5 rounded-full bg-white shadow-sm transition-all"></span>
+                    </button>
+                </div>
+
+                <!-- Mode Selector: Segmented Control -->
+                <div class="flex rounded-md overflow-hidden border border-border ${disableModes ? 'opacity-50 pointer-events-none' : ''}">
+                    <button
+                        class="proxy-mode-btn flex-1 text-[10px] font-medium py-1.5 transition-colors ${settings.mode === 'remote' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted/50'}"
+                        data-proxy-mode="remote"
+                        ${disableModes ? 'disabled' : ''}
+                    >Remote</button>
+                    <button
+                        class="proxy-mode-btn flex-1 text-[10px] font-medium py-1.5 border-l border-border transition-colors ${settings.mode === 'local' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted/50'}"
+                        data-proxy-mode="local"
+                        ${disableModes ? 'disabled' : ''}
+                    >Local</button>
+                </div>
+
+                <!-- Status Row -->
+                <div class="flex items-center justify-between text-[10px] ${!settings.enabled ? 'opacity-50' : ''}">
+                    <div class="flex items-center gap-1.5 min-w-0">
+                        <span class="w-1.5 h-1.5 rounded-full shrink-0 ${statusMeta.dotClass}"></span>
+                        <span class="${statusMeta.textClass} truncate">${this.escapeHtml(statusMeta.label)}</span>
+                    </div>
+                    <div class="flex items-center gap-1 shrink-0">
+                        ${activeUrl ? `<span class="text-muted-foreground" title="${this.escapeHtml(activeUrl)}">${this.escapeHtml(this.formatProxyHostname(activeUrl))}</span>` : ''}
+                        ${hasError ? `
+                            <button id="proxy-retry-btn" class="p-0.5 rounded hover:bg-muted transition-colors" title="Reconnect" ${pending ? 'disabled' : ''}>
+                                <svg class="w-3 h-3 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M1 4v6h6M23 20v-6h-6" stroke-linecap="round" stroke-linejoin="round"/>
+                                    <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                            </button>
+                        ` : ''}
+                        ${activeUrl ? `
+                            <button id="proxy-copy-url-btn" class="p-0.5 rounded hover:bg-muted transition-colors" title="Copy URL">
+                                <svg class="w-3 h-3 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                                </svg>
+                            </button>
+                            <button id="proxy-edit-url-btn" class="p-0.5 rounded hover:bg-muted transition-colors" title="Edit URL">
+                                <svg class="w-3 h-3 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                                </svg>
+                            </button>
+                        ` : ''}
+                    </div>
+                </div>
+
+                <!-- Proxy URL Edit Form -->
+                ${this.showProxyUrlEdit ? `
+                    <form id="proxy-url-edit-form" class="space-y-2 p-2 bg-muted/30 rounded-lg">
+                        <div class="flex items-center gap-1.5">
+                            <input
+                                id="proxy-url-input"
+                                type="text"
+                                value="${this.escapeHtml(activeUrl || '')}"
+                                placeholder="wss://proxy.example.com/"
+                                class="input-focus-clean flex-1 px-2 py-1.5 text-[10px] border border-border rounded-md bg-background text-foreground placeholder:text-muted-foreground font-mono"
+                                ${pending ? 'disabled' : ''}
+                            />
+                            <button
+                                type="submit"
+                                class="p-1.5 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                                title="Save"
+                                ${pending ? 'disabled' : ''}
+                            >
+                                <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="20 6 9 17 4 12"/>
+                                </svg>
+                            </button>
+                            <button
+                                type="button"
+                                id="proxy-url-cancel-btn"
+                                class="p-1.5 rounded-md border border-border hover:bg-muted transition-colors"
+                                title="Cancel"
+                            >
+                                <svg class="w-3 h-3 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M18 6L6 18M6 6l12 12"/>
+                                </svg>
+                            </button>
+                        </div>
+                        <p class="text-[9px] text-muted-foreground">URL must start with ws:// or wss://</p>
+                    </form>
+                ` : ''}
+
+                <!-- Security Details Button -->
+                ${settings.enabled ? `
+                    <button id="proxy-security-details-btn" class="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 text-[10px] font-medium rounded-md border border-border hover:bg-muted transition-colors text-muted-foreground hover:text-foreground">
+                        <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                            ${hasTlsInfo ? '<path d="M9 12l2 2 4-4"/>' : ''}
+                        </svg>
+                        Security Details
+                    </button>
+                ` : ''}
+
+                ${this.proxyActionError ? `<p class="text-[10px] text-destructive">${this.escapeHtml(this.proxyActionError)}</p>` : ''}
+            </div>
+        `;
+    }
+
+    async handleProxyToggle() {
+        if (this.proxyActionPending) return;
+        this.proxyActionError = null;
+        this.proxyActionPending = true;
+        this.renderTopSectionOnly();
+
+        try {
+            await networkProxy.updateSettings({ enabled: !this.proxySettings.enabled });
+        } catch (error) {
+            this.proxyActionError = error.message;
+        } finally {
+            this.proxyActionPending = false;
+            this.renderTopSectionOnly();
+        }
+    }
+
+    async handleProxyModeChange(mode) {
+        if (!this.proxySettings?.enabled || this.proxyActionPending) {
+            return;
+        }
+
+        if (mode !== 'remote' && mode !== 'local') return;
+        if (this.proxySettings.mode === mode) return;
+
+        this.proxyActionError = null;
+        this.proxyActionPending = true;
+        this.renderTopSectionOnly();
+
+        try {
+            await networkProxy.updateSettings({ mode });
+        } catch (error) {
+            this.proxyActionError = error.message;
+        } finally {
+            this.proxyActionPending = false;
+            this.renderTopSectionOnly();
+        }
+    }
+
+    async handleProxyReconnect() {
+        if (!this.proxySettings?.enabled || this.proxyActionPending) {
+            return;
+        }
+
+        this.proxyActionError = null;
+        this.proxyActionPending = true;
+        this.renderTopSectionOnly();
+
+        try {
+            await networkProxy.reconnect();
+        } catch (error) {
+            this.proxyActionError = error.message;
+        } finally {
+            this.proxyActionPending = false;
+            this.renderTopSectionOnly();
+        }
+    }
+
+    async handleProxyCopyUrl() {
+        const url = this.getActiveProxyUrl();
+        if (!url || !navigator?.clipboard) return;
+
+        try {
+            await navigator.clipboard.writeText(url);
+        } catch (error) {
+            this.proxyActionError = error.message;
+            this.renderTopSectionOnly();
+        }
+    }
+
+    handleProxyEditUrl() {
+        this.showProxyUrlEdit = !this.showProxyUrlEdit;
+        this.proxyActionError = null;
+        this.renderTopSectionOnly();
+    }
+
+    async handleProxyUrlSubmit(newUrl) {
+        const currentUrl = this.getActiveProxyUrl();
+        if (newUrl === currentUrl) {
+            this.showProxyUrlEdit = false;
+            this.renderTopSectionOnly();
+            return;
+        }
+        
+        // Validate URL format
+        if (newUrl && !newUrl.match(/^wss?:\/\//)) {
+            this.proxyActionError = 'URL must start with ws:// or wss://';
+            this.renderTopSectionOnly();
+            return;
+        }
+
+        this.proxyActionError = null;
+        this.proxyActionPending = true;
+        this.renderTopSectionOnly();
+
+        try {
+            // Update the URL for current mode
+            const mode = this.proxySettings?.mode || 'remote';
+            const updateKey = mode === 'local' ? 'localUrl' : 'remoteUrl';
+            await networkProxy.updateSettings({ [updateKey]: newUrl });
+            this.showProxyUrlEdit = false;
+        } catch (error) {
+            this.proxyActionError = error.message;
+        } finally {
+            this.proxyActionPending = false;
+            this.renderTopSectionOnly();
+        }
     }
 
     /**
@@ -1291,6 +1664,58 @@ class RightPanel {
         const clearBtn = document.getElementById('clear-key-btn');
         if (clearBtn) {
             clearBtn.onclick = () => this.handleClearApiKey();
+        }
+
+        const proxyToggleBtn = document.getElementById('proxy-toggle-btn');
+        if (proxyToggleBtn) {
+            proxyToggleBtn.onclick = () => this.handleProxyToggle();
+        }
+
+        document.querySelectorAll('[data-proxy-mode]').forEach(btn => {
+            btn.onclick = () => {
+                const mode = btn.getAttribute('data-proxy-mode');
+                this.handleProxyModeChange(mode);
+            };
+        });
+
+        const proxyRetryBtn = document.getElementById('proxy-retry-btn');
+        if (proxyRetryBtn) {
+            proxyRetryBtn.onclick = () => this.handleProxyReconnect();
+        }
+
+        const proxyCopyBtn = document.getElementById('proxy-copy-url-btn');
+        if (proxyCopyBtn) {
+            proxyCopyBtn.onclick = () => this.handleProxyCopyUrl();
+        }
+
+        const proxyEditBtn = document.getElementById('proxy-edit-url-btn');
+        if (proxyEditBtn) {
+            proxyEditBtn.onclick = () => this.handleProxyEditUrl();
+        }
+
+        const proxyUrlEditForm = document.getElementById('proxy-url-edit-form');
+        if (proxyUrlEditForm) {
+            proxyUrlEditForm.onsubmit = (e) => {
+                e.preventDefault();
+                const input = document.getElementById('proxy-url-input');
+                if (input) {
+                    this.handleProxyUrlSubmit(input.value.trim());
+                }
+            };
+        }
+
+        const proxyUrlCancelBtn = document.getElementById('proxy-url-cancel-btn');
+        if (proxyUrlCancelBtn) {
+            proxyUrlCancelBtn.onclick = () => {
+                this.showProxyUrlEdit = false;
+                this.proxyActionError = null;
+                this.renderTopSectionOnly();
+            };
+        }
+
+        const proxySecurityBtn = document.getElementById('proxy-security-details-btn');
+        if (proxySecurityBtn) {
+            proxySecurityBtn.onclick = () => tlsSecurityModal.open();
         }
     }
 
@@ -1595,6 +2020,11 @@ class RightPanel {
         if (this.timerInterval) {
             clearInterval(this.timerInterval);
         }
+        if (this.proxyUnsubscribe) {
+            this.proxyUnsubscribe();
+            this.proxyUnsubscribe = null;
+        }
+        delete window.showProxyFallbackConfirmation;
     }
 }
 
