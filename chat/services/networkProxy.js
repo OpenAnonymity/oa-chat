@@ -113,8 +113,13 @@ class NetworkProxy {
     }
 
     sanitizeUrl(url, fallback) {
-        const normalized = this.ensureTrailingSlash(url);
+        let normalized = this.ensureTrailingSlash(url);
         if (normalized.startsWith('ws://') || normalized.startsWith('wss://')) {
+            // Auto-upgrade ws:// to wss:// when page is served over HTTPS (mixed content not allowed)
+            if (typeof window !== 'undefined' && window.location?.protocol === 'https:' && normalized.startsWith('ws://')) {
+                console.warn('[networkProxy] Auto-upgrading ws:// to wss:// (page served over HTTPS)');
+                normalized = 'wss://' + normalized.slice(5);
+            }
             return normalized;
         }
         return fallback;
