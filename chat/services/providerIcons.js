@@ -52,7 +52,7 @@ const PROVIDER_ICONS = {
 
     'Cohere': {
         type: 'url',
-        url: 'https://cohere.com/favicon.ico'
+        url: 'img/cohere.ico'
     },
 
     'Perplexity': {

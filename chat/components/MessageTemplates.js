@@ -729,7 +729,9 @@ function buildCitationsSection(citations, messageId) {
  */
 function buildAssistantMessage(message, helpers, providerName, modelName) {
     const { processContentWithLatex, formatTime } = helpers;
-    const tokenDisplay = buildTokenDisplay(message);
+    // FEATURE DISABLED: Token count display - uncomment to re-enable
+    // const tokenDisplay = buildTokenDisplay(message);
+    const tokenDisplay = '';
     const iconData = getProviderIcon(providerName, 'w-3.5 h-3.5');
     const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
 

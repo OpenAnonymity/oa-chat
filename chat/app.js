@@ -1658,10 +1658,11 @@ class ChatApp {
                         }
                     },
                     (tokenUpdate) => {
+                        // FEATURE DISABLED: Token count display - uncomment to re-enable
                         streamingTokenCount = tokenUpdate.completionTokens || 0;
-                        if (tokenUpdate.isStreaming && this.chatArea) {
-                            this.chatArea.updateStreamingTokens(streamingMessageId, streamingTokenCount);
-                        }
+                        // if (tokenUpdate.isStreaming && this.chatArea) {
+                        //     this.chatArea.updateStreamingTokens(streamingMessageId, streamingTokenCount);
+                        // }
                     },
                     [], // No files for regeneration
                     false, // No search for regeneration
@@ -1715,9 +1716,10 @@ class ChatApp {
                 }
 
                 if (this.chatArea) {
-                    if (streamingMessage.tokenCount) {
-                        this.chatArea.updateFinalTokens(streamingMessageId, streamingMessage.tokenCount);
-                    }
+                    // FEATURE DISABLED: Token count display - uncomment to re-enable
+                    // if (streamingMessage.tokenCount) {
+                    //     this.chatArea.updateFinalTokens(streamingMessageId, streamingMessage.tokenCount);
+                    // }
                     // Finalize reasoning display with markdown processing and timing
                     if (streamingMessage.reasoning) {
                         this.chatArea.finalizeReasoningDisplay(streamingMessageId, streamingMessage.reasoning, streamingMessage.reasoningDuration);
@@ -2061,11 +2063,12 @@ class ChatApp {
                         }
                     },
                     (tokenUpdate) => {
+                        // FEATURE DISABLED: Token count display - uncomment to re-enable
                         // Update streaming token count in real-time
                         streamingTokenCount = tokenUpdate.completionTokens || 0;
-                        if (tokenUpdate.isStreaming && this.chatArea) {
-                            this.chatArea.updateStreamingTokens(streamingMessageId, streamingTokenCount);
-                        }
+                        // if (tokenUpdate.isStreaming && this.chatArea) {
+                        //     this.chatArea.updateStreamingTokens(streamingMessageId, streamingTokenCount);
+                        // }
                     },
                     [], // Files are now included in processedMessages, not passed separately
                     searchEnabled,

@@ -549,19 +549,20 @@ export default class ChatArea {
     }
 
     /**
+     * FEATURE DISABLED: Token count display - uncomment to re-enable
      * Updates the streaming token count display for a message.
      * @param {string} messageId - The message ID
      * @param {number} tokenCount - Token count to display
      */
-    updateStreamingTokens(messageId, tokenCount) {
-        const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
-        if (messageEl) {
-            const tokenEl = messageEl.querySelector('.streaming-token-count');
-            if (tokenEl) {
-                tokenEl.textContent = tokenCount;
-            }
-        }
-    }
+    // updateStreamingTokens(messageId, tokenCount) {
+    //     const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
+    //     if (messageEl) {
+    //         const tokenEl = messageEl.querySelector('.streaming-token-count');
+    //         if (tokenEl) {
+    //             tokenEl.textContent = tokenCount;
+    //         }
+    //     }
+    // }
 
     /**
      * Updates the reasoning trace content during streaming.
@@ -835,14 +836,15 @@ export default class ChatArea {
         let imageBubble = messageEl.querySelector('.message-assistant-images');
 
         if (!imageBubble) {
-            // Create the image bubble after text bubble but before action buttons
-            const actionButtons = groupEl.querySelector('.flex.items-center.gap-1');
+            // Create the image bubble after text bubble but before action buttons wrapper
+            // Use the outer wrapper selector (justify-between) to get a direct child of groupEl
+            const actionButtonsWrapper = groupEl.querySelector(':scope > .flex.items-center.justify-between');
 
             imageBubble = document.createElement('div');
             imageBubble.className = 'font-normal message-assistant-images w-full';
 
-            if (actionButtons) {
-                groupEl.insertBefore(imageBubble, actionButtons);
+            if (actionButtonsWrapper) {
+                groupEl.insertBefore(imageBubble, actionButtonsWrapper);
             } else {
                 groupEl.appendChild(imageBubble);
             }
@@ -912,27 +914,28 @@ export default class ChatArea {
     }
 
     /**
+     * FEATURE DISABLED: Token count display - uncomment to re-enable
      * Updates the final token count for a message after streaming completes.
      * @param {string} messageId - The message ID
      * @param {number} tokenCount - Final token count
      */
-    updateFinalTokens(messageId, tokenCount) {
-        const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
-        if (messageEl) {
-            // Remove streaming indicator
-            const streamingTokenEl = messageEl.querySelector('.streaming-token-count');
-            if (streamingTokenEl) {
-                streamingTokenEl.remove();
-            }
-
-            // Create and append final token count
-            const tokenDisplayHtml = `<span class="text-xs text-muted-foreground ml-auto" style="font-size: 0.7rem;">${tokenCount}</span>`;
-            const headerEl = messageEl.querySelector('.flex.w-full.items-center');
-            if (headerEl) {
-                headerEl.insertAdjacentHTML('beforeend', tokenDisplayHtml);
-            }
-        }
-    }
+    // updateFinalTokens(messageId, tokenCount) {
+    //     const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
+    //     if (messageEl) {
+    //         // Remove streaming indicator
+    //         const streamingTokenEl = messageEl.querySelector('.streaming-token-count');
+    //         if (streamingTokenEl) {
+    //             streamingTokenEl.remove();
+    //         }
+    //
+    //         // Create and append final token count
+    //         const tokenDisplayHtml = `<span class="text-xs text-muted-foreground ml-auto" style="font-size: 0.7rem;">${tokenCount}</span>`;
+    //         const headerEl = messageEl.querySelector('.flex.w-full.items-center');
+    //         if (headerEl) {
+    //             headerEl.insertAdjacentHTML('beforeend', tokenDisplayHtml);
+    //         }
+    //     }
+    // }
 
     /**
      * Re-renders a message to its final state after streaming is complete.

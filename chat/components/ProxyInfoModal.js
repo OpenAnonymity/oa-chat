@@ -58,7 +58,7 @@ class ProxyInfoModal {
                 <div class="p-4 space-y-4">
                     <div class="space-y-3 text-sm text-foreground">
                         <p>
-                            OA provides an <strong>in-browser, VPN-like encrypted tunnel</strong> for your API requests, hiding your IP/metadata side-channels from the model provider.
+                            OA provides an <strong>in-browser, VPN-like encrypted tunnel</strong> that hides your IP/metadata side-channels from the model provider when you use the ephemeral API keys to access the models.
                         </p>
 
                         <div class="p-3 rounded-lg border border-border bg-slate-100 dark:bg-slate-800/50 space-y-2">
@@ -70,11 +70,11 @@ class ProxyInfoModal {
                                 </li>
                                 <li class="flex items-start gap-2">
                                     <span class="text-blue-500 mt-0.5">→</span>
-                                    <span>Inside that WebSocket, we establish a separate <strong class="text-foreground">TLS tunnel</strong> (using mbedTLS/WASM)</span>
+                                    <span>Inside that WebSocket, we establish a separate <strong class="text-foreground">TLS tunnel</strong> (using mbedTLS/WASM) to the model provider</span>
                                 </li>
                                 <li class="flex items-start gap-2">
                                     <span class="text-blue-500 mt-0.5">→</span>
-                                    <span>Your API requests travel through this encrypted tunnel to the model provider</span>
+                                    <span>Your API requests travel through this encrypted tunnel <strong class="text-foreground">directly</strong> to the model provider; our relay server only sees the encrypted blobs</span>
                                 </li>
                             </ul>
                         </div>
