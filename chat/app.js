@@ -2604,6 +2604,19 @@ class ChatApp {
      * Renders the sessions list (delegated to Sidebar component).
      */
     renderSessions() {
+        // Hide skeleton loader when sessions are rendered for the first time
+        const skeleton = document.getElementById('sessions-skeleton');
+        const sessionsList = document.getElementById('sessions-list');
+        const isFirstRender = skeleton && !skeleton.classList.contains('hidden');
+
+        if (isFirstRender) {
+            skeleton.classList.add('hidden');
+            // Trigger reveal animation on sessions list
+            if (sessionsList) {
+                sessionsList.classList.add('sessions-revealing');
+            }
+        }
+
         if (this.sidebar) {
             this.sidebar.render();
         }

@@ -65,7 +65,7 @@
             const timeout = setTimeout(() => {
                 reject(new Error('Timeout waiting for libcurl.js to load'));
             }, 10000); // 10 second timeout
-            
+
             document.addEventListener('libcurl_load', () => {
                 clearTimeout(timeout);
                 // Ensure libcurl is available globally
@@ -84,7 +84,7 @@
                 }
                 resolve(lib);
             }, { once: true });
-            
+
             document.addEventListener('libcurl_abort', (e) => {
                 clearTimeout(timeout);
                 console.error('[libcurl] Aborted:', e.detail);
@@ -194,6 +194,14 @@
                         </div>
 
                         <div id="sessions-scroll-area" class="flex-1 min-h-0 overflow-y-auto">
+                            <!-- Loading indicator shown while sessions load -->
+                            <div id="sessions-skeleton" class="sessions-loader">
+                                <div class="loader-dots">
+                                    <span></span>
+                                    <span></span>
+                                    <span></span>
+                                </div>
+                            </div>
                             <div id="sessions-list" class="flex flex-col gap-0.5"></div>
                         </div>
                     </div>
