@@ -1743,6 +1743,12 @@ html {
     opacity: 1;
 }
 
+/* Extra bottom margin for the last user message (when no response follows)
+   to make room for action buttons that won't overlap with the input area */
+#messages-container > .self-end:last-child {
+    margin-bottom: 2.5rem;
+}
+
 /* Custom Tooltip Styles */
 [data-tooltip] {
     position: relative;

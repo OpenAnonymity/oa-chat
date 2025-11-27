@@ -30,7 +30,7 @@ const WELCOME_CONTENT = {
 
 [11/26/2025] Added Claude Opus 4.5, Gemini 3 Pro, and GPT-5.1 Instant and Thinking\\
 [11/25/2025] Added TLS-over-WebSocket inference proxy\\
-[11/19/2025] Added prompt editing and chat branching + UI fixes\\
+[11/19/2025] Added prompt editing and chat branching + UI fixes
     `.trim(),
     // Future: Add diagram/image support
     // diagram: null,
