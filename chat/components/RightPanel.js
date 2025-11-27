@@ -7,6 +7,7 @@ import stationClient from '../services/station.js';
 import networkLogger from '../services/networkLogger.js';
 import networkProxy from '../services/networkProxy.js';
 import tlsSecurityModal from './TLSSecurityModal.js';
+import proxyInfoModal from './ProxyInfoModal.js';
 import { getActivityDescription, getActivityIcon, getStatusDotClass, formatTimestamp } from '../services/networkLogRenderer.js';
 
 class RightPanel {
@@ -1366,8 +1367,8 @@ class RightPanel {
         const hasTlsInfo = tlsInfo.version !== null;
         const isEncrypted = settings.enabled && status.usingProxy;
 
-        return `<div class="p-3 space-y-2.5">
-                <!-- Header: Title + Toggle -->
+        return `<div class="p-3 space-y-2">
+                <!-- Header Row: Title + Toggle -->
                 <div class="flex items-center justify-between">
                     <div class="flex items-center gap-1.5">
                         <svg class="w-3.5 h-3.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
@@ -1379,15 +1380,14 @@ class RightPanel {
                             <path d="M4 22h6m4 0h6"/>
                         </svg>
                         <span class="text-xs font-medium text-foreground">Inference Proxy</span>
-                        ${isEncrypted ? `
-                            <span class="inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-medium ${hasTlsInfo ? 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400' : 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400'}" title="${hasTlsInfo ? 'TLS tunnel over WebSocket proxy' : 'Encrypted via WebSocket proxy'}">
-                                <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-                                    <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-                                </svg>
-                                TLS-over-WS
-                            </span>
-                        ` : ''}
+                        <span class="px-1 py-0.5 rounded text-[8px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 uppercase tracking-wide">Beta</span>
+                        <button id="proxy-info-btn" class="inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-5 w-5" title="What is this?">
+                            <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="12" cy="12" r="10"/>
+                                <path d="M12 16v-4"/>
+                                <circle cx="12" cy="8" r="0.5" fill="currentColor"/>
+                            </svg>
+                        </button>
                     </div>
                     <button
                         id="proxy-toggle-btn"
@@ -1404,27 +1404,36 @@ class RightPanel {
                     <div class="flex items-center gap-1.5 min-w-0">
                         <span class="w-1.5 h-1.5 rounded-full shrink-0 ${statusMeta.dotClass}"></span>
                         <span class="${statusMeta.textClass} truncate">${this.escapeHtml(statusMeta.label)}</span>
+                        ${isEncrypted ? `
+                            <span class="inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-medium ${hasTlsInfo ? 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400' : 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400'}" title="${hasTlsInfo ? 'TLS tunnel over WebSocket proxy' : 'Encrypted via WebSocket proxy'}">
+                                <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                                    <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                                </svg>
+                                TLS-over-WSS
+                            </span>
+                        ` : ''}
                     </div>
                     <div class="flex items-center gap-1 shrink-0">
                         ${activeUrl ? `<span class="text-muted-foreground" title="${this.escapeHtml(activeUrl)}">${this.escapeHtml(this.formatProxyHostname(activeUrl))}</span>` : ''}
                         ${hasError ? `
-                            <button id="proxy-retry-btn" class="p-0.5 rounded hover:bg-muted transition-colors" title="Reconnect" ${pending ? 'disabled' : ''}>
-                                <svg class="w-3 h-3 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <button id="proxy-retry-btn" class="inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-5 w-5" title="Reconnect" ${pending ? 'disabled' : ''}>
+                                <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <path d="M1 4v6h6M23 20v-6h-6" stroke-linecap="round" stroke-linejoin="round"/>
                                     <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15" stroke-linecap="round" stroke-linejoin="round"/>
                                 </svg>
                             </button>
                         ` : ''}
                         ${activeUrl ? `
-                            <button id="proxy-copy-url-btn" class="p-0.5 rounded hover:bg-muted transition-colors" title="Copy URL">
-                                <svg class="w-3 h-3 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <button id="proxy-copy-url-btn" class="inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-5 w-5" title="Copy URL">
+                                <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
                                     <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
                                 </svg>
                             </button>
                         ` : ''}
-                        <button id="proxy-edit-url-btn" class="p-0.5 rounded hover:bg-muted transition-colors" title="${activeUrl ? 'Edit URL' : 'Configure URL'}">
-                            <svg class="w-3 h-3 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <button id="proxy-edit-url-btn" class="inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-5 w-5" title="${activeUrl ? 'Edit URL' : 'Configure URL'}">
+                            <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
                                 <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
                             </svg>
@@ -1677,6 +1686,11 @@ class RightPanel {
         const proxySecurityBtn = document.getElementById('proxy-security-details-btn');
         if (proxySecurityBtn) {
             proxySecurityBtn.onclick = () => tlsSecurityModal.open();
+        }
+
+        const proxyInfoBtn = document.getElementById('proxy-info-btn');
+        if (proxyInfoBtn) {
+            proxyInfoBtn.onclick = () => proxyInfoModal.open();
         }
     }
 

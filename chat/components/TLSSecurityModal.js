@@ -51,13 +51,13 @@ class TLSSecurityModal {
         try {
             // libcurl.js bundles WASM inside libcurl_full.js (no separate .wasm file)
             // We verify the JS file from jsDelivr CDN which has its own integrity guarantees
-            
+
             let localHash = null;
             let source = 'jsdelivr';
-            
+
             // Fetch the libcurl_full.js from CDN and compute hash
             try {
-                const response = await fetch(LIBCURL_CDN_URL, { 
+                const response = await fetch(LIBCURL_CDN_URL, {
                     signal: AbortSignal.timeout(10000),
                     cache: 'force-cache' // Use cached version (same as what browser loaded)
                 });
@@ -106,7 +106,7 @@ class TLSSecurityModal {
                     <div class="flex items-center gap-2.5">
                         <div class="flex h-8 w-8 items-center justify-center rounded-lg ${isEncrypted ? 'bg-green-100 dark:bg-green-500/20' : 'bg-muted'}">
                             <svg class="w-4 h-4 ${isEncrypted ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                ${isEncrypted 
+                                ${isEncrypted
                                     ? '<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>'
                                     : '<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>'
                                 }
@@ -123,7 +123,7 @@ class TLSSecurityModal {
 
                 <!-- Content -->
                 <div class="p-4 space-y-4 max-h-[70vh] overflow-y-auto">
-                    
+
                     <!-- TLS Implementation -->
                     <div class="space-y-2">
                         <h3 class="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
@@ -167,19 +167,19 @@ class TLSSecurityModal {
                                     <p>Look at "Messages" tab. You should see:</p>
                                     <ul class="list-disc list-inside pl-2 space-y-0.5">
                                         <li><strong class="text-foreground">Binary frames</strong> (not readable text)</li>
-                                        <li>TLS record headers start with <code class="bg-muted px-1 rounded">0x16</code> (handshake) or <code class="bg-muted px-1 rounded">0x17</code> (app data)</li>
+                                        <li>TLS record headers start with <code class="bg-slate-200 dark:bg-slate-700 px-1 rounded">0x16</code> (handshake) or <code class="bg-slate-200 dark:bg-slate-700 px-1 rounded">0x17</code> (app data)</li>
                                     </ul>
                                     <p class="text-amber-600 dark:text-amber-400">If you see readable JSON/text, it's NOT encrypted!</p>
                                 </div>
                             </details>
-                            
+
                             <details class="group border border-border rounded-lg">
                                 <summary class="p-2.5 cursor-pointer flex items-center gap-2 hover:bg-muted/50 rounded-lg">
                                     <svg class="w-3.5 h-3.5 transition-transform group-open:rotate-90 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
                                     <span class="font-medium">2. Verify the WASM source</span>
                                 </summary>
                                 <div class="px-3 pb-3 text-muted-foreground space-y-1.5">
-                                    <p>The TLS is handled by <code class="bg-muted px-1 rounded">libcurl_full.js</code></p>
+                                    <p>The TLS is handled by <code class="bg-slate-200 dark:bg-slate-700 px-1 rounded">libcurl_full.js</code></p>
                                     <p>This is compiled from:</p>
                                     <ul class="list-disc list-inside pl-2">
                                         <li><a href="https://github.com/ading2210/libcurl.js" class="text-blue-500 hover:underline" target="_blank">libcurl.js</a> - WASM port of libcurl</li>
@@ -234,7 +234,7 @@ class TLSSecurityModal {
                                     <span class="text-muted-foreground"> — serves npm packages with integrity checks</span>
                                 </div>
                             </div>
-                            <div class="mt-2 p-2 bg-muted/50 rounded text-muted-foreground">
+                            <div class="mt-2 p-2 bg-slate-100 dark:bg-slate-800/50 rounded text-slate-600 dark:text-slate-300">
                                 <strong class="text-foreground">Ultimate verification:</strong> Inspect WebSocket frames in DevTools. Binary blobs = encrypted. Readable text = not encrypted.
                             </div>
                         </div>
