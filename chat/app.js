@@ -1724,6 +1724,10 @@ class ChatApp {
                     if (streamingMessage.reasoning) {
                         this.chatArea.finalizeReasoningDisplay(streamingMessageId, streamingMessage.reasoning, streamingMessage.reasoningDuration);
                     }
+                    // Re-render message if no content (to show "no response" notice and clean up empty bubbles)
+                    if (!streamingMessage.content && (!streamingMessage.images || streamingMessage.images.length === 0)) {
+                        await this.chatArea.finalizeStreamingMessage(streamingMessage);
+                    }
                 }
 
             } catch (error) {

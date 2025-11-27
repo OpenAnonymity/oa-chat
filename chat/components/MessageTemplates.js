@@ -779,6 +779,15 @@ function buildAssistantMessage(message, helpers, providerName, modelName) {
         </div>
     ` : '';
 
+    // Check if message is complete but has no output (no text, no images)
+    // This happens when provider doesn't return a response
+    const hasNoOutput = !processedContent && (!message.images || message.images.length === 0);
+    // Message is complete if not actively streaming (streamingTokens is null/undefined after finalization)
+    const isMessageComplete = !message.streamingReasoning && (message.streamingTokens === null || message.streamingTokens === undefined);
+    const noResponseNotice = (hasNoOutput && isMessageComplete) ? `
+        <span class="text-xs text-muted-foreground/70 italic">[OA: Model provider returned no response. Try starting a new session.]</span>
+    ` : '';
+
     // Build citations section if there are citations
     const citationsBubble = buildCitationsSection(message.citations, message.id);
 
@@ -822,6 +831,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName) {
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M2 12h6c6 0 10-4 14-8m-4 0h4v4M8 12c6 0 10 4 14 8m-4 0h4v-4" />
                             </svg>
                         </button>
+                        ${noResponseNotice}
                     </div>
                     ${buildCitationsToggleButton(message.citations, message.id)}
                 </div>
