@@ -26,6 +26,14 @@ export default class ChatArea {
 
         // Event delegation for message action buttons
         messagesContainer.addEventListener('click', async (e) => {
+            // Code block copy button
+            const codeBlockCopyBtn = e.target.closest('.code-block-copy-btn');
+            if (codeBlockCopyBtn) {
+                e.preventDefault();
+                await this.handleCopyCodeBlock(codeBlockCopyBtn);
+                return;
+            }
+
             const copyBtn = e.target.closest('.copy-message-btn');
             if (copyBtn) {
                 const messageId = copyBtn.dataset.messageId;
@@ -158,6 +166,59 @@ export default class ChatArea {
 
             // Blur the button to ensure it hides if relying on focus state
             btn.blur();
+        }, 2000);
+    }
+
+    /**
+     * Handles copying code from a code block
+     * @param {HTMLElement} btn - The copy button element
+     */
+    async handleCopyCodeBlock(btn) {
+        // Get code from data attribute (preserves original formatting)
+        const code = btn.dataset.code;
+        if (!code) return;
+
+        // Decode HTML entities that were escaped for the attribute
+        const textarea = document.createElement('textarea');
+        textarea.innerHTML = code;
+        const decodedCode = textarea.value;
+
+        // Get button elements for animation
+        const svg = btn.querySelector('.copy-icon');
+        const textEl = btn.querySelector('.copy-text');
+        if (!svg) return;
+
+        const originalSvgContent = svg.innerHTML;
+        const originalText = textEl ? textEl.textContent : '';
+
+        try {
+            // Try modern Clipboard API first
+            await navigator.clipboard.writeText(decodedCode);
+        } catch (error) {
+            // Fallback to execCommand for older browsers or restricted contexts
+            try {
+                const tempTextarea = document.createElement('textarea');
+                tempTextarea.value = decodedCode;
+                tempTextarea.style.position = 'fixed';
+                tempTextarea.style.opacity = '0';
+                document.body.appendChild(tempTextarea);
+                tempTextarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(tempTextarea);
+            } catch (fallbackError) {
+                console.error('Failed to copy code:', fallbackError);
+                return;
+            }
+        }
+
+        // Animate button to show success
+        svg.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />';
+        if (textEl) textEl.textContent = 'Copied';
+
+        setTimeout(() => {
+            // Restore original icon and text
+            svg.innerHTML = originalSvgContent;
+            if (textEl) textEl.textContent = originalText;
         }, 2000);
     }
 

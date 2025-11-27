@@ -996,7 +996,104 @@
     font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
 }
 
-.prose pre {
+/* Code Block Wrapper with Header */
+.code-block-wrapper {
+    position: relative;
+    margin-bottom: 0.75rem;
+    border-radius: 0.5rem;
+    overflow: hidden;
+    background-color: hsl(var(--color-muted));
+    border: 1px solid hsl(var(--color-border) / 0.5);
+}
+
+.code-block-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.4rem 0.75rem;
+    background-color: hsl(var(--color-muted) / 0.8);
+    border-bottom: 1px solid hsl(var(--color-border) / 0.3);
+    min-height: 2rem;
+}
+
+.code-block-lang {
+    font-size: 0.7rem;
+    font-weight: 500;
+    color: hsl(var(--color-muted-foreground));
+    text-transform: lowercase;
+    letter-spacing: 0.02em;
+}
+
+.code-block-copy-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.2rem 0.5rem;
+    font-size: 0.7rem;
+    font-weight: 500;
+    color: hsl(var(--color-muted-foreground));
+    background: transparent;
+    border: none;
+    border-radius: 0.25rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.code-block-copy-btn:hover {
+    color: hsl(var(--color-foreground));
+    background-color: hsl(var(--color-background) / 0.5);
+}
+
+.code-block-copy-btn .copy-icon {
+    width: 0.875rem;
+    height: 0.875rem;
+    flex-shrink: 0;
+}
+
+.code-block-copy-btn .copy-text {
+    line-height: 1;
+}
+
+/* Code block pre/code styling */
+.code-block-wrapper pre {
+    margin: 0;
+    padding: 0.75rem;
+    background-color: transparent;
+    overflow-x: auto;
+    font-size: 0.8125rem;
+    line-height: 1.5;
+}
+
+.code-block-wrapper pre code {
+    background-color: transparent;
+    padding: 0;
+    font-size: inherit;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+}
+
+/* Highlight.js overrides for theme consistency */
+.code-block-wrapper pre code.hljs {
+    background: transparent;
+    padding: 0;
+}
+
+/* Dark mode adjustments */
+.dark .code-block-wrapper {
+    background-color: hsl(222 47% 8%);
+    border-color: hsl(var(--color-border) / 0.4);
+}
+
+.dark .code-block-header {
+    background-color: hsl(222 47% 11%);
+    border-bottom-color: hsl(var(--color-border) / 0.3);
+}
+
+.dark .code-block-copy-btn:hover {
+    background-color: hsl(var(--color-secondary) / 0.5);
+}
+
+/* Fallback for prose pre without wrapper (inline code blocks) */
+.prose pre:not(.code-block-wrapper pre) {
     background-color: hsl(var(--color-muted));
     padding: 0.75rem;
     border-radius: 0.5rem;
@@ -1005,7 +1102,7 @@
     font-size: 0.8125rem;
 }
 
-.prose pre code {
+.prose pre:not(.code-block-wrapper pre) code {
     background-color: transparent;
     padding: 0;
     font-size: inherit;

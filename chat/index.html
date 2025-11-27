@@ -57,6 +57,36 @@
     <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
 
+    <!-- Highlight.js for code syntax highlighting -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github.min.css" id="hljs-light">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css" id="hljs-dark" disabled>
+    <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+    <script>
+        // Sync highlight.js theme with app theme
+        (function() {
+            function syncHljsTheme() {
+                const isDark = document.documentElement.classList.contains('dark');
+                const lightSheet = document.getElementById('hljs-light');
+                const darkSheet = document.getElementById('hljs-dark');
+                if (lightSheet && darkSheet) {
+                    lightSheet.disabled = isDark;
+                    darkSheet.disabled = !isDark;
+                }
+            }
+            // Initial sync
+            syncHljsTheme();
+            // Watch for theme changes
+            const observer = new MutationObserver((mutations) => {
+                for (const mutation of mutations) {
+                    if (mutation.attributeName === 'class') {
+                        syncHljsTheme();
+                    }
+                }
+            });
+            observer.observe(document.documentElement, { attributes: true });
+        })();
+    </script>
+
     <!-- libcurl.js for encrypted proxying -->
     <script defer src="https://cdn.jsdelivr.net/npm/libcurl.js@0.7.1/libcurl_full.js" onload="libcurl.load_wasm();"></script>
     <script>

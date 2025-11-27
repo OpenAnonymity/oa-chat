@@ -136,6 +136,107 @@ class ChatApp {
     }
 
     /**
+     * Configure marked.js with custom renderer for code blocks
+     * Adds language label and copy button to fenced code blocks
+     */
+    configureMarkedRenderer() {
+        const renderer = new marked.Renderer();
+
+        // Custom code block renderer with header (language + copy button)
+        renderer.code = (code, language) => {
+            const lang = language || '';
+            const displayLang = lang ? this.formatLanguageName(lang) : '';
+
+            // Apply syntax highlighting if available
+            let highlightedCode = code;
+            if (typeof hljs !== 'undefined' && lang && hljs.getLanguage(lang)) {
+                try {
+                    highlightedCode = hljs.highlight(code, { language: lang, ignoreIllegals: true }).value;
+                } catch (e) {
+                    highlightedCode = this.escapeHtml(code);
+                }
+            } else if (typeof hljs !== 'undefined') {
+                // Auto-detect language
+                try {
+                    highlightedCode = hljs.highlightAuto(code).value;
+                } catch (e) {
+                    highlightedCode = this.escapeHtml(code);
+                }
+            } else {
+                highlightedCode = this.escapeHtml(code);
+            }
+
+            return `<div class="code-block-wrapper">
+                <div class="code-block-header">
+                    <span class="code-block-lang">${displayLang}</span>
+                    <button class="code-block-copy-btn" data-code="${this.escapeHtmlAttribute(code)}">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="copy-icon">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
+                        </svg>
+                        <span class="copy-text">Copy code</span>
+                    </button>
+                </div>
+                <pre><code class="hljs${lang ? ` language-${lang}` : ''}">${highlightedCode}</code></pre>
+            </div>`;
+        };
+
+        marked.setOptions({ renderer });
+    }
+
+    /**
+     * Format language name for display (e.g., 'javascript' -> 'JavaScript')
+     */
+    formatLanguageName(lang) {
+        const langMap = {
+            'js': 'JavaScript', 'javascript': 'JavaScript', 'jsx': 'JSX',
+            'ts': 'TypeScript', 'typescript': 'TypeScript', 'tsx': 'TSX',
+            'py': 'Python', 'python': 'Python',
+            'rb': 'Ruby', 'ruby': 'Ruby',
+            'go': 'Go', 'golang': 'Go',
+            'rs': 'Rust', 'rust': 'Rust',
+            'java': 'Java', 'kt': 'Kotlin', 'kotlin': 'Kotlin',
+            'c': 'C', 'cpp': 'C++', 'c++': 'C++', 'csharp': 'C#', 'cs': 'C#',
+            'swift': 'Swift', 'objc': 'Objective-C',
+            'php': 'PHP', 'perl': 'Perl',
+            'sh': 'Shell', 'bash': 'Bash', 'zsh': 'Zsh', 'shell': 'Shell',
+            'sql': 'SQL', 'mysql': 'MySQL', 'postgres': 'PostgreSQL',
+            'html': 'HTML', 'css': 'CSS', 'scss': 'SCSS', 'sass': 'Sass', 'less': 'Less',
+            'json': 'JSON', 'yaml': 'YAML', 'yml': 'YAML', 'xml': 'XML', 'toml': 'TOML',
+            'md': 'Markdown', 'markdown': 'Markdown',
+            'dockerfile': 'Dockerfile', 'docker': 'Docker',
+            'graphql': 'GraphQL', 'gql': 'GraphQL',
+            'r': 'R', 'matlab': 'MATLAB', 'julia': 'Julia',
+            'lua': 'Lua', 'elixir': 'Elixir', 'erlang': 'Erlang',
+            'scala': 'Scala', 'clojure': 'Clojure', 'haskell': 'Haskell',
+            'vim': 'Vim', 'powershell': 'PowerShell', 'ps1': 'PowerShell',
+            'diff': 'Diff', 'plaintext': 'Text', 'text': 'Text'
+        };
+        return langMap[lang.toLowerCase()] || lang.charAt(0).toUpperCase() + lang.slice(1);
+    }
+
+    /**
+     * Escape HTML special characters
+     */
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    /**
+     * Escape HTML for use in attributes (handles quotes)
+     */
+    escapeHtmlAttribute(text) {
+        return text
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/\n/g, '&#10;');
+    }
+
+    /**
      * Process content with protected LaTeX expressions
      * This prevents marked from breaking LaTeX delimiters
      */
@@ -166,7 +267,7 @@ class ChatApp {
             return placeholder;
         });
 
-        // Process markdown
+        // Process markdown (uses custom renderer configured in init)
         let html = marked.parse(processedContent);
 
         // Restore block LaTeX without <p> wrapping
@@ -678,6 +779,9 @@ class ChatApp {
      * Initializes the application: loads data, sets up components, and renders initial state.
      */
     async init() {
+        // Configure marked.js renderer for code blocks (with syntax highlighting + copy button)
+        this.configureMarkedRenderer();
+
         // Setup image expand functionality
         window.expandImage = (imageId) => {
             const img = document.querySelector(`[data-image-id="${imageId}"]`);
