@@ -1,4 +1,4 @@
-const DEFAULT_PROXY_URL = ''; // Set your proxy URL here or via UI
+const DEFAULT_PROXY_URL = 'wss://websocket-proxy-server-twilight-feather-9805.fly.dev/?secret=8d4fc1b2e7a9035f14c8d92afe6730bb'; // Set your proxy URL here or via UI
 const LOCAL_STORAGE_KEY = 'oa-network-proxy-settings';
 const DB_SETTINGS_KEY = 'proxySettings';
 
@@ -7,8 +7,6 @@ const DEFAULT_SETTINGS = {
     url: DEFAULT_PROXY_URL,
     fallbackToDirect: true
 };
-
-const TRAILING_SLASH_RE = /\/?$/;
 
 // TLS info parsing patterns (supports both OpenSSL and mbedTLS output formats)
 const TLS_PATTERNS = {
@@ -102,15 +100,10 @@ class NetworkProxy {
         }
     }
 
-    ensureTrailingSlash(url) {
-        if (!url || typeof url !== 'string') return '';
-        const trimmed = url.trim();
-        if (!trimmed) return '';
-        return trimmed.endsWith('/') ? trimmed : `${trimmed}/`;
-    }
-
     sanitizeUrl(url, fallback) {
-        let normalized = this.ensureTrailingSlash(url);
+        if (!url || typeof url !== 'string') return fallback;
+        let normalized = url.trim();
+        if (!normalized) return fallback;
         if (normalized.startsWith('ws://') || normalized.startsWith('wss://')) {
             // Auto-upgrade ws:// to wss:// when page is served over HTTPS (mixed content not allowed)
             if (typeof window !== 'undefined' && window.location?.protocol === 'https:' && normalized.startsWith('ws://')) {
@@ -456,7 +449,7 @@ class NetworkProxy {
 
     getActiveProxyUrl(settings = this.state.settings) {
         if (!settings.enabled) return null;
-        return settings.url ? this.ensureTrailingSlash(settings.url).replace(TRAILING_SLASH_RE, '/') : null;
+        return settings.url || null;
     }
 
     async updateSettings(partial, options = {}) {
