@@ -58,13 +58,13 @@ class RightPanel {
             this.proxyStatus = status;
             this.renderTopSectionOnly();
         });
-        
+
         // Expose fallback confirmation method globally for other modules
         window.showProxyFallbackConfirmation = (detail) => this.showProxyFallbackConfirmation(detail);
 
         // Invitation code dropdown state
         this.showInvitationForm = false;
-        
+
         // Proxy URL edit state
         this.showProxyUrlEdit = false;
 
@@ -1251,7 +1251,7 @@ class RightPanel {
     getActiveProxyUrl(settings = this.proxySettings, status = this.proxyStatus) {
         if (status?.activeProxyUrl) return status.activeProxyUrl;
         if (!settings) return null;
-        return settings.mode === 'local' ? settings.localUrl : settings.remoteUrl;
+        return settings.url;
     }
 
     formatProxyUrl(url) {
@@ -1316,7 +1316,7 @@ class RightPanel {
         return new Promise((resolve) => {
             // Remove existing dialog if any
             document.querySelector('.proxy-fallback-dialog')?.remove();
-            
+
             const overlay = document.createElement('div');
             overlay.className = 'proxy-fallback-dialog fixed inset-0 z-50 flex items-center justify-center bg-black/50 animate-in fade-in';
             overlay.innerHTML = `
@@ -1339,16 +1339,16 @@ class RightPanel {
                     </div>
                 </div>
             `;
-            
+
             const cleanup = (result) => {
                 overlay.remove();
                 resolve(result);
             };
-            
+
             overlay.querySelector('.fallback-cancel').onclick = () => cleanup(false);
             overlay.querySelector('.fallback-confirm').onclick = () => cleanup(true);
             overlay.onclick = (e) => { if (e.target === overlay) cleanup(false); };
-            
+
             document.body.appendChild(overlay);
             overlay.querySelector('.fallback-cancel').focus();
         });
@@ -1359,21 +1359,26 @@ class RightPanel {
         const status = this.proxyStatus || networkProxy.getStatus();
         const statusMeta = this.getProxyStatusMeta(settings, status);
         const activeUrl = settings.enabled ? this.getActiveProxyUrl(settings, status) : null;
-        // Get configured URL from settings (for edit form, even if not active)
-        const configuredUrl = settings.mode === 'local' ? settings.localUrl : settings.remoteUrl;
+        const configuredUrl = settings.url;
         const pending = this.proxyActionPending;
-        const disableModes = !settings.enabled || pending;
         const hasError = status?.lastError;
         const tlsInfo = networkProxy.getTlsInfo();
         const hasTlsInfo = tlsInfo.version !== null;
         const isEncrypted = settings.enabled && status.usingProxy;
 
-        return `
-            <div class="p-3 border-t border-border/70 space-y-2.5">
+        return `<div class="p-3 space-y-2.5">
                 <!-- Header: Title + Toggle -->
                 <div class="flex items-center justify-between">
                     <div class="flex items-center gap-1.5">
-                        <span class="text-xs font-medium text-foreground">Proxy</span>
+                        <svg class="w-3.5 h-3.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                            <circle cx="12" cy="9" r="8"/>
+                            <path d="M4 9h16"/>
+                            <path d="M12 1a12 12 0 0 1 3.5 8 12 12 0 0 1-3.5 8 12 12 0 0 1-3.5-8A12 12 0 0 1 12 1z"/>
+                            <path d="M12 17v4"/>
+                            <circle cx="12" cy="22" r="1.5" fill="currentColor"/>
+                            <path d="M4 22h6m4 0h6"/>
+                        </svg>
+                        <span class="text-xs font-medium text-foreground">Inference Proxy</span>
                         ${isEncrypted ? `
                             <span class="inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-medium ${hasTlsInfo ? 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400' : 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400'}" title="${hasTlsInfo ? 'TLS tunnel over WebSocket proxy' : 'Encrypted via WebSocket proxy'}">
                                 <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -1388,24 +1393,10 @@ class RightPanel {
                         id="proxy-toggle-btn"
                         class="relative w-8 h-[18px] rounded-full transition-colors ${settings.enabled ? 'bg-green-500' : 'bg-muted-foreground/30'} ${pending ? 'opacity-50 cursor-wait' : 'cursor-pointer'}"
                         ${pending ? 'disabled' : ''}
-                        title="${settings.enabled ? 'Disable proxy' : 'Enable proxy'}"
+                        title="${settings.enabled ? 'Disable relay' : 'Enable relay'}"
                     >
                         <span class="absolute top-0.5 ${settings.enabled ? 'right-0.5' : 'left-0.5'} w-3.5 h-3.5 rounded-full bg-white shadow-sm transition-all"></span>
                     </button>
-                </div>
-
-                <!-- Mode Selector: Segmented Control -->
-                <div class="flex rounded-md overflow-hidden border border-border ${disableModes ? 'opacity-50 pointer-events-none' : ''}">
-                    <button
-                        class="proxy-mode-btn flex-1 text-[10px] font-medium py-1.5 transition-colors ${settings.mode === 'remote' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted/50'}"
-                        data-proxy-mode="remote"
-                        ${disableModes ? 'disabled' : ''}
-                    >Remote</button>
-                    <button
-                        class="proxy-mode-btn flex-1 text-[10px] font-medium py-1.5 border-l border-border transition-colors ${settings.mode === 'local' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted/50'}"
-                        data-proxy-mode="local"
-                        ${disableModes ? 'disabled' : ''}
-                    >Local</button>
                 </div>
 
                 <!-- Status Row -->
@@ -1455,7 +1446,7 @@ class RightPanel {
                             />
                             <button
                                 type="submit"
-                                class="p-1.5 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                                class="btn-ghost-hover p-1.5 rounded-md border border-border bg-background text-foreground transition-all duration-200 hover:shadow-sm"
                                 title="Save"
                                 ${pending ? 'disabled' : ''}
                             >
@@ -1466,7 +1457,7 @@ class RightPanel {
                             <button
                                 type="button"
                                 id="proxy-url-cancel-btn"
-                                class="p-1.5 rounded-md border border-border hover:bg-muted transition-colors"
+                                class="btn-ghost-hover p-1.5 rounded-md border border-border bg-background text-foreground transition-all duration-200 hover:shadow-sm"
                                 title="Cancel"
                             >
                                 <svg class="w-3 h-3 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1480,7 +1471,7 @@ class RightPanel {
 
                 <!-- Security Details Button -->
                 ${settings.enabled ? `
-                    <button id="proxy-security-details-btn" class="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 text-[10px] font-medium rounded-md border border-border hover:bg-muted transition-colors text-muted-foreground hover:text-foreground">
+                    <button id="proxy-security-details-btn" class="btn-ghost-hover w-full flex items-center justify-center gap-1.5 px-2 py-1.5 text-[10px] font-medium rounded-md border border-border bg-background text-foreground transition-all duration-200 hover:shadow-sm">
                         <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
                             ${hasTlsInfo ? '<path d="M9 12l2 2 4-4"/>' : ''}
@@ -1502,28 +1493,6 @@ class RightPanel {
 
         try {
             await networkProxy.updateSettings({ enabled: !this.proxySettings.enabled });
-        } catch (error) {
-            this.proxyActionError = error.message;
-        } finally {
-            this.proxyActionPending = false;
-            this.renderTopSectionOnly();
-        }
-    }
-
-    async handleProxyModeChange(mode) {
-        if (!this.proxySettings?.enabled || this.proxyActionPending) {
-            return;
-        }
-
-        if (mode !== 'remote' && mode !== 'local') return;
-        if (this.proxySettings.mode === mode) return;
-
-        this.proxyActionError = null;
-        this.proxyActionPending = true;
-        this.renderTopSectionOnly();
-
-        try {
-            await networkProxy.updateSettings({ mode });
         } catch (error) {
             this.proxyActionError = error.message;
         } finally {
@@ -1576,7 +1545,7 @@ class RightPanel {
             this.renderTopSectionOnly();
             return;
         }
-        
+
         // Validate URL format
         if (newUrl && !newUrl.match(/^wss?:\/\//)) {
             this.proxyActionError = 'URL must start with ws:// or wss://';
@@ -1589,10 +1558,7 @@ class RightPanel {
         this.renderTopSectionOnly();
 
         try {
-            // Update the URL for current mode
-            const mode = this.proxySettings?.mode || 'remote';
-            const updateKey = mode === 'local' ? 'localUrl' : 'remoteUrl';
-            await networkProxy.updateSettings({ [updateKey]: newUrl });
+            await networkProxy.updateSettings({ url: newUrl });
             this.showProxyUrlEdit = false;
         } catch (error) {
             this.proxyActionError = error.message;
@@ -1672,13 +1638,6 @@ class RightPanel {
         if (proxyToggleBtn) {
             proxyToggleBtn.onclick = () => this.handleProxyToggle();
         }
-
-        document.querySelectorAll('[data-proxy-mode]').forEach(btn => {
-            btn.onclick = () => {
-                const mode = btn.getAttribute('data-proxy-mode');
-                this.handleProxyModeChange(mode);
-            };
-        });
 
         const proxyRetryBtn = document.getElementById('proxy-retry-btn');
         if (proxyRetryBtn) {

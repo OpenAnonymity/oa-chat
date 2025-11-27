@@ -1,13 +1,10 @@
-const DEFAULT_REMOTE_PROXY_URL = ''; // Set your proxy URL here or via UI
-const DEFAULT_LOCAL_PROXY_URL = ''; // Set your local proxy URL here or via UI
+const DEFAULT_PROXY_URL = ''; // Set your proxy URL here or via UI
 const LOCAL_STORAGE_KEY = 'oa-network-proxy-settings';
 const DB_SETTINGS_KEY = 'proxySettings';
 
 const DEFAULT_SETTINGS = {
     enabled: true,
-    mode: 'remote', // 'remote' | 'local'
-    remoteUrl: DEFAULT_REMOTE_PROXY_URL,
-    localUrl: DEFAULT_LOCAL_PROXY_URL,
+    url: DEFAULT_PROXY_URL,
     fallbackToDirect: true
 };
 
@@ -99,7 +96,7 @@ class NetworkProxy {
                     this.emitChange();
                 }
             };
-            
+
             // Delay to allow index.html script to load
             setTimeout(() => initProxy(), 500);
         }
@@ -131,14 +128,15 @@ class NetworkProxy {
             ...rawSettings
         };
 
-        const remoteUrl = this.sanitizeUrl(merged.remoteUrl, DEFAULT_REMOTE_PROXY_URL);
-        const localUrl = this.sanitizeUrl(merged.localUrl, DEFAULT_LOCAL_PROXY_URL);
+        // Migrate from old remoteUrl/localUrl format
+        let url = merged.url;
+        if (!url && (merged.remoteUrl || merged.localUrl)) {
+            url = merged.mode === 'local' ? merged.localUrl : merged.remoteUrl;
+        }
 
         return {
             enabled: !!merged.enabled,
-            mode: merged.mode === 'local' ? 'local' : 'remote',
-            remoteUrl,
-            localUrl,
+            url: this.sanitizeUrl(url, DEFAULT_PROXY_URL),
             fallbackToDirect: merged.fallbackToDirect !== false
         };
     }
@@ -168,7 +166,6 @@ class NetworkProxy {
     getStatus() {
         return {
             enabled: this.state.settings.enabled,
-            mode: this.state.settings.mode,
             activeProxyUrl: this.state.activeProxyUrl,
             ready: this.state.ready,
             usingProxy: this.state.usingProxy,
@@ -207,7 +204,7 @@ class NetworkProxy {
 
     enableTlsInspection() {
         if (this.tlsInspectionEnabled) return;
-        
+
         const libcurl = window.libcurl;
         if (!libcurl) {
             console.warn('[networkProxy] Cannot enable TLS inspection - libcurl not ready');
@@ -216,7 +213,7 @@ class NetworkProxy {
 
         // Save original stderr handler
         this.originalStderr = libcurl.stderr;
-        
+
         // Hook stderr to capture TLS handshake output (silently - no console spam)
         libcurl.stderr = (text) => {
             // Parse TLS info from verbose output (don't log to console - too noisy)
@@ -230,12 +227,12 @@ class NetworkProxy {
 
     disableTlsInspection() {
         if (!this.tlsInspectionEnabled) return;
-        
+
         const libcurl = window.libcurl;
         if (libcurl && this.originalStderr !== null) {
             libcurl.stderr = this.originalStderr;
         }
-        
+
         this.tlsInspectionEnabled = false;
         this.originalStderr = null;
         console.log('[networkProxy] TLS inspection disabled');
@@ -243,7 +240,7 @@ class NetworkProxy {
 
     parseTlsOutput(text) {
         if (!text || typeof text !== 'string') return;
-        
+
         // Store raw log (keep last 50 entries)
         this.tlsInfo.rawLogs.push({ timestamp: Date.now(), text });
         if (this.tlsInfo.rawLogs.length > 50) {
@@ -363,14 +360,14 @@ class NetworkProxy {
 
         try {
             console.log('[networkProxy] Forcing new TLS handshake to:', targetUrl);
-            
+
             // Re-apply proxy to create new session
             await this.ensureProxyApplied(true);
-            
+
             if (!this.httpSession) {
                 throw new Error('Failed to create new session');
             }
-            
+
             // Make request - the new connection will trigger TLS handshake output
             const response = await this.httpSession.fetch(targetUrl, {
                 method: 'HEAD',
@@ -459,12 +456,11 @@ class NetworkProxy {
 
     getActiveProxyUrl(settings = this.state.settings) {
         if (!settings.enabled) return null;
-        const url = settings.mode === 'local' ? settings.localUrl : settings.remoteUrl;
-        return url ? this.ensureTrailingSlash(url).replace(TRAILING_SLASH_RE, '/') : null;
+        return settings.url ? this.ensureTrailingSlash(settings.url).replace(TRAILING_SLASH_RE, '/') : null;
     }
 
     async updateSettings(partial, options = {}) {
-        const previousMode = this.state.settings.mode;
+        const previousUrl = this.state.settings.url;
         const wasEnabled = this.state.settings.enabled;
         this.state.settings = this.normalizeSettings({ ...this.state.settings, ...partial });
 
@@ -473,7 +469,7 @@ class NetworkProxy {
         }
 
         if (this.state.settings.enabled) {
-            const force = previousMode !== this.state.settings.mode || !wasEnabled;
+            const force = previousUrl !== this.state.settings.url || !wasEnabled;
             await this.ensureProxyApplied(force).catch((error) => {
                 this.state.lastError = error;
             });
@@ -501,13 +497,13 @@ class NetworkProxy {
         }
         const url = this.getActiveProxyUrl();
         if (!url) {
-            throw new Error('Proxy URL is not configured.');
+            throw new Error('Relay not configured');
         }
 
         try {
             console.debug('[networkProxy] Ensuring proxy is applied, url:', url);
             const libcurl = await this.ensureLibcurlReady();
-            
+
             console.debug('[networkProxy] Got libcurl:', {
                 exists: !!libcurl,
                 type: typeof libcurl,
@@ -516,11 +512,11 @@ class NetworkProxy {
                 hasFetch: typeof libcurl?.fetch,
                 keys: libcurl ? Object.keys(libcurl).slice(0, 10) : []
             });
-            
+
             if (!libcurl) {
                 throw new Error('libcurl.js object is not available after initialization');
             }
-            
+
             if (typeof libcurl.set_websocket !== 'function') {
                 console.error('[networkProxy] libcurl object:', libcurl);
                 console.error('[networkProxy] libcurl properties:', Object.keys(libcurl));
@@ -530,35 +526,35 @@ class NetworkProxy {
             const needsReconnect = force || this.state.activeProxyUrl !== url;
             if (needsReconnect) {
                 console.log('[networkProxy] Setting websocket to:', url);
-                
+
                 // Enable TLS inspection BEFORE creating session (to capture first handshake)
                 this.enableTlsInspection();
                 this.resetTlsInfo();
-                
+
                 // Close existing session to force new connections through new proxy
                 if (this.httpSession) {
                     console.log('[networkProxy] Closing existing HTTPSession');
                     this.httpSession.close();
                     this.httpSession = null;
                 }
-                
+
                 // Reset transport and set new proxy URL
                 libcurl.transport = 'wisp';
                 libcurl.set_websocket(url);
-                
+
                 // Create new session that will use the new proxy URL
                 this.httpSession = new libcurl.HTTPSession();
                 console.log('[networkProxy] Created new HTTPSession for proxy:', url);
-                
+
                 this.state.activeProxyUrl = url;
                 this.state.usingProxy = false;
                 this.state.connectionVerified = false;
             }
-            
+
             this.state.ready = true;
             this.state.fallbackActive = false;
             this.state.lastError = null;
-            
+
             // Verify connection with lightweight test (non-blocking)
             if (needsReconnect || !this.state.connectionVerified) {
                 // Run verification in background - don't block user actions
@@ -566,7 +562,7 @@ class NetworkProxy {
                     console.warn('[networkProxy] Background verification failed:', e.message);
                 });
             }
-            
+
             console.debug('[networkProxy] Proxy ready');
         } catch (error) {
             console.error('[networkProxy] Failed to apply proxy:', error);
@@ -588,11 +584,11 @@ class NetworkProxy {
         // Use example.com for ultra-lightweight verification (~1KB response)
         // TLS info is captured from actual OpenRouter requests, not this test
         const testUrl = 'https://example.com/';
-        
+
         if (!this.httpSession) {
             throw new Error('HTTPSession not initialized');
         }
-        
+
         try {
             const startTime = Date.now();
             const response = await this.httpSession.fetch(testUrl, {
@@ -600,7 +596,7 @@ class NetworkProxy {
                 signal: AbortSignal.timeout(5000)
             });
             const duration = Date.now() - startTime;
-            
+
             // Any HTTP response means proxy is working
             console.log('[networkProxy] ✅ Proxy verified in', duration + 'ms');
             this.state.connectionVerified = true;
@@ -609,7 +605,7 @@ class NetworkProxy {
             return true;
         } catch (error) {
             const msg = error.message || '';
-            
+
             // Error 18 (partial file) or 56 (recv failure) = proxy connected but response incomplete
             // This still means the proxy IS working
             if (msg.includes('error code 18') || msg.includes('error code 56')) {
@@ -619,7 +615,7 @@ class NetworkProxy {
                 this.emitChange();
                 return true;
             }
-            
+
             // Error 7 = couldn't connect at all
             console.error('[networkProxy] ❌ Proxy verification failed:', msg);
             this.state.connectionVerified = false;
@@ -651,22 +647,22 @@ class NetworkProxy {
         console.debug('[networkProxy] Waiting for libcurl to be ready...');
         const libcurl = await window.libcurlReadyPromise;
         console.debug('[networkProxy] libcurl ready, type:', typeof libcurl, 'ready:', libcurl?.ready);
-        
+
         // Also ensure window.libcurl is set
         if (libcurl && !window.libcurl) {
             window.libcurl = libcurl;
         }
-        
+
         // Enable TLS inspection to capture handshake details
         this.enableTlsInspection();
-        
+
         return libcurl || window.libcurl;
     }
 
     async fetch(resource, init = {}, config = {}) {
         const preferProxy = config.bypassProxy ? false : this.state.settings.enabled;
         const forceProxy = !!config.forceProxy;
-        
+
         const url = typeof resource === 'string' ? resource : resource.url;
         console.log('[networkProxy.fetch] Request to:', url?.substring(0, 100), 'preferProxy:', preferProxy);
 
@@ -679,15 +675,15 @@ class NetworkProxy {
 
         try {
             await this.ensureProxyApplied();
-            
+
             // Double-check that session is available after initialization
             if (!this.httpSession) {
                 throw new Error('HTTPSession not available after initialization');
             }
-            
+
             console.log('[networkProxy.fetch] 🔐 Using HTTPSession.fetch (encrypted via proxy) for:', url?.substring(0, 100));
             const startTime = Date.now();
-            
+
             // Auto-enable verbose mode for OpenRouter requests to capture TLS info
             // This ensures users see OpenRouter's certificate, not internal test endpoints
             const isOpenRouter = url?.includes('openrouter.ai');
@@ -696,11 +692,11 @@ class NetworkProxy {
             const response = await this.httpSession.fetch(resource, fetchInit);
             const duration = Date.now() - startTime;
             console.log('[networkProxy.fetch] ✅ HTTPSession.fetch succeeded in', duration + 'ms', 'status:', response.status);
-            
+
             // Track encrypted request
             const bodySize = init?.body?.length || init?.body?.byteLength || 0;
             this.trackEncryptedRequest(bodySize);
-            
+
             // Mark connection as verified on successful request (lazy verification)
             if (!this.state.connectionVerified) {
                 console.log('[networkProxy] ✅ Proxy verified via first real request');
