@@ -27,7 +27,7 @@ export default class ModelPicker {
             'openai/gpt-5.1-chat',
             'openai/gpt-5.1',
             'anthropic/claude-sonnet-4.5',
-            'anthropic/claude-opus-4.1',
+            'anthropic/claude-opus-4.5',
             'google/gemini-3-pro-preview',
             'google/gemini-3-pro-image-preview', // Nano Banana Pro
             'google/gemini-2.5-flash-image-preview', // Nano Banana
