@@ -18,6 +18,7 @@ import networkProxy from './services/networkProxy.js';
 const DEFAULT_MODEL_ID = 'openai/gpt-5.1-chat';
 const DEFAULT_MODEL_NAME = 'OpenAI: GPT-5.1 Instant';
 const DEFAULT_MODEL_NAME_ALIASES = new Set(['OpenAI: GPT-5.1 Chat', 'GPT-5.1 Chat']);
+const SESSION_STORAGE_KEY = 'oa-current-session'; // Tab-scoped session persistence
 const DELETE_HISTORY_COPY = {
     title: 'Delete all chat history',
     body: 'Past chat history is stored locally on this browser. Prompts and responses are end-to-end encrypted to and from the model providers who only see anonymous traffic and cannot identify, link, or otherwise track you.',
@@ -770,8 +771,12 @@ class ChatApp {
         // Load data from IndexedDB FIRST (to get existing sessions for sidebar)
         await this.loadFromDB();
 
-        // Don't create or select any session on startup
-        // A new session will be created when the user sends their first message
+        // Restore session from sessionStorage (persists across refreshes, not across tabs)
+        const savedSessionId = sessionStorage.getItem(SESSION_STORAGE_KEY);
+        if (savedSessionId && this.state.sessions.some(s => s.id === savedSessionId)) {
+            this.state.currentSessionId = savedSessionId;
+        }
+        // Otherwise, no session is selected - landing page shown until user sends first message
 
         // Load selected model from settings
         const storedModelPreference = await chatDB.getSetting('selectedModel');
@@ -1020,6 +1025,7 @@ class ChatApp {
         this.chatInput.updateSearchToggleUI();
 
         await chatDB.saveSession(session);
+        sessionStorage.setItem(SESSION_STORAGE_KEY, session.id);
         await chatDB.saveSetting('currentSessionId', session.id);
 
         // Hide message navigation immediately for new empty session
@@ -1060,6 +1066,7 @@ class ChatApp {
         this.editingMessageId = null;
 
         this.state.currentSessionId = sessionId;
+        sessionStorage.setItem(SESSION_STORAGE_KEY, sessionId);
         chatDB.saveSetting('currentSessionId', sessionId);
 
         // Keep current search state (global setting)

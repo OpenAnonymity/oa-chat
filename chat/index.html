@@ -196,6 +196,10 @@
                         <div id="sessions-scroll-area" class="flex-1 min-h-0 overflow-y-auto">
                             <!-- Loading indicator shown while sessions load -->
                             <div id="sessions-skeleton" class="sessions-loader">
+                                <div class="loader-text">
+                                    <span>Loading chats</span>
+                                    <span>from local browser storage</span>
+                                </div>
                                 <div class="loader-dots">
                                     <span></span>
                                     <span></span>
@@ -512,11 +516,13 @@
         </div>
     </div>
 
-    <!-- Prerender exact landing content early to avoid cold-start blank/flicker -->
+    <!-- Prerender landing content early (skip if restoring a session) -->
     <script type="module">
         try {
             const container = document.getElementById('messages-container');
-            if (container && container.childElementCount === 0) {
+            const hasSavedSession = sessionStorage.getItem('oa-current-session');
+            // Skip prerender if restoring a session - app.js will render the session directly
+            if (container && container.childElementCount === 0 && !hasSavedSession) {
                 const { buildEmptyState } = await import('./components/MessageTemplates.js');
                 container.innerHTML = buildEmptyState();
             }
