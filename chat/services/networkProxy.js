@@ -1,10 +1,9 @@
-const DEFAULT_PROXY_URL = 'wss://websocket-proxy-server-twilight-feather-9805.fly.dev/?secret=8d4fc1b2e7a9035f14c8d92afe6730bb'; // Set your proxy URL here or via UI
+// Hardcoded proxy URL - not user-configurable
+const PROXY_URL = 'wss://proxy.openanonymity.ai/?secret=8d4fc1b2e7a9035f14c8d92afe6730bb';
 const LOCAL_STORAGE_KEY = 'oa-network-proxy-settings';
-const DB_SETTINGS_KEY = 'proxySettings';
 
 const DEFAULT_SETTINGS = {
     enabled: true,
-    url: DEFAULT_PROXY_URL,
     fallbackToDirect: true
 };
 
@@ -55,7 +54,7 @@ class NetworkProxy {
             lastError: null,
             lastFailureAt: null,
             lastSuccessAt: null,
-            syncedWithDB: false,
+            initialized: false,
             transport: 'idle'
         };
 
@@ -81,56 +80,15 @@ class NetworkProxy {
         this.tlsInspectionEnabled = false;
         this.originalStderr = null;
 
-        // Initialize proxy if enabled
-        if (this.state.settings.enabled) {
-            const initProxy = async () => {
-                try {
-                    console.log('[networkProxy] Starting initial proxy setup');
-                    await this.ensureProxyApplied();
-                    console.log('[networkProxy] Initial proxy setup complete');
-                } catch (error) {
-                    console.error('[networkProxy] Initial proxy setup failed:', error);
-                    this.state.lastError = error;
-                    this.emitChange();
-                }
-            };
-
-            // Delay to allow index.html script to load
-            setTimeout(() => initProxy(), 500);
-        }
-    }
-
-    sanitizeUrl(url, fallback) {
-        if (!url || typeof url !== 'string') return fallback;
-        let normalized = url.trim();
-        if (!normalized) return fallback;
-        if (normalized.startsWith('ws://') || normalized.startsWith('wss://')) {
-            // Auto-upgrade ws:// to wss:// when page is served over HTTPS (mixed content not allowed)
-            if (typeof window !== 'undefined' && window.location?.protocol === 'https:' && normalized.startsWith('ws://')) {
-                console.warn('[networkProxy] Auto-upgrading ws:// to wss:// (page served over HTTPS)');
-                normalized = 'wss://' + normalized.slice(5);
-            }
-            return normalized;
-        }
-        return fallback;
+        // Proxy initialization is deferred to syncWithDatabase() called by app.js
+        // This avoids duplicate initialization and ensures proper sequencing
     }
 
     normalizeSettings(rawSettings = {}) {
-        const merged = {
-            ...DEFAULT_SETTINGS,
-            ...rawSettings
-        };
-
-        // Migrate from old remoteUrl/localUrl format
-        let url = merged.url;
-        if (!url && (merged.remoteUrl || merged.localUrl)) {
-            url = merged.mode === 'local' ? merged.localUrl : merged.remoteUrl;
-        }
-
         return {
-            enabled: !!merged.enabled,
-            url: this.sanitizeUrl(url, DEFAULT_PROXY_URL),
-            fallbackToDirect: merged.fallbackToDirect !== false
+            enabled: rawSettings.enabled !== undefined ? !!rawSettings.enabled : DEFAULT_SETTINGS.enabled,
+            url: PROXY_URL, // Always use hardcoded URL
+            fallbackToDirect: rawSettings.fallbackToDirect !== false
         };
     }
 
@@ -405,27 +363,12 @@ class NetworkProxy {
         return () => this.eventTarget.removeEventListener('change', handler);
     }
 
-    async syncWithDatabase() {
-        if (this.state.syncedWithDB) {
-            return;
-        }
-        if (!window.chatDB || !chatDB.db) {
+    async initialize() {
+        if (this.state.initialized) {
             return;
         }
 
-        try {
-            const stored = await chatDB.getSetting(DB_SETTINGS_KEY);
-            if (stored) {
-                this.state.settings = this.normalizeSettings(stored);
-                this.persistLocalSettings(this.state.settings);
-            } else {
-                await chatDB.saveSetting(DB_SETTINGS_KEY, this.state.settings);
-            }
-        } catch (error) {
-            console.warn('Failed to sync proxy settings with database:', error);
-        }
-
-        this.state.syncedWithDB = true;
+        this.state.initialized = true;
 
         if (this.state.settings.enabled) {
             await this.ensureProxyApplied().catch((error) => {
@@ -436,33 +379,30 @@ class NetworkProxy {
         this.emitChange();
     }
 
-    async saveSettings(settings) {
-        this.persistLocalSettings(settings);
-        if (window.chatDB && chatDB.db) {
-            try {
-                await chatDB.saveSetting(DB_SETTINGS_KEY, settings);
-            } catch (error) {
-                console.warn('Failed to write proxy settings to database:', error);
-            }
-        }
+    saveSettings(settings) {
+        // Only persist enabled and fallbackToDirect (URL is hardcoded)
+        this.persistLocalSettings({
+            enabled: settings.enabled,
+            fallbackToDirect: settings.fallbackToDirect
+        });
     }
 
     getActiveProxyUrl(settings = this.state.settings) {
         if (!settings.enabled) return null;
-        return settings.url || null;
+        return PROXY_URL;
     }
 
     async updateSettings(partial, options = {}) {
-        const previousUrl = this.state.settings.url;
         const wasEnabled = this.state.settings.enabled;
         this.state.settings = this.normalizeSettings({ ...this.state.settings, ...partial });
 
         if (!options.skipPersist) {
-            await this.saveSettings(this.state.settings);
+            this.saveSettings(this.state.settings);
         }
 
         if (this.state.settings.enabled) {
-            const force = previousUrl !== this.state.settings.url || !wasEnabled;
+            // Force reconnect if proxy was just enabled
+            const force = !wasEnabled;
             await this.ensureProxyApplied(force).catch((error) => {
                 this.state.lastError = error;
             });

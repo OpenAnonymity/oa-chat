@@ -301,6 +301,9 @@ class TLSSecurityModal {
     }
 
     renderConnectionInfo(tlsInfo) {
+        const settings = networkProxy.getSettings();
+        const proxyUrl = settings.url;
+
         return `
             <div class="space-y-2">
                 <h3 class="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
@@ -309,6 +312,7 @@ class TLSSecurityModal {
                 </h3>
                 <div class="p-3 rounded-lg border border-border bg-card text-xs">
                     <div class="space-y-1.5 font-mono text-muted-foreground">
+                        ${proxyUrl ? `<div class="flex justify-between"><span>Relay Server</span><span class="text-foreground truncate ml-2" title="${proxyUrl}">${this.formatProxyHostname(proxyUrl)}</span></div>` : ''}
                         ${tlsInfo.version ? `<div class="flex justify-between"><span>TLS Version</span><span class="text-foreground">${tlsInfo.version}</span></div>` : ''}
                         ${tlsInfo.cipher ? `<div class="flex justify-between"><span>Cipher</span><span class="text-foreground">${tlsInfo.cipher}</span></div>` : ''}
                         ${tlsInfo.certSubject ? `<div class="flex justify-between"><span>Certificate</span><span class="text-foreground">${this.formatCertName(tlsInfo.certSubject)}</span></div>` : ''}
@@ -328,9 +332,25 @@ class TLSSecurityModal {
                 </div>
             `;
         }
+
+        const settings = networkProxy.getSettings();
+        const proxyUrl = settings.url;
+
         return `
-            <div class="p-3 rounded-lg border border-border bg-card text-center text-xs text-muted-foreground">
-                No TLS connection captured yet. Make a request through the proxy to see connection info.
+            <div class="space-y-2">
+                <h3 class="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                    <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                    Current Connection
+                </h3>
+                <div class="p-3 rounded-lg border border-border bg-card text-xs">
+                    ${proxyUrl ? `
+                        <div class="flex justify-between font-mono text-muted-foreground mb-2">
+                            <span>Relay Server</span>
+                            <span class="text-foreground truncate ml-2" title="${proxyUrl}">${this.formatProxyHostname(proxyUrl)}</span>
+                        </div>
+                    ` : ''}
+                    <p class="text-center text-muted-foreground">No TLS connection captured yet. Make a request through the proxy to see connection info.</p>
+                </div>
             </div>
         `;
     }
@@ -340,6 +360,16 @@ class TLSSecurityModal {
         if (cnMatch) return cnMatch[1];
         const parts = certString.split(',');
         return parts[0]?.replace(/^[A-Z]+=/, '') || certString;
+    }
+
+    formatProxyHostname(url) {
+        if (!url) return '';
+        try {
+            const parsed = new URL(url);
+            return parsed.host;
+        } catch {
+            return url;
+        }
     }
 
     setupEventListeners() {

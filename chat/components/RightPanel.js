@@ -66,9 +66,6 @@ class RightPanel {
         // Invitation code dropdown state
         this.showInvitationForm = false;
 
-        // Proxy URL edit state
-        this.showProxyUrlEdit = false;
-
         this.initializeState();
         this.setupEventListeners();
         this.setupResponsive();
@@ -1249,39 +1246,6 @@ class RightPanel {
         `;
     }
 
-    getActiveProxyUrl(settings = this.proxySettings, status = this.proxyStatus) {
-        if (status?.activeProxyUrl) return status.activeProxyUrl;
-        if (!settings) return null;
-        return settings.url;
-    }
-
-    formatProxyUrl(url) {
-        if (!url) return '';
-        try {
-            const parsed = new URL(url);
-            const path = parsed.pathname === '/' ? '' : parsed.pathname;
-            return `${parsed.protocol.replace(':', '')}://${parsed.host}${path}`;
-        } catch {
-            return url;
-        }
-    }
-
-    formatProxyHostname(url) {
-        if (!url) return '';
-        try {
-            const parsed = new URL(url);
-            // For localhost, show port too
-            if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
-                return parsed.host;
-            }
-            // For remote URLs, show just the last two parts of hostname (e.g., "fly.dev")
-            const parts = parsed.hostname.split('.');
-            return parts.length > 2 ? parts.slice(-2).join('.') : parsed.hostname;
-        } catch {
-            return url;
-        }
-    }
-
     getProxyStatusMeta(settings = this.proxySettings, status = this.proxyStatus) {
         if (!settings || !settings.enabled) {
             return { label: 'Disabled', textClass: 'text-muted-foreground', dotClass: 'bg-muted-foreground/40' };
@@ -1359,8 +1323,6 @@ class RightPanel {
         const settings = this.proxySettings || networkProxy.getSettings();
         const status = this.proxyStatus || networkProxy.getStatus();
         const statusMeta = this.getProxyStatusMeta(settings, status);
-        const activeUrl = settings.enabled ? this.getActiveProxyUrl(settings, status) : null;
-        const configuredUrl = settings.url;
         const pending = this.proxyActionPending;
         const hasError = status?.lastError;
         const tlsInfo = networkProxy.getTlsInfo();
@@ -1414,69 +1376,15 @@ class RightPanel {
                             </span>
                         ` : ''}
                     </div>
-                    <div class="flex items-center gap-1 shrink-0">
-                        ${activeUrl ? `<span class="text-muted-foreground" title="${this.escapeHtml(activeUrl)}">${this.escapeHtml(this.formatProxyHostname(activeUrl))}</span>` : ''}
-                        ${hasError ? `
-                            <button id="proxy-retry-btn" class="inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-5 w-5" title="Reconnect" ${pending ? 'disabled' : ''}>
-                                <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <path d="M1 4v6h6M23 20v-6h-6" stroke-linecap="round" stroke-linejoin="round"/>
-                                    <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15" stroke-linecap="round" stroke-linejoin="round"/>
-                                </svg>
-                            </button>
-                        ` : ''}
-                        ${activeUrl ? `
-                            <button id="proxy-copy-url-btn" class="inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-5 w-5" title="Copy URL">
-                                <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-                                </svg>
-                            </button>
-                        ` : ''}
-                        <button id="proxy-edit-url-btn" class="inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-5 w-5" title="${activeUrl ? 'Edit URL' : 'Configure URL'}">
+                    ${hasError ? `
+                        <button id="proxy-retry-btn" class="inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-5 w-5" title="Reconnect" ${pending ? 'disabled' : ''}>
                             <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                                <path d="M1 4v6h6M23 20v-6h-6" stroke-linecap="round" stroke-linejoin="round"/>
+                                <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15" stroke-linecap="round" stroke-linejoin="round"/>
                             </svg>
                         </button>
-                    </div>
+                    ` : ''}
                 </div>
-
-                <!-- Proxy URL Edit Form -->
-                ${this.showProxyUrlEdit ? `
-                    <form id="proxy-url-edit-form" class="space-y-2 p-2 bg-muted/30 rounded-lg">
-                        <div class="flex items-center gap-1.5">
-                            <input
-                                id="proxy-url-input"
-                                type="text"
-                                value="${this.escapeHtml(configuredUrl || '')}"
-                                placeholder="wss://proxy.example.com/"
-                                class="input-focus-clean flex-1 px-2 py-1.5 text-[10px] border border-border rounded-md bg-background text-foreground placeholder:text-muted-foreground font-mono"
-                                ${pending ? 'disabled' : ''}
-                            />
-                            <button
-                                type="submit"
-                                class="btn-ghost-hover p-1.5 rounded-md border border-border bg-background text-foreground transition-all duration-200 hover:shadow-sm"
-                                title="Save"
-                                ${pending ? 'disabled' : ''}
-                            >
-                                <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <polyline points="20 6 9 17 4 12"/>
-                                </svg>
-                            </button>
-                            <button
-                                type="button"
-                                id="proxy-url-cancel-btn"
-                                class="btn-ghost-hover p-1.5 rounded-md border border-border bg-background text-foreground transition-all duration-200 hover:shadow-sm"
-                                title="Cancel"
-                            >
-                                <svg class="w-3 h-3 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <path d="M18 6L6 18M6 6l12 12"/>
-                                </svg>
-                            </button>
-                        </div>
-                        <p class="text-[9px] text-muted-foreground">URL must start with ws:// or wss://</p>
-                    </form>
-                ` : ''}
 
                 <!-- Security Details Button -->
                 ${settings.enabled ? `
@@ -1521,54 +1429,6 @@ class RightPanel {
 
         try {
             await networkProxy.reconnect();
-        } catch (error) {
-            this.proxyActionError = error.message;
-        } finally {
-            this.proxyActionPending = false;
-            this.renderTopSectionOnly();
-        }
-    }
-
-    async handleProxyCopyUrl() {
-        const url = this.getActiveProxyUrl();
-        if (!url || !navigator?.clipboard) return;
-
-        try {
-            await navigator.clipboard.writeText(url);
-        } catch (error) {
-            this.proxyActionError = error.message;
-            this.renderTopSectionOnly();
-        }
-    }
-
-    handleProxyEditUrl() {
-        this.showProxyUrlEdit = !this.showProxyUrlEdit;
-        this.proxyActionError = null;
-        this.renderTopSectionOnly();
-    }
-
-    async handleProxyUrlSubmit(newUrl) {
-        const currentUrl = this.getActiveProxyUrl();
-        if (newUrl === currentUrl) {
-            this.showProxyUrlEdit = false;
-            this.renderTopSectionOnly();
-            return;
-        }
-
-        // Validate URL format
-        if (newUrl && !newUrl.match(/^wss?:\/\//)) {
-            this.proxyActionError = 'URL must start with ws:// or wss://';
-            this.renderTopSectionOnly();
-            return;
-        }
-
-        this.proxyActionError = null;
-        this.proxyActionPending = true;
-        this.renderTopSectionOnly();
-
-        try {
-            await networkProxy.updateSettings({ url: newUrl });
-            this.showProxyUrlEdit = false;
         } catch (error) {
             this.proxyActionError = error.message;
         } finally {
@@ -1651,36 +1511,6 @@ class RightPanel {
         const proxyRetryBtn = document.getElementById('proxy-retry-btn');
         if (proxyRetryBtn) {
             proxyRetryBtn.onclick = () => this.handleProxyReconnect();
-        }
-
-        const proxyCopyBtn = document.getElementById('proxy-copy-url-btn');
-        if (proxyCopyBtn) {
-            proxyCopyBtn.onclick = () => this.handleProxyCopyUrl();
-        }
-
-        const proxyEditBtn = document.getElementById('proxy-edit-url-btn');
-        if (proxyEditBtn) {
-            proxyEditBtn.onclick = () => this.handleProxyEditUrl();
-        }
-
-        const proxyUrlEditForm = document.getElementById('proxy-url-edit-form');
-        if (proxyUrlEditForm) {
-            proxyUrlEditForm.onsubmit = (e) => {
-                e.preventDefault();
-                const input = document.getElementById('proxy-url-input');
-                if (input) {
-                    this.handleProxyUrlSubmit(input.value.trim());
-                }
-            };
-        }
-
-        const proxyUrlCancelBtn = document.getElementById('proxy-url-cancel-btn');
-        if (proxyUrlCancelBtn) {
-            proxyUrlCancelBtn.onclick = () => {
-                this.showProxyUrlEdit = false;
-                this.proxyActionError = null;
-                this.renderTopSectionOnly();
-            };
         }
 
         const proxySecurityBtn = document.getElementById('proxy-security-details-btn');

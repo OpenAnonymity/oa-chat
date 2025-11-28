@@ -843,7 +843,7 @@ class ChatApp {
 
         // Initialize IndexedDB
         await chatDB.init();
-        await networkProxy.syncWithDatabase();
+        await networkProxy.initialize();
 
         // Load network logs from database - DISABLED (logs are now memory-only, ephemeral per tab)
         // await networkLogger.loadLogs();
