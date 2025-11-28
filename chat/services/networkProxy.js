@@ -3,7 +3,7 @@ const PROXY_URL = 'wss://proxy.openanonymity.ai/?secret=8d4fc1b2e7a9035f14c8d92a
 const LOCAL_STORAGE_KEY = 'oa-network-proxy-settings';
 
 const DEFAULT_SETTINGS = {
-    enabled: true,
+    enabled: false,
     fallbackToDirect: true
 };
 
