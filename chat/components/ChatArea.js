@@ -30,7 +30,7 @@ export default class ChatArea {
             const codeBlockCopyBtn = e.target.closest('.code-block-copy-btn');
             if (codeBlockCopyBtn) {
                 e.preventDefault();
-                await this.handleCopyCodeBlock(codeBlockCopyBtn);
+                this.handleCopyCodeBlock(codeBlockCopyBtn);
                 return;
             }
 
@@ -105,10 +105,61 @@ export default class ChatArea {
     }
 
     /**
-     * Handles copying the raw markdown/latex content of a message
+     * Copies text to clipboard with Safari fallback.
+     * Uses execCommand for immediate synchronous copy (required for Safari user activation).
+     * @param {string} text - Text to copy
+     * @returns {boolean} Success status
+     */
+    copyToClipboard(text) {
+        try {
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            textarea.style.pointerEvents = 'none';
+            document.body.appendChild(textarea);
+            textarea.select();
+            const success = document.execCommand('copy');
+            document.body.removeChild(textarea);
+            return success;
+        } catch (e) {
+            // Fallback to async Clipboard API
+            navigator.clipboard.writeText(text).catch(() => {});
+            return true;
+        }
+    }
+
+    /**
+     * Gets visible text content from a message element in the DOM.
+     * @param {string} messageId - The message ID
+     * @returns {string|null} The text content or null
+     */
+    getMessageTextFromDOM(messageId) {
+        const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
+        if (!messageEl) return null;
+
+        const contentEl = messageEl.querySelector('.message-content');
+        if (contentEl) {
+            return contentEl.innerText || contentEl.textContent;
+        }
+        return null;
+    }
+
+    /**
+     * Handles copying the content of a message.
+     * Copies from DOM first (handles streaming), falls back to database.
      * @param {string} messageId - The message ID to copy
      */
     async handleCopyMessage(messageId) {
+        // First try DOM (synchronous, works for streaming, Safari-friendly)
+        const domContent = this.getMessageTextFromDOM(messageId);
+        if (domContent && domContent.trim()) {
+            this.copyToClipboard(domContent);
+            this.showCopySuccess(messageId);
+            return;
+        }
+
+        // Fallback to database for raw markdown
         const session = this.app.getCurrentSession();
         if (!session) return;
 
@@ -116,30 +167,33 @@ export default class ChatArea {
         const message = messages.find(m => m.id === messageId);
 
         if (message && message.content) {
-            try {
-                await navigator.clipboard.writeText(message.content);
+            this.copyToClipboard(message.content);
+            this.showCopySuccess(messageId);
+        }
+    }
 
-                // Handle assistant copy button
-                const btn = document.querySelector(`.copy-message-btn[data-message-id="${messageId}"]`);
-                if (btn) {
-                    this.animateCopyButton(btn);
-                }
+    /**
+     * Shows copy success feedback on the appropriate button.
+     * @param {string} messageId - The message ID
+     */
+    showCopySuccess(messageId) {
+        // Handle assistant copy button
+        const btn = document.querySelector(`.copy-message-btn[data-message-id="${messageId}"]`);
+        if (btn) {
+            this.animateCopyButton(btn);
+        }
 
-                // Handle user copy button
-                const userBtn = document.querySelector(`.copy-user-message-btn[data-message-id="${messageId}"]`);
-                if (userBtn) {
-                    this.animateCopyButton(userBtn);
-                    // Keep parent visible
-                    const actionsContainer = userBtn.closest('.message-user-actions');
-                    if (actionsContainer) {
-                        actionsContainer.classList.add('force-visible');
-                        setTimeout(() => {
-                            actionsContainer.classList.remove('force-visible');
-                        }, 2000);
-                    }
-                }
-            } catch (error) {
-                console.error('Failed to copy message:', error);
+        // Handle user copy button
+        const userBtn = document.querySelector(`.copy-user-message-btn[data-message-id="${messageId}"]`);
+        if (userBtn) {
+            this.animateCopyButton(userBtn);
+            // Keep parent visible
+            const actionsContainer = userBtn.closest('.message-user-actions');
+            if (actionsContainer) {
+                actionsContainer.classList.add('force-visible');
+                setTimeout(() => {
+                    actionsContainer.classList.remove('force-visible');
+                }, 2000);
             }
         }
     }
@@ -173,50 +227,30 @@ export default class ChatArea {
      * Handles copying code from a code block
      * @param {HTMLElement} btn - The copy button element
      */
-    async handleCopyCodeBlock(btn) {
+    handleCopyCodeBlock(btn) {
         // Get code from data attribute (preserves original formatting)
         const code = btn.dataset.code;
         if (!code) return;
 
         // Decode HTML entities that were escaped for the attribute
-        const textarea = document.createElement('textarea');
-        textarea.innerHTML = code;
-        const decodedCode = textarea.value;
+        const tempEl = document.createElement('textarea');
+        tempEl.innerHTML = code;
+        const decodedCode = tempEl.value;
 
         // Get button elements for animation
         const svg = btn.querySelector('.copy-icon');
         const textEl = btn.querySelector('.copy-text');
         if (!svg) return;
 
-        const originalSvgContent = svg.innerHTML;
-        const originalText = textEl ? textEl.textContent : '';
-
-        try {
-            // Try modern Clipboard API first
-            await navigator.clipboard.writeText(decodedCode);
-        } catch (error) {
-            // Fallback to execCommand for older browsers or restricted contexts
-            try {
-                const tempTextarea = document.createElement('textarea');
-                tempTextarea.value = decodedCode;
-                tempTextarea.style.position = 'fixed';
-                tempTextarea.style.opacity = '0';
-                document.body.appendChild(tempTextarea);
-                tempTextarea.select();
-                document.execCommand('copy');
-                document.body.removeChild(tempTextarea);
-            } catch (fallbackError) {
-                console.error('Failed to copy code:', fallbackError);
-                return;
-            }
-        }
+        this.copyToClipboard(decodedCode);
 
         // Animate button to show success
+        const originalSvgContent = svg.innerHTML;
+        const originalText = textEl ? textEl.textContent : '';
         svg.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />';
         if (textEl) textEl.textContent = 'Copied';
 
         setTimeout(() => {
-            // Restore original icon and text
             svg.innerHTML = originalSvgContent;
             if (textEl) textEl.textContent = originalText;
         }, 2000);
