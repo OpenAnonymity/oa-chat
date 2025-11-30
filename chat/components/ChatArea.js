@@ -26,6 +26,14 @@ export default class ChatArea {
 
         // Event delegation for message action buttons
         messagesContainer.addEventListener('click', async (e) => {
+            // User message show more/less toggle
+            const showMoreBtn = e.target.closest('.user-message-show-more');
+            if (showMoreBtn) {
+                e.preventDefault();
+                this.handleToggleUserMessage(showMoreBtn);
+                return;
+            }
+
             // Code block copy button
             const codeBlockCopyBtn = e.target.closest('.code-block-copy-btn');
             if (codeBlockCopyBtn) {
@@ -221,6 +229,27 @@ export default class ChatArea {
             // Blur the button to ensure it hides if relying on focus state
             btn.blur();
         }, 2000);
+    }
+
+    /**
+     * Handles toggling the collapsed state of long user messages.
+     * @param {HTMLElement} btn - The show more/less button element
+     */
+    handleToggleUserMessage(btn) {
+        const bubble = btn.closest('.message-user');
+        if (!bubble) return;
+
+        const content = bubble.querySelector('.user-message-collapsible');
+        if (!content) return;
+
+        const isCollapsed = content.classList.contains('collapsed');
+        if (isCollapsed) {
+            content.classList.remove('collapsed');
+            btn.textContent = 'Show less';
+        } else {
+            content.classList.add('collapsed');
+            btn.textContent = 'Show more';
+        }
     }
 
     /**

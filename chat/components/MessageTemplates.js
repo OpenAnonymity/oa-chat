@@ -196,6 +196,9 @@ function buildFileAttachments(files) {
     return `<div class="flex flex-wrap gap-3 mb-2">${fileCards}</div>`;
 }
 
+// Threshold for collapsing long user messages (in characters)
+const USER_MESSAGE_COLLAPSE_THRESHOLD = 560;
+
 /**
  * Builds HTML for a user message bubble.
  * @param {Object} message - Message object with id, content, etc.
@@ -243,15 +246,23 @@ function buildUserMessage(message, options = {}) {
         `;
     }
 
+    // Check if message is long enough to collapse
+    const isLongMessage = message.content && message.content.length > USER_MESSAGE_COLLAPSE_THRESHOLD;
+    const collapsibleClass = isLongMessage ? 'user-message-collapsible collapsed' : '';
+    const showMoreBtn = isLongMessage ? `
+        <button class="user-message-show-more" data-message-id="${message.id}">Show more</button>
+    ` : '';
+
     // Normal display mode with action buttons (shown on hover)
     return `
         <div class="${CLASSES.userWrapper}" data-message-id="${message.id}">
             <div class="${CLASSES.userGroup}">
                 <div class="${CLASSES.userBubble}">
-                    <div class="${CLASSES.userContent}">
+                    <div class="${CLASSES.userContent} ${collapsibleClass}">
                         ${fileAttachments}
                         <p class="mb-0">${escapeHtml(message.content)}</p>
                     </div>
+                    ${showMoreBtn}
                 </div>
                 <div class="message-user-actions absolute top-full right-0 mt-1 flex items-center gap-1 z-10">
                     <button

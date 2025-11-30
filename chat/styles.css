@@ -303,6 +303,7 @@
 
 /* Message styles */
 .message-user {
+    position: relative;
     background-color: hsl(217.2 91.2% 59.8%);
     color: white;
     border-radius: 0.875rem;
@@ -313,6 +314,59 @@
     font-size: 0.875rem;
     margin: 0;
     white-space: pre-wrap; /* Preserve whitespace and newlines */
+}
+
+/* Collapsible long user messages */
+.user-message-collapsible {
+    position: relative;
+    overflow: hidden;
+    transition: max-height 0.3s ease;
+}
+
+.user-message-collapsible.collapsed {
+    max-height: 6rem; /* ~4-5 lines */
+}
+
+/* Fade gradient overlay for collapsed state */
+.user-message-collapsible.collapsed::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 2.5rem;
+    background: linear-gradient(to bottom, transparent 0%, hsl(217.2 91.2% 59.8% / 0.85) 100%);
+    pointer-events: none;
+}
+
+/* Show more button - overlaid on content when collapsed */
+.user-message-show-more {
+    display: block;
+    width: 100%;
+    padding: 0;
+    margin-top: 0.25rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.9);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    text-align: right;
+    transition: color 0.15s ease;
+}
+
+.user-message-show-more:hover {
+    color: rgba(255, 255, 255, 1);
+}
+
+/* When collapsed, overlay the button on the content */
+.user-message-collapsible.collapsed + .user-message-show-more {
+    position: absolute;
+    bottom: 0.5rem;
+    right: 0.75rem;
+    width: auto;
+    margin-top: 0;
+    z-index: 1;
 }
 
 .message-assistant {
