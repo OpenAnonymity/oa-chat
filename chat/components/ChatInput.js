@@ -180,23 +180,12 @@ export default class ChatInput {
     }
 
     /**
-     * Updates the visual state of the search toggle switch.
+     * Updates the visual state of the search toggle.
      */
     updateSearchToggleUI() {
-        this.app.elements.searchSwitch.setAttribute('aria-checked', this.app.searchEnabled);
-
-        const thumb = this.app.elements.searchSwitch.querySelector('.search-switch-thumb');
-        if (this.app.searchEnabled) {
-            this.app.elements.searchSwitch.classList.remove('bg-muted', 'hover:bg-muted/80');
-            this.app.elements.searchSwitch.classList.add('search-switch-active');
-            thumb.classList.remove('translate-x-[2px]', 'bg-background/80');
-            thumb.classList.add('translate-x-[19px]', 'search-switch-thumb-active');
-        } else {
-            this.app.elements.searchSwitch.classList.remove('search-switch-active');
-            this.app.elements.searchSwitch.classList.add('bg-muted', 'hover:bg-muted/80');
-            thumb.classList.remove('translate-x-[19px]', 'search-switch-thumb-active');
-            thumb.classList.add('translate-x-[2px]', 'bg-background/80');
-        }
+        const toggle = this.app.elements.searchToggle;
+        toggle.setAttribute('aria-pressed', this.app.searchEnabled);
+        toggle.classList.toggle('search-active', this.app.searchEnabled);
     }
 
     /**

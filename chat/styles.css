@@ -1655,13 +1655,23 @@ html[data-right-panel-hidden="true"] #right-panel {
     }
 }
 
-/* Search switch active state - works in both light and dark mode */
-.search-switch-active {
-    background-color: rgb(59, 130, 246) !important;
+/* Search toggle active state */
+#search-toggle.search-active {
+    color: rgb(59, 130, 246) !important;
+    background-color: rgba(59, 130, 246, 0.1) !important;
 }
 
-.search-switch-thumb-active {
-    background-color: white !important;
+#search-toggle.search-active:hover {
+    background-color: rgba(59, 130, 246, 0.15) !important;
+}
+
+.dark #search-toggle.search-active {
+    color: rgb(96, 165, 250) !important;
+    background-color: rgba(59, 130, 246, 0.2) !important;
+}
+
+.dark #search-toggle.search-active:hover {
+    background-color: rgba(59, 130, 246, 0.25) !important;
 }
 
 /* Image modal animation */
@@ -1793,6 +1803,36 @@ html {
         opacity: 1;
         transform: translateX(-50%) translateY(8px);
     }
+}
+
+/* Tooltip position: top (for elements at bottom of screen) */
+[data-tooltip-position="top"]:hover::after {
+    top: auto;
+    bottom: 100%;
+    transform: translateX(-50%) translateY(-8px);
+}
+
+[data-tooltip-position="top"]:hover::before {
+    top: auto;
+    bottom: 100%;
+    transform: translateX(-50%) translateY(0px);
+    border-color: hsl(var(--color-border)) transparent transparent transparent;
+}
+
+@keyframes tooltipFadeInTop {
+    from {
+        opacity: 0;
+        transform: translateX(-50%) translateY(-4px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(-50%) translateY(-8px);
+    }
+}
+
+[data-tooltip-position="top"]:hover::after,
+[data-tooltip-position="top"]:hover::before {
+    animation: tooltipFadeInTop 0.15s ease-out;
 }
 
 /* Dark mode tooltip adjustment */

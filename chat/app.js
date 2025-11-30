@@ -59,7 +59,6 @@ class ChatApp {
             settingsBtn: document.getElementById('settings-btn'),
             settingsMenu: document.getElementById('settings-menu'),
             searchToggle: document.getElementById('search-toggle'),
-            searchSwitch: document.getElementById('search-switch'),
             // clearChatBtn: document.getElementById('clear-chat-btn'), // Temporarily removed
             // copyMarkdownBtn: document.getElementById('copy-markdown-btn'), // Temporarily removed
             toggleRightPanelBtn: document.getElementById('toggle-right-panel-btn'), // This might be legacy, but let's keep it for now.
@@ -83,7 +82,7 @@ class ChatApp {
             dropZoneOverlay: document.getElementById('drop-zone-overlay'),
         };
 
-        this.searchEnabled = false;
+        this.searchEnabled = true;
         this.sessionSearchQuery = '';
         this.uploadedFiles = [];
         this.rightPanel = null;
@@ -3205,10 +3204,10 @@ class ChatApp {
 
         // Update button icon based on streaming state
         if (isStreaming) {
-            // Change to stop icon
+            // Change to stop icon (simple square)
             this.elements.sendBtn.innerHTML = `
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5">
-                    <rect x="6" y="6" width="12" height="12" rx="2" ry="2"/>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-3 h-3">
+                    <rect x="4" y="4" width="16" height="16" rx="2"/>
                 </svg>
             `;
             // Change button style to indicate stop
@@ -3218,7 +3217,7 @@ class ChatApp {
         } else {
             // Restore send icon
             this.elements.sendBtn.innerHTML = `
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 10.5 12 3m0 0 7.5 7.5M12 3v18" />
                 </svg>
             `;
