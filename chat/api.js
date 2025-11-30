@@ -184,7 +184,10 @@ class OpenRouterAPI {
             'mistralai': 'Mistral',
             'deepseek': 'DeepSeek',
             'cohere': 'Cohere',
-            'perplexity': 'Perplexity'
+            'perplexity': 'Perplexity',
+            'qwen': 'Qwen',
+            'nvidia': 'Nvidia',
+            'alibaba': 'Qwen'  // Alibaba models are Qwen
         };
         return providerMap[provider] || provider.charAt(0).toUpperCase() + provider.slice(1);
     }
@@ -292,11 +295,11 @@ class OpenRouterAPI {
             } catch (fetchError) {
                 // Handle proxy fallback - requires user confirmation
                 if (fetchError instanceof ProxyFallbackError || fetchError?.requiresConfirmation) {
-                    const confirmed = await window.showProxyFallbackConfirmation?.({ 
-                        error: fetchError.message, 
-                        url: url 
+                    const confirmed = await window.showProxyFallbackConfirmation?.({
+                        error: fetchError.message,
+                        url: url
                     });
-                    
+
                     if (confirmed) {
                         response = await networkProxy.fetchWithFallback(url, {
                             method: 'POST',
@@ -604,12 +607,12 @@ class OpenRouterAPI {
                 // Handle proxy fallback - requires user confirmation
                 if (error instanceof ProxyFallbackError || error?.requiresConfirmation) {
                     console.log('🔒 Chat: Proxy unavailable, requesting user confirmation for fallback');
-                    
-                    const confirmed = await window.showProxyFallbackConfirmation?.({ 
-                        error: error.message, 
-                        url: url 
+
+                    const confirmed = await window.showProxyFallbackConfirmation?.({
+                        error: error.message,
+                        url: url
                     });
-                    
+
                     if (confirmed) {
                         console.log('✅ Chat: User confirmed fallback, using direct connection');
                         response = await networkProxy.fetchWithFallback(url, fetchOptions);

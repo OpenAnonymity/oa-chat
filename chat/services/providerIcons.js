@@ -17,7 +17,7 @@
 const PROVIDER_ICONS = {
     'OpenAI': {
         type: 'url',
-        url: 'img/chatgpt.svg'
+        url: 'img/openai.svg'
     },
 
     'Anthropic': {
