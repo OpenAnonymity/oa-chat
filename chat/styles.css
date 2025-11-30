@@ -1969,3 +1969,109 @@ html {
         height: 0.85rem;
     }
 }
+
+/* ===== Print Styles for PDF Export ===== */
+@media print {
+    /* Hide all non-message UI elements */
+    #sidebar,
+    #right-panel,
+    #input-card,
+    #show-sidebar-btn,
+    #show-right-panel-btn,
+    #export-pdf-btn,
+    .mobile-sidebar-backdrop,
+    .message-navigation,
+    .scroll-to-bottom-btn,
+    #model-picker-modal,
+    #delete-history-modal,
+    #verify-key-modal,
+    #link-preview-card,
+    .message-user-actions,
+    .copy-message-btn,
+    .regenerate-message-btn,
+    .edit-prompt-btn,
+    .fork-conversation-btn {
+        display: none !important;
+    }
+
+    /* Reset layout for print */
+    html, body {
+        height: auto !important;
+        overflow: visible !important;
+        background: white !important;
+    }
+
+    #app {
+        display: block !important;
+        height: auto !important;
+    }
+
+    main {
+        padding: 0 !important;
+    }
+
+    /* Chat area - remove scroll constraints */
+    #chat-area {
+        overflow: visible !important;
+        height: auto !important;
+        min-height: 0 !important;
+    }
+
+    #messages-container {
+        padding: 0 !important;
+        max-width: 100% !important;
+        gap: 1rem !important;
+    }
+
+    /* Message styling for print */
+    .message-user,
+    .message-assistant {
+        box-shadow: none !important;
+        border: 1px solid #e5e7eb !important;
+        background: white !important;
+        color: black !important;
+    }
+
+    .message-user {
+        background: #f9fafb !important;
+    }
+
+    /* Allow long messages to break across pages */
+    .message-content {
+        page-break-inside: auto;
+        break-inside: auto;
+    }
+
+    /* Try to avoid breaking inside code blocks */
+    .message-content pre {
+        page-break-inside: avoid;
+        break-inside: avoid;
+    }
+
+    /* Keep message headers with their content */
+    .group.flex.w-full.flex-col {
+        page-break-inside: avoid;
+        break-inside: avoid;
+    }
+
+    /* Ensure text is readable */
+    .prose {
+        max-width: 100% !important;
+        color: black !important;
+    }
+
+    .prose code {
+        background: #f3f4f6 !important;
+        color: black !important;
+    }
+
+    .prose pre {
+        background: #f3f4f6 !important;
+        border: 1px solid #e5e7eb !important;
+    }
+
+    /* Hide action buttons in assistant messages */
+    .flex.items-center.justify-between.mt-2 {
+        display: none !important;
+    }
+}

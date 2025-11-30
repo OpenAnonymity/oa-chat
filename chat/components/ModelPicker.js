@@ -137,6 +137,18 @@ export default class ModelPicker {
      * @param {string} searchTerm - Optional search term to filter
      */
     renderModels(searchTerm = '') {
+        // Show loading state if models are still being fetched
+        if (this.app.state.modelsLoading || this.app.state.models.length === 0) {
+            this.app.elements.modelsList.innerHTML = `
+                <div class="flex items-center justify-center py-8 text-muted-foreground">
+                    <style>@keyframes modelpicker-spin { to { transform: rotate(360deg); } }</style>
+                    <div style="width: 14px; height: 14px; border: 2px solid #9ca3af; border-top-color: #3b82f6; border-radius: 50%; animation: modelpicker-spin 0.6s linear infinite;"></div>
+                    <span class="text-sm ml-2">Loading models...</span>
+                </div>
+            `;
+            return;
+        }
+
         const filteredModels = this.filterModels(searchTerm);
 
         // Reset keyboard highlight when rendering
@@ -282,13 +294,44 @@ export default class ModelPicker {
             </div>
         `;
 
+        // Extract provider from model name - try multiple strategies
+        // This allows showing icons immediately without waiting for the models API
+        const inferProvider = (name) => {
+            if (!name) return null;
+            // Strategy 1: "Provider: Model" format (our custom names)
+            if (name.includes(': ')) {
+                return name.split(': ')[0];
+            }
+            // Strategy 2: Keyword matching for common model names
+            const lowerName = name.toLowerCase();
+            if (lowerName.includes('gpt') || lowerName.includes('o1-') || lowerName.includes('o3-') || lowerName.includes('o4-')) return 'OpenAI';
+            if (lowerName.includes('claude')) return 'Anthropic';
+            if (lowerName.includes('gemini')) return 'Google';
+            if (lowerName.includes('llama')) return 'Meta';
+            if (lowerName.includes('mistral')) return 'Mistral';
+            if (lowerName.includes('deepseek')) return 'DeepSeek';
+            if (lowerName.includes('qwen')) return 'Qwen';
+            if (lowerName.includes('command')) return 'Cohere';
+            if (lowerName.includes('sonar')) return 'Perplexity';
+            if (lowerName.includes('nemotron')) return 'Nvidia';
+            return null;
+        };
+
+        // Try to get provider from model lookup first, then infer from name
         const model = this.app.state.models.find(m => m.name === currentModelName);
-        const iconData = model ? getProviderIcon(model.provider, 'w-3 h-3') : { html: '', hasIcon: false };
+        const provider = model?.provider || inferProvider(currentModelName);
+        const iconData = provider ? getProviderIcon(provider, 'w-3 h-3') : { html: '', hasIcon: false };
+
+        // Always show icon container - use spinner only if we truly don't know the provider
+        const iconContent = iconData.hasIcon
+            ? iconData.html
+            : `<div style="width: 10px; height: 10px; border: 1.5px solid #d1d5db; border-top-color: #9ca3af; border-radius: 50%; animation: modelpicker-spin 0.6s linear infinite;"></div>
+               <style>@keyframes modelpicker-spin { to { transform: rotate(360deg); } }</style>`;
         const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
 
         this.app.elements.modelPickerBtn.innerHTML = `
             <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 ${bgClass}">
-                ${iconData.html}
+                ${iconContent}
             </div>
             <span class="truncate">${currentModelName}</span>
             ${shortcutHtml}

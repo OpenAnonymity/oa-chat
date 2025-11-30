@@ -57,6 +57,9 @@
     <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
 
+    <!-- html2pdf.js for PDF export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
     <!-- Highlight.js for code syntax highlighting -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github.min.css" id="hljs-light">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css" id="hljs-dark" disabled>
@@ -251,6 +254,13 @@
                     </svg>
                 </button>
 
+                <!-- Export PDF Button (hidden by default, shown when session is active) -->
+                <button id="export-pdf-btn" class="hidden absolute top-4 left-4 z-30 inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-8 w-8 cursor-pointer select-none" aria-label="Export as PDF">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                    </svg>
+                </button>
+
                 <!-- Status Indicator Dot (Always visible) -->
                 <!-- FEATURE DISABLED: Status indicator and activity banner - uncomment to re-enable -->
                 <!--
@@ -330,11 +340,14 @@
                                 <!-- Bottom Actions Bar -->
                                 <div class="flex flex-wrap gap-1 pt-1.5 md:flex-nowrap">
                                     <div class="relative flex w-full min-w-0 items-center gap-1">
-                                        <button id="model-picker-btn" class="btn-ghost-hover inline-flex items-center justify-center whitespace-nowrap rounded-md text-xs font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:text-accent-foreground h-7 px-2 shrink-0 gap-1 text-foreground">
+                                        <button id="model-picker-btn" class="btn-ghost-hover inline-flex items-center justify-center whitespace-nowrap rounded-md text-xs font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:text-accent-foreground h-7 px-2 shrink-0 gap-1.5 text-foreground">
+                                            <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 bg-muted">
+                                                <div class="w-2.5 h-2.5 rounded-full border-[1.5px] border-gray-300 border-t-gray-400 animate-spin"></div>
+                                            </div>
                                             <span>Select Model</span>
-                                            <div class="flex items-center gap-0.5 ml-1.5">
-                                                <kbd class="flex items-center justify-center h-3.5 w-3.5 p-0.5 rounded-sm bg-muted border border-border text-foreground text-[10px]">⌘</kbd>
-                                                <kbd class="flex items-center justify-center h-3.5 w-3.5 p-0.5 rounded-sm bg-muted border border-border text-foreground text-[10px]">K</kbd>
+                                            <div class="flex items-center gap-0.5 ml-2">
+                                                <kbd class="flex items-center justify-center h-4 w-4 p-1 rounded-sm bg-muted border border-border text-foreground text-xs">⌘</kbd>
+                                                <kbd class="flex items-center justify-center h-4 w-4 p-1 rounded-sm bg-muted border border-border text-foreground text-xs">K</kbd>
                                             </div>
                                         </button>
                                         <!-- File Upload Button -->

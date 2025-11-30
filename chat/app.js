@@ -63,6 +63,7 @@ class ChatApp {
             // copyMarkdownBtn: document.getElementById('copy-markdown-btn'), // Temporarily removed
             toggleRightPanelBtn: document.getElementById('toggle-right-panel-btn'), // This might be legacy, but let's keep it for now.
             showRightPanelBtn: document.getElementById('show-right-panel-btn'),
+            exportPdfBtn: document.getElementById('export-pdf-btn'),
             sidebar: document.getElementById('sidebar'),
             hideSidebarBtn: document.getElementById('hide-sidebar-btn'),
             showSidebarBtn: document.getElementById('show-sidebar-btn'),
@@ -892,10 +893,8 @@ class ChatApp {
             this.state.pendingModelName = normalizedModelName;
         }
 
-        // Load models from OpenRouter API (now we have a session)
-        await this.loadModels();
-
-        // Render initial state
+        // Render local data IMMEDIATELY (sessions from DB, model from settings)
+        // This prevents blocking UI on network calls
         this.renderSessions();
         this.renderMessages();
         this.renderCurrentModel();
@@ -909,7 +908,7 @@ class ChatApp {
             this.floatingPanel.render();
         }
 
-        // Restore search state from global setting
+        // Restore search state from global setting (local DB, fast)
         const savedSearchEnabled = await chatDB.getSetting('searchEnabled');
         this.searchEnabled = savedSearchEnabled !== undefined ? savedSearchEnabled : true;
         this.chatInput.updateSearchToggleUI();
@@ -918,6 +917,18 @@ class ChatApp {
 
         // Set up event listeners
         this.setupEventListeners();
+
+        // Load models from OpenRouter API in background (non-blocking)
+        // Updates model picker with icons once loaded
+        this.loadModels().then(() => {
+            this.renderCurrentModel(); // Re-render button with model icons
+            // Also re-render model list if modal is open
+            if (this.modelPicker && !this.elements.modelPickerModal.classList.contains('hidden')) {
+                this.modelPicker.renderModels(this.elements.modelSearch?.value || '');
+            }
+        }).catch(error => {
+            console.warn('Background model loading failed:', error);
+        });
 
         this.initScrollAwareScrollbars(this.elements.chatArea);
         this.initScrollAwareScrollbars(this.elements.sessionsScrollArea);
@@ -1947,8 +1958,8 @@ class ChatApp {
             if (selectedModelEntry) {
                 modelIdForRequest = selectedModelEntry.id;
             } else {
-                // Fallback if model from session is somehow not in the list anymore
-                modelIdForRequest = 'openai/gpt-4o';
+                // Models may not be loaded yet - fall back to default
+                modelIdForRequest = DEFAULT_MODEL_ID;
             }
 
             // Show typing indicator (only if still viewing this session)
@@ -2781,8 +2792,63 @@ class ChatApp {
         if (this.chatArea) {
             await this.chatArea.render();
         }
+        this.updateExportPdfButtonVisibility();
     }
 
+    /**
+     * Updates export PDF button visibility and position.
+     * Shows only when a session is active, adjusts position based on sidebar state.
+     */
+    updateExportPdfButtonVisibility() {
+        const btn = this.elements.exportPdfBtn;
+        if (!btn) return;
+
+        const hasSession = !!this.getCurrentSession();
+        const sidebarHidden = this.elements.sidebar?.classList.contains('sidebar-hidden');
+        const isMobile = this.isMobileView();
+
+        if (hasSession) {
+            btn.classList.remove('hidden');
+            btn.classList.add('flex');
+            // Adjust position: left-14 when sidebar is hidden (to avoid overlap with show-sidebar-btn)
+            if (sidebarHidden || isMobile) {
+                btn.classList.remove('left-4');
+                btn.classList.add('left-14');
+            } else {
+                btn.classList.remove('left-14');
+                btn.classList.add('left-4');
+            }
+        } else {
+            btn.classList.add('hidden');
+            btn.classList.remove('flex');
+        }
+    }
+
+    /**
+     * Exports the current chat session to a PDF file.
+     * Delegates to pdfExport service.
+     */
+    async exportChatToPdf() {
+        if (!this.getCurrentSession()) return;
+
+        const btn = this.elements.exportPdfBtn;
+        if (btn) {
+            btn.disabled = true;
+            btn.classList.add('opacity-50');
+        }
+
+        try {
+            const { exportToPdf } = await import('./services/pdfExport.js');
+            await exportToPdf(this.elements.messagesContainer);
+        } catch (error) {
+            console.error('PDF export failed:', error);
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.classList.remove('opacity-50');
+            }
+        }
+    }
 
     hideSidebar() {
         const sidebar = this.elements.sidebar;
@@ -2801,6 +2867,7 @@ class ChatApp {
         if (backdrop) {
             backdrop.classList.remove('visible');
         }
+        this.updateExportPdfButtonVisibility();
     }
 
     showSidebar() {
@@ -2823,6 +2890,7 @@ class ChatApp {
         if (backdrop && this.isMobileView()) {
             backdrop.classList.add('visible');
         }
+        this.updateExportPdfButtonVisibility();
     }
 
     isMobileView() {
@@ -2877,6 +2945,13 @@ class ChatApp {
         if (this.elements.showSidebarBtn) {
             this.elements.showSidebarBtn.addEventListener('click', () => {
                 this.showSidebar();
+            });
+        }
+
+        // Export PDF button
+        if (this.elements.exportPdfBtn) {
+            this.elements.exportPdfBtn.addEventListener('click', () => {
+                this.exportChatToPdf();
             });
         }
 
