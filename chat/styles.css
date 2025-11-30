@@ -415,9 +415,27 @@
     opacity: 0.85;
 }
 
-/* During streaming we show plain text with preserved newlines */
-.reasoning-content.streaming {
-    white-space: pre-line;
+/* Streaming uses div wrappers for each line to enable vertical spacing */
+.reasoning-content.streaming .streaming-line {
+    margin-bottom: 0.4em;
+}
+
+/* Empty lines collapse but still contribute some spacing */
+.reasoning-content.streaming .streaming-line:empty {
+    margin-bottom: 0.2em;
+}
+
+/* Bold titles in streaming state get extra spacing */
+.reasoning-content.streaming strong {
+    display: block;
+    margin-top: 0.5em;
+    margin-bottom: 0.15em;
+}
+
+/* First element doesn't need top margin */
+.reasoning-content.streaming > :first-child strong:first-child,
+.reasoning-content.streaming > .streaming-line:first-child strong {
+    margin-top: 0;
 }
 
 /* Remove extra margins and whitespace from markdown elements in reasoning */

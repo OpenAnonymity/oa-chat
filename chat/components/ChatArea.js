@@ -628,6 +628,27 @@ export default class ChatArea {
     // }
 
     /**
+     * Converts basic markdown (bold) to HTML for streaming display.
+     * Faster than full markdown processing but renders bold titles properly.
+     * @param {string} text - The text to convert
+     * @returns {string} HTML with bold converted and lines wrapped for spacing
+     */
+    convertBasicMarkdownToHtml(text) {
+        // Escape HTML entities first to prevent XSS
+        const escaped = text
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+        // Convert **bold** to <strong>bold</strong>
+        const withBold = escaped.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+        // Wrap each line in a div for vertical spacing (CSS can't add margin to pre-line breaks)
+        return withBold
+            .split('\n')
+            .map(line => `<div class="streaming-line">${line}</div>`)
+            .join('');
+    }
+
+    /**
      * Updates the reasoning trace content during streaming.
      * @param {string} messageId - The message ID
      * @param {string} reasoning - The reasoning content
@@ -642,9 +663,9 @@ export default class ChatArea {
             // Parse the reasoning content to fix formatting issues from the provider
             const parsedReasoning = parseStreamingReasoningContent(reasoning);
 
-            // During streaming, use plain text to avoid expensive markdown processing
-            // Markdown will be applied when streaming completes
-            reasoningContentEl.textContent = parsedReasoning;
+            // Convert basic markdown (bold) to HTML for proper rendering during streaming
+            // Full markdown/LaTeX will be applied when streaming completes
+            reasoningContentEl.innerHTML = this.convertBasicMarkdownToHtml(parsedReasoning);
         }
 
         // Update the subtitle with the last meaningful line and ensure animation is active
