@@ -566,29 +566,28 @@ class NetworkProxy {
 
         // Check if already ready
         if (window.libcurl && window.libcurl.ready) {
-            console.debug('[networkProxy] libcurl is already ready');
-            // Enable TLS inspection if not already
             this.enableTlsInspection();
             return window.libcurl;
         }
 
-        // Use the promise from index.html
-        if (!window.libcurlReadyPromise) {
-            throw new Error('libcurlReadyPromise not found - index.html initialization issue');
+        // Trigger lazy loading if not started
+        if (window.initLibcurl) {
+            window.initLibcurl();
         }
 
-        console.debug('[networkProxy] Waiting for libcurl to be ready...');
-        const libcurl = await window.libcurlReadyPromise;
-        console.debug('[networkProxy] libcurl ready, type:', typeof libcurl, 'ready:', libcurl?.ready);
+        // Use the promise from index.html
+        if (!window.libcurlReadyPromise) {
+            throw new Error('libcurlReadyPromise not found');
+        }
 
-        // Also ensure window.libcurl is set
+        console.debug('[networkProxy] Loading libcurl...');
+        const libcurl = await window.libcurlReadyPromise;
+
         if (libcurl && !window.libcurl) {
             window.libcurl = libcurl;
         }
 
-        // Enable TLS inspection to capture handshake details
         this.enableTlsInspection();
-
         return libcurl || window.libcurl;
     }
 

@@ -14,6 +14,7 @@ import { downloadInferenceTickets, downloadAllChats, getFileIconSvg } from './se
 import { parseReasoningContent } from './services/reasoningParser.js';
 import { fetchUrlMetadata } from './services/urlMetadata.js';
 import networkProxy from './services/networkProxy.js';
+import openRouterAPI from './api.js';
 
 const DEFAULT_MODEL_ID = 'openai/gpt-5.1-chat';
 const DEFAULT_MODEL_NAME = 'OpenAI: GPT-5.1 Instant';
@@ -834,30 +835,25 @@ class ChatApp {
             downloadInferenceTickets();
         };
 
-        // // Setup global function to open right panel
-        // window.openRightPanel = () => {
-        //     if (this.rightPanel) {
-        //         this.rightPanel.show();
-        //     }
-        // };
-
-        // Initialize IndexedDB
-        await chatDB.init();
-        await networkProxy.initialize();
-
-        // Load network logs from database - DISABLED (logs are now memory-only, ephemeral per tab)
-        // await networkLogger.loadLogs();
-
-        // Initialize theme management first
+        // Initialize theme FIRST (sync, fast, prevents flash)
         themeManager.init();
 
-        // Initialize UI components
+        // Start DB init in background - components can show skeleton state
+        const dbReady = chatDB.init();
+
+        // Initialize UI components immediately (sync, fast) - shows loading states
         this.sidebar = new Sidebar(this);
         this.chatArea = new ChatArea(this);
         this.chatInput = new ChatInput(this);
         this.modelPicker = new ModelPicker(this);
         this.rightPanel = new RightPanel(this);
         this.rightPanel.mount();
+
+        // Wait for DB before loading data
+        await dbReady;
+
+        // Initialize network proxy in background (don't block UI)
+        networkProxy.initialize().catch(err => console.warn('Proxy init failed:', err));
 
         // Now set up theme controls after chatInput is initialized
         this.updateThemeControls(themeManager.getPreference(), themeManager.getEffectiveTheme());
@@ -872,32 +868,42 @@ class ChatApp {
         // Initialize message navigation
         this.messageNavigation = new MessageNavigation(this);
 
-        // Load data from IndexedDB FIRST (to get existing sessions for sidebar)
-        await this.loadFromDB();
+        // Load all data from IndexedDB in PARALLEL for speed
+        const [sessions, storedModelPreference, savedSearchEnabled] = await Promise.all([
+            chatDB.getAllSessions(),
+            chatDB.getSetting('selectedModel'),
+            chatDB.getSetting('searchEnabled')
+        ]);
+
+        this.state.sessions = sessions;
+
+        // Migrate sessions in background (don't block UI)
+        this.migrateSessionsInBackground(sessions);
 
         // Restore session from sessionStorage (persists across refreshes, not across tabs)
         const savedSessionId = sessionStorage.getItem(SESSION_STORAGE_KEY);
         if (savedSessionId && this.state.sessions.some(s => s.id === savedSessionId)) {
             this.state.currentSessionId = savedSessionId;
         }
-        // Otherwise, no session is selected - landing page shown until user sends first message
 
-        // Load selected model from settings
-        const storedModelPreference = await chatDB.getSetting('selectedModel');
+        // Process model preference
         const normalizedModelName = this.normalizeModelName(storedModelPreference);
-        // Save normalized model name to settings
         if (normalizedModelName && normalizedModelName !== storedModelPreference) {
-            await chatDB.saveSetting('selectedModel', normalizedModelName);
+            // Save in background, don't block
+            chatDB.saveSetting('selectedModel', normalizedModelName).catch(() => {});
         }
         if (normalizedModelName) {
             this.state.pendingModelName = normalizedModelName;
         }
 
+        // Restore search state
+        this.searchEnabled = savedSearchEnabled !== undefined ? savedSearchEnabled : true;
+
         // Render local data IMMEDIATELY (sessions from DB, model from settings)
-        // This prevents blocking UI on network calls
         this.renderSessions();
         this.renderMessages();
         this.renderCurrentModel();
+        this.chatInput.updateSearchToggleUI();
 
         // Notify right panel of current session
         const currentSession = this.getCurrentSession();
@@ -907,11 +913,6 @@ class ChatApp {
         if (this.floatingPanel && currentSession) {
             this.floatingPanel.render();
         }
-
-        // Restore search state from global setting (local DB, fast)
-        const savedSearchEnabled = await chatDB.getSetting('searchEnabled');
-        this.searchEnabled = savedSearchEnabled !== undefined ? savedSearchEnabled : true;
-        this.chatInput.updateSearchToggleUI();
 
         this.renderDeleteHistoryModalContent();
 
@@ -934,15 +935,14 @@ class ChatApp {
         this.initScrollAwareScrollbars(this.elements.sessionsScrollArea);
         this.initScrollAwareScrollbars(this.elements.modelListScrollArea);
 
-        // Set up scroll listener for message navigation and scroll button
+        // Set up scroll listener for message navigation and scroll button (passive for performance)
         this.elements.chatArea.addEventListener('scroll', () => {
             if (this.messageNavigation) {
                 this.messageNavigation.handleScroll();
             }
-            // Update scroll button visibility based on scroll position
             this.updateScrollButtonVisibility();
             this.scheduleScrollPositionSave();
-        });
+        }, { passive: true });
 
         // Set up ResizeObserver to adjust chat area padding when input area expands
         this.setupInputAreaObserver();
@@ -1011,33 +1011,39 @@ class ChatApp {
         this.state.modelsLoading = false;
     }
 
-    async loadFromDB() {
-        // Load sessions (for display in sidebar)
-        this.state.sessions = await chatDB.getAllSessions();
+    /**
+     * Migrates sessions in background without blocking UI.
+     * Updates local state immediately, persists to DB async.
+     */
+    migrateSessionsInBackground(sessions) {
+        const sessionsToSave = [];
 
-        // Migrate old sessions to add updatedAt if missing
-        const sessionsToMigrate = this.state.sessions.filter(s => !s.updatedAt);
-        if (sessionsToMigrate.length > 0) {
-            for (const session of sessionsToMigrate) {
+        for (const session of sessions) {
+            let needsSave = false;
+
+            // Migrate updatedAt if missing
+            if (!session.updatedAt) {
                 session.updatedAt = session.createdAt;
-                await chatDB.saveSession(session);
+                needsSave = true;
             }
-        }
 
-        const sessionsNeedingModelUpdate = [];
-        for (const session of this.state.sessions) {
+            // Normalize model name
             const normalizedModel = this.normalizeModelName(session.model);
             if (normalizedModel !== session.model) {
                 session.model = normalizedModel;
-                sessionsNeedingModelUpdate.push(session);
+                needsSave = true;
+            }
+
+            if (needsSave) {
+                sessionsToSave.push(session);
             }
         }
 
-        for (const session of sessionsNeedingModelUpdate) {
-            await chatDB.saveSession(session);
+        // Save all migrations in parallel (non-blocking)
+        if (sessionsToSave.length > 0) {
+            Promise.all(sessionsToSave.map(s => chatDB.saveSession(s)))
+                .catch(err => console.warn('Session migration failed:', err));
         }
-
-        // Don't restore currentSessionId - we always create a new session on startup
     }
 
     /**

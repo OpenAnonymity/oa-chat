@@ -952,11 +952,13 @@ class OpenRouterAPI {
 
 }
 
-// Export for use in app.js
+// Create and export singleton
 const openRouterAPI = new OpenRouterAPI();
 
-// For non-module scripts
+// Also attach to window for console debugging
 if (typeof window !== 'undefined') {
     window.openRouterAPI = openRouterAPI;
 }
+
+export default openRouterAPI;
 

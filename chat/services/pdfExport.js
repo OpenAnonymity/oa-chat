@@ -1,7 +1,32 @@
 /**
  * PDF Export Service
  * Handles exporting chat sessions to PDF files using html2pdf.js
+ * Library is lazy-loaded on first export to improve initial page load.
  */
+
+let html2pdfLoaded = false;
+
+/**
+ * Lazy-loads the html2pdf library from CDN.
+ * @returns {Promise<void>}
+ */
+async function ensureHtml2Pdf() {
+    if (html2pdfLoaded || typeof html2pdf !== 'undefined') {
+        html2pdfLoaded = true;
+        return;
+    }
+
+    return new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
+        script.onload = () => {
+            html2pdfLoaded = true;
+            resolve();
+        };
+        script.onerror = () => reject(new Error('Failed to load html2pdf library'));
+        document.head.appendChild(script);
+    });
+}
 
 /**
  * Converts an already-loaded image element to a base64 data URL.
@@ -123,12 +148,14 @@ function generateFilename() {
  * @returns {Promise<boolean>} True if export succeeded
  */
 export async function exportToPdf(messagesContainer) {
-    if (!messagesContainer || typeof html2pdf === 'undefined') {
-        console.error('PDF export: Missing container or html2pdf library');
+    if (!messagesContainer) {
+        console.error('PDF export: Missing container');
         return false;
     }
 
     try {
+        // Lazy-load html2pdf on first use
+        await ensureHtml2Pdf();
         // Clone the messages container
         const clone = messagesContainer.cloneNode(true);
 

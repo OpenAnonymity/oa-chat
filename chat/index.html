@@ -46,26 +46,29 @@
             }
         })();
     </script>
-    <!-- Tailwind CSS -->
+    <!-- Preload critical resources for faster loading -->
+    <link rel="preconnect" href="https://cdn.tailwindcss.com" crossorigin>
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+    <link rel="dns-prefetch" href="https://openrouter.ai">
+    <link rel="dns-prefetch" href="https://org.openanonymity.ai">
+
+    <!-- Tailwind CSS - critical, must be blocking -->
     <script src="https://cdn.tailwindcss.com"></script>
 
-    <!-- Marked.js for Markdown -->
+    <!-- Marked.js for Markdown - critical for content display -->
     <script src="https://cdn.jsdelivr.net/npm/marked@11.0.0/marked.min.js"></script>
 
-    <!-- KaTeX for LaTeX -->
+    <!-- KaTeX for LaTeX - CSS is critical, JS can be async -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
-    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+    <script async src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+    <script async src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
 
-    <!-- html2pdf.js for PDF export -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-
-    <!-- Highlight.js for code syntax highlighting -->
+    <!-- Highlight.js - CSS critical, JS async (theme sync happens on first use) -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github.min.css" id="hljs-light">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css" id="hljs-dark" disabled>
-    <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+    <script async src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
     <script>
-        // Sync highlight.js theme with app theme
+        // Sync highlight.js theme with app theme (runs when hljs loads)
         (function() {
             function syncHljsTheme() {
                 const isDark = document.documentElement.classList.contains('dark');
@@ -76,45 +79,42 @@
                     darkSheet.disabled = !isDark;
                 }
             }
-            // Initial sync
             syncHljsTheme();
-            // Watch for theme changes
             const observer = new MutationObserver((mutations) => {
                 for (const mutation of mutations) {
-                    if (mutation.attributeName === 'class') {
-                        syncHljsTheme();
-                    }
+                    if (mutation.attributeName === 'class') syncHljsTheme();
                 }
             });
             observer.observe(document.documentElement, { attributes: true });
         })();
     </script>
 
-    <!-- libcurl.js for encrypted proxying -->
-    <script defer src="https://cdn.jsdelivr.net/npm/libcurl.js@0.7.1/libcurl_full.js" onload="libcurl.load_wasm();"></script>
+    <!-- libcurl.js for encrypted proxying - loaded async, not needed for initial render -->
     <script>
-        // Simple promise wrapper for libcurl initialization
+        // Promise wrapper for lazy libcurl initialization
         window.libcurlReadyPromise = new Promise((resolve, reject) => {
-            const timeout = setTimeout(() => {
-                reject(new Error('Timeout waiting for libcurl.js to load'));
-            }, 10000); // 10 second timeout
+            // Lazy load - only init when actually needed (proxy enabled)
+            let loadStarted = false;
+            let timeout = null;
+
+            window.initLibcurl = () => {
+                if (loadStarted) return window.libcurlReadyPromise;
+                loadStarted = true;
+
+                const script = document.createElement('script');
+                script.src = 'https://cdn.jsdelivr.net/npm/libcurl.js@0.7.1/libcurl_full.js';
+                script.onload = () => libcurl.load_wasm();
+                document.head.appendChild(script);
+
+                timeout = setTimeout(() => reject(new Error('Timeout waiting for libcurl.js')), 15000);
+            };
 
             document.addEventListener('libcurl_load', () => {
                 clearTimeout(timeout);
-                // Ensure libcurl is available globally
-                if (typeof libcurl === 'undefined' && !window.libcurl) {
-                    reject(new Error('libcurl_load event fired but libcurl is undefined'));
-                    return;
-                }
                 const lib = window.libcurl || libcurl;
-                console.log('[libcurl] ✅ Ready, version:', lib.version?.lib || 'unknown');
-                console.log('[libcurl] WASM bundled in libcurl_full.js (no separate download)');
-                console.log('[libcurl] Has set_websocket:', typeof lib.set_websocket);
-                console.log('[libcurl] Has fetch:', typeof lib.fetch);
-                // Ensure window.libcurl is set
-                if (!window.libcurl) {
-                    window.libcurl = lib;
-                }
+                if (!lib) { reject(new Error('libcurl undefined')); return; }
+                console.log('[libcurl] ✅ Ready');
+                if (!window.libcurl) window.libcurl = lib;
                 resolve(lib);
             }, { once: true });
 
@@ -556,26 +556,15 @@
         try {
             const container = document.getElementById('messages-container');
             const hasSavedSession = sessionStorage.getItem('oa-current-session');
-            // Skip prerender if restoring a session - app.js will render the session directly
             if (container && container.childElementCount === 0 && !hasSavedSession) {
                 const { buildEmptyState } = await import('./components/MessageTemplates.js');
                 container.innerHTML = buildEmptyState();
             }
-        } catch (error) {
-            console.warn('Failed to prerender welcome content:', error);
-        }
+        } catch (e) { console.warn('Prerender failed:', e); }
     </script>
 
-    <!-- Load external scripts -->
+    <!-- Single entry point - db.js is loaded inline for speed, then app bootstraps -->
     <script src="db.js"></script>
-    <script type="module" src="services/networkLogger.js"></script>
-    <script type="module" src="api.js"></script>
-    <script type="module" src="services/apiKeyStore.js"></script>
-    <script type="module" src="services/privacyPass.js"></script>
-    <script type="module" src="services/station.js"></script>
-    <script type="module" src="services/urlMetadata.js"></script>
-    <script type="module" src="components/MessageNavigation.js"></script>
-    <script type="module" src="components/RightPanel.js"></script>
     <script type="module" src="app.js"></script>
 </body>
 </html>
