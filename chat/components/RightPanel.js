@@ -1295,12 +1295,12 @@ class RightPanel {
                         </div>
                     </div>
                     <div class="p-4 space-y-3">
-                        <p class="text-sm text-foreground">The secure proxy could not be reached. Your request will be sent directly without proxy encryption.</p>
-                        <p class="text-xs text-muted-foreground">This means your IP address will be visible to the destination server.</p>
+                        <p class="text-sm text-foreground">The inference proxy could not be reached. Your request will be sent to the model provider directly without relay.</p>
+                        <p class="text-xs text-muted-foreground">The chat client will try reconnecting to the inference proxy automatically.</p>
                     </div>
                     <div class="p-4 border-t border-border flex justify-end gap-2">
                         <button class="fallback-cancel px-3 py-1.5 text-sm rounded-md border border-border hover:bg-muted transition-colors">Cancel</button>
-                        <button class="fallback-confirm px-3 py-1.5 text-sm rounded-md bg-amber-500 text-white hover:bg-amber-600 transition-colors">Send Directly</button>
+                        <button class="fallback-confirm px-3 py-1.5 text-sm rounded-md bg-amber-500 text-white hover:bg-amber-600 transition-colors">Proceed</button>
                     </div>
                 </div>
             `;

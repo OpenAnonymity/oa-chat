@@ -467,23 +467,27 @@ class ChatApp {
         `;
 
         // Add click handler
-        button.addEventListener('click', () => {
+        button.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
             this.isAutoScrollPaused = false;
-            this.scrollToBottom(true);
+            this._scrollButtonClickPending = true;
             this.hideScrollToBottomButton();
+            this.scrollToBottom(true);
+            // Clear flag after scroll completes
+            setTimeout(() => {
+                this._scrollButtonClickPending = false;
+            }, 350);
         });
 
-        // Insert before the input area
+        // Insert into input container (not input-card which has isolation: isolate that breaks backdrop-filter)
         const inputContainer = document.querySelector('.absolute.bottom-0.left-0.right-0');
         if (inputContainer) {
-            const anchor = inputContainer.querySelector('.rounded-lg') || inputContainer;
-            if (anchor.classList) {
-                anchor.classList.add('relative');
+            // Ensure container is positioned for absolute child
+            if (getComputedStyle(inputContainer).position === 'static') {
+                inputContainer.style.position = 'relative';
             }
-            if (getComputedStyle(anchor).position === 'static') {
-                anchor.style.position = 'relative';
-            }
-            anchor.appendChild(button);
+            inputContainer.appendChild(button);
         }
 
         this.scrollToBottomButton = button;
@@ -526,6 +530,9 @@ class ChatApp {
     updateScrollButtonVisibility() {
         const chatArea = this.elements.chatArea;
         if (!chatArea) return;
+
+        // Don't re-show button while scroll-to-bottom click is still processing
+        if (this._scrollButtonClickPending) return;
 
         const inputContainer = document.querySelector('.absolute.bottom-0.left-0.right-0');
         const lastMessage = this.elements.messagesContainer ? this.elements.messagesContainer.lastElementChild : null;

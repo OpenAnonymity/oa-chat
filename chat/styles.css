@@ -10,6 +10,11 @@
     --color-accent-primary: 217.2 91.2% 59.8%;  /* Blue - change this to customize */
     --color-accent-primary-foreground: 0 0% 100%;
 
+    /* Frosted glass effect - adjust opacity (0-1) and blur (px) */
+    --glass-opacity: 0.82;
+    --glass-blur: 12px;
+    --glass-opacity-hover: 0.92;
+
     /* Hover highlight background */
     --color-hover: 210 40% 96.1%;
 
@@ -45,6 +50,11 @@
 }
 
 .dark {
+    /* Frosted glass - slightly more opaque for dark mode readability */
+    --glass-opacity: 0.78;
+    --glass-blur: 14px;
+    --glass-opacity-hover: 0.88;
+
     /* Hover highlight for dark mode */
     --color-hover: 0 0% 22%;
 
@@ -2015,11 +2025,26 @@ html {
     border-color: hsl(var(--color-destructive) / 0.4) !important;
 }
 
-/* Scroll to Bottom Button */
+/* Input Area Wrapper - ensure it's above message content */
+.absolute.bottom-0.left-0.right-0 {
+    z-index: 20; /* Above message elements like .user-message-show-more (z-1) and .message-user-actions (z-10) */
+}
+
+/* Input Card - Frosted Glass Effect */
+#input-card {
+    background: hsl(var(--color-card) / var(--glass-opacity));
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border-color: hsl(var(--color-border) / 0.6);
+    min-height: 5.5rem; /* Prevents layout shift while inner content loads */
+}
+
+/* Scroll to Bottom Button - frost glass effect */
 .scroll-to-bottom-btn {
     position: absolute;
-    top: -2.1rem;
-    right: 1.5rem;
+    /* Position above the input card, aligned with right side of centered 42rem card */
+    bottom: calc(100% + 0.5rem);
+    right: calc(50% - 19.5rem); /* 50% - (21rem card half-width) + 1.5rem padding */
     z-index: 45;
     display: inline-flex;
     align-items: center;
@@ -2027,34 +2052,34 @@ html {
     padding: 0.35rem 0.75rem;
     min-height: 1.75rem;
     border-radius: 9999px;
-    background: hsl(var(--color-card) / 0.92);
-    border: 1px solid hsl(var(--color-border));
-    box-shadow: 0 6px 18px -12px rgba(15, 23, 42, 0.65);
+    /* Frost glass effect */
+    background: hsl(var(--color-card) / 0.7);
+    backdrop-filter: saturate(120%) blur(var(--glass-blur));
+    -webkit-backdrop-filter: saturate(120%) blur(var(--glass-blur));
+    border: 1px solid hsl(var(--color-border) / 0.5);
+    box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
     color: hsl(var(--color-foreground));
     font-size: 0.75rem;
     font-weight: 500;
     letter-spacing: 0.01em;
     cursor: pointer;
-    transition: opacity 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+    transition: opacity 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
     opacity: 0;
-    transform: translateY(-6px);
     pointer-events: none;
 }
 
 .scroll-to-bottom-btn.visible {
     opacity: 1;
-    transform: translateY(0);
     pointer-events: auto;
 }
 
 .scroll-to-bottom-btn:hover {
-    background: hsl(var(--color-card) / 0.98);
-    box-shadow: 0 10px 26px -10px rgba(15, 23, 42, 0.22);
+    background: hsl(var(--color-card) / 0.85);
+    box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
 }
 
 .scroll-to-bottom-btn:active {
     transform: translateY(0);
-    box-shadow: 0 6px 18px -12px rgba(15, 23, 42, 0.65);
 }
 
 .scroll-to-bottom-btn svg {
@@ -2066,20 +2091,23 @@ html {
     line-height: 1;
 }
 
+/* Dark mode - more translucent to show frost effect */
 .dark .scroll-to-bottom-btn {
-    background: hsl(var(--color-card) / 0.88);
-    box-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.6);
+    background: hsl(var(--color-card) / 0.6);
+    border-color: hsl(var(--color-border) / 0.4);
+    box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.4), 0 4px 6px -4px rgb(0 0 0 / 0.3);
 }
 
 .dark .scroll-to-bottom-btn:hover {
-    background: hsl(var(--color-card) / 0.94);
+    background: hsl(var(--color-card) / 0.75);
+    box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.45), 0 8px 10px -6px rgb(0 0 0 / 0.35);
 }
 
 /* Mobile responsive positioning */
 @media (max-width: 768px) {
     .scroll-to-bottom-btn {
+        /* On mobile, position relative to right edge */
         right: 1rem;
-        top: -1.65rem;
         padding: 0.3rem 0.6rem;
         gap: 0.35rem;
         font-size: 0.7rem;

@@ -135,38 +135,39 @@
             theme: {
                 extend: {
                     colors: {
-                        border: "hsl(214.3 31.8% 91.4%)",
-                        input: "hsl(214.3 31.8% 91.4%)",
-                        ring: "hsl(222.2 84% 4.9%)",
-                        background: "hsl(0 0% 100%)",
-                        foreground: "hsl(222.2 84% 4.9%)",
+                        /* All colors use CSS variables for dark mode support */
+                        border: "hsl(var(--color-border))",
+                        input: "hsl(var(--color-input))",
+                        ring: "hsl(var(--color-ring))",
+                        background: "hsl(var(--color-background))",
+                        foreground: "hsl(var(--color-foreground))",
                         primary: {
-                            DEFAULT: "hsl(222.2 47.4% 11.2%)",
-                            foreground: "hsl(210 40% 98%)",
+                            DEFAULT: "hsl(var(--color-primary))",
+                            foreground: "hsl(var(--color-primary-foreground))",
                         },
                         secondary: {
-                            DEFAULT: "hsl(210 40% 96.1%)",
-                            foreground: "hsl(222.2 47.4% 11.2%)",
+                            DEFAULT: "hsl(var(--color-secondary))",
+                            foreground: "hsl(var(--color-secondary-foreground))",
                         },
                         destructive: {
-                            DEFAULT: "hsl(0 84.2% 60.2%)",
-                            foreground: "hsl(210 40% 98%)",
+                            DEFAULT: "hsl(var(--color-destructive))",
+                            foreground: "hsl(var(--color-destructive-foreground))",
                         },
                         muted: {
-                            DEFAULT: "hsl(210 40% 96.1%)",
-                            foreground: "hsl(215.4 16.3% 46.9%)",
+                            DEFAULT: "hsl(var(--color-muted))",
+                            foreground: "hsl(var(--color-muted-foreground))",
                         },
                         accent: {
-                            DEFAULT: "hsl(210 40% 96.1%)",
-                            foreground: "hsl(222.2 47.4% 11.2%)",
+                            DEFAULT: "hsl(var(--color-accent))",
+                            foreground: "hsl(var(--color-accent-foreground))",
                         },
                         popover: {
-                            DEFAULT: "hsl(0 0% 100%)",
-                            foreground: "hsl(222.2 84% 4.9%)",
+                            DEFAULT: "hsl(var(--color-popover))",
+                            foreground: "hsl(var(--color-popover-foreground))",
                         },
                         card: {
-                            DEFAULT: "hsl(0 0% 100%)",
-                            foreground: "hsl(222.2 84% 4.9%)",
+                            DEFAULT: "hsl(var(--color-card))",
+                            foreground: "hsl(var(--color-card-foreground))",
                         },
                     },
                 }
@@ -287,7 +288,7 @@
 
                     <!-- Input Area -->
                     <div class="absolute bottom-0 left-0 right-0 sm:mb-2 sm:mt-0 flex-shrink-0 md:px-4">
-                        <div id="input-card" class="rounded-lg p-1.5 border border-border w-full max-w-[42rem] mx-auto flex-shrink-0 bg-card shadow-lg relative" style="isolation: isolate;">
+                        <div id="input-card" class="rounded-lg p-1.5 border w-full max-w-[42rem] mx-auto flex-shrink-0 shadow-lg relative" style="isolation: isolate;">
                                 <!-- Drop Zone Overlay -->
                                 <div id="drop-zone-overlay" class="hidden absolute inset-0 z-[60] rounded-lg border-2 border-dashed border-primary/30 bg-card flex items-center justify-center pointer-events-none transition-all duration-200">
                                     <div class="flex flex-col items-center justify-center text-muted-foreground animate-in fade-in zoom-in duration-300">
@@ -303,8 +304,8 @@
 
                                 <!-- Textarea Container -->
                                 <div class="relative w-full flex flex-col">
-                                    <div class="rounded-md w-full focus-within:bg-accent text-muted-foreground focus-within:text-foreground transition-colors bg-card">
-                                        <div class="flex h-max py-1.5 max-h-96 bg-card px-2 overflow-y-auto">
+                                    <div class="rounded-md w-full text-muted-foreground focus-within:text-foreground transition-colors bg-transparent">
+                                        <div class="flex h-max py-1.5 max-h-96 bg-transparent px-2 overflow-y-auto">
                                             <textarea
                                                 id="message-input"
                                                 rows="1"
