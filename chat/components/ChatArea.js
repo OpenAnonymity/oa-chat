@@ -355,7 +355,14 @@ export default class ChatArea {
 
         messagesContainer.innerHTML = messages.map(message => {
             const options = this.app.getMessageTemplateOptions ? this.app.getMessageTemplateOptions(message.id) : {};
-            return buildMessageHTML(message, helpers, this.app.state.models, session.model, options);
+            // Normalize streaming state for messages loaded from DB.
+            // If streamingReasoning/streamingTokens are set, it means streaming was interrupted
+            // (e.g., browser closed, network error). Reset them for proper display.
+            // Active streaming uses appendMessage/updateStreamingMessage, not render().
+            const normalizedMessage = (message.streamingReasoning || message.streamingTokens !== null)
+                ? { ...message, streamingReasoning: false, streamingTokens: null }
+                : message;
+            return buildMessageHTML(normalizedMessage, helpers, this.app.state.models, session.model, options);
         }).join('');
 
         // Render LaTeX in all message content elements

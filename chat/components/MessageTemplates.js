@@ -377,8 +377,10 @@ function generateReasoningSubtitle(reasoning, reasoningDuration) {
         return formatReasoningDuration(reasoningDuration);
     }
 
+    // This function is only called when NOT streaming.
+    // If reasoning is empty, it means streaming was interrupted without capturing reasoning.
     if (!reasoning || reasoning.trim().length === 0) {
-        return 'Thinking...';
+        return 'Reasoning incomplete';
     }
 
     const MAX_LENGTH = 150;
