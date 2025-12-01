@@ -796,7 +796,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName) {
     // Message is complete if not actively streaming (streamingTokens is null/undefined after finalization)
     const isMessageComplete = !message.streamingReasoning && (message.streamingTokens === null || message.streamingTokens === undefined);
     const noResponseNotice = (hasNoOutput && isMessageComplete) ? `
-        <span class="text-xs text-muted-foreground/70">[Model provider returned no response. Try starting a new session.]</span>
+        <span class="text-xs text-muted-foreground/70">[Model provider returned no response. Try a new prompt or a new session.]</span>
     ` : '';
 
     // Build citations section if there are citations

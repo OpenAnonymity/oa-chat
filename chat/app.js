@@ -1609,6 +1609,8 @@ class ChatApp {
 
             let streamingMessage = null;
             let streamedContent = '';
+            let streamedReasoning = '';
+            let firstChunkReceived = false;
 
             try {
                 // Get AI response from OpenRouter with streaming
@@ -1621,7 +1623,6 @@ class ChatApp {
                 // Create a placeholder message for streaming
                 const streamingMessageId = this.generateId();
                 let streamingTokenCount = 0;
-                let streamedReasoning = '';
 
                 streamingMessage = {
                     id: streamingMessageId,
@@ -1638,7 +1639,6 @@ class ChatApp {
 
                 let lastSaveLength = 0;
                 const SAVE_INTERVAL_CHARS = 100;
-                let firstChunkReceived = false;
                 let reasoningStartTime = null;
 
                 // Stream the response with token tracking
