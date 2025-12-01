@@ -68,6 +68,9 @@ class ThemeManager {
 
         const effectiveTheme = this.getEffectiveTheme();
 
+        // Disable transitions during theme switch for instant color change
+        root.classList.add('switching-theme');
+
         root.setAttribute('data-theme', effectiveTheme);
         root.setAttribute('data-theme-preference', this.preference);
 
@@ -84,6 +87,13 @@ class ThemeManager {
             root.classList.add('theme-dark');
             root.classList.remove('theme-light');
         }
+
+        // Re-enable transitions after a frame (colors already applied)
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                root.classList.remove('switching-theme');
+            });
+        });
     }
 
     setPreference(preference) {

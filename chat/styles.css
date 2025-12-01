@@ -1,5 +1,19 @@
-/* Slate color definitions */
+/* ============================================
+   CONFIGURABLE THEME - Edit these values to customize the app
+   ============================================ */
 :root {
+    /* Fonts */
+    --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    --font-mono: 'SF Mono', Consolas, 'Liberation Mono', Menlo, monospace;
+
+    /* Accent color (user bubbles, active toggles, primary highlights) */
+    --color-accent-primary: 217.2 91.2% 59.8%;  /* Blue - change this to customize */
+    --color-accent-primary-foreground: 0 0% 100%;
+
+    /* Hover highlight background */
+    --color-hover: 210 40% 96.1%;
+
+    /* Slate color definitions */
     --slate-1: hsl(206, 30%, 98.8%);
     --slate-2: hsl(210, 16.7%, 97.6%);
     --slate-3: hsl(209, 13.3%, 95.3%);
@@ -31,40 +45,54 @@
 }
 
 .dark {
-    --slate-1: hsl(200, 7%, 8.8%);
-    --slate-2: hsl(195, 7.1%, 11%);
-    --slate-3: hsl(197, 6.8%, 13.6%);
-    --slate-4: hsl(198, 6.6%, 15.8%);
-    --slate-200: hsl(217.2, 32.6%, 17.5%);
-    --slate-800: hsl(214.3, 31.8%, 91.4%);
-    --slate-6: hsl(198, 4.8%, 28.2%);
+    /* Hover highlight for dark mode */
+    --color-hover: 0 0% 22%;
+
+    /* Slate colors - neutral gray based */
+    --slate-1: hsl(0, 0%, 10%);
+    --slate-2: hsl(0, 0%, 13%);
+    --slate-3: hsl(0, 0%, 16%);
+    --slate-4: hsl(0, 0%, 19%);
+    --slate-200: hsl(0, 0%, 22%);
+    --slate-800: hsl(0, 0%, 85%);
+    --slate-6: hsl(0, 0%, 30%);
 
     color-scheme: dark;
-    --color-background: 222.2 84% 4.9%;
-    --color-foreground: 210 40% 98%;
-    --color-card: 222.2 47.4% 11.2%;
-    --color-card-foreground: 210 40% 98%;
-    --color-popover: 222.2 47.4% 11.2%;
-    --color-popover-foreground: 210 40% 98%;
-    --color-primary: 210 40% 98%;
-    --color-primary-foreground: 222.2 47.4% 11.2%;
-    --color-secondary: 217.2 32.6% 17.5%;
-    --color-secondary-foreground: 210 40% 98%;
-    --color-muted: 217.2 32.6% 17.5%;
-    --color-muted-foreground: 215 20.2% 65.1%;
-    --color-accent: 217.2 32.6% 17.5%;
-    --color-accent-foreground: 210 40% 98%;
+    /* Neutral gray background instead of blue-ish */
+    --color-background: 0 0% 15%;           /* #262626 */
+    --color-foreground: 0 0% 95%;           /* Near white */
+    --color-card: 0 0% 12%;                 /* Slightly darker than bg */
+    --color-card-foreground: 0 0% 95%;
+    --color-popover: 0 0% 12%;
+    --color-popover-foreground: 0 0% 95%;
+    --color-primary: 0 0% 95%;
+    --color-primary-foreground: 0 0% 12%;
+    --color-secondary: 0 0% 20%;
+    --color-secondary-foreground: 0 0% 95%;
+    --color-muted: 0 0% 20%;
+    --color-muted-foreground: 0 0% 65%;
+    --color-accent: 0 0% 20%;
+    --color-accent-foreground: 0 0% 95%;
     --color-destructive: 0 62.8% 30.6%;
-    --color-destructive-foreground: 210 40% 98%;
-    --color-border: 217.2 32.6% 17.5%;
-    --color-input: 217.2 32.6% 17.5%;
-    --color-ring: 212.7 26.8% 83.9%;
+    --color-destructive-foreground: 0 0% 95%;
+    --color-border: 0 0% 25%;
+    --color-input: 0 0% 25%;
+    --color-ring: 0 0% 80%;
 }
 
 :root,
 .dark {
     --tw-ring-offset-color: hsl(var(--color-background));
     --tw-ring-color: hsl(var(--color-ring));
+}
+
+/* Global font application */
+body {
+    font-family: var(--font-sans);
+}
+
+code, pre, kbd, .font-mono {
+    font-family: var(--font-mono);
 }
 
 .bg-background {
@@ -112,6 +140,13 @@
     color: hsl(var(--color-muted-foreground) / var(--tw-text-opacity, 1)) !important;
 }
 
+/* Placeholder text color - ensures Tailwind placeholder:text-muted-foreground uses our variable */
+.placeholder\:text-muted-foreground::placeholder,
+::placeholder {
+    color: hsl(var(--color-muted-foreground)) !important;
+    opacity: 1;
+}
+
 .bg-accent {
     --tw-bg-opacity: 1;
     background-color: hsl(var(--color-accent) / var(--tw-bg-opacity, 1)) !important;
@@ -145,6 +180,11 @@
 .bg-primary {
     --tw-bg-opacity: 1;
     background-color: hsl(var(--color-primary) / var(--tw-bg-opacity, 1)) !important;
+}
+
+.text-primary {
+    --tw-text-opacity: 1;
+    color: hsl(var(--color-primary) / var(--tw-text-opacity, 1)) !important;
 }
 
 .text-primary-foreground {
@@ -210,6 +250,14 @@
     transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
+/* Disable transitions during theme switching to prevent staggered color updates */
+html.switching-theme,
+html.switching-theme *,
+html.switching-theme *::before,
+html.switching-theme *::after {
+    transition: none !important;
+}
+
 /* Sidebar sessions loader */
 .sessions-loader {
     display: flex;
@@ -235,14 +283,14 @@
     gap: 0.125rem;
     font-size: 0.75rem;
     font-weight: 500;
-    color: hsl(215.4 16.3% 46.9%);
+    color: hsl(var(--color-muted-foreground));
     opacity: 0.8;
 }
 
 .loader-bar {
     width: 120px;
     height: 3px;
-    background: hsl(215.4 16.3% 46.9% / 0.25);
+    background: hsl(var(--color-muted-foreground) / 0.25);
     border-radius: 2px;
     overflow: hidden;
 }
@@ -250,7 +298,7 @@
 .loader-bar-fill {
     width: 40%;
     height: 100%;
-    background: hsl(215.4 16.3% 46.9% / 0.6);
+    background: hsl(var(--color-muted-foreground) / 0.6);
     border-radius: 2px;
     animation: loaderSlide 1.2s ease-in-out infinite;
 }
@@ -267,9 +315,9 @@
     }
 }
 
-/* Custom hover highlight - matches model picker contrast */
+/* Standardized hover highlight - uses --color-hover for consistency */
 .hover-highlight:hover {
-    background-color: hsl(var(--color-accent)) !important;
+    background-color: hsl(var(--color-hover)) !important;
 }
 
 /* Session list styles */
@@ -294,18 +342,18 @@
 }
 
 .chat-session:hover {
-    background-color: hsl(var(--color-accent) / 0.3);
+    background-color: hsl(var(--color-hover) / 0.7);
 }
 
 .chat-session.active {
-    background-color: hsl(var(--color-accent) / 0.5);
+    background-color: hsl(var(--color-hover));
 }
 
 /* Message styles */
 .message-user {
     position: relative;
-    background-color: hsl(217.2 91.2% 59.8%);
-    color: white;
+    background-color: hsl(var(--color-accent-primary));
+    color: hsl(var(--color-accent-primary-foreground));
     border-radius: 0.875rem;
     font-size: 0.875rem;
 }
@@ -335,7 +383,7 @@
     left: 0;
     right: 0;
     height: 2.5rem;
-    background: linear-gradient(to bottom, transparent 0%, hsl(217.2 91.2% 59.8% / 0.85) 100%);
+    background: linear-gradient(to bottom, transparent 0%, hsl(var(--color-accent-primary) / 0.85) 100%);
     pointer-events: none;
 }
 
@@ -1056,7 +1104,7 @@
     padding: 0.1rem 0.2rem;
     border-radius: 0.25rem;
     font-size: 0.8125rem;
-    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-family: var(--font-mono);
 }
 
 /* Code Block Wrapper with Header */
@@ -1131,7 +1179,7 @@
     background-color: transparent;
     padding: 0;
     font-size: inherit;
-    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-family: var(--font-mono);
 }
 
 /* Highlight.js overrides for theme consistency */
@@ -1140,14 +1188,14 @@
     padding: 0;
 }
 
-/* Dark mode adjustments */
+/* Dark mode adjustments - uses neutral grays from theme */
 .dark .code-block-wrapper {
-    background-color: hsl(222 47% 8%);
+    background-color: hsl(var(--color-card));
     border-color: hsl(var(--color-border) / 0.4);
 }
 
 .dark .code-block-header {
-    background-color: hsl(222 47% 11%);
+    background-color: hsl(var(--color-muted) / 0.5);
     border-bottom-color: hsl(var(--color-border) / 0.3);
 }
 
@@ -1219,7 +1267,7 @@ textarea:focus {
     font-weight: 700;
     letter-spacing: 0.05em;
     text-transform: uppercase;
-    color: hsl(215.4 16.3% 46.9%);
+    color: hsl(var(--color-muted-foreground));
 }
 
 /* Dark mode hover fixes for better contrast */
@@ -1677,7 +1725,7 @@ html[data-right-panel-hidden="true"] #right-panel {
 }
 
 .message-indicator.active {
-    background: hsl(217.2 91.2% 59.8%);
+    background: hsl(var(--color-accent-primary));
     height: 4px;
 }
 
@@ -1728,22 +1776,23 @@ html[data-right-panel-hidden="true"] #right-panel {
 }
 
 /* Search toggle active state */
+/* Search toggle uses accent-primary */
 #search-toggle.search-active {
-    color: rgb(59, 130, 246) !important;
-    background-color: rgba(59, 130, 246, 0.1) !important;
+    color: hsl(var(--color-accent-primary)) !important;
+    background-color: hsl(var(--color-accent-primary) / 0.1) !important;
 }
 
 #search-toggle.search-active:hover {
-    background-color: rgba(59, 130, 246, 0.15) !important;
+    background-color: hsl(var(--color-accent-primary) / 0.15) !important;
 }
 
 .dark #search-toggle.search-active {
-    color: rgb(96, 165, 250) !important;
-    background-color: rgba(59, 130, 246, 0.2) !important;
+    color: hsl(var(--color-accent-primary) / 0.85) !important;
+    background-color: hsl(var(--color-accent-primary) / 0.2) !important;
 }
 
 .dark #search-toggle.search-active:hover {
-    background-color: rgba(59, 130, 246, 0.25) !important;
+    background-color: hsl(var(--color-accent-primary) / 0.25) !important;
 }
 
 /* Image modal animation */
@@ -1956,7 +2005,7 @@ html {
 
 /* Shared subtle hover effect for secondary buttons */
 .btn-ghost-hover:hover {
-    background-color: hsl(var(--color-accent) / 0.5) !important;
+    background-color: hsl(var(--color-hover)) !important;
     border-color: hsl(var(--color-foreground) / 0.3) !important;
 }
 
