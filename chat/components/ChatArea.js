@@ -70,6 +70,13 @@ export default class ChatArea {
                 return;
             }
 
+            const resendBtn = e.target.closest('.resend-prompt-btn');
+            if (resendBtn) {
+                const messageId = resendBtn.dataset.messageId;
+                await this.handleResendMessage(messageId);
+                return;
+            }
+
             const cancelEditBtn = e.target.closest('.cancel-edit-btn');
             if (cancelEditBtn) {
                 const messageId = cancelEditBtn.dataset.messageId;
@@ -321,6 +328,31 @@ export default class ChatArea {
         await this.render();
 
         // Trigger regeneration by calling the app's regenerateResponse method
+        await this.app.regenerateResponse();
+    }
+
+    /**
+     * Resends a user message - deletes any responses after it and regenerates
+     * @param {string} messageId - User message ID to resend
+     */
+    async handleResendMessage(messageId) {
+        const session = this.app.getCurrentSession();
+        if (!session) return;
+
+        if (this.app.isCurrentSessionStreaming()) return;
+
+        const messages = await chatDB.getSessionMessages(session.id);
+        const messageIndex = messages.findIndex(m => m.id === messageId);
+
+        if (messageIndex === -1 || messages[messageIndex].role !== 'user') return;
+
+        // Delete all messages after this user message
+        const messagesToDelete = messages.slice(messageIndex + 1);
+        for (const msg of messagesToDelete) {
+            await chatDB.deleteMessage(msg.id);
+        }
+
+        await this.render();
         await this.app.regenerateResponse();
     }
 
