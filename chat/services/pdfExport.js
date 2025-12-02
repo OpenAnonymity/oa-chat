@@ -131,6 +131,26 @@ function styleTextElements(wrapper) {
     wrapper.querySelectorAll('.text-foreground, .text-muted-foreground').forEach(el => {
         el.style.setProperty('color', '#374151', 'important');
     });
+    // Force light mode styling on inline code elements (not in code blocks)
+    wrapper.querySelectorAll('code').forEach(el => {
+        // Skip code elements inside code-block-wrapper (those have transparent bg)
+        if (!el.closest('.code-block-wrapper')) {
+            el.style.cssText = 'background-color: #f3f4f6 !important; color: #111827 !important; padding: 0.1rem 0.2rem; border-radius: 0.25rem;';
+        }
+    });
+    // Style code block wrappers with light mode colors
+    wrapper.querySelectorAll('.code-block-wrapper').forEach(el => {
+        el.style.cssText = 'background-color: #f3f4f6 !important; border: 1px solid #e5e7eb !important; border-radius: 0.5rem; overflow: hidden;';
+    });
+    wrapper.querySelectorAll('.code-block-header').forEach(el => {
+        el.style.cssText = 'background-color: #e5e7eb !important; border-bottom: 1px solid #d1d5db !important; padding: 0.4rem 0.75rem;';
+    });
+    wrapper.querySelectorAll('.code-block-wrapper pre').forEach(el => {
+        el.style.cssText = 'background-color: #f3f4f6 !important; margin: 0; padding: 0.75rem;';
+    });
+    wrapper.querySelectorAll('.code-block-wrapper code, .code-block-wrapper pre code').forEach(el => {
+        el.style.cssText = 'background-color: transparent !important; color: #111827 !important;';
+    });
 }
 
 /**
