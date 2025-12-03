@@ -423,21 +423,20 @@ export default class ChatArea {
 
     /**
      * Applies KaTeX rendering to message content elements.
+     * KaTeX is loaded with defer, guaranteeing it's ready before app.js runs.
      * @param {HTMLElement} scope - The element to search within (default: document)
      */
     renderLatex(scope = document) {
-        if (typeof renderMathInElement !== 'undefined') {
-            scope.querySelectorAll('.message-content').forEach(el => {
-                renderMathInElement(el, {
-                    delimiters: [
-                        {left: '$$', right: '$$', display: true},
-                        {left: '\\[', right: '\\]', display: true},
-                        {left: '\\(', right: '\\)', display: false}
-                    ],
-                    throwOnError: false
-                });
+        scope.querySelectorAll('.message-content').forEach(el => {
+            renderMathInElement(el, {
+                delimiters: [
+                    {left: '$$', right: '$$', display: true},
+                    {left: '\\[', right: '\\]', display: true},
+                    {left: '\\(', right: '\\)', display: false}
+                ],
+                throwOnError: false
             });
-        }
+        });
     }
 
     /**
@@ -637,16 +636,14 @@ export default class ChatArea {
             // Use the app's LaTeX-safe processor
             contentEl.innerHTML = this.app.processContentWithLatex(content);
             // Re-render LaTeX for the updated content
-            if (typeof renderMathInElement !== 'undefined') {
-                renderMathInElement(contentEl, {
-                    delimiters: [
-                        {left: '$$', right: '$$', display: true},
-                        {left: '\\[', right: '\\]', display: true},
-                        {left: '\\(', right: '\\)', display: false}
-                    ],
-                    throwOnError: false
-                });
-            }
+            renderMathInElement(contentEl, {
+                delimiters: [
+                    {left: '$$', right: '$$', display: true},
+                    {left: '\\[', right: '\\]', display: true},
+                    {left: '\\(', right: '\\)', display: false}
+                ],
+                throwOnError: false
+            });
         }
     }
 
@@ -905,16 +902,14 @@ export default class ChatArea {
             }
 
             // Render LaTeX in the reasoning content
-            if (typeof renderMathInElement !== 'undefined') {
-                renderMathInElement(reasoningContentEl, {
-                    delimiters: [
-                        {left: '$$', right: '$$', display: true},
-                        {left: '\\[', right: '\\]', display: true},
-                        {left: '\\(', right: '\\)', display: false}
-                    ],
-                    throwOnError: false
-                });
-            }
+            renderMathInElement(reasoningContentEl, {
+                delimiters: [
+                    {left: '$$', right: '$$', display: true},
+                    {left: '\\[', right: '\\]', display: true},
+                    {left: '\\(', right: '\\)', display: false}
+                ],
+                throwOnError: false
+            });
         }
 
         // Update the subtitle to show timing instead of the summary
@@ -1012,7 +1007,7 @@ export default class ChatArea {
 
         // Render LaTeX only for the new message
         const newMessageEl = messagesContainer.querySelector(`[data-message-id="${message.id}"]`);
-        if (newMessageEl && typeof renderMathInElement !== 'undefined') {
+        if (newMessageEl) {
             const contentEl = newMessageEl.querySelector('.message-content');
             if (contentEl) {
                 renderMathInElement(contentEl, {
@@ -1091,16 +1086,14 @@ export default class ChatArea {
             if (newMessageEl) {
                 messageEl.parentElement.replaceChild(newMessageEl, messageEl);
                 // Re-run KaTeX rendering on the new element
-                if (typeof renderMathInElement !== 'undefined') {
-                    renderMathInElement(newMessageEl, {
-                        delimiters: [
-                            {left: '$$', right: '$$', display: true},
-                            {left: '\\[', right: '\\]', display: true},
-                            {left: '\\(', right: '\\)', display: false}
-                        ],
-                        throwOnError: false
-                    });
-                }
+                renderMathInElement(newMessageEl, {
+                    delimiters: [
+                        {left: '$$', right: '$$', display: true},
+                        {left: '\\[', right: '\\]', display: true},
+                        {left: '\\(', right: '\\)', display: false}
+                    ],
+                    throwOnError: false
+                });
                 // Setup citation carousel scrolling for the updated message
                 this.setupCitationCarouselScroll();
             }
