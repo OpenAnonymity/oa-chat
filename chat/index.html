@@ -55,8 +55,8 @@
     <!-- Tailwind CSS - critical, must be blocking -->
     <script src="https://cdn.tailwindcss.com"></script>
 
-    <!-- Marked.js for Markdown - critical for content display -->
-    <script src="https://cdn.jsdelivr.net/npm/marked@11.0.0/marked.min.js"></script>
+    <!-- Marked.js for Markdown - defer since only used by module scripts -->
+    <script defer src="https://cdn.jsdelivr.net/npm/marked@11.0.0/marked.min.js"></script>
 
     <!-- KaTeX for LaTeX - CSS critical, JS uses defer to ensure correct load order -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
