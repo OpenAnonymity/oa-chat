@@ -474,10 +474,23 @@ class ChatApp {
             this._scrollButtonClickPending = true;
             this.hideScrollToBottomButton();
             this.scrollToBottom(true);
-            // Clear flag after scroll completes
-            setTimeout(() => {
-                this._scrollButtonClickPending = false;
-            }, 350);
+
+            // Clear flag only after scroll animation completes and we're at bottom
+            // Use longer timeout to account for smooth scroll animation
+            const clearPendingFlag = () => {
+                const chatArea = this.elements.chatArea;
+                if (chatArea) {
+                    const isAtBottom = chatArea.scrollHeight - chatArea.scrollTop - chatArea.clientHeight < 10;
+                    if (isAtBottom) {
+                        this._scrollButtonClickPending = false;
+                        return;
+                    }
+                }
+                // If not at bottom yet, check again
+                setTimeout(clearPendingFlag, 100);
+            };
+            // Start checking after initial scroll animation time
+            setTimeout(clearPendingFlag, 400);
         });
 
         // Insert into input container (not input-card which has isolation: isolate that breaks backdrop-filter)

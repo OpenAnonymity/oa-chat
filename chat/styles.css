@@ -99,6 +99,15 @@
 /* Global font application */
 body {
     font-family: var(--font-sans);
+    /* Prevent layout collapse on very narrow screens */
+    min-width: 320px;
+    /* Disable double-tap zoom while allowing scroll and pinch-zoom */
+    touch-action: manipulation;
+}
+
+/* Ensure chat area can always scroll with touch */
+#chat-area {
+    touch-action: pan-y pinch-zoom;
 }
 
 code, pre, kbd, .font-mono {
@@ -1535,31 +1544,34 @@ textarea:focus {
     }
 }
 
-/* Right panel responsive styles */
-.right-panel-desktop {
-    transform: translateX(100%);
+/* ============================================
+   RESPONSIVE LAYOUT SYSTEM
+   ============================================
+   Breakpoints (mobile-first):
+   - Base: < 640px  (mobile)
+   - sm:  >= 640px  (tablet)
+   - lg:  >= 1024px (desktop)
+
+   Behavior:
+   - Mobile:  Sidebar overlay, Right panel overlay, input buttons collapsed
+   - Tablet:  Sidebar toggleable, Right panel overlay
+   - Desktop: Both panels can be inline
+   ============================================ */
+
+/* --- Core Layout Constraints --- */
+html, body {
+    height: 100%;
+    height: 100dvh; /* Dynamic viewport height for mobile address bar */
+    overflow: hidden;
 }
 
-@media (min-width: 1024px) {
-    .right-panel-desktop:not(.panel-hidden) {
-        transform: translateX(0);
-    }
+#app {
+    min-width: 320px;
+    height: 100%;
+    height: 100dvh;
 }
 
-/* Right panel hidden state - prevent flash on load */
-html[data-right-panel-hidden="true"] #right-panel {
-    transform: translateX(100%) !important;
-}
-
-@media (min-width: 1024px) {
-    html[data-right-panel-hidden="true"] #right-panel {
-        width: 0 !important;
-        border-left-width: 0 !important;
-        transform: none !important;
-    }
-}
-
-/* Sidebar hidden state */
+/* --- Sidebar Base & Hidden State --- */
 #sidebar.sidebar-hidden {
     width: 0 !important;
     border-right-width: 0 !important;
@@ -1569,9 +1581,39 @@ html[data-right-panel-hidden="true"] #right-panel {
     display: flex !important;
 }
 
-/* Sidebar responsive styles */
-@media (max-width: 768px) {
-    /* Hide sidebar by default on mobile */
+/* --- Mobile Sidebar Backdrop --- */
+.mobile-sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    background-color: rgba(0, 0, 0, 0.5);
+    z-index: 35;
+    display: none;
+}
+
+.mobile-sidebar-backdrop.visible {
+    display: block;
+}
+
+/* --- Right Panel Base --- */
+/*
+ * Right panel visibility is controlled by JS inline styles.
+ * CSS handles positioning mode (fixed vs relative) via media queries.
+ * The data-right-panel-hidden attribute ensures panel stays hidden during transitions.
+ *
+ * CRITICAL: This rule must use BOTH hiding mechanisms (transform AND width/overflow)
+ * to prevent flash when crossing the 1024px breakpoint.
+ */
+html[data-right-panel-hidden="true"] #right-panel {
+    transform: translateX(100%) !important;
+    width: 0 !important;
+    border-left-width: 0 !important;
+    overflow: hidden !important;
+    visibility: hidden !important;
+}
+
+/* --- Mobile: < 640px --- */
+@media (max-width: 639px) {
+    /* Sidebar: always overlay mode */
     #sidebar:not(.mobile-visible) {
         position: fixed !important;
         left: 0;
@@ -1581,12 +1623,6 @@ html[data-right-panel-hidden="true"] #right-panel {
         border-right-width: 0 !important;
     }
 
-    /* Show sidebar toggle button on mobile */
-    #show-sidebar-btn {
-        display: flex !important;
-    }
-
-    /* When sidebar is shown on mobile, make it overlay with proper width */
     #sidebar.mobile-visible {
         position: fixed !important;
         left: 0;
@@ -1596,43 +1632,232 @@ html[data-right-panel-hidden="true"] #right-panel {
         border-right-width: 1px !important;
         box-shadow: 0 0 20px rgba(0, 0, 0, 0.3);
     }
+
+    /* Always show sidebar toggle on mobile */
+    #show-sidebar-btn {
+        display: flex !important;
+    }
+
+    /* Hide keyboard shortcuts on mobile (⌘K) - saves space without losing functionality */
+    #model-picker-btn .flex.items-center.gap-0\.5 {
+        display: none;
+    }
+
+    /* Progressive model name truncation:
+       Hide provider name first (e.g., "OpenAI: " disappears), keep model name */
+    #model-picker-btn .model-provider-name {
+        display: none;
+    }
+
+    /* Model name can shrink but stays readable */
+    #model-picker-btn .model-short-name {
+        max-width: 150px;
+    }
 }
 
-/* Desktop: respect hidden state */
-@media (min-width: 769px) {
+/* --- Extremely narrow screens (< 360px) - only then hide secondary buttons --- */
+@media (max-width: 359px) {
+    #file-upload-btn {
+        display: none !important;
+    }
+
+    #model-picker-btn .model-short-name {
+        max-width: 100px;
+    }
+}
+
+/* --- Mobile layout (< 640px) - continued: fixed input and scroll fix --- */
+@media (max-width: 639px) {
+    /* CRITICAL: Input card fixed at viewport bottom on mobile
+       This ensures input is ALWAYS visible regardless of content height */
+    #input-card {
+        position: fixed !important;
+        bottom: 0.5rem !important;
+        left: 0.5rem !important;
+        right: 0.5rem !important;
+        width: auto !important;
+        max-width: none !important;
+        z-index: 50 !important;
+    }
+
+    /* ===========================================
+       MOBILE SCROLL FIX FOR iOS
+
+       Use absolute positioning for chat area to ensure it fills
+       exactly the available space and scrolls properly.
+       =========================================== */
+
+    /* Main content area - becomes the positioning context */
+    main {
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
+        padding-top: 0.5rem !important;
+        display: block !important;
+    }
+
+    /* Hide the flex container wrapper - we position chat-area directly */
+    main > div.flex {
+        display: contents !important;
+    }
+
+    /* Chat area - absolutely positioned within main */
+    #chat-area {
+        position: absolute !important;
+        top: 3rem !important; /* Space for top buttons */
+        left: 0 !important;
+        right: 0 !important;
+        bottom: 5rem !important; /* Space for fixed input card */
+        overflow-y: scroll !important;
+        -webkit-overflow-scrolling: touch !important;
+        overscroll-behavior-y: contain !important;
+        /* Hide scrollbar on mobile for cleaner look */
+        scrollbar-width: none; /* Firefox */
+        -ms-overflow-style: none; /* IE/Edge */
+    }
+
+    /* Hide scrollbar on mobile - WebKit (Chrome, Safari, newer Edge) */
+    #chat-area::-webkit-scrollbar {
+        display: none;
+    }
+
+    /* Messages container padding */
+    #messages-container {
+        padding-bottom: 2rem !important;
+        padding-top: 1rem !important;
+    }
+}
+
+/* --- Small Tablet: 640px to 767px (sidebar overlay, right panel overlay) --- */
+@media (min-width: 640px) and (max-width: 767px) {
+    #sidebar:not(.mobile-visible) {
+        position: fixed !important;
+        left: 0;
+        top: 0;
+        z-index: 40;
+        width: 0 !important;
+        border-right-width: 0 !important;
+    }
+
+    #sidebar.mobile-visible {
+        position: fixed !important;
+        left: 0;
+        top: 0;
+        z-index: 40;
+        width: 16rem !important;
+        border-right-width: 1px !important;
+        box-shadow: 0 0 20px rgba(0, 0, 0, 0.3);
+    }
+
+    #show-sidebar-btn {
+        display: flex !important;
+    }
+
+    /* Right panel: overlay mode */
+    #right-panel {
+        position: fixed !important;
+        right: 0;
+        top: 0;
+        width: 18rem !important;
+    }
+
+    /* Hide keyboard shortcuts */
+    #model-picker-btn .flex.items-center.gap-0\.5 {
+        display: none;
+    }
+
+    /* Input card fixed at bottom */
+    #input-card {
+        position: fixed !important;
+        bottom: 0.5rem !important;
+        left: 0.5rem !important;
+        right: 0.5rem !important;
+        width: auto !important;
+        max-width: none !important;
+        z-index: 50 !important;
+    }
+
+    /* Scroll fix - same as mobile */
+    main {
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
+        padding-top: 0.5rem !important;
+        display: block !important;
+    }
+
+    main > div.flex {
+        display: contents !important;
+    }
+
+    #chat-area {
+        position: absolute !important;
+        top: 3rem !important;
+        left: 0 !important;
+        right: 0 !important;
+        bottom: 5rem !important;
+        overflow-y: scroll !important;
+        -webkit-overflow-scrolling: touch !important;
+        overscroll-behavior-y: contain !important;
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+    }
+
+    #chat-area::-webkit-scrollbar {
+        display: none;
+    }
+
+    #messages-container {
+        padding-bottom: 2rem !important;
+        padding-top: 1rem !important;
+    }
+}
+
+/* --- Large Tablet: 768px to 1023px (sidebar inline, right panel overlay) --- */
+@media (min-width: 768px) and (max-width: 1023px) {
     #sidebar:not(.sidebar-hidden) {
         width: 16rem;
         border-right-width: 1px;
     }
 
-    #sidebar.sidebar-hidden {
-        width: 0 !important;
-        border-right-width: 0 !important;
+    /* Right panel: overlay mode */
+    #right-panel {
+        position: fixed !important;
+        right: 0;
+        top: 0;
+        width: 18rem !important;
     }
 
-    #sidebar.sidebar-hidden ~ * #show-sidebar-btn {
-        display: flex !important;
-    }
-}
-
-/* Mobile sidebar backdrop */
-.mobile-sidebar-backdrop {
-    position: fixed;
-    inset: 0;
-    background-color: rgba(0, 0, 0, 0.5);
-    z-index: 35;
-    animation: fadeIn 0.2s ease-out;
-    display: none;
-}
-
-.mobile-sidebar-backdrop.visible {
-    display: block;
-}
-
-@media (min-width: 769px) {
-    /* Hide backdrop on desktop */
+    /* Hide mobile backdrop */
     .mobile-sidebar-backdrop {
         display: none !important;
+    }
+
+    /* Input card - can use normal positioning here since sidebar is inline */
+    /* But keep consistent with tablet behavior for smooth transitions */
+}
+
+/* --- Desktop: >= 1024px --- */
+@media (min-width: 1024px) {
+    /* Sidebar: inline mode */
+    #sidebar:not(.sidebar-hidden) {
+        width: 16rem;
+        border-right-width: 1px;
+    }
+
+    /* Hide mobile backdrop */
+    .mobile-sidebar-backdrop {
+        display: none !important;
+    }
+
+    /* Right panel: inline shrink mode (not fixed overlay) */
+    /* JS controls visibility via inline width/transform - CSS only sets position */
+    #right-panel {
+        position: relative !important;
     }
 }
 
@@ -1655,17 +1880,17 @@ html[data-right-panel-hidden="true"] #right-panel {
     opacity: 1;
 }
 
-/* Adjust position when right panel is open on desktop */
-@media (min-width: 1024px) {
-    .right-panel-open .message-navigation {
-        right: calc(12px + 288px); /* 288px is default right panel width */
+/* Mobile: tighter positioning */
+@media (max-width: 639px) {
+    .message-navigation {
+        right: 6px;
     }
 }
 
-/* Responsive positioning */
-@media (max-width: 768px) {
-    .message-navigation {
-        right: 8px;
+/* Desktop: adjust for inline right panel */
+@media (min-width: 1024px) {
+    .right-panel-open .message-navigation {
+        right: calc(12px + 288px); /* 288px = 18rem right panel width */
     }
 }
 
@@ -2051,11 +2276,12 @@ html {
 
 /* Scroll to Bottom Button - frost glass effect */
 .scroll-to-bottom-btn {
+    /* On desktop: position absolute relative to input container */
     position: absolute;
-    /* Position above the input card, aligned with right side of centered 42rem card */
-    bottom: calc(100% + 0.5rem);
-    right: calc(50% - 19.5rem); /* 50% - (21rem card half-width) + 1.5rem padding */
-    z-index: 45;
+    bottom: calc(100% + 0.5rem); /* Just above the input card */
+    /* Align with right edge of centered 42rem card, with minimum 1rem from edge */
+    right: max(1rem, calc(50% - 21rem));
+    z-index: 55;
     display: inline-flex;
     align-items: center;
     gap: 0.45rem;
@@ -2113,14 +2339,24 @@ html {
     box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.45), 0 8px 10px -6px rgb(0 0 0 / 0.35);
 }
 
-/* Mobile responsive positioning */
-@media (max-width: 768px) {
+/* Tablet: input card becomes fixed, so button needs fixed positioning too */
+@media (max-width: 767px) {
     .scroll-to-bottom-btn {
-        /* On mobile, position relative to right edge */
+        position: fixed;
+        bottom: 6.5rem;
         right: 1rem;
+    }
+}
+
+/* Mobile: compact style with fixed positioning */
+@media (max-width: 639px) {
+    .scroll-to-bottom-btn {
+        position: fixed;
         padding: 0.3rem 0.6rem;
         gap: 0.35rem;
         font-size: 0.7rem;
+        bottom: 6.5rem;
+        right: 1rem;
     }
 
     .scroll-to-bottom-btn svg {
@@ -2234,3 +2470,4 @@ html {
         display: none !important;
     }
 }
+
