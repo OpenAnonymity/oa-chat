@@ -101,13 +101,13 @@ body {
     font-family: var(--font-sans);
     /* Prevent layout collapse on very narrow screens */
     min-width: 320px;
-    /* Disable double-tap zoom while allowing scroll and pinch-zoom */
-    touch-action: manipulation;
+    /* Disable all zoom gestures on mobile (double-tap and pinch) */
+    touch-action: pan-x pan-y;
 }
 
-/* Ensure chat area can always scroll with touch */
+/* Ensure chat area can scroll with touch but no zoom */
 #chat-area {
-    touch-action: pan-y pinch-zoom;
+    touch-action: pan-y;
 }
 
 code, pre, kbd, .font-mono {
@@ -1559,16 +1559,33 @@ textarea:focus {
    ============================================ */
 
 /* --- Core Layout Constraints --- */
-html, body {
+html {
     height: 100%;
+    height: -webkit-fill-available; /* iOS Safari fallback */
     height: 100dvh; /* Dynamic viewport height for mobile address bar */
     overflow: hidden;
+    overscroll-behavior: none; /* Prevent bounce/overscroll */
+}
+
+body {
+    height: 100%;
+    height: -webkit-fill-available;
+    height: 100dvh;
+    overflow: hidden;
+    overscroll-behavior: none;
+    /* Prevent iOS rubber-band scrolling on body */
+    position: fixed;
+    width: 100%;
+    top: 0;
+    left: 0;
 }
 
 #app {
     min-width: 320px;
     height: 100%;
+    height: -webkit-fill-available;
     height: 100dvh;
+    overflow: hidden;
 }
 
 /* --- Sidebar Base & Hidden State --- */
@@ -1672,7 +1689,8 @@ html[data-right-panel-hidden="true"] #right-panel {
        This ensures input is ALWAYS visible regardless of content height */
     #input-card {
         position: fixed !important;
-        bottom: 0.5rem !important;
+        /* Account for iOS safe area (home indicator) */
+        bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px)) !important;
         left: 0.5rem !important;
         right: 0.5rem !important;
         width: auto !important;
@@ -1709,7 +1727,8 @@ html[data-right-panel-hidden="true"] #right-panel {
         top: 3rem !important; /* Space for top buttons */
         left: 0 !important;
         right: 0 !important;
-        bottom: 5rem !important; /* Space for fixed input card */
+        /* Space for fixed input card + safe area */
+        bottom: calc(5rem + env(safe-area-inset-bottom, 0px)) !important;
         overflow-y: scroll !important;
         -webkit-overflow-scrolling: touch !important;
         overscroll-behavior-y: contain !important;
