@@ -342,6 +342,19 @@ html.switching-theme *::after {
 /* Session list styles */
 .chat-session {
     transition: all 0.15s ease;
+    -webkit-tap-highlight-color: transparent; /* Remove iOS tap highlight */
+}
+
+/* Only apply hover styles on devices with pointer hover (not touch) */
+@media (hover: hover) and (pointer: fine) {
+    .chat-session:hover {
+        background-color: hsl(var(--color-hover) / 0.7);
+    }
+}
+
+/* Touch feedback - :active works on single tap for touch devices */
+.chat-session:active {
+    background-color: hsl(var(--color-hover) / 0.7);
 }
 
 /* Sessions list reveal animation */
@@ -358,10 +371,6 @@ html.switching-theme *::after {
         opacity: 1;
         transform: translateY(0);
     }
-}
-
-.chat-session:hover {
-    background-color: hsl(var(--color-hover) / 0.7);
 }
 
 .chat-session.active {
@@ -1598,6 +1607,11 @@ body {
     display: flex !important;
 }
 
+/* When show-sidebar-btn is visible, move export-pdf-btn to the right to avoid overlap */
+#sidebar.sidebar-hidden ~ * #export-pdf-btn {
+    left: 3.5rem !important; /* Position next to show-sidebar-btn */
+}
+
 /* --- Mobile Sidebar Backdrop --- */
 .mobile-sidebar-backdrop {
     position: fixed;
@@ -1653,6 +1667,11 @@ html[data-right-panel-hidden="true"] #right-panel {
     /* Always show sidebar toggle on mobile */
     #show-sidebar-btn {
         display: flex !important;
+    }
+
+    /* Position export button next to sidebar toggle on mobile */
+    #export-pdf-btn {
+        left: 3.5rem !important;
     }
 
     /* Hide keyboard shortcuts on mobile (⌘K) - saves space without losing functionality */
@@ -1772,6 +1791,11 @@ html[data-right-panel-hidden="true"] #right-panel {
 
     #show-sidebar-btn {
         display: flex !important;
+    }
+
+    /* Position export button next to sidebar toggle */
+    #export-pdf-btn {
+        left: 3.5rem !important;
     }
 
     /* Right panel: overlay mode */
