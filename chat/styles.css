@@ -2159,6 +2159,14 @@ html {
     position: relative;
 }
 
+/* Hide tooltips on touch devices - they require hover which doesn't exist on mobile */
+@media (hover: none), (pointer: coarse) {
+    [data-tooltip]:hover::after,
+    [data-tooltip]:hover::before {
+        display: none !important;
+    }
+}
+
 /* Elevate tooltip parent above input area when hovering to ensure tooltip visibility */
 [data-tooltip]:hover {
     z-index: 50; /* Above input area (z-20) and scroll button (z-45) */
