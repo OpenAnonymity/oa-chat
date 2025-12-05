@@ -162,27 +162,27 @@ export default class ChatArea {
 
     /**
      * Handles copying the content of a message.
-     * Copies from DOM first (handles streaming), falls back to database.
+     * Prioritizes raw markdown from database; falls back to DOM for streaming.
      * @param {string} messageId - The message ID to copy
      */
     async handleCopyMessage(messageId) {
-        // First try DOM (synchronous, works for streaming, Safari-friendly)
-        const domContent = this.getMessageTextFromDOM(messageId);
-        if (domContent && domContent.trim()) {
-            this.copyToClipboard(domContent);
+        const session = this.app.getCurrentSession();
+        if (!session) return;
+
+        // Try database first to get raw markdown/LaTeX
+        const messages = await chatDB.getSessionMessages(session.id);
+        const message = messages.find(m => m.id === messageId);
+
+        if (message && message.content && message.content.trim()) {
+            this.copyToClipboard(message.content);
             this.showCopySuccess(messageId);
             return;
         }
 
-        // Fallback to database for raw markdown
-        const session = this.app.getCurrentSession();
-        if (!session) return;
-
-        const messages = await chatDB.getSessionMessages(session.id);
-        const message = messages.find(m => m.id === messageId);
-
-        if (message && message.content) {
-            this.copyToClipboard(message.content);
+        // Fallback to DOM for streaming messages not yet saved
+        const domContent = this.getMessageTextFromDOM(messageId);
+        if (domContent && domContent.trim()) {
+            this.copyToClipboard(domContent);
             this.showCopySuccess(messageId);
         }
     }
