@@ -111,7 +111,7 @@ export default class Sidebar {
             <div class="group relative flex h-9 items-center rounded-lg ${isActive ? 'chat-session active' : 'hover-highlight'} transition-colors pl-3 chat-session" data-session-id="${session.id}">
                 <a class="flex flex-1 items-center justify-between h-full min-w-0 text-foreground hover:text-foreground cursor-pointer">
                     <div class="flex min-w-0 flex-1 items-center">
-                        <input class="w-full cursor-pointer truncate bg-transparent text-sm leading-5 focus:outline-none text-foreground ${titleClass}" placeholder="Untitled Chat" readonly value="${this.escapeHtml(session.title)}">
+                        <input class="session-title-input w-full cursor-pointer truncate bg-transparent text-sm leading-5 focus:outline-none text-foreground ${titleClass}" placeholder="Untitled Chat" readonly data-session-id="${session.id}" value="${this.escapeHtml(session.title)}">
                     </div>
                 </a>
                 <div class="flex shrink-0 items-center relative">
@@ -121,6 +121,7 @@ export default class Sidebar {
                         </svg>
                     </button>
                     <div class="session-menu hidden absolute right-0 top-10 z-[100] rounded-lg border border-border bg-popover shadow-lg p-1 min-w-[140px]" data-session-id="${session.id}">
+                        <button class="rename-session-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">Rename</button>
                         <button class="delete-session-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">Delete</button>
                     </div>
                 </div>
@@ -158,6 +159,40 @@ export default class Sidebar {
             });
         });
 
+        // Rename session action - enable inline editing
+        document.querySelectorAll('.rename-session-action').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const sessionId = btn.dataset.sessionId;
+                // Close the menu
+                document.querySelectorAll('.session-menu').forEach(m => m.classList.add('hidden'));
+                // Enable inline editing on the title input
+                this.startInlineEdit(sessionId);
+            });
+        });
+
+        // Title input blur/keydown handlers for inline editing
+        document.querySelectorAll('.session-title-input').forEach(input => {
+            input.addEventListener('blur', (e) => {
+                if (!input.readOnly) {
+                    this.finishInlineEdit(input);
+                }
+            });
+            input.addEventListener('keydown', (e) => {
+                if (!input.readOnly) {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        input.blur();
+                    } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        this.cancelInlineEdit(input);
+                    }
+                }
+            });
+        });
+
         // Delete session action
         document.querySelectorAll('.delete-session-action').forEach(btn => {
             btn.addEventListener('click', (e) => {
@@ -167,6 +202,69 @@ export default class Sidebar {
                 // Menu will be removed when sessions are re-rendered
             });
         });
+    }
+
+    /**
+     * Starts inline editing for a session title.
+     * @param {string} sessionId - Session ID to edit
+     */
+    startInlineEdit(sessionId) {
+        const input = document.querySelector(`.session-title-input[data-session-id="${sessionId}"]`);
+        if (!input) return;
+
+        // Store original value for cancel
+        input.dataset.originalValue = input.value;
+
+        // Enable editing
+        input.readOnly = false;
+        input.classList.remove('cursor-pointer');
+        input.classList.add('cursor-text', 'bg-accent', 'rounded', 'px-1');
+
+        // Select all text and focus
+        input.select();
+        input.focus();
+    }
+
+    /**
+     * Finishes inline editing and saves the new title.
+     * @param {HTMLInputElement} input - The input element
+     */
+    async finishInlineEdit(input) {
+        const sessionId = input.dataset.sessionId;
+        const newTitle = input.value.trim();
+        const originalValue = input.dataset.originalValue;
+
+        // Reset input styling
+        input.readOnly = true;
+        input.classList.add('cursor-pointer');
+        input.classList.remove('cursor-text', 'bg-accent', 'rounded', 'px-1');
+
+        // Only save if title changed and is not empty
+        if (newTitle && newTitle !== originalValue) {
+            await this.app.updateSessionTitle(sessionId, newTitle);
+        } else {
+            // Restore original value if empty or unchanged
+            input.value = originalValue;
+        }
+
+        delete input.dataset.originalValue;
+    }
+
+    /**
+     * Cancels inline editing and restores the original title.
+     * @param {HTMLInputElement} input - The input element
+     */
+    cancelInlineEdit(input) {
+        // Restore original value
+        input.value = input.dataset.originalValue || input.value;
+
+        // Reset input styling
+        input.readOnly = true;
+        input.classList.add('cursor-pointer');
+        input.classList.remove('cursor-text', 'bg-accent', 'rounded', 'px-1');
+
+        delete input.dataset.originalValue;
+        input.blur();
     }
 }
 
