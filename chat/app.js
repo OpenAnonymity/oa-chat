@@ -65,6 +65,7 @@ class ChatApp {
             toggleRightPanelBtn: document.getElementById('toggle-right-panel-btn'), // This might be legacy, but let's keep it for now.
             showRightPanelBtn: document.getElementById('show-right-panel-btn'),
             exportPdfBtn: document.getElementById('export-pdf-btn'),
+            wideModeBtn: document.getElementById('wide-mode-btn'),
             sidebar: document.getElementById('sidebar'),
             hideSidebarBtn: document.getElementById('hide-sidebar-btn'),
             showSidebarBtn: document.getElementById('show-sidebar-btn'),
@@ -857,6 +858,9 @@ class ChatApp {
 
         // Initialize theme FIRST (sync, fast, prevents flash)
         themeManager.init();
+
+        // Initialize wide mode state from localStorage
+        this.initWideMode();
 
         // Start DB init in background - components can show skeleton state
         const dbReady = chatDB.init();
@@ -2819,6 +2823,7 @@ class ChatApp {
             await this.chatArea.render();
         }
         this.updateExportPdfButtonVisibility();
+        this.updateWideModeButtonVisibility();
     }
 
     /**
@@ -2848,6 +2853,57 @@ class ChatApp {
             btn.classList.add('hidden');
             btn.classList.remove('flex');
         }
+    }
+
+    /**
+     * Updates wide mode button visibility and position.
+     * Shows only when a session is active, adjusts position based on sidebar state.
+     */
+    updateWideModeButtonVisibility() {
+        const btn = this.elements.wideModeBtn;
+        if (!btn) return;
+
+        const hasSession = !!this.getCurrentSession();
+        const sidebarHidden = this.elements.sidebar?.classList.contains('sidebar-hidden');
+        const isMobile = this.isMobileView();
+
+        if (hasSession) {
+            btn.classList.remove('hidden');
+            btn.classList.add('flex');
+            // Adjust position based on sidebar state
+            // When sidebar hidden: show-sidebar-btn at left-4, export-pdf at left-14, wide-mode at left-24
+            // When sidebar visible: export-pdf at left-4, wide-mode at left-14
+            if (sidebarHidden || isMobile) {
+                btn.classList.remove('left-4', 'left-14');
+                btn.classList.add('left-24');
+            } else {
+                btn.classList.remove('left-4', 'left-24');
+                btn.classList.add('left-14');
+            }
+        } else {
+            btn.classList.add('hidden');
+            btn.classList.remove('flex');
+        }
+    }
+
+    /**
+     * Initializes wide mode state from localStorage.
+     */
+    initWideMode() {
+        const isWide = localStorage.getItem('oa-wide-mode') === 'true';
+        if (isWide) {
+            document.documentElement.classList.add('wide-mode');
+            this.elements.wideModeBtn?.classList.add('wide-active');
+        }
+    }
+
+    /**
+     * Toggles wide mode on/off.
+     */
+    toggleWideMode() {
+        const isWide = document.documentElement.classList.toggle('wide-mode');
+        localStorage.setItem('oa-wide-mode', isWide ? 'true' : 'false');
+        this.elements.wideModeBtn?.classList.toggle('wide-active', isWide);
     }
 
     /**
@@ -2894,6 +2950,7 @@ class ChatApp {
             backdrop.classList.remove('visible');
         }
         this.updateExportPdfButtonVisibility();
+        this.updateWideModeButtonVisibility();
     }
 
     showSidebar() {
@@ -2917,6 +2974,7 @@ class ChatApp {
             backdrop.classList.add('visible');
         }
         this.updateExportPdfButtonVisibility();
+        this.updateWideModeButtonVisibility();
     }
 
     isMobileView() {
@@ -2978,6 +3036,13 @@ class ChatApp {
         if (this.elements.exportPdfBtn) {
             this.elements.exportPdfBtn.addEventListener('click', () => {
                 this.exportChatToPdf();
+            });
+        }
+
+        // Wide mode button
+        if (this.elements.wideModeBtn) {
+            this.elements.wideModeBtn.addEventListener('click', () => {
+                this.toggleWideMode();
             });
         }
 

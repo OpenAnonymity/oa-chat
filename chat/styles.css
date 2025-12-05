@@ -1332,6 +1332,36 @@ textarea:focus {
     background-color: hsl(var(--color-background));
 }
 
+/* Wide mode - increases message container max-width */
+#messages-container {
+    --messages-max-width: 44rem;
+    max-width: var(--messages-max-width);
+    transition: max-width 0.2s ease;
+}
+
+html.wide-mode #messages-container {
+    --messages-max-width: 66rem; /* 1.5x of 44rem */
+}
+
+/* Wide mode button active state */
+#wide-mode-btn.wide-active {
+    color: hsl(var(--color-accent-primary)) !important;
+    background-color: hsl(var(--color-accent-primary) / 0.1) !important;
+}
+
+#wide-mode-btn.wide-active:hover {
+    background-color: hsl(var(--color-accent-primary) / 0.15) !important;
+}
+
+.dark #wide-mode-btn.wide-active {
+    color: hsl(var(--color-accent-primary) / 0.85) !important;
+    background-color: hsl(var(--color-accent-primary) / 0.2) !important;
+}
+
+.dark #wide-mode-btn.wide-active:hover {
+    background-color: hsl(var(--color-accent-primary) / 0.25) !important;
+}
+
 .prose p:first-child {
     margin-top: 0;
 }
@@ -1607,9 +1637,13 @@ body {
     display: flex !important;
 }
 
-/* When show-sidebar-btn is visible, move export-pdf-btn to the right to avoid overlap */
+/* When show-sidebar-btn is visible, move export-pdf-btn and wide-mode-btn to the right to avoid overlap */
 #sidebar.sidebar-hidden ~ * #export-pdf-btn {
     left: 3.5rem !important; /* Position next to show-sidebar-btn */
+}
+
+#sidebar.sidebar-hidden ~ * #wide-mode-btn {
+    left: 6rem !important; /* Position next to export-pdf-btn */
 }
 
 /* --- Mobile Sidebar Backdrop --- */
@@ -1672,6 +1706,11 @@ html[data-right-panel-hidden="true"] #right-panel {
     /* Position export button next to sidebar toggle on mobile */
     #export-pdf-btn {
         left: 3.5rem !important;
+    }
+
+    /* Position wide mode button next to export button on mobile */
+    #wide-mode-btn {
+        left: 6rem !important;
     }
 
     /* Hide keyboard shortcuts on mobile (⌘K) - saves space without losing functionality */
@@ -1796,6 +1835,11 @@ html[data-right-panel-hidden="true"] #right-panel {
     /* Position export button next to sidebar toggle */
     #export-pdf-btn {
         left: 3.5rem !important;
+    }
+
+    /* Position wide mode button next to export button */
+    #wide-mode-btn {
+        left: 6rem !important;
     }
 
     /* Right panel: overlay mode */
@@ -2425,6 +2469,7 @@ html {
     #show-sidebar-btn,
     #show-right-panel-btn,
     #export-pdf-btn,
+    #wide-mode-btn,
     .mobile-sidebar-backdrop,
     .message-navigation,
     .scroll-to-bottom-btn,
