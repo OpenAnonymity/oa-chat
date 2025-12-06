@@ -742,6 +742,19 @@ function buildCitationsSection(citations, messageId) {
 }
 
 /**
+ * Extracts just the model name from a full "Provider: ModelName" string.
+ * @param {string} fullName - Full model name (e.g., "OpenAI: GPT-5.1 Thinking")
+ * @returns {string} Short model name (e.g., "GPT-5.1 Thinking")
+ */
+function extractShortModelName(fullName) {
+    if (!fullName) return fullName;
+    if (fullName.includes(': ')) {
+        return fullName.split(': ').slice(1).join(': ');
+    }
+    return fullName;
+}
+
+/**
  * Builds HTML for an assistant message bubble.
  * @param {Object} message - Message object
  * @param {Object} helpers - Helper functions { processContentWithLatex, formatTime }
@@ -756,6 +769,8 @@ function buildAssistantMessage(message, helpers, providerName, modelName) {
     const tokenDisplay = '';
     const iconData = getProviderIcon(providerName, 'w-3.5 h-3.5');
     const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
+    // Use short model name for display (without provider prefix)
+    const displayModelName = extractShortModelName(modelName);
 
     // Build reasoning trace if present
     const reasoningBubble = buildReasoningTrace(
@@ -820,7 +835,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName) {
                     <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow ${bgClass}">
                         ${iconData.html}
                     </div>
-                    <span class="${CLASSES.assistantModelName}" style="font-size: 0.7rem;">${modelName}</span>
+                    <span class="${CLASSES.assistantModelName}" style="font-size: 0.7rem;">${displayModelName}</span>
                     <span class="${CLASSES.assistantTime}" style="font-size: 0.7rem;">${formatTime(message.timestamp)}</span>
                     ${tokenDisplay}
                 </div>

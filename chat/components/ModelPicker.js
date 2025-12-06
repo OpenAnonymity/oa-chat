@@ -329,23 +329,18 @@ export default class ModelPicker {
                <style>@keyframes modelpicker-spin { to { transform: rotate(360deg); } }</style>`;
         const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
 
-        // Split model name into provider and model for progressive truncation
-        // Format: "Provider: Model" -> provider="Provider", modelOnly="Model"
-        let providerPart = '';
-        let modelOnly = currentModelName;
+        // Extract short model name (without provider prefix) for compact display
+        // Format: "Provider: Model" -> "Model"
+        let shortModelName = currentModelName;
         if (currentModelName && currentModelName.includes(': ')) {
-            const parts = currentModelName.split(': ');
-            providerPart = parts[0] + ': ';
-            modelOnly = parts.slice(1).join(': ');
+            shortModelName = currentModelName.split(': ').slice(1).join(': ');
         }
 
         this.app.elements.modelPickerBtn.innerHTML = `
             <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 ${bgClass}">
                 ${iconContent}
             </div>
-            <span class="model-name-container min-w-0 flex">
-                <span class="model-provider-name">${providerPart}</span><span class="model-short-name truncate">${modelOnly}</span>
-            </span>
+            <span class="model-name-container min-w-0 truncate">${shortModelName}</span>
             ${shortcutHtml}
         `;
         this.app.elements.modelPickerBtn.classList.add('gap-1.5');
