@@ -320,13 +320,12 @@ export default class ModelPicker {
         // Try to get provider from model lookup first, then infer from name
         const model = this.app.state.models.find(m => m.name === currentModelName);
         const provider = model?.provider || inferProvider(currentModelName);
+        // getProviderIcon returns first letter fallback when no icon configured
         const iconData = provider ? getProviderIcon(provider, 'w-3 h-3') : { html: '', hasIcon: false };
 
-        // Always show icon container - use spinner only if we truly don't know the provider
-        const iconContent = iconData.hasIcon
-            ? iconData.html
-            : `<div style="width: 10px; height: 10px; border: 1.5px solid #d1d5db; border-top-color: #9ca3af; border-radius: 50%; animation: modelpicker-spin 0.6s linear infinite;"></div>
-               <style>@keyframes modelpicker-spin { to { transform: rotate(360deg); } }</style>`;
+        // Use icon HTML directly - getProviderIcon already provides first letter fallback
+        // Only show spinner if provider is completely unknown (very rare)
+        const iconContent = iconData.html || `<span class="text-[10px] font-semibold">?</span>`;
         const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
 
         // Extract short model name (without provider prefix) for compact display

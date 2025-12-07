@@ -755,6 +755,33 @@ function extractShortModelName(fullName) {
 }
 
 /**
+ * Infers provider name from model name when models list is unavailable.
+ * Uses the "Provider: Model" format or keyword matching as fallback.
+ * @param {string} name - Model name (e.g., "OpenAI: GPT-5.1 Thinking" or "GPT-4")
+ * @returns {string|null} Provider name or null if unknown
+ */
+function inferProvider(name) {
+    if (!name) return null;
+    // Strategy 1: "Provider: Model" format (our custom names)
+    if (name.includes(': ')) {
+        return name.split(': ')[0];
+    }
+    // Strategy 2: Keyword matching for common model names
+    const lowerName = name.toLowerCase();
+    if (lowerName.includes('gpt') || lowerName.includes('o1-') || lowerName.includes('o3-') || lowerName.includes('o4-')) return 'OpenAI';
+    if (lowerName.includes('claude')) return 'Anthropic';
+    if (lowerName.includes('gemini')) return 'Google';
+    if (lowerName.includes('llama')) return 'Meta';
+    if (lowerName.includes('mistral')) return 'Mistral';
+    if (lowerName.includes('deepseek')) return 'DeepSeek';
+    if (lowerName.includes('qwen')) return 'Qwen';
+    if (lowerName.includes('command')) return 'Cohere';
+    if (lowerName.includes('sonar')) return 'Perplexity';
+    if (lowerName.includes('nemotron')) return 'Nvidia';
+    return null;
+}
+
+/**
  * Builds HTML for an assistant message bubble.
  * @param {Object} message - Message object
  * @param {Object} helpers - Helper functions { processContentWithLatex, formatTime }
@@ -1001,7 +1028,8 @@ export function buildMessageHTML(message, helpers, models, sessionModelName, opt
         // Determine provider name and model name
         const modelName = sessionModelName || 'OpenAI: GPT-5.1 Instant';
         const modelOption = models.find(m => m.name === modelName);
-        const providerName = modelOption ? modelOption.provider : 'OpenAI';
+        // Use models lookup first, then infer from name, then default to OpenAI
+        const providerName = modelOption?.provider || inferProvider(modelName) || 'OpenAI';
 
         return buildAssistantMessage(message, helpers, providerName, modelName);
     }
