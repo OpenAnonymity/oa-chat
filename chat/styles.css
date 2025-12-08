@@ -2323,6 +2323,24 @@ html {
     font-size: 0.875rem;
     line-height: 1.5;
     min-height: 80px;
+    max-height: 60vh;
+}
+
+/* Subtle theme-aware resize handle */
+.edit-prompt-textarea::-webkit-resizer {
+    width: 6px;
+    height: 6px;
+    background: linear-gradient(
+        135deg,
+        transparent 50%,
+        hsl(var(--color-muted-foreground) / 0.35) 50%,
+        hsl(var(--color-muted-foreground) / 0.35) 57%,
+        transparent 57%,
+        transparent 64%,
+        hsl(var(--color-muted-foreground) / 0.35) 64%,
+        hsl(var(--color-muted-foreground) / 0.35) 71%,
+        transparent 71%
+    );
 }
 
 /* Shared focus style for textareas and inputs - clean, subtle, no heavy ring */

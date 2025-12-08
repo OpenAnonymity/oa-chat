@@ -45,11 +45,11 @@ const CLASSES = {
 
     assistantWrapper: 'w-full px-2 md:px-3 self-start pb-1',
     assistantGroup: 'group flex w-full flex-col items-start justify-start gap-2',
-    assistantHeader: 'flex w-full items-center justify-start gap-2',
+    assistantHeader: 'flex w-full items-center justify-start gap-2 group',
     assistantAvatar: 'flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow bg-muted',
     assistantAvatarText: 'text-xs font-semibold text-foreground',
     assistantModelName: 'text-xs text-foreground font-medium',
-    assistantTime: 'text-xs text-muted-foreground',
+    assistantTime: 'text-xs text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity',
     assistantTokens: 'text-xs text-muted-foreground ml-auto',
     assistantBubble: 'py-3 px-4 font-normal message-assistant w-full flex items-center',
     assistantContent: 'min-w-0 w-full overflow-hidden message-content prose',
@@ -217,7 +217,7 @@ function buildUserMessage(message, options = {}) {
                 <div class="${CLASSES.userGroup}">
                     <div class="edit-prompt-form w-full">
                         <textarea
-                            class="edit-prompt-textarea w-full px-4 py-3 border border-border rounded-lg bg-background text-foreground resize-none focus:outline-none shadow-sm"
+                            class="edit-prompt-textarea w-full px-4 py-3 border border-border rounded-lg bg-background text-foreground resize-y focus:outline-none shadow-sm"
                             rows="3"
                             data-message-id="${message.id}"
                         >${escapeHtml(message.content)}</textarea>
