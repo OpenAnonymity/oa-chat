@@ -385,8 +385,13 @@ export default class ChatArea {
             formatTime: this.app.formatTime.bind(this.app)
         };
 
+        // Check if this session is currently streaming
+        const isSessionStreaming = this.app.isCurrentSessionStreaming();
+
         messagesContainer.innerHTML = messages.map(message => {
             const options = this.app.getMessageTemplateOptions ? this.app.getMessageTemplateOptions(message.id) : {};
+            // Pass session streaming state to template
+            options.isSessionStreaming = isSessionStreaming;
             // Normalize streaming state for messages loaded from DB.
             // If streamingReasoning/streamingTokens are set, it means streaming was interrupted
             // (e.g., browser closed, network error). Reset them for proper display.

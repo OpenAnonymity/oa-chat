@@ -787,9 +787,10 @@ function inferProvider(name) {
  * @param {Object} helpers - Helper functions { processContentWithLatex, formatTime }
  * @param {string} providerName - Provider name (e.g., "OpenAI", "Anthropic")
  * @param {string} modelName - Model display name
+ * @param {Object} options - Template options (e.g., isSessionStreaming)
  * @returns {string} HTML string
  */
-function buildAssistantMessage(message, helpers, providerName, modelName) {
+function buildAssistantMessage(message, helpers, providerName, modelName, options = {}) {
     const { processContentWithLatex, formatTime } = helpers;
     // FEATURE DISABLED: Token count display - uncomment to re-enable
     // const tokenDisplay = buildTokenDisplay(message);
@@ -846,9 +847,14 @@ function buildAssistantMessage(message, helpers, providerName, modelName) {
     // Check if message is complete but has no output (no text, no images)
     // This happens when provider doesn't return a response
     const hasNoOutput = !processedContent && (!message.images || message.images.length === 0);
-    // Message is complete if not actively streaming (streamingTokens is null/undefined after finalization)
-    const isMessageComplete = !message.streamingReasoning && (message.streamingTokens === null || message.streamingTokens === undefined);
-    const noResponseNotice = (hasNoOutput && isMessageComplete) ? `
+    // Message is complete if:
+    // - Not actively streaming reasoning
+    // - streamingTokens is null/undefined (finalized)
+    // - The session itself is not streaming (prevents false positives when switching sessions)
+    const isMessageComplete = !message.streamingReasoning &&
+        (message.streamingTokens === null || message.streamingTokens === undefined);
+    const isSessionStreaming = options.isSessionStreaming || false;
+    const noResponseNotice = (hasNoOutput && isMessageComplete && !isSessionStreaming) ? `
         <span class="text-xs text-muted-foreground opacity-70">[Model provider returned no response. Try a new prompt or a new session.]</span>
     ` : '';
 
@@ -1031,7 +1037,7 @@ export function buildMessageHTML(message, helpers, models, sessionModelName, opt
         // Use models lookup first, then infer from name, then default to OpenAI
         const providerName = modelOption?.provider || inferProvider(modelName) || 'OpenAI';
 
-        return buildAssistantMessage(message, helpers, providerName, modelName);
+        return buildAssistantMessage(message, helpers, providerName, modelName, options);
     }
 }
 
