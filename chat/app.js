@@ -138,6 +138,29 @@ class ChatApp {
     }
 
     /**
+     * Adds images to an array while deduplicating by data URL.
+     * Prevents the same image from being added multiple times when it arrives
+     * through different channels (e.g., delta.images and reasoning_details).
+     * @param {Array} existingImages - The existing images array (will be modified)
+     * @param {Array} newImages - New images to add
+     */
+    addImagesWithDedup(existingImages, newImages) {
+        if (!newImages || newImages.length === 0) return;
+
+        const existingUrls = new Set(
+            existingImages.map(img => img.image_url?.url).filter(Boolean)
+        );
+
+        for (const img of newImages) {
+            const url = img.image_url?.url;
+            if (url && !existingUrls.has(url)) {
+                existingImages.push(img);
+                existingUrls.add(url);
+            }
+        }
+    }
+
+    /**
      * Configure marked.js with custom renderer for code blocks
      * Adds language label and copy button to fenced code blocks
      */
@@ -1683,8 +1706,14 @@ class ChatApp {
                                 streamingMessage.streamingTokens = Math.ceil(streamedContent.length / 4);
                             }
 
+                            // Handle image data
+                            if (imageData && imageData.images) {
+                                if (!streamingMessage.images) streamingMessage.images = [];
+                                this.addImagesWithDedup(streamingMessage.images, imageData.images);
+                            }
+
                             // Save message to DB (always) and append to UI (only if viewing this session)
-                            if (chunk) {
+                            if (chunk || (imageData && imageData.images)) {
                                 await chatDB.saveMessage(streamingMessage);
                                 if (this.chatArea && this.isViewingSession(session.id)) {
                                     await this.chatArea.appendMessage(streamingMessage);
@@ -1696,6 +1725,17 @@ class ChatApp {
                         // Handle subsequent chunks
                         if (chunk) streamedContent += chunk;
 
+                        // Handle image data
+                        if (imageData && imageData.images) {
+                            if (!streamingMessage.images) streamingMessage.images = [];
+                            this.addImagesWithDedup(streamingMessage.images, imageData.images);
+                            await chatDB.saveMessage(streamingMessage);
+                            // Only update UI if still viewing the same session
+                            if (this.chatArea && this.isViewingSession(session.id)) {
+                                this.chatArea.updateStreamingImages(streamingMessageId, streamingMessage.images);
+                            }
+                        }
+
                         if (streamedContent.length - lastSaveLength >= SAVE_INTERVAL_CHARS) {
                             streamingMessage.content = streamedContent;
                             streamingMessage.streamingTokens = Math.ceil(streamedContent.length / 4);
@@ -1704,7 +1744,7 @@ class ChatApp {
                         }
 
                         // Only update UI if still viewing the same session
-                        if (this.chatArea && this.isViewingSession(session.id)) {
+                        if (chunk && this.chatArea && this.isViewingSession(session.id)) {
                             this.chatArea.updateStreamingMessage(streamingMessageId, streamedContent);
                         }
                     },
@@ -2070,7 +2110,7 @@ class ChatApp {
                             // Handle image data
                             if (imageData && imageData.images) {
                                 if (!streamingMessage.images) streamingMessage.images = [];
-                                streamingMessage.images.push(...imageData.images);
+                                this.addImagesWithDedup(streamingMessage.images, imageData.images);
                             }
 
                             // Save message to DB (always) and append to UI (only if viewing this session)
@@ -2105,7 +2145,7 @@ class ChatApp {
 
                         if (imageData && imageData.images) {
                             if (!streamingMessage.images) streamingMessage.images = [];
-                            streamingMessage.images.push(...imageData.images);
+                            this.addImagesWithDedup(streamingMessage.images, imageData.images);
                             await chatDB.saveMessage(streamingMessage);
                             // Only update UI if still viewing the same session
                             if (this.chatArea && this.isViewingSession(session.id)) {

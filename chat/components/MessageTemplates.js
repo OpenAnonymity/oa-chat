@@ -90,11 +90,11 @@ function buildGeneratedImages(images) {
         if (image.type === 'image_url' && image.image_url?.url) {
             const imageId = `image-${Date.now()}-${index}`;
             return `
-                <div class="relative inline-block">
+                <div class="relative inline-block max-w-full">
                     <img
                         src="${escapeHtml(image.image_url.url)}"
                         alt="Generated image"
-                        class="aspect-auto h-96 max-w-xl rounded-lg border object-cover cursor-pointer hover:opacity-95 transition-opacity"
+                        class="w-full max-w-xl max-h-96 rounded-lg border object-contain cursor-pointer hover:opacity-95 transition-opacity"
                         data-image-id="${imageId}"
                         onclick="window.expandImage('${imageId}')"
                     />
