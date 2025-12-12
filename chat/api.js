@@ -29,8 +29,10 @@ class OpenRouterAPI {
         // Custom display name overrides
         // Map model ID or default name to custom display name
         this.displayNameOverrides = {
+            'openai/gpt-5.2-chat': 'OpenAI: GPT-5.2 Instant',
             'openai/gpt-5.1-chat': 'OpenAI: GPT-5.1 Instant',
             'openai/gpt-5-chat': 'OpenAI: GPT-5 Instant',
+            'openai/gpt-5.2': 'OpenAI: GPT-5.2 Thinking',
             'openai/gpt-5.1': 'OpenAI: GPT-5.1 Thinking',
             'openai/gpt-5': 'OpenAI: GPT-5 Thinking',
             // Add more customizations here as needed
@@ -111,6 +113,7 @@ class OpenRouterAPI {
 
             // Return a fallback list of models
             return [
+                { name: 'OpenAI: GPT-5.2 Instant', id: 'openai/gpt-5.2-chat', category: 'OpenAI', provider: 'OpenAI' },
                 { name: 'OpenAI: GPT-5.1 Instant', id: 'openai/gpt-5.1-chat', category: 'OpenAI', provider: 'OpenAI' },
             ];
         }
@@ -226,15 +229,15 @@ class OpenRouterAPI {
 
     // Get model-specific max_tokens
     getMaxTokensForModel(modelId) {
+        const baseModelId = typeof modelId === 'string' ? modelId.split(':')[0] : '';
         // Check for Opus 4.1
-        if (modelId.includes('claude-opus-4.1')) {
+        if (baseModelId.includes('claude-opus-4.1')) {
             return 13333;
         }
-        // Check for GPT-5 Thinking (exclude chat variant)
+        // Check for GPT-5 Thinking (exclude chat variants)
         if (
-            modelId.includes('gpt-5') &&
-            !modelId.includes('gpt-5-chat') &&
-            !modelId.includes('gpt-5.1-chat')
+            baseModelId.includes('gpt-5') &&
+            !baseModelId.endsWith('-chat')
         ) {
             return 120000;
         }
@@ -244,13 +247,10 @@ class OpenRouterAPI {
     // Fallback models if API fails
     getFallbackModels() {
         return [
+            { id: 'openai/gpt-5.2-chat', name: 'OpenAI: GPT-5.2 Instant', category: 'Flagship models', provider: 'OpenAI' },
             { id: 'openai/gpt-5.1-chat', name: 'OpenAI: GPT-5.1 Instant', category: 'Flagship models', provider: 'OpenAI' },
-            { id: 'openai/gpt-4', name: 'GPT-4', category: 'Flagship models', provider: 'OpenAI' },
-            { id: 'openai/gpt-4-turbo', name: 'GPT-4 Turbo', category: 'Flagship models', provider: 'OpenAI' },
-            { id: 'openai/gpt-3.5-turbo', name: 'GPT-3.5 Turbo', category: 'Flagship models', provider: 'OpenAI' },
-            { id: 'anthropic/claude-3-opus', name: 'Claude 3 Opus', category: 'Flagship models', provider: 'Anthropic' },
-            { id: 'anthropic/claude-3-sonnet', name: 'Claude 3 Sonnet', category: 'Flagship models', provider: 'Anthropic' },
-            { id: 'anthropic/claude-3-haiku', name: 'Claude 3 Haiku', category: 'Flagship models', provider: 'Anthropic' },
+            { id: 'anthropic/claude-sonnet-4.5', name: 'Anthropic: Claude Sonnet 4.5', category: 'Flagship models', provider: 'Anthropic' },
+            { id: 'google/gemini-3-pro-preview', name: 'Google: Gemini 3 Pro Preview', category: 'Flagship models', provider: 'Google' },
         ];
     }
 

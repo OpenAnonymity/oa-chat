@@ -16,9 +16,25 @@ import { fetchUrlMetadata } from './services/urlMetadata.js';
 import networkProxy from './services/networkProxy.js';
 import openRouterAPI from './api.js';
 
-const DEFAULT_MODEL_ID = 'openai/gpt-5.1-chat';
-const DEFAULT_MODEL_NAME = 'OpenAI: GPT-5.1 Instant';
-const DEFAULT_MODEL_NAME_ALIASES = new Set(['OpenAI: GPT-5.1 Chat', 'GPT-5.1 Chat']);
+const DEFAULT_MODEL_ID = 'openai/gpt-5.2-chat';
+const DEFAULT_MODEL_NAME = 'OpenAI: GPT-5.2 Instant';
+
+// Used to upgrade users who were implicitly on the prior default.
+const PREVIOUS_DEFAULT_MODEL_NAME = 'OpenAI: GPT-5.1 Instant';
+
+// Legacy/alternate display names that may exist in persisted settings/sessions.
+// Map them to the canonical display names used by the current UI.
+const MODEL_NAME_ALIASES = new Map([
+    // GPT-5.2 Instant (chat)
+    ['OpenAI: GPT-5.2 Chat', 'OpenAI: GPT-5.2 Instant'],
+    ['GPT-5.2 Chat', 'OpenAI: GPT-5.2 Instant'],
+    // GPT-5.1 Instant (chat)
+    ['OpenAI: GPT-5.1 Chat', 'OpenAI: GPT-5.1 Instant'],
+    ['GPT-5.1 Chat', 'OpenAI: GPT-5.1 Instant'],
+    // GPT-5 Instant (chat)
+    ['OpenAI: GPT-5 Chat', 'OpenAI: GPT-5 Instant'],
+    ['GPT-5 Chat', 'OpenAI: GPT-5 Instant'],
+]);
 const SESSION_STORAGE_KEY = 'oa-current-session'; // Tab-scoped session persistence
 const DELETE_HISTORY_COPY = {
     title: 'Delete all chat history',
@@ -113,6 +129,14 @@ class ChatApp {
         this.editingMessageId = null; // Track which message is being edited
 
         this.init();
+    }
+
+    getDefaultModelId() {
+        return DEFAULT_MODEL_ID;
+    }
+
+    getDefaultModelName() {
+        return DEFAULT_MODEL_NAME;
     }
 
     attachDownloadLinkHandler(rootEl) {
@@ -934,7 +958,9 @@ class ChatApp {
         }
 
         // Process model preference
-        const normalizedModelName = this.normalizeModelName(storedModelPreference);
+        const normalizedModelName = this.upgradeDefaultModelPreference(
+            this.normalizeModelName(storedModelPreference)
+        );
         if (normalizedModelName && normalizedModelName !== storedModelPreference) {
             // Save in background, don't block
             chatDB.saveSetting('selectedModel', normalizedModelName).catch(() => {});
@@ -1123,8 +1149,8 @@ class ChatApp {
      * Accepts:
      * - A model ID (e.g. "openai/gpt-5.1-chat"), which is converted via
      *   OpenRouter display-name overrides when available.
-     * - Legacy aliases (e.g. "OpenAI: GPT-5 Chat"), which are mapped to the
-     *   current default name.
+     * - Legacy aliases (e.g. "OpenAI: GPT-5.1 Chat"), which are mapped to
+     *   canonical display names.
      *
      * Returns the original value when no conversion is necessary so that
      * newer/custom names remain untouched.
@@ -1145,11 +1171,25 @@ class ChatApp {
             return modelIdOrName;
         }
 
-        if (DEFAULT_MODEL_NAME_ALIASES.has(modelIdOrName)) {
-            return DEFAULT_MODEL_NAME;
+        if (MODEL_NAME_ALIASES.has(modelIdOrName)) {
+            return MODEL_NAME_ALIASES.get(modelIdOrName);
         }
 
         return modelIdOrName;
+    }
+
+    /**
+     * Upgrades users who were effectively on the old default model to the new
+     * default model. Only applies to stored *preference* (not per-session model).
+     * @param {string|null} normalizedModelName
+     * @returns {string|null}
+     */
+    upgradeDefaultModelPreference(normalizedModelName) {
+        if (!normalizedModelName) return normalizedModelName;
+        if (normalizedModelName === PREVIOUS_DEFAULT_MODEL_NAME) {
+            return DEFAULT_MODEL_NAME;
+        }
+        return normalizedModelName;
     }
 
     /**
@@ -1160,7 +1200,9 @@ class ChatApp {
     async createSession(title = 'New Chat') {
         // Use pending model if available, otherwise fall back to selected model
         const storedModelPreference = await chatDB.getSetting('selectedModel');
-        const normalizedSelectedModelName = this.normalizeModelName(storedModelPreference);
+        const normalizedSelectedModelName = this.upgradeDefaultModelPreference(
+            this.normalizeModelName(storedModelPreference)
+        );
         if (normalizedSelectedModelName && normalizedSelectedModelName !== storedModelPreference) {
             await chatDB.saveSetting('selectedModel', normalizedSelectedModelName);
         }
@@ -1379,7 +1421,9 @@ class ChatApp {
 
         // Load the selected model from settings so UI shows correct model
         const storedModelPreference = await chatDB.getSetting('selectedModel');
-        const normalizedSelectedModelName = this.normalizeModelName(storedModelPreference);
+        const normalizedSelectedModelName = this.upgradeDefaultModelPreference(
+            this.normalizeModelName(storedModelPreference)
+        );
         if (normalizedSelectedModelName && normalizedSelectedModelName !== storedModelPreference) {
             await chatDB.saveSetting('selectedModel', normalizedSelectedModelName);
         }
@@ -1995,7 +2039,7 @@ class ChatApp {
                 await chatDB.saveSession(session);
             }
 
-            // Use GPT-5.1 Chat as default
+            // Use GPT-5.2 Chat as default
             if (!modelNameToUse) {
                 const defaultModel = this.state.models.find(m => m.id === DEFAULT_MODEL_ID);
                 if (defaultModel) {

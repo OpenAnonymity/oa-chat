@@ -1032,7 +1032,10 @@ export function buildMessageHTML(message, helpers, models, sessionModelName, opt
         return buildUserMessage(message, options);
     } else {
         // Determine provider name and model name
-        const modelName = sessionModelName || 'OpenAI: GPT-5.1 Instant';
+        const defaultModelName = window.app && typeof window.app.getDefaultModelName === 'function'
+            ? window.app.getDefaultModelName()
+            : 'OpenAI: GPT-5.2 Instant';
+        const modelName = sessionModelName || defaultModelName;
         const modelOption = models.find(m => m.name === modelName);
         // Use models lookup first, then infer from name, then default to OpenAI
         const providerName = modelOption?.provider || inferProvider(modelName) || 'OpenAI';

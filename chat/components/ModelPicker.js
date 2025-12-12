@@ -24,8 +24,8 @@ export default class ModelPicker {
         // Add model IDs here to always show them first
         this.pinnedModels = [
             // Example: Uncomment to pin specific models
-            'openai/gpt-5.1-chat',
-            'openai/gpt-5.1',
+            'openai/gpt-5.2-chat',
+            'openai/gpt-5.2',
             'anthropic/claude-sonnet-4.5',
             'anthropic/claude-opus-4.5',
             'google/gemini-3-pro-preview',
@@ -44,7 +44,9 @@ export default class ModelPicker {
         ]);
 
         // Default model name to show when no model is selected
-        this.defaultModelName = 'OpenAI: GPT-5.1 Instant';
+        this.defaultModelName = (this.app && typeof this.app.getDefaultModelName === 'function')
+            ? this.app.getDefaultModelName()
+            : 'OpenAI: GPT-5.2 Instant';
 
         // Keyboard navigation state
         this.highlightedIndex = -1;

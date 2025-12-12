@@ -124,6 +124,12 @@ class RightPanel {
         this.currentSession = session;
         this.loadSessionData();
         this.updateStatusIndicator();
+
+        // Update verifier's current station for UI display and banned check
+        const stationName = session?.apiKeyInfo?.station_name;
+        if (stationName) {
+            stationVerifier.setCurrentStation(stationName, session);
+        }
     }
 
     loadNextTicket() {
@@ -532,11 +538,15 @@ class RightPanel {
         // Store return focus element
         this.verifyModalReturnFocusEl = document.activeElement;
 
+        const modelIdForTest = (this.app && typeof this.app.getDefaultModelId === 'function')
+            ? this.app.getDefaultModelId()
+            : 'openai/gpt-5.2-chat';
+
         // Generate curl command with actual key and output truncation
         const curlCommand = `curl https://openrouter.ai/api/v1/chat/completions \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer ${this.apiKey}" \\
-  -d '{"model":"openai/gpt-5.1-chat","messages":[{"role":"user","content":"Hi"}]}' \\
+  -d '{"model":"${modelIdForTest}","messages":[{"role":"user","content":"Hi"}]}' \\
   | grep -o '"content":"[^"]*"' | head -1`;
 
         // Generate simplified modal content
@@ -731,6 +741,10 @@ class RightPanel {
                 networkLogger.setCurrentSession(this.currentSession.id);
             }
 
+            const modelIdForTest = (this.app && typeof this.app.getDefaultModelId === 'function')
+                ? this.app.getDefaultModelId()
+                : 'openai/gpt-5.2-chat';
+
             const response = await networkProxy.fetch('https://openrouter.ai/api/v1/chat/completions', {
                 method: 'POST',
                 headers: {
@@ -740,7 +754,7 @@ class RightPanel {
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    model: 'openai/gpt-5.1-chat',
+                    model: modelIdForTest,
                     messages: [{ role: 'user', content: 'Hi' }]
                 })
             });
@@ -1258,6 +1272,115 @@ class RightPanel {
         `;
     }
 
+    generateStationRowHTML() {
+        const state = this.verificationState;
+        const stationId = this.apiKeyInfo?.station_name;
+        const isPending = state.status === 'pending';
+        const passed = state.status === 'passed';
+        const failed = state.status === 'failed';
+        const isBanned = state.banned;
+
+        // Get staleness level from verifier
+        const staleness = stationVerifier.getStalenessLevel(stationId);
+        const timeSince = stationVerifier.getTimeSinceVerification(stationId);
+
+        // Status indicator: dot color based on staleness
+        let dotColor;
+        let statusText;
+
+        if (isBanned) {
+            dotColor = 'bg-red-600 animate-pulse';
+            statusText = 'BANNED - Create new session';
+        } else if (isPending) {
+            dotColor = 'bg-amber-500 animate-pulse';
+            statusText = 'Checking...';
+        } else if (staleness === 'fresh') {
+            dotColor = 'bg-green-500';
+            statusText = `Verified ${timeSince || ''}`;
+        } else if (staleness === 'stale') {
+            dotColor = 'bg-orange-500'; // Orange for stale (>1 min)
+            statusText = `Verified ${timeSince} (stale)`;
+        } else if (staleness === 'critical' || failed) {
+            dotColor = 'bg-red-500';
+            statusText = failed ? 'Failed' : `Verification stale (${timeSince})`;
+        } else {
+            dotColor = 'bg-muted-foreground/30';
+            statusText = 'Not verified';
+        }
+
+        // Icon color matches dot
+        const iconColor = isBanned
+            ? 'text-red-600'
+            : isPending
+                ? 'animate-spin text-amber-500'
+                : staleness === 'fresh'
+                    ? 'text-green-500'
+                    : staleness === 'stale'
+                        ? 'text-orange-500'
+                        : (staleness === 'critical' || staleness === 'banned' || failed)
+                            ? 'text-red-500'
+                            : 'text-muted-foreground';
+
+        return `
+            <div class="flex items-center justify-between p-2 bg-background rounded-md border border-border">
+                <div class="flex items-center gap-1">
+                    <span class="text-[10px] text-muted-foreground">Station</span>
+                    <span class="w-1.5 h-1.5 rounded-full ${dotColor}" title="${statusText}"></span>
+                    <button id="station-info-btn" class="inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-4 w-4" title="What is this?">
+                        <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="10"/>
+                            <path d="M12 16v-4"/>
+                            <circle cx="12" cy="8" r="0.5" fill="currentColor"/>
+                        </svg>
+                    </button>
+                </div>
+                <div class="flex items-center gap-1">
+                    <span class="text-[10px] font-medium">${this.escapeHtml(this.apiKeyInfo.station_name)}</span>
+                    <button
+                        id="station-challenge-btn"
+                        class="p-0.5 rounded hover:bg-muted/50 transition-colors ${isPending ? 'opacity-50' : ''}"
+                        title="${isPending ? 'Refreshing...' : 'Refresh status'}"
+                        ${isPending ? 'disabled' : ''}
+                    >
+                        <svg class="w-3 h-3 ${iconColor}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            ${isPending
+                                ? '<path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/>'
+                                : '<path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z"/>'
+                            }
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            ${state.error ? `<div class="text-[9px] text-destructive px-2">${this.escapeHtml(state.error)}</div>` : ''}
+        `;
+    }
+
+    formatUTCtoLocal(utcTimestamp) {
+        const date = new Date(utcTimestamp);
+        return date.toLocaleString(undefined, {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+        });
+    }
+
+    formatVerificationTime(timestamp) {
+        const date = new Date(timestamp);
+        const now = new Date();
+        const diffMs = now - date;
+        const diffMins = Math.floor(diffMs / 60000);
+
+        if (diffMins < 1) return 'Just now';
+        if (diffMins < 60) return `${diffMins}m ago`;
+
+        const diffHours = Math.floor(diffMins / 60);
+        if (diffHours < 24) return `${diffHours}h ago`;
+
+        return date.toLocaleDateString();
+    }
+
     getProxyStatusMeta(settings = this.proxySettings, status = this.proxyStatus) {
         if (!settings || !settings.enabled) {
             return { label: 'Disabled', textClass: 'text-muted-foreground', dotClass: 'bg-muted-foreground/40' };
@@ -1533,6 +1656,43 @@ class RightPanel {
         const proxyInfoBtn = document.getElementById('proxy-info-btn');
         if (proxyInfoBtn) {
             proxyInfoBtn.onclick = () => proxyInfoModal.open();
+        }
+
+        // Station challenge button
+        const challengeBtn = document.getElementById('station-challenge-btn');
+        if (challengeBtn) {
+            challengeBtn.onclick = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                this.handleStationChallenge();
+            };
+        }
+
+        // Station info button
+        const stationInfoBtn = document.getElementById('station-info-btn');
+        if (stationInfoBtn) {
+            stationInfoBtn.onclick = () => stationVerificationModal.open();
+        }
+    }
+
+    /**
+     * Handle station status refresh - fetches from broadcast endpoint
+     */
+    async handleStationChallenge() {
+        console.log('🔄 Refresh status button clicked');
+
+        const stationName = this.apiKeyInfo?.station_name;
+        if (!stationName) {
+            console.warn('⚠️ No station name available');
+            return;
+        }
+
+        console.log(`🔍 Refreshing status for station ${stationName}...`);
+
+        try {
+            await stationVerifier.refreshStatus();
+        } catch (error) {
+            console.error('Status refresh failed:', error);
         }
     }
 
