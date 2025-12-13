@@ -3276,39 +3276,49 @@ class ChatApp {
             }
         });
 
-        // Handle global paste events for files
+        // Handle global paste events for files and text
         document.addEventListener('paste', async (e) => {
-            // If the event target is the message input, let the specific handler in ChatInput deal with it
-            if (e.target === this.elements.messageInput) {
-                return;
-            }
+            // If an input/textarea is already focused, let native behavior work
+            const activeElement = document.activeElement;
+            const isInputFocused = activeElement && (
+                activeElement.tagName === 'INPUT' ||
+                activeElement.tagName === 'TEXTAREA' ||
+                activeElement.isContentEditable
+            );
+
+            if (isInputFocused) return;
 
             const items = e.clipboardData?.items;
             if (!items) return;
 
-            // Extract file blobs SYNCHRONOUSLY before any async operations
+            // Extract files and text SYNCHRONOUSLY before any async operations
             // (clipboard data becomes inaccessible after async operations)
             const fileBlobsData = [];
+            let pastedText = null;
+
             for (let i = 0; i < items.length; i++) {
                 if (items[i].kind === 'file') {
                     const blob = items[i].getAsFile();
                     if (blob) {
                         fileBlobsData.push({ blob, type: items[i].type });
                     }
+                } else if (items[i].kind === 'string' && items[i].type === 'text/plain') {
+                    pastedText = e.clipboardData.getData('text/plain');
                 }
             }
 
-            if (fileBlobsData.length > 0) {
-                // Prevent default paste behavior immediately
+            // If we have files or text to handle, prevent default
+            if (fileBlobsData.length > 0 || pastedText) {
                 e.preventDefault();
+            }
 
+            // Handle files
+            if (fileBlobsData.length > 0) {
                 try {
-                    // Import helpers
                     const { getExtensionFromMimeType, validateFile } = await import('./services/fileUtils.js');
                     const filesToUpload = [];
 
                     for (const { blob } of fileBlobsData) {
-                        // Generate a filename if blob doesn't have one
                         let filename = blob.name;
                         if (!filename) {
                             const extension = getExtensionFromMimeType(blob.type);
@@ -3316,8 +3326,6 @@ class ChatApp {
                         }
 
                         const file = this.convertBlobToFile(blob, filename);
-
-                        // Validate the file using our smart detection
                         const validation = await validateFile(file);
                         if (validation.valid) {
                             filesToUpload.push(file);
@@ -3328,15 +3336,28 @@ class ChatApp {
 
                     if (filesToUpload.length > 0) {
                         await this.handleFileUpload(filesToUpload);
-
-                        // Focus input after successful paste
-                        requestAnimationFrame(() => {
-                            this.elements.messageInput.focus();
-                        });
                     }
                 } catch (error) {
                     console.error('Error handling global pasted files:', error);
                 }
+            }
+
+            // Handle text paste
+            if (pastedText) {
+                const input = this.elements.messageInput;
+                input.focus();
+                // Insert text at cursor position (or append if no selection)
+                const start = input.selectionStart;
+                const end = input.selectionEnd;
+                input.value = input.value.slice(0, start) + pastedText + input.value.slice(end);
+                input.selectionStart = input.selectionEnd = start + pastedText.length;
+                // Trigger input event to update UI (auto-resize, send button state)
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+            } else if (fileBlobsData.length > 0) {
+                // Focus input after successful file paste (only if no text was pasted)
+                requestAnimationFrame(() => {
+                    this.elements.messageInput.focus();
+                });
             }
         });
     }
