@@ -1068,20 +1068,15 @@ export default class ChatArea {
     async finalizeStreamingMessage(message) {
         const messageEl = document.querySelector(`[data-message-id="${message.id}"]`);
         if (messageEl) {
-            // Find model details from the app state - try by ID first, then by name
-            let model = this.app.state.models.find(m => m.id === message.model);
-            if (!model) {
-                model = this.app.state.models.find(m => m.name === message.model);
-            }
-            const modelName = model ? model.name : (message.model || 'Unknown Model');
-
+            const session = this.app.getCurrentSession();
             const helpers = {
                 processContentWithLatex: this.app.processContentWithLatex.bind(this.app),
                 formatTime: this.app.formatTime.bind(this.app)
             };
 
             // Re-build the entire message HTML to reflect its final state
-            const newMessageHtml = window.buildMessageHTML(message, helpers, this.app.state.models, modelName);
+            // buildMessageHTML handles model resolution from message.model internally
+            const newMessageHtml = window.buildMessageHTML(message, helpers, this.app.state.models, session?.model);
 
             // Create a temporary container to parse the new HTML
             const tempDiv = document.createElement('div');

@@ -747,26 +747,62 @@ function buildCitationsSection(citations, messageId) {
  * @returns {string} Short model name (e.g., "GPT-5.1 Thinking")
  */
 function extractShortModelName(fullName) {
-    if (!fullName) return fullName;
-    if (fullName.includes(': ')) {
-        return fullName.split(': ').slice(1).join(': ');
+    if (!fullName || typeof fullName !== 'string') return fullName;
+    // Handle "Provider: ModelName" format
+    const colonIdx = fullName.indexOf(': ');
+    if (colonIdx !== -1) {
+        return fullName.slice(colonIdx + 2);
+    }
+    // Handle "provider/model-id" format (e.g., "google/gemini-3-pro-preview" -> "Gemini 3 Pro Preview")
+    const slashIdx = fullName.indexOf('/');
+    if (slashIdx !== -1) {
+        const modelPart = fullName.slice(slashIdx + 1);
+        // Convert kebab-case to Title Case (e.g., "gemini-3-pro-preview" -> "Gemini 3 Pro Preview")
+        return modelPart
+            .split('-')
+            .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+            .join(' ');
     }
     return fullName;
 }
 
+// Provider slug to display name mapping (module-level constant for efficiency)
+const PROVIDER_SLUG_MAP = {
+    'openai': 'OpenAI',
+    'anthropic': 'Anthropic',
+    'google': 'Google',
+    'meta': 'Meta',
+    'meta-llama': 'Meta',
+    'mistral': 'Mistral',
+    'mistralai': 'Mistral',
+    'deepseek': 'DeepSeek',
+    'qwen': 'Qwen',
+    'alibaba': 'Qwen',
+    'cohere': 'Cohere',
+    'perplexity': 'Perplexity',
+    'nvidia': 'Nvidia'
+};
+
 /**
  * Infers provider name from model name when models list is unavailable.
- * Uses the "Provider: Model" format or keyword matching as fallback.
- * @param {string} name - Model name (e.g., "OpenAI: GPT-5.1 Thinking" or "GPT-4")
+ * Uses the "Provider: Model" format, model ID format, or keyword matching as fallback.
+ * @param {string} name - Model name (e.g., "OpenAI: GPT-5.1 Thinking", "openai/gpt-5.2-chat", or "GPT-4")
  * @returns {string|null} Provider name or null if unknown
  */
 function inferProvider(name) {
-    if (!name) return null;
+    if (!name || typeof name !== 'string') return null;
     // Strategy 1: "Provider: Model" format (our custom names)
-    if (name.includes(': ')) {
-        return name.split(': ')[0];
+    const colonIdx = name.indexOf(': ');
+    if (colonIdx !== -1) {
+        return name.slice(0, colonIdx);
     }
-    // Strategy 2: Keyword matching for common model names
+    // Strategy 2: "provider/model-id" format (model IDs)
+    const slashIdx = name.indexOf('/');
+    if (slashIdx !== -1) {
+        const provider = name.slice(0, slashIdx).toLowerCase();
+        return PROVIDER_SLUG_MAP[provider] || provider.charAt(0).toUpperCase() + provider.slice(1);
+    }
+    // Strategy 3: Keyword matching for common model names
     const lowerName = name.toLowerCase();
     if (lowerName.includes('gpt') || lowerName.includes('o1-') || lowerName.includes('o3-') || lowerName.includes('o4-')) return 'OpenAI';
     if (lowerName.includes('claude')) return 'Anthropic';
@@ -1035,8 +1071,28 @@ export function buildMessageHTML(message, helpers, models, sessionModelName, opt
         const defaultModelName = window.app && typeof window.app.getDefaultModelName === 'function'
             ? window.app.getDefaultModelName()
             : 'OpenAI: GPT-5.2 Instant';
-        const modelName = sessionModelName || defaultModelName;
-        const modelOption = models.find(m => m.name === modelName);
+        // For assistant messages, prefer the model stored on the message itself
+        const storedModel = message.model || sessionModelName || defaultModelName;
+        const isModelId = typeof storedModel === 'string' && storedModel.includes('/');
+        const modelsArray = Array.isArray(models) ? models : [];
+
+        // Resolve model: storedModel can be either a model ID (e.g., "openai/gpt-5.2-chat")
+        // or a display name (e.g., "OpenAI: GPT-5.2 Instant"). Look up by ID first, then by name.
+        // Note: O(n) lookup per message - acceptable for typical chat sizes (<100 messages)
+        let modelOption = isModelId
+            ? modelsArray.find(m => m.id === storedModel)
+            : modelsArray.find(m => m.name === storedModel);
+
+        // Get display name: prefer model lookup, then API display name override, then stored value
+        let modelName;
+        if (modelOption) {
+            modelName = modelOption.name;
+        } else if (isModelId && typeof openRouterAPI !== 'undefined' && openRouterAPI.getDisplayName) {
+            // Try to get display name from API overrides (e.g., "openai/gpt-5.2-chat" -> "OpenAI: GPT-5.2 Instant")
+            modelName = openRouterAPI.getDisplayName(storedModel, storedModel);
+        } else {
+            modelName = storedModel;
+        }
         // Use models lookup first, then infer from name, then default to OpenAI
         const providerName = modelOption?.provider || inferProvider(modelName) || 'OpenAI';
 
