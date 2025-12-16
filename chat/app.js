@@ -104,6 +104,7 @@ class ChatApp {
         this.searchEnabled = true;
         this.sessionSearchQuery = '';
         this.uploadedFiles = [];
+        this.fileUndoStack = []; // Track file paste operations for undo
         this.rightPanel = null;
         this.floatingPanel = null;
         this.messageNavigation = null;
@@ -1987,6 +1988,7 @@ class ChatApp {
             // Clear input and files
             this.elements.messageInput.value = '';
             this.uploadedFiles = [];
+            this.fileUndoStack = []; // Clear undo stack when message is sent
             this.renderFilePreviews();
             this.updateFileCountBadge();
             this.updateInputState();
@@ -3203,6 +3205,15 @@ class ChatApp {
                 this.elements.searchRoomsInput?.focus();
             }
 
+            // Cmd/Ctrl + Z for undo - handle file paste undo if there are file operations
+            if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === 'z') {
+                if (this.fileUndoStack.length > 0) {
+                    e.preventDefault();
+                    this.undoFilePaste();
+                }
+                // If no file undo available, let native text undo work
+            }
+
             // Cmd/Ctrl + Shift + Backspace for clear chat (temporarily disabled)
             // if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'Backspace') {
             //     e.preventDefault();
@@ -3278,7 +3289,6 @@ class ChatApp {
 
         // Handle global paste events for files and text
         document.addEventListener('paste', async (e) => {
-            // If an input/textarea is already focused, let native behavior work
             const activeElement = document.activeElement;
             const isInputFocused = activeElement && (
                 activeElement.tagName === 'INPUT' ||
@@ -3286,15 +3296,13 @@ class ChatApp {
                 activeElement.isContentEditable
             );
 
-            if (isInputFocused) return;
-
             const items = e.clipboardData?.items;
             if (!items) return;
 
             // Extract files and text SYNCHRONOUSLY before any async operations
             // (clipboard data becomes inaccessible after async operations)
             const fileBlobsData = [];
-            let pastedText = null;
+            let hasTextItem = false;
 
             for (let i = 0; i < items.length; i++) {
                 if (items[i].kind === 'file') {
@@ -3303,17 +3311,18 @@ class ChatApp {
                         fileBlobsData.push({ blob, type: items[i].type });
                     }
                 } else if (items[i].kind === 'string' && items[i].type === 'text/plain') {
-                    pastedText = e.clipboardData.getData('text/plain');
+                    hasTextItem = true;
                 }
             }
 
-            // If we have files or text to handle, prevent default
-            if (fileBlobsData.length > 0 || pastedText) {
-                e.preventDefault();
+            // If input is focused and there are NO files, let native text paste work
+            if (isInputFocused && fileBlobsData.length === 0) {
+                return;
             }
 
-            // Handle files
+            // Handle files (always, regardless of focus state - native behavior doesn't support file paste)
             if (fileBlobsData.length > 0) {
+                e.preventDefault();
                 try {
                     const { getExtensionFromMimeType, validateFile } = await import('./services/fileUtils.js');
                     const filesToUpload = [];
@@ -3336,28 +3345,28 @@ class ChatApp {
 
                     if (filesToUpload.length > 0) {
                         await this.handleFileUpload(filesToUpload);
+                        // Focus input after file upload
+                        requestAnimationFrame(() => {
+                            this.elements.messageInput.focus();
+                        });
                     }
                 } catch (error) {
-                    console.error('Error handling global pasted files:', error);
+                    console.error('Error handling pasted files:', error);
                 }
+                return; // Don't also paste text when pasting files
             }
 
-            // Handle text paste
+            // Handle text paste only when NO input is focused (global text paste)
+            const pastedText = e.clipboardData.getData('text/plain');
             if (pastedText) {
+                e.preventDefault();
                 const input = this.elements.messageInput;
                 input.focus();
-                // Insert text at cursor position (or append if no selection)
-                const start = input.selectionStart;
-                const end = input.selectionEnd;
-                input.value = input.value.slice(0, start) + pastedText + input.value.slice(end);
-                input.selectionStart = input.selectionEnd = start + pastedText.length;
+                // Use execCommand to insert text - preserves browser's undo/redo stack
+                // Note: execCommand is deprecated but has no modern replacement for undo-compatible text insertion
+                document.execCommand('insertText', false, pastedText); // eslint-disable-line
                 // Trigger input event to update UI (auto-resize, send button state)
                 input.dispatchEvent(new Event('input', { bubbles: true }));
-            } else if (fileBlobsData.length > 0) {
-                // Focus input after successful file paste (only if no text was pasted)
-                requestAnimationFrame(() => {
-                    this.elements.messageInput.focus();
-                });
             }
         });
     }
@@ -3521,6 +3530,8 @@ class ChatApp {
         }
 
         if (validFiles.length > 0) {
+            // Track for undo: record how many files were added
+            this.fileUndoStack.push(validFiles.length);
             this.uploadedFiles.push(...validFiles);
             this.renderFilePreviews();
             this.updateFileCountBadge();
@@ -3530,6 +3541,22 @@ class ChatApp {
         if (errors.length > 0) {
             this.showErrorNotification(errors.join('\n\n'));
         }
+    }
+
+    /**
+     * Undo the most recent file paste operation.
+     * @returns {boolean} True if an undo was performed
+     */
+    undoFilePaste() {
+        if (this.fileUndoStack.length === 0) return false;
+
+        const count = this.fileUndoStack.pop();
+        // Remove the last 'count' files from uploadedFiles
+        this.uploadedFiles.splice(-count, count);
+        this.renderFilePreviews();
+        this.updateFileCountBadge();
+        this.updateInputState();
+        return true;
     }
 
     /**
@@ -3687,6 +3714,7 @@ class ChatApp {
 
     removeFile(index) {
         this.uploadedFiles.splice(index, 1);
+        this.fileUndoStack = []; // Clear undo stack - manual removal invalidates undo history
         this.renderFilePreviews();
         this.updateFileCountBadge();
         this.updateInputState();

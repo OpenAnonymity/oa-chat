@@ -18,11 +18,13 @@ export default class ChatInput {
      * Sets up all event listeners for the input area controls.
      */
     setupEventListeners() {
-        // Auto-resize textarea
+        // Auto-resize textarea and clear file undo stack on text input
         this.app.elements.messageInput.addEventListener('input', () => {
             this.app.elements.messageInput.style.height = '24px';
             this.app.elements.messageInput.style.height = Math.min(this.app.elements.messageInput.scrollHeight, 384) + 'px';
             this.app.updateInputState();
+            // Clear file undo stack - text input should take undo precedence
+            this.app.fileUndoStack = [];
         });
 
         // Send on Enter (not Shift+Enter and not composing with IME)
