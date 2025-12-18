@@ -187,13 +187,10 @@
             <div class="flex h-full w-full flex-col gap-2 p-2">
                 <div class="flex w-full items-center gap-1 pr-1">
                     <button id="new-chat-btn" class="btn-ghost-hover flex-1 inline-flex items-center whitespace-nowrap transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 gap-2 bg-card border border-border text-foreground shadow-sm h-9 rounded-md px-3 justify-start">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 text-muted-foreground">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" />
-                        </svg>
                         <span class="text-sm">New Chat</span>
-                        <div class="hidden items-center gap-0.5 md:flex ml-auto">
-                            <kbd class="flex items-center justify-center aspect-square h-4 w-4 p-1 pointer-events-none rounded-sm bg-muted border border-border text-foreground text-xs">⌘</kbd>
-                            <kbd class="flex items-center justify-center aspect-square h-4 w-4 p-1 pointer-events-none rounded-sm bg-muted border border-border text-foreground text-xs">/</kbd>
+                        <div class="hidden items-center gap-0.5 md:flex ml-auto pointer-events-none text-muted-foreground text-xs">
+                            <span class="opacity-60">⌘</span>
+                            <span class="opacity-60">/</span>
                         </div>
                     </button>
                     <button id="delete-history-btn" class="inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-9 w-9 flex-shrink-0" aria-label="Delete all local chat history">
@@ -353,9 +350,9 @@
                                                 <div class="w-2.5 h-2.5 rounded-full border-[1.5px] border-gray-300 border-t-gray-400 animate-spin"></div>
                                             </div>
                                             <span>Select Model</span>
-                                            <div class="flex items-center gap-0.5 ml-2">
-                                                <kbd class="flex items-center justify-center h-4 w-4 p-1 rounded-sm bg-muted border border-border text-foreground text-xs">⌘</kbd>
-                                                <kbd class="flex items-center justify-center h-4 w-4 p-1 rounded-sm bg-muted border border-border text-foreground text-xs">K</kbd>
+                                            <div class="flex items-center gap-0.5 ml-2 pointer-events-none text-muted-foreground text-xs">
+                                                <span class="opacity-60">⌘</span>
+                                                <span class="opacity-60">K</span>
                                             </div>
                                         </button>
                                         <!-- File Upload Button -->

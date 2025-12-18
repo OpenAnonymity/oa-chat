@@ -290,9 +290,9 @@ export default class ModelPicker {
 
         // Always show shortcut HTML
         const shortcutHtml = `
-            <div class="flex items-center gap-0.5 ml-2">
-                <kbd class="flex items-center justify-center h-4 w-4 p-1 rounded-sm bg-muted border border-border text-foreground text-xs">⌘</kbd>
-                <kbd class="flex items-center justify-center h-4 w-4 p-1 rounded-sm bg-muted border border-border text-foreground text-xs">K</kbd>
+            <div class="flex items-center gap-0.5 ml-2 pointer-events-none text-muted-foreground text-xs">
+                <span class="opacity-60">⌘</span>
+                <span class="opacity-60">K</span>
             </div>
         `;
 
