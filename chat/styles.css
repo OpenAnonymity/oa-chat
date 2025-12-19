@@ -1291,10 +1291,9 @@ textarea:focus {
 
 /* Model category headers */
 .model-category-header {
-    font-size: 0.6875rem;
-    font-weight: 700;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
+    font-size: 0.75rem;
+    font-weight: 300;
+    letter-spacing: 0.03em;
     color: hsl(var(--color-muted-foreground));
 }
 
