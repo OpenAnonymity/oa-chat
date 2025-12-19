@@ -425,7 +425,7 @@ class OpenRouterAPI {
         let accumulatedReasoning = '';
         let hasReceivedFirstToken = false;
         let citations = []; // Track citations for web search results
-        let annotations = []; // Track annotations from OpenRouter response
+        const annotationsMap = new Map(); // Track annotations with deduplication by URL
         let estimatedReasoningTokens = 0; // Track reasoning tokens for cumulative display
 
         // Buffering for reasoning chunks to reduce UI updates
@@ -446,40 +446,98 @@ class OpenRouterAPI {
             }
         };
 
-        // Helper to parse citations from annotations
+        // Helper to normalize URLs for deduplication (strip trailing garbage, normalize trailing slashes)
+        const normalizeUrl = (url) => {
+            if (!url) return url;
+            // Remove trailing parentheses, brackets, quotes that are malformed
+            let cleaned = url.replace(/[)\]}"']+$/, '');
+            try {
+                const parsed = new URL(cleaned);
+                // Normalize: origin + pathname without trailing slash (except for root)
+                let path = parsed.pathname.replace(/\/+$/, '') || '/';
+                return parsed.origin + path;
+            } catch {
+                return cleaned.replace(/\/+$/, '');
+            }
+        };
+
+        // Helper to clean URL for storage (fix malformed URLs)
+        const cleanUrl = (url) => {
+            if (!url) return url;
+            // Remove trailing parentheses, brackets, quotes that are malformed
+            return url.replace(/[)\]}"']+$/, '');
+        };
+
+        // Helper to add annotations with deduplication during collection
+        const addAnnotations = (newAnnotations) => {
+            if (!newAnnotations || !Array.isArray(newAnnotations)) return;
+            newAnnotations.forEach(ann => {
+                if (ann.type === 'url_citation' && ann.url) {
+                    const key = normalizeUrl(ann.url);
+                    if (!annotationsMap.has(key)) {
+                        annotationsMap.set(key, ann);
+                    }
+                }
+            });
+        };
+
+        // Helper to parse citations from annotations (deduplicates by URL)
         const parseCitationsFromAnnotations = (annotationsList) => {
-            const citationsList = [];
-            let citationIndex = 1;
+            if (!annotationsList || !Array.isArray(annotationsList)) return [];
 
-            if (!annotationsList || !Array.isArray(annotationsList)) return citationsList;
+            // Use Map to deduplicate by normalized URL
+            const citationMap = new Map();
 
-            // Extract url_citation annotations
-            const urlCitations = annotationsList.filter(ann => ann.type === 'url_citation');
+            annotationsList
+                .filter(ann => ann.type === 'url_citation' && ann.url)
+                .forEach(annotation => {
+                    const normalizedUrl = normalizeUrl(annotation.url);
+                    // Only add if URL not already seen (keep first occurrence)
+                    if (!citationMap.has(normalizedUrl)) {
+                        citationMap.set(normalizedUrl, {
+                            url: cleanUrl(annotation.url),
+                            title: annotation.title || null,
+                            content: annotation.content || null,
+                            startIndex: annotation.start_index ?? annotation.startIndex ?? null,
+                            endIndex: annotation.end_index ?? annotation.endIndex ?? null
+                        });
+                    }
+                });
 
-            if (urlCitations.length > 0) {
-                console.log('Found web search citations:', urlCitations.length);
+            // Assign sequential indices to deduplicated citations
+            const citations = Array.from(citationMap.values()).map((citation, idx) => ({
+                ...citation,
+                index: idx + 1
+            }));
+
+            if (citations.length > 0) {
+                console.log('Found web search citations:', citations.length, '(deduplicated from', annotationsList.filter(a => a.type === 'url_citation').length, 'annotations)');
             }
 
-            urlCitations.forEach(annotation => {
-                citationsList.push({
-                    url: annotation.url || '',
-                    title: annotation.title || null,
-                    content: annotation.content || null,
-                    index: citationIndex++,
-                    // OpenRouter uses snake_case: start_index, end_index
-                    startIndex: annotation.start_index ?? annotation.startIndex ?? null,
-                    endIndex: annotation.end_index ?? annotation.endIndex ?? null
-                });
-            });
-
-            return citationsList;
+            return citations;
         };
 
         // Helper to parse citations from content (fallback for when no annotations)
         // Extracts URLs and numbered references like [1], [2] etc.
+        // Uses normalizeUrl for deduplication and cleanUrl for storage
         const parseCitations = (content) => {
-            const citationMap = new Map();
+            const citationMap = new Map(); // Key: normalized URL, Value: citation object
             let citationIndex = 1;
+
+            // Helper to add a URL to the map with deduplication
+            const addUrl = (rawUrl, title, explicitIndex) => {
+                const cleaned = cleanUrl(rawUrl);
+                const normalized = normalizeUrl(rawUrl);
+                if (!citationMap.has(normalized) &&
+                    !cleaned.match(/\.(png|jpg|jpeg|gif|svg|css|js|ico|woff|ttf|eot)$/i) &&
+                    cleaned.length < 200) {
+                    citationMap.set(normalized, {
+                        url: cleaned,
+                        title: title || null,
+                        index: explicitIndex || citationIndex++
+                    });
+                }
+            };
 
             // First, look for existing numbered citations [1], [2], etc.
             const existingCitationPattern = /\[(\d+)\]/g;
@@ -492,60 +550,32 @@ class OpenRouterAPI {
             // Pattern 1: Markdown-style references [text](url)
             const markdownUrlPattern = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
             while ((match = markdownUrlPattern.exec(content)) !== null) {
-                const url = match[2];
-                if (!citationMap.has(url)) {
-                    citationMap.set(url, {
-                        url: url,
-                        title: match[1],
-                        index: citationIndex++
-                    });
-                }
+                addUrl(match[2], match[1], null);
             }
 
             // Pattern 2: References/Sources section at the end
-            // Matches patterns like: [1] https://example.com or Sources: 1. https://example.com
             const referencesPattern = /(?:^|\n)(?:References?|Sources?|Citations?):?\s*\n((?:(?:\[\d+\]|\d+\.)\s*https?:\/\/[^\s]+\s*\n?)+)/gmi;
             const referencesMatch = referencesPattern.exec(content);
             if (referencesMatch) {
                 const referencesSection = referencesMatch[1];
                 const citationPattern = /(?:\[(\d+)\]|(\d+)\.)\s*(https?:\/\/[^\s]+)/g;
                 while ((match = citationPattern.exec(referencesSection)) !== null) {
-                    const url = match[3];
                     const num = parseInt(match[1] || match[2]);
-                    if (!citationMap.has(url)) {
-                        citationMap.set(url, {
-                            url: url,
-                            title: null,
-                            index: num || citationIndex++
-                        });
-                    }
+                    addUrl(match[3], null, num);
                 }
             }
 
-            // Pattern 3: Plain URLs in the content that look like sources
-            // More conservative - only match URLs that appear to be references
+            // Pattern 3: Plain URLs in the content
             const plainUrlPattern = /(?:(?:^|\n)(?:[-•*]|\d+\.?)\s+)?(https?:\/\/(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&\/\/=]*))/g;
             while ((match = plainUrlPattern.exec(content)) !== null) {
-                const url = match[1];
-                // Only add if not already captured and looks like a real source
-                if (!citationMap.has(url) &&
-                    !url.match(/\.(png|jpg|jpeg|gif|svg|css|js|ico|woff|ttf|eot)$/i) &&
-                    url.length < 200) {
-                    citationMap.set(url, {
-                        url: url,
-                        title: null,
-                        index: citationIndex++
-                    });
-                }
+                addUrl(match[1], null, null);
             }
 
             // If we have existing citation numbers in text but found URLs, ensure they match
             if (existingNumbers.size > 0 && citationMap.size > 0) {
-                // The content has numbered citations, so we found the sources
                 return Array.from(citationMap.values()).sort((a, b) => a.index - b.index);
             }
 
-            // Only return citations if we found some
             return citationMap.size > 0 ? Array.from(citationMap.values()).sort((a, b) => a.index - b.index) : [];
         };
 
@@ -683,16 +713,16 @@ class OpenRouterAPI {
                             const parsed = JSON.parse(data);
 
                             // Check for annotations in various possible locations in the response
+                            // All formats use addAnnotations() which deduplicates by normalized URL
+
                             // Format 1: Direct annotations array
                             if (parsed.annotations && Array.isArray(parsed.annotations)) {
-                                console.log('Found annotations (format 1 - direct):', parsed.annotations.length);
-                                annotations = annotations.concat(parsed.annotations);
+                                addAnnotations(parsed.annotations);
                             }
 
                             // Format 2: In choices[0].message.annotations (chat completions format)
                             if (parsed.choices?.[0]?.message?.annotations && Array.isArray(parsed.choices[0].message.annotations)) {
-                                console.log('Found annotations (format 2 - choices[0].message):', parsed.choices[0].message.annotations.length);
-                                annotations = annotations.concat(parsed.choices[0].message.annotations);
+                                addAnnotations(parsed.choices[0].message.annotations);
                             }
 
                             // Format 3: In choices[0].message.content[] (if content is array with annotations)
@@ -700,7 +730,7 @@ class OpenRouterAPI {
                             if (Array.isArray(messageContent)) {
                                 messageContent.forEach(item => {
                                     if (item.annotations && Array.isArray(item.annotations)) {
-                                        annotations = annotations.concat(item.annotations);
+                                        addAnnotations(item.annotations);
                                     }
                                 });
                             }
@@ -711,7 +741,7 @@ class OpenRouterAPI {
                                     if (output.content && Array.isArray(output.content)) {
                                         output.content.forEach(contentItem => {
                                             if (contentItem.annotations && Array.isArray(contentItem.annotations)) {
-                                                annotations = annotations.concat(contentItem.annotations);
+                                                addAnnotations(contentItem.annotations);
                                             }
                                         });
                                     }
@@ -726,7 +756,7 @@ class OpenRouterAPI {
                                         if (outputItem.content && Array.isArray(outputItem.content)) {
                                             outputItem.content.forEach(contentItem => {
                                                 if (contentItem.annotations && Array.isArray(contentItem.annotations)) {
-                                                    annotations = annotations.concat(contentItem.annotations);
+                                                    addAnnotations(contentItem.annotations);
                                                 }
                                             });
                                         }
@@ -893,10 +923,11 @@ class OpenRouterAPI {
 
             // Parse citations - prefer annotations over content parsing
             if (searchEnabled) {
-                if (annotations.length > 0) {
-                    // Use citations from annotations if available
-                    console.log('Processing annotations for citations:', annotations.length, 'annotations');
-                    citations = parseCitationsFromAnnotations(annotations);
+                const annotationsList = Array.from(annotationsMap.values());
+                if (annotationsList.length > 0) {
+                    // Use citations from annotations (already deduplicated during collection)
+                    console.log('Processing annotations for citations:', annotationsList.length, 'unique annotations');
+                    citations = parseCitationsFromAnnotations(annotationsList);
                     console.log('Parsed citations:', citations.length, 'citations');
                 } else if (accumulatedContent) {
                     // Fallback to parsing from content

@@ -704,6 +704,17 @@ function buildCitationsSection(citations, messageId) {
 
         const favicon = citation.favicon || `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
 
+        // Get description/preview from content or description (enrichment), distinct from title
+        let description = '';
+        const rawDescription = citation.description || citation.content || '';
+        if (rawDescription.trim().length > 0) {
+            description = rawDescription.trim().replace(/\[\d+\]/g, '').trim();
+            // Truncate description
+            if (description.length > 120) {
+                description = description.substring(0, 117) + '...';
+            }
+        }
+
         return `
             <a href="${escapeHtml(citation.url)}"
                target="_blank"
@@ -711,7 +722,7 @@ function buildCitationsSection(citations, messageId) {
                id="citation-${messageId}-${displayIndex}"
                class="citation-card-modern group"
                data-citation-index="${displayIndex}"
-               title="View source">
+               title="${escapeHtml(citation.url)}">
                 <div class="citation-card-header">
                     <img src="${escapeHtml(favicon)}"
                          alt="${escapeHtml(domain)}"
@@ -726,6 +737,7 @@ function buildCitationsSection(citations, messageId) {
                 <div class="citation-title">
                     ${escapeHtml(title.substring(0, 80))}${title.length > 80 ? '...' : ''}
                 </div>
+                ${description ? `<div class="citation-description">${escapeHtml(description)}</div>` : ''}
                 <div class="citation-number">
                     ${displayIndex}
                 </div>
