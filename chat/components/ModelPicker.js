@@ -189,19 +189,20 @@ export default class ModelPicker {
             `;
         }
 
-        // Render categories for unpinned models
-        const categories = [...new Set(unpinnedModels.map(m => m.category))];
-        html += categories.map(category => `
-            <div class="mb-3">
-                <div class="model-category-header px-2 py-1 text-xs font-medium text-muted-foreground">${category}</div>
-                <div class="space-y-0">
-                    ${unpinnedModels
-                        .filter(m => m.category === category)
-                        .map(model => this.buildModelOptionHTML(model))
-                        .join('')}
+        // Render all unpinned models sorted alphabetically by display name
+        const sortedModels = [...unpinnedModels].sort((a, b) =>
+            a.name.localeCompare(b.name)
+        );
+        if (sortedModels.length > 0) {
+            html += `
+                <div class="mb-3">
+                    <div class="model-category-header px-2 py-1 text-xs font-medium text-muted-foreground">All Models</div>
+                    <div class="space-y-0">
+                        ${sortedModels.map(model => this.buildModelOptionHTML(model)).join('')}
+                    </div>
                 </div>
-            </div>
-        `).join('');
+            `;
+        }
 
         this.app.elements.modelsList.innerHTML = html;
 
