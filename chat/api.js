@@ -227,22 +227,22 @@ class OpenRouterAPI {
         return `data:${type};base64,${detail.data}`;
     }
 
-    // Get model-specific max_tokens
-    getMaxTokensForModel(modelId) {
-        const baseModelId = typeof modelId === 'string' ? modelId.split(':')[0] : '';
-        // Check for Opus 4.1
-        if (baseModelId.includes('claude-opus-4.1')) {
-            return 13333;
-        }
-        // Check for GPT-5 Thinking (exclude chat variants)
-        if (
-            baseModelId.includes('gpt-5') &&
-            !baseModelId.endsWith('-chat')
-        ) {
-            return 120000;
-        }
-        return undefined; // Use API default for other models
-    }
+    // Get model-specific max_tokens (disabled - let OpenRouter use API key credits)
+    // getMaxTokensForModel(modelId) {
+    //     const baseModelId = typeof modelId === 'string' ? modelId.split(':')[0] : '';
+    //     // Check for Opus 4.1
+    //     if (baseModelId.includes('claude-opus-4.1')) {
+    //         return 13333;
+    //     }
+    //     // Check for GPT-5 Thinking (exclude chat variants)
+    //     if (
+    //         baseModelId.includes('gpt-5') &&
+    //         !baseModelId.endsWith('-chat')
+    //     ) {
+    //         return 120000;
+    //     }
+    //     return undefined; // Use API default for other models
+    // }
 
     // Fallback models if API fails
     getFallbackModels() {
@@ -599,11 +599,11 @@ class OpenRouterAPI {
                 stream_options: { include_usage: true }
             };
 
-            // Add model-specific max_tokens if applicable
-            const maxTokens = this.getMaxTokensForModel(effectiveModelId);
-            if (maxTokens !== undefined) {
-                requestBody.max_tokens = maxTokens;
-            }
+            // Add model-specific max_tokens if applicable (disabled - let OpenRouter use API key credits)
+            // const maxTokens = this.getMaxTokensForModel(effectiveModelId);
+            // if (maxTokens !== undefined) {
+            //     requestBody.max_tokens = maxTokens;
+            // }
 
             // Add PDF plugin configuration if PDFs are present
             // Default to mistral-ocr as per OpenRouter documentation
