@@ -14,6 +14,7 @@ import { downloadInferenceTickets, downloadAllChats, getFileIconSvg } from './se
 import { parseReasoningContent } from './services/reasoningParser.js';
 import { fetchUrlMetadata } from './services/urlMetadata.js';
 import networkProxy from './services/networkProxy.js';
+import stationVerifier from './services/verifier.js';
 import openRouterAPI from './api.js';
 
 const DEFAULT_MODEL_ID = 'openai/gpt-5.2-chat';
@@ -1024,6 +1025,9 @@ class ChatApp {
         // Set up link preview event listeners
         this.setupLinkPreviewListeners();
 
+        // Initialize verifier and start broadcast checks
+        this.initVerifier();
+
         // Handle mobile view on initial load
         if (this.isMobileView()) {
             this.hideSidebar();
@@ -1045,6 +1049,32 @@ class ChatApp {
                 this.sendMessage();
             }, 0);
         }
+    }
+
+    /**
+     * Initialize the verifier service for station verification
+     */
+    initVerifier() {
+        // Initialize verifier (loads cached broadcast data)
+        stationVerifier.init();
+
+        // Set up banned warning callback - show warning and clear API key when station gets banned
+        stationVerifier.setBannedWarningCallback(async ({ stationId, reason, bannedAt, session }) => {
+            console.log(`🚫 Station ${stationId} banned: ${reason}`);
+            
+            if (session && session.apiKeyInfo?.stationId === stationId) {
+                // Show warning modal (which also clears the key)
+                await this.showBannedStationWarningModal({
+                    stationId,
+                    reason,
+                    bannedAt,
+                    sessionId: session.id
+                });
+            }
+        });
+
+        // Start periodic broadcast checks
+        stationVerifier.startBroadcastCheck(() => this.getCurrentSession());
     }
 
     setupInputAreaObserver() {
@@ -1648,6 +1678,47 @@ class ChatApp {
                     await this.addMessage('assistant', `**Error:** ${error.message}`, { isLocalOnly: true });
                     return;
                 }
+
+                // Verify key with verifier before proceeding
+                try {
+                    if (this.floatingPanel) {
+                        this.floatingPanel.showMessage('Verifying key...', 'info');
+                    }
+                    await stationVerifier.submitKey(session.apiKeyInfo);
+                    
+                    // Set current station for broadcast monitoring
+                    stationVerifier.setCurrentStation(session.apiKeyInfo.stationId, session);
+                } catch (verifyError) {
+                    // Clear the API key since it failed verification
+                    session.apiKey = null;
+                    session.apiKeyInfo = null;
+                    session.expiresAt = null;
+                    await chatDB.saveSession(session);
+                    
+                    // Update UI components
+                    if (this.rightPanel) {
+                        this.rightPanel.onSessionChange(session);
+                    }
+                    
+                    if (this.floatingPanel) {
+                        this.floatingPanel.showMessage(verifyError.message, 'error', 5000);
+                    }
+
+                    // Show detailed error for banned stations
+                    let errorMessage;
+                    if (verifyError.status === 'banned' && verifyError.bannedStation) {
+                        const bs = verifyError.bannedStation;
+                        const bannedDate = bs.bannedAt ? new Date(bs.bannedAt).toLocaleString() : 'Unknown';
+                        errorMessage = `**Station Banned**\n\n${verifyError.message}\n\n` +
+                            `- **Station ID:** \`${bs.stationId}\`\n` +
+                            `- **Reason:** ${bs.reason || 'Not specified'}\n` +
+                            `- **Banned at:** ${bannedDate}`;
+                    } else {
+                        errorMessage = `**Verification Error:** ${verifyError.message}`;
+                    }
+                    await this.addMessage('assistant', errorMessage, { isLocalOnly: true });
+                    return; // Block inference if verification fails
+                }
             }
 
             // Set current session for network logging
@@ -1947,6 +2018,48 @@ class ChatApp {
         let session = this.getCurrentSession();
         if (!session) return; // Safety check
 
+        // TODO: Re-enable verifier offline check later
+        // // Block if verifier is offline (unless user acknowledged)
+        // // This must be checked FIRST before any message is sent
+        // const verifierOffline = stationVerifier.isOffline();
+        // console.log(`🔍 Verifier status check: online=${stationVerifier.verifierOnline}, isOffline=${verifierOffline}, skipOfflineCheck=${skipOfflineCheck}`);
+        // if (verifierOffline && !skipOfflineCheck) {
+        //     console.log('⚠️ Blocking - showing verifier offline warning');
+        //     this.showVerifierOfflineWarningModal({
+        //         lastSuccessful: stationVerifier.lastSuccessfulBroadcast,
+        //         timeSince: stationVerifier.getTimeSinceLastBroadcast(),
+        //         error: 'Verifier unreachable',
+        //         onSendAnyway: () => {
+        //             // Re-call sendMessage with skip flag
+        //             this.sendMessage(true);
+        //         }
+        //     });
+        //     return; // Block until user acknowledges
+        // }
+
+        // Block sending if station is banned (check both state and cached broadcast data)
+        const stationId = session.apiKeyInfo?.stationId;
+        if (stationId) {
+            const stationState = stationVerifier.getStationState(stationId);
+            // Also check cached broadcast data directly
+            const isBannedInCache = stationVerifier.isStationBanned(stationId);
+            
+            if (stationState?.banned || isBannedInCache) {
+                console.log(`🚫 Station ${stationId} is banned (state: ${stationState?.banned}, cache: ${isBannedInCache})`);
+                // Get ban info from state or cache
+                const broadcastData = stationVerifier.getLastBroadcastData();
+                const bannedInfo = broadcastData?.banned_stations?.find(s => s.station_id === stationId);
+                
+                this.showBannedStationWarningModal({
+                    stationId: stationId,
+                    reason: stationState?.banReason || bannedInfo?.reason || 'Unknown',
+                    bannedAt: stationState?.bannedAt || bannedInfo?.banned_at,
+                    sessionId: session.id
+                });
+                return; // Block the message
+            }
+        }
+
         // Check if current session is already streaming
         const streamingState = this.getSessionStreamingState(session.id);
         if (streamingState.isStreaming) return;
@@ -2027,6 +2140,47 @@ class ChatApp {
                     }
                     await this.addMessage('assistant', `**Error:** ${error.message}`, { isLocalOnly: true });
                     return; // Return early if key acquisition fails
+                }
+
+                // Verify key with verifier before proceeding
+                try {
+                    if (this.floatingPanel) {
+                        this.floatingPanel.showMessage('Verifying key...', 'info');
+                    }
+                    await stationVerifier.submitKey(session.apiKeyInfo);
+                    
+                    // Set current station for broadcast monitoring
+                    stationVerifier.setCurrentStation(session.apiKeyInfo.stationId, session);
+                } catch (verifyError) {
+                    // Clear the API key since it failed verification
+                    session.apiKey = null;
+                    session.apiKeyInfo = null;
+                    session.expiresAt = null;
+                    await chatDB.saveSession(session);
+                    
+                    // Update UI components
+                    if (this.rightPanel) {
+                        this.rightPanel.onSessionChange(session);
+                    }
+                    
+                    if (this.floatingPanel) {
+                        this.floatingPanel.showMessage(verifyError.message, 'error', 5000);
+                    }
+
+                    // Show detailed error for banned stations
+                    let errorMessage;
+                    if (verifyError.status === 'banned' && verifyError.bannedStation) {
+                        const bs = verifyError.bannedStation;
+                        const bannedDate = bs.bannedAt ? new Date(bs.bannedAt).toLocaleString() : 'Unknown';
+                        errorMessage = `**Station Banned**\n\n${verifyError.message}\n\n` +
+                            `- **Station ID:** \`${bs.stationId}\`\n` +
+                            `- **Reason:** ${bs.reason || 'Not specified'}\n` +
+                            `- **Banned at:** ${bannedDate}`;
+                    } else {
+                        errorMessage = `**Verification Error:** ${verifyError.message}`;
+                    }
+                    await this.addMessage('assistant', errorMessage, { isLocalOnly: true });
+                    return; // Block inference if verification fails
                 }
             }
 
@@ -3582,7 +3736,7 @@ class ChatApp {
                     <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" />
                 </svg>
                 <div class="flex-1">
-                    <div class="font-semibold text-sm mb-1">Upload Error</div>
+                    <div class="font-semibold text-sm mb-1">Error</div>
                     <div class="text-sm opacity-90 whitespace-pre-line">${message}</div>
                 </div>
                 <button onclick="this.parentElement.parentElement.remove()" class="flex-shrink-0 hover:opacity-70 transition-opacity">
@@ -3599,6 +3753,47 @@ class ChatApp {
         setTimeout(() => {
             notification.remove();
         }, 6000);
+    }
+
+    /**
+     * Shows a warning when attempting to use a banned station's API key
+     * Clears the key and shows an error message
+     */
+    async showBannedStationWarningModal({ stationId, reason, bannedAt, sessionId }) {
+        // Get the session
+        const session = this.state.sessions.find(s => s.id === sessionId) || this.getCurrentSession();
+        
+        if (session) {
+            // Clear the API key
+            session.apiKey = null;
+            session.apiKeyInfo = null;
+            session.expiresAt = null;
+            await chatDB.saveSession(session);
+            
+            // Update UI
+            if (this.rightPanel) {
+                this.rightPanel.onSessionChange(session);
+            }
+        }
+        
+        // Format the ban timestamp
+        const bannedDate = bannedAt ? new Date(bannedAt).toLocaleString() : 'Unknown';
+        
+        // Show error message in chat with itemized format
+        const errorMessage = `**Station Banned**
+
+The station that issued your API key has been banned.
+
+- **Station ID:** \`${stationId || 'Unknown'}\`
+- **Reason:** ${reason || 'Not specified'}
+- **Banned at:** ${bannedDate}
+
+Your API key has been cleared. A new key from a different station will be obtained automatically when you send your next message.`;
+        
+        await this.addMessage('assistant', errorMessage, { isLocalOnly: true });
+        
+        // Also show a toast notification
+        this.showErrorNotification(`Station banned: ${reason || 'Unknown reason'}. Your API key has been cleared.`);
     }
 
     async renderFilePreviews() {
@@ -3751,7 +3946,8 @@ class ChatApp {
             return result.key;
         } catch (error) {
             console.error('Failed to automatically acquire API key:', error);
-            throw new Error(`A network error occurred while trying to get an API key: ${error.message}`);
+            // Pass through the original error message without wrapping
+            throw error;
         }
     }
 
