@@ -620,15 +620,14 @@ class StationClient {
             this.markTicketAsUsed(ticket);
 
             // Return key data with signature fields for verification
-            // Use expires_at_unix (Unix timestamp) for expiration checks and verification
             return {
                 key: data.key,
                 keyHash: data.key_hash,
                 ticketsConsumed: data.tickets_consumed,
                 creditLimit: data.credit_limit,
                 durationMinutes: data.duration_minutes,
-                expiresAt: data.expires_at_unix,  // Unix timestamp in seconds
-                expiresAtIso: data.expires_at,    // ISO string for display
+                expiresAt: data.expires_at,           // ISO string for display/checks
+                expiresAtUnix: data.expires_at_unix,  // Unix timestamp for signature verification
                 stationId: data.station_id,
                 stationUrl: data.station_url,
                 stationSignature: data.station_signature,

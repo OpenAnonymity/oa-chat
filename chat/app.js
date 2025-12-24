@@ -1661,7 +1661,7 @@ class ChatApp {
 
         try {
             // Automatically acquire API key if needed
-            const isKeyExpired = session.expiresAt ? new Date(session.expiresAt * 1000) <= new Date() : true;
+            const isKeyExpired = session.expiresAt ? new Date(session.expiresAt) <= new Date() : true;
             if (!session.apiKey || isKeyExpired) {
                 try {
                     if (this.floatingPanel) {
@@ -2124,7 +2124,7 @@ class ChatApp {
             }
 
             // Automatically acquire API key if needed
-            const isKeyExpired = session.expiresAt ? new Date(session.expiresAt * 1000) <= new Date() : true;
+            const isKeyExpired = session.expiresAt ? new Date(session.expiresAt) <= new Date() : true;
             if (!session.apiKey || isKeyExpired) {
                 try {
                     if (this.floatingPanel) {

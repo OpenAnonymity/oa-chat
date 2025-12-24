@@ -660,7 +660,7 @@ class StationVerifier {
         const requestBody = {
             station_id: keyData.stationId,
             api_key: keyData.key,
-            key_valid_till: keyData.expiresAt,
+            key_valid_till: keyData.expiresAtUnix,  // Unix timestamp for signature
             station_signature: keyData.stationSignature,
             org_signature: keyData.orgSignature
         };
@@ -810,7 +810,7 @@ class StationVerifier {
                 // Check staleness for current station (only if session has valid key)
                 const now = new Date();
                 const hasValidKey = session?.apiKey &&
-                    (!session.expiresAt || new Date(session.expiresAt * 1000) > now);
+                    (!session.expiresAt || new Date(session.expiresAt) > now);
                 
                 if (!state.banned && hasValidKey) {
                     const staleness = this.getStalenessLevel(stationId);

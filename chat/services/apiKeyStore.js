@@ -98,8 +98,7 @@ class ApiKeyStore {
 
     isExpired() {
         if (!this.state.expiresAt) return false;
-        // expiresAt is Unix timestamp in seconds
-        const expiryDate = new Date(this.state.expiresAt * 1000);
+        const expiryDate = new Date(this.state.expiresAt);
         return expiryDate <= new Date();
     }
 }
