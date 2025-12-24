@@ -26,9 +26,8 @@ class StationClient {
         this.ppExtension = privacyPassProvider;
         this.tickets = this.loadTickets();
         this.currentTicketIndex = 0;
-        this.selectedStationUrl = null;
-        this.selectedStationName = null;
         this.tabId = this.generateTabId();
+        
         console.log(`📊 StationClient ready with ${this.tickets.length} tickets (Tab ID: ${this.tabId})`);
         
         // Listen for cross-tab ticket changes via storage events
@@ -133,7 +132,13 @@ class StationClient {
                     }
                 }
 
-                lastError = error;
+                // Convert AbortError to user-friendly timeout message
+                if (error.name === 'AbortError') {
+                    lastError = new Error(`Request timed out. Please try again.`);
+                } else {
+                    lastError = error;
+                }
+                
                 const isRetryable = this.isRetryableError(error);
                 
                 if (isRetryable && attempt < maxAttempts) {
@@ -143,7 +148,7 @@ class StationClient {
                 }
                 
                 // Final attempt or non-retryable error
-                throw error;
+                throw lastError;
             }
         }
 
@@ -169,46 +174,6 @@ class StationClient {
             RETRY_DEFAULTS.maxDelayMs
         );
         await new Promise(r => setTimeout(r, delay));
-    }
-
-    async getOnlineStations() {
-        try {
-            console.log('🔍 Fetching online stations from org...');
-            const { data } = await this.fetchWithRetry(
-                `${ORG_API_BASE}/api/v2/online`,
-                {},
-                { context: 'Online stations' }
-            );
-
-            const stations = Object.entries(data).map(([name, info]) => ({
-                name,
-                url: info.url,
-                models: info.models || [],
-                lastSeenSecondsAgo: info.last_seen_seconds_ago,
-            }));
-
-            console.log(`✅ Found ${stations.length} online stations:`, stations.map(s => s.name));
-            return stations;
-        } catch (error) {
-            console.error('❌ Failed to fetch online stations:', error.message);
-            return [];
-        }
-    }
-
-    selectRandomStation(stations) {
-        if (!stations || stations.length === 0) {
-            return null;
-        }
-
-        const randomIndex = crypto.getRandomValues(new Uint32Array(1))[0] % stations.length;
-        const selected = stations[randomIndex];
-
-        console.log(`🎲 Randomly selected station: ${selected.name} (${randomIndex + 1}/${stations.length})`);
-
-        this.selectedStationUrl = selected.url;
-        this.selectedStationName = selected.name;
-
-        return selected;
     }
 
     loadTickets() {
@@ -598,102 +563,89 @@ class StationClient {
                 }
             });
 
-            const onlineStations = await this.getOnlineStations();
+            // Request API key directly from org
+            const requestKeyUrl = `${ORG_API_BASE}/api/request_key`;
+            const requestHeaders = {
+                'Content-Type': 'application/json',
+                'Authorization': `InferenceTicket token=${ticket.finalized_ticket}`,
+            };
+            const requestBody = { name };
 
-            if (onlineStations.length === 0) {
-                throw new Error('No stations are currently available to provision API keys. Please wait for stations or contact support.');
-            }
+            console.log('🔑 Requesting API key from org...');
 
-            let remainingStations = [...onlineStations];
-            let lastError = null;
-
-            // Try each station in pool
-            while (remainingStations.length > 0) {
-                const selectedStation = this.selectRandomStation(remainingStations);
-                remainingStations = remainingStations.filter(s => s !== selectedStation);
-
-                if (!selectedStation.url) {
-                    lastError = new Error(`Station ${selectedStation.name} has no URL configured.`);
-                    continue;
+            const { response, data } = await this.fetchWithRetry(
+                requestKeyUrl,
+                {
+                    method: 'POST',
+                    headers: requestHeaders,
+                    body: JSON.stringify(requestBody)
+                },
+                { 
+                    context: 'Org API key',
+                    maxAttempts: 1,    // No retries - ticket would be consumed
+                    timeoutMs: 30000   // 30s timeout - org has internal station timeout
                 }
+            );
 
-                const normalizedUrl = selectedStation.url.replace(/\/$/, '');
-                const requestKeyUrl = `${normalizedUrl}/api/v2/request_key`;
-                const requestHeaders = {
-                    'Content-Type': 'application/json',
-                    'Authorization': `InferenceTicket token=${ticket.finalized_ticket}`,
-                };
-                const requestBody = { name };
+            // Log request
+            networkLogger.logRequest({
+                type: 'api-key',
+                method: 'POST',
+                url: requestKeyUrl,
+                status: response.status,
+                request: {
+                    headers: networkLogger.sanitizeHeaders(requestHeaders),
+                    body: requestBody
+                },
+                response: data
+            });
 
-                try {
-                    console.log(`🔑 Requesting API key from ${selectedStation.name}...`);
-
-                    const { response, data } = await this.fetchWithRetry(
-                        requestKeyUrl,
-                        {
-                            method: 'POST',
-                            headers: requestHeaders,
-                            body: JSON.stringify(requestBody)
-                        },
-                        { context: `${selectedStation.name} API key` }
-                    );
-
-                    // Log request
-                    networkLogger.logRequest({
-                        type: 'api-key',
-                        method: 'POST',
-                        url: requestKeyUrl,
-                        status: response.status,
-                        request: {
-                            headers: networkLogger.sanitizeHeaders(requestHeaders),
-                            body: requestBody
-                        },
-                        response: data
-                    });
-
-                    if (!response.ok) {
-                        if (response.status === 401 || data.detail?.includes('double-spending')) {
-                            this.markTicketAsUsed(ticket);
-                            const ticketError = new Error('This ticket was already used. Please try again with next ticket.');
-                            ticketError.code = 'TICKET_USED';
-                            throw ticketError;
-                        }
-                        throw new Error(data.detail || 'Failed to provision API key');
-                    }
-
+            if (!response.ok) {
+                // Extract error message from various possible response formats
+                const errorMessage = data.detail || data.error || data.message || 
+                    (typeof data === 'string' ? data : null) ||
+                    `Failed to provision API key (${response.status})`;
+                
+                if (response.status === 401 || errorMessage.includes('double-spending')) {
                     this.markTicketAsUsed(ticket);
-
-                    return {
-                        key: data.key,
-                        name: data.name,
-                        credit_limit: data.credit_limit,
-                        duration_minutes: data.duration_minutes,
-                        expires_at: data.expires_at,
-                        station_name: this.selectedStationName,
-                        station_url: this.selectedStationUrl,
-                        ticket_used: {
-                            blinded_request: ticket.blinded_request,
-                            signed_response: ticket.signed_response,
-                            finalized_ticket: ticket.finalized_ticket,
-                        }
-                    };
-
-                } catch (stationError) {
-                    lastError = stationError;
-                    console.error(`Station ${selectedStation.name} failed:`, stationError.message);
-
-                    if (stationError.code === 'TICKET_USED') {
-                        throw stationError;
-                    }
-
-                    console.warn(`⚠️ Trying a different station...`);
+                    const ticketError = new Error('This ticket was already used. Please try again with next ticket.');
+                    ticketError.code = 'TICKET_USED';
+                    throw ticketError;
                 }
+                // Release reservation - ticket wasn't consumed, can be reused
+                this.releaseReservation(ticket);
+                throw new Error(errorMessage);
             }
 
-            throw new Error(`Failed to provision API key after trying ${onlineStations.length} station(s): ${lastError?.message || 'Unknown error'}`);
+            this.markTicketAsUsed(ticket);
+
+            // Return key data with signature fields for verification
+            // Use expires_at_unix (Unix timestamp) for expiration checks and verification
+            return {
+                key: data.key,
+                keyHash: data.key_hash,
+                ticketsConsumed: data.tickets_consumed,
+                creditLimit: data.credit_limit,
+                durationMinutes: data.duration_minutes,
+                expiresAt: data.expires_at_unix,  // Unix timestamp in seconds
+                expiresAtIso: data.expires_at,    // ISO string for display
+                stationId: data.station_id,
+                stationUrl: data.station_url,
+                stationSignature: data.station_signature,
+                orgSignature: data.org_signature,
+                ticketUsed: {
+                    blindedRequest: ticket.blinded_request,
+                    signedResponse: ticket.signed_response,
+                    finalizedTicket: ticket.finalized_ticket,
+                }
+            };
 
         } catch (error) {
             console.error('Request API key error:', error);
+            // Release reservation on error (unless ticket was consumed)
+            if (ticket && error.code !== 'TICKET_USED') {
+                this.releaseReservation(ticket);
+            }
             throw error;
         }
     }
@@ -763,6 +715,22 @@ class StationClient {
             console.log(`📊 Remaining tickets: ${this.tickets.filter(t => !t.used).length}`);
 
             window.dispatchEvent(new CustomEvent('tickets-updated'));
+        }
+    }
+
+    releaseReservation(ticket) {
+        if (!ticket || !this.tickets) return;
+
+        const ticketIndex = this.tickets.findIndex(
+            t => t.finalized_ticket === ticket.finalized_ticket
+        );
+
+        if (ticketIndex !== -1 && this.tickets[ticketIndex].reserved_by === this.tabId) {
+            this.tickets[ticketIndex].reserved = false;
+            this.tickets[ticketIndex].reserved_at = null;
+            this.tickets[ticketIndex].reserved_by = null;
+            this.saveTickets(this.tickets);
+            console.log(`🔓 Released reservation for ticket ${ticketIndex + 1}`);
         }
     }
 }

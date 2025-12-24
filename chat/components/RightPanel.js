@@ -1223,10 +1223,10 @@ class RightPanel {
 
                     <div class="space-y-2 mb-3">
 
-                        ${this.apiKeyInfo?.station_name ? `
+                        ${this.apiKeyInfo?.stationId ? `
                             <div class="flex items-center justify-between p-2 bg-background rounded-md border border-border">
                                 <span class="text-[10px] text-muted-foreground">Issuing Station</span>
-                                <span class="text-[10px] font-medium">${this.escapeHtml(this.apiKeyInfo.station_name)}</span>
+                                <span class="text-[10px] font-medium font-mono">${this.escapeHtml(this.apiKeyInfo.stationId.slice(0, 16))}...</span>
                             </div>
                         ` : ''}
 
