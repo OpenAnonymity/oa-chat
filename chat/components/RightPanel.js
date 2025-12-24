@@ -245,7 +245,8 @@ class RightPanel {
         }
 
         const updateTimeRemaining = () => {
-            const expiryDate = new Date(this.expiresAt);
+            // expiresAt is Unix timestamp in seconds, convert to milliseconds
+            const expiryDate = new Date(this.expiresAt * 1000);
             const now = new Date();
             const diff = expiryDate - now;
 
@@ -449,7 +450,7 @@ class RightPanel {
             // Store API key in current session
             this.currentSession.apiKey = result.key;
             this.currentSession.apiKeyInfo = result;
-            this.currentSession.expiresAt = result.expires_at;
+            this.currentSession.expiresAt = result.expiresAt;
 
             // Save session to DB
             await chatDB.saveSession(this.currentSession);
@@ -457,7 +458,7 @@ class RightPanel {
             // Update local state
             this.apiKey = result.key;
             this.apiKeyInfo = result;
-            this.expiresAt = result.expires_at;
+            this.expiresAt = result.expiresAt;
 
             // Success - reset for next ticket
             setTimeout(() => {

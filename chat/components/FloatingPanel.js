@@ -151,7 +151,8 @@ class FloatingPanel {
         }
 
         const session = this.app.getCurrentSession();
-        const hasActiveKey = session && session.apiKey && session.expiresAt && (new Date(session.expiresAt) > new Date());
+        // expiresAt is Unix timestamp in seconds
+        const hasActiveKey = session && session.apiKey && session.expiresAt && (new Date(session.expiresAt * 1000) > new Date());
 
         if (hasActiveKey) {
             if (this.currentLog) {

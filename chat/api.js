@@ -49,8 +49,9 @@ class OpenRouterAPI {
             if (stored) {
                 const data = JSON.parse(stored);
                 if (data.key) {
-                    // Check if not expired
-                    const expiryDate = new Date(data.expires_at);
+                    // Check if not expired (expires_at is Unix timestamp in seconds)
+                    const expiresAt = data.expiresAt || data.expires_at;
+                    const expiryDate = new Date(expiresAt * 1000);
                     if (expiryDate > new Date()) {
                         return data.key;
                     }

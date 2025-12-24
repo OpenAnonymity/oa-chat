@@ -38,8 +38,8 @@ class ApiKeyStore {
                 this.state = {
                     apiKey: data.key,
                     apiKeyInfo: data,
-                    expiresAt: data.expires_at,
-                    ticketUsed: data.ticket_used
+                    expiresAt: data.expiresAt || data.expires_at, // Support both formats
+                    ticketUsed: data.ticketUsed || data.ticket_used
                 };
                 console.log('📥 Loaded API key from localStorage');
                 this.notify();
@@ -54,8 +54,8 @@ class ApiKeyStore {
             this.state = {
                 apiKey: apiKeyData.key,
                 apiKeyInfo: apiKeyData,
-                expiresAt: apiKeyData.expires_at,
-                ticketUsed: apiKeyData.ticket_used
+                expiresAt: apiKeyData.expiresAt || apiKeyData.expires_at,
+                ticketUsed: apiKeyData.ticketUsed || apiKeyData.ticket_used
             };
 
             localStorage.setItem('openrouter_api_key_data', JSON.stringify(apiKeyData));
@@ -98,7 +98,8 @@ class ApiKeyStore {
 
     isExpired() {
         if (!this.state.expiresAt) return false;
-        const expiryDate = new Date(this.state.expiresAt);
+        // expiresAt is Unix timestamp in seconds
+        const expiryDate = new Date(this.state.expiresAt * 1000);
         return expiryDate <= new Date();
     }
 }
