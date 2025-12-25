@@ -27,9 +27,9 @@ class StationClient {
         this.tickets = this.loadTickets();
         this.currentTicketIndex = 0;
         this.tabId = this.generateTabId();
-        
+
         console.log(`📊 StationClient ready with ${this.tickets.length} tickets (Tab ID: ${this.tabId})`);
-        
+
         // Listen for cross-tab ticket changes via storage events
         window.addEventListener('storage', (event) => {
             if (event.key === 'inference_tickets' && event.newValue !== event.oldValue) {
@@ -71,12 +71,12 @@ class StationClient {
             try {
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-                
+
                 const response = await networkProxy.fetch(url, {
                     ...init,
                     signal: controller.signal
                 });
-                
+
                 clearTimeout(timeoutId);
 
                 // Parse JSON if requested
@@ -100,26 +100,26 @@ class StationClient {
                 // Handle proxy fallback - requires user confirmation
                 if (error instanceof ProxyFallbackError || error?.requiresConfirmation) {
                     console.log(`🔒 ${context}: Proxy unavailable, requesting user confirmation for fallback`);
-                    
+
                     // Show confirmation dialog
-                    const confirmed = await window.showProxyFallbackConfirmation?.({ 
-                        error: error.message, 
-                        url: url 
+                    const confirmed = await window.showProxyFallbackConfirmation?.({
+                        error: error.message,
+                        url: url
                     });
-                    
+
                     if (confirmed) {
                         // User confirmed - retry with direct fetch
                         console.log(`✅ ${context}: User confirmed fallback, using direct connection`);
                         const controller = new AbortController();
                         const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-                        
+
                         const response = await networkProxy.fetchWithFallback(url, {
                             ...init,
                             signal: controller.signal
                         });
-                        
+
                         clearTimeout(timeoutId);
-                        
+
                         if (parseJson) {
                             const { data, error: parseError } = await this.parseResponseBody(response, context);
                             if (parseError) throw parseError;
@@ -134,19 +134,19 @@ class StationClient {
 
                 // Convert AbortError to user-friendly timeout message
                 if (error.name === 'AbortError') {
-                    lastError = new Error(`Request timed out. Please try again.`);
+                    lastError = new Error(`Request timed out. Please try again. (Are you connected to the Internet?)`);
                 } else {
                     lastError = error;
                 }
-                
+
                 const isRetryable = this.isRetryableError(error);
-                
+
                 if (isRetryable && attempt < maxAttempts) {
                     console.warn(`⚠️ ${context} attempt ${attempt}/${maxAttempts} failed: ${error.message}. Retrying...`);
                     await this.backoff(attempt, baseDelayMs);
                     continue;
                 }
-                
+
                 // Final attempt or non-retryable error
                 throw lastError;
             }
@@ -213,20 +213,20 @@ class StationClient {
         // Filter for tickets that are not used and either not reserved or reservation has expired
         const availableTickets = this.tickets.filter(t => {
             if (t.used) return false;
-            
+
             // Check if ticket is reserved by another tab and reservation is still valid
             if (t.reserved && t.reserved_by !== this.tabId) {
                 const reservedAt = new Date(t.reserved_at).getTime();
                 const isExpired = (now - reservedAt) > RESERVATION_TIMEOUT_MS;
-                
+
                 if (!isExpired) {
                     return false; // Skip tickets reserved by other tabs
                 }
-                
+
                 // Reservation expired, this ticket is available
                 console.log(`⏰ Ticket reservation expired (reserved ${Math.floor((now - reservedAt) / 1000)}s ago)`);
             }
-            
+
             return true;
         });
 
@@ -256,7 +256,7 @@ class StationClient {
 
         // Re-read tickets from localStorage to ensure freshness
         const freshTickets = this.loadTickets();
-        
+
         const ticketIndex = freshTickets.findIndex(
             t => t.finalized_ticket === ticket.finalized_ticket
         );
@@ -277,7 +277,7 @@ class StationClient {
         if (targetTicket.reserved && targetTicket.reserved_by !== this.tabId) {
             const reservedAt = new Date(targetTicket.reserved_at).getTime();
             const age = Date.now() - reservedAt;
-            
+
             // Check if reservation is still valid (within 5 seconds)
             if (age < 5000) {
                 console.log(`❌ Ticket reserved by another tab (${Math.floor(age / 1000)}s ago)`);
@@ -580,7 +580,7 @@ class StationClient {
                     headers: requestHeaders,
                     body: JSON.stringify(requestBody)
                 },
-                { 
+                {
                     context: 'Org API key',
                     maxAttempts: 1,    // No retries - ticket would be consumed
                     timeoutMs: 30000   // 30s timeout - org has internal station timeout
@@ -602,10 +602,10 @@ class StationClient {
 
             if (!response.ok) {
                 // Extract error message from various possible response formats
-                const errorMessage = data.detail || data.error || data.message || 
+                const errorMessage = data.detail || data.error || data.message ||
                     (typeof data === 'string' ? data : null) ||
                     `Failed to provision API key (${response.status})`;
-                
+
                 if (response.status === 401 || errorMessage.includes('double-spending')) {
                     this.markTicketAsUsed(ticket);
                     const ticketError = new Error('This ticket was already used. Please try again with next ticket.');

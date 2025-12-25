@@ -1157,7 +1157,7 @@ class ChatApp {
         // Set up banned warning callback - show warning and clear API key when station gets banned
         stationVerifier.setBannedWarningCallback(async ({ stationId, reason, bannedAt, session }) => {
             console.log(`🚫 Station ${stationId} banned: ${reason}`);
-            
+
             if (session && session.apiKeyInfo?.stationId === stationId) {
                 // Show warning modal (which also clears the key)
                 await this.showBannedStationWarningModal({
@@ -1781,7 +1781,7 @@ class ChatApp {
                         this.floatingPanel.showMessage('Verifying key...', 'info');
                     }
                     await stationVerifier.submitKey(session.apiKeyInfo);
-                    
+
                     // Set current station for broadcast monitoring
                     stationVerifier.setCurrentStation(session.apiKeyInfo.stationId, session);
                 } catch (verifyError) {
@@ -1790,12 +1790,12 @@ class ChatApp {
                     session.apiKeyInfo = null;
                     session.expiresAt = null;
                     await chatDB.saveSession(session);
-                    
+
                     // Update UI components
                     if (this.rightPanel) {
                         this.rightPanel.onSessionChange(session);
                     }
-                    
+
                     if (this.floatingPanel) {
                         this.floatingPanel.showMessage(verifyError.message, 'error', 5000);
                     }
@@ -2139,13 +2139,13 @@ class ChatApp {
             const stationState = stationVerifier.getStationState(stationId);
             // Also check cached broadcast data directly
             const isBannedInCache = stationVerifier.isStationBanned(stationId);
-            
+
             if (stationState?.banned || isBannedInCache) {
                 console.log(`🚫 Station ${stationId} is banned (state: ${stationState?.banned}, cache: ${isBannedInCache})`);
                 // Get ban info from state or cache
                 const broadcastData = stationVerifier.getLastBroadcastData();
                 const bannedInfo = broadcastData?.banned_stations?.find(s => s.station_id === stationId);
-                
+
                 this.showBannedStationWarningModal({
                     stationId: stationId,
                     reason: stationState?.banReason || bannedInfo?.reason || 'Unknown',
@@ -2244,7 +2244,7 @@ class ChatApp {
                         this.floatingPanel.showMessage('Verifying key...', 'info');
                     }
                     await stationVerifier.submitKey(session.apiKeyInfo);
-                    
+
                     // Set current station for broadcast monitoring
                     stationVerifier.setCurrentStation(session.apiKeyInfo.stationId, session);
                 } catch (verifyError) {
@@ -2253,12 +2253,12 @@ class ChatApp {
                     session.apiKeyInfo = null;
                     session.expiresAt = null;
                     await chatDB.saveSession(session);
-                    
+
                     // Update UI components
                     if (this.rightPanel) {
                         this.rightPanel.onSessionChange(session);
                     }
-                    
+
                     if (this.floatingPanel) {
                         this.floatingPanel.showMessage(verifyError.message, 'error', 5000);
                     }
@@ -3450,11 +3450,11 @@ class ChatApp {
                 this.handleNewChatRequest();
             }
 
-            // Cmd/Ctrl + K for model picker
+            // Cmd/Ctrl + K for model picker (toggle)
             if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
                 e.preventDefault();
                 if (this.modelPicker) {
-                    this.modelPicker.open();
+                    this.modelPicker.toggle();
                 }
             }
 
@@ -3867,23 +3867,23 @@ class ChatApp {
     async showBannedStationWarningModal({ stationId, reason, bannedAt, sessionId }) {
         // Get the session
         const session = this.state.sessions.find(s => s.id === sessionId) || this.getCurrentSession();
-        
+
         if (session) {
             // Clear the API key
             session.apiKey = null;
             session.apiKeyInfo = null;
             session.expiresAt = null;
             await chatDB.saveSession(session);
-            
+
             // Update UI
             if (this.rightPanel) {
                 this.rightPanel.onSessionChange(session);
             }
         }
-        
+
         // Format the ban timestamp
         const bannedDate = bannedAt ? new Date(bannedAt).toLocaleString() : 'Unknown';
-        
+
         // Show error message in chat with itemized format
         const errorMessage = `**Station Banned**
 
@@ -3894,9 +3894,9 @@ The station that issued your API key has been banned.
 - **Banned at:** ${bannedDate}
 
 Your API key has been cleared. A new key from a different station will be obtained automatically when you send your next message.`;
-        
+
         await this.addMessage('assistant', errorMessage, { isLocalOnly: true });
-        
+
         // Also show a toast notification
         this.showErrorNotification(`Station banned: ${reason || 'Unknown reason'}. Your API key has been cleared.`);
     }

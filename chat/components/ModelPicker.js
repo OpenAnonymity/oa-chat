@@ -113,6 +113,17 @@ export default class ModelPicker {
     }
 
     /**
+     * Toggles the model picker modal open/closed.
+     */
+    toggle() {
+        if (this.app.elements.modelPickerModal.classList.contains('hidden')) {
+            this.open();
+        } else {
+            this.close();
+        }
+    }
+
+    /**
      * Filters models based on search term using fuzzy matching.
      * Also excludes blocked models from the list.
      * @param {string} searchTerm - Search query
