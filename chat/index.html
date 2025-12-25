@@ -244,27 +244,45 @@
 
         <div class="flex flex-1 min-w-0">
             <!-- Main Content Area -->
-            <main class="relative flex-1 flex flex-col min-w-0 min-h-0 h-full pt-2">
-                <!-- Show Sidebar Button (hidden by default, shown when sidebar is hidden) -->
-                <button id="show-sidebar-btn" class="hidden absolute top-4 left-4 z-30 inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-8 w-8 cursor-pointer select-none">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12" />
-                    </svg>
-                </button>
+            <main class="relative flex-1 flex flex-col min-w-0 min-h-0 h-full">
+                <!-- Chat Toolbar - fixed at top, divider appears on scroll when content overlaps -->
+                <div id="chat-toolbar" class="chat-toolbar flex-shrink-0 flex flex-nowrap items-center justify-between px-2 pt-2 pb-1">
+                    <!-- Left toolbar buttons -->
+                    <div class="flex items-center gap-1">
+                        <!-- Show Sidebar Button (hidden by default, shown when sidebar is hidden) -->
+                        <button id="show-sidebar-btn" class="hidden inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-9 w-9 cursor-pointer select-none">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12" />
+                            </svg>
+                        </button>
 
-                <!-- Export PDF Button (hidden by default, shown when session is active) -->
-                <button id="export-pdf-btn" class="hidden absolute top-4 left-4 z-30 inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-8 w-8 cursor-pointer select-none" aria-label="Export as PDF">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
-                    </svg>
-                </button>
+                        <!-- Export PDF Button (hidden by default, shown when session is active) -->
+                        <button id="export-pdf-btn" class="hidden inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-9 w-9 cursor-pointer select-none" aria-label="Export as PDF">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                            </svg>
+                        </button>
 
-                <!-- Wide Mode Button (shown next to export PDF button) -->
-                <button id="wide-mode-btn" class="hidden absolute top-4 left-4 z-30 inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-8 w-8 cursor-pointer select-none" aria-label="Toggle wide mode">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
-                    </svg>
-                </button>
+                        <!-- Wide Mode Button (shown next to export PDF button) -->
+                        <button id="wide-mode-btn" class="hidden inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-9 w-9 cursor-pointer select-none" aria-label="Toggle wide mode">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
+                            </svg>
+                        </button>
+                    </div>
+
+                    <!-- Right toolbar buttons -->
+                    <div class="flex items-center gap-1">
+                        <!-- Show Right Panel Button -->
+                        <button id="show-right-panel-btn" class="hidden inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-9 w-9 cursor-pointer select-none">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M9 4.5v15m6-15v15m-10.875 0h15.75c.621 0 1.125-.504 1.125-1.125V5.625c0-.621-.504-1.125-1.125-1.125H4.125C3.504 4.5 3 5.004 3 5.625v13.5c0 .621.504 1.125 1.125 1.125Z" />
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <!-- Mobile toolbar divider - separate element for reliable positioning -->
+                <div id="mobile-toolbar-divider"></div>
 
                 <!-- Status Indicator Dot (Always visible) -->
                 <!-- FEATURE DISABLED: Status indicator and activity banner - uncomment to re-enable -->
@@ -276,17 +294,10 @@
                 </div>
                 -->
 
-                <!-- Show Right Panel Button -->
-                <button id="show-right-panel-btn" class="hidden absolute top-4 right-4 z-30 inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-8 w-8 cursor-pointer select-none">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 4.5v15m6-15v15m-10.875 0h15.75c.621 0 1.125-.504 1.125-1.125V5.625c0-.621-.504-1.125-1.125-1.125H4.125C3.504 4.5 3 5.004 3 5.625v13.5c0 .621.504 1.125 1.125 1.125Z" />
-                    </svg>
-                </button>
-
                 <div class="flex flex-1 flex-col min-w-0 min-h-0 max-h-full">
                     <!-- Chat Messages Area -->
                     <div id="chat-area" class="flex-1 min-h-0 w-full overflow-y-scroll">
-                        <div id="messages-container" class="w-full mx-auto flex flex-col items-center gap-6 px-2 sm:px-4 md:px-6 pt-16 md:pt-12 pb-32">
+                        <div id="messages-container" class="w-full mx-auto flex flex-col items-center gap-6 px-2 sm:px-4 md:px-6 pt-4 pb-32">
                         </div>
                     </div>
 

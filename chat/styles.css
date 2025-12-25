@@ -1653,13 +1653,68 @@ body {
     display: flex !important;
 }
 
-/* When show-sidebar-btn is visible, move export-pdf-btn and wide-mode-btn to the right to avoid overlap */
-#sidebar.sidebar-hidden ~ * #export-pdf-btn {
-    left: 3.5rem !important; /* Position next to show-sidebar-btn */
+/* Chat Toolbar - fixed at top of main content area */
+.chat-toolbar {
+    min-height: 3rem; /* pt-2 (8px) + h-9 (36px) + pb-1 (4px) = 48px */
+    z-index: 30;
+    background-color: hsl(var(--color-background));
+    border-bottom: 1px solid transparent;
+    /* Fast background transition so overlay appears quickly when screen narrows */
+    transition: border-color 0.15s ease, min-height 0.2s ease, background-color 0.1s ease;
+    overflow: hidden; /* Prevent any content overflow */
 }
 
-#sidebar.sidebar-hidden ~ * #wide-mode-btn {
-    left: 6rem !important; /* Position next to export-pdf-btn */
+/* Mobile toolbar divider - simple horizontal line below toolbar (JS controls visibility) */
+#mobile-toolbar-divider {
+    display: none; /* JS toggles to 'block' when scrolled on mobile */
+    height: 1px;
+    background-color: rgba(0, 0, 0, 0.12);
+    flex-shrink: 0;
+}
+
+/* Dark mode divider */
+.dark #mobile-toolbar-divider,
+:root.dark #mobile-toolbar-divider {
+    background-color: rgba(255, 255, 255, 0.2);
+}
+
+/* Desktop toolbar: ALWAYS absolute position to prevent layout jumps */
+/* Only visual properties (background, border) change based on screen width */
+@media (min-width: 768px) {
+    .chat-toolbar {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+    }
+
+    /* CRITICAL: Fixed padding that NEVER changes - prevents layout jumps */
+    #chat-area {
+        padding-top: 48px; /* Always reserve space for toolbar height */
+    }
+}
+
+/* Wide screen mode: transparent toolbar, content visible behind buttons */
+.chat-toolbar.toolbar-wide {
+    background-color: transparent;
+    border-bottom-color: transparent !important;
+    pointer-events: none; /* Allow clicks through transparent areas */
+}
+
+.chat-toolbar.toolbar-wide > * {
+    pointer-events: auto; /* But buttons remain clickable */
+}
+
+/* Hide right panel button on mobile - panel doesn't make sense on narrow screens */
+@media (max-width: 767px) {
+    #show-right-panel-btn {
+        display: none !important;
+    }
+}
+
+/* Divider appears when scrolled AND content overlaps with toolbar */
+.chat-toolbar.toolbar-divider-visible {
+    border-bottom-color: hsl(var(--color-border));
 }
 
 /* --- Mobile Sidebar Backdrop --- */
@@ -1702,6 +1757,7 @@ html[data-right-panel-hidden="true"] #right-panel {
         z-index: 40;
         width: 0 !important;
         border-right-width: 0 !important;
+        overflow: hidden !important;
     }
 
     #sidebar.mobile-visible {
@@ -1712,21 +1768,12 @@ html[data-right-panel-hidden="true"] #right-panel {
         width: 16rem !important;
         border-right-width: 1px !important;
         box-shadow: 0 0 20px rgba(0, 0, 0, 0.3);
+        overflow: hidden !important;
     }
 
     /* Always show sidebar toggle on mobile */
     #show-sidebar-btn {
         display: flex !important;
-    }
-
-    /* Position export button next to sidebar toggle on mobile */
-    #export-pdf-btn {
-        left: 3.5rem !important;
-    }
-
-    /* Position wide mode button next to export button on mobile */
-    #wide-mode-btn {
-        left: 6rem !important;
     }
 
     /* Hide keyboard shortcuts on mobile (⌘K) - saves space without losing functionality */
@@ -1779,15 +1826,16 @@ html[data-right-panel-hidden="true"] #right-panel {
        exactly the available space and scrolls properly.
        =========================================== */
 
-    /* Main content area - becomes the positioning context */
+    /* Main content area - use flexbox for proper layout */
     main {
         position: fixed !important;
         top: 0 !important;
         left: 0 !important;
         right: 0 !important;
         bottom: 0 !important;
-        padding-top: 0.5rem !important;
-        display: block !important;
+        padding-top: 0 !important;
+        display: flex !important;
+        flex-direction: column !important;
     }
 
     /* Hide the flex container wrapper - we position chat-area directly */
@@ -1795,14 +1843,28 @@ html[data-right-panel-hidden="true"] #right-panel {
         display: contents !important;
     }
 
-    /* Chat area - absolutely positioned within main */
+    /* Chat toolbar - ensure it's visible and positioned correctly on mobile */
+    #chat-toolbar {
+        position: relative !important;
+        flex-shrink: 0 !important;
+        z-index: 30;
+        background-color: hsl(var(--color-background)) !important; /* Always solid on mobile */
+    }
+
+
+    /* Ensure buttons maintain proper size on mobile */
+    #chat-toolbar button {
+        min-width: 2.25rem !important; /* 36px = h-9 */
+        min-height: 2.25rem !important;
+    }
+
+    /* Chat area - fill remaining space below toolbar using flex */
     #chat-area {
-        position: absolute !important;
-        top: 3rem !important; /* Space for top buttons */
-        left: 0 !important;
-        right: 0 !important;
+        position: relative !important;
+        flex: 1 !important;
+        min-height: 0 !important; /* Allow flex child to shrink */
         /* Space for fixed input card + safe area */
-        bottom: calc(5rem + env(safe-area-inset-bottom, 0px)) !important;
+        margin-bottom: calc(5rem + env(safe-area-inset-bottom, 0px)) !important;
         overflow-y: scroll !important;
         -webkit-overflow-scrolling: touch !important;
         overscroll-behavior-y: contain !important;
@@ -1832,6 +1894,7 @@ html[data-right-panel-hidden="true"] #right-panel {
         z-index: 40;
         width: 0 !important;
         border-right-width: 0 !important;
+        overflow: hidden !important;
     }
 
     #sidebar.mobile-visible {
@@ -1842,20 +1905,11 @@ html[data-right-panel-hidden="true"] #right-panel {
         width: 16rem !important;
         border-right-width: 1px !important;
         box-shadow: 0 0 20px rgba(0, 0, 0, 0.3);
+        overflow: hidden !important;
     }
 
     #show-sidebar-btn {
         display: flex !important;
-    }
-
-    /* Position export button next to sidebar toggle */
-    #export-pdf-btn {
-        left: 3.5rem !important;
-    }
-
-    /* Position wide mode button next to export button */
-    #wide-mode-btn {
-        left: 6rem !important;
     }
 
     /* Right panel: overlay mode */
@@ -1882,27 +1936,42 @@ html[data-right-panel-hidden="true"] #right-panel {
         z-index: 50 !important;
     }
 
-    /* Scroll fix - same as mobile */
+    /* Scroll fix - same as mobile, use flexbox */
     main {
         position: fixed !important;
         top: 0 !important;
         left: 0 !important;
         right: 0 !important;
         bottom: 0 !important;
-        padding-top: 0.5rem !important;
-        display: block !important;
+        padding-top: 0 !important;
+        display: flex !important;
+        flex-direction: column !important;
     }
 
     main > div.flex {
         display: contents !important;
     }
 
+    /* Chat toolbar positioning for small tablet */
+    #chat-toolbar {
+        position: relative !important;
+        flex-shrink: 0 !important;
+        z-index: 30;
+        background-color: hsl(var(--color-background)) !important;
+    }
+
+
+    /* Ensure buttons maintain proper size */
+    #chat-toolbar button {
+        min-width: 2.25rem !important;
+        min-height: 2.25rem !important;
+    }
+
     #chat-area {
-        position: absolute !important;
-        top: 3rem !important;
-        left: 0 !important;
-        right: 0 !important;
-        bottom: 5rem !important;
+        position: relative !important;
+        flex: 1 !important;
+        min-height: 0 !important;
+        margin-bottom: 5rem !important;
         overflow-y: scroll !important;
         -webkit-overflow-scrolling: touch !important;
         overscroll-behavior-y: contain !important;
@@ -2500,6 +2569,7 @@ html {
     #sidebar,
     #right-panel,
     #input-card,
+    #chat-toolbar,
     #show-sidebar-btn,
     #show-right-panel-btn,
     #export-pdf-btn,

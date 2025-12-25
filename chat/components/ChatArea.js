@@ -418,6 +418,7 @@ export default class ChatArea {
         // Defer button visibility check to allow DOM to settle after render
         requestAnimationFrame(() => {
             this.app.updateScrollButtonVisibility();
+            this.app.updateToolbarDivider();
         });
 
         // Update message navigation if it exists

@@ -10,6 +10,9 @@ import tlsSecurityModal from './TLSSecurityModal.js';
 import proxyInfoModal from './ProxyInfoModal.js';
 import { getActivityDescription, getActivityIcon, getStatusDotClass, formatTimestamp } from '../services/networkLogRenderer.js';
 
+// Layout constant for toolbar overlay prediction
+const RIGHT_PANEL_WIDTH = 320; // 20rem = 320px (w-80)
+
 class RightPanel {
     constructor(app) {
         this.app = app; // Reference to main app
@@ -290,13 +293,30 @@ class RightPanel {
         this.isVisible = true;
         localStorage.setItem('oa-right-panel-visible', 'true');
         this.updatePanelVisibility();
+        // Predict final width: panel is opening, main area will be NARROWER
+        // Only affects width on desktop (>=1024px), on mobile it overlays
+        // Grace period in updateToolbarDivider blocks intermediate updates during animation
+        this.app?.updateToolbarDivider(this.isDesktop ? -RIGHT_PANEL_WIDTH : 0);
+    }
+
+    hide() {
+        this.isVisible = false;
+        localStorage.setItem('oa-right-panel-visible', 'false');
+        this.updatePanelVisibility();
+        // Predict final width: panel is closing, main area will be WIDER
+        // Only affects width on desktop (>=1024px), on mobile it overlays
+        this.app?.updateToolbarDivider(this.isDesktop ? RIGHT_PANEL_WIDTH : 0);
     }
 
     toggle() {
         // Toggle the right panel visibility
+        const wasVisible = this.isVisible;
         this.isVisible = !this.isVisible;
         localStorage.setItem('oa-right-panel-visible', this.isVisible.toString());
         this.updatePanelVisibility();
+        // Predict final width based on toggle direction
+        // Only affects width on desktop (>=1024px), on mobile it overlays
+        this.app?.updateToolbarDivider(this.isDesktop ? (wasVisible ? RIGHT_PANEL_WIDTH : -RIGHT_PANEL_WIDTH) : 0);
     }
 
     closeRightPanel() {
@@ -304,6 +324,9 @@ class RightPanel {
         this.isVisible = false;
         localStorage.setItem('oa-right-panel-visible', 'false');
         this.updatePanelVisibility();
+        // Predict final width: panel is closing, main area will be WIDER
+        // Only affects width on desktop (>=1024px), on mobile it overlays
+        this.app?.updateToolbarDivider(this.isDesktop ? RIGHT_PANEL_WIDTH : 0);
     }
 
     /**
@@ -1769,9 +1792,9 @@ class RightPanel {
         const hasApiKey = !!this.apiKey;
 
         panel.innerHTML = `
-            <!-- Header -->
-            <div class="p-3 bg-muted/10 border-b border-border">
-                <div class="flex items-center justify-between">
+            <!-- Header - matches chat-toolbar height (min-h-[3rem] + px-2 pt-2 pb-1) -->
+            <div class="min-h-[3rem] px-3 pt-2 pb-1 bg-muted/10 border-b border-border flex items-center">
+                <div class="flex items-center justify-between w-full">
                     <h2 class="text-xs font-semibold text-foreground">System Panel</h2>
                     <button id="close-right-panel" class="text-muted-foreground hover:text-foreground transition-colors p-0.5 rounded-lg hover:bg-accent">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

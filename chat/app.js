@@ -20,6 +20,11 @@ import openRouterAPI from './api.js';
 const DEFAULT_MODEL_ID = 'openai/gpt-5.2-chat';
 const DEFAULT_MODEL_NAME = 'OpenAI: GPT-5.2 Instant';
 
+// Layout constants for toolbar overlay prediction
+const SIDEBAR_WIDTH = 256;      // 16rem = 256px
+const RIGHT_PANEL_WIDTH = 320;  // 20rem = 320px (w-80)
+const TOOLBAR_PREDICTION_GRACE_MS = 350; // Grace period to respect predicted state during animations
+
 // Used to upgrade users who were implicitly on the prior default.
 const PREVIOUS_DEFAULT_MODEL_NAME = 'OpenAI: GPT-5.1 Instant';
 
@@ -588,6 +593,86 @@ class ChatApp {
     }
 
     /**
+     * Updates toolbar mode and divider visibility.
+     * - Wide screens (no overlap): toolbar floats over content, no blocking
+     * - Narrow screens (overlap): toolbar blocks content, divider shows when content scrolls behind
+     */
+    /**
+     * Updates toolbar state. Can predict final width with widthDelta parameter.
+     * @param {number} widthDelta - Optional: predicted change in main area width (negative = narrower)
+     */
+    updateToolbarDivider(widthDelta = 0) {
+        const chatArea = this.elements.chatArea;
+        const toolbar = document.getElementById('chat-toolbar');
+        const messagesContainer = this.elements.messagesContainer;
+        if (!chatArea || !toolbar || !messagesContainer) return;
+
+        // Track prediction timing to avoid overriding during panel animations
+        const now = Date.now();
+
+        if (widthDelta !== 0) {
+            // This is a prediction call - record the timestamp
+            this._toolbarPredictionTime = now;
+        } else if (this._toolbarPredictionTime && (now - this._toolbarPredictionTime) < TOOLBAR_PREDICTION_GRACE_MS) {
+            // Non-prediction call within grace period - skip to avoid overriding
+            return;
+        }
+
+        // On mobile (< 768px), toolbar never floats - show divider when scrolled
+        const isMobile = window.innerWidth < 768;
+        const mobileDivider = document.getElementById('mobile-toolbar-divider');
+
+        if (isMobile) {
+            toolbar.classList.remove('toolbar-floating');
+
+            // On mobile, show divider if user has scrolled down past threshold
+            const hasScrolled = chatArea.scrollTop > 10; // Small threshold to avoid flickering
+            toolbar.classList.toggle('toolbar-divider-visible', hasScrolled);
+
+            // Also control the mobile divider element visibility
+            if (mobileDivider) {
+                mobileDivider.style.display = hasScrolled ? 'block' : 'none';
+            }
+            return;
+        }
+
+        // Hide mobile divider on desktop
+        if (mobileDivider) {
+            mobileDivider.style.display = 'none';
+        }
+
+        // Desktop: Check if content area overlaps with toolbar buttons
+        // Use widthDelta to predict final width (before animation completes)
+        const currentWidth = chatArea.clientWidth;
+        const mainWidth = currentWidth + widthDelta;
+        const actualContentWidth = messagesContainer.getBoundingClientRect().width;
+        const sideMargin = (mainWidth - actualContentWidth) / 2;
+        // Button area: ~116px (3×36px buttons + gaps + padding)
+        // But messages-container has internal padding (px-6 = 24px on md+), so actual text is further inward
+        // With sideMargin=80 + internal padding=24, actual content at 104px - minimal overlap with 116px buttons
+        const buttonAreaWidth = 80;
+
+        // Wide screen: no overlap, make toolbar transparent (visual only, no layout change)
+        const isWideScreen = sideMargin >= buttonAreaWidth;
+        toolbar.classList.toggle('toolbar-wide', isWideScreen);
+
+        // Only show divider on narrow screens when content scrolls past toolbar
+        if (isWideScreen) {
+            toolbar.classList.remove('toolbar-divider-visible');
+            return;
+        }
+
+        // Narrow screen: show divider when content crosses toolbar
+        const toolbarBottom = toolbar.getBoundingClientRect().bottom;
+        const firstMessage = messagesContainer.firstElementChild;
+        const threshold = 8;
+        const contentCrossesToolbar = firstMessage &&
+            firstMessage.getBoundingClientRect().top < (toolbarBottom - threshold);
+
+        toolbar.classList.toggle('toolbar-divider-visible', contentCrossesToolbar);
+    }
+
+    /**
      * Checks scroll position and updates button visibility
      */
     updateScrollButtonVisibility() {
@@ -1016,7 +1101,16 @@ class ChatApp {
                 this.messageNavigation.handleScroll();
             }
             this.updateScrollButtonVisibility();
+            this.updateToolbarDivider();
             this.scheduleScrollPositionSave();
+        }, { passive: true });
+
+        // Set up resize listener for toolbar divider (content width changes)
+        // Debounced to avoid overriding predicted state during panel animations (300ms)
+        let resizeDebounceTimer;
+        window.addEventListener('resize', () => {
+            clearTimeout(resizeDebounceTimer);
+            resizeDebounceTimer = setTimeout(() => this.updateToolbarDivider(), 350);
         }, { passive: true });
 
         // Set up ResizeObserver to adjust chat area padding when input area expands
@@ -1036,6 +1130,8 @@ class ChatApp {
         // Scroll to bottom after initial load (for refresh)
         setTimeout(() => {
             this.scrollToBottom(true);
+            // Initialize toolbar divider state
+            this.updateToolbarDivider();
         }, 100);
 
         // Auto-focus input field on startup
@@ -3144,6 +3240,8 @@ class ChatApp {
         const isWide = document.documentElement.classList.toggle('wide-mode');
         localStorage.setItem('oa-wide-mode', isWide ? 'true' : 'false');
         this.elements.wideModeBtn?.classList.toggle('wide-active', isWide);
+        // Recalculate toolbar divider after max-width transition completes (200ms)
+        setTimeout(() => this.updateToolbarDivider(), 200);
     }
 
     /**
@@ -3191,6 +3289,10 @@ class ChatApp {
         }
         this.updateExportPdfButtonVisibility();
         this.updateWideModeButtonVisibility();
+        // Predict final width: sidebar is closing, main area will be WIDER
+        // Only affects width on desktop, on mobile sidebar overlays
+        // Grace period in updateToolbarDivider blocks intermediate updates during animation
+        this.updateToolbarDivider(this.isMobileView() ? 0 : SIDEBAR_WIDTH);
     }
 
     showSidebar() {
@@ -3215,6 +3317,9 @@ class ChatApp {
         }
         this.updateExportPdfButtonVisibility();
         this.updateWideModeButtonVisibility();
+        // Predict final width: sidebar is opening, main area will be NARROWER
+        // Only affects width on desktop, on mobile sidebar overlays
+        this.updateToolbarDivider(this.isMobileView() ? 0 : -SIDEBAR_WIDTH);
     }
 
     isMobileView() {
@@ -3250,11 +3355,11 @@ class ChatApp {
             });
         }
 
-        // Show right panel button
+        // Toggle right panel button (shows when panel is hidden, but acts as toggle)
         if (this.elements.showRightPanelBtn) {
             this.elements.showRightPanelBtn.addEventListener('click', () => {
                 if (this.rightPanel) {
-                    this.rightPanel.show();
+                    this.rightPanel.toggle();
                 }
             });
         }
