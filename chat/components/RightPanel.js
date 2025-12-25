@@ -1792,8 +1792,8 @@ class RightPanel {
         const hasApiKey = !!this.apiKey;
 
         panel.innerHTML = `
-            <!-- Header - matches chat-toolbar height (min-h-[3rem] + px-2 pt-2 pb-1) -->
-            <div class="min-h-[3rem] px-3 pt-2 pb-1 bg-muted/10 border-b border-border flex items-center">
+            <!-- Header - matches chat-toolbar height (3rem + 1px for border alignment) -->
+            <div style="min-height: calc(3rem + 1px);" class="px-3 bg-muted/10 border-b border-border flex items-center">
                 <div class="flex items-center justify-between w-full">
                     <h2 class="text-xs font-semibold text-foreground">System Panel</h2>
                     <button id="close-right-panel" class="text-muted-foreground hover:text-foreground transition-colors p-0.5 rounded-lg hover:bg-accent">
