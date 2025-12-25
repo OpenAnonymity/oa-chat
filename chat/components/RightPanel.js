@@ -1277,7 +1277,7 @@ class RightPanel {
                         </button>
                         <button
                             id="clear-key-btn"
-                            class="btn-destructive-hover text-[10px] px-2 py-1.5 rounded-md border border-destructive/30 text-destructive bg-destructive/10 transition-all duration-200"
+                            class="btn-destructive-hover text-[10px] px-2 py-1.5 rounded-md border border-red-300 dark:border-red-800 text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-900/30 transition-all duration-200"
                         >
                             Remove
                         </button>
