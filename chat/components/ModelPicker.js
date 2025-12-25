@@ -219,6 +219,13 @@ export default class ModelPicker {
 
         // Wire up click handlers
         this.attachModelClickListeners();
+
+        // Auto-highlight first item so user can immediately press Enter
+        const modelOptions = this.getModelOptions();
+        if (modelOptions.length > 0) {
+            this.highlightedIndex = 0;
+            this.updateHighlight(modelOptions);
+        }
     }
 
     /**
@@ -381,9 +388,11 @@ export default class ModelPicker {
                 break;
 
             case 'Enter':
-                if (this.highlightedIndex >= 0 && this.highlightedIndex < modelOptions.length) {
-                    e.preventDefault();
-                    const selectedModel = modelOptions[this.highlightedIndex].dataset.modelName;
+                e.preventDefault();
+                // Select highlighted item, or first item if none highlighted
+                const indexToSelect = this.highlightedIndex >= 0 ? this.highlightedIndex : 0;
+                if (indexToSelect < modelOptions.length) {
+                    const selectedModel = modelOptions[indexToSelect].dataset.modelName;
                     this.selectModel(selectedModel);
                 }
                 break;
