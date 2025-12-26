@@ -4,14 +4,12 @@
  * and model selection interactions.
  *
  * CONFIGURATION:
- * To pin specific models to the top of the list, edit the pinnedModels array in the constructor.
- * Add model IDs (e.g., 'openai/gpt-4o', 'anthropic/claude-3.5-sonnet') in the order you want them to appear.
- * Pinned models will appear in a separate "Pinned" section at the top.
- *
- * To block models from appearing, add their model IDs to the blockedModels array in the constructor.
+ * Model config (pinned/blocked models, defaults) is stored in services/modelConfig.js
+ * and persisted to IndexedDB. Edit DEFAULT_CONFIG there or use saveModelConfig() at runtime.
  */
 
 import { getProviderIcon } from '../services/providerIcons.js';
+import { loadModelConfig, getDefaultModelConfig } from '../services/modelConfig.js';
 
 export default class ModelPicker {
     /**
@@ -20,36 +18,34 @@ export default class ModelPicker {
     constructor(app) {
         this.app = app;
 
-        // Configuration: Pin specific models to the top
-        // Add model IDs here to always show them first
-        this.pinnedModels = [
-            // Example: Uncomment to pin specific models
-            'openai/gpt-5.2-chat',
-            'openai/gpt-5.2',
-            'anthropic/claude-sonnet-4.5',
-            'anthropic/claude-opus-4.5',
-            'google/gemini-3-pro-preview',
-            'google/gemini-3-pro-image-preview', // Nano Banana Pro
-            'google/gemini-2.5-flash-image-preview', // Nano Banana
-        ];
-
-        // Configuration: Block specific models from appearing
-        // Add model IDs here to exclude them from the picker
-        this.blockedModels = new Set([
-            'openai/o4-mini-deep-research',
-            'openai/o3-deep-research',
-            'alibaba/tongyi-deepresearch-30b-a3b',
-            'perplexity/sonar-deep-research'
-            // Add more model IDs to block as needed
-        ]);
-
-        // Default model name to show when no model is selected
-        this.defaultModelName = (this.app && typeof this.app.getDefaultModelName === 'function')
-            ? this.app.getDefaultModelName()
-            : 'OpenAI: GPT-5.2 Instant';
+        // Load defaults synchronously for immediate use
+        const defaults = getDefaultModelConfig();
+        this.pinnedModels = defaults.pinnedModels;
+        this.blockedModels = new Set(defaults.blockedModels);
+        this.defaultModelName = defaults.defaultModelName;
 
         // Keyboard navigation state
         this.highlightedIndex = -1;
+
+        // Load persisted config (overrides defaults if user has customizations in DB)
+        this._loadConfig();
+    }
+
+    /**
+     * Loads config from database and updates instance properties.
+     * Defaults are already set in constructor, so this only matters if user
+     * has saved custom config via saveModelConfig(). In practice, DB is empty
+     * and this returns the same defaults.
+     */
+    async _loadConfig() {
+        try {
+            const config = await loadModelConfig();
+            this.pinnedModels = config.pinnedModels;
+            this.blockedModels = new Set(config.blockedModels);
+            this.defaultModelName = config.defaultModelName;
+        } catch (e) {
+            console.warn('ModelPicker: failed to load config', e);
+        }
     }
 
     /**

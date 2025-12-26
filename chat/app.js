@@ -16,9 +16,9 @@ import { fetchUrlMetadata } from './services/urlMetadata.js';
 import networkProxy from './services/networkProxy.js';
 import stationVerifier from './services/verifier.js';
 import openRouterAPI from './api.js';
+import { getDefaultModelConfig } from './services/modelConfig.js';
 
-const DEFAULT_MODEL_ID = 'openai/gpt-5.2-chat';
-const DEFAULT_MODEL_NAME = 'OpenAI: GPT-5.2 Instant';
+const { defaultModelId: DEFAULT_MODEL_ID, defaultModelName: DEFAULT_MODEL_NAME } = getDefaultModelConfig();
 
 // Layout constants for toolbar overlay prediction
 const SIDEBAR_WIDTH = 256;      // 16rem = 256px
