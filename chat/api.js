@@ -1,5 +1,6 @@
 // OpenRouter API integration
 import networkProxy, { ProxyFallbackError } from './services/networkProxy.js';
+import { loadModelConfig, getDefaultModelConfig } from './services/modelConfig.js';
 
 // System prompt to prepend to all conversations
 // Modify this function to change the default AI behavior
@@ -26,20 +27,26 @@ class OpenRouterAPI {
     constructor() {
         this.baseUrl = 'https://openrouter.ai/api/v1';
 
-        // Custom display name overrides
-        // Map model ID or default name to custom display name
-        this.displayNameOverrides = {
-            'openai/gpt-5.2-chat': 'OpenAI: GPT-5.2 Instant',
-            'openai/gpt-5.1-chat': 'OpenAI: GPT-5.1 Instant',
-            'openai/gpt-5-chat': 'OpenAI: GPT-5 Instant',
-            'openai/gpt-5.2': 'OpenAI: GPT-5.2 Thinking',
-            'openai/gpt-5.1': 'OpenAI: GPT-5.1 Thinking',
-            'openai/gpt-5': 'OpenAI: GPT-5 Thinking',
-            // Add more customizations here as needed
-            // Examples:
-            // 'anthropic/claude-opus-4.1': 'Anthropic: Claude Opus 4.1 Extended',
-            // 'google/gemini-2.5-pro': 'Google: Gemini 2.5 Pro Ultra',
-        };
+        // Load display name overrides from centralized config
+        const defaults = getDefaultModelConfig();
+        this.displayNameOverrides = { ...defaults.displayNameOverrides };
+
+        // Async load for any user customizations in DB
+        this._loadConfig();
+    }
+
+    /**
+     * Loads config from database and updates displayNameOverrides.
+     */
+    async _loadConfig() {
+        try {
+            const config = await loadModelConfig();
+            if (config.displayNameOverrides) {
+                this.displayNameOverrides = { ...config.displayNameOverrides };
+            }
+        } catch (e) {
+            console.warn('OpenRouterAPI: failed to load config', e);
+        }
     }
 
     // Get API key - only use ticket-based key

@@ -23,6 +23,15 @@ const DEFAULT_CONFIG = {
     ],
     defaultModelId: 'openai/gpt-5.2-chat',      // API model identifier
     defaultModelName: 'OpenAI: GPT-5.2 Instant', // Display name in UI
+    // Custom display name overrides (model ID -> display name)
+    displayNameOverrides: {
+        'openai/gpt-5.2-chat': 'OpenAI: GPT-5.2 Instant',
+        'openai/gpt-5.1-chat': 'OpenAI: GPT-5.1 Instant',
+        'openai/gpt-5-chat': 'OpenAI: GPT-5 Instant',
+        'openai/gpt-5.2': 'OpenAI: GPT-5.2 Thinking',
+        'openai/gpt-5.1': 'OpenAI: GPT-5.1 Thinking',
+        'openai/gpt-5': 'OpenAI: GPT-5 Thinking',
+    },
 };
 
 const CONFIG_KEY = 'modelPickerConfig';
