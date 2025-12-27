@@ -3,8 +3,8 @@
    ============================================ */
 :root {
     /* Fonts */
-    --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-    --font-mono: 'SF Mono', Consolas, 'Liberation Mono', Menlo, monospace;
+    --font-sans: 'SF Pro Text', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    --font-mono: 'SF Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
 
     /* Accent color (user bubbles, active toggles, primary highlights) */
     --color-accent-primary: 217.2 91.2% 59.8%;  /* Blue - change this to customize */
@@ -2670,4 +2670,3 @@ html {
         display: none !important;
     }
 }
-
