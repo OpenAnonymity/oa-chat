@@ -1422,7 +1422,7 @@ class RightPanel {
                     </div>
                     <button
                         id="proxy-toggle-btn"
-                        class="relative w-8 h-[18px] rounded-full transition-colors ${settings.enabled ? 'bg-green-500' : 'bg-muted-foreground/30'} ${pending ? 'opacity-50 cursor-wait' : 'cursor-pointer'}"
+                        class="relative w-8 h-[18px] rounded-full transition-colors ${settings.enabled ? 'bg-blue-500' : 'bg-muted-foreground/30'} ${pending ? 'opacity-50 cursor-wait' : 'cursor-pointer'}"
                         ${pending ? 'disabled' : ''}
                         title="${settings.enabled ? 'Disable relay' : 'Enable relay'}"
                     >

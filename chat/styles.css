@@ -1378,6 +1378,53 @@ html.wide-mode #messages-container {
     background-color: hsl(var(--color-accent-primary) / 0.25) !important;
 }
 
+/* ============================================
+   FLAT MODE
+   Removes bubbles from assistant messages,
+   changes user messages to gray background
+   ============================================ */
+
+/* Flat mode toggle switch styling - matches proxy toggle */
+html.flat-mode .flat-mode-switch {
+    background-color: rgb(59 130 246) !important; /* blue-500 */
+}
+
+html.flat-mode .flat-mode-knob {
+    left: auto;
+    right: 0.125rem; /* right-0.5 */
+}
+
+/* Flat mode - Assistant messages: remove bubble, keep text */
+html.flat-mode .message-assistant {
+    background-color: transparent;
+    border: none;
+    border-radius: 0;
+    padding-top: 0; /* Remove top padding so content stays at same position as bubble mode */
+    padding-left: 0.5rem; /* Small left padding for alignment with header */
+    padding-right: 0;
+}
+
+/* Flat mode - User messages: gray bubble instead of blue */
+html.flat-mode .message-user {
+    background-color: var(--slate-2);
+    border: 1px solid var(--slate-4);
+    color: hsl(var(--color-foreground));
+}
+
+/* Flat mode - Update collapsed user message gradient for gray background */
+html.flat-mode .user-message-collapsible.collapsed::after {
+    background: linear-gradient(to bottom, transparent 0%, var(--slate-2) 100%);
+}
+
+/* Flat mode - Show more button uses foreground color instead of white */
+html.flat-mode .user-message-show-more {
+    color: hsl(var(--color-muted-foreground));
+}
+
+html.flat-mode .user-message-show-more:hover {
+    color: hsl(var(--color-foreground));
+}
+
 .prose p:first-child {
     margin-top: 0;
 }

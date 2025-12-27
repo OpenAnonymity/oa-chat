@@ -46,6 +46,18 @@
             }
         })();
     </script>
+    <script>
+        // Apply flat mode state immediately to prevent flash
+        (function () {
+            try {
+                if (localStorage.getItem('oa-flat-mode') === 'true') {
+                    document.documentElement.classList.add('flat-mode');
+                }
+            } catch (error) {
+                console.warn('Unable to apply flat mode state:', error);
+            }
+        })();
+    </script>
     <!-- Preload critical resources for faster loading -->
     <link rel="preconnect" href="https://cdn.tailwindcss.com" crossorigin>
     <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
@@ -414,6 +426,14 @@
                                                         <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"></path>
                                                     </svg>
                                                 </a>
+
+                                                <!-- Flat mode toggle -->
+                                                <button id="flat-mode-toggle" type="button" class="w-full flex items-center justify-between px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" role="switch" aria-checked="false">
+                                                    <span>Flat mode</span>
+                                                    <span class="flat-mode-switch relative w-8 h-[18px] rounded-full transition-colors bg-muted-foreground/30">
+                                                        <span class="flat-mode-knob absolute top-0.5 left-0.5 w-3.5 h-3.5 rounded-full bg-white shadow-sm transition-all"></span>
+                                                    </span>
+                                                </button>
 
                                                 <div class="mt-2 border-t border-border pt-2">
                                                     <p class="px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Theme</p>

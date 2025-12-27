@@ -88,6 +88,7 @@ class ChatApp {
             showRightPanelBtn: document.getElementById('show-right-panel-btn'),
             exportPdfBtn: document.getElementById('export-pdf-btn'),
             wideModeBtn: document.getElementById('wide-mode-btn'),
+            flatModeToggle: document.getElementById('flat-mode-toggle'),
             sidebar: document.getElementById('sidebar'),
             hideSidebarBtn: document.getElementById('hide-sidebar-btn'),
             showSidebarBtn: document.getElementById('show-sidebar-btn'),
@@ -995,6 +996,9 @@ class ChatApp {
 
         // Initialize wide mode state from localStorage
         this.initWideMode();
+
+        // Initialize flat mode state from localStorage
+        this.initFlatMode();
 
         // Start DB init in background - components can show skeleton state
         const dbReady = chatDB.init();
@@ -3245,6 +3249,28 @@ class ChatApp {
     }
 
     /**
+     * Initializes flat mode state from localStorage.
+     * CSS toggle switch state is controlled via html.flat-mode class.
+     */
+    initFlatMode() {
+        const isFlat = localStorage.getItem('oa-flat-mode') === 'true';
+        if (isFlat) {
+            document.documentElement.classList.add('flat-mode');
+        }
+        // Update aria-checked for accessibility
+        this.elements.flatModeToggle?.setAttribute('aria-checked', String(isFlat));
+    }
+
+    /**
+     * Toggles flat mode on/off.
+     */
+    toggleFlatMode() {
+        const isFlat = document.documentElement.classList.toggle('flat-mode');
+        localStorage.setItem('oa-flat-mode', isFlat ? 'true' : 'false');
+        this.elements.flatModeToggle?.setAttribute('aria-checked', String(isFlat));
+    }
+
+    /**
      * Exports the current chat session to a PDF file.
      * Delegates to pdfExport service.
      */
@@ -3388,6 +3414,14 @@ class ChatApp {
         if (this.elements.wideModeBtn) {
             this.elements.wideModeBtn.addEventListener('click', () => {
                 this.toggleWideMode();
+            });
+        }
+
+        // Flat mode toggle (in settings menu)
+        if (this.elements.flatModeToggle) {
+            this.elements.flatModeToggle.addEventListener('click', (e) => {
+                e.stopPropagation(); // Prevent settings menu from closing
+                this.toggleFlatMode();
             });
         }
 
