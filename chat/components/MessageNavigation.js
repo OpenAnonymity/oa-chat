@@ -6,6 +6,7 @@ export default class MessageNavigation {
         this.messages = [];
         this.container = null;
         this.isVisible = false;
+        this.hideTimeout = null;
 
         this.init();
     }
@@ -129,13 +130,14 @@ export default class MessageNavigation {
             });
 
             // Show preview popover on hover
-            btn.addEventListener('mouseenter', (e) => {
+            btn.addEventListener('mouseenter', () => {
+                this.cancelHideTimeout();
                 const index = parseInt(btn.dataset.messageIndex);
                 this.showPreview(btn, index);
             });
 
             btn.addEventListener('mouseleave', () => {
-                this.hidePreview();
+                this.scheduleHidePreview();
             });
         });
     }
@@ -156,27 +158,46 @@ export default class MessageNavigation {
         const message = this.messages[messageIndex];
         if (!message) return;
 
-        // Remove existing popover
-        this.hidePreview();
+        // Remove existing popover immediately (no delay for replacement)
+        this.hidePreviewImmediate();
 
         // Create popover
         const popover = document.createElement('div');
         popover.id = 'message-preview-popover';
         popover.className = 'message-preview-popover';
 
-        // Get preview text (first 200 chars for left positioning)
+        // Get preview text (first 200 chars)
         const previewText = message.content.substring(0, 200) + (message.content.length > 200 ? '…' : '');
+
+        // Process markdown/latex like the main chat area
+        const processedContent = this.app.processContentWithLatex(previewText);
 
         popover.innerHTML = `
             <div class="popover-header">Message ${messageIndex + 1}</div>
-            <div class="popover-content">${this.escapeHtml(previewText)}</div>
+            <div class="popover-content message-content prose prose-sm">${processedContent}</div>
         `;
 
         document.body.appendChild(popover);
 
+        // Add hover handlers to keep popover visible when mouse enters it
+        popover.addEventListener('mouseenter', () => this.cancelHideTimeout());
+        popover.addEventListener('mouseleave', () => this.scheduleHidePreview());
+
+        // Render LaTeX in the popover content
+        const contentEl = popover.querySelector('.popover-content');
+        if (contentEl && typeof renderMathInElement === 'function') {
+            renderMathInElement(contentEl, {
+                delimiters: [
+                    {left: '$$', right: '$$', display: true},
+                    {left: '\\[', right: '\\]', display: true},
+                    {left: '\\(', right: '\\)', display: false}
+                ],
+                throwOnError: false
+            });
+        }
+
         // Position popover to the left of navigation
         const navRect = this.container.getBoundingClientRect();
-        const popoverRect = popover.getBoundingClientRect();
 
         popover.style.position = 'fixed';
         popover.style.right = (window.innerWidth - navRect.left + 16) + 'px';
@@ -196,17 +217,28 @@ export default class MessageNavigation {
         }
     }
 
-    hidePreview() {
+    scheduleHidePreview() {
+        this.cancelHideTimeout();
+        this.hideTimeout = setTimeout(() => this.hidePreviewImmediate(), 150);
+    }
+
+    cancelHideTimeout() {
+        if (this.hideTimeout) {
+            clearTimeout(this.hideTimeout);
+            this.hideTimeout = null;
+        }
+    }
+
+    hidePreviewImmediate() {
+        this.cancelHideTimeout();
         const popover = document.getElementById('message-preview-popover');
         if (popover) {
             popover.remove();
         }
     }
 
-    escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
+    hidePreview() {
+        this.hidePreviewImmediate();
     }
 
     updateCurrentMessageIndex() {

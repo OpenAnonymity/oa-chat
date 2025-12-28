@@ -2441,11 +2441,11 @@ html[data-right-panel-hidden="true"] #right-panel {
 }
 
 .message-indicator {
-    width: 3px;
+    width: 4px;
     min-height: 3px;
     background: hsl(var(--color-foreground) / 0.2);
     border: none;
-    border-radius: 1.5px;
+    border-radius: 2px;
     cursor: pointer;
     transition: all 0.15s ease;
     padding: 0;
@@ -2454,7 +2454,7 @@ html[data-right-panel-hidden="true"] #right-panel {
 
 .message-indicator:hover {
     background: hsl(var(--color-foreground) / 0.5);
-    transform: scaleX(1.6);
+    transform: scaleX(1.4);
 }
 
 .message-indicator.active {
@@ -2471,7 +2471,7 @@ html[data-right-panel-hidden="true"] #right-panel {
     box-shadow: 0 8px 24px -4px rgba(0, 0, 0, 0.12), 0 2px 8px -2px rgba(0, 0, 0, 0.08);
     z-index: 35; /* Above message navigation (z-30) but below right panel (z-40) */
     animation: popoverFadeIn 0.15s ease-out;
-    pointer-events: none;
+    pointer-events: auto;
 }
 
 .dark .message-preview-popover {
@@ -2493,6 +2493,32 @@ html[data-right-panel-hidden="true"] #right-panel {
     padding: 12px 14px;
     line-height: 1.5;
     word-wrap: break-word;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+/* Prose overrides for popover preview */
+.popover-content.prose {
+    font-size: 0.8125rem;
+}
+
+.popover-content.prose p {
+    margin: 0.25em 0;
+}
+
+.popover-content.prose pre {
+    font-size: 0.75rem;
+    padding: 0.5em;
+    margin: 0.5em 0;
+    overflow-x: auto;
+}
+
+.popover-content.prose code {
+    font-size: 0.75rem;
+}
+
+.popover-content.prose strong {
+    font-weight: 600;
 }
 
 @keyframes popoverFadeIn {
