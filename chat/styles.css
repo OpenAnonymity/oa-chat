@@ -1152,14 +1152,29 @@ html.switching-theme *::after {
     font-family: var(--font-mono);
 }
 
-/* Code Block Wrapper with Header */
+/* Code Block Wrapper with Header
+   --code-block-bg: Background for code content area
+   --code-block-header: Background for language/copy header
+   --code-block-border: Border color */
+:root {
+    --code-block-bg: hsl(220, 6%, 94%);      /* Light: neutral warm gray */
+    --code-block-header: hsl(220, 6%, 91%);  /* Slightly darker for header */
+    --code-block-border: hsl(220, 6%, 88%);  /* Subtle border */
+}
+
+.dark {
+    --code-block-bg: hsl(0, 0%, 12%);        /* Dark: darker than default slate-3 */
+    --code-block-header: hsl(0, 0%, 15%);    /* Slightly lighter header for contrast */
+    --code-block-border: hsl(0, 0%, 18%);    /* Subtle border */
+}
+
 .code-block-wrapper {
     position: relative;
     margin-bottom: 0.75rem;
     border-radius: 0.5rem;
     overflow: hidden;
-    background-color: hsl(var(--color-muted));
-    border: 1px solid hsl(var(--color-border) / 0.5);
+    background-color: var(--code-block-bg);
+    border: 1px solid var(--code-block-border);
 }
 
 .code-block-header {
@@ -1167,8 +1182,8 @@ html.switching-theme *::after {
     align-items: center;
     justify-content: space-between;
     padding: 0.4rem 0.75rem;
-    background-color: hsl(var(--color-muted) / 0.8);
-    border-bottom: 1px solid hsl(var(--color-border) / 0.3);
+    background-color: var(--code-block-header);
+    border-bottom: 1px solid var(--code-block-border);
     min-height: 2rem;
 }
 
@@ -1233,17 +1248,7 @@ html.switching-theme *::after {
     padding: 0;
 }
 
-/* Dark mode adjustments - uses neutral grays from theme */
-.dark .code-block-wrapper {
-    background-color: hsl(var(--color-card));
-    border-color: hsl(var(--color-border) / 0.4);
-}
-
-.dark .code-block-header {
-    background-color: hsl(var(--color-muted) / 0.5);
-    border-bottom-color: hsl(var(--color-border) / 0.3);
-}
-
+/* Dark mode code block - colors defined via CSS variables above */
 .dark .code-block-copy-btn:hover {
     background-color: hsl(var(--color-secondary) / 0.5);
 }
