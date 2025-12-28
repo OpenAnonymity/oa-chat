@@ -47,10 +47,11 @@
         })();
     </script>
     <script>
-        // Apply flat mode state immediately to prevent flash
+        // Apply flat mode state immediately to prevent flash (default: ON)
         (function () {
             try {
-                if (localStorage.getItem('oa-flat-mode') === 'true') {
+                // Default to flat mode ON unless explicitly set to 'false'
+                if (localStorage.getItem('oa-flat-mode') !== 'false') {
                     document.documentElement.classList.add('flat-mode');
                 }
             } catch (error) {

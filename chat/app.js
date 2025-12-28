@@ -3253,9 +3253,10 @@ class ChatApp {
     /**
      * Initializes flat mode state from localStorage.
      * CSS toggle switch state is controlled via html.flat-mode class.
+     * Default: ON (unless explicitly set to 'false')
      */
     initFlatMode() {
-        const isFlat = localStorage.getItem('oa-flat-mode') === 'true';
+        const isFlat = localStorage.getItem('oa-flat-mode') !== 'false';
         if (isFlat) {
             document.documentElement.classList.add('flat-mode');
         }
