@@ -95,6 +95,7 @@ class ChatApp {
             mobileSidebarBackdrop: document.getElementById('mobile-sidebar-backdrop'),
             sessionsScrollArea: document.getElementById('sessions-scroll-area'),
             modelListScrollArea: document.getElementById('model-list-scroll-area'),
+            themeToggle: document.getElementById('theme-toggle'),
             themeOptionButtons: Array.from(document.querySelectorAll('[data-theme-option]')),
             themeEffectiveLabel: document.getElementById('theme-effective-label'),
             fileUploadBtn: document.getElementById('file-upload-btn'),
@@ -3260,17 +3261,27 @@ class ChatApp {
         if (isFlat) {
             document.documentElement.classList.add('flat-mode');
         }
-        // Update aria-checked for accessibility
-        this.elements.flatModeToggle?.setAttribute('aria-checked', String(isFlat));
+        // Update aria-checked for segmented control buttons
+        this.updateFlatModeButtons(isFlat);
     }
 
     /**
-     * Toggles flat mode on/off.
+     * Updates aria-checked states on flat mode toggle buttons.
      */
-    toggleFlatMode() {
-        const isFlat = document.documentElement.classList.toggle('flat-mode');
-        localStorage.setItem('oa-flat-mode', isFlat ? 'true' : 'false');
-        this.elements.flatModeToggle?.setAttribute('aria-checked', String(isFlat));
+    updateFlatModeButtons(isFlat) {
+        const flatBtn = this.elements.flatModeToggle?.querySelector('[data-mode="flat"]');
+        const bubbleBtn = this.elements.flatModeToggle?.querySelector('[data-mode="bubble"]');
+        flatBtn?.setAttribute('aria-checked', String(isFlat));
+        bubbleBtn?.setAttribute('aria-checked', String(!isFlat));
+    }
+
+    /**
+     * Sets flat mode to a specific state.
+     */
+    setFlatMode(enabled) {
+        document.documentElement.classList.toggle('flat-mode', enabled);
+        localStorage.setItem('oa-flat-mode', enabled ? 'true' : 'false');
+        this.updateFlatModeButtons(enabled);
     }
 
     /**
@@ -3420,11 +3431,15 @@ class ChatApp {
             });
         }
 
-        // Flat mode toggle (in settings menu)
+        // Flat mode toggle (segmented control in settings menu)
         if (this.elements.flatModeToggle) {
             this.elements.flatModeToggle.addEventListener('click', (e) => {
                 e.stopPropagation(); // Prevent settings menu from closing
-                this.toggleFlatMode();
+                const btn = e.target.closest('.display-toggle-btn');
+                if (btn) {
+                    const mode = btn.dataset.mode;
+                    this.setFlatMode(mode === 'flat');
+                }
             });
         }
 

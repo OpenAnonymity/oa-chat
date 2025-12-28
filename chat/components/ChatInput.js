@@ -63,9 +63,31 @@ export default class ChatInput {
         });
 
         // Settings menu toggle
+        // IMPORTANT: The menu is moved to document.body when opened to enable backdrop-filter.
+        // backdrop-filter only blurs content OUTSIDE the element's stacking context.
+        // Since input-card has `isolation: isolate`, any child element's backdrop-filter
+        // can only blur content within input-card, not the page behind it.
+        // By moving to body, the menu escapes input-card's stacking context.
         this.app.elements.settingsBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            this.app.elements.settingsMenu.classList.toggle('hidden');
+            const menu = this.app.elements.settingsMenu;
+            const btn = this.app.elements.settingsBtn;
+            const isHidden = menu.classList.contains('hidden');
+
+            if (isHidden) {
+                // Move menu to body for backdrop-filter to work (escapes input-card stacking context)
+                document.body.appendChild(menu);
+                menu.classList.remove('hidden');
+                btn.classList.add('tooltip-disabled'); // Hide tooltip while menu is open
+
+                // Position relative to settings button
+                const btnRect = btn.getBoundingClientRect();
+                menu.style.left = `${btnRect.left}px`;
+                menu.style.bottom = `${window.innerHeight - btnRect.top + 8}px`;
+            } else {
+                menu.classList.add('hidden');
+                btn.classList.remove('tooltip-disabled');
+            }
         });
 
         // Settings menu actions
@@ -114,6 +136,7 @@ export default class ChatInput {
         document.addEventListener('click', () => {
             if (!this.app.elements.settingsMenu.classList.contains('hidden')) {
                 this.app.elements.settingsMenu.classList.add('hidden');
+                this.app.elements.settingsBtn.classList.remove('tooltip-disabled');
             }
             // Also close session menus
             document.querySelectorAll('.session-menu').forEach(menu => {
@@ -138,56 +161,48 @@ export default class ChatInput {
     }
 
     /**
-     * Sets up theme selection controls and listeners.
+     * Sets up theme selection controls (segmented toggle) and listeners.
      */
     setupThemeControls() {
-        if (!this.app.elements.themeOptionButtons || this.app.elements.themeOptionButtons.length === 0) {
-            return;
-        }
+        const themeToggle = this.app.elements.themeToggle;
+        if (!themeToggle) return;
 
-        this.app.elements.themeOptionButtons.forEach((button) => {
-            button.addEventListener('click', (event) => {
-                event.preventDefault();
-                event.stopPropagation();
-
-                const preference = button.dataset.themeOption || 'system';
+        // Use event delegation on the container
+        themeToggle.addEventListener('click', (event) => {
+            event.stopPropagation();
+            const btn = event.target.closest('.theme-toggle-btn');
+            if (btn) {
+                const preference = btn.dataset.themeOption || 'system';
                 themeManager.setPreference(preference);
-
-                if (this.app.elements.settingsMenu) {
-                    this.app.elements.settingsMenu.classList.add('hidden');
-                }
-                document.querySelectorAll('.session-menu').forEach(menu => {
-                    menu.classList.add('hidden');
-                });
-            });
+            }
         });
     }
 
     /**
-     * Updates the visual state of theme controls based on current preference.
+     * Updates the visual state of theme toggle based on current preference.
      * @param {string} preference - Theme preference (light, dark, system)
      * @param {string} effectiveTheme - Actual theme being used
      */
     updateThemeControls(preference, effectiveTheme) {
+        const themeToggle = this.app.elements.themeToggle;
+
+        // Update the container's data-theme attribute for CSS indicator positioning
+        if (themeToggle) {
+            themeToggle.dataset.theme = preference;
+        }
+
+        // Update aria-checked on buttons
         if (this.app.elements.themeOptionButtons && this.app.elements.themeOptionButtons.length > 0) {
             this.app.elements.themeOptionButtons.forEach((button) => {
                 const option = button.dataset.themeOption;
-                const isActive = option === preference;
-
-                button.classList.toggle('theme-option-active', isActive);
-                button.setAttribute('aria-checked', String(isActive));
-
-                const checkIcon = button.querySelector('.theme-option-check');
-                if (checkIcon) {
-                    checkIcon.classList.toggle('opacity-100', isActive);
-                    checkIcon.classList.toggle('opacity-0', !isActive);
-                }
+                button.setAttribute('aria-checked', String(option === preference));
             });
         }
 
+        // Update effective theme label
         if (this.app.elements.themeEffectiveLabel) {
             if (preference === 'system') {
-                this.app.elements.themeEffectiveLabel.textContent = `Follows system appearance (${this.formatThemeName(effectiveTheme)})`;
+                this.app.elements.themeEffectiveLabel.textContent = `Using ${this.formatThemeName(effectiveTheme)} (system)`;
             } else {
                 this.app.elements.themeEffectiveLabel.textContent = `Using ${this.formatThemeName(preference)} theme`;
             }

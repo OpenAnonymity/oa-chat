@@ -21,14 +21,14 @@ export default class MessageNavigation {
         nav.id = 'message-navigation';
         nav.className = 'message-navigation hidden';
         nav.innerHTML = `
-            <button id="prev-message-btn" class="nav-btn" aria-label="Previous message" title="Previous message">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="3" stroke="currentColor" style="width: 8px; height: 8px;">
+            <button id="prev-message-btn" class="nav-btn" aria-label="Previous message" title="Previous message (↑)">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 15.75l7.5-7.5 7.5 7.5" />
                 </svg>
             </button>
             <div id="message-indicators" class="message-indicators"></div>
-            <button id="next-message-btn" class="nav-btn" aria-label="Next message" title="Next message">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="3" stroke="currentColor" style="width: 8px; height: 8px;">
+            <button id="next-message-btn" class="nav-btn" aria-label="Next message" title="Next message (↓)">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
                 </svg>
             </button>
@@ -107,8 +107,7 @@ export default class MessageNavigation {
 
         indicatorsContainer.innerHTML = this.messages.map((msg, index) => {
             const isCurrent = index === this.currentMessageIndex;
-            // Calculate bar width based on message length
-            const barWidth = this.calculateBarWidth(msg.content || '');
+            const barHeight = this.calculateBarHeight(msg.content || '');
             return `
                 <button
                     class="message-indicator ${isCurrent ? 'active' : ''}"
@@ -117,7 +116,7 @@ export default class MessageNavigation {
                     aria-label="Jump to message ${index + 1}"
                     aria-current="${isCurrent}"
                     title="Message ${index + 1}"
-                    style="width: ${barWidth}px"
+                    style="height: ${barHeight}px"
                 ></button>
             `;
         }).join('');
@@ -141,17 +140,16 @@ export default class MessageNavigation {
         });
     }
 
-    calculateBarWidth(content) {
+    calculateBarHeight(content) {
         const length = content.length;
-        // Define width categories with more varied lengths for better visual distinction
-        if (length < 100) return 6;      // Very short (one-liners)
-        if (length < 300) return 8;      // Short (brief)
-        if (length < 600) return 10;     // Medium-short
-        if (length < 1000) return 12;    // Medium
-        if (length < 1500) return 14;    // Medium-long
-        if (length < 2500) return 16;    // Long
-        if (length < 4000) return 18;    // Very long
-        return 20; // Extremely long (detailed responses)
+        // Height indicates message length (compact)
+        if (length < 100) return 3;
+        if (length < 300) return 5;
+        if (length < 600) return 7;
+        if (length < 1000) return 9;
+        if (length < 2000) return 12;
+        if (length < 4000) return 15;
+        return 18;
     }
 
     showPreview(button, messageIndex) {

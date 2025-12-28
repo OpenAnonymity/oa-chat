@@ -399,7 +399,7 @@
                                                 </svg>
                                             </button>
                                             <!-- Settings Dropdown Menu (hidden by default) -->
-                                            <div id="settings-menu" class="hidden absolute bottom-full mb-2 left-0 z-[100] rounded-lg border border-border bg-popover shadow-lg p-2 min-w-[220px]">
+                                            <div id="settings-menu" class="hidden z-[100] rounded-lg border shadow-xl p-2 min-w-[220px] settings-menu-glass">
                                                 <!-- TODO: Implement Auto-expand functionality -->
                                                 <!-- <button class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors">Auto-expand</button> -->
                                                 <!-- TODO: Implement Export functionality -->
@@ -428,52 +428,54 @@
                                                     </svg>
                                                 </a>
 
-                                                <!-- Flat mode toggle -->
-                                                <button id="flat-mode-toggle" type="button" class="w-full flex items-center justify-between px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" role="switch" aria-checked="false">
-                                                    <span>Flat mode</span>
-                                                    <span class="flat-mode-switch relative w-8 h-[18px] rounded-full transition-colors bg-muted-foreground/30">
-                                                        <span class="flat-mode-knob absolute top-0.5 left-0.5 w-3.5 h-3.5 rounded-full bg-white shadow-sm transition-all"></span>
-                                                    </span>
-                                                </button>
-
+                                                <!-- Display section with flat mode toggle -->
                                                 <div class="mt-2 border-t border-border pt-2">
-                                                    <p class="px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Theme</p>
-                                                    <div role="group" aria-label="Theme selection" class="space-y-1">
-                                                        <button type="button" class="theme-option flex w-full items-center justify-between rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover-highlight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" data-theme-option="light" role="menuitemradio" aria-checked="false">
-                                                            <span class="flex items-center gap-2">
-                                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                                                    <p class="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Display</p>
+                                                    <div class="px-3 pb-2">
+                                                        <div id="flat-mode-toggle" class="display-toggle-container" role="radiogroup" aria-label="Display mode">
+                                                            <div class="display-toggle-indicator"></div>
+                                                            <!-- Flat mode: text lines without bubble -->
+                                                            <button type="button" class="display-toggle-btn" data-mode="flat" aria-checked="true" title="Flat mode">
+                                                                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                                                    <path stroke-linecap="round" d="M4 7h16M4 12h12M4 17h14"/>
+                                                                </svg>
+                                                            </button>
+                                                            <!-- Bubble mode: text lines inside chat bubble -->
+                                                            <button type="button" class="display-toggle-btn" data-mode="bubble" aria-checked="false" title="Bubble mode">
+                                                                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z"/>
+                                                                </svg>
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                <div class="border-t border-border pt-2">
+                                                    <p class="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Theme</p>
+                                                    <div class="px-3 pb-1">
+                                                        <div id="theme-toggle" class="theme-toggle-container" role="radiogroup" aria-label="Theme selection" data-theme="system">
+                                                            <div class="theme-toggle-indicator"></div>
+                                                            <!-- Light theme -->
+                                                            <button type="button" class="theme-toggle-btn" data-theme-option="light" aria-checked="false" title="Light">
+                                                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                                                                     <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1.5m0 15V21m9-9h-1.5M4.5 12H3m15.364-6.364-1.06 1.06M6.697 17.303l-1.06 1.06m0-12.728 1.06 1.06m9.607 9.607 1.06 1.06M12 8.25a3.75 3.75 0 1 1 0 7.5 3.75 3.75 0 0 1 0-7.5z"></path>
                                                                 </svg>
-                                                                <span>Light</span>
-                                                            </span>
-                                                            <svg class="theme-option-check w-4 h-4 opacity-0 text-primary transition-opacity" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                                                                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path>
-                                                            </svg>
-                                                        </button>
-                                                        <button type="button" class="theme-option flex w-full items-center justify-between rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover-highlight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" data-theme-option="dark" role="menuitemradio" aria-checked="false">
-                                                            <span class="flex items-center gap-2">
-                                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                                                            </button>
+                                                            <!-- Dark theme -->
+                                                            <button type="button" class="theme-toggle-btn" data-theme-option="dark" aria-checked="false" title="Dark">
+                                                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                                                                     <path stroke-linecap="round" stroke-linejoin="round" d="M21 12.79A9 9 0 0 1 11.21 3 7.5 7.5 0 1 0 21 12.79z"></path>
                                                                 </svg>
-                                                                <span>Dark</span>
-                                                            </span>
-                                                            <svg class="theme-option-check w-4 h-4 opacity-0 text-primary transition-opacity" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                                                                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path>
-                                                            </svg>
-                                                        </button>
-                                                        <button type="button" class="theme-option flex w-full items-center justify-between rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover-highlight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" data-theme-option="system" role="menuitemradio" aria-checked="false">
-                                                            <span class="flex items-center gap-2">
-                                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                                                            </button>
+                                                            <!-- System theme -->
+                                                            <button type="button" class="theme-toggle-btn" data-theme-option="system" aria-checked="false" title="System">
+                                                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                                                                     <path stroke-linecap="round" stroke-linejoin="round" d="M9 17v2h6v-2m2 0h.75A2.25 2.25 0 0 0 20 14.75V7.25A2.25 2.25 0 0 0 17.75 5H6.25A2.25 2.25 0 0 0 4 7.25v7.5A2.25 2.25 0 0 0 6.25 17H7.5"></path>
                                                                 </svg>
-                                                                <span>System</span>
-                                                            </span>
-                                                            <svg class="theme-option-check w-4 h-4 opacity-0 text-primary transition-opacity" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                                                                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path>
-                                                            </svg>
-                                                        </button>
+                                                            </button>
+                                                        </div>
                                                     </div>
-                                                    <p id="theme-effective-label" class="px-3 pt-1 text-[11px] text-muted-foreground/80"></p>
+                                                    <p id="theme-effective-label" class="px-3 text-[11px] text-muted-foreground/80"></p>
                                                 </div>
                                             </div>
                                         </div>
