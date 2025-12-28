@@ -464,9 +464,11 @@ function buildReasoningTrace(reasoning, messageId, isStreaming = false, processC
     // During streaming, reasoning will be plain text
     // After streaming, it will be processed with markdown
     const trimmedReasoning = (reasoning || '').trim();
-    // For streaming, start with empty content (will be filled as plain text by ChatArea updates)
+    // Loading indicator shown at bottom of content during streaming (shimmer animation)
+    const loadingIndicator = '<span class="reasoning-loading-indicator reasoning-subtitle-streaming">Thinking...</span>';
+    // For streaming, start with loading indicator (will be appended after content by ChatArea updates)
     const reasoningHtml = isStreaming
-        ? ''
+        ? loadingIndicator
         : (processContent ? processContent(trimmedReasoning) : trimmedReasoning);
 
     // Generate subtitle - show timing for completed reasoning, summary during streaming
@@ -599,8 +601,8 @@ function enhanceInlineLinks(content, messageId) {
         const enhancedLink = doc.createElement('span');
         enhancedLink.className = 'inline-link-citation';
 
-        // Get favicon URL
-        const faviconUrl = `https://www.google.com/s2/favicons?domain=${domain}&sz=16`;
+        // Get favicon URL - use sz=32 for crisp rendering on high-DPI displays
+        const faviconUrl = `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
 
         enhancedLink.innerHTML = ` <a href="${escapeHtml(url)}"
             target="_blank"
@@ -628,7 +630,7 @@ function enhanceInlineLinks(content, messageId) {
 }
 
 /**
- * Builds HTML for citations toggle button.
+ * Builds HTML for citations toggle button with stacked source favicons.
  * @param {Array} citations - Array of citation objects
  * @param {string} messageId - The message ID for unique identification
  * @returns {string} HTML string for toggle button
@@ -638,12 +640,34 @@ function buildCitationsToggleButton(citations, messageId) {
 
     const toggleId = `citations-toggle-${messageId}`;
 
+    // Get unique domains for favicons (max 4)
+    const seenDomains = new Set();
+    const uniqueFavicons = [];
+    for (const c of citations) {
+        const domain = extractDomain(c.url);
+        if (!seenDomains.has(domain)) {
+            seenDomains.add(domain);
+            uniqueFavicons.push({ domain, favicon: c.favicon || `https://www.google.com/s2/favicons?domain=${domain}&sz=64` });
+            if (uniqueFavicons.length >= 4) break;
+        }
+    }
+
+    // Build stacked favicon HTML
+    const faviconsHtml = uniqueFavicons.map((f, i) => `
+        <img src="${escapeHtml(f.favicon)}"
+             alt="${escapeHtml(f.domain)}"
+             class="citations-toggle-favicon"
+             style="z-index: ${uniqueFavicons.length - i};"
+             onerror="this.style.display='none';" />`
+    ).join('');
+
     return `
         <button
-            class="citations-toggle-btn inline-flex items-center gap-2 px-2 py-1 text-left hover:bg-muted/80 rounded transition-colors"
+            class="citations-toggle-btn inline-flex items-center gap-1.5 px-2 py-1 text-left hover:bg-muted/80 rounded transition-colors"
             id="${toggleId}"
             data-message-id="${messageId}"
         >
+            <span class="citations-toggle-favicons">${faviconsHtml}</span>
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4 text-muted-foreground">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 0 0 8.716-6.747M12 21a9.004 9.004 0 0 1-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 0 1 7.843 4.582M12 3a8.997 8.997 0 0 0-7.843 4.582m15.686 0A11.953 11.953 0 0 1 12 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0 1 21 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0 1 12 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 0 1 3 12c0-1.605.42-3.113 1.157-4.418" />
             </svg>

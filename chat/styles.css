@@ -514,6 +514,22 @@ html.switching-theme *::after {
     margin-top: 0;
 }
 
+/* Loading indicator at bottom of reasoning content during streaming */
+/* Pulsing animation with foreground (black) color like bold subtitles */
+@keyframes loadingPulse {
+    0%, 100% { opacity: 1.0; }
+    50% { opacity: 1; }
+}
+
+.reasoning-loading-indicator {
+    display: block;
+    margin-top: 0.75em;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: hsl(var(--color-foreground)) !important;
+    animation: loadingPulse 1.5s ease-in-out infinite !important;
+}
+
 /* Remove extra margins and whitespace from markdown elements in reasoning */
 .reasoning-content > *:first-child {
     margin-top: 0;
@@ -697,6 +713,27 @@ html.switching-theme *::after {
 
 .dark .citations-toggle-btn:hover {
     background-color: hsl(var(--color-muted) / 0.4) !important;
+}
+
+.citations-toggle-favicons {
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.citations-toggle-favicon {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: hsl(var(--color-background));
+    border: 1.5px solid hsl(var(--color-background));
+    margin-right: -6px;
+    flex-shrink: 0;
+}
+
+.citations-toggle-favicon:last-child {
+    margin-right: 0;
 }
 
 .citations-carousel {
