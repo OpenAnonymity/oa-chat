@@ -120,9 +120,10 @@ export default class ModelPicker {
     }
 
     /**
-     * Filters models based on search term using fuzzy matching.
+     * Filters models based on search term using multi-word substring matching.
+     * Space-separated words are matched independently (AND logic).
      * Also excludes blocked models from the list.
-     * @param {string} searchTerm - Search query
+     * @param {string} searchTerm - Search query (space-separated words)
      * @returns {Array} Filtered models
      */
     filterModels(searchTerm = '') {
@@ -131,14 +132,28 @@ export default class ModelPicker {
             !this.blockedModels.has(model.id)
         );
 
-        const term = searchTerm.toLowerCase();
-        if (!term) return allowedModels;
+        // Split into non-empty lowercase terms
+        const terms = searchTerm.toLowerCase().split(' ').filter(Boolean);
+        if (terms.length === 0) return allowedModels;
 
-        return allowedModels.filter(model =>
-            this.app.fuzzyMatch(term, model.name.toLowerCase()) ||
-            this.app.fuzzyMatch(term, model.provider.toLowerCase()) ||
-            this.app.fuzzyMatch(term, model.category.toLowerCase())
-        );
+        // Single term optimization - avoid extra string concat
+        if (terms.length === 1) {
+            const term = terms[0];
+            return allowedModels.filter(model =>
+                model.name.toLowerCase().includes(term) ||
+                model.provider.toLowerCase().includes(term) ||
+                model.category.toLowerCase().includes(term)
+            );
+        }
+
+        // Multi-term: combine fields once, check all terms
+        return allowedModels.filter(model => {
+            const haystack = `${model.name} ${model.provider} ${model.category}`.toLowerCase();
+            for (let i = 0; i < terms.length; i++) {
+                if (!haystack.includes(terms[i])) return false;
+            }
+            return true;
+        });
     }
 
     /**
