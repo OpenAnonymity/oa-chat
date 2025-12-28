@@ -2479,13 +2479,12 @@ html[data-right-panel-hidden="true"] #right-panel {
 }
 
 .popover-header {
-    font-size: 0.7rem;
-    font-weight: 600;
+    font-size: 0.75rem;
+    font-weight: 300;
     color: hsl(var(--color-muted-foreground));
     padding: 10px 14px 8px;
     border-bottom: 1px solid hsl(var(--color-border));
     letter-spacing: 0.03em;
-    text-transform: uppercase;
 }
 
 .popover-content {
