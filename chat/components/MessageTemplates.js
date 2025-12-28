@@ -175,18 +175,18 @@ function buildFileAttachments(files) {
         }
 
         return `
-            <div class="group relative flex items-center p-2 gap-3 bg-white/10 hover:bg-white/20 dark:bg-white/5 dark:hover:bg-white/10 border border-white/20 dark:border-white/10 rounded-xl w-auto max-w-[240px] transition-all select-none overflow-hidden shadow-sm backdrop-blur-sm" ${clickHandler}>
+            <div class="file-attachment-card group relative flex items-center p-2 gap-3 rounded-xl w-auto max-w-[240px] transition-all select-none overflow-hidden shadow-sm backdrop-blur-sm" ${clickHandler}>
                 <!-- Icon/Preview Container -->
-                <div class="flex-shrink-0 w-10 h-10 rounded-lg overflow-hidden flex items-center justify-center bg-white/95 dark:bg-white/50 border border-white/50 dark:border-white/50 shadow-sm">
+                <div class="file-attachment-icon flex-shrink-0 w-10 h-10 rounded-lg overflow-hidden flex items-center justify-center shadow-sm">
                     ${iconOrPreview}
                 </div>
 
                 <!-- Text Info -->
                 <div class="flex flex-col min-w-0 pr-2">
-                    <span class="text-xs font-medium text-white dark:text-white truncate leading-tight" title="${escapeHtml(file.name)}">
+                    <span class="text-xs font-medium truncate leading-tight" title="${escapeHtml(file.name)}">
                         ${escapeHtml(file.name)}
                     </span>
-                    <span class="text-[10px] text-white/70 dark:text-white/60 truncate">
+                    <span class="text-[10px] opacity-70 truncate">
                         ${fileSize}
                     </span>
                 </div>

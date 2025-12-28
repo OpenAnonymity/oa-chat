@@ -1692,6 +1692,50 @@ html.flat-mode .user-message-show-more:hover {
     color: hsl(var(--color-foreground));
 }
 
+/* File attachment cards in user messages */
+.file-attachment-card {
+    background: rgba(255, 255, 255, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+.file-attachment-card:hover {
+    background: rgba(255, 255, 255, 0.25);
+}
+
+.file-attachment-icon {
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.5);
+}
+
+.dark .file-attachment-card {
+    background: rgba(255, 255, 255, 0.06) !important;
+    border: 1px solid rgba(255, 255, 255, 0.3) !important;
+}
+
+.dark .file-attachment-card:hover {
+    background: rgba(255, 255, 255, 0.1) !important;
+}
+
+.dark .file-attachment-icon {
+    background: rgba(255, 255, 255, 0.15) !important;
+    border: 1px solid rgba(255, 255, 255, 0.25) !important;
+}
+
+/* Flat mode - file attachments need darker boundaries on gray bubble */
+html.flat-mode .file-attachment-card {
+    background: rgba(0, 0, 0, 0.04);
+    border: 1px solid rgba(0, 0, 0, 0.12);
+}
+
+html.flat-mode .file-attachment-card:hover {
+    background: rgba(0, 0, 0, 0.08);
+}
+
+html.flat-mode .file-attachment-icon {
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid rgba(0, 0, 0, 0.08);
+}
+
 .prose p:first-child {
     margin-top: 0;
 }
