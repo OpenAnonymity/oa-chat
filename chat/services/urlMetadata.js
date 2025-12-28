@@ -44,7 +44,7 @@ async function fetchUrlMetadata(url) {
     }
 
     const domain = extractDomain(url);
-    
+
     // Default metadata
     const defaultMetadata = {
         title: domain,
@@ -59,17 +59,17 @@ async function fetchUrlMetadata(url) {
         // First, try a faster approach using a simple HEAD request for basic info
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 1500); // 1.5 second timeout
-        
+
         // Use cors-anywhere alternative or allorigins as fallback
         const proxies = [
             `https://corsproxy.io/?${encodeURIComponent(url)}`,
             `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`
         ];
-        
+
         let response;
         let html = '';
         let usedProxy = null;
-        
+
         // Try proxies in order until one works
         for (const proxyUrl of proxies) {
             try {
@@ -80,7 +80,7 @@ async function fetchUrlMetadata(url) {
                         'User-Agent': 'Mozilla/5.0 (compatible; LinkPreview/1.0)'
                     }
                 });
-                
+
                 if (response.ok) {
                     if (proxyUrl.includes('allorigins')) {
                         const data = await response.json();
@@ -96,33 +96,33 @@ async function fetchUrlMetadata(url) {
                 continue;
             }
         }
-        
+
         clearTimeout(timeoutId);
-        
+
         if (!html) {
             throw new Error('All proxies failed');
         }
-        
+
         // Parse HTML to extract metadata
         const parser = new DOMParser();
         const doc = parser.parseFromString(html, 'text/html');
-        
+
         // Extract title
         let title = doc.querySelector('meta[property="og:title"]')?.content ||
                    doc.querySelector('meta[name="twitter:title"]')?.content ||
                    doc.querySelector('title')?.textContent ||
                    domain;
-        
+
         // Extract description
         let description = doc.querySelector('meta[property="og:description"]')?.content ||
                          doc.querySelector('meta[name="twitter:description"]')?.content ||
                          doc.querySelector('meta[name="description"]')?.content ||
                          '';
-        
+
         // Extract favicon - always use Google's favicon service for consistency
         // This is more reliable than trying to parse from HTML
         let favicon = `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
-        
+
         const metadata = {
             title: title.trim().substring(0, 100),
             description: description.trim().substring(0, 200),
@@ -130,11 +130,11 @@ async function fetchUrlMetadata(url) {
             domain: domain,
             url: url
         };
-        
+
         // Cache the result
         ensureCacheSize();
         metadataCache.set(url, metadata);
-        
+
         return metadata;
     } catch (error) {
         console.debug('Failed to fetch metadata for', url, error.message);
@@ -162,10 +162,38 @@ function clearMetadataCache() {
     metadataCache.clear();
 }
 
+/**
+ * Gets metadata from cache synchronously (no fetch).
+ * @param {string} url - The URL to look up
+ * @returns {Object|null} Cached metadata or null if not cached
+ */
+function getFromCache(url) {
+    return metadataCache.get(url) || null;
+}
+
+/**
+ * Adds metadata to cache directly (for pre-populating from citation data).
+ * @param {string} url - The URL to cache
+ * @param {Object} metadata - Metadata object with title, description, favicon, domain
+ */
+function addToCache(url, metadata) {
+    if (!url || !metadata) return;
+    ensureCacheSize();
+    metadataCache.set(url, {
+        title: metadata.title || extractDomain(url),
+        description: metadata.description || '',
+        favicon: metadata.favicon || `https://www.google.com/s2/favicons?domain=${extractDomain(url)}&sz=32`,
+        domain: metadata.domain || extractDomain(url),
+        url: url
+    });
+}
+
 export {
     fetchUrlMetadata,
     fetchMultipleUrlMetadata,
     clearMetadataCache,
-    extractDomain
+    extractDomain,
+    getFromCache,
+    addToCache
 };
 

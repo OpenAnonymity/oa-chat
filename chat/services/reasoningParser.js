@@ -118,6 +118,11 @@ export function parseReasoningContent(rawReasoning) {
 
     let content = rawReasoning.replace(/\r\n/g, '\n').trim();
 
+    // Sanitize literal \n strings that some models produce (e.g., Claude)
+    content = content.replace(/\\n/g, '\n');
+    // Remove lines that are only whitespace
+    content = content.replace(/^\s+$/gm, '');
+
     // Step 1: Convert any bold pair into a standalone block and drop strays.
     // For final markdown rendering, ensure a blank line after bold subtitles.
     content = blockifyBoldMarkers(content, 2);
@@ -145,6 +150,13 @@ export function parseStreamingReasoningContent(rawReasoning) {
     }
     // Streaming: produce readable plain text with single newlines after subtitles
     let content = rawReasoning.replace(/\r\n/g, '\n').trim();
+
+    // Sanitize literal \n strings that some models produce (e.g., Claude)
+    // Convert literal "\n" to actual newlines
+    content = content.replace(/\\n/g, '\n');
+    // Remove lines that are only whitespace
+    content = content.replace(/^\s+$/gm, '');
+
     content = blockifyBoldMarkers(content, 1);
     // Collapse runs of blank lines to single newline for smoother streaming
     content = content.replace(/\n{2,}/g, '\n');

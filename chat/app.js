@@ -12,7 +12,7 @@ import apiKeyStore from './services/apiKeyStore.js';
 import themeManager from './services/themeManager.js';
 import { downloadInferenceTickets, downloadAllChats, getFileIconSvg } from './services/fileUtils.js';
 import { parseReasoningContent } from './services/reasoningParser.js';
-import { fetchUrlMetadata } from './services/urlMetadata.js';
+import { fetchUrlMetadata, getFromCache } from './services/urlMetadata.js';
 import networkProxy from './services/networkProxy.js';
 import stationVerifier from './services/verifier.js';
 import openRouterAPI from './api.js';
@@ -818,6 +818,7 @@ class ChatApp {
 
     /**
      * Handles mouse enter on inline link buttons.
+     * Shows instant preview if cached, otherwise fetches in background.
      * @param {MouseEvent} event - Mouse event
      */
     async handleLinkMouseEnter(event) {
@@ -834,28 +835,29 @@ class ChatApp {
             clearTimeout(this.linkPreviewTimeout);
         }
 
-        // Show preview after a short delay
-        this.linkPreviewTimeout = setTimeout(async () => {
-            if (this.currentPreviewLink !== linkButton) return;
+        // Check cache synchronously for instant preview
+        const cachedMetadata = getFromCache(url);
+        if (cachedMetadata) {
+            // Show instantly from cache - no loading state
+            this.showLinkPreview(linkButton, cachedMetadata);
+            return;
+        }
 
-            // Show loading state
-            this.showLinkPreview(linkButton, { loading: true });
+        // Not cached - show loading and fetch in background
+        this.showLinkPreview(linkButton, { loading: true });
 
-            try {
-                // Fetch metadata
-                const metadata = await fetchUrlMetadata(url);
-
-                // Check if we're still hovering this link
-                if (this.currentPreviewLink === linkButton) {
-                    this.showLinkPreview(linkButton, metadata);
-                }
-            } catch (error) {
-                console.debug('Failed to load link preview:', error);
-                if (this.currentPreviewLink === linkButton) {
-                    this.hideLinkPreview();
-                }
+        try {
+            const metadata = await fetchUrlMetadata(url);
+            // Check if we're still hovering this link
+            if (this.currentPreviewLink === linkButton) {
+                this.showLinkPreview(linkButton, metadata);
             }
-        }, 200); // 200ms delay
+        } catch (error) {
+            console.debug('Failed to load link preview:', error);
+            if (this.currentPreviewLink === linkButton) {
+                this.hideLinkPreview();
+            }
+        }
     }
 
     /**
@@ -3725,6 +3727,7 @@ class ChatApp {
 
     /**
      * Enriches citations with metadata and updates the UI.
+     * Also pre-populates URL metadata cache for instant link previews.
      * @param {Object} message - The message containing citations
      */
     async enrichCitationsAndUpdateUI(message) {
@@ -3732,7 +3735,7 @@ class ChatApp {
 
         try {
             // Import the URL metadata service
-            const { fetchUrlMetadata } = await import('./services/urlMetadata.js');
+            const { fetchUrlMetadata, addToCache } = await import('./services/urlMetadata.js');
 
             // Fetch metadata for all citations in parallel
             const metadataPromises = message.citations.map(citation =>
@@ -3743,6 +3746,8 @@ class ChatApp {
                         citation.description = metadata.description;
                         citation.favicon = metadata.favicon;
                         citation.domain = metadata.domain;
+                        // Explicitly add to cache for instant inline link previews
+                        addToCache(citation.url, metadata);
                     })
                     .catch(err => {
                         console.debug('Failed to fetch metadata for', citation.url);

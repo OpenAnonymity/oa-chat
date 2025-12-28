@@ -14,6 +14,17 @@ export default class ChatArea {
      */
     constructor(app) {
         this.app = app;
+        // Buffer for debounced reasoning updates during streaming
+        this.reasoningBuffer = { content: '', timeout: null, messageId: null };
+        // Typewriter state for gradual content reveal
+        this.typewriter = {
+            targetContent: '',      // Full content to display
+            displayedLength: 0,     // Characters currently shown
+            interval: null,         // Typing interval ID
+            messageId: null,        // Current message being typed
+            charsPerTick: 3,        // Characters to reveal per tick
+            tickMs: 16              // Milliseconds between ticks (~60fps)
+        };
         this.setupEventListeners();
     }
 
@@ -692,37 +703,156 @@ export default class ChatArea {
 
     /**
      * Updates the reasoning trace content during streaming.
+     * Uses debounced buffering for smoother rendering of rapid chunks.
      * @param {string} messageId - The message ID
      * @param {string} reasoning - The reasoning content
      */
     updateStreamingReasoning(messageId, reasoning) {
-        const reasoningContentEl = document.getElementById(`reasoning-content-${messageId}`);
-        if (reasoningContentEl) {
-            // Ensure streaming whitespace behavior while streaming
-            if (!reasoningContentEl.classList.contains('streaming')) {
-                reasoningContentEl.classList.add('streaming');
-            }
-            // Parse the reasoning content to fix formatting issues from the provider
-            const parsedReasoning = parseStreamingReasoningContent(reasoning);
+        // Always update buffer immediately (non-blocking)
+        this.reasoningBuffer.content = reasoning;
+        this.reasoningBuffer.messageId = messageId;
 
-            // Convert basic markdown (bold) to HTML for proper rendering during streaming
-            // Full markdown/LaTeX will be applied when streaming completes
-            reasoningContentEl.innerHTML = this.convertBasicMarkdownToHtml(parsedReasoning);
+        // Debounce the actual DOM render (~80ms batches rapid chunks)
+        if (!this.reasoningBuffer.timeout) {
+            this.reasoningBuffer.timeout = setTimeout(() => {
+                this.flushReasoningBuffer();
+            }, 80);
+        }
+    }
+
+    /**
+     * Flushes the reasoning buffer and starts/updates typewriter animation.
+     * Called on debounce timeout to batch rapid streaming updates.
+     */
+    flushReasoningBuffer() {
+        this.reasoningBuffer.timeout = null;
+        const { content, messageId } = this.reasoningBuffer;
+        if (!messageId || !content) return;
+
+        // Parse the reasoning content
+        const parsedReasoning = parseStreamingReasoningContent(content);
+
+        // Update typewriter target (it will catch up gradually)
+        this.typewriter.targetContent = parsedReasoning;
+
+        // If message changed, reset typewriter state
+        if (this.typewriter.messageId !== messageId) {
+            this.typewriter.messageId = messageId;
+            this.typewriter.displayedLength = 0;
+        }
+
+        // Start typewriter if not already running
+        if (!this.typewriter.interval) {
+            this.typewriter.interval = setInterval(() => {
+                this.typewriterTick();
+            }, this.typewriter.tickMs);
         }
 
         // Update the subtitle with the last meaningful line and ensure animation is active
         const subtitleEl = document.getElementById(`reasoning-subtitle-${messageId}`);
         if (subtitleEl) {
-            const subtitle = this.extractReasoningSubtitle(reasoning);
+            const subtitle = this.extractReasoningSubtitle(content);
             subtitleEl.textContent = subtitle;
-            // Ensure streaming animation class is present
             if (!subtitleEl.classList.contains('reasoning-subtitle-streaming')) {
                 subtitleEl.classList.add('reasoning-subtitle-streaming');
             }
         }
+    }
 
-        // Update scroll button visibility based on content overflow
+    /**
+     * Typewriter tick - reveals a few more characters of reasoning content.
+     * Handles race conditions by continuing from displayed position toward target.
+     */
+    typewriterTick() {
+        const { targetContent, displayedLength, messageId, charsPerTick } = this.typewriter;
+        if (!messageId) return;
+
+        const reasoningContentEl = document.getElementById(`reasoning-content-${messageId}`);
+        if (!reasoningContentEl) return;
+
+        // Ensure streaming class is present
+        if (!reasoningContentEl.classList.contains('streaming')) {
+            reasoningContentEl.classList.add('streaming');
+        }
+
+        // Calculate how much to reveal this tick
+        const targetLength = targetContent.length;
+
+        /*
+         * ANIMATED ELEMENT PRESERVATION PATTERN
+         * =====================================
+         * The loading indicator has a CSS shimmer animation. For the animation to
+         * run smoothly, the DOM element must NOT be recreated on each tick.
+         *
+         * WRONG: Using innerHTML to replace everything (resets animation to frame 0)
+         *   container.innerHTML = content + '<span class="animated">...</span>';
+         *
+         * RIGHT: Keep the animated element in DOM, update content around it
+         *   1. Query for existing animated element (or create once)
+         *   2. Remove other children while keeping the animated element
+         *   3. Insert new content before/after the animated element
+         *
+         * This pattern preserves animation state across rapid updates.
+         * See styles.css "SHIMMER ANIMATION" section for related CSS notes.
+         */
+        let loadingIndicator = reasoningContentEl.querySelector('.reasoning-loading-indicator');
+        if (!loadingIndicator) {
+            loadingIndicator = document.createElement('span');
+            loadingIndicator.className = 'reasoning-loading-indicator reasoning-subtitle-streaming';
+            loadingIndicator.textContent = 'Thinking...';
+            reasoningContentEl.appendChild(loadingIndicator);
+        }
+
+        // Helper: update content while preserving loading indicator in DOM
+        const updateContentPreservingIndicator = (html) => {
+            // Remove all children EXCEPT loading indicator
+            const children = Array.from(reasoningContentEl.childNodes);
+            for (const child of children) {
+                if (child !== loadingIndicator) {
+                    child.remove();
+                }
+            }
+            // Insert new content before loading indicator
+            const wrapper = document.createElement('div');
+            wrapper.innerHTML = html;
+            while (wrapper.firstChild) {
+                reasoningContentEl.insertBefore(wrapper.firstChild, loadingIndicator);
+            }
+        };
+
+        if (displayedLength >= targetLength) {
+            // Caught up to target - update content, wait for more
+            updateContentPreservingIndicator(this.convertBasicMarkdownToHtml(targetContent));
+            reasoningContentEl.scrollTop = reasoningContentEl.scrollHeight;
+            return;
+        }
+
+        // Reveal more characters
+        const newLength = Math.min(displayedLength + charsPerTick, targetLength);
+        this.typewriter.displayedLength = newLength;
+
+        // Update displayed content
+        const displayContent = targetContent.substring(0, newLength);
+        updateContentPreservingIndicator(this.convertBasicMarkdownToHtml(displayContent));
+
+        // Auto-scroll reasoning content to bottom
+        reasoningContentEl.scrollTop = reasoningContentEl.scrollHeight;
+
+        // Update scroll button visibility
         this.app.updateScrollButtonVisibility();
+    }
+
+    /**
+     * Stops the typewriter animation and clears state.
+     */
+    stopTypewriter() {
+        if (this.typewriter.interval) {
+            clearInterval(this.typewriter.interval);
+            this.typewriter.interval = null;
+        }
+        this.typewriter.targetContent = '';
+        this.typewriter.displayedLength = 0;
+        this.typewriter.messageId = null;
     }
 
     /**
@@ -881,6 +1011,17 @@ export default class ChatArea {
      * @param {number} reasoningDuration - Duration in milliseconds (optional)
      */
     finalizeReasoningDisplay(messageId, reasoning, reasoningDuration) {
+        // Clear any pending buffer timeout and reset state
+        if (this.reasoningBuffer.timeout) {
+            clearTimeout(this.reasoningBuffer.timeout);
+            this.reasoningBuffer.timeout = null;
+        }
+        this.reasoningBuffer.content = '';
+        this.reasoningBuffer.messageId = null;
+
+        // Stop typewriter animation
+        this.stopTypewriter();
+
         if (!reasoning) return;
 
         const reasoningContentEl = document.getElementById(`reasoning-content-${messageId}`);
