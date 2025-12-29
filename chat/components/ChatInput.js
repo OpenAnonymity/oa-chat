@@ -62,6 +62,17 @@ export default class ChatInput {
             await chatDB.saveSetting('searchEnabled', this.app.searchEnabled);
         });
 
+        // Reasoning toggle functionality (entire row is clickable)
+        const reasoningToggleRow = document.getElementById('reasoning-toggle-row');
+        if (reasoningToggleRow) {
+            reasoningToggleRow.addEventListener('click', async (e) => {
+                e.stopPropagation(); // Prevent menu from closing
+                this.app.reasoningEnabled = !this.app.reasoningEnabled;
+                this.updateReasoningToggleUI();
+                await chatDB.saveSetting('reasoningEnabled', this.app.reasoningEnabled);
+            });
+        }
+
         // Settings menu toggle
         // IMPORTANT: The menu is moved to document.body when opened to enable backdrop-filter.
         // backdrop-filter only blurs content OUTSIDE the element's stacking context.
@@ -158,6 +169,26 @@ export default class ChatInput {
         const toggle = this.app.elements.searchToggle;
         toggle.setAttribute('aria-pressed', this.app.searchEnabled);
         toggle.classList.toggle('search-active', this.app.searchEnabled);
+    }
+
+    /**
+     * Updates the visual state of the reasoning toggle.
+     */
+    updateReasoningToggleUI() {
+        const toggle = document.getElementById('reasoning-toggle-btn');
+        if (!toggle) return;
+        const indicator = toggle.querySelector('span');
+        if (this.app.reasoningEnabled) {
+            toggle.classList.remove('bg-muted-foreground/30');
+            toggle.classList.add('bg-blue-500');
+            indicator.classList.remove('left-0.5');
+            indicator.classList.add('right-0.5');
+        } else {
+            toggle.classList.remove('bg-blue-500');
+            toggle.classList.add('bg-muted-foreground/30');
+            indicator.classList.remove('right-0.5');
+            indicator.classList.add('left-0.5');
+        }
     }
 
     /**

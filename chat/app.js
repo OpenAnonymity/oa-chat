@@ -110,6 +110,7 @@ class ChatApp {
         };
 
         this.searchEnabled = true;
+        this.reasoningEnabled = true;
         this.sessionSearchQuery = '';
         this.uploadedFiles = [];
         this.fileUndoStack = []; // Track file paste operations for undo
@@ -1034,10 +1035,11 @@ class ChatApp {
         this.messageNavigation = new MessageNavigation(this);
 
         // Load all data from IndexedDB in PARALLEL for speed
-        const [sessions, storedModelPreference, savedSearchEnabled] = await Promise.all([
+        const [sessions, storedModelPreference, savedSearchEnabled, savedReasoningEnabled] = await Promise.all([
             chatDB.getAllSessions(),
             chatDB.getSetting('selectedModel'),
-            chatDB.getSetting('searchEnabled')
+            chatDB.getSetting('searchEnabled'),
+            chatDB.getSetting('reasoningEnabled')
         ]);
 
         this.state.sessions = sessions;
@@ -1066,11 +1068,15 @@ class ChatApp {
         // Restore search state
         this.searchEnabled = savedSearchEnabled !== undefined ? savedSearchEnabled : true;
 
+        // Restore reasoning state
+        this.reasoningEnabled = savedReasoningEnabled !== undefined ? savedReasoningEnabled : true;
+
         // Render local data IMMEDIATELY (sessions from DB, model from settings)
         this.renderSessions();
         this.renderMessages();
         this.renderCurrentModel();
         this.chatInput.updateSearchToggleUI();
+        this.chatInput.updateReasoningToggleUI();
 
         // Notify right panel of current session
         const currentSession = this.getCurrentSession();
@@ -2338,8 +2344,11 @@ class ChatApp {
             // Show typing indicator (only if still viewing this session)
             const typingId = this.isViewingSession(session.id) ? this.showTypingIndicator(modelNameToUse) : null;
 
-            // Declare streaming message outside try block so it's accessible in catch
+            // Declare variables outside try block so they're accessible in catch
             let streamingMessage = null;
+            let firstChunkReceived = false;
+            let streamedContent = '';
+            let streamedReasoning = '';
 
             try {
                 // Get AI response from OpenRouter with streaming
@@ -2351,8 +2360,8 @@ class ChatApp {
 
                 // Create a placeholder message for streaming
                 const streamingMessageId = this.generateId();
-                let streamedContent = '';
-                let streamedReasoning = '';
+                streamedContent = '';
+                streamedReasoning = '';
                 let streamingTokenCount = 0;
 
                 // Prepare assistant message object (don't save to DB yet - wait for first chunk)
@@ -2372,7 +2381,7 @@ class ChatApp {
                 // Track progress for periodic saves
                 let lastSaveLength = 0;
                 const SAVE_INTERVAL_CHARS = 100; // Save every 100 characters
-                let firstChunkReceived = false;
+                firstChunkReceived = false;
                 let firstContentChunk = true; // Track when content starts (after reasoning)
                 let reasoningStartTime = null;
                 let reasoningEndTime = null;
@@ -2503,7 +2512,8 @@ class ChatApp {
                         if (this.chatArea && this.isViewingSession(session.id)) {
                             this.chatArea.updateStreamingReasoning(streamingMessageId, streamedReasoning);
                         }
-                    }
+                    },
+                    this.reasoningEnabled
                 );
 
                 // Save the final message content with token data, reasoning, and citations
@@ -2579,10 +2589,34 @@ class ChatApp {
                     }
                     // If firstChunkReceived is false, message was never added to UI or DB, nothing to clean up
                 } else {
-                    // Non-cancellation error
+                    // Non-cancellation error - show actual error message to user
+                    const errorMessage = error.message || 'Sorry, I encountered an error while processing your request.';
+
+                    // Customize messages for specific error types
+                    let userFriendlyMessage;
+                    if (error.status === 402) {
+                        // Credit/token limit errors
+                        userFriendlyMessage = `Ephemeral key is out of credit limit. Renew or extend the key, or start a new session. Please submit [feedback](https://forms.gle/HEmvxnJpN1jQC7CfA) if you run into this error often.`;
+                    } else if (error.status === 401) {
+                        // Authentication errors
+                        userFriendlyMessage = `Authentication error. Please check the system panel (right side) and submit an [issue](https://forms.gle/HEmvxnJpN1jQC7CfA) here!`;
+                    } else if (error.status === 503 || error.status === 502 || error.status === 504) {
+                        // Service unavailable / gateway errors
+                        userFriendlyMessage = `Gateway error. Please take a look at the system panel and submit an [issue](https://forms.gle/HEmvxnJpN1jQC7CfA) here.`;
+                    } else if (errorMessage.includes('proxy') || errorMessage.includes('Proxy')) {
+                        // Proxy/connection errors
+                        userFriendlyMessage = `Proxy error. Please take a look at the system panel and submit an [issue](https://forms.gle/HEmvxnJpN1jQC7CfA) here.`;
+                    } else if (errorMessage.includes('No API key')) {
+                        // No API key errors
+                        userFriendlyMessage = `API key error. Please take a look at the system panel and submit an [issue](https://forms.gle/HEmvxnJpN1jQC7CfA) here.`;
+                    } else {
+                        // Generic fallback
+                        userFriendlyMessage = `⚠️ **Error:** ${errorMessage}`;
+                    }
+
                     if (firstChunkReceived && streamingMessage) {
                         // Message was already added to UI, update it with error
-                        streamingMessage.content = 'Sorry, I encountered an error while processing your request.';
+                        streamingMessage.content = userFriendlyMessage;
                         streamingMessage.tokenCount = null;
                         streamingMessage.streamingTokens = null;
                         streamingMessage.streamingReasoning = false;
@@ -2594,7 +2628,7 @@ class ChatApp {
                         }
                     } else if (this.isViewingSession(session.id)) {
                         // Error before first chunk - message never added to UI, add new error message
-                        await this.addMessage('assistant', 'Sorry, I encountered an error while processing your request.', { isLocalOnly: true });
+                        await this.addMessage('assistant', userFriendlyMessage, { isLocalOnly: true });
                     }
                 }
             }

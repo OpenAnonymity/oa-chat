@@ -367,7 +367,7 @@ class OpenRouterAPI {
     }
 
     // Stream chat completion with support for multimodal content, web search, and reasoning traces
-    async streamCompletion(messages, modelId, apiKey, onChunk, onTokenUpdate, files = [], searchEnabled = false, abortController = null, onReasoningChunk = null) {
+    async streamCompletion(messages, modelId, apiKey, onChunk, onTokenUpdate, files = [], searchEnabled = false, abortController = null, onReasoningChunk = null, reasoningEnabled = true) {
         const key = apiKey || this.getApiKey();
 
         if (!key) {
@@ -624,6 +624,12 @@ class OpenRouterAPI {
                         }
                     }
                 ];
+            }
+
+            // Add reasoning parameter if enabled (OpenRouter unified reasoning API)
+            // See: https://openrouter.ai/docs/guides/best-practices/reasoning-tokens
+            if (reasoningEnabled) {
+                requestBody.reasoning = { enabled: true };
             }
 
             const fetchOptions = {
