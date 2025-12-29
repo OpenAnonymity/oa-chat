@@ -4,7 +4,7 @@
  * scroll behaviors, and LaTeX rendering.
  */
 
-import { buildMessageHTML, buildEmptyState } from './MessageTemplates.js';
+import { buildMessageHTML, buildEmptyState, buildSharedIndicator, buildImportedIndicator } from './MessageTemplates.js';
 import { downloadAllChats } from '../services/fileUtils.js';
 import { parseStreamingReasoningContent, parseReasoningContent } from '../services/reasoningParser.js';
 
@@ -372,8 +372,8 @@ export default class ChatArea {
      * Handles empty states, message rendering, LaTeX processing, and scroll behavior.
      */
     async render() {
-        const session = this.app.getCurrentSession();
         const messagesContainer = this.app.elements.messagesContainer;
+        const session = this.app.getCurrentSession();
 
         if (!session) {
             messagesContainer.innerHTML = buildEmptyState();
@@ -399,7 +399,23 @@ export default class ChatArea {
         // Check if this session is currently streaming
         const isSessionStreaming = this.app.isCurrentSessionStreaming();
 
-        messagesContainer.innerHTML = messages.map(message => {
+        // Check if this is an imported (or forked from import) session with new messages added
+        // importedFrom = pure import (can still receive updates)
+        // forkedFrom = was imported but user made changes (no longer receives updates)
+        const wasImported = session.importedFrom || session.forkedFrom;
+        const importedCount = session.importedMessageCount || 0;
+        const hasNewMessagesAfterImport = wasImported && importedCount > 0 && messages.length > importedCount;
+
+        // Check if session is shared and has new messages after sharing
+        const sharedCount = session.shareInfo?.messageCount || 0;
+        const hasNewMessagesAfterShare = session.shareInfo?.shareId && sharedCount > 0 && messages.length > sharedCount;
+        
+        // Debug logging for shared indicator position
+        if (session.shareInfo?.shareId) {
+            console.log(`[ChatArea] Shared session: messageCount=${sharedCount}, currentMessages=${messages.length}, hasNewAfterShare=${hasNewMessagesAfterShare}`);
+        }
+
+        let messagesHtml = messages.map((message, index) => {
             const options = this.app.getMessageTemplateOptions ? this.app.getMessageTemplateOptions(message.id) : {};
             // Pass session streaming state to template
             options.isSessionStreaming = isSessionStreaming;
@@ -410,8 +426,32 @@ export default class ChatArea {
             const normalizedMessage = (message.streamingReasoning || message.streamingTokens !== null)
                 ? { ...message, streamingReasoning: false, streamingTokens: null }
                 : message;
-            return buildMessageHTML(normalizedMessage, helpers, this.app.state.models, session.model, options);
+            let html = buildMessageHTML(normalizedMessage, helpers, this.app.state.models, session.model, options);
+            
+            // Insert "Above was shared" indicator after the last imported message
+            if (hasNewMessagesAfterImport && index === importedCount - 1) {
+                html += buildImportedIndicator(importedCount);
+            }
+            
+            // Insert shared indicator after the last shared message (only if there are new messages after)
+            if (hasNewMessagesAfterShare && !isSessionStreaming && index === sharedCount - 1) {
+                html += buildSharedIndicator(session.shareInfo.shareId);
+            }
+            
+            return html;
         }).join('');
+
+        // If session is imported but no new messages yet, show indicator at the end
+        if (wasImported && !hasNewMessagesAfterImport && messages.length > 0) {
+            messagesHtml += buildImportedIndicator(messages.length);
+        }
+
+        // Show shared indicator at the end only if no new messages after sharing
+        if (session.shareInfo?.shareId && !hasNewMessagesAfterShare && !isSessionStreaming && messages.length > 0) {
+            messagesHtml += buildSharedIndicator(session.shareInfo.shareId);
+        }
+
+        messagesContainer.innerHTML = messagesHtml;
 
         // Render LaTeX in all message content elements
         this.renderLatex();

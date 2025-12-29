@@ -12,13 +12,16 @@ import apiKeyStore from './services/apiKeyStore.js';
 import themeManager from './services/themeManager.js';
 import { downloadInferenceTickets, downloadAllChats, getFileIconSvg } from './services/fileUtils.js';
 import { parseReasoningContent } from './services/reasoningParser.js';
-import { fetchUrlMetadata, getFromCache } from './services/urlMetadata.js';
+import { fetchUrlMetadata } from './services/urlMetadata.js';
 import networkProxy from './services/networkProxy.js';
 import stationVerifier from './services/verifier.js';
 import openRouterAPI from './api.js';
-import { getDefaultModelConfig } from './services/modelConfig.js';
+import stationClient from './services/station.js';
+import shareService from './services/shareService.js';
+import shareModals from './components/ShareModals.js';
 
-const { defaultModelId: DEFAULT_MODEL_ID, defaultModelName: DEFAULT_MODEL_NAME } = getDefaultModelConfig();
+const DEFAULT_MODEL_ID = 'openai/gpt-5.2-chat';
+const DEFAULT_MODEL_NAME = 'OpenAI: GPT-5.2 Instant';
 
 // Layout constants for toolbar overlay prediction
 const SIDEBAR_WIDTH = 256;      // 16rem = 256px
@@ -86,16 +89,16 @@ class ChatApp {
             // copyMarkdownBtn: document.getElementById('copy-markdown-btn'), // Temporarily removed
             toggleRightPanelBtn: document.getElementById('toggle-right-panel-btn'), // This might be legacy, but let's keep it for now.
             showRightPanelBtn: document.getElementById('show-right-panel-btn'),
+            shareBtn: document.getElementById('share-btn'),
+            shareBtnText: document.getElementById('share-btn-text'),
             exportPdfBtn: document.getElementById('export-pdf-btn'),
             wideModeBtn: document.getElementById('wide-mode-btn'),
-            flatModeToggle: document.getElementById('flat-mode-toggle'),
             sidebar: document.getElementById('sidebar'),
             hideSidebarBtn: document.getElementById('hide-sidebar-btn'),
             showSidebarBtn: document.getElementById('show-sidebar-btn'),
             mobileSidebarBackdrop: document.getElementById('mobile-sidebar-backdrop'),
             sessionsScrollArea: document.getElementById('sessions-scroll-area'),
             modelListScrollArea: document.getElementById('model-list-scroll-area'),
-            themeToggle: document.getElementById('theme-toggle'),
             themeOptionButtons: Array.from(document.querySelectorAll('[data-theme-option]')),
             themeEffectiveLabel: document.getElementById('theme-effective-label'),
             fileUploadBtn: document.getElementById('file-upload-btn'),
@@ -820,7 +823,6 @@ class ChatApp {
 
     /**
      * Handles mouse enter on inline link buttons.
-     * Shows instant preview if cached, otherwise fetches in background.
      * @param {MouseEvent} event - Mouse event
      */
     async handleLinkMouseEnter(event) {
@@ -837,29 +839,28 @@ class ChatApp {
             clearTimeout(this.linkPreviewTimeout);
         }
 
-        // Check cache synchronously for instant preview
-        const cachedMetadata = getFromCache(url);
-        if (cachedMetadata) {
-            // Show instantly from cache - no loading state
-            this.showLinkPreview(linkButton, cachedMetadata);
-            return;
-        }
+        // Show preview after a short delay
+        this.linkPreviewTimeout = setTimeout(async () => {
+            if (this.currentPreviewLink !== linkButton) return;
 
-        // Not cached - show loading and fetch in background
-        this.showLinkPreview(linkButton, { loading: true });
+            // Show loading state
+            this.showLinkPreview(linkButton, { loading: true });
 
-        try {
-            const metadata = await fetchUrlMetadata(url);
-            // Check if we're still hovering this link
-            if (this.currentPreviewLink === linkButton) {
-                this.showLinkPreview(linkButton, metadata);
+            try {
+                // Fetch metadata
+                const metadata = await fetchUrlMetadata(url);
+
+                // Check if we're still hovering this link
+                if (this.currentPreviewLink === linkButton) {
+                    this.showLinkPreview(linkButton, metadata);
+                }
+            } catch (error) {
+                console.debug('Failed to load link preview:', error);
+                if (this.currentPreviewLink === linkButton) {
+                    this.hideLinkPreview();
+                }
             }
-        } catch (error) {
-            console.debug('Failed to load link preview:', error);
-            if (this.currentPreviewLink === linkButton) {
-                this.hideLinkPreview();
-            }
-        }
+        }, 200); // 200ms delay
     }
 
     /**
@@ -1001,9 +1002,6 @@ class ChatApp {
         // Initialize wide mode state from localStorage
         this.initWideMode();
 
-        // Initialize flat mode state from localStorage
-        this.initFlatMode();
-
         // Start DB init in background - components can show skeleton state
         const dbReady = chatDB.init();
 
@@ -1077,6 +1075,7 @@ class ChatApp {
         this.renderCurrentModel();
         this.chatInput.updateSearchToggleUI();
         this.chatInput.updateReasoningToggleUI();
+        this.updateShareButtonUI();
 
         // Notify right panel of current session
         const currentSession = this.getCurrentSession();
@@ -1158,6 +1157,506 @@ class ChatApp {
                 this.sendMessage();
             }, 0);
         }
+
+        // Check for session in URL (?s=sessionId)
+        this.checkForUrlSession();
+
+        // Periodic check for share expiry status (every 30 seconds)
+        setInterval(() => this.updateShareButtonUI(), 30000);
+    }
+
+    /**
+     * Check URL for session parameter (?s=sessionId)
+     * - First checks if it's a local session by ID
+     * - Then checks if it's a local session by shareId (owned shares)
+     * - Then checks if it's a local session by importedFrom (imported shares)
+     * - If not found locally, tries to fetch as shared session from org
+     */
+    async checkForUrlSession() {
+        const params = new URLSearchParams(window.location.search);
+        const sessionId = params.get('s');
+        
+        if (!sessionId) {
+            // No URL params - update URL to reflect current session (if any)
+            if (this.state.currentSessionId) {
+                this.updateUrlWithSession(this.state.currentSessionId);
+            }
+            return;
+        }
+
+        // Check if it's a local session by ID
+        const localSessionById = this.state.sessions.find(s => s.id === sessionId);
+        if (localSessionById) {
+            this.switchSession(sessionId);
+            return;
+        }
+
+        // Check if it's a local session by shareId (for sessions we shared)
+        const localSessionByShareId = this.state.sessions.find(s => s.shareInfo?.shareId === sessionId);
+        if (localSessionByShareId) {
+            this.switchSession(localSessionByShareId.id);
+            return;
+        }
+
+        // Check if it's a session we imported (by importedFrom field) - can receive updates
+        const importedSession = this.state.sessions.find(s => s.importedFrom === sessionId);
+        if (importedSession) {
+            // User already imported this share - check for updates
+            await this.checkForShareUpdates(sessionId, importedSession);
+            return;
+        }
+
+        // Check if it's a session we forked from this share - user made their own changes
+        const forkedSession = this.state.sessions.find(s => s.forkedFrom === sessionId);
+        if (forkedSession) {
+            // User has a forked copy - ask if they want their copy or a fresh import
+            const wantsFresh = await this.showForkedSessionPrompt(forkedSession);
+            if (wantsFresh) {
+                // User wants fresh copy - import as new session
+                await this.importSharedSession(sessionId);
+            } else {
+                // User wants their forked copy
+                this.switchSession(forkedSession.id);
+            }
+            return;
+        }
+
+        // Not a local session - try to fetch as shared session from org
+        await this.importSharedSession(sessionId);
+    }
+
+    /**
+     * Show a prompt when user opens a share they've previously forked
+     * @param {Object} forkedSession - The forked session
+     * @returns {Promise<boolean>} True if user wants fresh import, false for their copy
+     */
+    showForkedSessionPrompt(forkedSession) {
+        return shareModals.showForkedPrompt(forkedSession);
+    }
+
+    /**
+     * Check if a previously imported share has been updated
+     * @param {string} shareId - The share ID to check
+     * @param {Object} existingSession - The existing imported session
+     */
+    async checkForShareUpdates(shareId, existingSession) {
+        const { hasUpdates, shareData } = await shareService.checkForUpdates(
+            shareId,
+            existingSession.importedCiphertext
+        );
+        
+        if (!hasUpdates || !shareData) {
+                this.switchSession(existingSession.id);
+                return;
+            }
+            
+            const wantsFresh = await this.showImportUpdatePrompt(existingSession);
+            if (wantsFresh) {
+            await this.importSharedSessionWithData(shareId, shareData);
+            } else {
+            this.switchSession(existingSession.id);
+        }
+    }
+
+    /**
+     * Show a prompt asking user if they want to view their local copy or fetch latest
+     * @param {Object} existingSession - The existing imported session
+     * @returns {Promise<boolean>} True if user wants to fetch latest, false for local copy
+     */
+    showImportUpdatePrompt(existingSession) {
+        return shareModals.showUpdatePrompt(existingSession);
+    }
+
+    /**
+     * Simple password prompt for importing (no settings, just password)
+     * @returns {Promise<string|null>} Password or null if cancelled
+     */
+    showImportPasswordPrompt(message) {
+        return shareModals.showImportPasswordPrompt(message);
+    }
+
+    /**
+     * Decode share payload (handles both plaintext and encrypted)
+     * @returns {Promise<Object|null>} Payload or null if cancelled/failed
+     */
+    async decodeSharePayload(shareData, promptMessage) {
+        if (shareService.isPlaintextShare(shareData)) {
+            // Plaintext - decode directly, no prompt needed
+            return shareService.decodeShareData(shareData, null);
+        }
+        
+        // Encrypted - show simple password prompt
+        const password = await this.showImportPasswordPrompt(promptMessage);
+        if (!password) return null;
+        
+        return shareService.decodeShareData(shareData, password);
+    }
+
+    /**
+     * Update an existing imported session with new data from share
+     * @param {string} shareId - Share ID
+     * @param {Object} encryptedData - Already fetched encrypted data from org
+     */
+    async importSharedSessionWithData(shareId, encryptedData) {
+        const existingSession = this.state.sessions.find(s => s.importedFrom === shareId);
+        if (!existingSession) {
+            await this.importSharedSession(shareId);
+            return;
+        }
+
+        try {
+            // Decode payload (handles plaintext or encrypted with password prompt)
+            const payload = await this.decodeSharePayload(
+                encryptedData,
+                'Enter the password to decrypt the updated chat:'
+            );
+            if (!payload) {
+                this.switchSession(existingSession.id);
+                return;
+            }
+
+            shareService.validatePayload(payload);
+
+            // Delete old messages for this session
+            const oldMessages = await chatDB.getSessionMessages(existingSession.id);
+            for (const msg of oldMessages) {
+                await chatDB.deleteMessage(msg.id);
+            }
+
+            // Save new messages with existing session ID
+            const messages = shareService.createMessagesFromPayload(
+                payload.messages,
+                existingSession.id,
+                () => this.generateId()
+            );
+            for (const message of messages) {
+                await chatDB.saveMessage(message);
+            }
+
+            // Update the existing session
+            existingSession.title = payload.session.title || existingSession.title;
+            existingSession.model = payload.session.model;
+            existingSession.searchEnabled = payload.session.searchEnabled ?? true;
+            existingSession.updatedAt = Date.now();
+            existingSession.importedMessageCount = payload.messages.length;
+            existingSession.importedCiphertext = encryptedData.ciphertext;
+            
+            // Apply shared API key if present
+            if (payload.sharedApiKey?.key) {
+                existingSession.apiKey = payload.sharedApiKey.key;
+                existingSession.apiKeyInfo = {
+                    stationId: payload.sharedApiKey.stationId,
+                    station_name: payload.sharedApiKey.stationId,
+                    usage: payload.sharedApiKey.usage,
+                    isShared: true
+                };
+                existingSession.expiresAt = payload.sharedApiKey.expiresAt;
+            }
+            await chatDB.saveSession(existingSession);
+
+            this.state.currentSessionId = existingSession.id;
+            sessionStorage.setItem(SESSION_STORAGE_KEY, existingSession.id);
+            await chatDB.saveSetting('currentSessionId', existingSession.id);
+
+            this.updateUrlWithSession(shareId);
+            this.renderSessions();
+            await this.renderMessages();
+            this.renderCurrentModel();
+            this.updateInputState();
+            this.updateShareButtonUI();
+
+            if (this.rightPanel) {
+                this.rightPanel.onSessionChange(existingSession);
+            }
+
+            console.log(`✅ Updated imported session: ${existingSession.title}`);
+            this.showToast('Updated to latest version!', 'success');
+
+        } catch (error) {
+            console.error('Failed to import shared session:', error);
+            this.showToast(error.message || 'Failed to import shared chat', 'error');
+            const session = this.state.sessions.find(s => s.importedFrom === shareId);
+            if (session) {
+                this.switchSession(session.id);
+            }
+        }
+    }
+
+    /**
+     * Update URL to include current session ID
+     * @param {string} sessionId - Session ID (local or share)
+     */
+    updateUrlWithSession(sessionId) {
+        if (!sessionId) {
+            window.history.replaceState({}, '', window.location.pathname);
+            return;
+        }
+        const url = new URL(window.location);
+        url.searchParams.set('s', sessionId);
+        window.history.replaceState({}, '', url);
+    }
+
+    /**
+     * Copy the current session's URL to clipboard
+     */
+    async copySessionLink() {
+        const session = this.getCurrentSession();
+        if (!session) {
+            this.showToast('No active session', 'error');
+            return;
+        }
+        
+        // Session ID is used for both local and shared URLs
+        const url = new URL(window.location.origin + window.location.pathname);
+        url.searchParams.set('s', session.id);
+        
+        await navigator.clipboard.writeText(url.toString());
+        this.showToast('Link copied to clipboard!', 'success');
+    }
+
+    /**
+     * Import a shared session by downloading and decoding it
+     * @param {string} shareId - Share ID from URL
+     */
+    async importSharedSession(shareId) {
+        try {
+            // Download share data
+            const shareData = await shareService.downloadShare(shareId);
+
+            // Decode payload (handles plaintext or encrypted with password prompt)
+            const payload = await this.decodeSharePayload(
+                shareData,
+                'Enter the password to decrypt this shared chat:'
+            );
+            if (!payload) {
+                window.history.replaceState({}, '', window.location.pathname);
+                return;
+            }
+
+            // Validate and create session from payload
+            shareService.validatePayload(payload);
+            const session = shareService.createSessionFromPayload(
+                payload,
+                shareId,
+                shareData.ciphertext,
+                () => this.generateId()
+            );
+
+            // Save session to DB
+            this.state.sessions.unshift(session);
+            await chatDB.saveSession(session);
+
+            // Save messages with new session ID
+            const messages = shareService.createMessagesFromPayload(
+                payload.messages,
+                session.id,
+                () => this.generateId()
+            );
+            for (const message of messages) {
+                await chatDB.saveMessage(message);
+            }
+
+            // Switch to imported session
+            this.state.currentSessionId = session.id;
+            sessionStorage.setItem(SESSION_STORAGE_KEY, session.id);
+            await chatDB.saveSetting('currentSessionId', session.id);
+
+            this.updateUrlWithSession(shareId);
+            this.renderSessions();
+            await this.renderMessages();
+            this.renderCurrentModel();
+            this.updateInputState();
+            this.updateShareButtonUI();
+
+            if (this.rightPanel) {
+                this.rightPanel.onSessionChange(session);
+            }
+
+            console.log(`✅ Imported shared session: ${session.title}`);
+            this.showToast('Imported shared chat!', 'success');
+
+        } catch (error) {
+            console.error('Failed to import shared session:', error);
+            window.history.replaceState({}, '', window.location.pathname);
+            this.showToast(error.message || 'Failed to import shared chat', 'error');
+        }
+    }
+
+
+    /**
+     * Share the current session with optional encryption
+     * Opens the share management modal for settings
+     */
+    async shareCurrentSession() {
+        const session = this.getCurrentSession();
+        if (!session) {
+            this.showToast('No active session to share', 'error');
+            return null;
+        }
+
+        const messages = await chatDB.getSessionMessages(session.id);
+        if (messages.length === 0) {
+            this.showToast('Cannot share empty chat', 'error');
+            return null;
+        }
+
+        // Use the management modal for all share operations
+        return this.showShareManagementModal();
+    }
+
+    /**
+     * Share current session with provided settings (no prompting)
+     * @param {Object} settings - {password: string|null, ttlSeconds: number, shareApiKeyMetadata: boolean}
+     */
+    async shareCurrentSessionWithSettings(settings) {
+        const session = this.getCurrentSession();
+        if (!session) {
+            this.showToast('No active session to share', 'error');
+            return null;
+        }
+
+        const messages = await chatDB.getSessionMessages(session.id);
+        if (messages.length === 0) {
+            this.showToast('Cannot share empty chat', 'error');
+            return null;
+        }
+
+        const isUpdate = !!session.shareInfo?.shareId;
+
+        try {
+            const result = await shareService.createOrUpdateShare(session, messages, settings);
+            session.shareInfo = result.shareInfo;
+            await chatDB.saveSession(session);
+
+            await navigator.clipboard.writeText(result.shareUrl);
+            this.showToast(isUpdate ? 'Share updated and link copied!' : 'Share link copied to clipboard!', 'success');
+
+            this.renderSessions();
+            if (this.rightPanel) this.rightPanel.render();
+
+            return result.shareUrl;
+        } catch (error) {
+            console.error('Failed to share session:', error);
+            this.showToast(error.message || 'Failed to share chat', 'error');
+            return null;
+        }
+    }
+
+    /**
+     * Delete the share for the current session
+     */
+    async deleteCurrentSessionShare() {
+        const session = this.getCurrentSession();
+        if (!session?.shareInfo?.shareId || !session?.shareInfo?.token) {
+            this.showToast('This session is not shared', 'error');
+            return;
+        }
+
+        try {
+            await shareService.deleteShare(session.shareInfo.shareId, session.shareInfo.token);
+
+            // Clear share info from session
+            delete session.shareInfo;
+            await chatDB.saveSession(session);
+
+            this.showToast('Share deleted', 'success');
+
+            // Re-render sidebar to update button labels
+            this.renderSessions();
+
+        } catch (error) {
+            console.error('Failed to delete share:', error);
+            this.showToast(error.message || 'Failed to delete share', 'error');
+        }
+    }
+
+    /**
+     * Show share management modal with status, actions, and settings
+     */
+    async showShareManagementModal() {
+        const session = this.getCurrentSession();
+        if (!session) return;
+
+        shareModals.showManagementModal(session, {
+            onShare: async (settings) => {
+                // Fork if imported
+                if (session.importedFrom) {
+                    session.forkedFrom = session.importedFrom;
+                    session.importedFrom = null;
+                    session.importedCiphertext = null;
+                    await chatDB.saveSession(session);
+                    this.updateUrlWithSession(session.id);
+                }
+                await this.shareCurrentSessionWithSettings(settings);
+                this.updateShareButtonUI();
+                await this.renderMessages();
+            },
+            onRevoke: async () => {
+                await this.deleteCurrentSessionShare();
+                this.updateShareButtonUI();
+                await this.renderMessages();
+            },
+            showToast: (msg, type) => this.showToast(msg, type)
+            });
+    }
+
+    /**
+     * Update the share button visibility and state based on current session
+     */
+    updateShareButtonUI() {
+        const btn = this.elements.shareBtn;
+        const btnText = this.elements.shareBtnText;
+        if (!btn) return;
+
+        const session = this.getCurrentSession();
+
+        // Hide if no session
+        if (!session) {
+            btn.classList.add('hidden');
+            btn.classList.remove('flex');
+            return;
+        }
+
+        // Show the button
+        btn.classList.remove('hidden');
+        btn.classList.add('flex');
+
+        // Update button style based on share status
+        const shareInfo = session.shareInfo;
+        
+        // Remove all color classes first
+        btn.classList.remove('text-amber-600', 'text-green-600', 'text-muted-foreground');
+        
+        if (shareInfo?.shareId) {
+            const isExpired = shareInfo.expiresAt && Date.now() > shareInfo.expiresAt;
+            if (isExpired) {
+                btn.classList.add('text-amber-600');
+                if (btnText) btnText.textContent = 'Expired';
+            } else {
+                btn.classList.add('text-green-600');
+                if (btnText) btnText.textContent = 'Shared';
+            }
+        } else {
+            btn.classList.add('text-muted-foreground');
+            if (btnText) btnText.textContent = 'Share';
+        }
+    }
+
+    /**
+     * Show a toast notification
+     * @param {string} message - Message to display
+     * @param {string} type - 'success' or 'error'
+     */
+    showToast(message, type = 'success') {
+        const toast = document.createElement('div');
+        const bgColor = type === 'error' ? 'bg-destructive text-destructive-foreground' : 'bg-primary text-primary-foreground';
+        toast.className = `fixed bottom-36 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg shadow-lg text-sm ${bgColor} animate-in fade-in slide-in-from-bottom-4`;
+        toast.textContent = message;
+        document.body.appendChild(toast);
+        setTimeout(() => {
+            toast.classList.add('animate-out', 'fade-out', 'slide-out-to-bottom-4');
+            setTimeout(() => toast.remove(), 150);
+        }, 3000);
     }
 
     /**
@@ -1170,7 +1669,7 @@ class ChatApp {
         // Set up banned warning callback - show warning and clear API key when station gets banned
         stationVerifier.setBannedWarningCallback(async ({ stationId, reason, bannedAt, session }) => {
             console.log(`🚫 Station ${stationId} banned: ${reason}`);
-
+            
             if (session && session.apiKeyInfo?.stationId === stationId) {
                 // Show warning modal (which also clears the key)
                 await this.showBannedStationWarningModal({
@@ -1377,6 +1876,9 @@ class ChatApp {
         sessionStorage.setItem(SESSION_STORAGE_KEY, session.id);
         await chatDB.saveSetting('currentSessionId', session.id);
 
+        // Update URL to reflect new session
+        this.updateUrlWithSession(session.id);
+
         // Hide message navigation immediately for new empty session
         if (this.messageNavigation) {
             this.messageNavigation.hide();
@@ -1391,6 +1893,7 @@ class ChatApp {
 
         // Update input state for new session
         this.updateInputState();
+        this.updateShareButtonUI();
 
         // Notify right panel of session change
         if (this.rightPanel) {
@@ -1419,10 +1922,13 @@ class ChatApp {
         chatDB.saveSetting('currentSessionId', sessionId);
 
         // Keep current search state (global setting)
-        const session = this.getCurrentSession();
+        const session = this.state.sessions.find(s => s.id === sessionId);
         if (session) {
             this.chatInput.updateSearchToggleUI();
         }
+
+        // Update URL to reflect current session
+        this.updateUrlWithSession(sessionId);
 
         // Clear message navigation immediately before switching to prevent showing stale data
         if (this.messageNavigation) {
@@ -1438,6 +1944,7 @@ class ChatApp {
 
         // Update UI based on new session's streaming state
         this.updateInputState();
+        this.updateShareButtonUI();
 
         // Notify right panel of session change
         if (this.rightPanel && session) {
@@ -1581,6 +2088,7 @@ class ChatApp {
 
         // Update input state
         this.updateInputState();
+        this.updateShareButtonUI();
 
         // Hide message navigation
         if (this.messageNavigation) {
@@ -1794,7 +2302,7 @@ class ChatApp {
                         this.floatingPanel.showMessage('Verifying key...', 'info');
                     }
                     await stationVerifier.submitKey(session.apiKeyInfo);
-
+                    
                     // Set current station for broadcast monitoring
                     stationVerifier.setCurrentStation(session.apiKeyInfo.stationId, session);
                 } catch (verifyError) {
@@ -1803,12 +2311,12 @@ class ChatApp {
                     session.apiKeyInfo = null;
                     session.expiresAt = null;
                     await chatDB.saveSession(session);
-
+                    
                     // Update UI components
                     if (this.rightPanel) {
                         this.rightPanel.onSessionChange(session);
                     }
-
+                    
                     if (this.floatingPanel) {
                         this.floatingPanel.showMessage(verifyError.message, 'error', 5000);
                     }
@@ -2127,6 +2635,21 @@ class ChatApp {
         let session = this.getCurrentSession();
         if (!session) return; // Safety check
 
+        // If this is an imported session and URL still shows the original share ID,
+        // "fork" it - update URL to local session ID and mark as forked
+        if (session.importedFrom) {
+            const params = new URLSearchParams(window.location.search);
+            if (params.get('s') === session.importedFrom) {
+                // Move importedFrom to forkedFrom (for UI display only)
+                // Clear importedFrom so this session won't receive updates from share
+                session.forkedFrom = session.importedFrom;
+                session.importedFrom = null;
+                session.importedCiphertext = null;  // No longer tracking updates
+                await chatDB.saveSession(session);  // Persist the fork
+                this.updateUrlWithSession(session.id);
+            }
+        }
+
         // TODO: Re-enable verifier offline check later
         // // Block if verifier is offline (unless user acknowledged)
         // // This must be checked FIRST before any message is sent
@@ -2152,13 +2675,13 @@ class ChatApp {
             const stationState = stationVerifier.getStationState(stationId);
             // Also check cached broadcast data directly
             const isBannedInCache = stationVerifier.isStationBanned(stationId);
-
+            
             if (stationState?.banned || isBannedInCache) {
                 console.log(`🚫 Station ${stationId} is banned (state: ${stationState?.banned}, cache: ${isBannedInCache})`);
                 // Get ban info from state or cache
                 const broadcastData = stationVerifier.getLastBroadcastData();
                 const bannedInfo = broadcastData?.banned_stations?.find(s => s.station_id === stationId);
-
+                
                 this.showBannedStationWarningModal({
                     stationId: stationId,
                     reason: stationState?.banReason || bannedInfo?.reason || 'Unknown',
@@ -2257,7 +2780,7 @@ class ChatApp {
                         this.floatingPanel.showMessage('Verifying key...', 'info');
                     }
                     await stationVerifier.submitKey(session.apiKeyInfo);
-
+                    
                     // Set current station for broadcast monitoring
                     stationVerifier.setCurrentStation(session.apiKeyInfo.stationId, session);
                 } catch (verifyError) {
@@ -2266,12 +2789,12 @@ class ChatApp {
                     session.apiKeyInfo = null;
                     session.expiresAt = null;
                     await chatDB.saveSession(session);
-
+                    
                     // Update UI components
                     if (this.rightPanel) {
                         this.rightPanel.onSessionChange(session);
                     }
-
+                    
                     if (this.floatingPanel) {
                         this.floatingPanel.showMessage(verifyError.message, 'error', 5000);
                     }
@@ -3286,39 +3809,6 @@ class ChatApp {
     }
 
     /**
-     * Initializes flat mode state from localStorage.
-     * CSS toggle switch state is controlled via html.flat-mode class.
-     * Default: ON (unless explicitly set to 'false')
-     */
-    initFlatMode() {
-        const isFlat = localStorage.getItem('oa-flat-mode') !== 'false';
-        if (isFlat) {
-            document.documentElement.classList.add('flat-mode');
-        }
-        // Update aria-checked for segmented control buttons
-        this.updateFlatModeButtons(isFlat);
-    }
-
-    /**
-     * Updates aria-checked states on flat mode toggle buttons.
-     */
-    updateFlatModeButtons(isFlat) {
-        const flatBtn = this.elements.flatModeToggle?.querySelector('[data-mode="flat"]');
-        const bubbleBtn = this.elements.flatModeToggle?.querySelector('[data-mode="bubble"]');
-        flatBtn?.setAttribute('aria-checked', String(isFlat));
-        bubbleBtn?.setAttribute('aria-checked', String(!isFlat));
-    }
-
-    /**
-     * Sets flat mode to a specific state.
-     */
-    setFlatMode(enabled) {
-        document.documentElement.classList.toggle('flat-mode', enabled);
-        localStorage.setItem('oa-flat-mode', enabled ? 'true' : 'false');
-        this.updateFlatModeButtons(enabled);
-    }
-
-    /**
      * Exports the current chat session to a PDF file.
      * Delegates to pdfExport service.
      */
@@ -3438,6 +3928,13 @@ class ChatApp {
             });
         }
 
+        // Share button
+        if (this.elements.shareBtn) {
+            this.elements.shareBtn.addEventListener('click', async () => {
+                await this.showShareManagementModal();
+            });
+        }
+
         // Sidebar toggle buttons
         if (this.elements.hideSidebarBtn) {
             this.elements.hideSidebarBtn.addEventListener('click', () => {
@@ -3462,18 +3959,6 @@ class ChatApp {
         if (this.elements.wideModeBtn) {
             this.elements.wideModeBtn.addEventListener('click', () => {
                 this.toggleWideMode();
-            });
-        }
-
-        // Flat mode toggle (segmented control in settings menu)
-        if (this.elements.flatModeToggle) {
-            this.elements.flatModeToggle.addEventListener('click', (e) => {
-                e.stopPropagation(); // Prevent settings menu from closing
-                const btn = e.target.closest('.display-toggle-btn');
-                if (btn) {
-                    const mode = btn.dataset.mode;
-                    this.setFlatMode(mode === 'flat');
-                }
             });
         }
 
@@ -3536,11 +4021,11 @@ class ChatApp {
                 this.handleNewChatRequest();
             }
 
-            // Cmd/Ctrl + K for model picker (toggle)
+            // Cmd/Ctrl + K for model picker
             if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
                 e.preventDefault();
                 if (this.modelPicker) {
-                    this.modelPicker.toggle();
+                    this.modelPicker.open();
                 }
             }
 
@@ -3777,7 +4262,6 @@ class ChatApp {
 
     /**
      * Enriches citations with metadata and updates the UI.
-     * Also pre-populates URL metadata cache for instant link previews.
      * @param {Object} message - The message containing citations
      */
     async enrichCitationsAndUpdateUI(message) {
@@ -3785,7 +4269,7 @@ class ChatApp {
 
         try {
             // Import the URL metadata service
-            const { fetchUrlMetadata, addToCache } = await import('./services/urlMetadata.js');
+            const { fetchUrlMetadata } = await import('./services/urlMetadata.js');
 
             // Fetch metadata for all citations in parallel
             const metadataPromises = message.citations.map(citation =>
@@ -3796,8 +4280,6 @@ class ChatApp {
                         citation.description = metadata.description;
                         citation.favicon = metadata.favicon;
                         citation.domain = metadata.domain;
-                        // Explicitly add to cache for instant inline link previews
-                        addToCache(citation.url, metadata);
                     })
                     .catch(err => {
                         console.debug('Failed to fetch metadata for', citation.url);
@@ -3853,6 +4335,7 @@ class ChatApp {
             this.elements.sendBtn.classList.add('bg-primary', 'hover:bg-primary/90', 'text-primary-foreground');
             this.elements.sendBtn.classList.remove('bg-destructive', 'hover:bg-destructive/90', 'text-destructive-foreground');
 
+            // Set placeholder based on state
             if (this.searchEnabled) {
                 // For now, use the same placeholder as the default when search is enabled
                 this.elements.messageInput.placeholder = "Ask anonymously";
@@ -3956,23 +4439,23 @@ class ChatApp {
     async showBannedStationWarningModal({ stationId, reason, bannedAt, sessionId }) {
         // Get the session
         const session = this.state.sessions.find(s => s.id === sessionId) || this.getCurrentSession();
-
+        
         if (session) {
             // Clear the API key
             session.apiKey = null;
             session.apiKeyInfo = null;
             session.expiresAt = null;
             await chatDB.saveSession(session);
-
+            
             // Update UI
             if (this.rightPanel) {
                 this.rightPanel.onSessionChange(session);
             }
         }
-
+        
         // Format the ban timestamp
         const bannedDate = bannedAt ? new Date(bannedAt).toLocaleString() : 'Unknown';
-
+        
         // Show error message in chat with itemized format
         const errorMessage = `**Station Banned**
 
@@ -3983,9 +4466,9 @@ The station that issued your API key has been banned.
 - **Banned at:** ${bannedDate}
 
 Your API key has been cleared. A new key from a different station will be obtained automatically when you send your next message.`;
-
+        
         await this.addMessage('assistant', errorMessage, { isLocalOnly: true });
-
+        
         // Also show a toast notification
         this.showErrorNotification(`Station banned: ${reason || 'Unknown reason'}. Your API key has been cleared.`);
     }
@@ -4129,6 +4612,11 @@ Your API key has been cleared. A new key from a different station will be obtain
             session.apiKey = result.key;
             session.apiKeyInfo = result;
             session.expiresAt = result.expiresAt;
+            
+            // Clear apiKeyShared flag - new key hasn't been shared yet
+            if (session.shareInfo?.apiKeyShared) {
+                session.shareInfo.apiKeyShared = false;
+            }
 
             await chatDB.saveSession(session);
 

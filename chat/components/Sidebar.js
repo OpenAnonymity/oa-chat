@@ -106,12 +106,36 @@ export default class Sidebar {
     buildSessionHTML(session) {
         const isActive = session.id === this.app.state.currentSessionId;
         const titleClass = session.title === 'New Chat' ? 'italic text-muted-foreground' : '';
+        const isShared = !!session.shareInfo?.shareId;
+        // Show imported indicator for both pure imports and forked imports
+        const isImported = !!(session.importedFrom || session.forkedFrom);
+        const shareLabel = isShared ? 'Update Share' : 'Share';
+
+        // Build indicator icons
+        let indicatorHtml = '';
+        if (isShared) {
+            // Arrow up from box (opposite of import's arrow down to box)
+            indicatorHtml += `<span class="text-primary flex-shrink-0 ml-1" title="Shared">
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
+                </svg>
+            </span>`;
+        }
+        if (isImported) {
+            // Arrow down to box
+            indicatorHtml += `<span class="text-muted-foreground flex-shrink-0 ml-1" title="Imported">
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                </svg>
+            </span>`;
+        }
 
         return `
             <div class="group relative flex h-9 items-center rounded-lg ${isActive ? 'chat-session active' : 'hover-highlight'} transition-colors pl-3 chat-session" data-session-id="${session.id}">
                 <a class="flex flex-1 items-center justify-between h-full min-w-0 text-foreground hover:text-foreground cursor-pointer">
                     <div class="flex min-w-0 flex-1 items-center">
                         <input class="session-title-input w-full cursor-pointer truncate bg-transparent text-sm leading-5 focus:outline-none text-foreground ${titleClass}" placeholder="Untitled Chat" readonly data-session-id="${session.id}" value="${this.escapeHtml(session.title)}">
+                        ${indicatorHtml}
                     </div>
                 </a>
                 <div class="flex shrink-0 items-center relative">
@@ -122,6 +146,9 @@ export default class Sidebar {
                     </button>
                     <div class="session-menu hidden absolute right-0 top-10 z-[100] rounded-lg border border-border bg-popover shadow-lg p-1 min-w-[140px]" data-session-id="${session.id}">
                         <button class="rename-session-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">Rename</button>
+                        <button class="copy-link-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">Copy Link</button>
+                        <button class="share-session-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">${shareLabel}</button>
+                        ${isShared ? `<button class="delete-share-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">Delete Share</button>` : ''}
                         <button class="delete-session-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">Delete</button>
                     </div>
                 </div>
@@ -200,6 +227,51 @@ export default class Sidebar {
                 const sessionId = btn.dataset.sessionId;
                 this.app.deleteSession(sessionId);
                 // Menu will be removed when sessions are re-rendered
+            });
+        });
+
+        // Share session action (encrypted sharing via org platform)
+        document.querySelectorAll('.share-session-action').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const sessionId = btn.dataset.sessionId;
+                // Close the menu
+                document.querySelectorAll('.session-menu').forEach(m => m.classList.add('hidden'));
+                // Switch to session if not current, then share
+                if (sessionId !== this.app.state.currentSessionId) {
+                    this.app.switchSession(sessionId);
+                }
+                this.app.shareCurrentSession();
+            });
+        });
+
+        // Copy link action (local URL for bookmarking)
+        document.querySelectorAll('.copy-link-action').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const sessionId = btn.dataset.sessionId;
+                // Close the menu
+                document.querySelectorAll('.session-menu').forEach(m => m.classList.add('hidden'));
+                // Switch to session if not current, then copy link
+                if (sessionId !== this.app.state.currentSessionId) {
+                    this.app.switchSession(sessionId);
+                }
+                this.app.copySessionLink();
+            });
+        });
+
+        // Delete share action
+        document.querySelectorAll('.delete-share-action').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const sessionId = btn.dataset.sessionId;
+                // Close the menu
+                document.querySelectorAll('.session-menu').forEach(m => m.classList.add('hidden'));
+                // Switch to session if not current, then delete share
+                if (sessionId !== this.app.state.currentSessionId) {
+                    this.app.switchSession(sessionId);
+                }
+                this.app.deleteCurrentSessionShare();
             });
         });
     }

@@ -139,6 +139,22 @@
         });
     </script>
 
+    <!-- hash-wasm for Argon2id encryption - loaded async when needed -->
+    <script>
+        window.hashWasmReadyPromise = null;
+        window.initHashWasm = () => {
+            if (!window.hashWasmReadyPromise) {
+                window.hashWasmReadyPromise = import('https://esm.sh/hash-wasm@4.11.0')
+                    .then(module => {
+                        window.argon2id = module.argon2id;
+                        console.log('[hash-wasm] ✅ Argon2id ready');
+                        return module.argon2id;
+                    });
+            }
+            return window.hashWasmReadyPromise;
+        };
+    </script>
+
     <!-- Vercel Web Analytics -->
     <script defer src="/_vercel/insights/script.js"></script>
 
@@ -286,6 +302,14 @@
 
                     <!-- Right toolbar buttons -->
                     <div class="flex items-center gap-1">
+                        <!-- Share Button (hidden by default, shown when session is active and not imported) -->
+                        <button id="share-btn" class="hidden items-center gap-1.5 px-2.5 py-1.5 rounded-md hover-highlight cursor-pointer select-none text-sm">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
+                            </svg>
+                            <span id="share-btn-text" class="whitespace-nowrap">Share</span>
+                        </button>
+
                         <!-- Show Right Panel Button -->
                         <button id="show-right-panel-btn" class="hidden inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-9 w-9 cursor-pointer select-none">
                             <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">

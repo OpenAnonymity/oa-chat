@@ -1090,6 +1090,57 @@ function buildDividerMessage(message) {
 }
 
 /**
+ * Builds HTML for a "shared" indicator at the end of messages.
+ * Shows that chat is shared up until this point.
+ * @param {string} shareId - The share ID for the session
+ * @returns {string} HTML string
+ */
+export function buildSharedIndicator(shareId) {
+    const shareUrl = `${window.location.origin}${window.location.pathname}?s=${shareId}`;
+    return `
+        <div class="w-full flex items-center justify-center gap-4 select-none fade-in opacity-80 mt-4 mb-4">
+            <div class="h-px bg-primary/30 flex-1 max-w-[80px] sm:max-w-[120px]"></div>
+            <div class="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <!-- Arrow up from box icon -->
+                <svg class="w-3.5 h-3.5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
+                </svg>
+                <span class="opacity-70">Chat</span>
+                <button
+                    onclick="navigator.clipboard.writeText('${shareUrl}'); window.app.showToast('Link copied!', 'success')"
+                    class="text-primary hover:text-primary/80 font-medium underline underline-offset-2 transition-colors cursor-pointer"
+                    title="Click to copy share link"
+                >shared</button>
+                <span class="opacity-70">up until now</span>
+            </div>
+            <div class="h-px bg-primary/30 flex-1 max-w-[80px] sm:max-w-[120px]"></div>
+        </div>
+    `;
+}
+
+/**
+ * Builds HTML for an "imported" indicator showing where the shared content ends.
+ * Displayed at the point where imported messages end and new messages begin.
+ * @param {number} importedCount - Number of messages that were imported
+ * @returns {string} HTML string
+ */
+export function buildImportedIndicator(importedCount) {
+    return `
+        <div class="w-full flex items-center justify-center gap-4 select-none fade-in opacity-80 mt-4 mb-4">
+            <div class="h-px bg-muted-foreground/30 flex-1 max-w-[80px] sm:max-w-[120px]"></div>
+            <div class="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <!-- Arrow down to box icon (imported) -->
+                <svg class="w-3.5 h-3.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                </svg>
+                <span class="opacity-70">Above was shared</span>
+            </div>
+            <div class="h-px bg-muted-foreground/30 flex-1 max-w-[80px] sm:max-w-[120px]"></div>
+        </div>
+    `;
+}
+
+/**
  * Builds HTML for a single message (user or assistant).
  * @param {Object} message - Message object with role, content, etc.
  * @param {Object} helpers - Helper functions { processContentWithLatex, formatTime }
