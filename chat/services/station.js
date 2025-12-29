@@ -7,7 +7,7 @@ import privacyPassProvider from './privacyPass.js';
 import networkLogger from './networkLogger.js';
 import networkProxy, { ProxyFallbackError } from './networkProxy.js';
 
-const ORG_API_BASE = 'https://org.openanonymity.ai';
+export const ORG_API_BASE = 'https://org.openanonymity.ai';
 
 // Retry configuration - tuned for snappy UX
 const RETRY_DEFAULTS = {
