@@ -177,18 +177,8 @@ export default class ChatInput {
     updateReasoningToggleUI() {
         const toggle = document.getElementById('reasoning-toggle-btn');
         if (!toggle) return;
-        const indicator = toggle.querySelector('span');
-        if (this.app.reasoningEnabled) {
-            toggle.classList.remove('bg-muted-foreground/30');
-            toggle.classList.add('bg-blue-500');
-            indicator.classList.remove('left-0.5');
-            indicator.classList.add('right-0.5');
-        } else {
-            toggle.classList.remove('bg-blue-500');
-            toggle.classList.add('bg-muted-foreground/30');
-            indicator.classList.remove('right-0.5');
-            indicator.classList.add('left-0.5');
-        }
+        toggle.classList.toggle('switch-active', this.app.reasoningEnabled);
+        toggle.classList.toggle('switch-inactive', !this.app.reasoningEnabled);
     }
 
     /**

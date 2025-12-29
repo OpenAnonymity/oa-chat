@@ -57,10 +57,14 @@ class RightPanel {
         this.proxyStatus = networkProxy.getStatus();
         this.proxyActionError = null;
         this.proxyActionPending = false;
+        this.proxyAnimating = false; // Flag to skip re-render during toggle animation
         this.proxyUnsubscribe = networkProxy.onChange(({ settings, status }) => {
             this.proxySettings = settings;
             this.proxyStatus = status;
-            this.renderTopSectionOnly();
+            // Skip re-render if animation is in progress (will re-render after animation)
+            if (!this.proxyAnimating) {
+                this.renderTopSectionOnly();
+            }
         });
 
         // Expose fallback confirmation method globally for other modules
@@ -280,8 +284,8 @@ class RightPanel {
             if (timeRemainingEl) {
                 // Show share icon if: 1) owner shared their key, or 2) key was received from a share
                 const isKeyShared = this.currentSession?.shareInfo?.apiKeyShared || this.currentSession?.apiKeyInfo?.isShared;
-                const shareIcon = isKeyShared 
-                    ? `<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/></svg>` 
+                const shareIcon = isKeyShared
+                    ? `<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/></svg>`
                     : '';
                 timeRemainingEl.innerHTML = shareIcon + (this.timeRemaining || 'Loading...');
                 timeRemainingEl.className = `font-medium px-2 py-0.5 rounded-full text-[10px] flex-shrink-0 ml-2 flex items-center gap-1 ${this.getTimerClasses(isKeyShared)}`;
@@ -1431,11 +1435,11 @@ class RightPanel {
                     </div>
                     <button
                         id="proxy-toggle-btn"
-                        class="relative w-8 h-[18px] rounded-full transition-colors ${settings.enabled ? 'bg-green-500' : 'bg-muted-foreground/30'} ${pending ? 'opacity-50 cursor-wait' : 'cursor-pointer'}"
+                        class="switch-toggle ${settings.enabled ? 'switch-active' : 'switch-inactive'}"
                         ${pending ? 'disabled' : ''}
                         title="${settings.enabled ? 'Disable relay' : 'Enable relay'}"
                     >
-                        <span class="absolute top-0.5 ${settings.enabled ? 'right-0.5' : 'left-0.5'} w-3.5 h-3.5 rounded-full bg-white shadow-sm transition-all"></span>
+                        <span class="switch-toggle-indicator"></span>
                     </button>
                 </div>
 
@@ -1484,7 +1488,16 @@ class RightPanel {
         if (this.proxyActionPending) return;
         this.proxyActionError = null;
         this.proxyActionPending = true;
-        this.renderTopSectionOnly();
+        this.proxyAnimating = true; // Prevent onChange callback from re-rendering during animation
+
+        // Update toggle visually BEFORE re-render to trigger CSS animation
+        const toggle = document.getElementById('proxy-toggle-btn');
+        if (toggle) {
+            const newEnabled = !this.proxySettings.enabled;
+            toggle.classList.toggle('switch-active', newEnabled);
+            toggle.classList.toggle('switch-inactive', !newEnabled);
+            toggle.disabled = true;
+        }
 
         try {
             await networkProxy.updateSettings({ enabled: !this.proxySettings.enabled });
@@ -1492,7 +1505,11 @@ class RightPanel {
             this.proxyActionError = error.message;
         } finally {
             this.proxyActionPending = false;
-            this.renderTopSectionOnly();
+            // Wait for CSS animation to complete (200ms) before re-rendering
+            setTimeout(() => {
+                this.proxyAnimating = false;
+                this.renderTopSectionOnly();
+            }, 230); // Slightly longer than 200ms CSS transition
         }
     }
 

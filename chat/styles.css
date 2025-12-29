@@ -2576,6 +2576,52 @@ html[data-right-panel-hidden="true"] #right-panel {
     }
 }
 
+/* ----------------------------------------
+   Switch Toggle (iOS-style)
+   Used by: reasoning toggle, proxy toggle
+   ---------------------------------------- */
+
+.switch-toggle {
+    position: relative;
+    width: 2rem; /* w-8 */
+    height: 18px;
+    border-radius: 9999px;
+    transition: background-color 0.2s ease;
+    cursor: pointer;
+}
+
+.switch-toggle:disabled {
+    opacity: 0.7;
+    cursor: pointer; /* Keep pointer cursor during animation, not wait cursor */
+    pointer-events: none; /* Prevent clicks without changing cursor */
+}
+
+.switch-toggle-indicator {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 14px; /* w-3.5 */
+    height: 14px; /* h-3.5 */
+    border-radius: 9999px;
+    background: white;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+    transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Active state - slide indicator to right */
+.switch-toggle.switch-active .switch-toggle-indicator {
+    transform: translateX(14px); /* Move by (toggle-width - indicator-width - padding) = 32 - 14 - 4 = 14px */
+}
+
+/* Background colors */
+.switch-toggle.switch-inactive {
+    background-color: hsl(var(--color-muted-foreground) / 0.3);
+}
+
+.switch-toggle.switch-active {
+    background-color: #3b82f6; /* bg-blue-500 */
+}
+
 /* Search toggle active state */
 /* Search toggle uses accent-primary */
 #search-toggle.search-active {
