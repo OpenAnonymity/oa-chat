@@ -19,20 +19,28 @@ import { ORG_API_BASE } from './station.js';
  */
 async function createShareApi(shareId, encryptedData, expiresInSeconds = 604800) {
     const url = `${ORG_API_BASE}/chat/share`;
+    const requestBody = {
+        id: shareId,
+        salt: encryptedData.salt,
+        iv: encryptedData.iv,
+        ciphertext: encryptedData.ciphertext
+    };
+
+    // Only include expires_in if it's a positive value (0 = indefinite, omit to let server decide)
+    if (expiresInSeconds > 0) {
+        requestBody.expires_in = expiresInSeconds;
+    }
+
     const response = await networkProxy.fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            id: shareId,
-            salt: encryptedData.salt,
-            iv: encryptedData.iv,
-            ciphertext: encryptedData.ciphertext,
-            expires_in: expiresInSeconds
-        })
+        body: JSON.stringify(requestBody)
     });
 
     if (!response.ok) {
-        throw new Error(`Failed to create share (${response.status})`);
+        const errorText = await response.text().catch(() => 'Unable to read error body');
+        console.error('[shareService] Share creation failed:', response.status, errorText);
+        throw new Error(`Failed to create share (${response.status}): ${errorText}`);
     }
 
     const data = await response.json();
@@ -55,18 +63,24 @@ async function createShareApi(shareId, encryptedData, expiresInSeconds = 604800)
  */
 async function updateShareApi(shareId, token, encryptedData, expiresInSeconds = 604800) {
     const url = `${ORG_API_BASE}/chat/share/${shareId}`;
+    const requestBody = {
+        salt: encryptedData.salt,
+        iv: encryptedData.iv,
+        ciphertext: encryptedData.ciphertext
+    };
+
+    // Only include expires_in if it's a positive value (0 = indefinite, omit to let server decide)
+    if (expiresInSeconds > 0) {
+        requestBody.expires_in = expiresInSeconds;
+    }
+
     const response = await networkProxy.fetch(url, {
         method: 'PATCH',
         headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({
-            salt: encryptedData.salt,
-            iv: encryptedData.iv,
-            ciphertext: encryptedData.ciphertext,
-            expires_in: expiresInSeconds
-        })
+        body: JSON.stringify(requestBody)
     });
 
     if (!response.ok) {
@@ -322,7 +336,7 @@ export function createMessagesFromPayload(payloadMessages, sessionId, generateId
 export function buildShareInfo(result, shareId, messageCount, isPlaintext, apiKeyShared, ttlSeconds) {
     // Convert expires_at to milliseconds if it's in seconds (Unix epoch)
     const expiresAtMs = result.expires_at < 1e12 ? result.expires_at * 1000 : result.expires_at;
-    
+
     return {
         shareId,
         token: result.token,
@@ -344,14 +358,14 @@ export function buildShareInfo(result, shareId, messageCount, isPlaintext, apiKe
  */
 export async function createOrUpdateShare(session, messages, settings) {
     const { password, ttlSeconds, shareApiKeyMetadata } = settings;
-    
+
     // Build and encode payload
     const payload = buildSharePayload(session, messages, { shareApiKeyMetadata });
     const shareData = await encodeShareData(payload, password);
-    
+
     const shareId = session.id;
     const isExpired = session.shareInfo?.expiresAt && Date.now() > session.shareInfo.expiresAt;
-    
+
     let result;
     // Use POST for new shares or expired shares, PATCH for active shares
     if (session.shareInfo?.shareId && session.shareInfo?.token && !isExpired) {
@@ -360,7 +374,7 @@ export async function createOrUpdateShare(session, messages, settings) {
     } else {
         result = await createShareApi(shareId, shareData, ttlSeconds);
     }
-    
+
     const shareInfo = buildShareInfo(
         result,
         shareId,
@@ -369,7 +383,7 @@ export async function createOrUpdateShare(session, messages, settings) {
         shareApiKeyMetadata,
         ttlSeconds
     );
-    
+
     return {
         shareInfo,
         shareUrl: buildShareUrl(shareId)
@@ -384,19 +398,19 @@ export async function createOrUpdateShare(session, messages, settings) {
  */
 export async function downloadAndDecodeShare(shareId, password) {
     const shareData = await downloadShareApi(shareId);
-    
+
     // For plaintext shares, no password needed
     if (isPlaintextShare(shareData)) {
         const payload = await decodeShareData(shareData, null);
         validatePayload(payload);
         return { payload, shareData };
     }
-    
+
     // For encrypted shares, password is required
     if (!password) {
         throw new Error('PASSWORD_REQUIRED');
     }
-    
+
     const payload = await decodeShareData(shareData, password);
     validatePayload(payload);
     return { payload, shareData };
