@@ -1727,6 +1727,11 @@ html.flat-mode .user-message-show-more:hover {
     border: 1px solid rgba(255, 255, 255, 0.25) !important;
 }
 
+/* Brighter PDF icon in dark mode for better visibility */
+.dark .file-attachment-icon .text-destructive {
+    color: hsl(0 72% 55%) !important;
+}
+
 /* Flat mode - file attachments need darker boundaries on gray bubble */
 html.flat-mode .file-attachment-card {
     background: rgba(0, 0, 0, 0.04);
@@ -1740,6 +1745,16 @@ html.flat-mode .file-attachment-card:hover {
 html.flat-mode .file-attachment-icon {
     background: rgba(255, 255, 255, 0.9);
     border: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+/* Dark + flat mode: use dark styles with better icon visibility */
+html.flat-mode.dark .file-attachment-icon {
+    background: rgba(255, 255, 255, 0.12) !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+}
+
+html.flat-mode.dark .file-attachment-icon .text-destructive {
+    color: hsl(0 72% 55%) !important;
 }
 
 .prose p:first-child {
