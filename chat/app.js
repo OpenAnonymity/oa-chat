@@ -99,6 +99,7 @@ class ChatApp {
             mobileSidebarBackdrop: document.getElementById('mobile-sidebar-backdrop'),
             sessionsScrollArea: document.getElementById('sessions-scroll-area'),
             modelListScrollArea: document.getElementById('model-list-scroll-area'),
+            themeToggle: document.getElementById('theme-toggle'),
             themeOptionButtons: Array.from(document.querySelectorAll('[data-theme-option]')),
             themeEffectiveLabel: document.getElementById('theme-effective-label'),
             fileUploadBtn: document.getElementById('file-upload-btn'),
@@ -1209,7 +1210,7 @@ class ChatApp {
     async checkForUrlSession() {
         const params = new URLSearchParams(window.location.search);
         const sessionId = params.get('s');
-        
+
         if (!sessionId) {
             // No URL params - update URL to reflect current session (if any)
             if (this.state.currentSessionId) {
@@ -1278,12 +1279,12 @@ class ChatApp {
             shareId,
             existingSession.importedCiphertext
         );
-        
+
         if (!hasUpdates || !shareData) {
                 this.switchSession(existingSession.id);
                 return;
             }
-            
+
             const wantsFresh = await this.showImportUpdatePrompt(existingSession);
             if (wantsFresh) {
             await this.importSharedSessionWithData(shareId, shareData);
@@ -1318,11 +1319,11 @@ class ChatApp {
             // Plaintext - decode directly, no prompt needed
             return shareService.decodeShareData(shareData, null);
         }
-        
+
         // Encrypted - show simple password prompt
         const password = await this.showImportPasswordPrompt(promptMessage);
         if (!password) return null;
-        
+
         return shareService.decodeShareData(shareData, password);
     }
 
@@ -1334,12 +1335,12 @@ class ChatApp {
     async verifySharedApiKey(sharedApiKey) {
         // No key to verify
         if (!sharedApiKey?.key) return null;
-        
+
         // Check if key has required signature fields for verification
-        const hasSignatures = sharedApiKey.stationSignature && 
-                             sharedApiKey.orgSignature && 
+        const hasSignatures = sharedApiKey.stationSignature &&
+                             sharedApiKey.orgSignature &&
                              sharedApiKey.expiresAtUnix;
-        
+
         if (!hasSignatures) {
             // Legacy share without signatures - show verification failed modal
             console.warn('⚠️ Shared key missing signature fields, cannot verify');
@@ -1351,7 +1352,7 @@ class ChatApp {
             });
             return choice === 'import_without_key' ? null : 'cancel';
         }
-        
+
         // Attempt verification with verifier
         try {
             console.log('🔐 Verifying shared API key...');
@@ -1366,18 +1367,18 @@ class ChatApp {
             return sharedApiKey; // Return original data on success
         } catch (verifyError) {
             console.warn('⚠️ Shared key verification failed:', verifyError.message);
-            
+
             // Check if it's a banned station
             const isBanned = verifyError.status === 'banned';
             const banReason = verifyError.bannedStation?.reason;
-            
+
             const choice = await shareModals.showSharedKeyVerificationFailedPrompt({
                 error: verifyError.message,
                 stationId: sharedApiKey.stationId,
                 isBanned,
                 banReason
             });
-            
+
             return choice === 'import_without_key' ? null : 'cancel';
         }
     }
@@ -1430,7 +1431,7 @@ class ChatApp {
             existingSession.updatedAt = Date.now();
             existingSession.importedMessageCount = payload.messages.length;
             existingSession.importedCiphertext = encryptedData.ciphertext;
-            
+
             // Verify and apply shared API key if present
             if (payload.sharedApiKey?.key) {
                 const verifiedKeyData = await this.verifySharedApiKey(payload.sharedApiKey);
@@ -1511,11 +1512,11 @@ class ChatApp {
             this.showToast('No active session', 'error');
             return;
         }
-        
+
         // Session ID is used for both local and shared URLs
         const url = new URL(window.location.origin + window.location.pathname);
         url.searchParams.set('s', session.id);
-        
+
         await navigator.clipboard.writeText(url.toString());
         this.showToast('Link copied to clipboard!', 'success');
     }
@@ -1741,10 +1742,10 @@ class ChatApp {
 
         // Update button style based on share status
         const shareInfo = session.shareInfo;
-        
+
         // Remove all color classes first
         btn.classList.remove('text-amber-600', 'text-green-600', 'text-muted-foreground');
-        
+
         if (shareInfo?.shareId) {
             const isExpired = shareInfo.expiresAt && Date.now() > shareInfo.expiresAt;
             if (isExpired) {
@@ -1787,7 +1788,7 @@ class ChatApp {
         // Set up banned warning callback - show warning and clear API key when station gets banned
         stationVerifier.setBannedWarningCallback(async ({ stationId, reason, bannedAt, session }) => {
             console.log(`🚫 Station ${stationId} banned: ${reason}`);
-            
+
             if (session && session.apiKeyInfo?.stationId === stationId) {
                 // Show warning modal (which also clears the key)
                 await this.showBannedStationWarningModal({
@@ -2420,7 +2421,7 @@ class ChatApp {
                         this.floatingPanel.showMessage('Verifying key...', 'info');
                     }
                     await stationVerifier.submitKey(session.apiKeyInfo);
-                    
+
                     // Set current station for broadcast monitoring
                     stationVerifier.setCurrentStation(session.apiKeyInfo.stationId, session);
                 } catch (verifyError) {
@@ -2429,12 +2430,12 @@ class ChatApp {
                     session.apiKeyInfo = null;
                     session.expiresAt = null;
                     await chatDB.saveSession(session);
-                    
+
                     // Update UI components
                     if (this.rightPanel) {
                         this.rightPanel.onSessionChange(session);
                     }
-                    
+
                     if (this.floatingPanel) {
                         this.floatingPanel.showMessage(verifyError.message, 'error', 5000);
                     }
@@ -2793,13 +2794,13 @@ class ChatApp {
             const stationState = stationVerifier.getStationState(stationId);
             // Also check cached broadcast data directly
             const isBannedInCache = stationVerifier.isStationBanned(stationId);
-            
+
             if (stationState?.banned || isBannedInCache) {
                 console.log(`🚫 Station ${stationId} is banned (state: ${stationState?.banned}, cache: ${isBannedInCache})`);
                 // Get ban info from state or cache
                 const broadcastData = stationVerifier.getLastBroadcastData();
                 const bannedInfo = broadcastData?.banned_stations?.find(s => s.station_id === stationId);
-                
+
                 this.showBannedStationWarningModal({
                     stationId: stationId,
                     reason: stationState?.banReason || bannedInfo?.reason || 'Unknown',
@@ -2898,7 +2899,7 @@ class ChatApp {
                         this.floatingPanel.showMessage('Verifying key...', 'info');
                     }
                     await stationVerifier.submitKey(session.apiKeyInfo);
-                    
+
                     // Set current station for broadcast monitoring
                     stationVerifier.setCurrentStation(session.apiKeyInfo.stationId, session);
                 } catch (verifyError) {
@@ -2907,12 +2908,12 @@ class ChatApp {
                     session.apiKeyInfo = null;
                     session.expiresAt = null;
                     await chatDB.saveSession(session);
-                    
+
                     // Update UI components
                     if (this.rightPanel) {
                         this.rightPanel.onSessionChange(session);
                     }
-                    
+
                     if (this.floatingPanel) {
                         this.floatingPanel.showMessage(verifyError.message, 'error', 5000);
                     }
@@ -4557,23 +4558,23 @@ class ChatApp {
     async showBannedStationWarningModal({ stationId, reason, bannedAt, sessionId }) {
         // Get the session
         const session = this.state.sessions.find(s => s.id === sessionId) || this.getCurrentSession();
-        
+
         if (session) {
             // Clear the API key
             session.apiKey = null;
             session.apiKeyInfo = null;
             session.expiresAt = null;
             await chatDB.saveSession(session);
-            
+
             // Update UI
             if (this.rightPanel) {
                 this.rightPanel.onSessionChange(session);
             }
         }
-        
+
         // Format the ban timestamp
         const bannedDate = bannedAt ? new Date(bannedAt).toLocaleString() : 'Unknown';
-        
+
         // Show error message in chat with itemized format
         const errorMessage = `**Station Banned**
 
@@ -4584,9 +4585,9 @@ The station that issued your API key has been banned.
 - **Banned at:** ${bannedDate}
 
 Your API key has been cleared. A new key from a different station will be obtained automatically when you send your next message.`;
-        
+
         await this.addMessage('assistant', errorMessage, { isLocalOnly: true });
-        
+
         // Also show a toast notification
         this.showErrorNotification(`Station banned: ${reason || 'Unknown reason'}. Your API key has been cleared.`);
     }
@@ -4730,7 +4731,7 @@ Your API key has been cleared. A new key from a different station will be obtain
             session.apiKey = result.key;
             session.apiKeyInfo = result;
             session.expiresAt = result.expiresAt;
-            
+
             // Clear apiKeyShared flag - new key hasn't been shared yet
             if (session.shareInfo?.apiKeyShared) {
                 session.shareInfo.apiKeyShared = false;

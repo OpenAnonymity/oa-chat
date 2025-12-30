@@ -144,6 +144,7 @@ export default class ChatInput {
         // });
 
         // Close settings menu when clicking outside
+        // Note: Toggle controls inside the menu use stopPropagation() to prevent this from firing
         document.addEventListener('click', () => {
             if (!this.app.elements.settingsMenu.classList.contains('hidden')) {
                 this.app.elements.settingsMenu.classList.add('hidden');
@@ -158,8 +159,59 @@ export default class ChatInput {
         // Setup theme controls
         this.setupThemeControls();
 
+        // Setup flat mode (display mode) controls
+        this.setupFlatModeControls();
+
         // Mark input as ready for the inline script to defer handling
         window.chatInputReady = true;
+    }
+
+    /**
+     * Sets up flat mode (display mode) toggle controls and listeners.
+     * Toggles between flat (text lines) and bubble (chat bubble) display modes.
+     * Uses event delegation with stopPropagation to prevent the document click
+     * handler from closing the settings menu.
+     */
+    setupFlatModeControls() {
+        const flatModeToggle = document.getElementById('flat-mode-toggle');
+        if (!flatModeToggle) return;
+
+        // Sync initial visual state with localStorage (HTML may have stale defaults)
+        this.updateFlatModeControls();
+
+        flatModeToggle.addEventListener('click', (event) => {
+            event.stopPropagation(); // Prevent settings menu from closing
+            const btn = event.target.closest('.display-toggle-btn');
+            if (btn) {
+                const mode = btn.dataset.mode;
+                const isFlatMode = mode === 'flat';
+
+                // Update HTML class for CSS styling
+                document.documentElement.classList.toggle('flat-mode', isFlatMode);
+
+                // Persist preference to localStorage
+                localStorage.setItem('oa-flat-mode', isFlatMode ? 'true' : 'false');
+
+                // Update toggle visual state
+                this.updateFlatModeControls();
+            }
+        });
+    }
+
+    /**
+     * Updates the visual state of flat mode toggle based on current HTML class.
+     * Syncs aria-checked attributes with actual flat-mode state.
+     */
+    updateFlatModeControls() {
+        const flatModeToggle = document.getElementById('flat-mode-toggle');
+        if (!flatModeToggle) return;
+
+        const isFlatMode = document.documentElement.classList.contains('flat-mode');
+        const activeMode = isFlatMode ? 'flat' : 'bubble';
+
+        flatModeToggle.querySelectorAll('.display-toggle-btn').forEach(btn => {
+            btn.setAttribute('aria-checked', btn.dataset.mode === activeMode ? 'true' : 'false');
+        });
     }
 
     /**
@@ -183,14 +235,15 @@ export default class ChatInput {
 
     /**
      * Sets up theme selection controls (segmented toggle) and listeners.
+     * Uses event delegation on the container with stopPropagation to prevent
+     * the document click handler from closing the settings menu.
      */
     setupThemeControls() {
         const themeToggle = this.app.elements.themeToggle;
         if (!themeToggle) return;
 
-        // Use event delegation on the container
         themeToggle.addEventListener('click', (event) => {
-            event.stopPropagation();
+            event.stopPropagation(); // Prevent settings menu from closing
             const btn = event.target.closest('.theme-toggle-btn');
             if (btn) {
                 const preference = btn.dataset.themeOption || 'system';
