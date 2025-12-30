@@ -181,18 +181,52 @@ class ChatApp {
      * @param {Array} existingImages - The existing images array (will be modified)
      * @param {Array} newImages - New images to add
      */
+    /**
+     * Adds images to an array while detecting near-duplicates.
+     *
+     * Problem: Image generation models (e.g., Gemini via OpenRouter) sometimes stream
+     * the same image multiple times with minor encoding differences (~0.01% size variance).
+     * These appear as visually identical images but have slightly different base64 data.
+     *
+     * Solution: Detect near-duplicates using two combined signals:
+     * 1. Header match - First 100 chars of base64 (image format + early metadata)
+     * 2. Size similarity - Within 1% of each other (same content, minor compression variance)
+     *
+     * This approach:
+     * - Catches near-duplicates (same visual content, different encoding)
+     * - Allows genuinely different images through (different headers or sizes)
+     * - No hard cap on image count for multi-image responses
+     *
+     * @param {Array} existingImages - The existing images array (will be modified)
+     * @param {Array} newImages - New images to add
+     */
     addImagesWithDedup(existingImages, newImages) {
         if (!newImages || newImages.length === 0) return;
 
-        const existingUrls = new Set(
-            existingImages.map(img => img.image_url?.url).filter(Boolean)
-        );
+        // Extract header (first 100 chars of base64 data) for format/metadata comparison
+        const getHeader = (url) => {
+            if (!url) return null;
+            const base64Start = url.indexOf('base64,');
+            return base64Start === -1 ? url.substring(0, 100) : url.substring(base64Start, base64Start + 107);
+        };
+
+        // Two images are near-duplicates if headers match AND sizes are within 1%
+        const isNearDuplicate = (newUrl, existingUrl) => {
+            if (!newUrl || !existingUrl) return false;
+            const newHeader = getHeader(newUrl);
+            const existingHeader = getHeader(existingUrl);
+            if (newHeader !== existingHeader) return false;
+            const sizeDiff = Math.abs(newUrl.length - existingUrl.length);
+            const maxSize = Math.max(newUrl.length, existingUrl.length);
+            return sizeDiff / maxSize < 0.01;
+        };
 
         for (const img of newImages) {
             const url = img.image_url?.url;
-            if (url && !existingUrls.has(url)) {
+            if (!url) continue;
+            const isDupe = existingImages.some(existing => isNearDuplicate(url, existing.image_url?.url));
+            if (!isDupe) {
                 existingImages.push(img);
-                existingUrls.add(url);
             }
         }
     }
