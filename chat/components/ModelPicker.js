@@ -10,6 +10,7 @@
 
 import { getProviderIcon } from '../services/providerIcons.js';
 import { loadModelConfig, getDefaultModelConfig } from '../services/modelConfig.js';
+import { getTicketCost, TIER_INSTANT } from '../services/modelTiers.js';
 
 export default class ModelPicker {
     /**
@@ -250,6 +251,20 @@ export default class ModelPicker {
         const iconData = getProviderIcon(model.provider, 'w-3.5 h-3.5');
         const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
 
+        // Get ticket cost for this model (use current reasoning state from app)
+        const reasoningEnabled = this.app.reasoningEnabled ?? true;
+        const ticketCost = getTicketCost(model.id, reasoningEnabled);
+
+        // Checkmark slot - always reserve space for consistent alignment
+        const checkmarkSlot = isSelected
+            ? '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-4 h-4 text-primary flex-shrink-0"><path fill-rule="evenodd" d="M19.916 4.626a.75.75 0 0 1 .208 1.04l-9 13.5a.75.75 0 0 1-1.154.114l-6-6a.75.75 0 0 1 1.06-1.06l5.353 5.353 8.493-12.74a.75.75 0 0 1 1.04-.207Z" clip-rule="evenodd" /></svg>'
+            : '<span class="w-4 h-4 flex-shrink-0"></span>';
+
+        // Build ticket badge - always reserve space for consistent alignment
+        const ticketBadge = ticketCost > TIER_INSTANT
+            ? `<span class="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-medium flex-shrink-0 min-w-[26px] text-center" title="${ticketCost} ticket${ticketCost > 1 ? 's' : ''}">${ticketCost}×</span>`
+            : '<span class="min-w-[26px] flex-shrink-0"></span>';
+
         return `
             <div class="model-option px-2 py-1.5 rounded-sm cursor-pointer transition-colors hover:bg-accent ${isSelected ? 'bg-accent' : ''}" data-model-name="${model.name}">
                 <div class="flex items-center gap-2">
@@ -259,7 +274,8 @@ export default class ModelPicker {
                     <div class="flex-1 min-w-0">
                         <div class="font-medium text-sm text-foreground truncate">${model.name}</div>
                     </div>
-                    ${isSelected ? '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-4 h-4 text-primary flex-shrink-0"><path fill-rule="evenodd" d="M19.916 4.626a.75.75 0 0 1 .208 1.04l-9 13.5a.75.75 0 0 1-1.154.114l-6-6a.75.75 0 0 1 1.06-1.06l5.353 5.353 8.493-12.74a.75.75 0 0 1 1.04-.207Z" clip-rule="evenodd" /></svg>' : ''}
+                    ${checkmarkSlot}
+                    ${ticketBadge}
                 </div>
             </div>
         `;

@@ -19,6 +19,7 @@ import openRouterAPI from './api.js';
 import stationClient from './services/station.js';
 import shareService from './services/shareService.js';
 import shareModals from './components/ShareModals.js';
+import { getTicketCost } from './services/modelTiers.js';
 
 const DEFAULT_MODEL_ID = 'openai/gpt-5.2-chat';
 const DEFAULT_MODEL_NAME = 'OpenAI: GPT-5.2 Instant';
@@ -4669,9 +4670,22 @@ Your API key has been cleared. A new key from a different station will be obtain
     async acquireAndSetApiKey(session) {
         if (!session) throw new Error("No active session found.");
 
-        const ticketCount = stationClient.getTicketCount();
-        if (ticketCount === 0) {
-            throw new Error("You have no inference tickets. Please open the right panel to register an invitation code and get tickets.");
+        const availableTickets = stationClient.getTicketCount();
+        if (availableTickets === 0) {
+            throw new Error("You have no inference tickets. Please open the right panel to enter an invitation code and get tickets.");
+        }
+
+        // Determine model ID from session model name
+        const modelName = session.model || DEFAULT_MODEL_NAME;
+        const modelEntry = this.state.models.find(m => m.name === modelName);
+        const modelId = modelEntry?.id || DEFAULT_MODEL_ID;
+
+        // Calculate ticket cost based on model tier and reasoning state
+        const ticketsRequired = getTicketCost(modelId, this.reasoningEnabled);
+
+        // Check if user has enough tickets
+        if (availableTickets < ticketsRequired) {
+            throw new Error(`Not enough tickets for this model. Need ${ticketsRequired}, but only ${availableTickets} available.`);
         }
 
         // Set current session for network logging
@@ -4680,7 +4694,7 @@ Your API key has been cleared. A new key from a different station will be obtain
         }
 
         try {
-            const result = await stationClient.requestApiKey();
+            const result = await stationClient.requestApiKey('OA-WebApp-Key', ticketsRequired);
 
             session.apiKey = result.key;
             session.apiKeyInfo = result;

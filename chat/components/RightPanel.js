@@ -9,6 +9,7 @@ import networkProxy from '../services/networkProxy.js';
 import tlsSecurityModal from './TLSSecurityModal.js';
 import proxyInfoModal from './ProxyInfoModal.js';
 import { getActivityDescription, getActivityIcon, getStatusDotClass, formatTimestamp } from '../services/networkLogRenderer.js';
+import { getTicketCost } from '../services/modelTiers.js';
 
 // Layout constant for toolbar overlay prediction
 const RIGHT_PANEL_WIDTH = 320; // 20rem = 320px (w-80)
@@ -447,6 +448,20 @@ class RightPanel {
 
         if (!this.currentSession) return; // Safety check
 
+        // Calculate ticket cost based on selected model and reasoning state
+        const modelName = this.currentSession.model || this.app.state.pendingModelName || 'OpenAI: GPT-5.2 Instant';
+        const modelEntry = this.app.state.models.find(m => m.name === modelName);
+        const modelId = modelEntry?.id || 'openai/gpt-5.2-chat';
+        const reasoningEnabled = this.app.reasoningEnabled ?? true;
+        const ticketsRequired = getTicketCost(modelId, reasoningEnabled);
+
+        // Check if user has enough tickets
+        const availableTickets = stationClient.getTicketCount();
+        if (availableTickets < ticketsRequired) {
+            alert(`Not enough tickets for this model. Need ${ticketsRequired}, but only ${availableTickets} available.`);
+            return;
+        }
+
         try {
             // Set current session for network logging
             if (this.currentSession && window.networkLogger) {
@@ -471,7 +486,7 @@ class RightPanel {
             this.isRequestingKey = true;
             this.renderTopSectionOnly();
 
-            const result = await stationClient.requestApiKey();
+            const result = await stationClient.requestApiKey('OA-WebApp-Key', ticketsRequired);
 
             // Store API key in current session
             this.currentSession.apiKey = result.key;
