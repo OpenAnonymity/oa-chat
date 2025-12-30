@@ -38,8 +38,10 @@ const WELCOME_CONTENT = {
 };
 
 // Shared class constants (copied verbatim from existing markup)
+// NOTE: Removed 'fade-in' from wrappers to prevent flash on session switch.
+// Animation is added dynamically in appendMessage() for new messages only.
 const CLASSES = {
-    userWrapper: 'w-full px-2 md:px-3 fade-in self-end mb-2',
+    userWrapper: 'w-full px-2 md:px-3 self-end mb-2',
     userGroup: 'group my-1 flex w-full flex-col gap-2 justify-end items-end relative',
     userBubble: 'py-3 px-4 font-normal message-user max-w-full',
     userContent: 'min-w-0 w-full overflow-hidden break-words',

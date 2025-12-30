@@ -372,6 +372,16 @@ export default class ChatArea {
      * Handles empty states, message rendering, LaTeX processing, and scroll behavior.
      */
     async render() {
+        // Clear any leftover streaming state from previous session to prevent stale updates
+        if (this.reasoningBuffer.timeout) {
+            clearTimeout(this.reasoningBuffer.timeout);
+            this.reasoningBuffer.timeout = null;
+        }
+        this.reasoningBuffer.content = '';
+        this.reasoningBuffer.messageId = null;
+        this.stopTypewriter();
+
+        const session = this.app.getCurrentSession();
         const messagesContainer = this.app.elements.messagesContainer;
         const session = this.app.getCurrentSession();
 
@@ -409,7 +419,7 @@ export default class ChatArea {
         // Check if session is shared and has new messages after sharing
         const sharedCount = session.shareInfo?.messageCount || 0;
         const hasNewMessagesAfterShare = session.shareInfo?.shareId && sharedCount > 0 && messages.length > sharedCount;
-        
+
         // Debug logging for shared indicator position
         if (session.shareInfo?.shareId) {
             console.log(`[ChatArea] Shared session: messageCount=${sharedCount}, currentMessages=${messages.length}, hasNewAfterShare=${hasNewMessagesAfterShare}`);
@@ -427,17 +437,17 @@ export default class ChatArea {
                 ? { ...message, streamingReasoning: false, streamingTokens: null }
                 : message;
             let html = buildMessageHTML(normalizedMessage, helpers, this.app.state.models, session.model, options);
-            
+
             // Insert "Above was shared" indicator after the last imported message
             if (hasNewMessagesAfterImport && index === importedCount - 1) {
                 html += buildImportedIndicator(importedCount);
             }
-            
+
             // Insert shared indicator after the last shared message (only if there are new messages after)
             if (hasNewMessagesAfterShare && !isSessionStreaming && index === sharedCount - 1) {
                 html += buildSharedIndicator(session.shareInfo.shareId);
             }
-            
+
             return html;
         }).join('');
 
@@ -1192,9 +1202,17 @@ export default class ChatArea {
         // Append the message
         messagesContainer.insertAdjacentHTML('beforeend', messageHtml);
 
-        // Render LaTeX only for the new message
+        // Render LaTeX only for the new message and add fade-in animation
         const newMessageEl = messagesContainer.querySelector(`[data-message-id="${message.id}"]`);
         if (newMessageEl) {
+            // Add fade-in animation for newly appended messages
+            newMessageEl.classList.add('fade-in');
+            // Also add to reasoning trace if present
+            const reasoningTrace = newMessageEl.querySelector('.reasoning-trace');
+            if (reasoningTrace) {
+                reasoningTrace.classList.add('fade-in');
+            }
+
             const contentEl = newMessageEl.querySelector('.message-content');
             if (contentEl) {
                 renderMathInElement(contentEl, {
@@ -1245,30 +1263,28 @@ export default class ChatArea {
     /**
      * Re-renders a message to its final state after streaming is complete.
      * This ensures reasoning traces are collapsed and tokens are correctly displayed.
+     * When reasoning is already finalized, does targeted updates to avoid flash.
      * @param {Object} message - The completed message object
      */
     async finalizeStreamingMessage(message) {
         const messageEl = document.querySelector(`[data-message-id="${message.id}"]`);
-        if (messageEl) {
-            const session = this.app.getCurrentSession();
-            const helpers = {
-                processContentWithLatex: this.app.processContentWithLatex.bind(this.app),
-                formatTime: this.app.formatTime.bind(this.app)
-            };
+        if (!messageEl) return;
 
-            // Re-build the entire message HTML to reflect its final state
-            // buildMessageHTML handles model resolution from message.model internally
-            const newMessageHtml = window.buildMessageHTML(message, helpers, this.app.state.models, session?.model);
+        // Check if reasoning trace is already finalized (subtitle shows duration, not streaming)
+        const existingReasoningTrace = messageEl.querySelector('.reasoning-trace');
+        const existingSubtitle = existingReasoningTrace?.querySelector(`#reasoning-subtitle-${message.id}`);
+        const isReasoningFinalized = existingSubtitle &&
+            !existingSubtitle.classList.contains('reasoning-subtitle-streaming') &&
+            existingSubtitle.textContent.startsWith('Thought for');
 
-            // Create a temporary container to parse the new HTML
-            const tempDiv = document.createElement('div');
-            tempDiv.innerHTML = newMessageHtml;
-            const newMessageEl = tempDiv.firstElementChild;
-
-            if (newMessageEl) {
-                messageEl.parentElement.replaceChild(newMessageEl, messageEl);
-                // Re-run KaTeX rendering on the new element
-                renderMathInElement(newMessageEl, {
+        // If reasoning is finalized, do targeted updates instead of full replacement
+        // This prevents flash by not touching the reasoning trace DOM at all
+        if (isReasoningFinalized) {
+            // Just update the content element if it exists
+            const contentEl = messageEl.querySelector('.message-content');
+            if (contentEl && message.content) {
+                contentEl.innerHTML = this.app.processContentWithLatex(message.content);
+                renderMathInElement(contentEl, {
                     delimiters: [
                         {left: '$$', right: '$$', display: true},
                         {left: '\\[', right: '\\]', display: true},
@@ -1276,9 +1292,38 @@ export default class ChatArea {
                     ],
                     throwOnError: false
                 });
-                // Setup citation carousel scrolling for the updated message
+            }
+
+            // Setup citation carousel if citations were added
+            if (message.citations && message.citations.length > 0) {
                 this.setupCitationCarouselScroll();
             }
+            return;
+        }
+
+        // Full replacement for messages without finalized reasoning
+        const session = this.app.getCurrentSession();
+        const helpers = {
+            processContentWithLatex: this.app.processContentWithLatex.bind(this.app),
+            formatTime: this.app.formatTime.bind(this.app)
+        };
+
+        const newMessageHtml = window.buildMessageHTML(message, helpers, this.app.state.models, session?.model);
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = newMessageHtml;
+        const newMessageEl = tempDiv.firstElementChild;
+
+        if (newMessageEl) {
+            messageEl.parentElement.replaceChild(newMessageEl, messageEl);
+            renderMathInElement(newMessageEl, {
+                delimiters: [
+                    {left: '$$', right: '$$', display: true},
+                    {left: '\\[', right: '\\]', display: true},
+                    {left: '\\(', right: '\\)', display: false}
+                ],
+                throwOnError: false
+            });
+            this.setupCitationCarouselScroll();
         }
     }
 
