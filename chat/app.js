@@ -2611,8 +2611,8 @@ class ChatApp {
                         //     this.chatArea.updateStreamingTokens(streamingMessageId, streamingTokenCount);
                         // }
                     },
-                    [], // No files for regeneration
-                    false, // No search for regeneration
+                    [], // No files for regeneration (files are included in processedMessages)
+                    this.searchEnabled, // Use current search toggle state
                     abortController,
                     async (reasoningChunk) => {
                         // Handle reasoning trace streaming
@@ -2637,7 +2637,8 @@ class ChatApp {
                         if (this.chatArea && this.isViewingSession(session.id)) {
                             this.chatArea.updateStreamingReasoning(streamingMessageId, streamedReasoning);
                         }
-                    }
+                    },
+                    this.reasoningEnabled // Use current reasoning toggle state
                 );
 
                 // Save the final message content with token data, reasoning, and citations
