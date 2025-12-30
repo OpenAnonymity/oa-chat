@@ -149,6 +149,7 @@ export default class Sidebar {
                         <button class="copy-link-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">Copy Link</button>
                         <button class="share-session-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">${shareLabel}</button>
                         ${isShared ? `<button class="delete-share-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">Delete Share</button>` : ''}
+                        <button class="export-pdf-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">Export as PDF</button>
                         <button class="delete-session-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">Delete</button>
                     </div>
                 </div>
@@ -272,6 +273,21 @@ export default class Sidebar {
                     this.app.switchSession(sessionId);
                 }
                 this.app.deleteCurrentSessionShare();
+            });
+        });
+
+        // Export as PDF action
+        document.querySelectorAll('.export-pdf-action').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const sessionId = btn.dataset.sessionId;
+                // Close the menu
+                document.querySelectorAll('.session-menu').forEach(m => m.classList.add('hidden'));
+                // Switch to session if not current, then export
+                if (sessionId !== this.app.state.currentSessionId) {
+                    this.app.switchSession(sessionId);
+                }
+                this.app.exportChatToPdf();
             });
         });
     }

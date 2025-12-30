@@ -91,7 +91,6 @@ class ChatApp {
             showRightPanelBtn: document.getElementById('show-right-panel-btn'),
             shareBtn: document.getElementById('share-btn'),
             shareBtnText: document.getElementById('share-btn-text'),
-            exportPdfBtn: document.getElementById('export-pdf-btn'),
             wideModeBtn: document.getElementById('wide-mode-btn'),
             sidebar: document.getElementById('sidebar'),
             hideSidebarBtn: document.getElementById('hide-sidebar-btn'),
@@ -688,10 +687,10 @@ class ChatApp {
         const mainWidth = currentWidth + widthDelta;
         const actualContentWidth = messagesContainer.getBoundingClientRect().width;
         const sideMargin = (mainWidth - actualContentWidth) / 2;
-        // Button area: ~116px (3×36px buttons + gaps + padding)
+        // Button area: ~80px (2×36px buttons + gaps + padding) - show-sidebar + wide-mode when sidebar hidden
         // But messages-container has internal padding (px-6 = 24px on md+), so actual text is further inward
-        // With sideMargin=80 + internal padding=24, actual content at 104px - minimal overlap with 116px buttons
-        const buttonAreaWidth = 80;
+        // With sideMargin=52 + internal padding=24, actual content at 76px - minimal overlap with 80px buttons
+        const buttonAreaWidth = 52;
 
         // Wide screen: no overlap, make toolbar transparent (visual only, no layout change)
         const isWideScreen = sideMargin >= buttonAreaWidth;
@@ -3841,37 +3840,7 @@ class ChatApp {
         if (this.chatArea) {
             await this.chatArea.render();
         }
-        this.updateExportPdfButtonVisibility();
         this.updateWideModeButtonVisibility();
-    }
-
-    /**
-     * Updates export PDF button visibility and position.
-     * Shows only when a session is active, adjusts position based on sidebar state.
-     */
-    updateExportPdfButtonVisibility() {
-        const btn = this.elements.exportPdfBtn;
-        if (!btn) return;
-
-        const hasSession = !!this.getCurrentSession();
-        const sidebarHidden = this.elements.sidebar?.classList.contains('sidebar-hidden');
-        const isMobile = this.isMobileView();
-
-        if (hasSession) {
-            btn.classList.remove('hidden');
-            btn.classList.add('flex');
-            // Adjust position: left-14 when sidebar is hidden (to avoid overlap with show-sidebar-btn)
-            if (sidebarHidden || isMobile) {
-                btn.classList.remove('left-4');
-                btn.classList.add('left-14');
-            } else {
-                btn.classList.remove('left-14');
-                btn.classList.add('left-4');
-            }
-        } else {
-            btn.classList.add('hidden');
-            btn.classList.remove('flex');
-        }
     }
 
     /**
@@ -3889,15 +3858,14 @@ class ChatApp {
         if (hasSession) {
             btn.classList.remove('hidden');
             btn.classList.add('flex');
-            // Adjust position based on sidebar state
-            // When sidebar hidden: show-sidebar-btn at left-4, export-pdf at left-14, wide-mode at left-24
-            // When sidebar visible: export-pdf at left-4, wide-mode at left-14
+            // When sidebar hidden/mobile: show-sidebar-btn at left-4, wide-mode at left-14
+            // When sidebar visible: wide-mode at left-4
             if (sidebarHidden || isMobile) {
-                btn.classList.remove('left-4', 'left-14');
-                btn.classList.add('left-24');
-            } else {
-                btn.classList.remove('left-4', 'left-24');
+                btn.classList.remove('left-4');
                 btn.classList.add('left-14');
+            } else {
+                btn.classList.remove('left-14');
+                btn.classList.add('left-4');
             }
         } else {
             btn.classList.add('hidden');
@@ -3934,22 +3902,11 @@ class ChatApp {
     async exportChatToPdf() {
         if (!this.getCurrentSession()) return;
 
-        const btn = this.elements.exportPdfBtn;
-        if (btn) {
-            btn.disabled = true;
-            btn.classList.add('opacity-50');
-        }
-
         try {
             const { exportToPdf } = await import('./services/pdfExport.js');
             await exportToPdf(this.elements.messagesContainer);
         } catch (error) {
             console.error('PDF export failed:', error);
-        } finally {
-            if (btn) {
-                btn.disabled = false;
-                btn.classList.remove('opacity-50');
-            }
         }
     }
 
@@ -3970,7 +3927,6 @@ class ChatApp {
         if (backdrop) {
             backdrop.classList.remove('visible');
         }
-        this.updateExportPdfButtonVisibility();
         this.updateWideModeButtonVisibility();
         // Predict final width: sidebar is closing, main area will be WIDER
         // Only affects width on desktop, on mobile sidebar overlays
@@ -3998,7 +3954,6 @@ class ChatApp {
         if (backdrop && this.isMobileView()) {
             backdrop.classList.add('visible');
         }
-        this.updateExportPdfButtonVisibility();
         this.updateWideModeButtonVisibility();
         // Predict final width: sidebar is opening, main area will be NARROWER
         // Only affects width on desktop, on mobile sidebar overlays
@@ -4064,13 +4019,6 @@ class ChatApp {
         if (this.elements.showSidebarBtn) {
             this.elements.showSidebarBtn.addEventListener('click', () => {
                 this.showSidebar();
-            });
-        }
-
-        // Export PDF button
-        if (this.elements.exportPdfBtn) {
-            this.elements.exportPdfBtn.addEventListener('click', () => {
-                this.exportChatToPdf();
             });
         }
 
