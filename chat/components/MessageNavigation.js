@@ -116,7 +116,6 @@ export default class MessageNavigation {
                     data-message-id="${msg.id}"
                     aria-label="Jump to message ${index + 1}"
                     aria-current="${isCurrent}"
-                    title="Message ${index + 1}"
                     style="height: ${barHeight}px"
                 ></button>
             `;
