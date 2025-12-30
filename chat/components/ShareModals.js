@@ -6,14 +6,16 @@
 
 import shareService from '../services/shareService.js';
 
-// TTL preset options used across modals
+// LocalStorage keys for share preferences
+const PASSWORD_MODE_KEY = 'oa-share-password-mode';
+const EXPIRY_TTL_KEY = 'oa-share-expiry-ttl';
+
+// TTL preset options for segmented control
 const TTL_PRESETS = [
-    { value: 60, label: '1 minute' },
-    { value: 3600, label: '1 hour' },
-    { value: 86400, label: '1 day' },
-    { value: 604800, label: '7 days' },
-    { value: 1209600, label: '14 days' },
-    { value: 2592000, label: '30 days' }
+    { value: 86400, label: '1 day', short: '1d' },
+    { value: 604800, label: '7 days', short: '7d' },
+    { value: 2592000, label: '30 days', short: '30d' },
+    { value: 0, label: 'Indefinite', short: '∞' }
 ];
 
 /**
@@ -29,49 +31,70 @@ function escapeHtml(text) {
  * Format TTL seconds to human-readable string
  */
 function formatTtl(seconds) {
+    if (!seconds || seconds === 0) return 'Never';
     if (seconds < 3600) return `${Math.round(seconds / 60)} min`;
     if (seconds < 86400) return `${Math.round(seconds / 3600)} hour${seconds >= 7200 ? 's' : ''}`;
     return `${Math.round(seconds / 86400)} day${seconds >= 172800 ? 's' : ''}`;
 }
 
 /**
- * Get TTL seconds from form elements
+ * Get saved password mode preference
  */
-function getTtlSeconds(presetEl, customValueEl, customUnitEl) {
-    if (presetEl?.value === 'custom') {
-        const val = parseInt(customValueEl?.value, 10) || 1;
-        const unit = parseInt(customUnitEl?.value, 10) || 86400;
-        return Math.max(60, Math.min(val * unit, 2592000));
-    }
-    return parseInt(presetEl?.value, 10) || 604800;
+function getPasswordMode() {
+    return localStorage.getItem(PASSWORD_MODE_KEY) || 'pin';
 }
 
 /**
- * Build TTL options HTML with custom value support
+ * Save password mode preference
  */
-function buildTtlOptionsHtml(prevTtl = 604800) {
-    const isCustomPrev = prevTtl && !TTL_PRESETS.some(opt => opt.value === prevTtl);
-    let html = '';
-    if (isCustomPrev) {
-        html += `<option value="${prevTtl}" selected>${formatTtl(prevTtl)} (last time)</option>`;
-    }
-    html += TTL_PRESETS.map(opt =>
-        `<option value="${opt.value}"${!isCustomPrev && opt.value === prevTtl ? ' selected' : ''}>${opt.label}</option>`
-    ).join('');
-    html += '<option value="custom">Custom...</option>';
-    return html;
+function setPasswordMode(mode) {
+    localStorage.setItem(PASSWORD_MODE_KEY, mode);
+}
+
+/**
+ * Get saved expiry TTL preference
+ */
+function getExpiryTtl() {
+    const saved = localStorage.getItem(EXPIRY_TTL_KEY);
+    return saved !== null ? parseInt(saved, 10) : 604800; // Default to 7 days
+}
+
+/**
+ * Save expiry TTL preference
+ */
+function setExpiryTtl(ttl) {
+    localStorage.setItem(EXPIRY_TTL_KEY, ttl.toString());
+}
+
+/**
+ * Sanitize PIN input - strip non-alphanumeric characters
+ */
+function sanitizePinInput(value) {
+    return value.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 6);
 }
 
 /**
  * Password visibility toggle icon SVGs
  */
-const EYE_CLOSED_SVG = `<svg class="w-4 h-4 eye-closed" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+const EYE_CLOSED_SVG = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
     <path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.451 10.451 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.522 10.522 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88" />
 </svg>`;
 
-const EYE_OPEN_SVG = `<svg class="w-4 h-4 eye-open hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+const EYE_OPEN_SVG = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
     <path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
     <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+</svg>`;
+
+const COPY_ICON_SVG = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+    <path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
+</svg>`;
+
+const CHECK_ICON_SVG = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+    <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+</svg>`;
+
+const LINK_ICON_SVG = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+    <path stroke-linecap="round" stroke-linejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244" />
 </svg>`;
 
 class ShareModals {
@@ -83,15 +106,16 @@ class ShareModals {
      * Clean up current modal
      */
     cleanup() {
-        // Remove escape key handler if present
         if (this._escapeHandler) {
             document.removeEventListener('keydown', this._escapeHandler);
             this._escapeHandler = null;
         }
+        if (this._restoreMainInput) {
+            this._restoreMainInput();
+            this._restoreMainInput = null;
+        }
         if (this.currentModal) {
-            this.currentModal.classList.add('fade-out');
-            const modal = this.currentModal;
-            setTimeout(() => modal.remove(), 150);
+            this.currentModal.remove();
             this.currentModal = null;
         }
     }
@@ -104,38 +128,208 @@ class ShareModals {
         modal.className = `fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm fade-in ${className}`;
         this.currentModal = modal;
         document.body.appendChild(modal);
+
+        // Prevent main input from stealing focus while modal is open
+        const mainInput = document.getElementById('message-input');
+        if (mainInput) {
+            mainInput.setAttribute('tabindex', '-1');
+            this._restoreMainInput = () => mainInput.removeAttribute('tabindex');
+        }
+
+        // Focus trap: keep focus within modal
+        modal.addEventListener('keydown', (e) => {
+            if (e.key === 'Tab') {
+                const focusable = modal.querySelectorAll('button, input, select, textarea, [tabindex]:not([tabindex="-1"])');
+                if (focusable.length === 0) return;
+
+                const first = focusable[0];
+                const last = focusable[focusable.length - 1];
+
+                if (e.shiftKey && document.activeElement === first) {
+                    e.preventDefault();
+                    last.focus();
+                } else if (!e.shiftKey && document.activeElement === last) {
+                    e.preventDefault();
+                    first.focus();
+                }
+            }
+        });
+
         return modal;
     }
 
     /**
-     * Setup password toggle functionality
+     * Setup password toggle functionality (uses CSS masking since type="text" to avoid password managers)
      */
     setupPasswordToggle(container) {
         const toggleBtn = container.querySelector('.toggle-password-btn');
         const passwordInput = container.querySelector('.password-input');
         if (!toggleBtn || !passwordInput) return;
 
+        // Prevent button from stealing focus
+        toggleBtn.onmousedown = (e) => e.preventDefault();
+
+        // Default: password is shown (not masked)
         toggleBtn.onclick = () => {
-            const isHidden = passwordInput.type === 'password';
-            passwordInput.type = isHidden ? 'text' : 'password';
-            toggleBtn.querySelector('.eye-open')?.classList.toggle('hidden', !isHidden);
-            toggleBtn.querySelector('.eye-closed')?.classList.toggle('hidden', isHidden);
+            const isMasked = passwordInput.classList.contains('text-masked');
+            passwordInput.classList.toggle('text-masked');
+            // When masked: show eye-closed, hide eye-open
+            // When shown: show eye-open, hide eye-closed
+            toggleBtn.querySelector('.eye-open')?.classList.toggle('hidden', !isMasked);
+            toggleBtn.querySelector('.eye-closed')?.classList.toggle('hidden', isMasked);
         };
     }
 
     /**
-     * Setup custom TTL toggle functionality
+     * Setup PIN input with visual boxes
      */
-    setupTtlToggle(container) {
-        const preset = container.querySelector('.ttl-preset');
-        const customContainer = container.querySelector('.ttl-custom-container');
-        const customValue = container.querySelector('.ttl-custom-value');
-        if (!preset || !customContainer) return;
+    setupPinInput(container) {
+        const pinInput = container.querySelector('.pin-hidden-input');
+        const boxes = container.querySelectorAll('.pin-box');
+        const toggleBtn = container.querySelector('.toggle-pin-visibility');
+        if (!pinInput || !boxes.length) return;
 
-        preset.onchange = () => {
-            const isCustom = preset.value === 'custom';
-            customContainer.classList.toggle('hidden', !isCustom);
-            if (isCustom && customValue) customValue.focus();
+        let isRevealed = true; // Show PIN by default (low-stakes sharing)
+
+        const updateBoxes = () => {
+            const value = pinInput.value;
+            boxes.forEach((box, i) => {
+                const char = value[i] || '';
+                if (char) {
+                    box.textContent = isRevealed ? char : '•';
+                    box.classList.add('filled');
+                } else {
+                    box.textContent = '';
+                    box.classList.remove('filled');
+                }
+                // Highlight current box
+                box.classList.toggle('active', i === value.length && value.length < 6);
+            });
+        };
+
+        // Handle input
+        pinInput.addEventListener('input', (e) => {
+            pinInput.value = sanitizePinInput(e.target.value);
+            updateBoxes();
+        });
+
+        // Handle paste
+        pinInput.addEventListener('paste', (e) => {
+            e.preventDefault();
+            const pasted = (e.clipboardData || window.clipboardData).getData('text');
+            pinInput.value = sanitizePinInput(pasted);
+            updateBoxes();
+        });
+
+        // Click on container focuses input
+        container.querySelector('.pin-input-container')?.addEventListener('click', () => {
+            pinInput.focus();
+        });
+
+        // Toggle visibility - prevent button from stealing focus
+        if (toggleBtn) {
+            toggleBtn.onmousedown = (e) => e.preventDefault();
+            toggleBtn.onclick = () => {
+                isRevealed = !isRevealed;
+                toggleBtn.querySelector('.eye-open')?.classList.toggle('hidden', !isRevealed);
+                toggleBtn.querySelector('.eye-closed')?.classList.toggle('hidden', isRevealed);
+                updateBoxes();
+            };
+        }
+
+        // Initial state
+        updateBoxes();
+    }
+
+    /**
+     * Setup expiry segmented control
+     */
+    setupExpiryToggle(container, initialValue = 604800) {
+        const toggleContainer = container.querySelector('.expiry-toggle-container');
+        const buttons = container.querySelectorAll('.expiry-toggle-btn');
+        const indicator = container.querySelector('.expiry-toggle-indicator');
+        const customContainer = container.querySelector('.expiry-custom-container');
+        const customValue = container.querySelector('.expiry-custom-value');
+        const customUnit = container.querySelector('.expiry-custom-unit');
+
+        if (!buttons.length || !indicator || !toggleContainer) return;
+
+        // Find initial selection
+        let selectedIndex = TTL_PRESETS.findIndex(p => p.value === initialValue);
+        const isCustomInitial = selectedIndex === -1 && initialValue !== 604800 && initialValue !== 0;
+        if (selectedIndex === -1) selectedIndex = 1; // Default to 7 days
+
+        const updateIndicator = (index) => {
+            const isCustom = index === buttons.length - 1;
+            const btn = buttons[index];
+            if (btn) {
+                const containerRect = toggleContainer.getBoundingClientRect();
+                const btnRect = btn.getBoundingClientRect();
+                indicator.style.width = `${btnRect.width}px`;
+                indicator.style.transform = `translateX(${btnRect.left - containerRect.left - 3}px)`;
+            }
+
+            // Update aria states
+            buttons.forEach((b, i) => {
+                b.setAttribute('aria-checked', i === index ? 'true' : 'false');
+            });
+
+            // Show/hide custom input
+            if (customContainer) {
+                customContainer.classList.toggle('hidden', !isCustom);
+                if (isCustom && customValue) {
+                    setTimeout(() => customValue.focus(), 100);
+                }
+            }
+        };
+
+        buttons.forEach((btn, index) => {
+            btn.onclick = () => {
+                selectedIndex = index;
+                updateIndicator(index);
+                // Save preference (for presets, not custom)
+                if (index < TTL_PRESETS.length) {
+                    setExpiryTtl(TTL_PRESETS[index].value);
+                }
+            };
+        });
+
+        // Set initial state
+        if (isCustomInitial) {
+            selectedIndex = buttons.length - 1; // Custom
+            // Pre-fill custom values
+            if (customValue && customUnit) {
+                if (initialValue >= 86400) {
+                    customValue.value = Math.round(initialValue / 86400);
+                    customUnit.value = '86400';
+                } else if (initialValue >= 3600) {
+                    customValue.value = Math.round(initialValue / 3600);
+                    customUnit.value = '3600';
+                } else {
+                    customValue.value = Math.round(initialValue / 60);
+                    customUnit.value = '60';
+                }
+            }
+        }
+        // Set initial position without animation
+        requestAnimationFrame(() => {
+            indicator.style.transition = 'none';
+            updateIndicator(selectedIndex);
+            // Re-enable transitions after a frame
+            requestAnimationFrame(() => {
+                indicator.style.transition = '';
+            });
+        });
+
+        return () => {
+            const isCustom = selectedIndex === buttons.length - 1;
+            if (isCustom && customValue && customUnit) {
+                const val = parseInt(customValue.value, 10) || 1;
+                const unit = parseInt(customUnit.value, 10) || 86400;
+                return Math.max(60, Math.min(val * unit, 2592000));
+            }
+            const preset = TTL_PRESETS[selectedIndex];
+            return preset !== undefined ? preset.value : 604800;
         };
     }
 
@@ -145,8 +339,6 @@ class ShareModals {
 
     /**
      * Show prompt when user opens a share they've previously forked
-     * @param {Object} forkedSession - The forked session
-     * @returns {Promise<boolean>} True if user wants fresh import, false for their copy
      */
     showForkedPrompt(forkedSession) {
         return new Promise((resolve) => {
@@ -190,8 +382,6 @@ class ShareModals {
 
     /**
      * Show prompt asking user if they want to view their local copy or fetch latest
-     * @param {Object} existingSession - The existing imported session
-     * @returns {Promise<boolean>} True if user wants to fetch latest, false for local copy
      */
     showUpdatePrompt(existingSession) {
         return new Promise((resolve) => {
@@ -233,13 +423,11 @@ class ShareModals {
 
     /**
      * Show prompt when shared API key verification fails
-     * @param {Object} opts - {error, stationId, isBanned, banReason}
-     * @returns {Promise<'import_without_key'|'cancel'>}
      */
     showSharedKeyVerificationFailedPrompt({ error, stationId, isBanned, banReason }) {
         return new Promise((resolve) => {
             const modal = this.createModalContainer();
-            
+
             const title = isBanned ? 'Shared Key From Banned Station' : 'Shared Key Verification Failed';
             const description = isBanned
                 ? `The included API key is from a station that has been banned.`
@@ -247,7 +435,7 @@ class ShareModals {
             const explanationText = isBanned
                 ? `Keys from banned stations cannot be trusted.`
                 : `It may be that the original chat session owner tampered with the key. For your safety, we blocked this key, and your data are not affected.`;
-            
+
             modal.innerHTML = `
                 <div class="bg-background border-2 border-amber-500/50 rounded-xl shadow-2xl p-6 max-w-md mx-4 w-full">
                     <div class="flex items-center gap-2 mb-2">
@@ -257,21 +445,19 @@ class ShareModals {
                         <h3 class="text-lg font-semibold text-amber-600 dark:text-amber-400">${title}</h3>
                     </div>
                     <p class="text-sm text-muted-foreground mb-3">${description}</p>
-                    
+
                     <div class="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3 mb-3 text-xs">
                         ${stationId ? `<div class="mb-1"><span class="text-muted-foreground">Station:</span> <code class="text-amber-700 dark:text-amber-300 font-medium">${escapeHtml(stationId)}</code></div>` : ''}
                         ${isBanned && banReason ? `<div class="mb-1"><span class="text-muted-foreground">Ban reason:</span> <span class="text-amber-700 dark:text-amber-300">${escapeHtml(banReason)}</span></div>` : ''}
                         <div><span class="text-muted-foreground">Error:</span> <span class="text-amber-700 dark:text-amber-300 font-medium">${escapeHtml(error)}</span></div>
                     </div>
-                    
-                    <p class="text-sm text-muted-foreground mb-3">
-                        ${explanationText}
-                    </p>
-                    
+
+                    <p class="text-sm text-muted-foreground mb-3">${explanationText}</p>
+
                     <p class="text-xs text-muted-foreground mb-4">
                         Be cautious with shared API keys from untrusted sources. You can import the chat without the key and request your own when needed.
                     </p>
-                    
+
                     <div class="flex flex-col gap-2">
                         <button id="import-without-key-btn" class="w-full px-4 py-2 text-sm font-medium rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">
                             Import without the shared API key <span class="opacity-60 ml-1">(Enter)</span>
@@ -303,8 +489,6 @@ class ShareModals {
 
     /**
      * Simple password prompt for importing encrypted shares
-     * @param {string} message - Prompt message
-     * @returns {Promise<string|null>} Password or null if cancelled
      */
     showImportPasswordPrompt(message) {
         return new Promise((resolve) => {
@@ -313,15 +497,16 @@ class ShareModals {
                 <div class="w-full max-w-sm rounded-xl border border-border bg-background shadow-2xl p-6 mx-4">
                     <p class="text-sm text-foreground mb-4">${message}</p>
                     <div class="relative mb-3">
-                        <input type="password" class="password-input w-full px-3 py-2 pr-10 text-sm border border-border rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary" placeholder="Password">
-                        <button type="button" class="toggle-password-btn absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-1">
-                            ${EYE_CLOSED_SVG}${EYE_OPEN_SVG}
+                        <input type="text" class="password-input w-full px-3 py-2 pr-10 text-sm border border-border/60 rounded-lg bg-background text-foreground focus:outline-none focus:border-primary" placeholder="Password or PIN" autocomplete="off">
+                        <button type="button" class="toggle-password-btn absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-1 rounded-md hover-highlight transition-colors">
+                            <span class="eye-closed">${EYE_CLOSED_SVG}</span>
+                            <span class="eye-open hidden">${EYE_OPEN_SVG}</span>
                         </button>
                     </div>
                     <p class="password-error text-xs text-destructive mb-3 hidden"></p>
                     <div class="flex gap-2 justify-end">
-                        <button id="cancel-btn" class="px-4 py-2 text-sm rounded-lg border border-border hover:bg-muted transition-colors">Cancel</button>
-                        <button id="confirm-btn" class="px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">Import</button>
+                        <button id="cancel-btn" class="px-3 py-1.5 text-sm rounded-md border border-border bg-background hover:bg-muted transition-all duration-200 hover:shadow-sm">Cancel</button>
+                        <button id="confirm-btn" class="px-3 py-1.5 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-all duration-200 hover:shadow-sm">Import</button>
                     </div>
                 </div>
             `;
@@ -358,103 +543,180 @@ class ShareModals {
     }
 
     // =========================================================================
-    // SHARE CREATION MODALS
+    // SHARE CREATION MODALS (Legacy - kept for compatibility)
     // =========================================================================
 
     /**
      * Show share settings modal for creating/updating shares
-     * @param {Object} opts - {message, isCreate, hasApiKey}
-     * @returns {Promise<{password: string|null, ttlSeconds: number, shareApiKeyMetadata: boolean}|null>}
      */
     showSettingsPrompt({ message, isCreate = false, hasApiKey = false }) {
         return new Promise((resolve) => {
+            const passwordMode = getPasswordMode();
+            const savedExpiryTtl = getExpiryTtl();
             const modal = this.createModalContainer();
+
             modal.innerHTML = `
                 <div class="w-full max-w-sm rounded-xl border border-border bg-background shadow-2xl p-6 mx-4">
-                    <p class="text-sm text-foreground mb-3">${message}</p>
-                    
-                    <!-- Info message -->
-                    <div class="flex items-center gap-2 mb-4 text-muted-foreground">
-                        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                        </svg>
-                        <span class="text-xs">Chat will be shared till the bottom</span>
-                    </div>
+                    <h3 class="text-base font-medium text-foreground mb-4">Share Chat</h3>
 
-                    <!-- No password checkbox -->
-                    <label class="flex items-center gap-2 mb-3 cursor-pointer select-none">
-                        <input type="checkbox" class="no-password-checkbox w-4 h-4 rounded border-border text-primary focus:ring-primary">
-                        <span class="text-sm text-foreground">No password (plaintext)</span>
-                    </label>
+                    <!-- PIN/Password Section -->
+                    <div class="mb-4">
+                        <div class="flex items-center justify-between mb-2">
+                            <label class="text-xs text-muted-foreground">Encryption</label>
+                            <div class="encryption-mode-toggle" role="radiogroup" aria-label="Encryption mode">
+                                <button type="button" class="encryption-mode-btn ${passwordMode === 'pin' ? 'active' : ''}" data-mode="pin">PIN</button>
+                                <button type="button" class="encryption-mode-btn ${passwordMode === 'password' ? 'active' : ''}" data-mode="password">Password</button>
+                                <div class="encryption-mode-indicator"></div>
+                            </div>
+                        </div>
 
-                    <!-- Password input -->
-                    <div class="password-section relative mb-3">
-                        <input type="text" class="password-input w-full px-3 py-2 pr-10 text-sm border border-border rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary" placeholder="Password">
-                        <button type="button" class="toggle-password-btn absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-1">
-                            ${EYE_CLOSED_SVG}${EYE_OPEN_SVG}
-                        </button>
-                    </div>
-                    <p class="password-error text-xs text-destructive mb-3 hidden"></p>
+                        <!-- Encryption input container (fixed height to prevent layout shift) -->
+                        <div class="h-20 flex items-center">
+                            <!-- PIN Input (OTP-style) -->
+                            <div class="pin-section w-full ${passwordMode === 'password' ? 'hidden' : ''}">
+                                <div class="pin-input-container">
+                                    <input type="text" class="pin-hidden-input" maxlength="6" autocomplete="off" inputmode="text">
+                                    <div class="pin-boxes">
+                                        <div class="pin-box"></div>
+                                        <div class="pin-box"></div>
+                                        <div class="pin-box"></div>
+                                        <span class="pin-separator">-</span>
+                                        <div class="pin-box"></div>
+                                        <div class="pin-box"></div>
+                                        <div class="pin-box"></div>
+                                    </div>
+                                </div>
+                                <div class="flex items-center justify-center gap-2 mt-1.5">
+                                    <button type="button" class="toggle-pin-visibility text-muted-foreground hover:text-foreground flex items-center p-1 rounded-md hover-highlight transition-colors">
+                                        <span class="eye-closed hidden">${EYE_CLOSED_SVG}</span>
+                                        <span class="eye-open">${EYE_OPEN_SVG}</span>
+                                    </button>
+                                    <span class="text-muted-foreground">·</span>
+                                    <span class="text-xs text-muted-foreground">Leave empty for no encryption</span>
+                                </div>
+                            </div>
 
-                    <!-- TTL Settings -->
-                    <div class="mb-3">
-                        <label class="block text-xs text-muted-foreground mb-1.5">Expires after</label>
-                        <div class="flex gap-2">
-                            <select class="ttl-preset flex-1 px-3 py-2 text-sm border border-border rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary">
-                                ${buildTtlOptionsHtml()}
-                            </select>
-                            <div class="ttl-custom-container hidden flex gap-1">
-                                <input type="number" class="ttl-custom-value w-16 px-2 py-2 text-sm border border-border rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary" min="1" max="999" placeholder="1">
-                                <select class="ttl-custom-unit px-2 py-2 text-sm border border-border rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary">
-                                    <option value="60">min</option>
-                                    <option value="3600">hour</option>
-                                    <option value="86400" selected>day</option>
-                                </select>
+                            <!-- Password Input (Traditional) -->
+                            <div class="password-section w-full ${passwordMode === 'pin' ? 'hidden' : ''}">
+                                <div class="relative">
+                                    <input type="text" class="password-input w-full px-3 py-2.5 pr-10 text-sm border border-border/60 rounded-lg bg-background text-foreground focus:outline-none focus:border-primary" placeholder="Password (leave empty for no encryption)" autocomplete="off">
+                                    <button type="button" class="toggle-password-btn absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-1 rounded-md hover-highlight transition-colors">
+                                        <span class="eye-closed hidden">${EYE_CLOSED_SVG}</span>
+                                        <span class="eye-open">${EYE_OPEN_SVG}</span>
+                                    </button>
+                                </div>
+                                <p class="text-xs text-muted-foreground mt-2 text-center">Leave empty for no encryption</p>
                             </div>
                         </div>
                     </div>
 
+                    <!-- Expiry Segmented Control -->
+                    <div class="mb-4">
+                        <label class="block text-xs text-muted-foreground mb-2">Expires after</label>
+                        <div class="expiry-toggle-container" role="radiogroup" aria-label="Expiry selection">
+                            <div class="expiry-toggle-indicator"></div>
+                            ${TTL_PRESETS.map((p) => `
+                                <button type="button" class="expiry-toggle-btn" data-value="${p.value}" aria-checked="${p.value === savedExpiryTtl ? 'true' : 'false'}">
+                                    ${p.short}
+                                </button>
+                            `).join('')}
+                            <button type="button" class="expiry-toggle-btn" data-value="custom" aria-checked="false">
+                                Custom
+                            </button>
+                        </div>
+                        <div class="expiry-custom-container hidden mt-2 flex gap-2">
+                            <input type="number" class="expiry-custom-value w-20 px-3 py-1.5 text-sm border border-border/60 rounded-lg bg-background text-foreground focus:outline-none focus:border-primary" min="1" max="999" value="1">
+                            <select class="expiry-custom-unit px-3 py-1.5 text-sm border border-border/60 rounded-lg bg-background text-foreground focus:outline-none focus:border-primary">
+                                <option value="3600">hours</option>
+                                <option value="86400" selected>days</option>
+                            </select>
+                        </div>
+                    </div>
+
                     ${hasApiKey ? `
-                        <label class="flex items-start gap-2 mb-4 cursor-pointer select-none">
-                            <input type="checkbox" class="api-metadata-checkbox w-4 h-4 mt-0.5 rounded border-border text-primary focus:ring-primary">
+                        <label class="flex items-center gap-2.5 mb-4 cursor-pointer select-none">
+                            <input type="checkbox" class="api-metadata-checkbox w-4 h-4 rounded border-border text-primary focus:ring-primary">
                             <div>
-                                <span class="text-sm text-foreground">Share API key metadata</span>
-                                <p class="text-xs text-muted-foreground mt-0.5">Station, expiry, usage stats</p>
+                                <span class="text-sm text-foreground">Include this session's API key</span>
+                                <p class="text-xs text-muted-foreground">Recipients can borrow your key and continue chatting</p>
                             </div>
                         </label>
                     ` : ''}
 
+                    <p class="text-xs text-muted-foreground mb-4 flex items-center gap-1.5">
+                        <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                        All messages in this chat will be shared
+                    </p>
+
                     <div class="flex gap-2 justify-end">
-                        <button id="cancel-btn" class="px-4 py-2 text-sm rounded-lg border border-border hover:bg-muted transition-colors">Cancel</button>
-                        <button id="confirm-btn" class="px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">
-                            ${isCreate ? 'Share' : 'Import'}
+                        <button id="cancel-btn" class="px-3 py-1.5 text-sm rounded-md border border-border bg-background hover:bg-muted transition-all duration-200 hover:shadow-sm">Cancel</button>
+                        <button id="confirm-btn" class="px-3 py-1.5 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-all duration-200 hover:shadow-sm">
+                            ${isCreate ? 'Create Link' : 'Import'}
                         </button>
                     </div>
                 </div>
             `;
 
-            const noPasswordCheckbox = modal.querySelector('.no-password-checkbox');
+            const pinSection = modal.querySelector('.pin-section');
             const passwordSection = modal.querySelector('.password-section');
+            const pinInput = modal.querySelector('.pin-hidden-input');
             const passwordInput = modal.querySelector('.password-input');
-            const errorEl = modal.querySelector('.password-error');
-            const ttlPreset = modal.querySelector('.ttl-preset');
-            const ttlCustomValue = modal.querySelector('.ttl-custom-value');
-            const ttlCustomUnit = modal.querySelector('.ttl-custom-unit');
+            const modeToggle = modal.querySelector('.encryption-mode-toggle');
+            const modeBtns = modal.querySelectorAll('.encryption-mode-btn');
+            const modeIndicator = modal.querySelector('.encryption-mode-indicator');
             const apiMetadataCheckbox = modal.querySelector('.api-metadata-checkbox');
 
-            this.setupPasswordToggle(modal);
-            this.setupTtlToggle(modal);
+            let currentMode = passwordMode;
 
-            // Toggle no-password mode
-            noPasswordCheckbox.onchange = () => {
-                const isPlaintext = noPasswordCheckbox.checked;
-                passwordSection.classList.toggle('hidden', isPlaintext);
-                passwordSection.classList.toggle('opacity-50', isPlaintext);
-                if (isPlaintext) {
-                    passwordInput.value = '';
-                    errorEl.classList.add('hidden');
-                }
+            this.setupPinInput(modal);
+            this.setupPasswordToggle(modal);
+            const getTtlSeconds = this.setupExpiryToggle(modal, savedExpiryTtl);
+
+// Helper to update indicator position/width based on active button
+            const updateModeIndicator = (activeBtn) => {
+                if (!modeIndicator || !activeBtn) return;
+                const containerRect = modeToggle.getBoundingClientRect();
+                const btnRect = activeBtn.getBoundingClientRect();
+                modeIndicator.style.width = `${btnRect.width}px`;
+                modeIndicator.style.transform = `translateX(${btnRect.left - containerRect.left - 2}px)`;
             };
+
+            // Toggle between PIN and password mode
+            modeBtns.forEach(btn => {
+                btn.onclick = () => {
+                    const newMode = btn.dataset.mode;
+                    if (newMode === currentMode) return;
+
+                    currentMode = newMode;
+                    setPasswordMode(currentMode);
+                    pinSection.classList.toggle('hidden', currentMode !== 'pin');
+                    passwordSection.classList.toggle('hidden', currentMode !== 'password');
+
+                    // Update toggle UI
+                    modeBtns.forEach(b => b.classList.toggle('active', b.dataset.mode === currentMode));
+                    updateModeIndicator(btn);
+
+                    if (currentMode === 'pin') {
+                        pinInput?.focus();
+                    } else {
+                        passwordInput?.focus();
+                    }
+                };
+            });
+
+            // Initialize indicator position without animation
+            const initialActiveBtn = modal.querySelector('.encryption-mode-btn.active');
+            if (initialActiveBtn && modeIndicator) {
+                requestAnimationFrame(() => {
+                    modeIndicator.style.transition = 'none';
+                    updateModeIndicator(initialActiveBtn);
+                    requestAnimationFrame(() => {
+                        modeIndicator.style.transition = '';
+                    });
+                });
+            }
 
             const finish = (result) => {
                 this.cleanup();
@@ -462,30 +724,36 @@ class ShareModals {
             };
 
             const handleConfirm = () => {
-                const isPlaintext = noPasswordCheckbox.checked;
-                const password = isPlaintext ? null : passwordInput.value;
-
-                if (!isPlaintext && !password) {
-                    errorEl.textContent = 'Password is required';
-                    errorEl.classList.remove('hidden');
-                    return;
-                }
+                const password = currentMode === 'pin'
+                    ? (pinInput?.value || null)
+                    : (passwordInput?.value || null);
 
                 finish({
                     password,
-                    ttlSeconds: getTtlSeconds(ttlPreset, ttlCustomValue, ttlCustomUnit),
+                    ttlSeconds: getTtlSeconds(),
                     shareApiKeyMetadata: apiMetadataCheckbox?.checked || false
                 });
             };
 
             modal.querySelector('#cancel-btn').onclick = () => finish(null);
             modal.querySelector('#confirm-btn').onclick = handleConfirm;
-            passwordInput.onkeydown = (e) => {
+
+            // Handle Enter key
+            const handleKeydown = (e) => {
                 if (e.key === 'Enter') handleConfirm();
                 else if (e.key === 'Escape') finish(null);
             };
+            pinInput?.addEventListener('keydown', handleKeydown);
+            passwordInput?.addEventListener('keydown', handleKeydown);
+
             modal.onclick = (e) => { if (e.target === modal) finish(null); };
-            passwordInput.focus();
+
+            // Focus appropriate input
+            if (currentMode === 'pin') {
+                pinInput?.focus();
+            } else {
+                passwordInput?.focus();
+            }
         });
     }
 
@@ -495,10 +763,8 @@ class ShareModals {
 
     /**
      * Show share management modal with status, actions, and settings
-     * @param {Object} session - Current session
-     * @param {Object} callbacks - {onShare, onRevoke, onCopyLink, showToast}
      */
-    showManagementModal(session, callbacks) {
+    showManagementModal(session, previewMessages, callbacks) {
         if (!session) return;
 
         const { onShare, onRevoke, onCopyLink, showToast } = callbacks;
@@ -506,7 +772,9 @@ class ShareModals {
         const isShared = !!shareInfo?.shareId;
         const isExpired = shareInfo?.expiresAt && Date.now() > shareInfo.expiresAt;
         const hasApiKey = !!session.apiKeyInfo;
-        const prevTtl = shareInfo?.ttlSeconds || 604800;
+        const isApiKeyExpired = hasApiKey && session.apiKeyInfo.expiresAt && Date.now() > session.apiKeyInfo.expiresAt;
+        const prevTtl = shareInfo?.ttlSeconds ?? getExpiryTtl(); // Use saved preference for new shares
+        const passwordMode = getPasswordMode();
 
         // Determine status
         let status = 'Not shared';
@@ -525,24 +793,24 @@ class ShareModals {
 
         const modal = this.createModalContainer('bg-black/60');
         modal.innerHTML = `
-            <div class="w-full max-w-sm rounded-xl border border-border bg-background shadow-2xl p-6 mx-4">
-                <h3 class="text-base font-medium text-foreground mb-4">Share Settings</h3>
-                
-                <!-- Status section -->
-                <div id="status-section">
+            <div class="w-full max-w-sm rounded-xl border border-border bg-background shadow-2xl p-5 mx-4">
+                <h3 class="text-base font-medium text-foreground mb-4">Share Chat</h3>
+
+                <!-- Status section (for already shared) -->
+                <div id="status-section" class="${isShared ? '' : 'hidden'}">
                     <div class="mb-4 pb-4 border-b border-border">
                         <div class="flex items-center justify-between">
                             <span class="text-sm text-muted-foreground">Status</span>
                             <div class="flex items-center gap-1.5">
                                 ${isShared && shareInfo?.isPlaintext ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">Unencrypted</span>' : ''}
-                                ${isShared && shareInfo?.apiKeyShared ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">Key shared</span>' : ''}
+                                ${isShared && shareInfo?.apiKeyShared ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">Key included</span>' : ''}
                                 <span class="text-sm font-medium ${statusClass}">${status}</span>
                             </div>
                         </div>
                     </div>
 
                     ${isShared ? `
-                        <div class="space-y-1.5 mb-4 text-xs text-muted-foreground">
+                        <div class="space-y-1 mb-4 text-xs text-muted-foreground">
                             ${expiryDate ? `<div>Expires: ${expiryDate}</div>` : ''}
                             <div>Messages: ${shareInfo.messageCount || 0}</div>
                         </div>
@@ -551,141 +819,336 @@ class ShareModals {
 
                 ${isShared ? `
                     <!-- Actions for shared session -->
-                    <div id="actions-section" class="flex flex-col gap-2 mb-4">
+                    <div id="actions-section" class="flex flex-col gap-2 mb-3">
                         ${isExpired ? `
-                            <button id="share-again-btn" class="w-full px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">
+                            <button id="share-again-btn" class="share-action-btn w-full px-3 py-2 text-sm rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors flex items-center justify-center gap-2">
                                 Share Again
                             </button>
                         ` : `
-                            <button id="copy-link-btn" class="w-full px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">
-                                Copy Share Link
+                            <button id="copy-link-btn" class="share-action-btn w-full px-3 py-2 text-sm rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors flex items-center justify-center gap-2">
+                                ${COPY_ICON_SVG}
+                                <span>Copy Link</span>
                             </button>
-                            <button id="update-btn" class="w-full px-4 py-2 text-sm rounded-lg border border-border hover:bg-muted transition-colors">
-                                Update Share
+                            <button id="update-btn" class="w-full px-3 py-2 text-sm rounded-lg border border-border hover:bg-muted transition-colors">
+                                Update Settings
                             </button>
-                            <button id="revoke-btn" class="w-full px-4 py-2 text-sm rounded-lg text-destructive border border-destructive/30 hover:bg-destructive/10 transition-colors">
-                                Revoke Share
+                            <button id="revoke-btn" class="w-full px-3 py-2 text-sm rounded-lg text-destructive border border-destructive/30 hover:bg-destructive/10 transition-colors">
+                                Stop Sharing
                             </button>
                         `}
                     </div>
-                    
+
                     <!-- Hidden share form -->
                     <div id="form-section" class="hidden">
                 ` : `
                     <div id="form-section">`}
-                    
-                    <!-- Password input -->
-                    <div class="relative mb-3">
-                        <input type="password" class="password-input w-full px-3 py-2 pr-10 text-sm border border-border rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary" placeholder="Password (leave blank for no encryption)">
-                        <button type="button" class="toggle-password-btn absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-1">
-                            ${EYE_CLOSED_SVG}${EYE_OPEN_SVG}
-                        </button>
-                    </div>
 
-                    <!-- TTL Settings -->
-                    <div class="mb-3">
-                        <label class="block text-xs text-muted-foreground mb-1.5">Expires after</label>
-                        <div class="flex gap-2">
-                            <select class="ttl-preset flex-1 px-3 py-2 text-sm border border-border rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary">
-                                ${buildTtlOptionsHtml(prevTtl)}
-                            </select>
-                            <div class="ttl-custom-container hidden flex gap-1">
-                                <input type="number" class="ttl-custom-value w-16 px-2 py-2 text-sm border border-border rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary" min="1" max="999" placeholder="1">
-                                <select class="ttl-custom-unit px-2 py-2 text-sm border border-border rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary">
-                                    <option value="60">min</option>
-                                    <option value="3600">hour</option>
-                                    <option value="86400" selected>day</option>
-                                </select>
+                    <!-- PIN/Password Section -->
+                    <div class="mb-4">
+                        <div class="flex items-center justify-between mb-2">
+                            <label class="text-xs text-muted-foreground">Encryption</label>
+                            <div class="encryption-mode-toggle" role="radiogroup" aria-label="Encryption mode">
+                                <button type="button" class="encryption-mode-btn ${passwordMode === 'pin' ? 'active' : ''}" data-mode="pin">PIN</button>
+                                <button type="button" class="encryption-mode-btn ${passwordMode === 'password' ? 'active' : ''}" data-mode="password">Password</button>
+                                <div class="encryption-mode-indicator"></div>
+                            </div>
+                        </div>
+
+                        <!-- Encryption input container (fixed height to prevent layout shift) -->
+                        <div class="h-20 flex items-center">
+                            <!-- PIN Input (OTP-style) -->
+                            <div class="pin-section w-full ${passwordMode === 'password' ? 'hidden' : ''}">
+                                <div class="pin-input-container">
+                                    <input type="text" class="pin-hidden-input" maxlength="6" autocomplete="off" inputmode="text">
+                                    <div class="pin-boxes">
+                                        <div class="pin-box"></div>
+                                        <div class="pin-box"></div>
+                                        <div class="pin-box"></div>
+                                        <span class="pin-separator">-</span>
+                                        <div class="pin-box"></div>
+                                        <div class="pin-box"></div>
+                                        <div class="pin-box"></div>
+                                    </div>
+                                </div>
+                                <div class="flex items-center justify-center gap-2 mt-1.5">
+                                    <button type="button" class="toggle-pin-visibility text-muted-foreground hover:text-foreground flex items-center p-1 rounded-md hover-highlight transition-colors">
+                                        <span class="eye-closed hidden">${EYE_CLOSED_SVG}</span>
+                                        <span class="eye-open">${EYE_OPEN_SVG}</span>
+                                    </button>
+                                    <span class="text-muted-foreground">·</span>
+                                    <span class="text-xs text-muted-foreground">Leave empty for no encryption</span>
+                                </div>
+                            </div>
+
+                            <!-- Password Input (Traditional) -->
+                            <div class="password-section w-full ${passwordMode === 'pin' ? 'hidden' : ''}">
+                                <div class="relative">
+                                    <input type="text" class="password-input w-full px-3 py-2.5 pr-10 text-sm border border-border/60 rounded-lg bg-background text-foreground focus:outline-none focus:border-primary" placeholder="Password (leave empty for no encryption)" autocomplete="off">
+                                    <button type="button" class="toggle-password-btn absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-1 rounded-md hover-highlight transition-colors">
+                                        <span class="eye-closed hidden">${EYE_CLOSED_SVG}</span>
+                                        <span class="eye-open">${EYE_OPEN_SVG}</span>
+                                    </button>
+                                </div>
+                                <p class="text-xs text-muted-foreground mt-2 text-center">Leave empty for no encryption</p>
                             </div>
                         </div>
                     </div>
 
-                    ${hasApiKey ? `
-                        <div class="mb-4">
-                            <label class="flex items-center gap-2 cursor-pointer select-none">
-                                <input type="checkbox" class="api-metadata-checkbox w-4 h-4 rounded border-border text-primary focus:ring-primary">
-                                <span class="text-sm text-foreground">Share API key</span>
-                            </label>
-                            <p class="text-xs text-muted-foreground mt-1 ml-6">Others can use your ephemeral key</p>
+                    <!-- Expiry Segmented Control -->
+                    <div class="mb-4">
+                        <label class="block text-xs text-muted-foreground mb-2">Expires after</label>
+                        <div class="expiry-toggle-container" role="radiogroup" aria-label="Expiry selection">
+                            <div class="expiry-toggle-indicator"></div>
+                            ${TTL_PRESETS.map((p, i) => `
+                                <button type="button" class="expiry-toggle-btn" data-value="${p.value}" aria-checked="${p.value === prevTtl ? 'true' : 'false'}">
+                                    ${p.short}
+                                </button>
+                            `).join('')}
+                            <button type="button" class="expiry-toggle-btn" data-value="custom" aria-checked="false">
+                                Custom
+                            </button>
                         </div>
-                    ` : ''}
-
-                    <!-- Info message -->
-                    <div class="flex items-center gap-2 mb-4 text-muted-foreground">
-                        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                        </svg>
-                        <span class="text-xs">Chat will be shared till the bottom</span>
+                        <div class="expiry-custom-container hidden mt-2 flex gap-2">
+                            <input type="number" class="expiry-custom-value w-20 px-3 py-1.5 text-sm border border-border/60 rounded-lg bg-background text-foreground focus:outline-none focus:border-primary" min="1" max="999" value="1">
+                            <select class="expiry-custom-unit px-3 py-1.5 text-sm border border-border/60 rounded-lg bg-background text-foreground focus:outline-none focus:border-primary">
+                                <option value="3600">hours</option>
+                                <option value="86400" selected>days</option>
+                            </select>
+                        </div>
                     </div>
 
-                    <button id="submit-btn" class="w-full px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">
-                        ${isShared ? 'Update' : 'Share'}
-                    </button>
-                </div>
+                    ${hasApiKey ? `
+                        <label class="flex items-center gap-2.5 mb-4 ${isApiKeyExpired ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'} select-none">
+                            <input type="checkbox" class="api-metadata-checkbox w-4 h-4 rounded border-border text-primary focus:ring-primary" ${isApiKeyExpired ? 'disabled' : ''}>
+                            <div>
+                                <span class="text-sm text-foreground">Include this session's API key</span>
+                                <p class="text-xs text-muted-foreground">
+                                    ${isApiKeyExpired
+                                        ? 'Key expired — recipients will view only'
+                                        : 'Recipients can borrow your key and continue chatting'}
+                                </p>
+                            </div>
+                        </label>
+                    ` : ''}
 
-                <button id="close-btn" class="w-full mt-2 px-4 py-2 text-sm rounded-lg border border-border hover:bg-muted transition-colors">
-                    Close
-                </button>
+                    <div class="mb-4 rounded-lg border border-border/50 overflow-hidden">
+                        <div class="flex items-center gap-1.5 text-xs text-muted-foreground px-2.5 py-1.5 bg-muted/30 border-b border-border/30">
+                            <svg class="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
+                            </svg>
+                            Share cutoff preview
+                        </div>
+                        <div class="share-cutoff-chat max-h-32 overflow-y-auto py-2 px-2 flex flex-col gap-1">
+                            ${previewMessages && previewMessages.length > 0 ? previewMessages.map(msg =>
+                                msg.role === 'user'
+                                    ? `<div class="flex justify-end">
+                                        <div class="max-w-[85%] px-2 py-1 rounded-lg text-[11px] bg-muted text-foreground break-words line-clamp-2">
+                                            ${escapeHtml(msg.content?.substring(0, 80) || '')}${msg.content?.length > 80 ? '…' : ''}
+                                        </div>
+                                    </div>`
+                                    : `<div class="flex justify-start gap-1.5 items-start">
+                                        <div class="w-4 h-4 rounded-full bg-muted flex items-center justify-center flex-shrink-0 mt-0.5">
+                                            <svg class="w-2.5 h-2.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8.625 12a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H8.25m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H12m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 0 1-2.555-.337A5.972 5.972 0 0 1 5.41 20.97a5.969 5.969 0 0 1-.474-.065 4.48 4.48 0 0 0 .978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25Z"/>
+                                            </svg>
+                                        </div>
+                                        <div class="max-w-[85%] text-[11px] text-foreground/80 break-words line-clamp-2">
+                                            ${escapeHtml(msg.content?.substring(0, 100) || '')}${msg.content?.length > 100 ? '…' : ''}
+                                        </div>
+                                    </div>`
+                            ).join('') : `
+                                <div class="py-3 text-xs text-muted-foreground italic text-center">No messages yet</div>
+                            `}
+                        </div>
+                    </div>
+
+                    <div class="flex justify-between">
+                        <button id="close-btn" class="btn-ghost-hover px-4 py-1.5 text-sm rounded-md border border-border bg-background text-foreground transition-colors">
+                            ${isShared && !isExpired ? 'Done' : 'Cancel'}
+                        </button>
+                        <button id="submit-btn" class="px-4 py-1.5 text-sm rounded-md bg-blue-600 text-white hover:bg-blue-700 transition-colors">
+                            ${isShared ? 'Copy link' : 'Share'}
+                        </button>
+                    </div>
+                </div>
             </div>
         `;
 
         const statusSection = modal.querySelector('#status-section');
         const actionsSection = modal.querySelector('#actions-section');
         const formSection = modal.querySelector('#form-section');
+        const pinSection = modal.querySelector('.pin-section');
+        const passwordSection = modal.querySelector('.password-section');
+        const pinInput = modal.querySelector('.pin-hidden-input');
         const passwordInput = modal.querySelector('.password-input');
-        const ttlPreset = modal.querySelector('.ttl-preset');
-        const ttlCustomValue = modal.querySelector('.ttl-custom-value');
-        const ttlCustomUnit = modal.querySelector('.ttl-custom-unit');
+        const modeToggle = modal.querySelector('.encryption-mode-toggle');
+        const modeBtns = modal.querySelectorAll('.encryption-mode-btn');
+        const modeIndicator = modal.querySelector('.encryption-mode-indicator');
         const apiMetadataCheckbox = modal.querySelector('.api-metadata-checkbox');
+        const closeBtn = modal.querySelector('#close-btn');
+        const copyLinkBtn = modal.querySelector('#copy-link-btn');
 
+        let currentMode = passwordMode;
+
+        this.setupPinInput(modal);
         this.setupPasswordToggle(modal);
-        this.setupTtlToggle(modal);
+        const getTtlSeconds = this.setupExpiryToggle(modal, prevTtl);
+
+// Helper to update indicator position/width based on active button
+        const updateModeIndicator = (activeBtn) => {
+            if (!modeIndicator || !activeBtn) return;
+            const containerRect = modeToggle.getBoundingClientRect();
+            const btnRect = activeBtn.getBoundingClientRect();
+            modeIndicator.style.width = `${btnRect.width}px`;
+            modeIndicator.style.transform = `translateX(${btnRect.left - containerRect.left - 2}px)`;
+        };
+
+        // Toggle between PIN and password mode
+        modeBtns.forEach(btn => {
+            btn.onclick = () => {
+                const newMode = btn.dataset.mode;
+                if (newMode === currentMode) return;
+
+                currentMode = newMode;
+                setPasswordMode(currentMode);
+                pinSection?.classList.toggle('hidden', currentMode !== 'pin');
+                passwordSection?.classList.toggle('hidden', currentMode !== 'password');
+
+                // Update toggle UI
+                modeBtns.forEach(b => b.classList.toggle('active', b.dataset.mode === currentMode));
+                updateModeIndicator(btn);
+
+                if (currentMode === 'pin') {
+                    pinInput?.focus();
+                } else {
+                    passwordInput?.focus();
+                }
+            };
+        });
+
+        // Initialize indicator position without animation
+        const initialActiveBtn = modal.querySelector('.encryption-mode-btn.active');
+        if (initialActiveBtn && modeIndicator) {
+            requestAnimationFrame(() => {
+                modeIndicator.style.transition = 'none';
+                updateModeIndicator(initialActiveBtn);
+                requestAnimationFrame(() => {
+                    modeIndicator.style.transition = '';
+                });
+            });
+        }
 
         const showForm = () => {
             if (actionsSection) actionsSection.classList.add('hidden');
             if (statusSection) statusSection.classList.add('hidden');
             if (formSection) formSection.classList.remove('hidden');
-            passwordInput?.focus();
+            closeBtn.textContent = 'Cancel';
+
+            if (currentMode === 'pin') {
+                pinInput?.focus();
+            } else {
+                passwordInput?.focus();
+            }
         };
 
         // Close handlers
-        modal.querySelector('#close-btn').onclick = () => this.cleanup();
+        closeBtn.onclick = () => this.cleanup();
         modal.onclick = (e) => { if (e.target === modal) this.cleanup(); };
-        
+
         // Escape key closes modal
         const handleEscape = (e) => { if (e.key === 'Escape') this.cleanup(); };
         document.addEventListener('keydown', handleEscape);
-        // Store for cleanup
         this._escapeHandler = handleEscape;
 
         // Submit handler
         const handleSubmit = async () => {
-            const password = passwordInput.value.trim() || null;
+            const pinValue = pinInput?.value || '';
+            const passwordValue = passwordInput?.value || '';
+
+            // Validate PIN: must be empty (no encryption) or exactly 6 characters
+            if (currentMode === 'pin' && pinValue.length > 0 && pinValue.length < 6) {
+                // Shake the PIN boxes to indicate error
+                const pinBoxes = modal.querySelector('.pin-boxes');
+                if (pinBoxes) {
+                    pinBoxes.classList.add('shake');
+                    setTimeout(() => pinBoxes.classList.remove('shake'), 500);
+                }
+                pinInput?.focus();
+                return;
+            }
+
+            const password = currentMode === 'pin'
+                ? (pinValue || null)
+                : (passwordValue || null);
+
             const settings = {
                 password,
-                ttlSeconds: getTtlSeconds(ttlPreset, ttlCustomValue, ttlCustomUnit),
+                ttlSeconds: getTtlSeconds(),
                 shareApiKeyMetadata: apiMetadataCheckbox?.checked || false
             };
-            this.cleanup();
-            await onShare(settings);
+
+            // Show loading state
+            const submitBtn = modal.querySelector('#submit-btn');
+            if (submitBtn) {
+                submitBtn.disabled = true;
+                submitBtn.textContent = 'Sharing...';
+            }
+
+            try {
+                await onShare(settings);
+
+                // After successful share, update buttons to Copy link / Done state
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = `${LINK_ICON_SVG}<span>Copy link</span>`;
+                submitBtn.classList.add('flex', 'items-center', 'justify-center', 'gap-1.5');
+                closeBtn.textContent = 'Done';
+
+                // Change submit button to copy behavior
+                submitBtn.onclick = async () => {
+                    const shareUrl = shareService.buildShareUrl(session.id);
+                    await navigator.clipboard.writeText(shareUrl);
+                    submitBtn.innerHTML = `${CHECK_ICON_SVG}<span>Copied!</span>`;
+                    submitBtn.classList.add('bg-green-600', 'hover:bg-green-600');
+                    setTimeout(() => {
+                        submitBtn.innerHTML = `${LINK_ICON_SVG}<span>Copy link</span>`;
+                        submitBtn.classList.remove('bg-green-600', 'hover:bg-green-600');
+                    }, 2000);
+                };
+
+            } catch (error) {
+                if (submitBtn) {
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = isShared ? 'Copy link' : 'Share';
+                }
+                showToast('Failed to create share link', 'error');
+            }
         };
-        
+
         modal.querySelector('#submit-btn')?.addEventListener('click', handleSubmit);
-        
-        // Keyboard shortcuts in password input
-        if (passwordInput) {
-            passwordInput.onkeydown = (e) => {
-                if (e.key === 'Enter') handleSubmit();
-                else if (e.key === 'Escape') this.cleanup();
-            };
-        }
+
+        // Keyboard shortcuts
+        const handleFormKeydown = (e) => {
+            if (e.key === 'Enter') handleSubmit();
+        };
+        pinInput?.addEventListener('keydown', handleFormKeydown);
+        passwordInput?.addEventListener('keydown', handleFormKeydown);
 
         // Action handlers for shared sessions
         if (isShared && !isExpired) {
-            modal.querySelector('#copy-link-btn')?.addEventListener('click', async () => {
+            copyLinkBtn?.addEventListener('click', async () => {
                 const shareUrl = shareService.buildShareUrl(session.id);
                 await navigator.clipboard.writeText(shareUrl);
-                showToast('Share link copied!', 'success');
+
+                // Visual feedback
+                const span = copyLinkBtn.querySelector('span');
+                const originalHtml = copyLinkBtn.innerHTML;
+                copyLinkBtn.innerHTML = `${CHECK_ICON_SVG}<span>Copied!</span>`;
+                copyLinkBtn.classList.add('bg-green-600', 'hover:bg-green-600');
+
+                setTimeout(() => {
+                    copyLinkBtn.innerHTML = originalHtml;
+                    copyLinkBtn.classList.remove('bg-green-600', 'hover:bg-green-600');
+                }, 2000);
             });
 
             modal.querySelector('#update-btn')?.addEventListener('click', showForm);
@@ -698,14 +1161,17 @@ class ShareModals {
         } else if (isShared && isExpired) {
             modal.querySelector('#share-again-btn')?.addEventListener('click', showForm);
         }
-        
-        // Auto-focus password input if form is visible on open
+
+        // Auto-focus if form is visible
         if (!isShared) {
-            passwordInput?.focus();
+            if (currentMode === 'pin') {
+                pinInput?.focus();
+            } else {
+                passwordInput?.focus();
+            }
         }
     }
 }
 
 const shareModals = new ShareModals();
 export default shareModals;
-

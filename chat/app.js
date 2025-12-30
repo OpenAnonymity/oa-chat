@@ -1695,7 +1695,12 @@ class ChatApp {
         const session = this.getCurrentSession();
         if (!session) return;
 
-        shareModals.showManagementModal(session, {
+        // Get messages to show in preview (last few turns, truncated for performance)
+        const messages = await chatDB.getSessionMessages(session.id);
+        // Show last 6 messages max for preview (3 turns)
+        const previewMessages = messages.slice(-6);
+
+        shareModals.showManagementModal(session, previewMessages, {
             onShare: async (settings) => {
                 // Fork if imported
                 if (session.importedFrom) {
