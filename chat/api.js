@@ -628,7 +628,9 @@ class OpenRouterAPI {
 
             // Add reasoning parameter if enabled (OpenRouter unified reasoning API)
             // See: https://openrouter.ai/docs/guides/best-practices/reasoning-tokens
-            if (reasoningEnabled) {
+            // Only apply to Claude models - other thinking models (Gemini, GPT) handle reasoning natively
+            const isClaudeModel = effectiveModelId.includes('anthropic/') || effectiveModelId.includes('claude');
+            if (reasoningEnabled && isClaudeModel) {
                 requestBody.reasoning = { enabled: true };
             }
 
