@@ -31,17 +31,6 @@ const TLS_PATTERNS = {
     connected: /(?:Connected to|SSL connection established|Handshake complete)/i
 };
 
-// Custom error for fallback confirmation
-class ProxyFallbackError extends Error {
-    constructor(originalError, url) {
-        super(`Proxy failed for ${url}: ${originalError.message}`);
-        this.name = 'ProxyFallbackError';
-        this.originalError = originalError;
-        this.url = url;
-        this.requiresConfirmation = true;
-    }
-}
-
 class NetworkProxy {
     constructor() {
         this.eventTarget = new EventTarget();
@@ -649,36 +638,23 @@ class NetworkProxy {
             this.state.lastFailureAt = Date.now();
             this.state.lastError = error;
             this.state.transport = 'direct';
-            this.emitChange();
 
             if (forceProxy || !this.state.settings.fallbackToDirect) {
+                this.emitChange();
                 throw error;
             }
 
-            // Require user confirmation before falling back
-            // Throw special error that callers should catch and handle
-            throw new ProxyFallbackError(error, url);
+            // Silently disable proxy and auto-retry with direct fetch
+            // Use synchronous state update to avoid race conditions with parallel requests
+            console.warn('[networkProxy.fetch] Proxy failed, silently disabling and retrying direct:', url?.substring(0, 100));
+            this.state.settings.enabled = false;
+            this.state.fallbackActive = true;
+            this.saveSettings(this.state.settings); // Sync persist to localStorage
+            this.emitChange();
+            return fetch(resource, init);
         }
     }
-
-    // Call this after user confirms fallback
-    async fetchWithFallback(resource, init = {}) {
-        const url = typeof resource === 'string' ? resource : resource.url;
-        console.warn('[networkProxy.fetch] User confirmed fallback, using direct fetch for:', url?.substring(0, 100));
-        this.state.fallbackActive = true;
-        this.state.transport = 'direct';
-        this.emitChange();
-        return fetch(resource, init);
-    }
-
-    // Check if error requires fallback confirmation
-    static needsFallbackConfirmation(error) {
-        return error instanceof ProxyFallbackError || error?.requiresConfirmation;
-    }
 }
-
-// Export the error class too
-export { ProxyFallbackError };
 
 const networkProxy = new NetworkProxy();
 window.networkProxy = networkProxy;

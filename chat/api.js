@@ -1,5 +1,5 @@
 // OpenRouter API integration
-import networkProxy, { ProxyFallbackError } from './services/networkProxy.js';
+import networkProxy from './services/networkProxy.js';
 import { loadModelConfig, getDefaultModelConfig } from './services/modelConfig.js';
 
 // System prompt to prepend to all conversations
@@ -293,34 +293,11 @@ class OpenRouterAPI {
         };
 
         try {
-            let response;
-            try {
-                response = await networkProxy.fetch(url, {
-                    method: 'POST',
-                    headers: headers,
-                    body: JSON.stringify(body)
-                });
-            } catch (fetchError) {
-                // Handle proxy fallback - requires user confirmation
-                if (fetchError instanceof ProxyFallbackError || fetchError?.requiresConfirmation) {
-                    const confirmed = await window.showProxyFallbackConfirmation?.({
-                        error: fetchError.message,
-                        url: url
-                    });
-
-                    if (confirmed) {
-                        response = await networkProxy.fetchWithFallback(url, {
-                            method: 'POST',
-                            headers: headers,
-                            body: JSON.stringify(body)
-                        });
-                    } else {
-                        throw new Error('Request cancelled: User declined to send without proxy');
-                    }
-                } else {
-                    throw fetchError;
-                }
-            }
+            const response = await networkProxy.fetch(url, {
+                method: 'POST',
+                headers: headers,
+                body: JSON.stringify(body)
+            });
 
             const data = await response.json();
 
@@ -645,30 +622,7 @@ class OpenRouterAPI {
                 fetchOptions.signal = abortController.signal;
             }
 
-            // Fetch with proxy fallback confirmation
-            let response;
-            try {
-                response = await networkProxy.fetch(url, fetchOptions);
-            } catch (error) {
-                // Handle proxy fallback - requires user confirmation
-                if (error instanceof ProxyFallbackError || error?.requiresConfirmation) {
-                    console.log('🔒 Chat: Proxy unavailable, requesting user confirmation for fallback');
-
-                    const confirmed = await window.showProxyFallbackConfirmation?.({
-                        error: error.message,
-                        url: url
-                    });
-
-                    if (confirmed) {
-                        console.log('✅ Chat: User confirmed fallback, using direct connection');
-                        response = await networkProxy.fetchWithFallback(url, fetchOptions);
-                    } else {
-                        throw new Error('Request cancelled: User declined to send without proxy');
-                    }
-                } else {
-                    throw error;
-                }
-            }
+            const response = await networkProxy.fetch(url, fetchOptions);
 
             // Handle pre-stream errors
             if (!response.ok) {

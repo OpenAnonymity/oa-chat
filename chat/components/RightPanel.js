@@ -67,9 +67,6 @@ class RightPanel {
             }
         });
 
-        // Expose fallback confirmation method globally for other modules
-        window.showProxyFallbackConfirmation = (detail) => this.showProxyFallbackConfirmation(detail);
-
         // Invitation code dropdown state
         this.showInvitationForm = false;
 
@@ -1329,6 +1326,15 @@ class RightPanel {
     }
 
     getProxyStatusMeta(settings = this.proxySettings, status = this.proxyStatus) {
+        // Show recent failure even when disabled (auto-fallback case)
+        // Display for 30 seconds after failure so user knows what happened
+        const recentFailure = status?.lastError && status?.lastFailureAt && 
+            (Date.now() - status.lastFailureAt < 30000);
+        
+        if (recentFailure) {
+            return { label: 'Failed (using direct)', textClass: 'text-amber-500 dark:text-amber-400', dotClass: 'bg-amber-500' };
+        }
+
         if (!settings || !settings.enabled) {
             return { label: 'Disabled', textClass: 'text-muted-foreground', dotClass: 'bg-muted-foreground/40' };
         }
@@ -1338,7 +1344,7 @@ class RightPanel {
             return { label: 'Fallback (direct)', textClass: 'text-amber-500 dark:text-amber-300', dotClass: 'bg-amber-500' };
         }
 
-        // Show error if there's a recent error
+        // Show error if there's a recent error (proxy still enabled but erroring)
         if (status?.lastError) {
             const msg = status.lastError.message || 'Proxy error';
             const shortMsg = msg.length > 25 ? msg.substring(0, 25) + '...' : msg;
@@ -1356,49 +1362,6 @@ class RightPanel {
         }
 
         return { label: 'Initializing...', textClass: 'text-muted-foreground', dotClass: 'bg-muted-foreground/60' };
-    }
-
-    // Show fallback confirmation dialog - returns Promise<boolean>
-    showProxyFallbackConfirmation({ error, url }) {
-        return new Promise((resolve) => {
-            // Remove existing dialog if any
-            document.querySelector('.proxy-fallback-dialog')?.remove();
-
-            const overlay = document.createElement('div');
-            overlay.className = 'proxy-fallback-dialog fixed inset-0 z-50 flex items-center justify-center bg-black/50 animate-in fade-in';
-            overlay.innerHTML = `
-                <div class="bg-background border border-border rounded-lg shadow-xl max-w-sm mx-4 animate-in zoom-in-95">
-                    <div class="p-4 border-b border-border">
-                        <div class="flex items-center gap-2 text-amber-500">
-                            <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" stroke-linecap="round" stroke-linejoin="round"/>
-                            </svg>
-                            <span class="font-semibold">Proxy Unavailable</span>
-                        </div>
-                    </div>
-                    <div class="p-4 space-y-3">
-                        <p class="text-sm text-foreground">The inference proxy could not be reached. Your request will be sent to the model provider directly without relay.</p>
-                        <p class="text-xs text-muted-foreground">The chat client will try reconnecting to the inference proxy automatically.</p>
-                    </div>
-                    <div class="p-4 border-t border-border flex justify-end gap-2">
-                        <button class="fallback-cancel px-3 py-1.5 text-sm rounded-md border border-border hover:bg-muted transition-colors">Cancel</button>
-                        <button class="fallback-confirm px-3 py-1.5 text-sm rounded-md bg-amber-500 text-white hover:bg-amber-600 transition-colors">Proceed</button>
-                    </div>
-                </div>
-            `;
-
-            const cleanup = (result) => {
-                overlay.remove();
-                resolve(result);
-            };
-
-            overlay.querySelector('.fallback-cancel').onclick = () => cleanup(false);
-            overlay.querySelector('.fallback-confirm').onclick = () => cleanup(true);
-            overlay.onclick = (e) => { if (e.target === overlay) cleanup(false); };
-
-            document.body.appendChild(overlay);
-            overlay.querySelector('.fallback-cancel').focus();
-        });
     }
 
     generateProxySectionHTML() {
@@ -1924,7 +1887,6 @@ class RightPanel {
             this.proxyUnsubscribe();
             this.proxyUnsubscribe = null;
         }
-        delete window.showProxyFallbackConfirmation;
     }
 }
 
