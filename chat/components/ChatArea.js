@@ -383,7 +383,6 @@ export default class ChatArea {
 
         const session = this.app.getCurrentSession();
         const messagesContainer = this.app.elements.messagesContainer;
-        const session = this.app.getCurrentSession();
 
         if (!session) {
             messagesContainer.innerHTML = buildEmptyState();
