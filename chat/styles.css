@@ -454,9 +454,15 @@ html.switching-theme *::after {
 }
 
 /* Reasoning trace styles for thinking models */
+/* NOTE: Removed fadeIn animation to prevent flash on session switch.
+   Animation is added via .fade-in class in appendMessage() for new messages only. */
 .reasoning-trace {
-    animation: fadeIn 0.3s ease-in;
     margin-bottom: 0;
+}
+
+/* Add spacing after reasoning content only when expanded */
+.reasoning-trace:has(.reasoning-content:not(.hidden)) {
+    margin-bottom: 0.5rem;
 }
 
 /*
