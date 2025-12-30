@@ -172,12 +172,15 @@ export function buildSharePayload(session, messages, opts = {}) {
         }))
     };
 
-    // Include API key if requested
+    // Include API key with verification signatures if requested
     if (opts.shareApiKeyMetadata && session.apiKey && session.apiKeyInfo) {
         payload.sharedApiKey = {
             key: session.apiKey,
             stationId: session.apiKeyInfo.stationId || session.apiKeyInfo.station_name,
             expiresAt: session.expiresAt,
+            expiresAtUnix: session.apiKeyInfo.expiresAtUnix,
+            stationSignature: session.apiKeyInfo.stationSignature,
+            orgSignature: session.apiKeyInfo.orgSignature,
             usage: session.apiKeyInfo.usage || null
         };
     }
@@ -276,7 +279,12 @@ export function createSessionFromPayload(payload, shareId, ciphertext, generateI
             stationId: payload.sharedApiKey.stationId,
             station_name: payload.sharedApiKey.stationId,
             usage: payload.sharedApiKey.usage,
-            isShared: true
+            isShared: true,
+            // Include signature fields for verification
+            key: payload.sharedApiKey.key,
+            expiresAtUnix: payload.sharedApiKey.expiresAtUnix,
+            stationSignature: payload.sharedApiKey.stationSignature,
+            orgSignature: payload.sharedApiKey.orgSignature
         } : null,
         expiresAt: payload.sharedApiKey?.expiresAt || null,
         searchEnabled: payload.session.searchEnabled ?? true,

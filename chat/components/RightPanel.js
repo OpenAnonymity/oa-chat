@@ -278,15 +278,13 @@ class RightPanel {
             // Update the UI
             const timeRemainingEl = document.getElementById('api-key-expiry');
             if (timeRemainingEl) {
-                // API Key Sharing Icon - Uncomment to enable
-                // const isKeyShared = this.currentSession?.shareInfo?.apiKeyShared || this.currentSession?.apiKeyInfo?.isShared;
-                // const shareIcon = isKeyShared 
-                //     ? `<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/></svg>` 
-                //     : '';
-                // timeRemainingEl.innerHTML = shareIcon + (this.timeRemaining || 'Loading...');
-                // timeRemainingEl.className = `font-medium px-2 py-0.5 rounded-full text-[10px] flex-shrink-0 ml-2 flex items-center gap-1 ${this.getTimerClasses(isKeyShared)}`;
-                timeRemainingEl.innerHTML = this.timeRemaining || 'Loading...';
-                timeRemainingEl.className = `font-medium px-2 py-0.5 rounded-full text-[10px] flex-shrink-0 ml-2 flex items-center gap-1 ${this.getTimerClasses()}`;
+                // Show share icon if: 1) owner shared their key, or 2) key was received from a share
+                const isKeyShared = this.currentSession?.shareInfo?.apiKeyShared || this.currentSession?.apiKeyInfo?.isShared;
+                const shareIcon = isKeyShared 
+                    ? `<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/></svg>` 
+                    : '';
+                timeRemainingEl.innerHTML = shareIcon + (this.timeRemaining || 'Loading...');
+                timeRemainingEl.className = `font-medium px-2 py-0.5 rounded-full text-[10px] flex-shrink-0 ml-2 flex items-center gap-1 ${this.getTimerClasses(isKeyShared)}`;
             }
         };
 
@@ -852,9 +850,9 @@ class RightPanel {
 
     getTimerClasses(isKeyShared = null) {
         if (this.isExpired) return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400';
-        // API Key Sharing - Uncomment to enable blue color for shared keys
-        // const shared = isKeyShared ?? (this.currentSession?.shareInfo?.apiKeyShared || this.currentSession?.apiKeyInfo?.isShared);
-        // if (shared) return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400';
+        // Check passed param, or check session for shared status
+        const shared = isKeyShared ?? (this.currentSession?.shareInfo?.apiKeyShared || this.currentSession?.apiKeyInfo?.isShared);
+        if (shared) return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400';
         return 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400';
     }
 
@@ -1250,7 +1248,7 @@ class RightPanel {
                         <div class="flex items-center justify-between text-[10px] font-mono bg-muted/20 p-2 rounded-md border border-border break-all text-foreground">
                             <span>${this.maskApiKey(this.apiKey)}</span>
                             <span id="api-key-expiry" class="font-medium px-2 py-0.5 rounded-full text-[10px] flex-shrink-0 ml-2 flex items-center gap-1 ${this.getTimerClasses()}">
-                                ${/* API Key Sharing Icon - Uncomment to enable: (this.currentSession?.shareInfo?.apiKeyShared || this.currentSession?.apiKeyInfo?.isShared) ? `<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/></svg>` : '' */ ''}${this.timeRemaining || 'Loading...'}
+                                ${(this.currentSession?.shareInfo?.apiKeyShared || this.currentSession?.apiKeyInfo?.isShared) ? `<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/></svg>` : ''}${this.timeRemaining || 'Loading...'}
                             </span>
                         </div>
                     </div>

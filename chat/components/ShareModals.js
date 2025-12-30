@@ -232,6 +232,76 @@ class ShareModals {
     }
 
     /**
+     * Show prompt when shared API key verification fails
+     * @param {Object} opts - {error, stationId, isBanned, banReason}
+     * @returns {Promise<'import_without_key'|'cancel'>}
+     */
+    showSharedKeyVerificationFailedPrompt({ error, stationId, isBanned, banReason }) {
+        return new Promise((resolve) => {
+            const modal = this.createModalContainer();
+            
+            const title = isBanned ? 'Shared Key From Banned Station' : 'Shared Key Verification Failed';
+            const description = isBanned
+                ? `The included API key is from a station that has been banned.`
+                : `We cannot verify the integrity of the included API key shared with this chat.`;
+            const explanationText = isBanned
+                ? `Keys from banned stations cannot be trusted.`
+                : `It may be that the original chat session owner tampered with the key. For your safety, we blocked this key, and your data are not affected.`;
+            
+            modal.innerHTML = `
+                <div class="bg-background border-2 border-amber-500/50 rounded-xl shadow-2xl p-6 max-w-md mx-4 w-full">
+                    <div class="flex items-center gap-2 mb-2">
+                        <svg class="w-5 h-5 text-amber-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                        </svg>
+                        <h3 class="text-lg font-semibold text-amber-600 dark:text-amber-400">${title}</h3>
+                    </div>
+                    <p class="text-sm text-muted-foreground mb-3">${description}</p>
+                    
+                    <div class="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3 mb-3 text-xs">
+                        ${stationId ? `<div class="mb-1"><span class="text-muted-foreground">Station:</span> <code class="text-amber-700 dark:text-amber-300 font-medium">${escapeHtml(stationId)}</code></div>` : ''}
+                        ${isBanned && banReason ? `<div class="mb-1"><span class="text-muted-foreground">Ban reason:</span> <span class="text-amber-700 dark:text-amber-300">${escapeHtml(banReason)}</span></div>` : ''}
+                        <div><span class="text-muted-foreground">Error:</span> <span class="text-amber-700 dark:text-amber-300 font-medium">${escapeHtml(error)}</span></div>
+                    </div>
+                    
+                    <p class="text-sm text-muted-foreground mb-3">
+                        ${explanationText}
+                    </p>
+                    
+                    <p class="text-xs text-muted-foreground mb-4">
+                        Be cautious with shared API keys from untrusted sources. You can import the chat without the key and request your own when needed.
+                    </p>
+                    
+                    <div class="flex flex-col gap-2">
+                        <button id="import-without-key-btn" class="w-full px-4 py-2 text-sm font-medium rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">
+                            Import without the shared API key <span class="opacity-60 ml-1">(Enter)</span>
+                        </button>
+                        <button id="cancel-btn" class="w-full px-4 py-2 text-sm font-medium rounded-lg border border-border text-foreground hover:bg-muted transition-colors">
+                            Cancel Import <span class="opacity-60 ml-1">(Esc)</span>
+                        </button>
+                    </div>
+                </div>
+            `;
+
+            const handleKeydown = (e) => {
+                if (e.key === 'Enter') { e.preventDefault(); finish('import_without_key'); }
+                else if (e.key === 'Escape') { e.preventDefault(); finish('cancel'); }
+            };
+
+            const finish = (result) => {
+                document.removeEventListener('keydown', handleKeydown);
+                this.cleanup();
+                resolve(result);
+            };
+
+            document.addEventListener('keydown', handleKeydown);
+            modal.querySelector('#import-without-key-btn').onclick = () => finish('import_without_key');
+            modal.querySelector('#cancel-btn').onclick = () => finish('cancel');
+            modal.onclick = (e) => { if (e.target === modal) finish('cancel'); };
+        });
+    }
+
+    /**
      * Simple password prompt for importing encrypted shares
      * @param {string} message - Prompt message
      * @returns {Promise<string|null>} Password or null if cancelled
@@ -344,7 +414,6 @@ class ShareModals {
                         </div>
                     </div>
 
-                    <!-- API Key Sharing - Uncomment to enable
                     ${hasApiKey ? `
                         <label class="flex items-start gap-2 mb-4 cursor-pointer select-none">
                             <input type="checkbox" class="api-metadata-checkbox w-4 h-4 mt-0.5 rounded border-border text-primary focus:ring-primary">
@@ -354,7 +423,6 @@ class ShareModals {
                             </div>
                         </label>
                     ` : ''}
-                    -->
 
                     <div class="flex gap-2 justify-end">
                         <button id="cancel-btn" class="px-4 py-2 text-sm rounded-lg border border-border hover:bg-muted transition-colors">Cancel</button>
@@ -467,9 +535,7 @@ class ShareModals {
                             <span class="text-sm text-muted-foreground">Status</span>
                             <div class="flex items-center gap-1.5">
                                 ${isShared && shareInfo?.isPlaintext ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">Unencrypted</span>' : ''}
-                                <!-- API Key Sharing Badge - Uncomment to enable
                                 ${isShared && shareInfo?.apiKeyShared ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">Key shared</span>' : ''}
-                                -->
                                 <span class="text-sm font-medium ${statusClass}">${status}</span>
                             </div>
                         </div>
@@ -534,7 +600,6 @@ class ShareModals {
                         </div>
                     </div>
 
-                    <!-- API Key Sharing - Uncomment to enable
                     ${hasApiKey ? `
                         <div class="mb-4">
                             <label class="flex items-center gap-2 cursor-pointer select-none">
@@ -544,7 +609,6 @@ class ShareModals {
                             <p class="text-xs text-muted-foreground mt-1 ml-6">Others can use your ephemeral key</p>
                         </div>
                     ` : ''}
-                    -->
 
                     <!-- Info message -->
                     <div class="flex items-center gap-2 mb-4 text-muted-foreground">

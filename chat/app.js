@@ -1293,6 +1293,62 @@ class ChatApp {
     }
 
     /**
+     * Verify a shared API key with the verifier service
+     * @param {Object|null} sharedApiKey - Shared key data from payload
+     * @returns {Promise<Object|null|'cancel'>} Key data if valid, null to strip key, 'cancel' to abort import
+     */
+    async verifySharedApiKey(sharedApiKey) {
+        // No key to verify
+        if (!sharedApiKey?.key) return null;
+        
+        // Check if key has required signature fields for verification
+        const hasSignatures = sharedApiKey.stationSignature && 
+                             sharedApiKey.orgSignature && 
+                             sharedApiKey.expiresAtUnix;
+        
+        if (!hasSignatures) {
+            // Legacy share without signatures - show verification failed modal
+            console.warn('⚠️ Shared key missing signature fields, cannot verify');
+            const choice = await shareModals.showSharedKeyVerificationFailedPrompt({
+                error: 'Shared key is missing cryptographic signatures (legacy share format)',
+                stationId: sharedApiKey.stationId,
+                isBanned: false,
+                banReason: null
+            });
+            return choice === 'import_without_key' ? null : 'cancel';
+        }
+        
+        // Attempt verification with verifier
+        try {
+            console.log('🔐 Verifying shared API key...');
+            await stationVerifier.submitKey({
+                stationId: sharedApiKey.stationId,
+                key: sharedApiKey.key,
+                expiresAtUnix: sharedApiKey.expiresAtUnix,
+                stationSignature: sharedApiKey.stationSignature,
+                orgSignature: sharedApiKey.orgSignature
+            });
+            console.log('✅ Shared API key verified successfully');
+            return sharedApiKey; // Return original data on success
+        } catch (verifyError) {
+            console.warn('⚠️ Shared key verification failed:', verifyError.message);
+            
+            // Check if it's a banned station
+            const isBanned = verifyError.status === 'banned';
+            const banReason = verifyError.bannedStation?.reason;
+            
+            const choice = await shareModals.showSharedKeyVerificationFailedPrompt({
+                error: verifyError.message,
+                stationId: sharedApiKey.stationId,
+                isBanned,
+                banReason
+            });
+            
+            return choice === 'import_without_key' ? null : 'cancel';
+        }
+    }
+
+    /**
      * Update an existing imported session with new data from share
      * @param {string} shareId - Share ID
      * @param {Object} encryptedData - Already fetched encrypted data from org
@@ -1341,16 +1397,32 @@ class ChatApp {
             existingSession.importedMessageCount = payload.messages.length;
             existingSession.importedCiphertext = encryptedData.ciphertext;
             
-            // Apply shared API key if present
+            // Verify and apply shared API key if present
             if (payload.sharedApiKey?.key) {
-                existingSession.apiKey = payload.sharedApiKey.key;
-                existingSession.apiKeyInfo = {
-                    stationId: payload.sharedApiKey.stationId,
-                    station_name: payload.sharedApiKey.stationId,
-                    usage: payload.sharedApiKey.usage,
-                    isShared: true
-                };
-                existingSession.expiresAt = payload.sharedApiKey.expiresAt;
+                const verifiedKeyData = await this.verifySharedApiKey(payload.sharedApiKey);
+                if (verifiedKeyData === 'cancel') {
+                    this.switchSession(existingSession.id);
+                    return;
+                }
+                if (verifiedKeyData) {
+                    existingSession.apiKey = payload.sharedApiKey.key;
+                    existingSession.apiKeyInfo = {
+                        stationId: payload.sharedApiKey.stationId,
+                        station_name: payload.sharedApiKey.stationId,
+                        usage: payload.sharedApiKey.usage,
+                        isShared: true,
+                        key: payload.sharedApiKey.key,
+                        expiresAtUnix: payload.sharedApiKey.expiresAtUnix,
+                        stationSignature: payload.sharedApiKey.stationSignature,
+                        orgSignature: payload.sharedApiKey.orgSignature
+                    };
+                    existingSession.expiresAt = payload.sharedApiKey.expiresAt;
+                } else {
+                    // Verification failed, user chose to proceed without key
+                    existingSession.apiKey = null;
+                    existingSession.apiKeyInfo = null;
+                    existingSession.expiresAt = null;
+                }
             }
             await chatDB.saveSession(existingSession);
 
@@ -1433,8 +1505,20 @@ class ChatApp {
                 return;
             }
 
-            // Validate and create session from payload
+            // Validate payload structure
             shareService.validatePayload(payload);
+
+            // Verify shared API key if present with signature data
+            const verifiedKeyData = await this.verifySharedApiKey(payload.sharedApiKey);
+            if (verifiedKeyData === 'cancel') {
+                window.history.replaceState({}, '', window.location.pathname);
+                return;
+            }
+            // Apply verified key data (null if verification failed and user chose to proceed)
+            if (verifiedKeyData === null) {
+                payload.sharedApiKey = null;
+            }
+
             const session = shareService.createSessionFromPayload(
                 payload,
                 shareId,
