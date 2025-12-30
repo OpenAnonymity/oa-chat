@@ -28,6 +28,9 @@ export default class ModelPicker {
         // Keyboard navigation state
         this.highlightedIndex = -1;
 
+        // Scroll position state
+        this.savedScrollTop = 0;
+
         // Load persisted config (overrides defaults if user has customizations in DB)
         this._loadConfig();
     }
@@ -87,17 +90,23 @@ export default class ModelPicker {
     open() {
         this.app.elements.modelPickerModal.classList.remove('hidden');
         this.highlightedIndex = -1;
-        this.renderModels();
-        // Focus search input after a brief delay to ensure modal is visible
-        setTimeout(() => {
+        const shouldRestoreScroll = this.savedScrollTop > 0;
+        this.renderModels('', shouldRestoreScroll);
+        // Restore scroll position after browser renders the content
+        requestAnimationFrame(() => {
+            if (shouldRestoreScroll) {
+                this.app.elements.modelListScrollArea.scrollTop = this.savedScrollTop;
+            }
             this.app.elements.modelSearch.focus();
-        }, 100);
+        });
     }
 
     /**
      * Closes the model picker modal and clears the search.
      */
     close() {
+        // Save scroll position before hiding (from the scroll container, not inner list)
+        this.savedScrollTop = this.app.elements.modelListScrollArea.scrollTop;
         this.app.elements.modelPickerModal.classList.add('hidden');
         // Clear search
         this.app.elements.modelSearch.value = '';
@@ -160,8 +169,9 @@ export default class ModelPicker {
     /**
      * Renders the models list grouped by category.
      * @param {string} searchTerm - Optional search term to filter
+     * @param {boolean} skipAutoScroll - Skip auto-scroll when restoring scroll position
      */
-    renderModels(searchTerm = '') {
+    renderModels(searchTerm = '', skipAutoScroll = false) {
         // Show loading state if models are still being fetched
         if (this.app.state.modelsLoading || this.app.state.models.length === 0) {
             this.app.elements.modelsList.innerHTML = `
@@ -236,7 +246,7 @@ export default class ModelPicker {
         const modelOptions = this.getModelOptions();
         if (modelOptions.length > 0) {
             this.highlightedIndex = 0;
-            this.updateHighlight(modelOptions);
+            this.updateHighlight(modelOptions, skipAutoScroll);
         }
     }
 
@@ -247,7 +257,8 @@ export default class ModelPicker {
      */
     buildModelOptionHTML(model) {
         const session = this.app.getCurrentSession();
-        const isSelected = session && session.model === model.name;
+        const currentModel = session?.model || this.app.state.pendingModelName;
+        const isSelected = currentModel === model.name;
         const iconData = getProviderIcon(model.provider, 'w-3.5 h-3.5');
         const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
 
@@ -437,8 +448,9 @@ export default class ModelPicker {
     /**
      * Updates the visual highlight for keyboard navigation.
      * @param {Array} modelOptions - Array of model option elements
+     * @param {boolean} skipScroll - Skip scrollIntoView (used when restoring scroll position)
      */
-    updateHighlight(modelOptions) {
+    updateHighlight(modelOptions, skipScroll = false) {
         // Remove keyboard highlight from all options
         modelOptions.forEach(el => {
             el.classList.remove('keyboard-highlight');
@@ -448,8 +460,10 @@ export default class ModelPicker {
         if (this.highlightedIndex >= 0 && this.highlightedIndex < modelOptions.length) {
             const currentOption = modelOptions[this.highlightedIndex];
             currentOption.classList.add('keyboard-highlight');
-            // Scroll into view
-            currentOption.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            // Scroll into view (unless restoring saved scroll position)
+            if (!skipScroll) {
+                currentOption.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            }
         }
     }
 }
