@@ -475,6 +475,28 @@ class TicketClient {
                         throw new Error(errorMessage);
                     }
 
+                    const missingFields = [];
+                    if (!data?.key) missingFields.push('key');
+                    if (!data?.station_id) missingFields.push('station_id');
+                    if (!data?.station_signature) missingFields.push('station_signature');
+                    if (!data?.org_signature) missingFields.push('org_signature');
+                    if (!data?.expires_at_unix) missingFields.push('expires_at_unix');
+
+                    if (missingFields.length > 0) {
+                        const responseMessage = `${data?.detail || data?.error || data?.message || ''}`;
+                        const responseMessageLower = responseMessage.toLowerCase();
+                        if (responseMessageLower.includes('double') ||
+                            responseMessageLower.includes('spent') ||
+                            responseMessageLower.includes('used')) {
+                            const ticketError = new Error('One or more tickets were already used. Please try again.');
+                            ticketError.code = 'TICKET_USED';
+                            ticketError.consumeTickets = true;
+                            throw ticketError;
+                        }
+
+                        throw new Error(responseMessage || `Invalid key response from server (missing ${missingFields.join(', ')})`);
+                    }
+
                     return { response, data };
                 }
             );

@@ -657,6 +657,14 @@ class StationVerifier {
     async submitKey(keyData) {
         console.log('🔐 Submitting key to verifier for validation...');
 
+        if (!keyData?.stationId ||
+            !keyData?.key ||
+            !keyData?.expiresAtUnix ||
+            !keyData?.stationSignature ||
+            !keyData?.orgSignature) {
+            throw new Error('Invalid API key response. Please request a new key.');
+        }
+
         const requestBody = {
             station_id: keyData.stationId,
             api_key: keyData.key,
