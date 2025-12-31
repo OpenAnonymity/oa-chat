@@ -8,6 +8,9 @@ import { getProviderIcon } from '../services/providerIcons.js';
 import { extractDomain } from '../services/urlMetadata.js';
 import { getFileIconSvg } from '../services/fileUtils.js';
 
+// In-memory cache for reasoning trace expanded state (persists across session switches)
+const reasoningExpandedState = new Set();
+
 // Welcome message content configuration
 // Edit this markdown string to customize the intro message shown on new chat sessions
 // Supports full markdown: **bold**, *italic*, lists, links, etc.
@@ -432,8 +435,10 @@ function buildReasoningTrace(reasoning, messageId, isStreaming = false, processC
     const toggleId = `reasoning-toggle-${messageId}`;
     const subtitleId = `reasoning-subtitle-${messageId}`;
 
-    const contentVisibilityClass = 'hidden';
-    const chevronRotation = '';
+    // Check in-memory cache for expanded state (persists across session switches, not page reloads)
+    const isExpanded = reasoningExpandedState.has(messageId);
+    const contentVisibilityClass = isExpanded ? '' : 'hidden';
+    const chevronRotation = isExpanded ? 'style="transform: rotate(180deg)"' : '';
 
     // Trim whitespace and process content appropriately
     // During streaming, reasoning will be plain text
@@ -1250,9 +1255,11 @@ if (typeof window !== 'undefined') {
             if (isHidden) {
                 contentEl.classList.remove('hidden');
                 chevronEl.style.transform = 'rotate(180deg)';
+                reasoningExpandedState.add(messageId);
             } else {
                 contentEl.classList.add('hidden');
                 chevronEl.style.transform = 'rotate(0deg)';
+                reasoningExpandedState.delete(messageId);
             }
 
             // Update scroll button visibility after content change
