@@ -1016,6 +1016,18 @@ html.switching-theme *::after {
     box-shadow: 0 1px 4px hsl(var(--color-foreground) / 0.08);
 }
 
+/* Disable hover effects during streaming to prevent flicker */
+.streaming .inline-link-button:hover {
+    background: hsl(var(--color-muted) / 0.3);
+    border-color: hsl(var(--color-border) / 0.5);
+    transform: none;
+    box-shadow: none;
+}
+.dark .streaming .inline-link-button:hover {
+    background: hsl(var(--color-muted) / 0.2);
+    border-color: hsl(var(--color-border) / 0.6);
+}
+
 .inline-link-icon {
     width: 0.7rem;
     height: 0.7rem;

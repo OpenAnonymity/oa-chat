@@ -789,6 +789,9 @@ export default class ChatArea {
         }
 
         if (contentEl) {
+            // Add streaming class to disable hover effects (prevents flicker)
+            contentEl.classList.add('streaming');
+
             // Use the app's LaTeX-safe processor
             let processedContent = this.app.processContentWithLatex(content);
 
@@ -1386,6 +1389,9 @@ export default class ChatArea {
             // Just update the content element if it exists
             const contentEl = messageEl.querySelector('.message-content');
             if (contentEl && message.content) {
+                // Remove streaming class to re-enable hover effects
+                contentEl.classList.remove('streaming');
+
                 // Process content with the full pipeline (same as buildAssistantMessage)
                 let processedContent = message.content;
 
