@@ -379,12 +379,14 @@ function formatReasoningDuration(durationMs) {
 
 /**
  * Generates a subtitle for reasoning content.
+ * Only uses explicit subtitle markers (## headings or **bold** text).
+ * If none found, shows duration or generic completion text.
  * @param {string} reasoning - The reasoning content
  * @param {number} reasoningDuration - Duration in milliseconds (optional)
  * @returns {string} The subtitle text
  */
 function generateReasoningSubtitle(reasoning, reasoningDuration) {
-    // If duration is available, show timing
+    // If duration is available, show timing (preferred for completed reasoning)
     if (reasoningDuration) {
         return formatReasoningDuration(reasoningDuration);
     }
@@ -398,7 +400,8 @@ function generateReasoningSubtitle(reasoning, reasoningDuration) {
     const MAX_LENGTH = 150;
     const summaries = extractReasoningSummaries(reasoning);
 
-    // If we have summaries, use ONLY the last one (current step)
+    // Only use explicit subtitle markers (headings or bold text)
+    // If none found, fall back to generic "Reasoning complete"
     if (summaries.length > 0) {
         const lastSummary = summaries[summaries.length - 1];
         const summaryText = lastSummary.text;
@@ -408,37 +411,7 @@ function generateReasoningSubtitle(reasoning, reasoningDuration) {
             : summaryText;
     }
 
-    // Fallback: look for the last substantial line that isn't too detailed
-    const lines = reasoning.trim().split('\n');
-    for (let i = lines.length - 1; i >= 0; i--) {
-        const line = lines[i].trim();
-        if (!line) continue;
-
-        // Skip lines that look like detailed explanations
-        if (line.includes('I see that') ||
-            line.includes('I think') ||
-            line.includes('I should') ||
-            line.includes('I might') ||
-            line.length > 200) {
-            continue;
-        }
-
-        // Use this line if it's a reasonable length
-        if (line.length > 10 && line.length < 150) {
-            return line.length > MAX_LENGTH
-                ? line.substring(0, MAX_LENGTH - 3) + '...'
-                : line;
-        }
-    }
-
-    // Final fallback
-    const lastLine = lines[lines.length - 1].trim();
-    if (lastLine) {
-        return lastLine.length > MAX_LENGTH
-            ? lastLine.substring(0, MAX_LENGTH - 3) + '...'
-            : lastLine;
-    }
-
+    // No subtitle markers detected - use generic completion text
     return 'Reasoning complete';
 }
 

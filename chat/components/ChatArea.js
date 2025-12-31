@@ -429,10 +429,11 @@ export default class ChatArea {
             // Pass session streaming state to template
             options.isSessionStreaming = isSessionStreaming;
             // Normalize streaming state for messages loaded from DB.
-            // If streamingReasoning/streamingTokens are set, it means streaming was interrupted
-            // (e.g., browser closed, network error). Reset them for proper display.
-            // Active streaming uses appendMessage/updateStreamingMessage, not render().
-            const normalizedMessage = (message.streamingReasoning || message.streamingTokens !== null)
+            // If streamingReasoning/streamingTokens are set AND session is NOT currently streaming,
+            // it means streaming was interrupted (e.g., browser closed, network error).
+            // Skip normalization if session is actively streaming to preserve the streaming UI state.
+            const shouldNormalize = !isSessionStreaming && (message.streamingReasoning || message.streamingTokens !== null);
+            const normalizedMessage = shouldNormalize
                 ? { ...message, streamingReasoning: false, streamingTokens: null }
                 : message;
             let html = buildMessageHTML(normalizedMessage, helpers, this.app.state.models, session.model, options);
@@ -958,7 +959,8 @@ export default class ChatArea {
 
     /**
      * Extracts a meaningful subtitle from reasoning content.
-     * Shows only the latest/current step, not all steps combined.
+     * Only uses explicit subtitle markers (## headings or **bold** text).
+     * Returns "Thinking..." if no markers are found (e.g., Claude models).
      * @param {string} reasoning - The reasoning content
      * @returns {string} The subtitle text
      */
@@ -970,7 +972,8 @@ export default class ChatArea {
         const MAX_LENGTH = 150;
         const structure = this.parseReasoningStructure(reasoning);
 
-        // If we have summaries, use ONLY the last one (current step)
+        // Only use explicit subtitle markers (headings or bold text)
+        // If none found, keep showing "Thinking..." - don't fall back to body text
         if (structure.summaries.length > 0) {
             const lastSummary = structure.summaries[structure.summaries.length - 1];
             const summaryText = lastSummary.text;
@@ -980,37 +983,7 @@ export default class ChatArea {
                 : summaryText;
         }
 
-        // Fallback: look for the last substantial line that isn't too detailed
-        const lines = reasoning.trim().split('\n');
-        for (let i = lines.length - 1; i >= 0; i--) {
-            const line = lines[i].trim();
-            if (!line) continue;
-
-            // Skip lines that look like detailed explanations (containing certain patterns)
-            if (line.includes('I see that') ||
-                line.includes('I think') ||
-                line.includes('I should') ||
-                line.includes('I might') ||
-                line.length > 200) {
-                continue;
-            }
-
-            // Use this line if it's a reasonable length
-            if (line.length > 10 && line.length < 150) {
-                return line.length > MAX_LENGTH
-                    ? line.substring(0, MAX_LENGTH - 3) + '...'
-                    : line;
-            }
-        }
-
-        // Final fallback
-        const lastLine = lines[lines.length - 1].trim();
-        if (lastLine) {
-            return lastLine.length > MAX_LENGTH
-                ? lastLine.substring(0, MAX_LENGTH - 3) + '...'
-                : lastLine;
-        }
-
+        // No subtitle markers detected - keep default streaming indicator
         return 'Thinking...';
     }
 
