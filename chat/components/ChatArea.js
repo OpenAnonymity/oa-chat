@@ -1381,7 +1381,26 @@ export default class ChatArea {
             // Just update the content element if it exists
             const contentEl = messageEl.querySelector('.message-content');
             if (contentEl && message.content) {
-                contentEl.innerHTML = this.app.processContentWithLatex(message.content);
+                // Process content with the full pipeline (same as buildAssistantMessage)
+                let processedContent = message.content;
+
+                // Insert raw citation markers before LaTeX processing
+                if (message.citations && message.citations.length > 0) {
+                    processedContent = window.MessageTemplates.insertRawCitationMarkers(processedContent, message.citations);
+                }
+
+                // Process LaTeX/Markdown
+                processedContent = this.app.processContentWithLatex(processedContent);
+
+                // Style citation markers into clickable elements
+                if (message.citations && message.citations.length > 0) {
+                    processedContent = window.MessageTemplates.addInlineCitationMarkers(processedContent, message.id);
+                }
+
+                // Enhance inline links into styled buttons
+                processedContent = window.MessageTemplates.enhanceInlineLinks(processedContent, message.id);
+
+                contentEl.innerHTML = processedContent;
                 renderMathInElement(contentEl, {
                     delimiters: [
                         {left: '$$', right: '$$', display: true},

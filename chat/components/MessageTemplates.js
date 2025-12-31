@@ -1235,6 +1235,9 @@ if (typeof window !== 'undefined') {
     window.MessageTemplates.buildReasoningTrace = buildReasoningTrace;
     window.MessageTemplates.buildCitationsSection = buildCitationsSection;
     window.MessageTemplates.buildCitationsToggleButton = buildCitationsToggleButton;
+    window.MessageTemplates.insertRawCitationMarkers = insertRawCitationMarkers;
+    window.MessageTemplates.addInlineCitationMarkers = addInlineCitationMarkers;
+    window.MessageTemplates.enhanceInlineLinks = enhanceInlineLinks;
     window.buildMessageHTML = buildMessageHTML; // Make buildMessageHTML globally available
 
     // Global function to toggle reasoning trace visibility
