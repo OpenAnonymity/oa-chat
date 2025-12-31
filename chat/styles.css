@@ -2586,6 +2586,61 @@ html[data-right-panel-hidden="true"] #right-panel {
     font-weight: 600;
 }
 
+/* Share preview content (compact markdown in modal) */
+.share-preview-content {
+    font-size: inherit;
+    line-height: 1.4;
+}
+
+.share-preview-content p {
+    margin: 0;
+    display: inline;
+}
+
+.share-preview-content h1,
+.share-preview-content h2,
+.share-preview-content h3,
+.share-preview-content h4,
+.share-preview-content h5,
+.share-preview-content h6 {
+    font-size: inherit;
+    font-weight: 600;
+    margin: 0;
+    display: inline;
+}
+
+.share-preview-content pre,
+.share-preview-content code {
+    font-size: 0.9em;
+    padding: 0 0.2em;
+    background: hsl(var(--color-muted));
+    border-radius: 3px;
+}
+
+.share-preview-content pre {
+    display: inline;
+    white-space: pre-wrap;
+}
+
+.share-preview-content ul,
+.share-preview-content ol {
+    margin: 0;
+    padding-left: 1em;
+    display: inline;
+}
+
+.share-preview-content li {
+    display: inline;
+}
+
+.share-preview-content li::before {
+    content: '• ';
+}
+
+.share-preview-content .katex {
+    font-size: 0.9em;
+}
+
 @keyframes popoverFadeIn {
     from {
         opacity: 0;
