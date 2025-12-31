@@ -6,6 +6,7 @@
 import privacyPassProvider from './privacyPass.js';
 import networkLogger from './networkLogger.js';
 import networkProxy from './networkProxy.js';
+import ticketStore from './ticketStore.js';
 
 export const ORG_API_BASE = 'https://org.openanonymity.ai';
 
@@ -24,24 +25,9 @@ class StationClient {
     constructor() {
         console.log('🚀 Initializing StationClient');
         this.ppExtension = privacyPassProvider;
-        this.tickets = this.loadTickets();
-        this.currentTicketIndex = 0;
-        this.tabId = this.generateTabId();
+        this.ticketStore = ticketStore;
 
-        console.log(`📊 StationClient ready with ${this.tickets.length} tickets (Tab ID: ${this.tabId})`);
-
-        // Listen for cross-tab ticket changes via storage events
-        window.addEventListener('storage', (event) => {
-            if (event.key === 'inference_tickets' && event.newValue !== event.oldValue) {
-                console.log('🔄 Detected ticket changes from another tab, reloading...');
-                this.tickets = this.loadTickets();
-                window.dispatchEvent(new CustomEvent('tickets-updated'));
-            }
-        });
-    }
-
-    generateTabId() {
-        return `tab_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        console.log(`📊 StationClient ready with ${this.ticketStore.getCount()} tickets`);
     }
 
     /**
@@ -141,35 +127,8 @@ class StationClient {
         await new Promise(r => setTimeout(r, delay));
     }
 
-    loadTickets() {
-        try {
-            const stored = localStorage.getItem('inference_tickets');
-            const tickets = stored ? JSON.parse(stored) : [];
-            console.log(`📥 Loaded ${tickets.length} tickets from localStorage`);
-            return tickets;
-        } catch (error) {
-            console.error('❌ Error loading tickets:', error);
-            return [];
-        }
-    }
-
-    saveTickets(tickets) {
-        try {
-            localStorage.setItem('inference_tickets', JSON.stringify(tickets));
-            this.tickets = tickets;
-            this.currentTicketIndex = 0;
-            console.log(`💾 Saved ${tickets.length} tickets to localStorage`);
-
-            // Notify app about ticket updates
-            window.dispatchEvent(new CustomEvent('tickets-updated'));
-        } catch (error) {
-            console.error('❌ Error saving tickets:', error);
-        }
-    }
-
     getNextTicket() {
-        const tickets = this.getNextTickets(1);
-        return tickets.length > 0 ? tickets[0] : null;
+        return this.ticketStore.peekTicket();
     }
 
     /**
@@ -178,128 +137,20 @@ class StationClient {
      * @returns {Array} Array of available tickets (may be fewer than requested)
      */
     getNextTickets(count = 1) {
-        if (!this.tickets || this.tickets.length === 0 || count <= 0) {
-            return [];
-        }
+        return this.ticketStore.peekTickets(count);
+    }
 
-        const RESERVATION_TIMEOUT_MS = 5000; // 5 seconds
-        const now = Date.now();
-
-        // Filter for tickets that are not used and either not reserved or reservation has expired
-        const availableTickets = this.tickets.filter(t => {
-            if (t.used) return false;
-
-            // Check if ticket is reserved by another tab and reservation is still valid
-            if (t.reserved && t.reserved_by !== this.tabId) {
-                const reservedAt = new Date(t.reserved_at).getTime();
-                const isExpired = (now - reservedAt) > RESERVATION_TIMEOUT_MS;
-
-                if (!isExpired) {
-                    return false; // Skip tickets reserved by other tabs
-                }
-
-                // Reservation expired, this ticket is available
-                console.log(`⏰ Ticket reservation expired (reserved ${Math.floor((now - reservedAt) / 1000)}s ago)`);
-            }
-
-            return true;
-        });
-
-        if (availableTickets.length === 0) {
-            console.log('❌ No available tickets (all used or reserved)');
-            return [];
-        }
-
-        // Return up to 'count' tickets
-        return availableTickets.slice(0, count);
+    getTickets() {
+        return this.ticketStore.getTickets();
     }
 
     getTicketCount() {
-        if (!this.tickets) return 0;
-        return this.tickets.filter(t => !t.used).length;
+        return this.ticketStore.getCount();
     }
 
     clearTickets() {
-        this.tickets = [];
-        this.currentTicketIndex = 0;
-        localStorage.removeItem('inference_tickets');
         console.log('🗑️  All tickets cleared');
-        window.dispatchEvent(new CustomEvent('tickets-updated'));
-    }
-
-    reserveTicket(ticket) {
-        return this.reserveTickets([ticket]);
-    }
-
-    /**
-     * Reserve multiple tickets atomically.
-     * @param {Array} tickets - Array of tickets to reserve
-     * @returns {boolean} True if all tickets were reserved successfully
-     */
-    reserveTickets(tickets) {
-        if (!tickets || tickets.length === 0) return false;
-
-        // Re-read tickets from localStorage to ensure freshness
-        const freshTickets = this.loadTickets();
-        const now = Date.now();
-        const indicesToReserve = [];
-
-        // Validate all tickets first before making any changes
-        for (const ticket of tickets) {
-            if (!ticket) {
-                console.log('❌ Null ticket in reservation request');
-                return false;
-            }
-
-            const ticketIndex = freshTickets.findIndex(
-                t => t.finalized_ticket === ticket.finalized_ticket
-            );
-
-            if (ticketIndex === -1) {
-                console.log('❌ Ticket not found in storage');
-                return false;
-            }
-
-            const targetTicket = freshTickets[ticketIndex];
-
-            // Check if ticket is already used or reserved by another tab
-            if (targetTicket.used) {
-                console.log('❌ Ticket already used');
-                return false;
-            }
-
-            if (targetTicket.reserved && targetTicket.reserved_by !== this.tabId) {
-                const reservedAt = new Date(targetTicket.reserved_at).getTime();
-                const age = now - reservedAt;
-
-                // Check if reservation is still valid (within 5 seconds)
-                if (age < 5000) {
-                    console.log(`❌ Ticket reserved by another tab (${Math.floor(age / 1000)}s ago)`);
-                    return false;
-                }
-            }
-
-            indicesToReserve.push(ticketIndex);
-        }
-
-        // All tickets validated - now reserve them atomically
-        const reservedAt = new Date().toISOString();
-        for (const idx of indicesToReserve) {
-            freshTickets[idx].reserved = true;
-            freshTickets[idx].reserved_at = reservedAt;
-            freshTickets[idx].reserved_by = this.tabId;
-        }
-
-        // Save to localStorage in a single atomic write
-        try {
-            localStorage.setItem('inference_tickets', JSON.stringify(freshTickets));
-            this.tickets = freshTickets;
-            console.log(`✅ Reserved ${tickets.length} ticket(s) for this tab`);
-            return true;
-        } catch (error) {
-            console.error('❌ Error reserving tickets:', error);
-            return false;
-        }
+        return this.ticketStore.clearTickets();
     }
 
     async alphaRegister(invitationCode, progressCallback) {
@@ -477,8 +328,6 @@ class StationClient {
                     blinded_request: blindedRequest,
                     signed_response: signedResponse,
                     finalized_ticket: finalizedTicket,
-                    used: false,
-                    used_at: null,
                     created_at: new Date().toISOString(),
                 });
 
@@ -500,14 +349,11 @@ class StationClient {
                 action: 'tickets-unblind',
                 response: {
                     tickets_finalized: tickets.length,
-                    tickets_ready: tickets.filter(t => !t.used).length
+                    tickets_ready: tickets.length
                 }
             });
 
-            // Load existing tickets and append new ones
-            const existingTickets = this.loadTickets();
-            const combinedTickets = [...existingTickets, ...tickets];
-            this.saveTickets(combinedTickets);
+            await this.ticketStore.addTickets(tickets);
 
             if (progressCallback) progressCallback('Registration complete!', 100);
 
@@ -528,125 +374,113 @@ class StationClient {
      * Request an API key by redeeming inference tickets.
      * @param {string} name - Key name for identification
      * @param {number} ticketCount - Number of tickets to use (default: 1)
-     * @param {number} retryCount - Internal retry counter
      * @returns {Promise<Object>} API key data with verification signatures
      */
-    async requestApiKey(name = 'OA-WebApp-Key', ticketCount = 1, retryCount = 0) {
-        const MAX_RESERVE_RETRIES = 3;
-        let tickets = [];
-
+    async requestApiKey(name = 'OA-WebApp-Key', ticketCount = 1) {
         try {
-            // Get next available tickets
-            tickets = this.getNextTickets(ticketCount);
+            const { tickets, result } = await this.ticketStore.consumeTickets(
+                ticketCount,
+                async ({ tickets, totalCount, remainingCount }) => {
+                    networkLogger.logRequest({
+                        type: 'local',
+                        method: 'LOCAL',
+                        status: 200,
+                        action: 'ticket-select',
+                        response: {
+                            tickets_selected: tickets.length,
+                            total_tickets: totalCount,
+                            unused_tickets: remainingCount,
+                            ticket_index: Math.max(1, totalCount - remainingCount - tickets.length + 1)
+                        }
+                    });
 
-            if (tickets.length === 0) {
-                throw new Error('No inference tickets available. Please register with an invitation code first.');
-            }
+                    const tokenValues = tickets.map(t => t.finalized_ticket).join(',');
+                    const authHeader = tickets.length === 1
+                        ? `InferenceTicket token=${tokenValues}`
+                        : `InferenceTicket tokens=${tokenValues}`;
 
-            if (tickets.length < ticketCount) {
-                throw new Error(`Not enough tickets. Need ${ticketCount}, but only ${tickets.length} available.`);
-            }
+                    const requestKeyUrl = `${ORG_API_BASE}/api/request_key`;
+                    const requestHeaders = {
+                        'Content-Type': 'application/json',
+                        'Authorization': authHeader,
+                    };
+                    const requestBody = { name };
 
-            // Try to reserve all tickets atomically
-            const reserved = this.reserveTickets(tickets);
+                    console.log(`🔑 Requesting API key from org (${tickets.length} ticket${tickets.length > 1 ? 's' : ''})...`);
 
-            if (!reserved) {
-                // Tickets were taken by another tab, retry
-                if (retryCount < MAX_RESERVE_RETRIES) {
-                    console.log(`🔄 Ticket conflict detected, retrying (attempt ${retryCount + 1}/${MAX_RESERVE_RETRIES})...`);
-                    return await this.requestApiKey(name, ticketCount, retryCount + 1);
-                } else {
-                    throw new Error('Unable to reserve tickets after multiple attempts. All tickets may be in use by other tabs.');
-                }
-            }
+                    let response;
+                    let data;
 
-            // Log ticket selection as a local event
-            networkLogger.logRequest({
-                type: 'local',
-                method: 'LOCAL',
-                status: 200,
-                action: 'ticket-select',
-                response: {
-                    tickets_selected: tickets.length,
-                    total_tickets: this.tickets.length,
-                    unused_tickets: this.tickets.filter(t => !t.used).length,
-                    tab_id: this.tabId
-                }
-            });
+                    try {
+                        ({ response, data } = await this.fetchWithRetry(
+                            requestKeyUrl,
+                            {
+                                method: 'POST',
+                                headers: requestHeaders,
+                                body: JSON.stringify(requestBody)
+                            },
+                            {
+                                context: 'Org API key',
+                                maxAttempts: 1,    // No retries - tickets would be consumed
+                                timeoutMs: 30000   // 30s timeout - org has internal station timeout
+                            }
+                        ));
+                    } catch (error) {
+                        networkLogger.logRequest({
+                            type: 'api-key',
+                            method: 'POST',
+                            url: requestKeyUrl,
+                            status: 0,
+                            request: {
+                                headers: networkLogger.sanitizeHeaders(requestHeaders),
+                                body: requestBody
+                            },
+                            error: error.message
+                        });
+                        throw error;
+                    }
 
-            // Build Authorization header - singular 'token' for 1, plural 'tokens' for multiple
-            const tokenValues = tickets.map(t => t.finalized_ticket).join(',');
-            const authHeader = tickets.length === 1
-                ? `InferenceTicket token=${tokenValues}`
-                : `InferenceTicket tokens=${tokenValues}`;
+                    networkLogger.logRequest({
+                        type: 'api-key',
+                        method: 'POST',
+                        url: requestKeyUrl,
+                        status: response.status,
+                        request: {
+                            headers: networkLogger.sanitizeHeaders(requestHeaders),
+                            body: requestBody
+                        },
+                        response: data
+                    });
 
-            // Request API key directly from org
-            const requestKeyUrl = `${ORG_API_BASE}/api/request_key`;
-            const requestHeaders = {
-                'Content-Type': 'application/json',
-                'Authorization': authHeader,
-            };
-            const requestBody = { name };
+                    if (!response.ok) {
+                        const errorMessage = data.detail || data.error || data.message ||
+                            (typeof data === 'string' ? data : null) ||
+                            `Failed to provision API key (${response.status})`;
 
-            console.log(`🔑 Requesting API key from org (${tickets.length} ticket${tickets.length > 1 ? 's' : ''})...`);
+                        if (response.status === 401 || errorMessage.includes('double-spending')) {
+                            const ticketError = new Error('One or more tickets were already used. Please try again.');
+                            ticketError.code = 'TICKET_USED';
+                            ticketError.consumeTickets = true;
+                            throw ticketError;
+                        }
 
-            const { response, data } = await this.fetchWithRetry(
-                requestKeyUrl,
-                {
-                    method: 'POST',
-                    headers: requestHeaders,
-                    body: JSON.stringify(requestBody)
-                },
-                {
-                    context: 'Org API key',
-                    maxAttempts: 1,    // No retries - tickets would be consumed
-                    timeoutMs: 30000   // 30s timeout - org has internal station timeout
+                        throw new Error(errorMessage);
+                    }
+
+                    return { response, data };
                 }
             );
 
-            // Log request (sanitize auth header to hide ticket values)
-            networkLogger.logRequest({
-                type: 'api-key',
-                method: 'POST',
-                url: requestKeyUrl,
-                status: response.status,
-                request: {
-                    headers: networkLogger.sanitizeHeaders(requestHeaders),
-                    body: requestBody
-                },
-                response: data
-            });
+            const { data } = result;
 
-            if (!response.ok) {
-                // Extract error message from various possible response formats
-                const errorMessage = data.detail || data.error || data.message ||
-                    (typeof data === 'string' ? data : null) ||
-                    `Failed to provision API key (${response.status})`;
-
-                if (response.status === 401 || errorMessage.includes('double-spending')) {
-                    // Mark all tickets as used if double-spending detected
-                    tickets.forEach(t => this.markTicketAsUsed(t));
-                    const ticketError = new Error('One or more tickets were already used. Please try again.');
-                    ticketError.code = 'TICKET_USED';
-                    throw ticketError;
-                }
-                // Release reservations - tickets weren't consumed, can be reused
-                tickets.forEach(t => this.releaseReservation(t));
-                throw new Error(errorMessage);
-            }
-
-            // Mark all tickets as used
-            tickets.forEach(t => this.markTicketAsUsed(t));
-
-            // Return key data with signature fields for verification
             return {
                 key: data.key,
                 keyHash: data.key_hash,
                 ticketsConsumed: data.tickets_consumed || tickets.length,
                 creditLimit: data.credit_limit,
                 durationMinutes: data.duration_minutes,
-                expiresAt: data.expires_at,           // ISO string for display/checks
-                expiresAtUnix: data.expires_at_unix,  // Unix timestamp for signature verification
+                expiresAt: data.expires_at,
+                expiresAtUnix: data.expires_at_unix,
                 stationId: data.station_id,
                 stationUrl: data.station_url,
                 stationSignature: data.station_signature,
@@ -657,13 +491,8 @@ class StationClient {
                     finalizedTicket: t.finalized_ticket,
                 }))
             };
-
         } catch (error) {
             console.error('Request API key error:', error);
-            // Release reservations on error (unless tickets were consumed)
-            if (tickets.length > 0 && error.code !== 'TICKET_USED') {
-                tickets.forEach(t => this.releaseReservation(t));
-            }
             throw error;
         }
     }
@@ -712,45 +541,6 @@ class StationClient {
         }
     }
 
-    markTicketAsUsed(ticket) {
-        if (!ticket || !this.tickets) return;
-
-        const ticketIndex = this.tickets.findIndex(
-            t => t.finalized_ticket === ticket.finalized_ticket
-        );
-
-        if (ticketIndex !== -1) {
-            this.tickets[ticketIndex].used = true;
-            this.tickets[ticketIndex].used_at = new Date().toISOString();
-            // Clear reservation when marking as used
-            this.tickets[ticketIndex].reserved = false;
-            this.tickets[ticketIndex].reserved_at = null;
-            this.tickets[ticketIndex].reserved_by = null;
-
-            this.saveTickets(this.tickets);
-
-            console.log(`✅ Marked ticket ${ticketIndex + 1}/${this.tickets.length} as used`);
-            console.log(`📊 Remaining tickets: ${this.tickets.filter(t => !t.used).length}`);
-
-            window.dispatchEvent(new CustomEvent('tickets-updated'));
-        }
-    }
-
-    releaseReservation(ticket) {
-        if (!ticket || !this.tickets) return;
-
-        const ticketIndex = this.tickets.findIndex(
-            t => t.finalized_ticket === ticket.finalized_ticket
-        );
-
-        if (ticketIndex !== -1 && this.tickets[ticketIndex].reserved_by === this.tabId) {
-            this.tickets[ticketIndex].reserved = false;
-            this.tickets[ticketIndex].reserved_at = null;
-            this.tickets[ticketIndex].reserved_by = null;
-            this.saveTickets(this.tickets);
-            console.log(`🔓 Released reservation for ticket ${ticketIndex + 1}`);
-        }
-    }
 }
 
 // Export singleton instance
@@ -762,4 +552,3 @@ if (typeof window !== 'undefined') {
 }
 
 export default stationClient;
-

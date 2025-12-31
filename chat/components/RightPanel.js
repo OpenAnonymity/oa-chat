@@ -132,15 +132,13 @@ class RightPanel {
     }
 
     loadNextTicket() {
-        const tickets = stationClient.tickets;
+        const tickets = stationClient.getTickets();
         if (tickets && tickets.length > 0) {
-            const nextUnused = tickets.findIndex(t => !t.used);
-            if (nextUnused !== -1) {
-                this.currentTicket = tickets[nextUnused];
-                this.ticketIndex = nextUnused;
-            } else {
-                this.currentTicket = null;
-            }
+            this.currentTicket = tickets[0];
+            this.ticketIndex = 0;
+        } else {
+            this.currentTicket = null;
+            this.ticketIndex = 0;
         }
         // Reset animation state
         this.showFinalized = false;
@@ -1234,8 +1232,8 @@ class RightPanel {
                         <!-- Ticket Status -->
                         <div class="flex items-center justify-between text-xs">
                             <span class="text-muted-foreground">Status:</span>
-                            <span class="${this.currentTicket.used ? 'text-destructive' : 'text-foreground'}">
-                                ${this.currentTicket.used ? 'Used' : 'Available'}
+                            <span class="text-foreground">
+                                Available
                             </span>
                         </div>
                     </div>
@@ -1906,4 +1904,3 @@ class RightPanel {
 }
 
 export default RightPanel;
-
