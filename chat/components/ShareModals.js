@@ -916,13 +916,14 @@ class ShareModals {
                     <!-- PIN/Password Section -->
                     <div class="mb-4">
                         <div class="flex items-center justify-between mb-2">
-                            <label class="text-xs text-muted-foreground">Encryption</label>
+                            <label class="text-xs text-foreground">Encryption</label>
                             <div class="encryption-mode-toggle" role="radiogroup" aria-label="Encryption mode">
                                 <button type="button" class="encryption-mode-btn ${passwordMode === 'pin' ? 'active' : ''}" data-mode="pin">PIN</button>
                                 <button type="button" class="encryption-mode-btn ${passwordMode === 'password' ? 'active' : ''}" data-mode="password">Password</button>
                                 <div class="encryption-mode-indicator"></div>
                             </div>
                         </div>
+                        <p class="text-[11px] text-muted-foreground mb-2">Your chat is encrypted locally before upload. Only someone with this PIN/password can decrypt it.</p>
 
                         <!-- Encryption input container (fixed height to prevent layout shift) -->
                         <div class="h-20 flex items-center">
@@ -966,7 +967,7 @@ class ShareModals {
 
                     <!-- Expiry Segmented Control -->
                     <div class="mb-4">
-                        <label class="block text-xs text-muted-foreground mb-2">Expires after</label>
+                        <label class="block text-xs text-foreground mb-2">Expires after</label>
                         <div class="expiry-toggle-container" role="radiogroup" aria-label="Expiry selection">
                             <div class="expiry-toggle-indicator"></div>
                             ${TTL_PRESETS.map((p) => `
@@ -1163,13 +1164,14 @@ class ShareModals {
                     <!-- PIN/Password Section -->
                     <div class="mb-4">
                         <div class="flex items-center justify-between mb-2">
-                            <label class="text-xs text-muted-foreground">Encryption</label>
+                            <label class="text-xs text-foreground">Encryption</label>
                             <div class="encryption-mode-toggle" role="radiogroup" aria-label="Encryption mode">
                                 <button type="button" class="encryption-mode-btn ${passwordMode === 'pin' ? 'active' : ''}" data-mode="pin">PIN</button>
                                 <button type="button" class="encryption-mode-btn ${passwordMode === 'password' ? 'active' : ''}" data-mode="password">Password</button>
                                 <div class="encryption-mode-indicator"></div>
                             </div>
                         </div>
+                        <p class="text-[11px] text-muted-foreground mb-2">Your chat is encrypted locally before upload. Only someone with this PIN/password can decrypt it.</p>
 
                         <!-- Encryption input container (fixed height to prevent layout shift) -->
                         <div class="h-20 flex items-center">
@@ -1213,7 +1215,7 @@ class ShareModals {
 
                     <!-- Expiry Segmented Control -->
                     <div class="mb-4">
-                        <label class="block text-xs text-muted-foreground mb-2">Expires after</label>
+                        <label class="block text-xs text-foreground mb-2">Expires after</label>
                         <div class="expiry-toggle-container" role="radiogroup" aria-label="Expiry selection">
                             <div class="expiry-toggle-indicator"></div>
                             ${TTL_PRESETS.map((p, i) => `
@@ -1388,6 +1390,24 @@ class ShareModals {
         // Close handlers
         closeBtn.onclick = () => this.cleanup();
         modal.onclick = (e) => { if (e.target === modal) this.cleanup(); };
+
+        // Auto-focus input when typing anywhere in the modal (while form is visible)
+        modal.addEventListener('keydown', (e) => {
+            if (formSection.classList.contains('hidden')) return;
+            if (e.key === 'Escape' || e.key === 'Enter' || e.key === 'Tab') return;
+            if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+            const activeEl = document.activeElement;
+            const isInputFocused = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA');
+            if (isInputFocused) return;
+
+            // Focus the appropriate input for typing
+            if (currentMode === 'pin') {
+                pinInput?.focus();
+            } else {
+                passwordInput?.focus();
+            }
+        });
 
         // Escape key closes modal
         const handleEscape = (e) => { if (e.key === 'Escape') this.cleanup(); };

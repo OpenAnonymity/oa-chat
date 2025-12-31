@@ -4219,12 +4219,14 @@ class ChatApp {
             // - Not using modifier keys (Cmd/Ctrl/Alt)
             // - Key is a printable character
             // - Model picker is closed
+            // - No share modal is open
             if (!isInputFocused &&
                 !e.metaKey &&
                 !e.ctrlKey &&
                 !e.altKey &&
                 e.key.length === 1 &&
-                this.elements.modelPickerModal.classList.contains('hidden')) {
+                this.elements.modelPickerModal.classList.contains('hidden') &&
+                !shareModals.currentModal) {
                 this.elements.messageInput.focus();
             }
         });
