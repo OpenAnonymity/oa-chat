@@ -63,6 +63,53 @@ class TicketStore {
         }
     }
 
+    splitTicketsByStatus(tickets) {
+        const activeTickets = [];
+        const archivedTickets = [];
+
+        tickets.forEach(ticket => {
+            if (!ticket || !ticket.finalized_ticket) return;
+            const status = typeof ticket.status === 'string' ? ticket.status.toLowerCase() : '';
+            const isArchived = status === 'archived' || status === 'consumed' || status === 'used' ||
+                ticket.used === true || !!ticket.consumed_at;
+
+            if (isArchived) {
+                archivedTickets.push(ticket);
+            } else {
+                activeTickets.push(ticket);
+            }
+        });
+
+        return { activeTickets, archivedTickets };
+    }
+
+    extractImportTickets(payload) {
+        if (!payload) {
+            throw new Error('Invalid ticket file.');
+        }
+
+        if (Array.isArray(payload)) {
+            return this.splitTicketsByStatus(payload);
+        }
+
+        if (typeof payload !== 'object') {
+            throw new Error('Invalid ticket file.');
+        }
+
+        if (Array.isArray(payload.activeTickets) || Array.isArray(payload.archivedTickets)) {
+            return {
+                activeTickets: Array.isArray(payload.activeTickets) ? payload.activeTickets : [],
+                archivedTickets: Array.isArray(payload.archivedTickets) ? payload.archivedTickets : []
+            };
+        }
+
+        if (Array.isArray(payload.tickets)) {
+            return this.splitTicketsByStatus(payload.tickets);
+        }
+
+        throw new Error('No tickets found in the import file.');
+    }
+
     normalizeTickets(rawTickets, options = {}) {
         const input = Array.isArray(rawTickets) ? rawTickets : [];
         const normalized = [];
@@ -289,6 +336,32 @@ class TicketStore {
                 }
                 throw error;
             }
+        });
+    }
+
+    async importTickets(payload) {
+        return this.withLock(async () => {
+            const { activeTickets, archivedTickets } = this.extractImportTickets(payload);
+            const { tickets: normalizedActive } = this.normalizeTickets(activeTickets);
+            const { tickets: normalizedArchived } = this.normalizeTickets(archivedTickets, { allowUsed: true });
+
+            const existingActive = this.readTicketsFromStorage();
+            const existingArchived = this.readArchiveFromStorage();
+
+            const mergedActive = this.mergeTickets(existingActive, normalizedActive);
+            const mergedArchived = this.mergeTickets(existingArchived, normalizedArchived);
+            const archivedIds = new Set(mergedArchived.map(ticket => ticket.finalized_ticket));
+            const filteredActive = mergedActive.filter(ticket => !archivedIds.has(ticket.finalized_ticket));
+
+            this.writeTickets(filteredActive);
+            this.writeArchive(mergedArchived);
+
+            return {
+                addedActive: Math.max(0, filteredActive.length - existingActive.length),
+                addedArchived: Math.max(0, mergedArchived.length - existingArchived.length),
+                totalActive: filteredActive.length,
+                totalArchived: mergedArchived.length
+            };
         });
     }
 }

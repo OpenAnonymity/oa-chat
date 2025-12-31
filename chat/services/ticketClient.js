@@ -148,9 +148,17 @@ class TicketClient {
         return this.ticketStore.getCount();
     }
 
+    getArchivedTicketCount() {
+        return this.ticketStore.getArchiveCount();
+    }
+
     clearTickets() {
         console.log('🗑️  All tickets cleared');
         return this.ticketStore.clearTickets();
+    }
+
+    async importTickets(payload) {
+        return this.ticketStore.importTickets(payload);
     }
 
     async alphaRegister(invitationCode, progressCallback) {

@@ -10,6 +10,7 @@ import tlsSecurityModal from './TLSSecurityModal.js';
 import proxyInfoModal from './ProxyInfoModal.js';
 import { getActivityDescription, getActivityIcon, getStatusDotClass, formatTimestamp } from '../services/networkLogRenderer.js';
 import { getTicketCost } from '../services/modelTiers.js';
+import { downloadInferenceTickets } from '../services/fileUtils.js';
 
 // Layout constant for toolbar overlay prediction
 const RIGHT_PANEL_WIDTH = 320; // 20rem = 320px (w-80)
@@ -40,6 +41,8 @@ class RightPanel {
         this.isRequestingKey = false;
         this.registrationProgress = null;
         this.registrationError = null;
+        this.isImporting = false;
+        this.importStatus = null;
         this.timerInterval = null;
 
         // Ticket animation state
@@ -432,6 +435,82 @@ class RightPanel {
         } finally {
             this.isRegistering = false;
             this.renderTopSectionOnly();
+        }
+    }
+
+    async handleImportTickets(file, inputEl = null) {
+        if (!file || this.isImporting) return;
+
+        this.isImporting = true;
+        this.importStatus = null;
+        this.renderTopSectionOnly();
+
+        try {
+            const rawText = await file.text();
+            const payload = JSON.parse(rawText);
+            const result = await ticketClient.importTickets(payload);
+
+            this.ticketCount = ticketClient.getTicketCount();
+            this.loadNextTicket();
+
+            const totalAdded = result.addedActive + result.addedArchived;
+            if (totalAdded === 0) {
+                this.importStatus = {
+                    type: 'info',
+                    message: 'No new tickets found in that file.'
+                };
+            } else {
+                const parts = [];
+                if (result.addedActive > 0) {
+                    parts.push(`${result.addedActive} active`);
+                }
+                if (result.addedArchived > 0) {
+                    parts.push(`${result.addedArchived} archived`);
+                }
+                this.importStatus = {
+                    type: 'success',
+                    message: `Imported ${parts.join(' and ')} ticket${totalAdded !== 1 ? 's' : ''}.`
+                };
+            }
+        } catch (error) {
+            this.importStatus = {
+                type: 'error',
+                message: error.message || 'Failed to import tickets.'
+            };
+        } finally {
+            this.isImporting = false;
+            if (inputEl) {
+                inputEl.value = '';
+            }
+            this.renderTopSectionOnly();
+        }
+    }
+
+    handleExportTickets() {
+        try {
+            const success = downloadInferenceTickets();
+            this.importStatus = {
+                type: success ? 'success' : 'error',
+                message: success
+                    ? 'Export started. Check your downloads.'
+                    : 'Failed to export tickets.'
+            };
+        } catch (error) {
+            this.importStatus = {
+                type: 'error',
+                message: error.message || 'Failed to export tickets.'
+            };
+        }
+
+        this.renderTopSectionOnly();
+
+        if (this.importStatus?.type === 'success') {
+            setTimeout(() => {
+                if (this.importStatus?.type === 'success') {
+                    this.importStatus = null;
+                    this.renderTopSectionOnly();
+                }
+            }, 2500);
         }
     }
 
@@ -1135,6 +1214,29 @@ class RightPanel {
                     </button>
                 </div>
 
+                <div class="mt-2 flex items-center gap-1.5">
+                    <input
+                        id="import-tickets-input"
+                        type="file"
+                        accept="application/json"
+                        class="hidden"
+                    />
+                    <button
+                        id="import-tickets-btn"
+                        class="btn-ghost-hover inline-flex items-center justify-center gap-1 px-2 py-1 text-[10px] rounded-md border border-border bg-background transition-all duration-200 shadow-sm flex-1"
+                        ${this.isImporting ? 'disabled' : ''}
+                    >
+                        <span>Import</span>
+                    </button>
+                    <button
+                        id="export-tickets-btn"
+                        class="btn-ghost-hover inline-flex items-center justify-center gap-1 px-2 py-1 text-[10px] rounded-md border border-border bg-background transition-all duration-200 shadow-sm flex-1"
+                        title="Export active and archived tickets"
+                    >
+                        <span>Export</span>
+                    </button>
+                </div>
+
                 ${this.showInvitationForm || this.ticketCount === 0 ? `
                     <form id="invitation-code-form" class="space-y-2 mt-3 p-3 bg-muted/10 rounded-lg">
                         <input
@@ -1169,6 +1271,16 @@ class RightPanel {
                             ${this.escapeHtml(this.registrationError)}
                         </div>
                     ` : ''}
+                ` : ''}
+
+                ${this.importStatus ? `
+                    <div class="mt-2 px-3 text-[10px] leading-relaxed ${
+                        this.importStatus.type === 'error'
+                            ? 'text-destructive opacity-80'
+                            : 'text-muted-foreground'
+                    }">
+                        ${this.escapeHtml(this.importStatus.message)}
+                    </div>
                 ` : ''}
             </div>
 
@@ -1531,6 +1643,24 @@ class RightPanel {
                     this.handleRegister(input.value.trim());
                 }
             };
+        }
+
+        // Import tickets
+        const importBtn = document.getElementById('import-tickets-btn');
+        const importInput = document.getElementById('import-tickets-input');
+        if (importBtn && importInput) {
+            importBtn.onclick = () => importInput.click();
+            importInput.onchange = () => {
+                const file = importInput.files && importInput.files[0];
+                if (file) {
+                    this.handleImportTickets(file, importInput);
+                }
+            };
+        }
+
+        const exportBtn = document.getElementById('export-tickets-btn');
+        if (exportBtn) {
+            exportBtn.onclick = () => this.handleExportTickets();
         }
 
         // Use ticket button
