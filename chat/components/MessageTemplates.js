@@ -612,8 +612,7 @@ function enhanceInlineLinks(content, messageId) {
             class="inline-link-button"
             data-link-id="${linkId}"
             data-url="${escapeHtml(url)}"
-            data-domain="${escapeHtml(domain)}"
-            title="${escapeHtml(originalText || domain)}">
+            data-domain="${escapeHtml(domain)}">
             <img class="inline-link-icon"
                  src="${escapeHtml(faviconUrl)}"
                  alt="${escapeHtml(domain)}"
