@@ -347,15 +347,22 @@ export function downloadInferenceTickets() {
         // Get tickets from localStorage
         const ticketsJson = localStorage.getItem('inference_tickets');
         const tickets = ticketsJson ? JSON.parse(ticketsJson) : [];
+        const archiveJson = localStorage.getItem('inference_tickets_archive');
+        const archivedTickets = archiveJson ? JSON.parse(archiveJson) : [];
 
         // Create the export object
         const exportData = {
             exportDate: new Date().toISOString(),
-            version: '1.0',
-            totalTickets: tickets.length,
-            unusedTickets: tickets.filter(t => !t.used).length,
-            usedTickets: tickets.filter(t => t.used).length,
-            tickets: tickets
+            version: '2.0',
+            totalTickets: tickets.length + archivedTickets.length,
+            unusedTickets: tickets.length,
+            usedTickets: archivedTickets.length,
+            tickets: [
+                ...tickets.map(ticket => ({ ...ticket, status: 'active' })),
+                ...archivedTickets.map(ticket => ({ ...ticket, status: 'archived' }))
+            ],
+            activeTickets: tickets,
+            archivedTickets: archivedTickets
         };
 
         // Convert to JSON and create a blob
@@ -380,4 +387,3 @@ export function downloadInferenceTickets() {
         return false;
     }
 }
-

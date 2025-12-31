@@ -1,6 +1,6 @@
 /**
- * Station API Client
- * Handles authentication and API key provisioning from the station backend
+ * Ticket Client
+ * Handles inference ticket registration and API key provisioning via the org API.
  */
 
 import privacyPassProvider from './privacyPass.js';
@@ -12,7 +12,7 @@ export const ORG_API_BASE = 'https://org.openanonymity.ai';
 
 // Retry configuration - tuned for snappy UX
 const RETRY_DEFAULTS = {
-    maxAttempts: 2,       // Quick failover to next station
+    maxAttempts: 2,       // Fail fast and surface errors quickly
     baseDelayMs: 200,     // Short initial delay
     maxDelayMs: 1000,     // Cap delays at 1s
     timeoutMs: 2000       // 2s timeout - fail fast, try next
@@ -21,13 +21,13 @@ const RETRY_DEFAULTS = {
 // HTTP status codes that should trigger retry
 const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
 
-class StationClient {
+class TicketClient {
     constructor() {
-        console.log('🚀 Initializing StationClient');
+        console.log('🚀 Initializing TicketClient');
         this.ppExtension = privacyPassProvider;
         this.ticketStore = ticketStore;
 
-        console.log(`📊 StationClient ready with ${this.ticketStore.getCount()} tickets`);
+        console.log(`📊 TicketClient ready with ${this.ticketStore.getCount()} tickets`);
     }
 
     /**
@@ -544,11 +544,12 @@ class StationClient {
 }
 
 // Export singleton instance
-const stationClient = new StationClient();
+const ticketClient = new TicketClient();
 
 // Make available in console for debugging
 if (typeof window !== 'undefined') {
-    window.stationClient = stationClient;
+    window.ticketClient = ticketClient;
+    window.stationClient = ticketClient;
 }
 
-export default stationClient;
+export default ticketClient;

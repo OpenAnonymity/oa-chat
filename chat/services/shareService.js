@@ -5,7 +5,7 @@
 
 import { encrypt, decrypt } from './shareEncryption.js';
 import networkProxy from './networkProxy.js';
-import { ORG_API_BASE } from './station.js';
+import { ORG_API_BASE } from './ticketClient.js';
 
 // ========== Share API ==========
 
@@ -458,4 +458,3 @@ export default {
     downloadShare: downloadShareApi,
     deleteShare: deleteShareApi
 };
-

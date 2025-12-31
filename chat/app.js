@@ -16,7 +16,7 @@ import { fetchUrlMetadata } from './services/urlMetadata.js';
 import networkProxy from './services/networkProxy.js';
 import stationVerifier from './services/verifier.js';
 import openRouterAPI from './api.js';
-import stationClient from './services/station.js';
+import ticketClient from './services/ticketClient.js';
 import shareService from './services/shareService.js';
 import shareModals from './components/ShareModals.js';
 import { getTicketCost } from './services/modelTiers.js';
@@ -4670,7 +4670,7 @@ Your API key has been cleared. A new key from a different station will be obtain
     async acquireAndSetApiKey(session) {
         if (!session) throw new Error("No active session found.");
 
-        const availableTickets = stationClient.getTicketCount();
+        const availableTickets = ticketClient.getTicketCount();
         if (availableTickets === 0) {
             throw new Error("You have no inference tickets. Please open the right panel to enter an invitation code and get tickets.");
         }
@@ -4694,7 +4694,7 @@ Your API key has been cleared. A new key from a different station will be obtain
         }
 
         try {
-            const result = await stationClient.requestApiKey('OA-WebApp-Key', ticketsRequired);
+            const result = await ticketClient.requestApiKey('OA-WebApp-Key', ticketsRequired);
 
             session.apiKey = result.key;
             session.apiKeyInfo = result;
@@ -4793,4 +4793,3 @@ Your API key has been cleared. A new key from a different station will be obtain
 document.addEventListener('DOMContentLoaded', () => {
     window.app = new ChatApp();
 });
-

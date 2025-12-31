@@ -3,7 +3,7 @@
  * Manages the ticket system UI panel
  */
 
-import stationClient from '../services/station.js';
+import ticketClient from '../services/ticketClient.js';
 import networkLogger from '../services/networkLogger.js';
 import networkProxy from '../services/networkProxy.js';
 import tlsSecurityModal from './TLSSecurityModal.js';
@@ -78,7 +78,7 @@ class RightPanel {
 
     initializeState() {
         // Load initial ticket count
-        this.ticketCount = stationClient.getTicketCount();
+        this.ticketCount = ticketClient.getTicketCount();
 
         // Load current ticket for animation
         this.loadNextTicket();
@@ -132,7 +132,7 @@ class RightPanel {
     }
 
     loadNextTicket() {
-        const tickets = stationClient.getTickets();
+        const tickets = ticketClient.getTickets();
         if (tickets && tickets.length > 0) {
             this.currentTicket = tickets[0];
             this.ticketIndex = 0;
@@ -164,7 +164,7 @@ class RightPanel {
     setupEventListeners() {
         // Listen for ticket updates
         window.addEventListener('tickets-updated', () => {
-            this.ticketCount = stationClient.getTicketCount();
+            this.ticketCount = ticketClient.getTicketCount();
             this.loadNextTicket();
             this.renderTopSectionOnly(); // Only update top section, not logs
             this.updateStatusIndicator();
@@ -411,12 +411,12 @@ class RightPanel {
         }
 
         try {
-            await stationClient.alphaRegister(invitationCode, (message, percent) => {
+            await ticketClient.alphaRegister(invitationCode, (message, percent) => {
                 this.registrationProgress = { message, percent };
                 this.renderTopSectionOnly();
             });
 
-            this.ticketCount = stationClient.getTicketCount();
+            this.ticketCount = ticketClient.getTicketCount();
 
             // Clear form
             const input = document.getElementById('invitation-code-input');
@@ -454,7 +454,7 @@ class RightPanel {
         const ticketsRequired = getTicketCost(modelId, reasoningEnabled);
 
         // Check if user has enough tickets
-        const availableTickets = stationClient.getTicketCount();
+        const availableTickets = ticketClient.getTicketCount();
         if (availableTickets < ticketsRequired) {
             alert(`Not enough tickets for this model. Need ${ticketsRequired}, but only ${availableTickets} available.`);
             return;
@@ -484,7 +484,7 @@ class RightPanel {
             this.isRequestingKey = true;
             this.renderTopSectionOnly();
 
-            const result = await stationClient.requestApiKey('OA-WebApp-Key', ticketsRequired);
+            const result = await ticketClient.requestApiKey('OA-WebApp-Key', ticketsRequired);
 
             // Store API key in current session
             this.currentSession.apiKey = result.key;
