@@ -790,7 +790,12 @@ export default class ChatArea {
 
         if (contentEl) {
             // Use the app's LaTeX-safe processor
-            contentEl.innerHTML = this.app.processContentWithLatex(content);
+            let processedContent = this.app.processContentWithLatex(content);
+
+            // Enhance inline links into styled buttons during streaming
+            processedContent = window.MessageTemplates.enhanceInlineLinks(processedContent, messageId);
+
+            contentEl.innerHTML = processedContent;
             // Re-render LaTeX for the updated content
             renderMathInElement(contentEl, {
                 delimiters: [
