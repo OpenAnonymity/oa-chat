@@ -441,13 +441,47 @@ function buildReasoningTrace(reasoning, messageId, isStreaming = false, processC
     const trimmedReasoning = (reasoning || '').trim();
     // Loading indicator shown at bottom of content during streaming (shimmer animation)
     const loadingIndicator = '<span class="reasoning-loading-indicator reasoning-subtitle-streaming">Thinking...</span>';
-    // For streaming, start with loading indicator (will be appended after content by ChatArea updates)
-    const reasoningHtml = isStreaming
-        ? loadingIndicator
-        : (processContent ? processContent(trimmedReasoning) : trimmedReasoning);
+    // For streaming: show existing reasoning content (if any) PLUS loading indicator
+    // This ensures switching back to a streaming session shows accumulated reasoning
+    let reasoningHtml;
+    if (isStreaming) {
+        if (trimmedReasoning) {
+            // Convert basic markdown (bold) to HTML for streaming display and add loading indicator
+            const escapedReasoning = trimmedReasoning
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+            const withBold = escapedReasoning.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+            const lines = withBold.split('\n').map(line => `<div class="streaming-line">${line}</div>`).join('');
+            reasoningHtml = lines + loadingIndicator;
+        } else {
+            reasoningHtml = loadingIndicator;
+        }
+    } else {
+        reasoningHtml = processContent ? processContent(trimmedReasoning) : trimmedReasoning;
+    }
 
-    // Generate subtitle - show timing for completed reasoning, summary during streaming
-    const subtitle = isStreaming ? 'Thinking...' : generateReasoningSubtitle(reasoning, reasoningDuration);
+    // Generate subtitle - show timing for completed reasoning, or compute from content during streaming
+    // When switching back to a streaming session, compute subtitle from available reasoning content
+    let subtitle;
+    if (isStreaming) {
+        // If we have reasoning content, try to extract a meaningful subtitle from it
+        if (trimmedReasoning && trimmedReasoning.length > 20) {
+            const summaries = extractReasoningSummaries(trimmedReasoning);
+            if (summaries.length > 0) {
+                const lastSummary = summaries[summaries.length - 1];
+                subtitle = lastSummary.text.length > 150
+                    ? lastSummary.text.substring(0, 147) + '...'
+                    : lastSummary.text;
+            } else {
+                subtitle = 'Thinking...';
+            }
+        } else {
+            subtitle = 'Thinking...';
+        }
+    } else {
+        subtitle = generateReasoningSubtitle(reasoning, reasoningDuration);
+    }
 
     // Full-width during streaming to show more subtitle, compact when finished
     const buttonWidthClass = isStreaming ? 'w-full' : '';
@@ -846,6 +880,28 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
     // Use short model name for display (without provider prefix)
     const displayModelName = extractShortModelName(modelName);
+
+    // If message is pending (waiting for first chunk), show header with typing indicator
+    if (message.streamingPending) {
+        return `
+            <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}">
+                <div class="${CLASSES.assistantGroup}">
+                    <div class="${CLASSES.assistantHeader}">
+                        <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow ${bgClass}">
+                            ${iconData.html}
+                        </div>
+                        <span class="${CLASSES.assistantModelName}" style="font-size: 0.7rem;">${displayModelName}</span>
+                        <span class="${CLASSES.assistantTime}" style="font-size: 0.7rem;">${formatTime(message.timestamp)}</span>
+                    </div>
+                    <div class="flex gap-1 px-4 py-2">
+                        <div class="w-2 h-2 bg-muted-foreground rounded-full animate-pulse"></div>
+                        <div class="w-2 h-2 bg-muted-foreground rounded-full animate-pulse" style="animation-delay: 0.2s"></div>
+                        <div class="w-2 h-2 bg-muted-foreground rounded-full animate-pulse" style="animation-delay: 0.4s"></div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
 
     // Build reasoning trace if present
     const reasoningBubble = buildReasoningTrace(

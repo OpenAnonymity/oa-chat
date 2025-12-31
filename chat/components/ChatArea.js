@@ -4,7 +4,7 @@
  * scroll behaviors, and LaTeX rendering.
  */
 
-import { buildMessageHTML, buildEmptyState, buildSharedIndicator, buildImportedIndicator } from './MessageTemplates.js';
+import { buildMessageHTML, buildEmptyState, buildSharedIndicator, buildImportedIndicator, buildTypingIndicator } from './MessageTemplates.js';
 import { downloadAllChats } from '../services/fileUtils.js';
 import { parseStreamingReasoningContent, parseReasoningContent } from '../services/reasoningParser.js';
 
@@ -370,16 +370,36 @@ export default class ChatArea {
     /**
      * Renders all messages for the current session.
      * Handles empty states, message rendering, LaTeX processing, and scroll behavior.
+     *
+     * SESSION SWITCHING & STREAMING CONTINUITY:
+     * When switching between sessions while one is streaming, this method preserves
+     * the reasoning trace state so the user sees a consistent UI when switching back:
+     *
+     * 1. The reasoningBuffer is NOT cleared on render() - it persists across session
+     *    switches so we can restore the exact content the user last saw.
+     *
+     * 2. For streaming sessions, we prioritize buffer content over DB content because
+     *    DB saves may lag behind the live stream (async saves).
+     *
+     * 3. We immediately update the DOM with buffer content after setting innerHTML,
+     *    so the user sees all accumulated trace blocks (T1+T2+T3) right away,
+     *    not just what was saved to DB (which might only be T1).
+     *
+     * 4. The typewriter's displayedLength is set to match the buffer content length,
+     *    so only NEW content that arrives after the switch animates.
      */
     async render() {
-        // Clear any leftover streaming state from previous session to prevent stale updates
+        // Clear debounce timer but DON'T clear buffer content - it persists across
+        // session switches to enable seamless restoration of streaming state
         if (this.reasoningBuffer.timeout) {
             clearTimeout(this.reasoningBuffer.timeout);
             this.reasoningBuffer.timeout = null;
         }
-        this.reasoningBuffer.content = '';
-        this.reasoningBuffer.messageId = null;
-        this.stopTypewriter();
+        // Stop typewriter interval but preserve displayedLength for continuity
+        if (this.typewriter.interval) {
+            clearInterval(this.typewriter.interval);
+            this.typewriter.interval = null;
+        }
 
         const session = this.app.getCurrentSession();
         const messagesContainer = this.app.elements.messagesContainer;
@@ -436,6 +456,7 @@ export default class ChatArea {
             const normalizedMessage = shouldNormalize
                 ? { ...message, streamingReasoning: false, streamingTokens: null }
                 : message;
+
             let html = buildMessageHTML(normalizedMessage, helpers, this.app.state.models, session.model, options);
 
             // Insert "Above was shared" indicator after the last imported message
@@ -461,7 +482,75 @@ export default class ChatArea {
             messagesHtml += buildSharedIndicator(session.shareInfo.shareId);
         }
 
+        // If session is streaming but no assistant message exists yet (message not saved to DB),
+        // show a typing indicator so the user knows a response is pending
+        const lastMsg = messages[messages.length - 1];
+        const needsTypingIndicator = isSessionStreaming && (!lastMsg || lastMsg.role === 'user');
+        if (needsTypingIndicator) {
+            // Get provider from session model for the typing indicator
+            const sessionModel = this.app.state.models?.find(m => m.name === session.model);
+            const providerName = sessionModel?.provider || 'OpenAI';
+            messagesHtml += buildTypingIndicator('typing-restore-' + Date.now(), providerName);
+        }
+
         messagesContainer.innerHTML = messagesHtml;
+
+        // For streaming sessions, initialize typewriter state from live buffer OR DB content
+        // Priority: live buffer > DB (because DB saves may lag behind the live stream)
+        if (isSessionStreaming) {
+            const streamingMsg = messages.find(m => m.role === 'assistant' && m.streamingReasoning);
+            if (streamingMsg) {
+                // Check if we have live buffer content for THIS message (more up-to-date than DB)
+                const hasLiveBuffer = this.reasoningBuffer.messageId === streamingMsg.id && this.reasoningBuffer.content;
+                const reasoningSource = hasLiveBuffer ? this.reasoningBuffer.content : streamingMsg.reasoning;
+
+                if (reasoningSource) {
+                    const parsedReasoning = parseStreamingReasoningContent(reasoningSource);
+                    this.typewriter.messageId = streamingMsg.id;
+                    this.typewriter.targetContent = parsedReasoning;
+                    // Set displayedLength to full content so typewriter shows all existing content
+                    // and only animates NEW content that arrives after this render
+                    this.typewriter.displayedLength = parsedReasoning.length;
+
+                    // Immediately update DOM with buffer content (don't wait for flushReasoningBuffer)
+                    // This ensures user sees T1+T2+T3 right away, not just T1 from DB
+                    const reasoningContentEl = document.getElementById(`reasoning-content-${streamingMsg.id}`);
+                    if (reasoningContentEl && hasLiveBuffer) {
+                        // Clear existing content and insert buffer content
+                        let loadingIndicator = reasoningContentEl.querySelector('.reasoning-loading-indicator');
+                        if (!loadingIndicator) {
+                            loadingIndicator = document.createElement('span');
+                            loadingIndicator.className = 'reasoning-loading-indicator reasoning-subtitle-streaming';
+                            loadingIndicator.textContent = 'Thinking...';
+                        }
+                        reasoningContentEl.innerHTML = '';
+                        const wrapper = document.createElement('div');
+                        wrapper.innerHTML = this.convertBasicMarkdownToHtml(parsedReasoning);
+                        while (wrapper.firstChild) {
+                            reasoningContentEl.appendChild(wrapper.firstChild);
+                        }
+                        reasoningContentEl.appendChild(loadingIndicator);
+
+                        // Also update the subtitle to match the latest content
+                        const subtitleEl = document.getElementById(`reasoning-subtitle-${streamingMsg.id}`);
+                        if (subtitleEl) {
+                            const subtitle = this.extractReasoningSubtitle(reasoningSource);
+                            subtitleEl.textContent = subtitle;
+                            if (!subtitleEl.classList.contains('reasoning-subtitle-streaming')) {
+                                subtitleEl.classList.add('reasoning-subtitle-streaming');
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            // Not streaming - fully reset typewriter state
+            // DON'T clear buffer here - it may contain content from a different streaming session
+            // that the user might switch back to
+            this.typewriter.targetContent = '';
+            this.typewriter.displayedLength = 0;
+            this.typewriter.messageId = null;
+        }
 
         // Render LaTeX in all message content elements
         this.renderLatex();
@@ -786,6 +875,8 @@ export default class ChatArea {
         this.typewriter.targetContent = parsedReasoning;
 
         // If message changed, reset typewriter state
+        // Note: render() pre-initializes typewriter.messageId for streaming sessions,
+        // so this won't reset displayedLength when returning to the same streaming session
         if (this.typewriter.messageId !== messageId) {
             this.typewriter.messageId = messageId;
             this.typewriter.displayedLength = 0;
@@ -1149,6 +1240,7 @@ export default class ChatArea {
 
     /**
      * Appends a single message to the chat area without re-rendering the entire list.
+     * If the message already exists in DOM (e.g., from streamingPending placeholder), replaces it.
      * @param {Object} message - The message object to append
      */
     async appendMessage(message) {
@@ -1156,6 +1248,9 @@ export default class ChatArea {
         const session = this.app.getCurrentSession();
 
         if (!session) return;
+
+        // Remove any typing indicators (including restored ones from render())
+        messagesContainer.querySelectorAll('[id^="typing-"]').forEach(el => el.remove());
 
         // Check if we need to clear the empty state
         const emptyState = messagesContainer.querySelector('.text-center.text-muted-foreground');
@@ -1171,7 +1266,38 @@ export default class ChatArea {
 
         const messageHtml = buildMessageHTML(message, helpers, this.app.state.models, session.model);
 
-        // Append the message
+        // Check if message already exists in DOM (e.g., from streamingPending placeholder)
+        const existingMessageEl = messagesContainer.querySelector(`[data-message-id="${message.id}"]`);
+        if (existingMessageEl) {
+            // Replace existing element instead of appending duplicate
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = messageHtml;
+            const newMessageEl = tempDiv.firstElementChild;
+            if (newMessageEl) {
+                existingMessageEl.replaceWith(newMessageEl);
+                // Re-run LaTeX on the replaced element
+                const contentEl = newMessageEl.querySelector('.message-content');
+                if (contentEl) {
+                    renderMathInElement(contentEl, {
+                        delimiters: [
+                            {left: '$$', right: '$$', display: true},
+                            {left: '\\[', right: '\\]', display: true},
+                            {left: '\\(', right: '\\)', display: false}
+                        ],
+                        throwOnError: false
+                    });
+                }
+                // Scroll to bottom and update navigation
+                this.scrollToBottom();
+                this.app.updateScrollButtonVisibility();
+                if (this.app.messageNavigation) {
+                    this.app.messageNavigation.update();
+                }
+                return;
+            }
+        }
+
+        // Append the message (normal case - no existing element)
         messagesContainer.insertAdjacentHTML('beforeend', messageHtml);
 
         // Render LaTeX only for the new message and add fade-in animation

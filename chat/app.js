@@ -2538,8 +2538,12 @@ class ChatApp {
                     model: modelNameToUse,
                     tokenCount: null,
                     streamingTokens: 0,
-                    streamingReasoning: false
+                    streamingReasoning: false,
+                    streamingPending: true // Indicates waiting for first chunk
                 };
+
+                // Save placeholder immediately so switching sessions back can find it
+                await chatDB.saveMessage(streamingMessage);
 
                 let lastSaveLength = 0;
                 const SAVE_INTERVAL_CHARS = 100;
@@ -2555,6 +2559,9 @@ class ChatApp {
                         if (!firstChunkReceived) {
                             firstChunkReceived = true;
                             if (typingId) this.removeTypingIndicator(typingId);
+
+                            // Clear pending flag now that we have actual content
+                            streamingMessage.streamingPending = false;
 
                             // Handle text content
                             if (chunk) {
@@ -2621,6 +2628,8 @@ class ChatApp {
                             firstChunkReceived = true;
                             reasoningStartTime = Date.now();
                             if (typingId) this.removeTypingIndicator(typingId);
+                            // Clear pending flag now that we have actual content
+                            streamingMessage.streamingPending = false;
                             streamingMessage.reasoning = reasoningChunk;
                             streamingMessage.streamingReasoning = true;
                             streamedReasoning = reasoningChunk;
@@ -2632,6 +2641,8 @@ class ChatApp {
                         } else {
                             streamedReasoning += reasoningChunk;
                             streamingMessage.reasoning = streamedReasoning;
+                            // Save reasoning frequently so session switch can restore state
+                            await chatDB.saveMessage(streamingMessage);
                         }
 
                         // Only update UI if still viewing the same session
@@ -2651,6 +2662,7 @@ class ChatApp {
                 streamingMessage.model = tokenData.model || modelNameToUse;
                 streamingMessage.streamingTokens = null;
                 streamingMessage.streamingReasoning = false;
+                streamingMessage.streamingPending = false;
                 streamingMessage.citations = tokenData.citations || null;
 
                 // Calculate reasoning duration if reasoning was used
@@ -2687,6 +2699,17 @@ class ChatApp {
                 if (typingId) this.removeTypingIndicator(typingId);
 
                 if (error.isCancelled) {
+                    // If cancelled before first chunk, delete the placeholder message
+                    if (streamingMessage && !firstChunkReceived) {
+                        await chatDB.deleteMessage(streamingMessage.id);
+                        // Remove from UI if viewing this session
+                        if (this.isViewingSession(session.id)) {
+                            const messageEl = document.querySelector(`[data-message-id="${streamingMessage.id}"]`);
+                            if (messageEl) {
+                                messageEl.remove();
+                            }
+                        }
+                    }
                     if (streamingMessage && firstChunkReceived) {
                         if (streamedContent.trim() || streamedReasoning.trim()) {
                             streamingMessage.content = streamedContent;
@@ -2695,6 +2718,7 @@ class ChatApp {
                             streamingMessage.tokenCount = null;
                             streamingMessage.streamingTokens = null;
                             streamingMessage.streamingReasoning = false;
+                            streamingMessage.streamingPending = false;
                             await chatDB.saveMessage(streamingMessage);
                             // Only update UI if still viewing the same session
                             if (this.chatArea && this.isViewingSession(session.id)) {
@@ -2721,13 +2745,27 @@ class ChatApp {
                         streamingMessage.tokenCount = null;
                         streamingMessage.streamingTokens = null;
                         streamingMessage.streamingReasoning = false;
+                        streamingMessage.streamingPending = false;
                         await chatDB.saveMessage(streamingMessage);
                         // Only update UI if still viewing the same session
                         if (this.chatArea && this.isViewingSession(session.id)) {
                             await this.chatArea.finalizeStreamingMessage(streamingMessage);
                         }
-                    } else if (this.isViewingSession(session.id)) {
-                        await this.addMessage('assistant', 'Sorry, I encountered an error while processing your request.', { isLocalOnly: true });
+                    } else {
+                        // Error before first chunk - delete placeholder and show error
+                        if (streamingMessage) {
+                            await chatDB.deleteMessage(streamingMessage.id);
+                            // Remove from UI if viewing this session
+                            if (this.isViewingSession(session.id)) {
+                                const messageEl = document.querySelector(`[data-message-id="${streamingMessage.id}"]`);
+                                if (messageEl) {
+                                    messageEl.remove();
+                                }
+                            }
+                        }
+                        if (this.isViewingSession(session.id)) {
+                            await this.addMessage('assistant', 'Sorry, I encountered an error while processing your request.', { isLocalOnly: true });
+                        }
                     }
                 }
             }
