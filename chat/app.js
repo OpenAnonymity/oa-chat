@@ -1353,6 +1353,13 @@ class ChatApp {
             return choice === 'import_without_key' ? null : 'cancel';
         }
 
+        // Check if key is already expired - silently strip without warning
+        const nowUnix = Math.floor(Date.now() / 1000);
+        if (sharedApiKey.expiresAtUnix && sharedApiKey.expiresAtUnix <= nowUnix) {
+            console.log('⏰ Shared key expired, stripping silently');
+            return null;
+        }
+
         // Attempt verification with verifier
         try {
             console.log('🔐 Verifying shared API key...');
