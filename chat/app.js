@@ -3276,25 +3276,28 @@ class ChatApp {
                     // If firstChunkReceived is false, message was never added to UI or DB, nothing to clean up
                 } else {
                     // Non-cancellation error - show actual error message to user
-                    const errorMessage = error.message || 'Sorry, I encountered an error while processing your request.';
+                    const errorMessage = error.message;
 
                     // Customize messages for specific error types
-                    let userFriendlyMessage;
+                    let userFriendlyMessage = `Sorry, I encountered an error while processing your request. Try submitting the query again. **Error**: ${errorMessage}`;
+
+                    // The following are OpenRouter's API HTTP status codes, not OA infra
                     if (error.status === 402) {
                         // Credit/token limit errors
-                        userFriendlyMessage = `Ephemeral key is out of credit limit. Renew or extend the key, or start a new session. Please submit [feedback](https://forms.gle/HEmvxnJpN1jQC7CfA) if you run into this error often.`;
+                        // userFriendlyMessage = `Ephemeral key is out of credit limit. Renew or extend the key, or start a new session. Please submit feedback at [feedback](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor) if you run into this error often.`;
+                        userFriendlyMessage = `Sorry, I encountered an error while processing your request. Try submitting the query again. **Error**: ${errorMessage}`;
                     } else if (error.status === 401) {
                         // Authentication errors
-                        userFriendlyMessage = `Authentication error. Please check the system panel (right side) and submit an [issue](https://forms.gle/HEmvxnJpN1jQC7CfA) here!`;
+                        userFriendlyMessage = `Authentication error. Please check the system panel (right side) and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor)!`;
                     } else if (error.status === 503 || error.status === 502 || error.status === 504) {
                         // Service unavailable / gateway errors
-                        userFriendlyMessage = `Gateway error. Please take a look at the system panel and submit an [issue](https://forms.gle/HEmvxnJpN1jQC7CfA) here.`;
+                        userFriendlyMessage = `Gateway error. Please take a look at the system panel and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor).`;
                     } else if (errorMessage.includes('proxy') || errorMessage.includes('Proxy')) {
                         // Proxy/connection errors
-                        userFriendlyMessage = `Proxy error. Please take a look at the system panel and submit an [issue](https://forms.gle/HEmvxnJpN1jQC7CfA) here.`;
+                        userFriendlyMessage = `Proxy error. Please take a look at the system panel and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor).`;
                     } else if (errorMessage.includes('No API key')) {
                         // No API key errors
-                        userFriendlyMessage = `API key error. Please take a look at the system panel and submit an [issue](https://forms.gle/HEmvxnJpN1jQC7CfA) here.`;
+                        userFriendlyMessage = `API key error. Please take a look at the system panel and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor).`;
                     } else {
                         // Generic fallback
                         userFriendlyMessage = `⚠️ **Error:** ${errorMessage}`;
