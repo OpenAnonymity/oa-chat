@@ -2236,6 +2236,8 @@ html[data-right-panel-hidden="true"] #right-panel {
 
     /* Chat toolbar - ensure it's visible and positioned correctly on mobile */
     #chat-toolbar {
+        display: flex !important;
+        flex-wrap: nowrap !important; /* Prevent toolbar items from wrapping to new row */
         position: relative !important;
         flex-shrink: 0 !important;
         z-index: 30;
@@ -2345,6 +2347,8 @@ html[data-right-panel-hidden="true"] #right-panel {
 
     /* Chat toolbar positioning for small tablet */
     #chat-toolbar {
+        display: flex !important;
+        flex-wrap: nowrap !important; /* Prevent toolbar items from wrapping to new row */
         position: relative !important;
         flex-shrink: 0 !important;
         z-index: 30;

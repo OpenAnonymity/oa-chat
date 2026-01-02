@@ -666,12 +666,10 @@ class ChatApp {
 
         if (isMobile) {
             toolbar.classList.remove('toolbar-floating');
+            toolbar.classList.remove('toolbar-divider-visible'); // Use separate divider element on mobile
 
-            // On mobile, show divider if user has scrolled down past threshold
+            // On mobile, show divider element if user has scrolled down past threshold
             const hasScrolled = chatArea.scrollTop > 10; // Small threshold to avoid flickering
-            toolbar.classList.toggle('toolbar-divider-visible', hasScrolled);
-
-            // Also control the mobile divider element visibility
             if (mobileDivider) {
                 mobileDivider.style.display = hasScrolled ? 'block' : 'none';
             }
@@ -1715,10 +1713,16 @@ class ChatApp {
 
         // Get messages to show in preview (last few turns, truncated for performance)
         const messages = await chatDB.getSessionMessages(session.id);
+        // If already shared, show only messages included in the share
+        const sharedMessages = session.shareInfo?.messageCount
+            ? messages.slice(0, session.shareInfo.messageCount)
+            : messages;
         // Show last 6 messages max for preview (3 turns)
-        const previewMessages = messages.slice(-6);
+        const previewMessages = sharedMessages.slice(-6);
+        // All messages preview (for after revoke)
+        const allMessagesPreview = messages.slice(-6);
 
-        shareModals.showManagementModal(session, previewMessages, {
+        shareModals.showManagementModal(session, previewMessages, allMessagesPreview, {
             onShare: async (settings) => {
                 // Fork if imported
                 if (session.importedFrom) {
@@ -2332,71 +2336,88 @@ class ChatApp {
     /**
      * Processes messages with file metadata to convert them to multimodal content format.
      * This ensures files are included in conversation history for all API calls.
+     *
+     * Note: Most LLM APIs only support images in user role messages, not assistant messages.
+     * So assistant-generated images are collected and attached to the following user message.
+     *
      * @param {Array} messages - Array of messages from the database
      * @returns {Array} Processed messages with multimodal content
      */
     processMessagesWithFiles(messages) {
         const filteredMessages = messages.filter(msg => !msg.isLocalOnly);
+        const result = [];
+        let pendingAssistantImages = []; // Collect images from assistant messages to attach to next user message
 
-        return filteredMessages.map(msg => {
-            // Only process user messages with files
-            if (msg.role === 'user' && msg.files && msg.files.length > 0) {
-                // Separate text files from other media
-                let textContent = msg.content || '';
-                const mediaFiles = [];
-
-                msg.files.forEach(file => {
-                    // Use the detected file type that was stored during upload
-                    const isText = file.detectedType === 'text';
-
-                    if (isText) {
-                        // Extract content from base64 dataUrl
-                        try {
-                            // Data URL format: data:mime/type;base64,encodedData
-                            const base64Data = file.dataUrl.split(',')[1];
-                            const decodedContent = atob(base64Data);
-                            textContent += `\n\n--- File: ${file.name} ---\n${decodedContent}`;
-                        } catch (e) {
-                            console.error('Failed to decode text file:', file.name, e);
-                            textContent += `\n\n--- File: ${file.name} ---\n[Error reading file content]`;
-                        }
-                    } else {
-                        mediaFiles.push(file);
-                    }
+        for (const msg of filteredMessages) {
+            // For assistant messages: keep text only, collect images for next user message
+            if (msg.role === 'assistant') {
+                if (msg.images && msg.images.length > 0) {
+                    pendingAssistantImages.push(...msg.images);
+                }
+                // Add text-only assistant message (with placeholder if there were images but no text)
+                result.push({
+                    role: 'assistant',
+                    content: msg.content || (msg.images?.length ? '[Generated image]' : '')
                 });
+                continue;
+            }
 
-                // Convert to multimodal content array
-                const contentArray = [
-                    { type: 'text', text: textContent },
-                    ...mediaFiles.map(file => {
-                        if (file.type.startsWith('image/') || file.detectedType === 'image') {
-                            return {
+            // For user messages: include any pending assistant images + user's own files
+            if (msg.role === 'user') {
+                let textContent = msg.content || '';
+                const mediaContent = [];
+
+                // Add pending assistant images first (context from previous assistant)
+                if (pendingAssistantImages.length > 0) {
+                    mediaContent.push(...pendingAssistantImages);
+                    pendingAssistantImages = []; // Clear after attaching
+                }
+
+                // Process user's attached files
+                if (msg.files && msg.files.length > 0) {
+                    msg.files.forEach(file => {
+                        const isText = file.detectedType === 'text';
+                        if (isText) {
+                            try {
+                                const base64Data = file.dataUrl.split(',')[1];
+                                const decodedContent = atob(base64Data);
+                                textContent += `\n\n--- File: ${file.name} ---\n${decodedContent}`;
+                            } catch (e) {
+                                console.error('Failed to decode text file:', file.name, e);
+                                textContent += `\n\n--- File: ${file.name} ---\n[Error reading file content]`;
+                            }
+                        } else if (file.type.startsWith('image/') || file.detectedType === 'image') {
+                            mediaContent.push({
                                 type: 'image_url',
                                 image_url: { url: file.dataUrl }
-                            };
+                            });
                         } else {
                             // For PDFs and audio files
-                            return {
+                            mediaContent.push({
                                 type: 'file',
-                                file: {
-                                    filename: file.name,
-                                    file_data: file.dataUrl
-                                }
-                            };
+                                file: { filename: file.name, file_data: file.dataUrl }
+                            });
                         }
-                    })
-                ];
-                return {
-                    role: msg.role,
-                    content: contentArray
-                };
+                    });
+                }
+
+                // Build content - use multimodal format only if there's media
+                if (mediaContent.length > 0) {
+                    result.push({
+                        role: 'user',
+                        content: [{ type: 'text', text: textContent }, ...mediaContent]
+                    });
+                } else {
+                    result.push({ role: 'user', content: textContent });
+                }
+                continue;
             }
-            // For messages without files, return standard format
-            return {
-                role: msg.role,
-                content: msg.content
-            };
-        });
+
+            // Other roles (system, etc.)
+            result.push({ role: msg.role, content: msg.content });
+        }
+
+        return result;
     }
 
     /**

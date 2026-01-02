@@ -1233,7 +1233,7 @@ class ShareModals {
     /**
      * Show share management modal with status, actions, and settings
      */
-    showManagementModal(session, previewMessages, callbacks) {
+    showManagementModal(session, previewMessages, allMessagesPreview, callbacks) {
         if (!session) return;
 
         const { onShare, onRevoke, onCopyLink, showToast } = callbacks;
@@ -1257,6 +1257,8 @@ class ShareModals {
 
         // Build preview HTML (used in both form and status sections)
         const previewHtml = this.buildPreviewHtml(previewMessages);
+        // Build all messages preview HTML (used when returning to form after revoke)
+        const allMessagesPreviewHtml = this.buildPreviewHtml(allMessagesPreview);
 
         // Build status panel HTML using shared helper
         const statusPanelHtml = isShared ? (isExpired
@@ -1478,10 +1480,19 @@ class ShareModals {
             });
         }
 
-        const showForm = () => {
+        const showForm = (useAllMessages = false) => {
             if (statusSection) statusSection.classList.add('hidden');
             if (formSection) formSection.classList.remove('hidden');
             closeBtn.textContent = 'Cancel';
+
+            // Update preview if returning after revoke (now sharing all messages)
+            if (useAllMessages) {
+                const previewContainer = formSection.querySelector('.share-cutoff-chat');
+                if (previewContainer) {
+                    previewContainer.innerHTML = allMessagesPreviewHtml;
+                    renderLatexInElement(previewContainer);
+                }
+            }
 
             // Update submit button and ensure handler is attached
             const submitBtn = modal.querySelector('#submit-btn');
@@ -1597,7 +1608,7 @@ class ShareModals {
                 if (formSection) formSection.classList.add('hidden');
 
                 // Wire up action handlers
-                this.setupStatusPanelHandlers(modal, newShareUrl, onRevoke, showToast, showForm);
+                this.setupStatusPanelHandlers(modal, newShareUrl, onRevoke, showToast, () => showForm(true));
 
             } catch (error) {
                 if (submitBtn) {
@@ -1620,14 +1631,14 @@ class ShareModals {
 
         // Action handlers for shared sessions (using shared setup method)
         if (isShared && !isExpired) {
-            this.setupStatusPanelHandlers(modal, shareUrl, onRevoke, showToast, showForm);
+            this.setupStatusPanelHandlers(modal, shareUrl, onRevoke, showToast, () => showForm(true));
         } else if (isShared && isExpired) {
             // Wire up close button in expired panel
             const expiredCloseBtn = statusSection?.querySelector('#close-btn');
             if (expiredCloseBtn) {
                 expiredCloseBtn.onclick = () => this.cleanup();
             }
-            modal.querySelector('#share-again-btn')?.addEventListener('click', showForm);
+            modal.querySelector('#share-again-btn')?.addEventListener('click', () => showForm(true));
         }
 
         // Auto-focus if form is visible
