@@ -434,8 +434,8 @@ class OpenRouterAPI {
         // Helper to normalize URLs for deduplication (strip trailing garbage, normalize trailing slashes)
         const normalizeUrl = (url) => {
             if (!url) return url;
-            // Remove trailing parentheses, brackets, quotes that are malformed
-            let cleaned = url.replace(/[)\]}"']+$/, '');
+            // Remove trailing parentheses, brackets, quotes, and punctuation that are malformed
+            let cleaned = url.replace(/[)\]}"'.,;]+$/, '');
             try {
                 const parsed = new URL(cleaned);
                 // Normalize: origin + pathname without trailing slash (except for root)
@@ -449,8 +449,8 @@ class OpenRouterAPI {
         // Helper to clean URL for storage (fix malformed URLs)
         const cleanUrl = (url) => {
             if (!url) return url;
-            // Remove trailing parentheses, brackets, quotes that are malformed
-            return url.replace(/[)\]}"']+$/, '');
+            // Remove trailing parentheses, brackets, quotes, and punctuation that are malformed
+            return url.replace(/[)\]}"'.,;]+$/, '');
         };
 
         // Helper to add annotations with deduplication during collection
