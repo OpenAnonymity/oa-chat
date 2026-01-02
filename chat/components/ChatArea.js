@@ -466,7 +466,7 @@ export default class ChatArea {
 
             // Insert shared indicator after the last shared message (only if there are new messages after)
             if (hasNewMessagesAfterShare && !isSessionStreaming && index === sharedCount - 1) {
-                html += buildSharedIndicator(session.shareInfo.shareId);
+                html += buildSharedIndicator();
             }
 
             return html;
@@ -479,7 +479,7 @@ export default class ChatArea {
 
         // Show shared indicator at the end only if no new messages after sharing
         if (session.shareInfo?.shareId && !hasNewMessagesAfterShare && !isSessionStreaming && messages.length > 0) {
-            messagesHtml += buildSharedIndicator(session.shareInfo.shareId);
+            messagesHtml += buildSharedIndicator();
         }
 
         // If session is streaming but no assistant message exists yet (message not saved to DB),
