@@ -195,6 +195,42 @@ const LINK_ICON_SMALL_SVG = `<svg class="w-3 h-3 flex-shrink-0" fill="none" stro
     <path stroke-linecap="round" stroke-linejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244" />
 </svg>`;
 
+const UPLOAD_ICON_SVG = `<svg class="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+    <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
+</svg>`;
+
+/**
+ * Build info row HTML for share modal status panels
+ */
+function buildInfoRow(label, valueHtml, marginClass = 'mb-3') {
+    return `
+        <div class="${marginClass}">
+            <div class="flex items-center justify-between">
+                <label class="text-xs text-muted-foreground">${label}</label>
+                ${valueHtml}
+            </div>
+        </div>
+    `;
+}
+
+/**
+ * Build preview container HTML for share modals
+ */
+function buildPreviewContainerHtml(previewHtml, label = 'Shared content preview') {
+    if (!previewHtml) return '';
+    return `
+        <div class="mb-4 rounded-lg border border-border/50 overflow-hidden">
+            <div class="flex items-center gap-1.5 text-xs text-muted-foreground px-2.5 py-1.5 bg-muted/30 border-b border-border/30">
+                ${UPLOAD_ICON_SVG}
+                ${label}
+            </div>
+            <div class="share-cutoff-chat max-h-32 overflow-y-auto py-2 px-2 flex flex-col gap-1">
+                ${previewHtml}
+            </div>
+        </div>
+    `;
+}
+
 /**
  * Build the shared status panel HTML for after-sharing and share control views
  * @param {Object} opts - {isPlaintext, apiKeyShared, apiKeyExpiresAt, isExpired, expiryDate, messageCount, shareUrl, previewHtml}
@@ -207,48 +243,26 @@ function buildStatusPanelHtml(opts) {
     const statusText = isExpired ? 'Expired' : 'Active';
     const statusClass = isExpired ? 'text-amber-600 dark:text-amber-400' : 'text-green-600 dark:text-green-400';
 
+    const encryptionValue = isPlaintext
+        ? '<span class="text-xs text-foreground">None</span>'
+        : '<span class="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">Encrypted</span>';
+
+    const apiKeyValue = apiKeyShared
+        ? (keyExpiry
+            ? (keyExpiry.isExpired
+                ? '<span class="text-amber-600 dark:text-amber-400">Included (expired)</span>'
+                : `<span class="text-xs text-foreground">Included (expires ${keyExpiry.text})</span>`)
+            : '<span class="text-xs text-foreground">Included</span>')
+        : '<span class="text-xs text-foreground">Not included</span>';
+
     return `
         <!-- Content section that grows -->
         <div class="flex-1">
-            <!-- Status row -->
-            <div class="mb-3">
-                <div class="flex items-center justify-between">
-                    <label class="text-xs text-muted-foreground">Sharing Status</label>
-                    <span class="text-sm font-medium ${statusClass}">${statusText}</span>
-                </div>
-            </div>
-
-            <!-- Encryption row -->
-            <div class="mb-3">
-                <div class="flex items-center justify-between">
-                    <label class="text-xs text-muted-foreground">Encrypted Sharing</label>
-                    ${isPlaintext ? '<span class="text-xs text-foreground">None</span>' : '<span class="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">Encrypted</span>'}
-                </div>
-            </div>
-
-            <!-- Expiry row -->
-            <div class="mb-3">
-                <div class="flex items-center justify-between">
-                    <label class="text-xs text-muted-foreground">Expires</label>
-                    <span class="text-xs text-foreground">${expiryDate || 'Never'}</span>
-                </div>
-            </div>
-
-            <!-- Messages row -->
-            <div class="mb-3">
-                <div class="flex items-center justify-between">
-                    <label class="text-xs text-muted-foreground">Messages</label>
-                    <span class="text-xs text-foreground">${messageCount || 0}</span>
-                </div>
-            </div>
-
-            <!-- API Key row -->
-            <div class="mb-4">
-                <div class="flex items-center justify-between">
-                    <label class="text-xs text-muted-foreground">Session API key</label>
-                    <span class="text-xs text-foreground">${apiKeyShared ? (keyExpiry ? (keyExpiry.isExpired ? '<span class="text-amber-600 dark:text-amber-400">Included (expired)</span>' : `Included (expires ${keyExpiry.text})`) : 'Included') : 'Not included'}</span>
-                </div>
-            </div>
+            ${buildInfoRow('Sharing Status', `<span class="text-sm font-medium ${statusClass}">${statusText}</span>`)}
+            ${buildInfoRow('Encrypted Sharing', encryptionValue)}
+            ${buildInfoRow('Expires', `<span class="text-xs text-foreground">${expiryDate || 'Never'}</span>`)}
+            ${buildInfoRow('Messages', `<span class="text-xs text-foreground">${messageCount || 0}</span>`)}
+            ${buildInfoRow('Session API key', apiKeyValue, 'mb-4')}
 
             <!-- Share link box -->
             <div class="mb-4 rounded-lg border border-border/50 overflow-hidden">
@@ -261,20 +275,7 @@ function buildStatusPanelHtml(opts) {
                 </div>
             </div>
 
-            <!-- Share preview (consistent with form section) -->
-            ${previewHtml ? `
-            <div class="mb-4 rounded-lg border border-border/50 overflow-hidden">
-                <div class="flex items-center gap-1.5 text-xs text-muted-foreground px-2.5 py-1.5 bg-muted/30 border-b border-border/30">
-                    <svg class="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
-                    </svg>
-                    Shared content preview
-                </div>
-                <div class="share-cutoff-chat max-h-32 overflow-y-auto py-2 px-2 flex flex-col gap-1">
-                    ${previewHtml}
-                </div>
-            </div>
-            ` : ''}
+            ${buildPreviewContainerHtml(previewHtml, 'Shared content preview')}
         </div>
 
         <!-- Bottom buttons (equally spaced) -->
@@ -302,44 +303,10 @@ function buildExpiredPanelHtml(opts) {
     return `
         <!-- Content section that grows -->
         <div class="flex-1">
-            <!-- Status row -->
-            <div class="mb-3">
-                <div class="flex items-center justify-between">
-                    <label class="text-xs text-muted-foreground">Sharing status</label>
-                    <span class="text-sm font-medium text-amber-600 dark:text-amber-400">Expired</span>
-                </div>
-            </div>
-
-            <!-- Expiry row -->
-            <div class="mb-3">
-                <div class="flex items-center justify-between">
-                    <label class="text-xs text-muted-foreground">Expired on</label>
-                    <span class="text-xs text-foreground">${expiryDate || 'Unknown'}</span>
-                </div>
-            </div>
-
-            <!-- Messages row -->
-            <div class="mb-4">
-                <div class="flex items-center justify-between">
-                    <label class="text-xs text-muted-foreground">Messages</label>
-                    <span class="text-xs text-foreground">${messageCount || 0}</span>
-                </div>
-            </div>
-
-            <!-- Share preview (consistent with form section) -->
-            ${previewHtml ? `
-            <div class="mb-4 rounded-lg border border-border/50 overflow-hidden">
-                <div class="flex items-center gap-1.5 text-xs text-muted-foreground px-2.5 py-1.5 bg-muted/30 border-b border-border/30">
-                    <svg class="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
-                    </svg>
-                    Content preview
-                </div>
-                <div class="share-cutoff-chat max-h-32 overflow-y-auto py-2 px-2 flex flex-col gap-1">
-                    ${previewHtml}
-                </div>
-            </div>
-            ` : ''}
+            ${buildInfoRow('Sharing status', '<span class="text-sm font-medium text-amber-600 dark:text-amber-400">Expired</span>')}
+            ${buildInfoRow('Expired on', `<span class="text-xs text-foreground">${expiryDate || 'Unknown'}</span>`)}
+            ${buildInfoRow('Messages', `<span class="text-xs text-foreground">${messageCount || 0}</span>`, 'mb-4')}
+            ${buildPreviewContainerHtml(previewHtml, 'Content preview')}
         </div>
 
         <!-- Bottom buttons (consistent positions with form) -->
@@ -1233,7 +1200,7 @@ class ShareModals {
     /**
      * Show share management modal with status, actions, and settings
      */
-    showManagementModal(session, previewMessages, allMessagesPreview, callbacks) {
+    showManagementModal(session, messages, callbacks) {
         if (!session) return;
 
         const { onShare, onRevoke, onCopyLink, showToast } = callbacks;
@@ -1255,10 +1222,11 @@ class ShareModals {
             ? session.expiresAt
             : null;
 
-        // Build preview HTML (used in both form and status sections)
-        const previewHtml = this.buildPreviewHtml(previewMessages);
-        // Build all messages preview HTML (used when returning to form after revoke)
-        const allMessagesPreviewHtml = this.buildPreviewHtml(allMessagesPreview);
+        // Compute preview variants from messages
+        const sharedCount = shareInfo?.messageCount;
+        const sharedMessages = sharedCount ? messages.slice(0, sharedCount) : messages;
+        const previewHtml = this.buildPreviewHtml(sharedMessages.slice(-6));
+        const allMessagesPreviewHtml = this.buildPreviewHtml(messages.slice(-6));
 
         // Build status panel HTML using shared helper
         const statusPanelHtml = isShared ? (isExpired
@@ -1378,17 +1346,7 @@ class ShareModals {
                         </label>
                     ` : ''}
 
-                    <div class="mb-4 rounded-lg border border-border/50 overflow-hidden">
-                        <div class="flex items-center gap-1.5 text-xs text-muted-foreground px-2.5 py-1.5 bg-muted/30 border-b border-border/30">
-                            <svg class="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
-                            </svg>
-                            Share cutoff preview
-                        </div>
-                        <div class="share-cutoff-chat max-h-32 overflow-y-auto py-2 px-2 flex flex-col gap-1">
-                            ${previewHtml}
-                        </div>
-                    </div>
+                    ${buildPreviewContainerHtml(previewHtml, 'Share cutoff preview')}
 
                     <div class="flex justify-between">
                         <button id="close-btn" class="btn-ghost-hover px-4 py-1.5 text-sm rounded-md border border-border bg-background text-foreground transition-colors">
@@ -1420,21 +1378,18 @@ class ShareModals {
         this.setupPasswordToggle(modal);
         const getTtlSeconds = this.setupExpiryToggle(modal, prevTtl);
 
-        // Helper to scroll cutoff preview to bottom (immediate, no flash)
+        // Helper to scroll all cutoff previews to bottom (immediate, no flash)
         const scrollPreviewToBottom = () => {
-            const preview = modal.querySelector('.share-cutoff-chat');
-            if (preview) {
+            modal.querySelectorAll('.share-cutoff-chat').forEach(preview => {
                 preview.scrollTop = preview.scrollHeight;
-            }
+            });
         };
 
         // Render LaTeX in preview content
         renderLatexInElement(modal);
 
-        // Auto-scroll cutoff preview to bottom if form is visible (immediate)
-        if (!isShared) {
-            scrollPreviewToBottom();
-        }
+        // Auto-scroll cutoff preview to bottom
+        scrollPreviewToBottom();
 
 // Helper to update indicator position/width based on active button
         const updateModeIndicator = (activeBtn) => {
@@ -1606,6 +1561,9 @@ class ShareModals {
 
                 // Hide form
                 if (formSection) formSection.classList.add('hidden');
+
+                // Scroll preview to bottom
+                scrollPreviewToBottom();
 
                 // Wire up action handlers
                 this.setupStatusPanelHandlers(modal, newShareUrl, onRevoke, showToast, () => showForm(true));

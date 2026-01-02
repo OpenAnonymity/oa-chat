@@ -1711,18 +1711,8 @@ class ChatApp {
         const session = this.getCurrentSession();
         if (!session) return;
 
-        // Get messages to show in preview (last few turns, truncated for performance)
         const messages = await chatDB.getSessionMessages(session.id);
-        // If already shared, show only messages included in the share
-        const sharedMessages = session.shareInfo?.messageCount
-            ? messages.slice(0, session.shareInfo.messageCount)
-            : messages;
-        // Show last 6 messages max for preview (3 turns)
-        const previewMessages = sharedMessages.slice(-6);
-        // All messages preview (for after revoke)
-        const allMessagesPreview = messages.slice(-6);
-
-        shareModals.showManagementModal(session, previewMessages, allMessagesPreview, {
+        shareModals.showManagementModal(session, messages, {
             onShare: async (settings) => {
                 // Fork if imported
                 if (session.importedFrom) {
@@ -2338,23 +2328,40 @@ class ChatApp {
      * This ensures files are included in conversation history for all API calls.
      *
      * Note: Most LLM APIs only support images in user role messages, not assistant messages.
-     * So assistant-generated images are collected and attached to the following user message.
+     * So assistant-generated images are collected and attached to user messages.
+     *
+     * Strategy: Collect ALL assistant-generated images in the conversation, then attach
+     * the most recent ones (up to MAX_ATTACHED_IMAGES) to the LAST user message only.
+     * This allows models to see recent context without bloating every turn.
      *
      * @param {Array} messages - Array of messages from the database
      * @returns {Array} Processed messages with multimodal content
      */
     processMessagesWithFiles(messages) {
+        const MAX_ATTACHED_IMAGES = 3; // Limit to avoid huge requests
         const filteredMessages = messages.filter(msg => !msg.isLocalOnly);
         const result = [];
-        let pendingAssistantImages = []; // Collect images from assistant messages to attach to next user message
 
+        // First pass: collect ALL assistant-generated images in order
+        const allAssistantImages = [];
         for (const msg of filteredMessages) {
-            // For assistant messages: keep text only, collect images for next user message
+            if (msg.role === 'assistant' && msg.images && msg.images.length > 0) {
+                allAssistantImages.push(...msg.images);
+            }
+        }
+
+        // Keep only the most recent images
+        const recentImages = allAssistantImages.slice(-MAX_ATTACHED_IMAGES);
+
+        // Second pass: build result, attaching images only to the LAST user message
+        const lastUserIndex = filteredMessages.map(m => m.role).lastIndexOf('user');
+
+        for (let i = 0; i < filteredMessages.length; i++) {
+            const msg = filteredMessages[i];
+            const isLastUserMessage = (i === lastUserIndex);
+
+            // For assistant messages: keep text only
             if (msg.role === 'assistant') {
-                if (msg.images && msg.images.length > 0) {
-                    pendingAssistantImages.push(...msg.images);
-                }
-                // Add text-only assistant message (with placeholder if there were images but no text)
                 result.push({
                     role: 'assistant',
                     content: msg.content || (msg.images?.length ? '[Generated image]' : '')
@@ -2362,15 +2369,14 @@ class ChatApp {
                 continue;
             }
 
-            // For user messages: include any pending assistant images + user's own files
+            // For user messages
             if (msg.role === 'user') {
                 let textContent = msg.content || '';
                 const mediaContent = [];
 
-                // Add pending assistant images first (context from previous assistant)
-                if (pendingAssistantImages.length > 0) {
-                    mediaContent.push(...pendingAssistantImages);
-                    pendingAssistantImages = []; // Clear after attaching
+                // Only attach assistant images to the LAST user message
+                if (isLastUserMessage && recentImages.length > 0) {
+                    mediaContent.push(...recentImages);
                 }
 
                 // Process user's attached files
