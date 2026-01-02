@@ -1,4 +1,5 @@
 // Main application logic
+import { ulid } from 'https://esm.sh/ulidx@2.3.0';
 import RightPanel from './components/RightPanel.js';
 // FEATURE DISABLED: Status indicator and activity banner - uncomment to re-enable
 import FloatingPanel from './components/FloatingPanel.js';
@@ -1219,22 +1220,29 @@ class ChatApp {
             return;
         }
 
+        // Normalize input ID for comparison (handles dashes, case variations)
+        const normalizedInput = this.normalizeId(sessionId);
+
         // Check if it's a local session by ID
-        const localSessionById = this.state.sessions.find(s => s.id === sessionId);
+        const localSessionById = this.state.sessions.find(s => this.normalizeId(s.id) === normalizedInput);
         if (localSessionById) {
-            this.switchSession(sessionId);
+            this.switchSession(localSessionById.id);
             return;
         }
 
         // Check if it's a local session by shareId (for sessions we shared)
-        const localSessionByShareId = this.state.sessions.find(s => s.shareInfo?.shareId === sessionId);
+        const localSessionByShareId = this.state.sessions.find(s =>
+            s.shareInfo?.shareId && this.normalizeId(s.shareInfo.shareId) === normalizedInput
+        );
         if (localSessionByShareId) {
             this.switchSession(localSessionByShareId.id);
             return;
         }
 
         // Check if it's a session we imported (by importedFrom field) - can receive updates
-        const importedSession = this.state.sessions.find(s => s.importedFrom === sessionId);
+        const importedSession = this.state.sessions.find(s =>
+            s.importedFrom && this.normalizeId(s.importedFrom) === normalizedInput
+        );
         if (importedSession) {
             // User already imported this share - check for updates
             await this.checkForShareUpdates(sessionId, importedSession);
@@ -1242,7 +1250,9 @@ class ChatApp {
         }
 
         // Check if it's a session we forked from this share - user made their own changes
-        const forkedSession = this.state.sessions.find(s => s.forkedFrom === sessionId);
+        const forkedSession = this.state.sessions.find(s =>
+            s.forkedFrom && this.normalizeId(s.forkedFrom) === normalizedInput
+        );
         if (forkedSession) {
             // User has a forked copy - ask if they want their copy or a fresh import
             const wantsFresh = await this.showForkedSessionPrompt(forkedSession);
@@ -1895,11 +1905,24 @@ class ChatApp {
     }
 
     /**
-     * Generates a unique ID for sessions and messages.
-     * @returns {string} Unique ID
+     * Generates a unique ID for sessions and messages using ULID.
+     * Format: 5-5-5-6 lowercase (e.g., 01j7x-kqnp2-4mvwt-ghr85c)
+     * Uses 21 chars: 10 timestamp (48-bit) + 11 random (55-bit)
+     * @returns {string} Unique ULID with dashes for readability
      */
     generateId() {
-        return Date.now().toString(36) + Math.random().toString(36).substr(2);
+        const raw = ulid().slice(0, 21).toLowerCase(); // Truncate to 21 chars, lowercase
+        return `${raw.slice(0,5)}-${raw.slice(5,10)}-${raw.slice(10,15)}-${raw.slice(15)}`;
+    }
+
+    /**
+     * Normalize an ID for comparison/lookup (strip dashes, uppercase).
+     * Handles both old format and new ULID format with dashes.
+     * @param {string} id - ID to normalize
+     * @returns {string} Normalized ID
+     */
+    normalizeId(id) {
+        return id.replace(/-/g, '').toUpperCase();
     }
 
     /**
