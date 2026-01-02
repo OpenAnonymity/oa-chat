@@ -1779,12 +1779,17 @@ class ChatApp {
      * @param {string} type - 'success' or 'error'
      */
     showToast(message, type = 'success') {
+        // Remove existing toast to prevent overlap
+        document.getElementById('app-toast')?.remove();
+        clearTimeout(this._toastTimeout);
+
         const toast = document.createElement('div');
+        toast.id = 'app-toast';
         const bgColor = type === 'error' ? 'bg-destructive text-destructive-foreground' : 'bg-primary text-primary-foreground';
         toast.className = `fixed bottom-36 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg shadow-lg text-sm ${bgColor} animate-in fade-in slide-in-from-bottom-4`;
         toast.textContent = message;
         document.body.appendChild(toast);
-        setTimeout(() => {
+        this._toastTimeout = setTimeout(() => {
             toast.classList.add('animate-out', 'fade-out', 'slide-out-to-bottom-4');
             setTimeout(() => toast.remove(), 150);
         }, 3000);
