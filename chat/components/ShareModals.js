@@ -213,11 +213,16 @@ function buildStatusPanelHtml(opts) {
             <!-- Status row -->
             <div class="mb-3">
                 <div class="flex items-center justify-between">
-                    <label class="text-xs text-muted-foreground">Sharing status</label>
-                    <div class="flex items-center gap-1.5">
-                        ${isPlaintext ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">Unencrypted</span>' : '<span class="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">Encrypted</span>'}
-                        <span class="text-sm font-medium ${statusClass}">${statusText}</span>
-                    </div>
+                    <label class="text-xs text-muted-foreground">Sharing Status</label>
+                    <span class="text-sm font-medium ${statusClass}">${statusText}</span>
+                </div>
+            </div>
+
+            <!-- Encryption row -->
+            <div class="mb-3">
+                <div class="flex items-center justify-between">
+                    <label class="text-xs text-muted-foreground">Encrypted Sharing</label>
+                    ${isPlaintext ? '<span class="text-xs text-foreground">None</span>' : '<span class="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">Encrypted</span>'}
                 </div>
             </div>
 
@@ -1270,7 +1275,7 @@ class ShareModals {
 
         const modal = this.createModalContainer('bg-black/60');
         modal.innerHTML = `
-            <div class="w-full max-w-sm rounded-xl border border-border bg-background shadow-2xl p-5 mx-4 min-h-[520px] flex flex-col">
+            <div class="w-full max-w-sm rounded-xl border border-border bg-background shadow-2xl p-5 mx-4 flex flex-col">
                 <h3 class="text-base font-medium text-foreground mb-4">Share Chat</h3>
 
                 <!-- Status section (for already shared) -->
