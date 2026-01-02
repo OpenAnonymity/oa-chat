@@ -42,8 +42,8 @@
     --color-muted-foreground: 215.4 16.3% 46.9%;
     --color-accent: 210 40% 96.1%;
     --color-accent-foreground: 222.2 47.4% 11.2%;
-    --color-destructive: 0 84.2% 60.2%;
-    --color-destructive-foreground: 210 40% 98%;
+    --color-destructive: 0 62.8% 30.6%;
+    --color-destructive-foreground: 0 0% 95%;
     --color-border: 214.3 31.8% 91.4%;
     --color-input: 214.3 31.8% 91.4%;
     --color-ring: 222.2 84% 4.9%;
@@ -2990,6 +2990,18 @@ html {
 .btn-destructive-hover:hover {
     background-color: hsl(var(--color-destructive) / 0.2) !important;
     border-color: hsl(var(--color-destructive) / 0.4) !important;
+}
+
+/* Destructive button with brighter hover */
+.btn-destructive-bright:hover {
+    background-color: hsl(0 62.8% 38%) !important;
+    box-shadow: 0 2px 8px hsl(var(--color-destructive) / 0.3);
+}
+
+/* Primary (blue) button with brighter hover */
+.btn-primary-bright:hover {
+    background-color: hsl(217 91% 50%) !important;
+    box-shadow: 0 2px 8px hsl(217 91% 60% / 0.4);
 }
 
 /* Input Area Wrapper - ensure it's above message content */

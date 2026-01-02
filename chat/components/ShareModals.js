@@ -74,6 +74,41 @@ function formatTtl(seconds) {
 }
 
 /**
+ * Format API key expiry as relative time (e.g., "in 2h", "in 30m")
+ * @param {number|string} expiresAt - Expiry timestamp (ms) or ISO date string
+ * @returns {{text: string, isExpired: boolean}}
+ */
+function formatKeyExpiry(expiresAt) {
+    if (!expiresAt) return { text: '', isExpired: false };
+
+    const now = Date.now();
+    // Handle both timestamp (number) and ISO string formats
+    const expiryMs = typeof expiresAt === 'number' ? expiresAt : new Date(expiresAt).getTime();
+    const diff = expiryMs - now;
+
+    if (diff <= 0) {
+        return { text: 'expired', isExpired: true };
+    }
+
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+
+    let text;
+    if (days > 0) {
+        text = `in ${days}d`;
+    } else if (hours > 0) {
+        text = `in ${hours}h`;
+    } else if (minutes > 0) {
+        text = `in ${minutes}m`;
+    } else {
+        text = 'in <1m';
+    }
+
+    return { text, isExpired: false };
+}
+
+/**
  * Get saved password mode preference
  */
 function getPasswordMode() {
@@ -162,67 +197,93 @@ const LINK_ICON_SMALL_SVG = `<svg class="w-3 h-3 flex-shrink-0" fill="none" stro
 
 /**
  * Build the shared status panel HTML for after-sharing and share control views
- * @param {Object} opts - {isPlaintext, apiKeyShared, isExpired, expiryDate, messageCount, shareUrl}
+ * @param {Object} opts - {isPlaintext, apiKeyShared, apiKeyExpiresAt, isExpired, expiryDate, messageCount, shareUrl, previewHtml}
  */
 function buildStatusPanelHtml(opts) {
-    const { isPlaintext, apiKeyShared, isExpired, expiryDate, messageCount, shareUrl } = opts;
+    const { isPlaintext, apiKeyShared, apiKeyExpiresAt, isExpired, expiryDate, messageCount, shareUrl, previewHtml } = opts;
+
+    // Format API key expiry as relative time
+    const keyExpiry = apiKeyExpiresAt ? formatKeyExpiry(apiKeyExpiresAt) : null;
     const statusText = isExpired ? 'Expired' : 'Active';
     const statusClass = isExpired ? 'text-amber-600 dark:text-amber-400' : 'text-green-600 dark:text-green-400';
 
     return `
-        <!-- Status row -->
-        <div class="mb-4">
-            <div class="flex items-center justify-between mb-2">
-                <label class="text-xs text-muted-foreground">Status</label>
-                <div class="flex items-center gap-1.5">
-                    ${isPlaintext ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">Unencrypted</span>' : '<span class="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">Encrypted</span>'}
-                    ${apiKeyShared ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">Key included</span>' : ''}
-                    <span class="text-sm font-medium ${statusClass}">${statusText}</span>
+        <!-- Content section that grows -->
+        <div class="flex-1">
+            <!-- Status row -->
+            <div class="mb-3">
+                <div class="flex items-center justify-between">
+                    <label class="text-xs text-muted-foreground">Sharing status</label>
+                    <div class="flex items-center gap-1.5">
+                        ${isPlaintext ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">Unencrypted</span>' : '<span class="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">Encrypted</span>'}
+                        <span class="text-sm font-medium ${statusClass}">${statusText}</span>
+                    </div>
                 </div>
             </div>
+
+            <!-- Expiry row -->
+            <div class="mb-3">
+                <div class="flex items-center justify-between">
+                    <label class="text-xs text-muted-foreground">Expires</label>
+                    <span class="text-xs text-foreground">${expiryDate || 'Never'}</span>
+                </div>
+            </div>
+
+            <!-- Messages row -->
+            <div class="mb-3">
+                <div class="flex items-center justify-between">
+                    <label class="text-xs text-muted-foreground">Messages</label>
+                    <span class="text-xs text-foreground">${messageCount || 0}</span>
+                </div>
+            </div>
+
+            <!-- API Key row -->
+            <div class="mb-4">
+                <div class="flex items-center justify-between">
+                    <label class="text-xs text-muted-foreground">Session API key</label>
+                    <span class="text-xs text-foreground">${apiKeyShared ? (keyExpiry ? (keyExpiry.isExpired ? '<span class="text-amber-600 dark:text-amber-400">Included (expired)</span>' : `Included (expires ${keyExpiry.text})`) : 'Included') : 'Not included'}</span>
+                </div>
+            </div>
+
+            <!-- Share link box -->
+            <div class="mb-4 rounded-lg border border-border/50 overflow-hidden">
+                <div class="flex items-center gap-1.5 text-xs text-muted-foreground px-2.5 py-1.5 bg-muted/30 border-b border-border/30">
+                    ${LINK_ICON_SMALL_SVG}
+                    Share link
+                </div>
+                <div class="px-2.5 py-2 flex items-center gap-2">
+                    <input type="text" readonly class="share-url-input flex-1 text-xs bg-transparent text-foreground/80 outline-none truncate" value="${shareUrl}">
+                </div>
+            </div>
+
+            <!-- Share preview (consistent with form section) -->
+            ${previewHtml ? `
+            <div class="mb-4 rounded-lg border border-border/50 overflow-hidden">
+                <div class="flex items-center gap-1.5 text-xs text-muted-foreground px-2.5 py-1.5 bg-muted/30 border-b border-border/30">
+                    <svg class="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
+                    </svg>
+                    Shared content preview
+                </div>
+                <div class="share-cutoff-chat max-h-32 overflow-y-auto py-2 px-2 flex flex-col gap-1">
+                    ${previewHtml}
+                </div>
+            </div>
+            ` : ''}
         </div>
 
-        <!-- Expiry row -->
-        <div class="mb-3">
-            <div class="flex items-center justify-between">
-                <label class="text-xs text-muted-foreground">Expires</label>
-                <span class="text-xs text-foreground">${expiryDate || 'Never'}</span>
-            </div>
-        </div>
-
-        <!-- Messages row -->
-        <div class="mb-4">
-            <div class="flex items-center justify-between">
-                <label class="text-xs text-muted-foreground">Messages</label>
-                <span class="text-xs text-foreground">${messageCount || 0}</span>
-            </div>
-        </div>
-
-        <!-- Share link box -->
-        <div class="mb-4 rounded-lg border border-border/50 overflow-hidden">
-            <div class="flex items-center gap-1.5 text-xs text-muted-foreground px-2.5 py-1.5 bg-muted/30 border-b border-border/30">
-                ${LINK_ICON_SMALL_SVG}
-                Share link
-            </div>
-            <div class="px-2.5 py-2 flex items-center gap-2">
-                <input type="text" readonly class="share-url-input flex-1 text-xs bg-transparent text-foreground/80 outline-none truncate" value="${shareUrl}">
-            </div>
-        </div>
-
-        <!-- Bottom buttons -->
-        <div class="flex justify-between">
-            <button id="revoke-btn" class="px-3 py-1.5 text-sm rounded-md text-destructive border border-destructive/30 hover:bg-destructive/10 transition-colors">
+        <!-- Bottom buttons (equally spaced) -->
+        <div class="flex justify-between items-center mt-auto">
+            <button id="done-btn" class="btn-ghost-hover px-4 py-1.5 text-sm rounded-md border border-border bg-background text-foreground transition-colors">
+                Done
+            </button>
+            <button id="revoke-btn" class="btn-destructive-bright inline-flex items-center justify-center rounded-md bg-destructive px-4 py-1.5 text-sm font-medium text-destructive-foreground shadow-sm transition-all duration-200">
                 Stop Sharing
             </button>
-            <div class="flex gap-2">
-                <button id="update-btn" class="btn-ghost-hover px-4 py-1.5 text-sm rounded-md border border-border bg-background text-foreground transition-colors">
-                    Update
-                </button>
-                <button id="copy-link-btn" class="px-4 py-1.5 text-sm rounded-md bg-blue-600 text-white hover:bg-blue-700 transition-colors flex items-center gap-1.5">
-                    ${COPY_ICON_SVG}
-                    <span>Copy link</span>
-                </button>
-            </div>
+            <button id="copy-link-btn" class="btn-primary-bright px-4 py-1.5 text-sm rounded-md bg-blue-600 text-white transition-all duration-200 flex items-center gap-1.5">
+                ${COPY_ICON_SVG}
+                <span>Copy link</span>
+            </button>
         </div>
     `;
 }
@@ -231,35 +292,56 @@ function buildStatusPanelHtml(opts) {
  * Build expired share panel with "Share Again" button
  */
 function buildExpiredPanelHtml(opts) {
-    const { expiryDate, messageCount } = opts;
+    const { expiryDate, messageCount, previewHtml } = opts;
 
     return `
-        <!-- Status row -->
-        <div class="mb-4">
-            <div class="flex items-center justify-between mb-2">
-                <label class="text-xs text-muted-foreground">Status</label>
-                <span class="text-sm font-medium text-amber-600 dark:text-amber-400">Expired</span>
+        <!-- Content section that grows -->
+        <div class="flex-1">
+            <!-- Status row -->
+            <div class="mb-3">
+                <div class="flex items-center justify-between">
+                    <label class="text-xs text-muted-foreground">Sharing status</label>
+                    <span class="text-sm font-medium text-amber-600 dark:text-amber-400">Expired</span>
+                </div>
             </div>
+
+            <!-- Expiry row -->
+            <div class="mb-3">
+                <div class="flex items-center justify-between">
+                    <label class="text-xs text-muted-foreground">Expired on</label>
+                    <span class="text-xs text-foreground">${expiryDate || 'Unknown'}</span>
+                </div>
+            </div>
+
+            <!-- Messages row -->
+            <div class="mb-4">
+                <div class="flex items-center justify-between">
+                    <label class="text-xs text-muted-foreground">Messages</label>
+                    <span class="text-xs text-foreground">${messageCount || 0}</span>
+                </div>
+            </div>
+
+            <!-- Share preview (consistent with form section) -->
+            ${previewHtml ? `
+            <div class="mb-4 rounded-lg border border-border/50 overflow-hidden">
+                <div class="flex items-center gap-1.5 text-xs text-muted-foreground px-2.5 py-1.5 bg-muted/30 border-b border-border/30">
+                    <svg class="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
+                    </svg>
+                    Content preview
+                </div>
+                <div class="share-cutoff-chat max-h-32 overflow-y-auto py-2 px-2 flex flex-col gap-1">
+                    ${previewHtml}
+                </div>
+            </div>
+            ` : ''}
         </div>
 
-        <!-- Expiry row -->
-        <div class="mb-3">
-            <div class="flex items-center justify-between">
-                <label class="text-xs text-muted-foreground">Expired on</label>
-                <span class="text-xs text-foreground">${expiryDate || 'Unknown'}</span>
-            </div>
-        </div>
-
-        <!-- Messages row -->
-        <div class="mb-4">
-            <div class="flex items-center justify-between">
-                <label class="text-xs text-muted-foreground">Messages</label>
-                <span class="text-xs text-foreground">${messageCount || 0}</span>
-            </div>
-        </div>
-
-        <!-- Bottom button -->
-        <div class="flex justify-end">
+        <!-- Bottom buttons (consistent positions with form) -->
+        <div class="flex justify-between mt-auto">
+            <button id="close-btn" class="btn-ghost-hover px-4 py-1.5 text-sm rounded-md border border-border bg-background text-foreground transition-colors">
+                Cancel
+            </button>
             <button id="share-again-btn" class="px-4 py-1.5 text-sm rounded-md bg-blue-600 text-white hover:bg-blue-700 transition-colors">
                 Share Again
             </button>
@@ -529,37 +611,36 @@ class ShareModals {
     /**
      * Setup action handlers for status panel (shared between initial render and after-share)
      */
-    setupStatusPanelHandlers(modal, shareUrl, statusSection, formSection, closeBtn, onRevoke, showToast) {
+    setupStatusPanelHandlers(modal, shareUrl, onRevoke, showToast, showFormCallback) {
         const copyBtn = modal.querySelector('#copy-link-btn');
-        const updateBtn = modal.querySelector('#update-btn');
         const revokeBtn = modal.querySelector('#revoke-btn');
+        const doneBtn = modal.querySelector('#done-btn');
         const urlInput = modal.querySelector('.share-url-input');
 
         // Select URL on click for easy copying
         urlInput?.addEventListener('click', () => urlInput.select());
+
+        // Done button closes the modal
+        doneBtn?.addEventListener('click', () => this.cleanup());
 
         copyBtn?.addEventListener('click', async () => {
             await navigator.clipboard.writeText(shareUrl);
             const spanEl = copyBtn.querySelector('span');
             const originalText = spanEl?.textContent;
             if (spanEl) spanEl.textContent = 'Copied!';
-            copyBtn.classList.add('bg-green-600', 'hover:bg-green-600');
             setTimeout(() => {
                 if (spanEl) spanEl.textContent = originalText;
-                copyBtn.classList.remove('bg-green-600', 'hover:bg-green-600');
             }, 2000);
         });
 
-        updateBtn?.addEventListener('click', () => {
-            if (statusSection) statusSection.classList.add('hidden');
-            if (formSection) formSection.classList.remove('hidden');
-            if (closeBtn) closeBtn.textContent = 'Cancel';
-        });
-
+        // Stop Sharing revokes and shows the pre-share form
         revokeBtn?.addEventListener('click', async () => {
-            this.cleanup();
             await onRevoke();
             showToast('Share revoked', 'success');
+            // Show the pre-share form instead of closing
+            if (showFormCallback) {
+                showFormCallback();
+            }
         });
     }
 
@@ -923,7 +1004,7 @@ class ShareModals {
                                 <div class="encryption-mode-indicator"></div>
                             </div>
                         </div>
-                        <p class="text-[11px] text-muted-foreground mb-2">Your chat is encrypted locally before upload. Only someone with this PIN/password can decrypt it.</p>
+                        <p class="text-[11px] text-muted-foreground mb-2">This chat can be encrypted locally before sharing. Only someone with this PIN/password can decrypt it.</p>
 
                         <!-- Encryption input container (fixed height to prevent layout shift) -->
                         <div class="h-20 flex items-center">
@@ -1118,6 +1199,33 @@ class ShareModals {
     // =========================================================================
 
     /**
+     * Build preview messages HTML
+     */
+    buildPreviewHtml(previewMessages) {
+        if (!previewMessages || previewMessages.length === 0) {
+            return `<div class="py-3 text-xs text-muted-foreground italic text-center">No messages yet</div>`;
+        }
+        return previewMessages.map(msg =>
+            msg.role === 'user'
+                ? `<div class="flex justify-end">
+                    <div class="max-w-[85%] px-2 py-1 rounded-lg text-[11px] bg-muted text-foreground break-words line-clamp-2 message-content share-preview-content">
+                        ${processPreviewContent(msg.content?.substring(0, 80) || '')}${msg.content?.length > 80 ? '…' : ''}
+                    </div>
+                </div>`
+                : `<div class="flex justify-start gap-1.5 items-start">
+                    <div class="w-4 h-4 rounded-full bg-muted flex items-center justify-center flex-shrink-0 mt-0.5">
+                        <svg class="w-2.5 h-2.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8.625 12a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H8.25m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H12m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 0 1-2.555-.337A5.972 5.972 0 0 1 5.41 20.97a5.969 5.969 0 0 1-.474-.065 4.48 4.48 0 0 0 .978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25Z"/>
+                        </svg>
+                    </div>
+                    <div class="max-w-[85%] text-[11px] text-foreground/80 break-words line-clamp-2 message-content share-preview-content">
+                        ${processPreviewContent(msg.content?.substring(0, 100) || '')}${msg.content?.length > 100 ? '…' : ''}
+                    </div>
+                </div>`
+        ).join('');
+    }
+
+    /**
      * Show share management modal with status, actions, and settings
      */
     showManagementModal(session, previewMessages, callbacks) {
@@ -1126,40 +1234,52 @@ class ShareModals {
         const { onShare, onRevoke, onCopyLink, showToast } = callbacks;
         const shareInfo = session.shareInfo;
         const isShared = !!shareInfo?.shareId;
-        const isExpired = shareInfo?.expiresAt && Date.now() > shareInfo.expiresAt;
+        // Never consider expired if ttlSeconds is 0 (no expiry)
+        const isExpired = shareInfo?.ttlSeconds !== 0 && shareInfo?.expiresAt && Date.now() > shareInfo.expiresAt;
         const hasApiKey = !!session.apiKeyInfo;
-        const isApiKeyExpired = hasApiKey && session.apiKeyInfo.expiresAt && Date.now() > session.apiKeyInfo.expiresAt;
+        // API key expiry is stored at session.expiresAt (can be ISO string or timestamp)
+        const isApiKeyExpired = hasApiKey && session.expiresAt && new Date(session.expiresAt) <= new Date();
         const prevTtl = shareInfo?.ttlSeconds ?? getExpiryTtl(); // Use saved preference for new shares
         const passwordMode = getPasswordMode();
 
-        const expiryDate = shareInfo?.expiresAt ? new Date(shareInfo.expiresAt).toLocaleString() : null;
+        // Show "Never" if ttlSeconds is 0, otherwise show the expiry date
+        const expiryDate = shareInfo?.ttlSeconds === 0 ? null : (shareInfo?.expiresAt ? new Date(shareInfo.expiresAt).toLocaleString() : null);
         const shareUrl = isShared ? shareService.buildShareUrl(session.id) : '';
+        // API key expiry is at session.expiresAt, not inside apiKeyInfo
+        const apiKeyExpiresAt = shareInfo?.apiKeyShared && session.expiresAt
+            ? session.expiresAt
+            : null;
+
+        // Build preview HTML (used in both form and status sections)
+        const previewHtml = this.buildPreviewHtml(previewMessages);
 
         // Build status panel HTML using shared helper
         const statusPanelHtml = isShared ? (isExpired
-            ? buildExpiredPanelHtml({ expiryDate, messageCount: shareInfo?.messageCount })
+            ? buildExpiredPanelHtml({ expiryDate, messageCount: shareInfo?.messageCount, previewHtml })
             : buildStatusPanelHtml({
                 isPlaintext: shareInfo?.isPlaintext,
                 apiKeyShared: shareInfo?.apiKeyShared,
+                apiKeyExpiresAt,
                 isExpired: false,
                 expiryDate,
                 messageCount: shareInfo?.messageCount,
-                shareUrl
+                shareUrl,
+                previewHtml
             })
         ) : '';
 
         const modal = this.createModalContainer('bg-black/60');
         modal.innerHTML = `
-            <div class="w-full max-w-sm rounded-xl border border-border bg-background shadow-2xl p-5 mx-4">
+            <div class="w-full max-w-sm rounded-xl border border-border bg-background shadow-2xl p-5 mx-4 min-h-[520px] flex flex-col">
                 <h3 class="text-base font-medium text-foreground mb-4">Share Chat</h3>
 
                 <!-- Status section (for already shared) -->
-                <div id="status-section" class="${isShared ? '' : 'hidden'}">
+                <div id="status-section" class="flex-1 flex flex-col ${isShared ? '' : 'hidden'}">
                     ${statusPanelHtml}
                 </div>
 
                 <!-- Form section -->
-                <div id="form-section" class="${isShared ? 'hidden' : ''}">
+                <div id="form-section" class="flex-1 flex flex-col ${isShared ? 'hidden' : ''}">
 
                     <!-- PIN/Password Section -->
                     <div class="mb-4">
@@ -1171,7 +1291,7 @@ class ShareModals {
                                 <div class="encryption-mode-indicator"></div>
                             </div>
                         </div>
-                        <p class="text-[11px] text-muted-foreground mb-2">Your chat is encrypted locally before upload. Only someone with this PIN/password can decrypt it.</p>
+                        <p class="text-[11px] text-muted-foreground mb-2">This chat can be encrypted locally before sharing. Only someone with this PIN/password can decrypt it.</p>
 
                         <!-- Encryption input container (fixed height to prevent layout shift) -->
                         <div class="h-20 flex items-center">
@@ -1259,26 +1379,7 @@ class ShareModals {
                             Share cutoff preview
                         </div>
                         <div class="share-cutoff-chat max-h-32 overflow-y-auto py-2 px-2 flex flex-col gap-1">
-                            ${previewMessages && previewMessages.length > 0 ? previewMessages.map(msg =>
-                                msg.role === 'user'
-                                    ? `<div class="flex justify-end">
-                                        <div class="max-w-[85%] px-2 py-1 rounded-lg text-[11px] bg-muted text-foreground break-words line-clamp-2 message-content share-preview-content">
-                                            ${processPreviewContent(msg.content?.substring(0, 80) || '')}${msg.content?.length > 80 ? '…' : ''}
-                                        </div>
-                                    </div>`
-                                    : `<div class="flex justify-start gap-1.5 items-start">
-                                        <div class="w-4 h-4 rounded-full bg-muted flex items-center justify-center flex-shrink-0 mt-0.5">
-                                            <svg class="w-2.5 h-2.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8.625 12a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H8.25m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H12m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 0 1-2.555-.337A5.972 5.972 0 0 1 5.41 20.97a5.969 5.969 0 0 1-.474-.065 4.48 4.48 0 0 0 .978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25Z"/>
-                                            </svg>
-                                        </div>
-                                        <div class="max-w-[85%] text-[11px] text-foreground/80 break-words line-clamp-2 message-content share-preview-content">
-                                            ${processPreviewContent(msg.content?.substring(0, 100) || '')}${msg.content?.length > 100 ? '…' : ''}
-                                        </div>
-                                    </div>`
-                            ).join('') : `
-                                <div class="py-3 text-xs text-muted-foreground italic text-center">No messages yet</div>
-                            `}
+                            ${previewHtml}
                         </div>
                     </div>
 
@@ -1286,7 +1387,7 @@ class ShareModals {
                         <button id="close-btn" class="btn-ghost-hover px-4 py-1.5 text-sm rounded-md border border-border bg-background text-foreground transition-colors">
                             ${isShared && !isExpired ? 'Done' : 'Cancel'}
                         </button>
-                        <button id="submit-btn" class="px-4 py-1.5 text-sm rounded-md bg-blue-600 text-white hover:bg-blue-700 transition-colors">
+                        <button id="submit-btn" class="btn-primary-bright px-4 py-1.5 text-sm rounded-md bg-blue-600 text-white transition-all duration-200">
                             ${isShared ? 'Copy link' : 'Share'}
                         </button>
                     </div>
@@ -1377,6 +1478,14 @@ class ShareModals {
             if (formSection) formSection.classList.remove('hidden');
             closeBtn.textContent = 'Cancel';
 
+            // Update submit button and ensure handler is attached
+            const submitBtn = modal.querySelector('#submit-btn');
+            if (submitBtn) {
+                submitBtn.textContent = 'Share';
+                submitBtn.disabled = false;
+                submitBtn.onclick = handleSubmit;
+            }
+
             if (currentMode === 'pin') {
                 pinInput?.focus();
             } else {
@@ -1453,17 +1562,24 @@ class ShareModals {
 
                 // Get updated share info from session
                 const newShareInfo = session.shareInfo;
-                const newExpiryDate = newShareInfo?.expiresAt ? new Date(newShareInfo.expiresAt).toLocaleString() : null;
+                // Show "Never" if ttlSeconds is 0, otherwise show the expiry date
+                const newExpiryDate = newShareInfo?.ttlSeconds === 0 ? null : (newShareInfo?.expiresAt ? new Date(newShareInfo.expiresAt).toLocaleString() : null);
                 const newShareUrl = shareService.buildShareUrl(session.id);
+                // API key expiry is at session.expiresAt, not inside apiKeyInfo
+                const newApiKeyExpiresAt = (apiMetadataCheckbox?.checked && session.expiresAt)
+                    ? session.expiresAt
+                    : null;
 
                 // Build success panel using shared helper
                 const successPanelHtml = buildStatusPanelHtml({
                     isPlaintext: !password,
                     apiKeyShared: apiMetadataCheckbox?.checked || false,
+                    apiKeyExpiresAt: newApiKeyExpiresAt,
                     isExpired: false,
                     expiryDate: newExpiryDate,
                     messageCount: newShareInfo?.messageCount,
-                    shareUrl: newShareUrl
+                    shareUrl: newShareUrl,
+                    previewHtml
                 });
 
                 // Replace status section content with success panel
@@ -1476,7 +1592,7 @@ class ShareModals {
                 if (formSection) formSection.classList.add('hidden');
 
                 // Wire up action handlers
-                this.setupStatusPanelHandlers(modal, newShareUrl, statusSection, formSection, closeBtn, onRevoke, showToast);
+                this.setupStatusPanelHandlers(modal, newShareUrl, onRevoke, showToast, showForm);
 
             } catch (error) {
                 if (submitBtn) {
@@ -1487,7 +1603,8 @@ class ShareModals {
             }
         };
 
-        modal.querySelector('#submit-btn')?.addEventListener('click', handleSubmit);
+        const submitBtnEl = modal.querySelector('#submit-btn');
+        if (submitBtnEl) submitBtnEl.onclick = handleSubmit;
 
         // Keyboard shortcuts
         const handleFormKeydown = (e) => {
@@ -1498,8 +1615,13 @@ class ShareModals {
 
         // Action handlers for shared sessions (using shared setup method)
         if (isShared && !isExpired) {
-            this.setupStatusPanelHandlers(modal, shareUrl, statusSection, formSection, closeBtn, onRevoke, showToast);
+            this.setupStatusPanelHandlers(modal, shareUrl, onRevoke, showToast, showForm);
         } else if (isShared && isExpired) {
+            // Wire up close button in expired panel
+            const expiredCloseBtn = statusSection?.querySelector('#close-btn');
+            if (expiredCloseBtn) {
+                expiredCloseBtn.onclick = () => this.cleanup();
+            }
             modal.querySelector('#share-again-btn')?.addEventListener('click', showForm);
         }
 
