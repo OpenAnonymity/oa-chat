@@ -3090,7 +3090,7 @@ class ChatApp {
             }
 
             // Show typing indicator (only if still viewing this session)
-            const typingId = this.isViewingSession(session.id) ? this.showTypingIndicator(modelNameToUse) : null;
+            let typingId = this.isViewingSession(session.id) ? this.showTypingIndicator(modelNameToUse) : null;
 
             // Declare variables outside try block so they're accessible in catch
             let streamingMessage = null;
@@ -3098,6 +3098,24 @@ class ChatApp {
             let streamedContent = '';
             let streamedReasoning = '';
 
+            // Retry configuration for transient errors
+            const MAX_RETRIES = 2;
+            let retryCount = 0;
+
+            // Helper to check if error is retryable (only before streaming starts)
+            const isRetryableError = (error) => {
+                if (error.isCancelled) return false;
+                // Gateway errors are retryable
+                if ([502, 503, 504].includes(error.status)) return true;
+                // Generic errors (no specific status or unrecognized) are retryable
+                const errorMsg = error.message || '';
+                const hasSpecificError = error.status === 401 || error.status === 402 ||
+                    errorMsg.includes('proxy') || errorMsg.includes('Proxy') ||
+                    errorMsg.includes('No API key');
+                return !hasSpecificError;
+            };
+
+            retryLoop: while (retryCount <= MAX_RETRIES) {
             try {
                 // Get AI response from OpenRouter with streaming
                 const messages = await chatDB.getSessionMessages(session.id);
@@ -3298,6 +3316,8 @@ class ChatApp {
                     }
                 }
 
+                break retryLoop; // Success - exit retry loop
+
             } catch (error) {
                 console.error('Error getting AI response:', error);
                 if (typingId) this.removeTypingIndicator(typingId);
@@ -3336,53 +3356,68 @@ class ChatApp {
                         }
                     }
                     // If firstChunkReceived is false, message was never added to UI or DB, nothing to clean up
-                } else {
-                    // Non-cancellation error - show actual error message to user
-                    const errorMessage = error.message;
-
-                    // Customize messages for specific error types
-                    let userFriendlyMessage = `Sorry, I encountered an error while processing your request. Try submitting the query again. **Error**: ${errorMessage}`;
-
-                    // The following are OpenRouter's API HTTP status codes, not OA infra
-                    if (error.status === 402) {
-                        // Credit/token limit errors
-                        // userFriendlyMessage = `Ephemeral key is out of credit limit. Renew or extend the key, or start a new session. Please submit feedback at [feedback](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor) if you run into this error often.`;
-                        userFriendlyMessage = `Sorry, I encountered an error while processing your request. Try submitting the query again. **Error**: ${errorMessage}`;
-                    } else if (error.status === 401) {
-                        // Authentication errors
-                        userFriendlyMessage = `Authentication error. Please check the system panel (right side) and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor)!`;
-                    } else if (error.status === 503 || error.status === 502 || error.status === 504) {
-                        // Service unavailable / gateway errors
-                        userFriendlyMessage = `Gateway error. Please take a look at the system panel and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor).`;
-                    } else if (errorMessage.includes('proxy') || errorMessage.includes('Proxy')) {
-                        // Proxy/connection errors
-                        userFriendlyMessage = `Proxy error. Please take a look at the system panel and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor).`;
-                    } else if (errorMessage.includes('No API key')) {
-                        // No API key errors
-                        userFriendlyMessage = `API key error. Please take a look at the system panel and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor).`;
-                    } else {
-                        // Generic fallback
-                        userFriendlyMessage = `⚠️ **Error:** ${errorMessage}`;
-                    }
-
-                    if (firstChunkReceived && streamingMessage) {
-                        // Message was already added to UI, update it with error
-                        streamingMessage.content = userFriendlyMessage;
-                        streamingMessage.tokenCount = null;
-                        streamingMessage.streamingTokens = null;
-                        streamingMessage.streamingReasoning = false;
-                        streamingMessage.isLocalOnly = true;
-                        await chatDB.saveMessage(streamingMessage);
-                        // Only update UI if still viewing the same session
-                        if (this.chatArea && this.isViewingSession(session.id)) {
-                            await this.chatArea.finalizeStreamingMessage(streamingMessage);
-                        }
-                    } else if (this.isViewingSession(session.id)) {
-                        // Error before first chunk - message never added to UI, add new error message
-                        await this.addMessage('assistant', userFriendlyMessage, { isLocalOnly: true });
-                    }
+                    break retryLoop; // Don't retry cancelled requests
                 }
+
+                // Check if we should retry (only if no content received yet)
+                if (!firstChunkReceived && retryCount < MAX_RETRIES && isRetryableError(error)) {
+                    retryCount++;
+                    console.log(`Retrying request (attempt ${retryCount + 1}/${MAX_RETRIES + 1}) after error:`, error.message);
+                    // Small delay before retry (500ms * attempt number)
+                    await new Promise(r => setTimeout(r, 500 * retryCount));
+                    // Re-show typing indicator for retry
+                    typingId = this.isViewingSession(session.id) ? this.showTypingIndicator(modelNameToUse) : null;
+                    continue retryLoop;
+                }
+
+                // Non-retryable or exhausted retries - show error to user
+                const errorMessage = error.message;
+
+                // Customize messages for specific error types
+                let userFriendlyMessage = `Sorry, I encountered an error while processing your request. Try re-submitting the query. **Error**: ${errorMessage}`;
+
+                // The following are OpenRouter's API HTTP status codes, not OA infra
+                if (error.status === 402) {
+                    // Credit/token limit errors
+                    // userFriendlyMessage = `Ephemeral key is out of credit limit. Renew or extend the key`;
+                    userFriendlyMessage = `Sorry, I encountered an error while processing your request. Try submitting the query again. **Error**: ${errorMessage}`;
+                } else if (error.status === 401) {
+                    // Authentication errors
+                    userFriendlyMessage = `Authentication error. Please check the system panel (right side) and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor)!`;
+                } else if (error.status === 503 || error.status === 502 || error.status === 504) {
+                    // Service unavailable / gateway errors (after retries exhausted)
+                    userFriendlyMessage = `Gateway error (after ${retryCount} retries). Please take a look at the system panel and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor).`;
+                } else if (errorMessage.includes('proxy') || errorMessage.includes('Proxy')) {
+                    // Proxy/connection errors
+                    userFriendlyMessage = `Proxy error. Please take a look at the system panel and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor).`;
+                } else if (errorMessage.includes('No API key')) {
+                    // No API key errors
+                    userFriendlyMessage = `API key error. Please take a look at the system panel and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor).`;
+                } else {
+                    // Generic fallback (after retries if applicable)
+                    const retryNote = retryCount > 0 ? ` (after ${retryCount} retries)` : '';
+                    userFriendlyMessage = `⚠️ **Error**${retryNote}: ${errorMessage}`;
+                }
+
+                if (firstChunkReceived && streamingMessage) {
+                    // Message was already added to UI, update it with error
+                    streamingMessage.content = userFriendlyMessage;
+                    streamingMessage.tokenCount = null;
+                    streamingMessage.streamingTokens = null;
+                    streamingMessage.streamingReasoning = false;
+                    streamingMessage.isLocalOnly = true;
+                    await chatDB.saveMessage(streamingMessage);
+                    // Only update UI if still viewing the same session
+                    if (this.chatArea && this.isViewingSession(session.id)) {
+                        await this.chatArea.finalizeStreamingMessage(streamingMessage);
+                    }
+                } else if (this.isViewingSession(session.id)) {
+                    // Error before first chunk - message never added to UI, add new error message
+                    await this.addMessage('assistant', userFriendlyMessage, { isLocalOnly: true });
+                }
+                break retryLoop; // Exit after showing error
             }
+            } // End of retryLoop
         } finally {
             // Clear streaming state for this session
             this.setSessionStreamingState(session.id, false, null);
