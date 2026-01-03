@@ -273,7 +273,7 @@ class TicketClient {
                 });
 
                 if (!signResponse.ok) {
-                    throw new Error(signData.detail || signData.message || 'Server error during registration');
+                    throw new Error(signData.detail || signData.error || signData.message || 'Server error during registration');
                 }
             } catch (error) {
                 // Log failed request
