@@ -25,6 +25,8 @@ export default class ChatArea {
             charsPerTick: 3,        // Characters to reveal per tick
             tickMs: 16              // Milliseconds between ticks (~60fps)
         };
+        // Track if user has scrolled up in reasoning content (pauses auto-scroll)
+        this.reasoningAutoScrollPaused = false;
         this.setupEventListeners();
     }
 
@@ -888,6 +890,8 @@ export default class ChatArea {
         if (this.typewriter.messageId !== messageId) {
             this.typewriter.messageId = messageId;
             this.typewriter.displayedLength = 0;
+            // Reset scroll tracking for new message
+            this.reasoningAutoScrollPaused = false;
         }
 
         // Start typewriter if not already running
@@ -909,8 +913,59 @@ export default class ChatArea {
     }
 
     /**
+     * Sets up scroll tracking on a reasoning content element.
+     * Detects user input (wheel/touch) to pause auto-scroll, resumes when user scrolls to bottom.
+     * @param {HTMLElement} el - The reasoning content element
+     */
+    setupReasoningScrollTracking(el) {
+        if (!el || el._reasoningScrollTracked) return;
+        el._reasoningScrollTracked = true;
+
+        // Detect user wheel input - this is the primary way users scroll
+        el.addEventListener('wheel', (e) => {
+            // Any scroll up pauses auto-scroll immediately
+            if (e.deltaY < 0) {
+                this.reasoningAutoScrollPaused = true;
+            }
+            // Scrolling down only resumes if truly at the very bottom (strict threshold)
+            // This prevents accidental resume from trackpad momentum
+            else if (e.deltaY > 0 && this.reasoningAutoScrollPaused) {
+                const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+                // Very strict: must be within 5px of bottom to resume
+                if (distanceFromBottom <= 5) {
+                    this.reasoningAutoScrollPaused = false;
+                }
+            }
+        }, { passive: true });
+
+        // Detect touch scrolling (mobile)
+        let touchStartY = 0;
+        el.addEventListener('touchstart', (e) => {
+            touchStartY = e.touches[0].clientY;
+        }, { passive: true });
+
+        el.addEventListener('touchmove', (e) => {
+            const touchY = e.touches[0].clientY;
+            const deltaY = touchStartY - touchY; // positive = finger moving up = scrolling down in content
+
+            if (deltaY < 0) {
+                // Swiping down (scrolling up in content) - pause
+                this.reasoningAutoScrollPaused = true;
+            } else if (deltaY > 0 && this.reasoningAutoScrollPaused) {
+                // Swiping up (scrolling down) - only resume if at very bottom
+                const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+                if (distanceFromBottom <= 5) {
+                    this.reasoningAutoScrollPaused = false;
+                }
+            }
+            touchStartY = touchY;
+        }, { passive: true });
+    }
+
+    /**
      * Typewriter tick - reveals a few more characters of reasoning content.
      * Handles race conditions by continuing from displayed position toward target.
+     * Auto-scrolls only if user hasn't manually scrolled up.
      */
     typewriterTick() {
         const { targetContent, displayedLength, messageId, charsPerTick } = this.typewriter;
@@ -918,6 +973,9 @@ export default class ChatArea {
 
         const reasoningContentEl = document.getElementById(`reasoning-content-${messageId}`);
         if (!reasoningContentEl) return;
+
+        // Set up scroll tracking on first access
+        this.setupReasoningScrollTracking(reasoningContentEl);
 
         // Ensure streaming class is present
         if (!reasoningContentEl.classList.contains('streaming')) {
@@ -972,7 +1030,10 @@ export default class ChatArea {
         if (displayedLength >= targetLength) {
             // Caught up to target - update content, wait for more
             updateContentPreservingIndicator(this.convertBasicMarkdownToHtml(targetContent));
-            reasoningContentEl.scrollTop = reasoningContentEl.scrollHeight;
+            // Only auto-scroll if user hasn't scrolled up
+            if (!this.reasoningAutoScrollPaused) {
+                reasoningContentEl.scrollTop = reasoningContentEl.scrollHeight;
+            }
             return;
         }
 
@@ -984,8 +1045,10 @@ export default class ChatArea {
         const displayContent = targetContent.substring(0, newLength);
         updateContentPreservingIndicator(this.convertBasicMarkdownToHtml(displayContent));
 
-        // Auto-scroll reasoning content to bottom
-        reasoningContentEl.scrollTop = reasoningContentEl.scrollHeight;
+        // Only auto-scroll if user hasn't manually scrolled up
+        if (!this.reasoningAutoScrollPaused) {
+            reasoningContentEl.scrollTop = reasoningContentEl.scrollHeight;
+        }
 
         // Update scroll button visibility
         this.app.updateScrollButtonVisibility();
@@ -1002,6 +1065,8 @@ export default class ChatArea {
         this.typewriter.targetContent = '';
         this.typewriter.displayedLength = 0;
         this.typewriter.messageId = null;
+        // Reset scroll tracking for next stream
+        this.reasoningAutoScrollPaused = false;
     }
 
     /**
