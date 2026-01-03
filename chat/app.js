@@ -1404,9 +1404,11 @@ class ChatApp {
      * @param {Object} encryptedData - Already fetched encrypted data from org
      */
     async importSharedSessionWithData(shareId, encryptedData) {
-        const existingSession = this.state.sessions.find(s => s.importedFrom === shareId);
+        // Normalize shareId for consistent comparison and URL display
+        const normalizedShareId = shareService.normalizeShareId(shareId);
+        const existingSession = this.state.sessions.find(s => s.importedFrom === normalizedShareId);
         if (!existingSession) {
-            await this.importSharedSession(shareId);
+            await this.importSharedSession(normalizedShareId);
             return;
         }
 
@@ -1480,7 +1482,7 @@ class ChatApp {
             sessionStorage.setItem(SESSION_STORAGE_KEY, existingSession.id);
             await chatDB.saveSetting('currentSessionId', existingSession.id);
 
-            this.updateUrlWithSession(shareId);
+            this.updateUrlWithSession(normalizedShareId);
             this.renderSessions();
             await this.renderMessages();
             this.renderCurrentModel();
@@ -1497,7 +1499,7 @@ class ChatApp {
         } catch (error) {
             console.error('Failed to import shared session:', error);
             this.showToast(error.message || 'Failed to import shared chat', 'error');
-            const session = this.state.sessions.find(s => s.importedFrom === shareId);
+            const session = this.state.sessions.find(s => s.importedFrom === normalizedShareId);
             if (session) {
                 this.switchSession(session.id);
             }
@@ -1541,9 +1543,11 @@ class ChatApp {
      * @param {string} shareId - Share ID from URL
      */
     async importSharedSession(shareId) {
+        // Normalize shareId for consistent comparison and URL display
+        const normalizedShareId = shareService.normalizeShareId(shareId);
         try {
-            // Download share data
-            const shareData = await shareService.downloadShare(shareId);
+            // Download share data (downloadShare also normalizes, but we need it for local use)
+            const shareData = await shareService.downloadShare(normalizedShareId);
 
             // Decode payload (handles plaintext or encrypted with password prompt)
             const payload = await this.decodeSharePayload(
@@ -1571,7 +1575,7 @@ class ChatApp {
 
             const session = shareService.createSessionFromPayload(
                 payload,
-                shareId,
+                normalizedShareId,
                 shareData.ciphertext,
                 () => this.generateId()
             );
@@ -1595,7 +1599,7 @@ class ChatApp {
             sessionStorage.setItem(SESSION_STORAGE_KEY, session.id);
             await chatDB.saveSetting('currentSessionId', session.id);
 
-            this.updateUrlWithSession(shareId);
+            this.updateUrlWithSession(normalizedShareId);
             this.renderSessions();
             await this.renderMessages();
             this.renderCurrentModel();
@@ -2864,7 +2868,8 @@ class ChatApp {
         // "fork" it - update URL to local session ID and mark as forked
         if (session.importedFrom) {
             const params = new URLSearchParams(window.location.search);
-            if (params.get('s') === session.importedFrom) {
+            const urlShareId = shareService.normalizeShareId(params.get('s'));
+            if (urlShareId === session.importedFrom) {
                 // Move importedFrom to forkedFrom (for UI display only)
                 // Clear importedFrom so this session won't receive updates from share
                 session.forkedFrom = session.importedFrom;

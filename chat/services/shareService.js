@@ -7,6 +7,36 @@ import { encrypt, decrypt } from './shareEncryption.js';
 import networkProxy from './networkProxy.js';
 import { ORG_API_BASE } from './ticketClient.js';
 
+// ========== Share ID Normalization ==========
+
+/**
+ * Normalize a share ID for consistent server communication and storage.
+ * Handles case variations and dash formatting to ensure URLs are case-insensitive.
+ *
+ * Examples:
+ *   '01J7X-KQNP2-4MVWT-GHR85C' → '01j7x-kqnp2-4mvwt-ghr85c'
+ *   '01j7xkqnp24mvwtghr85c'    → '01j7x-kqnp2-4mvwt-ghr85c'
+ *   '01J7XKQNP24MVWTGHR85C'    → '01j7x-kqnp2-4mvwt-ghr85c'
+ *
+ * @param {string} id - Share ID (may be uppercase, with/without dashes)
+ * @returns {string} Normalized share ID (lowercase, with dashes for 21-char IDs)
+ */
+export function normalizeShareId(id) {
+    if (!id || typeof id !== 'string') return id;
+
+    // Strip dashes and convert to lowercase
+    const stripped = id.replace(/-/g, '').toLowerCase();
+
+    // For 21-char IDs (new ULID format), add dashes in 5-5-5-6 format
+    // This matches the format from generateId() in app.js
+    if (stripped.length === 21) {
+        return `${stripped.slice(0, 5)}-${stripped.slice(5, 10)}-${stripped.slice(10, 15)}-${stripped.slice(15)}`;
+    }
+
+    // For other lengths (old format or invalid), return lowercase without dashes
+    return stripped;
+}
+
 // ========== Share API ==========
 
 /**
@@ -18,9 +48,10 @@ import { ORG_API_BASE } from './ticketClient.js';
  * @returns {Promise<{id: string, token: string, created_at: number, expires_at: number}>}
  */
 async function createShareApi(shareId, encryptedData, expiresInSeconds = 604800) {
+    const normalizedId = normalizeShareId(shareId);
     const url = `${ORG_API_BASE}/chat/share`;
     const requestBody = {
-        id: shareId,
+        id: normalizedId,
         salt: encryptedData.salt,
         iv: encryptedData.iv,
         ciphertext: encryptedData.ciphertext
@@ -62,7 +93,8 @@ async function createShareApi(shareId, encryptedData, expiresInSeconds = 604800)
  * @returns {Promise<{id: string, created_at: number, expires_at: number}>}
  */
 async function updateShareApi(shareId, token, encryptedData, expiresInSeconds = 604800) {
-    const url = `${ORG_API_BASE}/chat/share/${shareId}`;
+    const normalizedId = normalizeShareId(shareId);
+    const url = `${ORG_API_BASE}/chat/share/${normalizedId}`;
     const requestBody = {
         salt: encryptedData.salt,
         iv: encryptedData.iv,
@@ -105,7 +137,8 @@ async function updateShareApi(shareId, token, encryptedData, expiresInSeconds = 
  * @returns {Promise<void>}
  */
 async function deleteShareApi(shareId, token) {
-    const url = `${ORG_API_BASE}/chat/share/${shareId}`;
+    const normalizedId = normalizeShareId(shareId);
+    const url = `${ORG_API_BASE}/chat/share/${normalizedId}`;
     const response = await networkProxy.fetch(url, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
@@ -125,7 +158,8 @@ async function deleteShareApi(shareId, token) {
  * @returns {Promise<{id: string, salt: string, iv: string, ciphertext: string, created_at: number, expires_at: number}>}
  */
 async function downloadShareApi(shareId) {
-    const url = `${ORG_API_BASE}/chat/share/${shareId}`;
+    const normalizedId = normalizeShareId(shareId);
+    const url = `${ORG_API_BASE}/chat/share/${normalizedId}`;
     const response = await networkProxy.fetch(url, { method: 'GET' });
 
     if (!response.ok) {
@@ -270,7 +304,8 @@ export function validatePayload(payload) {
  * @returns {string} Full shareable URL
  */
 export function buildShareUrl(shareId) {
-    return `${window.location.origin}${window.location.pathname}?s=${shareId}`;
+    const normalizedId = normalizeShareId(shareId);
+    return `${window.location.origin}${window.location.pathname}?s=${normalizedId}`;
 }
 
 /**
@@ -302,7 +337,7 @@ export function createSessionFromPayload(payload, shareId, ciphertext, generateI
         } : null,
         expiresAt: payload.sharedApiKey?.expiresAt || null,
         searchEnabled: payload.session.searchEnabled ?? true,
-        importedFrom: shareId,
+        importedFrom: normalizeShareId(shareId),
         importedMessageCount: payload.messages.length,
         importedCiphertext: ciphertext
     };
@@ -338,7 +373,7 @@ export function buildShareInfo(result, shareId, messageCount, isPlaintext, apiKe
     const expiresAtMs = result.expires_at < 1e12 ? result.expires_at * 1000 : result.expires_at;
 
     return {
-        shareId,
+        shareId: normalizeShareId(shareId),
         token: result.token,
         createdAt: result.created_at,
         expiresAt: expiresAtMs,
@@ -443,6 +478,7 @@ export { downloadShareApi as downloadShare, deleteShareApi as deleteShare };
 
 // Default export for convenient importing
 export default {
+    normalizeShareId,
     isPlaintextShare,
     buildSharePayload,
     encodeShareData,
