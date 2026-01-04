@@ -20,7 +20,8 @@ import openRouterAPI from './api.js';
 import ticketClient from './services/ticketClient.js';
 import shareService from './services/shareService.js';
 import shareModals from './components/ShareModals.js';
-import { getTicketCost } from './services/modelTiers.js';
+import { getTicketCost, initModelTiers } from './services/modelTiers.js';
+import { initPinnedModels } from './services/modelConfig.js';
 
 const DEFAULT_MODEL_ID = 'openai/gpt-5.2-chat';
 const DEFAULT_MODEL_NAME = 'OpenAI: GPT-5.2 Instant';
@@ -1065,6 +1066,10 @@ class ChatApp {
 
         // Initialize message navigation
         this.messageNavigation = new MessageNavigation(this);
+
+        // Initialize model tiers and pinned models (loads cache, fetches fresh data in background)
+        initModelTiers();
+        initPinnedModels();
 
         // Load all data from IndexedDB in PARALLEL for speed
         const [sessions, storedModelPreference, savedSearchEnabled, savedReasoningEnabled] = await Promise.all([

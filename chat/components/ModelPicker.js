@@ -9,8 +9,8 @@
  */
 
 import { getProviderIcon } from '../services/providerIcons.js';
-import { loadModelConfig, getDefaultModelConfig } from '../services/modelConfig.js';
-import { getTicketCost, TIER_INSTANT } from '../services/modelTiers.js';
+import { loadModelConfig, getDefaultModelConfig, onPinnedModelsUpdate } from '../services/modelConfig.js';
+import { getTicketCost, TIER_INSTANT, onModelTiersUpdate } from '../services/modelTiers.js';
 
 export default class ModelPicker {
     /**
@@ -33,6 +33,27 @@ export default class ModelPicker {
 
         // Load persisted config (overrides defaults if user has customizations in DB)
         this._loadConfig();
+
+        // Listen for pinned models updates (API fetch completed)
+        onPinnedModelsUpdate(() => this._onConfigUpdate());
+
+        // Listen for model tiers updates (for ticket cost display)
+        onModelTiersUpdate(() => this._onConfigUpdate());
+    }
+
+    /**
+     * Handle config update from API (pinned models or tiers changed).
+     * Re-renders if modal is open.
+     */
+    _onConfigUpdate() {
+        const defaults = getDefaultModelConfig();
+        this.pinnedModels = defaults.pinnedModels;
+
+        // Re-render if modal is currently visible
+        if (!this.app.elements.modelPickerModal.classList.contains('hidden')) {
+            const searchTerm = this.app.elements.modelSearch?.value || '';
+            this.renderModels(searchTerm, true);
+        }
     }
 
     /**

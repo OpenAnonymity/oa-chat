@@ -1,15 +1,16 @@
 /**
  * Model Tiers Service
  * Maps AI models to ticket costs for the inference ticket system.
+ * Fetches tiers from org API with localStorage caching.
  *
  * TIER STRUCTURE:
  * - Tier 1 (1 ticket): Instant/small models - fast, affordable
  * - Tier 2 (2 tickets): Standard thinking models - reasoning enabled
  * - Tier 3 (3 tickets): Premium models - large/image generation
  * - Tier 4 (10 tickets): Pro models - highest capability
- *
- * To update tiers, edit the TIERED_MODELS object below.
  */
+
+import { ORG_API_BASE } from '../config.js';
 
 // Ticket cost constants
 export const TIER_INSTANT = 1;
@@ -17,122 +18,22 @@ export const TIER_THINKING = 2;
 export const TIER_PREMIUM = 3;
 export const TIER_PRO = 10;
 
+// Cache key
+const CACHE_KEY = 'oa-model-tickets-cache';
+
+// Event target for notifying listeners of updates
+const eventTarget = new EventTarget();
+
 /**
- * Explicit model-to-tier mappings.
+ * Model-to-tier mappings (populated from API, with pattern-based fallbacks).
  * Key: model ID (e.g., "openai/gpt-5.2-chat")
  * Value: ticket cost
- *
- * Models not in this list use pattern-based fallback logic.
  */
-const TIERED_MODELS = {
-    // ═══════════════════════════════════════════════════════════════════
-    // TIER 1: Instant Models (1 ticket)
-    // Fast, non-thinking models for quick responses
-    // ═══════════════════════════════════════════════════════════════════
-
-    // OpenAI Instant (non-thinking)
-    'openai/gpt-5.2-chat': TIER_INSTANT,
-    'openai/gpt-5.1-chat': TIER_INSTANT,
-    'openai/gpt-5-chat': TIER_INSTANT,
-    'openai/gpt-4.1': TIER_INSTANT,
-    'openai/gpt-4.1-mini': TIER_INSTANT,
-    'openai/gpt-4.1-nano': TIER_INSTANT,
-    'openai/gpt-4o': TIER_INSTANT,
-    'openai/gpt-4o-mini': TIER_INSTANT,
-    'openai/chatgpt-4o-latest': TIER_INSTANT,
-
-    // Anthropic Instant (non-thinking)
-    'anthropic/claude-3.5-haiku': TIER_INSTANT,
-    'anthropic/claude-3-haiku': TIER_INSTANT,
-
-    // Google Flash models
-    'google/gemini-2.5-flash-preview': TIER_INSTANT,
-    'google/gemini-2.5-flash-preview-05-20': TIER_INSTANT,
-    'google/gemini-2.0-flash-001': TIER_INSTANT,
-    'google/gemini-2.0-flash-lite-001': TIER_INSTANT,
-    'google/gemini-flash-1.5': TIER_INSTANT,
-    'google/gemini-flash-1.5-8b': TIER_INSTANT,
-
-    // Other instant models
-    'deepseek/deepseek-chat': TIER_INSTANT,
-    'meta-llama/llama-3.3-70b-instruct': TIER_INSTANT,
-    'meta-llama/llama-3.1-405b-instruct': TIER_INSTANT,
-    'mistralai/mistral-large-2411': TIER_INSTANT,
-    'mistralai/mistral-medium-3': TIER_INSTANT,
-    'mistralai/mistral-small-3.1-24b-instruct': TIER_INSTANT,
-    'qwen/qwen-2.5-72b-instruct': TIER_INSTANT,
-    'qwen/qwen-turbo': TIER_INSTANT,
-
-    // ═══════════════════════════════════════════════════════════════════
-    // TIER 2: Standard Thinking Models (2 tickets)
-    // Reasoning-enabled models with extended thinking
-    // ═══════════════════════════════════════════════════════════════════
-
-    // OpenAI Thinking models
-    'openai/gpt-5.2': TIER_THINKING,
-    'openai/gpt-5.1': TIER_THINKING,
-    'openai/gpt-5': TIER_THINKING,
-    'openai/o4-mini': TIER_THINKING,
-    'openai/o3-mini': TIER_THINKING,
-    'openai/o1': TIER_THINKING,
-    'openai/o1-mini': TIER_THINKING,
-    'openai/o1-preview': TIER_THINKING,
-
-    // Anthropic Sonnet (with thinking capability)
-    'anthropic/claude-sonnet-4': TIER_THINKING,
-    'anthropic/claude-sonnet-4.5': TIER_THINKING,
-    'anthropic/claude-3.5-sonnet': TIER_THINKING,
-    'anthropic/claude-3.7-sonnet': TIER_THINKING,
-
-    // Google Pro models
-    'google/gemini-3-pro-preview': TIER_THINKING,
-    'google/gemini-2.5-pro': TIER_THINKING,
-    'google/gemini-2.5-pro-preview': TIER_THINKING,
-    'google/gemini-2.5-pro-preview-05-06': TIER_THINKING,
-    'google/gemini-pro-1.5': TIER_THINKING,
-
-    // Google Flash Thinking
-    'google/gemini-2.0-flash-thinking-exp': TIER_THINKING,
-    'google/gemini-2.5-flash-preview-thinking': TIER_THINKING,
-
-    // DeepSeek Reasoner
-    'deepseek/deepseek-r1': TIER_THINKING,
-    'deepseek/deepseek-reasoner': TIER_THINKING,
-
-    // Qwen thinking models
-    'qwen/qwq-32b': TIER_THINKING,
-    'qwen/qwq-32b-preview': TIER_THINKING,
-
-    // ═══════════════════════════════════════════════════════════════════
-    // TIER 3: Premium Models (3 tickets)
-    // Large models, image generation, specialized capabilities
-    // ═══════════════════════════════════════════════════════════════════
-
-    // Anthropic Opus (flagship)
-    'anthropic/claude-opus-4': TIER_PREMIUM,
-    'anthropic/claude-opus-4.1': TIER_PREMIUM,
-    'anthropic/claude-opus-4.5': TIER_PREMIUM,
-    'anthropic/claude-3-opus': TIER_PREMIUM,
-
-    // Image generation models
-    'google/gemini-3-pro-image-preview': TIER_PREMIUM,
-    'google/gemini-2.5-flash-image-preview': TIER_PREMIUM,
-
-    // ═══════════════════════════════════════════════════════════════════
-    // TIER 4: Pro Models (10 tickets)
-    // Highest capability, most expensive
-    // ═══════════════════════════════════════════════════════════════════
-
-    'openai/gpt-5.2-pro': TIER_PRO,
-    'openai/gpt-5.1-pro': TIER_PRO,
-    'openai/gpt-5-pro': TIER_PRO,
-    'openai/o3-pro': TIER_PRO,
-    'openai/o1-pro': TIER_PRO,
-};
+let modelTickets = {};
 
 /**
  * Patterns for detecting model characteristics when not explicitly tiered.
- * Used for fallback pricing of models not in TIERED_MODELS.
+ * Used for fallback pricing of models not in modelTickets.
  */
 const INSTANT_PATTERNS = [
     /-chat$/,           // OpenAI chat variants (gpt-X-chat)
@@ -152,7 +53,6 @@ const THINKING_PATTERNS = [
     /reasoner/i,        // Reasoner models
     /qwq/i,             // Qwen QwQ
     /r1/i,              // DeepSeek R1
-    /-pro/i,            // Models that have "-pro" in the ID
 ];
 
 const PREMIUM_PATTERNS = [
@@ -160,8 +60,80 @@ const PREMIUM_PATTERNS = [
     /image/i,           // Image generation models
 ];
 
-// Pro tier uses explicit mappings only - no patterns
-// (e.g., "Gemini 3 Pro" is a standard model, not a Pro tier model)
+/**
+ * Load cached data from localStorage.
+ */
+function loadCache() {
+    try {
+        const cache = localStorage.getItem(CACHE_KEY);
+        if (cache) {
+            const parsed = JSON.parse(cache);
+            if (parsed.data && typeof parsed.data === 'object') {
+                modelTickets = parsed.data;
+            }
+        }
+    } catch (e) {
+        console.warn('Failed to load model tiers cache:', e);
+    }
+}
+
+/**
+ * Save data to localStorage cache.
+ */
+function saveCache(data) {
+    try {
+        localStorage.setItem(CACHE_KEY, JSON.stringify({
+            data,
+            timestamp: Date.now()
+        }));
+    } catch (e) {
+        console.warn('Failed to save model tiers cache:', e);
+    }
+}
+
+/**
+ * Fetch model tickets from API.
+ * @returns {Promise<Object|null>} Model tickets map or null on error
+ */
+async function fetchModelTickets() {
+    try {
+        const response = await fetch(`${ORG_API_BASE}/chat/model-tickets`);
+        if (!response.ok) return null;
+        return await response.json();
+    } catch (e) {
+        console.warn('Failed to fetch model tickets:', e);
+        return null;
+    }
+}
+
+/**
+ * Initialize model tiers service.
+ * Loads from cache immediately, then fetches fresh data in background.
+ * Call this early in app init (non-blocking).
+ */
+export async function initModelTiers() {
+    // Load cached data first (synchronous, fast)
+    loadCache();
+
+    // Fetch fresh data in background
+    const ticketsData = await fetchModelTickets();
+
+    if (ticketsData && typeof ticketsData === 'object') {
+        modelTickets = ticketsData;
+        saveCache(ticketsData);
+        eventTarget.dispatchEvent(new CustomEvent('update'));
+    }
+}
+
+/**
+ * Add listener for model tiers updates.
+ * @param {Function} callback - Called when tiers update
+ * @returns {Function} Cleanup function to remove listener
+ */
+export function onModelTiersUpdate(callback) {
+    eventTarget.addEventListener('update', callback);
+    return () => eventTarget.removeEventListener('update', callback);
+}
 
 /**
  * Get the ticket cost for a model.
@@ -176,9 +148,9 @@ export function getTicketCost(modelId, reasoningEnabled = false) {
     // Strip :online suffix for pricing (web search doesn't change tier)
     const baseModelId = modelId.replace(/:online$/, '');
 
-    // Check explicit tier mapping first
-    if (baseModelId in TIERED_MODELS) {
-        return TIERED_MODELS[baseModelId];
+    // Check API-provided tier mapping first
+    if (baseModelId in modelTickets) {
+        return modelTickets[baseModelId];
     }
 
     // Fallback: pattern-based detection for untiered models
@@ -232,3 +204,5 @@ export function hasEnoughTickets(availableTickets, modelId, reasoningEnabled = f
     return availableTickets >= getTicketCost(modelId, reasoningEnabled);
 }
 
+// Load cache on module init (synchronous)
+loadCache();

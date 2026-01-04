@@ -1,20 +1,34 @@
 /**
  * Model Configuration Service
  * Centralized config for model picker - pinned models, blocked models, and defaults.
- * Stored in IndexedDB for persistence and accessible to Electron wrapper.
+ * Pinned models are fetched from org API with localStorage caching.
+ * Blocked models and other config stored in IndexedDB for persistence.
  */
 
-// Default configuration - edit these arrays to customize
+import { ORG_API_BASE } from '../config.js';
+
+// Cache key for pinned models
+const PINNED_CACHE_KEY = 'oa-pinned-models-cache';
+
+// Event target for notifying listeners of updates
+const eventTarget = new EventTarget();
+
+// Pinned models list (populated from API)
+let pinnedModels = [];
+
+// Fallback pinned models (used when API is unavailable or returns empty)
+const FALLBACK_PINNED_MODELS = [
+    'openai/gpt-5.2-chat',
+    'openai/gpt-5.2',
+    'anthropic/claude-sonnet-4.5',
+    'anthropic/claude-opus-4.5',
+    'google/gemini-3-pro-preview',
+    'google/gemini-3-pro-image-preview',
+    'google/gemini-2.5-flash-image-preview',
+];
+
+// Default configuration
 const DEFAULT_CONFIG = {
-    pinnedModels: [
-        'openai/gpt-5.2-chat',
-        'openai/gpt-5.2',
-        'anthropic/claude-sonnet-4.5',
-        'anthropic/claude-opus-4.5',
-        'google/gemini-3-pro-preview',
-        'google/gemini-3-pro-image-preview',
-        'google/gemini-2.5-flash-image-preview',
-    ],
     blockedModels: [
         'openai/o4-mini-deep-research',
         'openai/o3-deep-research',
@@ -37,24 +51,97 @@ const DEFAULT_CONFIG = {
 const CONFIG_KEY = 'modelPickerConfig';
 
 /**
+ * Load cached pinned models from localStorage.
+ */
+function loadPinnedCache() {
+    try {
+        const cache = localStorage.getItem(PINNED_CACHE_KEY);
+        if (cache) {
+            const parsed = JSON.parse(cache);
+            if (parsed.pinned_models && Array.isArray(parsed.pinned_models)) {
+                pinnedModels = parsed.pinned_models;
+            }
+        }
+    } catch (e) {
+        console.warn('Failed to load pinned models cache:', e);
+    }
+}
+
+/**
+ * Fetch pinned models from API.
+ * @returns {Promise<Object|null>} Pinned models response or null on error
+ */
+async function fetchPinnedModels() {
+    try {
+        const response = await fetch(`${ORG_API_BASE}/chat/pinned-models`);
+        if (!response.ok) return null;
+        return await response.json();
+    } catch (e) {
+        console.warn('Failed to fetch pinned models:', e);
+        return null;
+    }
+}
+
+/**
+ * Initialize pinned models.
+ * Loads from cache immediately, then fetches fresh data in background.
+ * Call this early in app init (non-blocking).
+ */
+export async function initPinnedModels() {
+    // Load cached data first (synchronous, fast)
+    loadPinnedCache();
+
+    // Fetch fresh data in background
+    const data = await fetchPinnedModels();
+
+    if (data && data.pinned_models) {
+        pinnedModels = data.pinned_models;
+        localStorage.setItem(PINNED_CACHE_KEY, JSON.stringify(data));
+        eventTarget.dispatchEvent(new CustomEvent('update'));
+    }
+}
+
+/**
+ * Add listener for pinned models updates.
+ * @param {Function} callback - Called when pinned models update
+ * @returns {Function} Cleanup function to remove listener
+ */
+export function onPinnedModelsUpdate(callback) {
+    eventTarget.addEventListener('update', callback);
+    return () => eventTarget.removeEventListener('update', callback);
+}
+
+/**
+ * Get pinned models with fallback.
+ * Uses API data if available, otherwise falls back to hardcoded defaults.
+ * @returns {string[]} Array of pinned model IDs
+ */
+export function getPinnedModels() {
+    return pinnedModels.length > 0 ? pinnedModels : FALLBACK_PINNED_MODELS;
+}
+
+/**
  * Load model config from database, falling back to defaults.
  * @returns {Promise<Object>} Config object with pinnedModels, blockedModels, defaultModelName
  */
 export async function loadModelConfig() {
+    const baseConfig = { ...DEFAULT_CONFIG, pinnedModels: getPinnedModels() };
+
     // Check if chatDB is available and initialized
     if (typeof chatDB === 'undefined' || !chatDB.db) {
-        return { ...DEFAULT_CONFIG };
+        return baseConfig;
     }
     try {
         const saved = await chatDB.getSetting(CONFIG_KEY);
         if (saved) {
             // Merge with defaults to ensure all keys exist
-            return { ...DEFAULT_CONFIG, ...saved };
+            // Note: pinnedModels from API takes precedence
+            return { ...baseConfig, ...saved, pinnedModels: getPinnedModels() };
         }
     } catch (e) {
         console.warn('Failed to load model config:', e);
     }
-    return { ...DEFAULT_CONFIG };
+    return baseConfig;
 }
 
 /**
@@ -74,6 +161,8 @@ export async function saveModelConfig(config) {
  * @returns {Object}
  */
 export function getDefaultModelConfig() {
-    return { ...DEFAULT_CONFIG };
+    return { ...DEFAULT_CONFIG, pinnedModels: getPinnedModels() };
 }
 
+// Load cache on module init (synchronous)
+loadPinnedCache();
