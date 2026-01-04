@@ -1,6 +1,4 @@
-// Hardcoded proxy URL - not user-configurable
-// const PROXY_URL = 'wss://proxy.openanonymity.ai/?secret=8d4fc1b2e7a9035f14c8d92afe6730bb';
-const PROXY_URL = 'wss://websocket-proxy-server-twilight-feather-9805.fly.dev/?secret=8d4fc1b2e7a9035f14c8d92afe6730bb';
+import { PROXY_URL } from '../config.js';
 const LOCAL_STORAGE_KEY = 'oa-network-proxy-settings';
 
 const DEFAULT_SETTINGS = {

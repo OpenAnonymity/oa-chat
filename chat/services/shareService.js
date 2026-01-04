@@ -5,7 +5,7 @@
 
 import { encrypt, decrypt } from './shareEncryption.js';
 import networkProxy from './networkProxy.js';
-import { ORG_API_BASE } from './ticketClient.js';
+import { ORG_API_BASE } from '../config.js';
 
 // ========== Share ID Normalization ==========
 

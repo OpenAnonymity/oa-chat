@@ -7,9 +7,7 @@ import privacyPassProvider from './privacyPass.js';
 import networkLogger from './networkLogger.js';
 import networkProxy from './networkProxy.js';
 import ticketStore from './ticketStore.js';
-
-export const ORG_API_BASE = 'https://org.openanonymity.ai';
-
+import { ORG_API_BASE } from '../config.js';
 // Retry configuration - tuned for snappy UX
 const RETRY_DEFAULTS = {
     maxAttempts: 2,       // Fail fast and surface errors quickly

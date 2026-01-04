@@ -4,8 +4,7 @@
  */
 
 import networkProxy from '../services/networkProxy.js';
-
-const ORG_API_BASE = 'https://org.openanonymity.ai';
+import { ORG_API_BASE } from '../config.js';
 const LIBCURL_CDN_URL = 'https://cdn.jsdelivr.net/npm/libcurl.js@0.7.1/libcurl_full.js';
 const LIBCURL_VERSION = '0.7.1';
 

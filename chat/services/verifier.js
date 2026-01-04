@@ -5,8 +5,7 @@
 
 import networkLogger from './networkLogger.js';
 import networkProxy from './networkProxy.js';
-
-const VERIFIER_URL = 'https://verifier.openanonymity.ai';
+import { VERIFIER_URL } from '../config.js';
 
 // Staleness thresholds
 const STALE_WARNING_MS = 60 * 1000;      // 1 minute - show orange indicator
