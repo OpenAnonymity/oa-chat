@@ -2757,6 +2757,27 @@ html {
     scroll-behavior: smooth;
 }
 
+/* Hide chat area scrollbar by default, show on hover/scroll */
+#chat-area::-webkit-scrollbar {
+    width: 8px;
+}
+
+#chat-area::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+#chat-area::-webkit-scrollbar-thumb {
+    background: transparent;
+    border-radius: 4px;
+    transition: background-color 0.2s ease;
+}
+
+#chat-area:hover::-webkit-scrollbar-thumb,
+#chat-area.scrolling::-webkit-scrollbar-thumb {
+    background: var(--slate-6);
+}
+
+
 /* Streaming token count animation */
 .streaming-token-count {
     animation: pulse 1.5s ease-in-out infinite;
