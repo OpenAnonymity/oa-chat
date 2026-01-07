@@ -5,7 +5,7 @@
 
 import { encrypt, decrypt } from './shareEncryption.js';
 import networkProxy from './networkProxy.js';
-import { ORG_API_BASE } from '../config.js';
+import { ORG_API_BASE, SHARE_BASE_URL } from '../config.js';
 
 // ========== Share ID Normalization ==========
 
@@ -306,7 +306,7 @@ export function validatePayload(payload) {
  */
 export function buildShareUrl(shareId) {
     const normalizedId = normalizeShareId(shareId);
-    return `${window.location.origin}${window.location.pathname}?s=${normalizedId}`;
+    return `${SHARE_BASE_URL}?s=${normalizedId}`;
 }
 
 /**
