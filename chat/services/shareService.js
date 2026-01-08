@@ -217,6 +217,7 @@ export function buildSharePayload(session, messages, opts = {}) {
             model: m.model,
             images: m.images,
             reasoning: m.reasoning,
+            reasoningDuration: m.reasoningDuration,
             tokenCount: m.tokenCount
         }))
     };
