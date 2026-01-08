@@ -73,6 +73,8 @@ class RightPanel {
 
         // Invitation code dropdown state
         this.showInvitationForm = false;
+        const storedTicketInfo = localStorage.getItem('oa-ticket-info-visible');
+        this.showTicketInfo = storedTicketInfo !== null ? storedTicketInfo === 'true' : true;
 
         this.initializeState();
         this.setupEventListeners();
@@ -162,6 +164,31 @@ class RightPanel {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
+    }
+
+    updateTicketInfoVisibility() {
+        const panel = document.getElementById('ticket-info-panel');
+        if (!panel) return;
+
+        const show = this.showTicketInfo;
+        panel.classList.toggle('mb-3', show);
+        panel.classList.toggle('mb-0', !show);
+        panel.classList.toggle('max-h-[480px]', show);
+        panel.classList.toggle('max-h-0', !show);
+        panel.classList.toggle('opacity-100', show);
+        panel.classList.toggle('opacity-0', !show);
+        panel.classList.toggle('translate-y-0', show);
+        panel.classList.toggle('-translate-y-1', !show);
+        panel.classList.toggle('pointer-events-none', !show);
+        panel.setAttribute('aria-hidden', show ? 'false' : 'true');
+    }
+
+    updateTicketInfoToggleButton() {
+        const toggleInfoBtn = document.getElementById('toggle-ticket-info-btn');
+        if (!toggleInfoBtn) return;
+
+        toggleInfoBtn.title = this.showTicketInfo ? 'Hide ticket info' : 'Show ticket info';
+        toggleInfoBtn.setAttribute('aria-pressed', this.showTicketInfo ? 'true' : 'false');
     }
 
     setupEventListeners() {
@@ -1192,6 +1219,13 @@ class RightPanel {
     generateTopSectionHTML() {
         const hasTickets = this.ticketCount > 0;
         const hasApiKey = !!this.apiKey;
+        const fallbackTicketValue = 'Not stored';
+        const previewTicket = this.currentTicket?.finalized_ticket
+            || this.currentTicket?.signed_response
+            || fallbackTicketValue;
+        const blindedRequest = this.currentTicket?.blinded_request || fallbackTicketValue;
+        const signedResponse = this.currentTicket?.signed_response || fallbackTicketValue;
+        const finalizedTicket = this.currentTicket?.finalized_ticket || fallbackTicketValue;
 
         return `
                 <!-- Invitation Code Section -->
@@ -1202,6 +1236,15 @@ class RightPanel {
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z"></path>
                         </svg>
                         <span class="text-xs font-medium">Inference Tickets: <span class="font-semibold">${this.ticketCount}</span></span>
+                        <button
+                            id="toggle-ticket-info-btn"
+                            class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-border text-[9px] text-muted-foreground hover:text-foreground transition-colors"
+                            title="${this.showTicketInfo ? 'Hide ticket info' : 'Show ticket info'}"
+                            aria-pressed="${this.showTicketInfo ? 'true' : 'false'}"
+                            type="button"
+                        >
+                            ?
+                        </button>
                     </div>
                     <button
                         id="toggle-invitation-form-btn"
@@ -1254,7 +1297,7 @@ class RightPanel {
                         >
                             ${this.isRegistering ? 'Registering...' : 'Register Code'}
                         </button>
-                        <p class="text-[10px] text-muted-foreground leading-relaxed">Register with an invitation code to obtain inference tickets. Each ticket can be used to request a temporary OpenRouter API key.</p>
+                        <p class="text-[10px] text-muted-foreground leading-relaxed">Register with an invitation code to obtain inference tickets. Ticket are privacy-preserving tokens to redeem a short-lived OpenRouter API key for each chat session.</p>
                     </form>
 
                     ${this.registrationProgress ? `
@@ -1285,72 +1328,54 @@ class RightPanel {
             </div>
 
             <!-- Ticket Visualization Section -->
-            ${hasTickets && !hasApiKey && this.currentTicket ? `
-                <div class="mx-3 mb-3 p-3 bg-muted/5 rounded-lg border border-border">
-                    <div class="mb-3">
-                        <div class="flex items-center justify-between">
-                            <span class="text-xs font-semibold text-foreground">Next Inference Ticket</span>
-                            <span class="text-[10px] text-foreground font-medium px-1.5 py-0.5 bg-primary/10 border border-border/30 rounded-full">#${this.ticketIndex + 1}</span>
+            <div id="ticket-info-panel" class="mx-3 ${this.showTicketInfo ? 'mb-3 max-h-[480px] opacity-100 translate-y-0' : 'mb-0 max-h-0 opacity-0 -translate-y-1 pointer-events-none'} overflow-hidden transition-all duration-200 ease-in-out" aria-hidden="${this.showTicketInfo ? 'false' : 'true'}">
+                <div class="p-2 bg-muted/5 rounded-lg border border-border">
+                        <div class="flex items-center gap-2">
+                            <span class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-border text-[9px] text-muted-foreground">?</span>
+                            <span class="text-xs font-semibold text-foreground">How Inference Tickets Work</span>
                         </div>
-                    </div>
+                    <p class="text-[10px] text-muted-foreground leading-relaxed mt-1">
+                        Inference tickets are privacy-preserving tokens (think cash, vouchers, or casino chips). Your device generates and blinds them, the OA server blind-signs them to make them valid, and you unblind them & store locally. When you start a new chat session, you pay tickets to mint a short-lived API key just for this session, unlinkable to you.
+                    </p>
 
-                    <div class="space-y-2">
-                        <!-- Ticket Data Display -->
-                        <div class="relative min-h-[60px]">
-                            ${!this.showFinalized ? `
-                                <div class="space-y-1 transition-all duration-500 ${
-                                    this.isTransitioning ? 'opacity-50 scale-95' : 'opacity-100 scale-100'
-                                }">
-                                    <div class="text-[10px] text-muted-foreground mb-1">
-                                        Signed Response (from server):
-                                    </div>
-                                    <div class="ticket-data-display bg-background border border-dashed border-border rounded p-1.5 text-[10px] font-mono break-all text-muted-foreground cursor-pointer hover-highlight transition-colors" data-full="${this.escapeHtml(this.currentTicket.signed_response)}" data-expanded="false">
-                                        ${this.formatTicketData(this.currentTicket.signed_response)}
-                                    </div>
-                                </div>
-                            ` : `
-                                <div class="space-y-1 transition-all duration-500 ${
-                                    this.showFinalized ? 'opacity-100 scale-100' : 'opacity-0 scale-110'
-                                }">
-                                    <div class="text-[10px] text-foreground mb-1 flex items-center gap-1">
-                                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                                        </svg>
-                                        Finalized Token (ready to use):
-                                    </div>
-                                    <div class="ticket-data-display bg-accent/50 border border-primary rounded p-1.5 text-[10px] font-mono break-all text-foreground animate-pulse cursor-pointer hover:bg-accent/70 transition-colors" data-full="${this.escapeHtml(this.currentTicket.finalized_ticket)}" data-expanded="false">
-                                        ${this.formatTicketData(this.currentTicket.finalized_ticket)}
-                                    </div>
-                                </div>
-                            `}
+                    <div class="ticket-details mt-2" data-expanded="false">
+                        <div class="ticket-preview-toggle cursor-pointer rounded-md border border-dashed border-border bg-background/70 p-2 transition-colors hover-highlight ${
+                            this.isTransitioning ? 'opacity-70' : ''
+                        }">
+                            <div class="flex items-center justify-between text-[10px] text-muted-foreground">
+                                <span>Next ticket</span>
+                                <span class="ticket-expand-hint">Click to expand</span>
+                            </div>
+                            <div class="mt-1 text-[10px] font-mono break-all text-foreground">
+                                ${this.formatTicketData(previewTicket)}
+                            </div>
                         </div>
 
-                        <!-- Use Ticket Button -->
-                        <button
-                            id="use-ticket-btn"
-                            class="w-full inline-flex items-center justify-center gap-1.5 rounded-md text-xs font-medium transition-all focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 h-7 px-3 ${
-                                this.isTransitioning
-                                    ? 'bg-background text-foreground border border-border'
-                                    : 'btn-ghost-hover bg-background text-foreground border border-border'
-                            }"
-                            ${this.isRequestingKey || this.isTransitioning ? 'disabled' : ''}
-                        >
-                            <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
-                            </svg>
-                            <span>${this.isRequestingKey ? 'Requesting...' : this.isTransitioning ? 'Transforming...' : 'Use This Ticket'}</span>
-                        </button>
-
-                        <!-- Ticket Status -->
-                        <div class="flex items-center justify-between text-xs">
-                            <span class="text-muted-foreground">Status:</span>
-                            <span class="text-foreground">
-                                Available
-                            </span>
+                        <div class="ticket-details-full hidden mt-2 space-y-2 max-h-[160px] overflow-y-auto pr-1">
+                            <div>
+                                <div class="text-[10px] text-muted-foreground">Locally blinded</div>
+                                <div class="ticket-data-display bg-background border border-dashed border-border rounded p-1.5 text-[10px] font-mono break-all text-muted-foreground cursor-pointer hover-highlight transition-colors max-h-24 overflow-y-auto" data-full="${this.escapeHtml(blindedRequest)}" data-expanded="false">
+                                    ${this.formatTicketData(blindedRequest)}
+                                </div>
+                            </div>
+                            <div>
+                                <div class="text-[10px] text-muted-foreground">OA signed</div>
+                                <div class="ticket-data-display bg-background border border-dashed border-border rounded p-1.5 text-[10px] font-mono break-all text-muted-foreground cursor-pointer hover-highlight transition-colors max-h-24 overflow-y-auto" data-full="${this.escapeHtml(signedResponse)}" data-expanded="false">
+                                    ${this.formatTicketData(signedResponse)}
+                                </div>
+                            </div>
+                            <div>
+                                <div class="text-[10px] text-muted-foreground">Locally unblinded (ready)</div>
+                                <div class="ticket-data-display bg-accent/50 border border-primary rounded p-1.5 text-[10px] font-mono break-all text-foreground cursor-pointer hover:bg-accent/70 transition-colors max-h-24 overflow-y-auto" data-full="${this.escapeHtml(finalizedTicket)}" data-expanded="false">
+                                    ${this.formatTicketData(finalizedTicket)}
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
-            ` : hasTickets && !hasApiKey && !this.currentTicket ? `
+            </div>
+
+            ${hasTickets && !hasApiKey && !this.currentTicket ? `
                 <div class="mx-3 mb-3 p-4">
                     <div class="text-center text-xs text-muted-foreground">
                         <svg class="w-8 h-8 mx-auto mb-2 text-muted-foreground/30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1453,9 +1478,9 @@ class RightPanel {
     getProxyStatusMeta(settings = this.proxySettings, status = this.proxyStatus) {
         // Show recent failure even when disabled (auto-fallback case)
         // Display for 30 seconds after failure so user knows what happened
-        const recentFailure = status?.lastError && status?.lastFailureAt && 
+        const recentFailure = status?.lastError && status?.lastFailureAt &&
             (Date.now() - status.lastFailureAt < 30000);
-        
+
         if (recentFailure) {
             return { label: 'Failed (using direct)', textClass: 'text-amber-500 dark:text-amber-400', dotClass: 'bg-amber-500' };
         }
@@ -1633,6 +1658,16 @@ class RightPanel {
             };
         }
 
+        const toggleInfoBtn = document.getElementById('toggle-ticket-info-btn');
+        if (toggleInfoBtn) {
+            toggleInfoBtn.onclick = () => {
+                this.showTicketInfo = !this.showTicketInfo;
+                localStorage.setItem('oa-ticket-info-visible', this.showTicketInfo ? 'true' : 'false');
+                this.updateTicketInfoVisibility();
+                this.updateTicketInfoToggleButton();
+            };
+        }
+
         // Invitation code form
         const form = document.getElementById('invitation-code-form');
         if (form) {
@@ -1663,12 +1698,6 @@ class RightPanel {
             exportBtn.onclick = () => this.handleExportTickets();
         }
 
-        // Use ticket button
-        const useTicketBtn = document.getElementById('use-ticket-btn');
-        if (useTicketBtn) {
-            useTicketBtn.onclick = () => this.handleRequestApiKey();
-        }
-
         // Ticket data click handler - toggle between truncated and full view
         const ticketDataDisplays = document.querySelectorAll('.ticket-data-display');
         ticketDataDisplays.forEach(display => {
@@ -1684,6 +1713,27 @@ class RightPanel {
                     // Show full version
                     display.textContent = fullData;
                     display.setAttribute('data-expanded', 'true');
+                }
+            };
+        });
+
+        const ticketToggles = document.querySelectorAll('.ticket-preview-toggle');
+        ticketToggles.forEach(toggle => {
+            toggle.onclick = () => {
+                const container = toggle.closest('.ticket-details');
+                if (!container) return;
+
+                const isExpanded = container.getAttribute('data-expanded') === 'true';
+                container.setAttribute('data-expanded', isExpanded ? 'false' : 'true');
+
+                const details = container.querySelector('.ticket-details-full');
+                if (details) {
+                    details.classList.toggle('hidden', isExpanded);
+                }
+
+                const hint = container.querySelector('.ticket-expand-hint');
+                if (hint) {
+                    hint.textContent = isExpanded ? 'Click to expand' : 'Click to collapse';
                 }
             };
         });
