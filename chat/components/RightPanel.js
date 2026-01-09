@@ -1238,7 +1238,7 @@ class RightPanel {
                         <span class="text-xs font-medium">Inference Tickets: <span class="font-semibold">${this.ticketCount}</span></span>
                         <button
                             id="toggle-ticket-info-btn"
-                            class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-border text-[9px] text-muted-foreground hover:text-foreground transition-colors"
+                            class="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-border text-[8px] text-muted-foreground hover:text-foreground hover:bg-accent hover:border-foreground/20 transition-all"
                             title="${this.showTicketInfo ? 'Hide ticket info' : 'Show ticket info'}"
                             aria-pressed="${this.showTicketInfo ? 'true' : 'false'}"
                             type="button"
@@ -1334,8 +1334,10 @@ class RightPanel {
                             <span class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-border text-[9px] text-muted-foreground">?</span>
                             <span class="text-xs font-semibold text-foreground">How Inference Tickets Work</span>
                         </div>
-                    <p class="text-[10px] text-muted-foreground leading-relaxed mt-1">
-                        Inference tickets are privacy-preserving tokens (think cash, vouchers, or casino chips). Your device generates and blinds them, the OA server blind-signs them to make them valid, and you unblind them & store locally. When you start a new chat session, you pay tickets to mint a short-lived API key just for this session, unlinkable to you.
+                    <p class="text-[10px] text-muted-foreground leading-snug mt-1">
+                    Inference tickets are privacy-preserving payment tokens that are detached from your identity (think cash, vouchers, or casino chips).
+                    When you start a new chat session by sending a message, your device auto-redeems tickets to mint a short-lived API key just for this session, unlinkable to you.<br><br>
+                    Cryptographically, tickets are implemented with <a href="https://en.wikipedia.org/wiki/Blind_signature" class="underline hover:text-foreground transition-colors" target="_blank" rel="noopener noreferrer">blind signatures</a>: your device generates and blinds them, the OA server blind-signs them to make them valid, and you unblind them for later use.
                     </p>
 
                     <div class="ticket-details mt-2" data-expanded="false">
@@ -1538,12 +1540,8 @@ class RightPanel {
                         </svg>
                         <span class="text-xs font-medium text-foreground">Inference Proxy</span>
                         <span class="px-1 py-0.5 rounded text-[8px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 uppercase tracking-wide">Beta</span>
-                        <button id="proxy-info-btn" class="inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-5 w-5" title="What is this?">
-                            <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                                <circle cx="12" cy="12" r="10"/>
-                                <path d="M12 16v-4"/>
-                                <circle cx="12" cy="8" r="0.5" fill="currentColor"/>
-                            </svg>
+                        <button id="proxy-info-btn" class="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-border text-[8px] text-muted-foreground hover:text-foreground hover:bg-accent hover:border-foreground/20 transition-all" title="What is this?" type="button">
+                            ?
                         </button>
                     </div>
                     <button
