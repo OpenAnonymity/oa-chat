@@ -976,7 +976,7 @@ class ShareModals {
                                 <div class="encryption-mode-indicator"></div>
                             </div>
                         </div>
-                        <p class="text-[11px] text-muted-foreground mb-2">This chat can be encrypted locally before sharing. Only someone with this PIN/password can decrypt it.</p>
+                        <p class="text-[11px] text-muted-foreground mb-2">This chat can be encrypted on-device before sharing. Only someone with this PIN/password can decrypt. The PIN is for <strong>this specific share only</strong>. You can revoke and re-share anytime.</p>
 
                         <!-- Encryption input container (fixed height to prevent layout shift) -->
                         <div class="h-20 flex items-center">
@@ -1266,7 +1266,7 @@ class ShareModals {
                                 <div class="encryption-mode-indicator"></div>
                             </div>
                         </div>
-                        <p class="text-[11px] text-muted-foreground mb-2">This chat can be encrypted locally before sharing. Only someone with this PIN/password can decrypt it.</p>
+                        <p class="text-[11px] text-muted-foreground mb-2">This chat can be encrypted on-device before sharing. Only someone with this PIN/password can decrypt. The PIN is for <strong>this specific share only</strong>. You can revoke and re-share anytime.</p>
 
                         <!-- Encryption input container (fixed height to prevent layout shift) -->
                         <div class="h-20 flex items-center">
