@@ -4,12 +4,28 @@
  * Delegates all state changes to the main app.
  */
 
+const SESSION_ROW_HEIGHT = 36;
+const HEADER_ROW_HEIGHT = 36;
+const GROUP_SPACER_HEIGHT = 12;
+const FOOTER_ROW_HEIGHT = 32;
+const VIRTUALIZE_THRESHOLD = 400;
+const VIRTUAL_OVERSCAN = 8;
+
 export default class Sidebar {
     /**
      * @param {Object} app - Reference to the main ChatApp instance
      */
     constructor(app) {
         this.app = app;
+        this.virtualState = {
+            enabled: false,
+            items: [],
+            offsets: [],
+            totalHeight: 0,
+            lastRange: null
+        };
+        this.virtualScrollRaf = null;
+        this.listenersAttached = false;
     }
 
     /**
@@ -18,6 +34,7 @@ export default class Sidebar {
     scrollToTop() {
         if (this.app.elements.sessionsScrollArea) {
             this.app.elements.sessionsScrollArea.scrollTop = 0;
+            this.handleScroll(true);
         }
     }
 
@@ -54,57 +71,22 @@ export default class Sidebar {
 
     /**
      * Renders the sessions list grouped by date.
-     * Wires up event listeners for session clicks, menu toggles, and delete actions.
      */
     render() {
-        // Get filtered sessions based on search query
         const sessionsToRender = this.app.getFilteredSessions();
+        this.ensureEventListeners();
 
-        // Group sessions by date (using updatedAt so active sessions move to TODAY)
-        const grouped = {};
-        const groupOrder = ['Today', 'Yesterday', 'Previous 7 Days', 'Previous 30 Days', 'Older'];
+        const shouldVirtualize = this.shouldVirtualize(sessionsToRender);
+        this.virtualState.enabled = shouldVirtualize;
+        this.toggleVirtualizedClass(shouldVirtualize);
 
-        sessionsToRender.forEach(session => {
-            // Use updatedAt if available, otherwise fall back to createdAt
-            const timestamp = session.updatedAt || session.createdAt;
-            const group = this.getSessionDateGroup(timestamp);
-            if (!grouped[group]) {
-                grouped[group] = [];
-            }
-            grouped[group].push(session);
-        });
-
-        // Sort sessions within each group by updatedAt (most recent first)
-        Object.keys(grouped).forEach(groupName => {
-            grouped[groupName].sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt));
-        });
-
-        // Build HTML for grouped sessions
-        const html = groupOrder.map(groupName => {
-            const sessions = grouped[groupName];
-            if (!sessions || sessions.length === 0) return '';
-
-            return `
-                <div class="mb-3">
-                    <div class="model-category-header px-3 flex items-center h-9">${groupName}</div>
-                    ${sessions.map(session => this.buildSessionHTML(session)).join('')}
-                </div>
-            `;
-        }).join('');
-
-        let footerHtml = '';
-        if (this.app.sessionSearchQuery.trim()) {
-            if (this.app.state.sessionSearchPending) {
-                footerHtml = `<div class="px-3 py-2 text-xs text-muted-foreground">Searching...</div>`;
-            }
-        } else if (this.app.state.hasMoreSessions) {
-            footerHtml = `<div class="px-3 py-2 text-xs text-muted-foreground">${this.app.state.isLoadingSessions ? 'Loading more...' : 'Scroll to load more'}</div>`;
+        if (shouldVirtualize) {
+            this.prepareVirtualItems(sessionsToRender);
+            this.renderVirtualRange(true);
+            return;
         }
 
-        this.app.elements.sessionsList.innerHTML = html + footerHtml;
-
-        // Wire up event listeners
-        this.attachEventListeners();
+        this.renderFullList(sessionsToRender);
     }
 
     /**
@@ -167,138 +149,125 @@ export default class Sidebar {
     }
 
     /**
-     * Attaches event listeners to session elements.
-     * Handles session switching, menu toggle, and delete actions.
+     * Ensures session list event listeners are attached once.
      */
-    attachEventListeners() {
-        // Session click to switch
-        document.querySelectorAll('.chat-session').forEach(el => {
-            el.addEventListener('click', (e) => {
-                if (!e.target.closest('.session-menu-btn') && !e.target.closest('.session-menu')) {
-                    this.app.switchSession(el.dataset.sessionId);
-                }
-            });
-        });
+    ensureEventListeners() {
+        if (this.listenersAttached) return;
+        const list = this.app.elements.sessionsList;
+        if (!list) return;
 
-        // Session menu toggle
-        document.querySelectorAll('.session-menu-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
+        this.listenersAttached = true;
+
+        list.addEventListener('click', async (e) => {
+            const renameAction = e.target.closest('.rename-session-action');
+            if (renameAction) {
                 e.stopPropagation();
-                const sessionId = btn.dataset.sessionId;
-                const menu = document.querySelector(`.session-menu[data-session-id="${sessionId}"]`);
-
-                // Close all other session menus
-                document.querySelectorAll('.session-menu').forEach(m => {
-                    if (m !== menu) m.classList.add('hidden');
-                });
-
-                menu.classList.toggle('hidden');
-            });
-        });
-
-        // Rename session action - enable inline editing
-        document.querySelectorAll('.rename-session-action').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const sessionId = btn.dataset.sessionId;
-                // Close the menu
-                document.querySelectorAll('.session-menu').forEach(m => m.classList.add('hidden'));
-                // Enable inline editing on the title input
+                const sessionId = renameAction.dataset.sessionId;
+                this.closeAllMenus();
                 this.startInlineEdit(sessionId);
-            });
-        });
+                return;
+            }
 
-        // Title input blur/keydown handlers for inline editing
-        document.querySelectorAll('.session-title-input').forEach(input => {
-            input.addEventListener('blur', (e) => {
-                if (!input.readOnly) {
-                    this.finishInlineEdit(input);
-                }
-            });
-            input.addEventListener('keydown', (e) => {
-                if (!input.readOnly) {
-                    if (e.key === 'Enter') {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        input.blur();
-                    } else if (e.key === 'Escape') {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        this.cancelInlineEdit(input);
-                    }
-                }
-            });
-        });
-
-        // Delete session action
-        document.querySelectorAll('.delete-session-action').forEach(btn => {
-            btn.addEventListener('click', (e) => {
+            const deleteAction = e.target.closest('.delete-session-action');
+            if (deleteAction) {
                 e.stopPropagation();
-                const sessionId = btn.dataset.sessionId;
+                const sessionId = deleteAction.dataset.sessionId;
+                this.closeAllMenus();
                 this.app.deleteSession(sessionId);
-                // Menu will be removed when sessions are re-rendered
-            });
+                return;
+            }
+
+            const shareAction = e.target.closest('.share-session-action');
+            if (shareAction) {
+                e.stopPropagation();
+                const sessionId = shareAction.dataset.sessionId;
+                this.closeAllMenus();
+                if (sessionId !== this.app.state.currentSessionId) {
+                    await this.app.switchSession(sessionId);
+                }
+                await this.app.shareCurrentSession();
+                return;
+            }
+
+            const copyAction = e.target.closest('.copy-link-action');
+            if (copyAction) {
+                e.stopPropagation();
+                const sessionId = copyAction.dataset.sessionId;
+                this.closeAllMenus();
+                if (sessionId !== this.app.state.currentSessionId) {
+                    await this.app.switchSession(sessionId);
+                }
+                await this.app.copySessionLink();
+                return;
+            }
+
+            const deleteShareAction = e.target.closest('.delete-share-action');
+            if (deleteShareAction) {
+                e.stopPropagation();
+                const sessionId = deleteShareAction.dataset.sessionId;
+                this.closeAllMenus();
+                if (sessionId !== this.app.state.currentSessionId) {
+                    await this.app.switchSession(sessionId);
+                }
+                await this.app.deleteCurrentSessionShare();
+                return;
+            }
+
+            const exportAction = e.target.closest('.export-pdf-action');
+            if (exportAction) {
+                e.stopPropagation();
+                const sessionId = exportAction.dataset.sessionId;
+                this.closeAllMenus();
+                if (sessionId !== this.app.state.currentSessionId) {
+                    await this.app.switchSession(sessionId);
+                }
+                await this.app.exportChatToPdf();
+                return;
+            }
+
+            const menuBtn = e.target.closest('.session-menu-btn');
+            if (menuBtn) {
+                e.stopPropagation();
+                const sessionId = menuBtn.dataset.sessionId;
+                const menu = list.querySelector(`.session-menu[data-session-id="${sessionId}"]`);
+                this.closeAllMenus(menu);
+                if (menu) {
+                    menu.classList.toggle('hidden');
+                }
+                return;
+            }
+
+            if (e.target.closest('.session-menu')) {
+                return;
+            }
+
+            const sessionEl = e.target.closest('.chat-session');
+            if (sessionEl) {
+                const sessionId = sessionEl.dataset.sessionId;
+                this.closeAllMenus();
+                this.app.switchSession(sessionId);
+            }
         });
 
-        // Share session action (encrypted sharing via org platform)
-        document.querySelectorAll('.share-session-action').forEach(btn => {
-            btn.addEventListener('click', (e) => {
+        list.addEventListener('keydown', (e) => {
+            const input = e.target.closest('.session-title-input');
+            if (!input || input.readOnly) return;
+            if (e.key === 'Enter') {
+                e.preventDefault();
                 e.stopPropagation();
-                const sessionId = btn.dataset.sessionId;
-                // Close the menu
-                document.querySelectorAll('.session-menu').forEach(m => m.classList.add('hidden'));
-                // Switch to session if not current, then share
-                if (sessionId !== this.app.state.currentSessionId) {
-                    this.app.switchSession(sessionId);
-                }
-                this.app.shareCurrentSession();
-            });
+                input.blur();
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                e.stopPropagation();
+                this.cancelInlineEdit(input);
+            }
         });
 
-        // Copy link action (local URL for bookmarking)
-        document.querySelectorAll('.copy-link-action').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const sessionId = btn.dataset.sessionId;
-                // Close the menu
-                document.querySelectorAll('.session-menu').forEach(m => m.classList.add('hidden'));
-                // Switch to session if not current, then copy link
-                if (sessionId !== this.app.state.currentSessionId) {
-                    this.app.switchSession(sessionId);
-                }
-                this.app.copySessionLink();
-            });
-        });
-
-        // Delete share action
-        document.querySelectorAll('.delete-share-action').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const sessionId = btn.dataset.sessionId;
-                // Close the menu
-                document.querySelectorAll('.session-menu').forEach(m => m.classList.add('hidden'));
-                // Switch to session if not current, then delete share
-                if (sessionId !== this.app.state.currentSessionId) {
-                    this.app.switchSession(sessionId);
-                }
-                this.app.deleteCurrentSessionShare();
-            });
-        });
-
-        // Export as PDF action
-        document.querySelectorAll('.export-pdf-action').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const sessionId = btn.dataset.sessionId;
-                // Close the menu
-                document.querySelectorAll('.session-menu').forEach(m => m.classList.add('hidden'));
-                // Switch to session if not current, then export
-                if (sessionId !== this.app.state.currentSessionId) {
-                    this.app.switchSession(sessionId);
-                }
-                this.app.exportChatToPdf();
-            });
-        });
+        list.addEventListener('blur', (e) => {
+            const input = e.target.closest('.session-title-input');
+            if (!input || input.readOnly) return;
+            this.finishInlineEdit(input);
+        }, true);
     }
 
     /**
@@ -362,5 +331,275 @@ export default class Sidebar {
 
         delete input.dataset.originalValue;
         input.blur();
+    }
+
+    closeAllMenus(exceptMenu = null) {
+        const list = this.app.elements.sessionsList;
+        if (!list) return;
+        list.querySelectorAll('.session-menu').forEach(menu => {
+            if (menu !== exceptMenu) {
+                menu.classList.add('hidden');
+            }
+        });
+    }
+
+    shouldVirtualize(sessions) {
+        return Array.isArray(sessions) && sessions.length >= VIRTUALIZE_THRESHOLD;
+    }
+
+    toggleVirtualizedClass(enabled) {
+        const list = this.app.elements.sessionsList;
+        if (!list) return;
+        list.classList.toggle('sessions-virtualized', enabled);
+    }
+
+    getFooterText() {
+        if (this.app.sessionSearchQuery.trim()) {
+            if (this.app.state.sessionSearchPending) {
+                return 'Searching...';
+            }
+            return '';
+        }
+        if (this.app.state.hasMoreSessions) {
+            return this.app.state.isLoadingSessions ? 'Loading more...' : 'Scroll to load more';
+        }
+        return '';
+    }
+
+    groupSessionsByDate(sessions) {
+        const grouped = {};
+        sessions.forEach(session => {
+            const timestamp = session.updatedAt || session.createdAt;
+            const group = this.getSessionDateGroup(timestamp);
+            if (!grouped[group]) {
+                grouped[group] = [];
+            }
+            grouped[group].push(session);
+        });
+
+        Object.keys(grouped).forEach(groupName => {
+            grouped[groupName].sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt));
+        });
+
+        return grouped;
+    }
+
+    renderFullList(sessionsToRender) {
+        const list = this.app.elements.sessionsList;
+        if (!list) return;
+
+        const grouped = this.groupSessionsByDate(sessionsToRender);
+        const groupOrder = ['Today', 'Yesterday', 'Previous 7 Days', 'Previous 30 Days', 'Older'];
+
+        const html = groupOrder.map(groupName => {
+            const sessions = grouped[groupName];
+            if (!sessions || sessions.length === 0) return '';
+
+            return `
+                <div class="mb-3">
+                    <div class="model-category-header px-3 flex items-center h-9">${groupName}</div>
+                    ${sessions.map(session => this.buildSessionHTML(session)).join('')}
+                </div>
+            `;
+        }).join('');
+
+        const footerText = this.getFooterText();
+        const footerHtml = footerText
+            ? `<div class="px-3 py-2 text-xs text-muted-foreground">${footerText}</div>`
+            : '';
+
+        list.innerHTML = html + footerHtml;
+    }
+
+    prepareVirtualItems(sessionsToRender) {
+        const grouped = this.groupSessionsByDate(sessionsToRender);
+        const groupOrder = ['Today', 'Yesterday', 'Previous 7 Days', 'Previous 30 Days', 'Older'];
+        const items = [];
+
+        groupOrder.forEach(groupName => {
+            const sessions = grouped[groupName];
+            if (!sessions || sessions.length === 0) return;
+            if (items.length) {
+                items.push({ type: 'spacer' });
+            }
+            items.push({ type: 'header', label: groupName });
+            sessions.forEach(session => {
+                items.push({ type: 'session', session });
+            });
+        });
+
+        const footerText = this.getFooterText();
+        if (footerText) {
+            items.push({ type: 'footer', text: footerText });
+        }
+
+        const offsets = [];
+        let totalHeight = 0;
+        items.forEach(item => {
+            offsets.push(totalHeight);
+            totalHeight += this.getItemHeight(item);
+        });
+
+        this.virtualState.items = items;
+        this.virtualState.offsets = offsets;
+        this.virtualState.totalHeight = totalHeight;
+        this.virtualState.lastRange = null;
+    }
+
+    getItemHeight(item) {
+        if (!item) return SESSION_ROW_HEIGHT;
+        switch (item.type) {
+            case 'header':
+                return HEADER_ROW_HEIGHT;
+            case 'spacer':
+                return GROUP_SPACER_HEIGHT;
+            case 'footer':
+                return FOOTER_ROW_HEIGHT;
+            default:
+                return SESSION_ROW_HEIGHT;
+        }
+    }
+
+    findIndexForOffset(offset) {
+        const offsets = this.virtualState.offsets;
+        let low = 0;
+        let high = offsets.length - 1;
+        let mid = 0;
+
+        while (low <= high) {
+            mid = Math.floor((low + high) / 2);
+            if (offsets[mid] === offset) {
+                return mid;
+            }
+            if (offsets[mid] < offset) {
+                low = mid + 1;
+            } else {
+                high = mid - 1;
+            }
+        }
+
+        return Math.max(0, low - 1);
+    }
+
+    handleScroll(force = false) {
+        if (!this.virtualState.enabled) return;
+        if (!force) {
+            const editingInput = this.app.elements.sessionsList?.querySelector('.session-title-input:not([readonly])');
+            if (editingInput) {
+                this.finishInlineEdit(editingInput).catch(() => {});
+                return;
+            }
+        }
+        if (force) {
+            this.renderVirtualRange(true);
+            return;
+        }
+        if (this.virtualScrollRaf) return;
+        this.virtualScrollRaf = requestAnimationFrame(() => {
+            this.virtualScrollRaf = null;
+            this.renderVirtualRange();
+        });
+    }
+
+    renderVirtualRange(force = false) {
+        const list = this.app.elements.sessionsList;
+        const scrollArea = this.app.elements.sessionsScrollArea;
+        if (!list || !scrollArea) return;
+
+        const items = this.virtualState.items;
+        if (!items || items.length === 0) {
+            list.innerHTML = '';
+            return;
+        }
+
+        const viewHeight = scrollArea.clientHeight || 0;
+        const maxScrollTop = Math.max(0, this.virtualState.totalHeight - viewHeight);
+        if (scrollArea.scrollTop > maxScrollTop) {
+            scrollArea.scrollTop = maxScrollTop;
+        }
+
+        const scrollTop = scrollArea.scrollTop || 0;
+        const startIndex = Math.max(0, this.findIndexForOffset(scrollTop) - VIRTUAL_OVERSCAN);
+        const endIndex = Math.min(
+            items.length - 1,
+            this.findIndexForOffset(scrollTop + viewHeight) + VIRTUAL_OVERSCAN
+        );
+
+        if (!force && this.virtualState.lastRange &&
+            this.virtualState.lastRange.start === startIndex &&
+            this.virtualState.lastRange.end === endIndex) {
+            return;
+        }
+
+        const startOffset = this.virtualState.offsets[startIndex] || 0;
+        const endOffset = endIndex + 1 < items.length
+            ? this.virtualState.offsets[endIndex + 1]
+            : this.virtualState.totalHeight;
+
+        const topSpacer = startOffset > 0
+            ? `<div class="session-virtual-spacer" style="height:${startOffset}px;"></div>`
+            : '';
+        const bottomSpacerHeight = Math.max(0, this.virtualState.totalHeight - endOffset);
+        const bottomSpacer = bottomSpacerHeight > 0
+            ? `<div class="session-virtual-spacer" style="height:${bottomSpacerHeight}px;"></div>`
+            : '';
+
+        const visibleHtml = items
+            .slice(startIndex, endIndex + 1)
+            .map(item => this.buildVirtualItemHTML(item))
+            .join('');
+
+        list.innerHTML = topSpacer + visibleHtml + bottomSpacer;
+        this.virtualState.lastRange = { start: startIndex, end: endIndex };
+    }
+
+    buildVirtualItemHTML(item) {
+        if (!item) return '';
+        if (item.type === 'header') {
+            return `<div class="model-category-header px-3 flex items-center h-9">${item.label}</div>`;
+        }
+        if (item.type === 'spacer') {
+            return '<div class="session-group-spacer"></div>';
+        }
+        if (item.type === 'footer') {
+            return `<div class="px-3 py-2 text-xs text-muted-foreground">${item.text}</div>`;
+        }
+        return this.buildSessionHTML(item.session);
+    }
+
+    scrollToSession(sessionId) {
+        if (!sessionId) return;
+        const scrollArea = this.app.elements.sessionsScrollArea;
+        const list = this.app.elements.sessionsList;
+        if (!scrollArea || !list) return;
+
+        if (this.virtualState.enabled) {
+            const index = this.virtualState.items.findIndex(item =>
+                item?.type === 'session' && item.session?.id === sessionId
+            );
+            if (index === -1) return;
+            const itemTop = this.virtualState.offsets[index] || 0;
+            const itemHeight = this.getItemHeight(this.virtualState.items[index]);
+            const viewHeight = scrollArea.clientHeight || 0;
+            const viewTop = scrollArea.scrollTop || 0;
+            const viewBottom = viewTop + viewHeight;
+            const itemBottom = itemTop + itemHeight;
+            if (itemTop >= viewTop && itemBottom <= viewBottom) {
+                return;
+            }
+
+            const targetTop = Math.max(0, itemTop - Math.max(0, (viewHeight - itemHeight) / 2));
+            scrollArea.scrollTop = targetTop;
+            this.handleScroll(true);
+            return;
+        }
+
+        const sessionEl = list.querySelector(`.chat-session[data-session-id="${sessionId}"]`);
+        if (!sessionEl) return;
+        const itemRect = sessionEl.getBoundingClientRect();
+        const viewRect = scrollArea.getBoundingClientRect();
+        if (itemRect.top < viewRect.top || itemRect.bottom > viewRect.bottom) {
+            sessionEl.scrollIntoView({ block: 'nearest' });
+        }
     }
 }

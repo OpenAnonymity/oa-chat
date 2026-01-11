@@ -363,6 +363,19 @@ html.switching-theme *::after {
     animation: sessionsReveal 0.35s ease-out forwards;
 }
 
+#sessions-list.sessions-virtualized {
+    gap: 0;
+}
+
+.session-virtual-spacer,
+.session-group-spacer {
+    flex-shrink: 0;
+}
+
+.session-group-spacer {
+    height: 12px;
+}
+
 @keyframes sessionsReveal {
     from {
         opacity: 0;

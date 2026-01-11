@@ -85,7 +85,6 @@ class ChatApp {
 
         this.elements = {
             newChatBtn: document.getElementById('new-chat-btn'),
-            sessionsScrollArea: document.getElementById('sessions-scroll-area'),
             sessionsList: document.getElementById('sessions-list'),
             searchRoomsInput: document.getElementById('search-rooms'),
             chatArea: document.getElementById('chat-area'),
@@ -1075,6 +1074,10 @@ class ChatApp {
             this.showToast('Failed to open local chat storage. Close other tabs and reload.', 'error');
             return;
         }
+
+        window.addEventListener('oa-db-versionchange', () => {
+            this.showToast('Chat storage updated in another tab. Reload to continue.', 'error');
+        });
 
         // Initialize network proxy in background (don't block UI)
         networkProxy.initialize().catch(err => console.warn('Proxy init failed:', err));
@@ -2178,6 +2181,9 @@ class ChatApp {
         this.renderSessions();
         this.renderMessages();
         this.renderCurrentModel();
+        if (this.sidebar && !this.isMobileView()) {
+            this.sidebar.scrollToSession(sessionId);
+        }
 
         // Update UI based on new session's streaming state
         this.updateInputState();
@@ -4093,7 +4099,6 @@ class ChatApp {
     async reloadSessions() {
         this.state.sessions = [];
         this.state.sessionsById = new Map();
-        this.state.sessionsById = new Map();
         this.state.sessionsPageCursor = null;
         this.state.hasMoreSessions = true;
         this.state.sessionSearchResults = null;
@@ -4469,6 +4474,9 @@ class ChatApp {
 
         if (this.elements.sessionsScrollArea) {
             this.elements.sessionsScrollArea.addEventListener('scroll', () => {
+                if (this.sidebar) {
+                    this.sidebar.handleScroll();
+                }
                 if (this.sessionSearchQuery.trim()) return;
                 const { scrollTop, scrollHeight, clientHeight } = this.elements.sessionsScrollArea;
                 if (scrollHeight - scrollTop - clientHeight < SESSION_SCROLL_LOAD_THRESHOLD) {

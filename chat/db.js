@@ -18,6 +18,13 @@ class ChatDatabase {
             request.onblocked = () => reject(new Error('Database upgrade blocked by another tab.'));
             request.onsuccess = () => {
                 this.db = request.result;
+                this.db.onversionchange = () => {
+                    this.db.close();
+                    this.db = null;
+                    if (typeof window !== 'undefined') {
+                        window.dispatchEvent(new CustomEvent('oa-db-versionchange'));
+                    }
+                };
                 resolve(this.db);
             };
 
