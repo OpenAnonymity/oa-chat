@@ -27,6 +27,8 @@ export default class ChatArea {
         };
         // Track if user has scrolled up in reasoning content (pauses auto-scroll)
         this.reasoningAutoScrollPaused = false;
+        // Pending animation frame for debounced auto-grow
+        this.pendingAutoGrowFrame = null;
         this.setupEventListeners();
     }
 
@@ -109,6 +111,26 @@ export default class ChatArea {
                 const messageId = forkBtn.dataset.messageId;
                 await this.app.forkConversation(messageId);
                 return;
+            }
+
+            // Edit model picker button - opens the model picker modal
+            const editModelPickerBtn = e.target.closest('.edit-model-picker-btn');
+            if (editModelPickerBtn) {
+                e.preventDefault();
+                e.stopPropagation();
+                // Open the model picker (same as Cmd+K)
+                if (this.app.modelPicker) {
+                    this.app.modelPicker.open();
+                }
+                return;
+            }
+        });
+
+        // Auto-grow edit textarea on input (debounced via requestAnimationFrame)
+        messagesContainer.addEventListener('input', (e) => {
+            const textarea = e.target.closest('.edit-prompt-textarea');
+            if (textarea) {
+                this.scheduleAutoGrow(textarea);
             }
         });
 
@@ -431,9 +453,10 @@ export default class ChatArea {
         const isSessionStreaming = this.app.isCurrentSessionStreaming();
 
         // Check if this is an imported (or forked from import) session with new messages added
-        // importedFrom = pure import (can still receive updates)
+        // importedFrom = share import (can still receive updates)
+        // importedSource = external import (ChatGPT, etc.)
         // forkedFrom = was imported but user made changes (no longer receives updates)
-        const wasImported = session.importedFrom || session.forkedFrom;
+        const wasImported = session.importedFrom || session.forkedFrom || session.importedSource;
         const importedCount = session.importedMessageCount || 0;
         const hasNewMessagesAfterImport = wasImported && importedCount > 0 && messages.length > importedCount;
 
@@ -576,6 +599,11 @@ export default class ChatArea {
         // Update message navigation if it exists
         if (this.app.messageNavigation) {
             this.app.messageNavigation.update();
+        }
+
+        // Initialize edit form if we're in edit mode
+        if (this.app.editingMessageId) {
+            this.initializeEditForm();
         }
     }
 
@@ -1535,5 +1563,79 @@ export default class ChatArea {
             });
         }
     }
-}
 
+    /**
+     * Schedules auto-grow using requestAnimationFrame for debouncing.
+     * Prevents layout thrashing when pasting text rapidly.
+     * @param {HTMLTextAreaElement} textarea - The textarea element to resize
+     */
+    scheduleAutoGrow(textarea) {
+        // Cancel any pending frame to debounce rapid inputs
+        if (this.pendingAutoGrowFrame) {
+            cancelAnimationFrame(this.pendingAutoGrowFrame);
+        }
+        // Schedule the resize for the next animation frame
+        this.pendingAutoGrowFrame = requestAnimationFrame(() => {
+            this.pendingAutoGrowFrame = null;
+            this.autoGrowTextarea(textarea);
+        });
+    }
+
+    /**
+     * Auto-grows a textarea to fit its content while respecting min/max heights.
+     * Works alongside CSS resize-y for manual drag resizing.
+     * Uses overflow:hidden technique to avoid visual glitches with resizer.
+     * @param {HTMLTextAreaElement} textarea - The textarea element to resize
+     */
+    autoGrowTextarea(textarea) {
+        if (!textarea) return;
+        // Temporarily hide overflow to prevent visual glitches during resize
+        const prevOverflow = textarea.style.overflow;
+        textarea.style.overflow = 'hidden';
+        // Reset to minimum to get true scrollHeight
+        textarea.style.height = '0';
+        // Set height to scrollHeight, respecting CSS min-height (80px via CSS)
+        const newHeight = Math.max(textarea.scrollHeight, 80);
+        textarea.style.height = newHeight + 'px';
+        // Restore overflow for manual resize capability
+        textarea.style.overflow = prevOverflow || '';
+    }
+
+    /**
+     * Updates the edit model picker button content to sync with the main model picker.
+     * Called after render when editing a message.
+     */
+    updateEditModelPickerButton() {
+        const editModelPickerBtn = document.getElementById('edit-model-picker-btn');
+        if (!editModelPickerBtn) return;
+
+        // Get the main model picker button's inner HTML (except the keyboard shortcut)
+        const mainBtn = this.app.elements.modelPickerBtn;
+        if (!mainBtn) return;
+
+        // Extract icon and model name from main button
+        const iconDiv = mainBtn.querySelector('.w-5.h-5');
+        const modelNameSpan = mainBtn.querySelector('.model-name-container');
+
+        if (iconDiv && modelNameSpan) {
+            editModelPickerBtn.innerHTML = `
+                ${iconDiv.outerHTML}
+                <span class="model-name-container min-w-0 truncate">${modelNameSpan.textContent}</span>
+            `;
+        }
+    }
+
+    /**
+     * Initializes the edit form after it's rendered.
+     * Sets up auto-grow and syncs the model picker button.
+     */
+    initializeEditForm() {
+        const textarea = document.querySelector('.edit-prompt-textarea');
+        if (textarea) {
+            // Auto-grow on initial render
+            this.autoGrowTextarea(textarea);
+        }
+        // Sync the model picker button
+        this.updateEditModelPickerButton();
+    }
+}

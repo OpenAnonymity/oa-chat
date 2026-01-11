@@ -2967,24 +2967,50 @@ html {
     font-size: 0.875rem;
     line-height: 1.5;
     min-height: 80px;
-    max-height: 60vh;
+    max-height: 40vh;
 }
 
-/* Subtle theme-aware resize handle */
+/* Subtle theme-aware resize handle - sized to be visible with or without scrollbar */
 .edit-prompt-textarea::-webkit-resizer {
-    width: 6px;
-    height: 6px;
+    width: 16px;
+    height: 16px;
     background: linear-gradient(
         135deg,
-        transparent 50%,
-        hsl(var(--color-muted-foreground) / 0.35) 50%,
-        hsl(var(--color-muted-foreground) / 0.35) 57%,
-        transparent 57%,
-        transparent 64%,
-        hsl(var(--color-muted-foreground) / 0.35) 64%,
-        hsl(var(--color-muted-foreground) / 0.35) 71%,
-        transparent 71%
+        transparent 35%,
+        hsl(var(--color-muted-foreground) / 0.3) 35%,
+        hsl(var(--color-muted-foreground) / 0.3) 45%,
+        transparent 45%,
+        transparent 55%,
+        hsl(var(--color-muted-foreground) / 0.3) 55%,
+        hsl(var(--color-muted-foreground) / 0.3) 65%,
+        transparent 65%
     );
+    background-size: 100% 100%;
+    border-radius: 0 0 6px 0;
+}
+
+/* Hide the scrollbar corner to prevent conflict with resize handle */
+.edit-prompt-textarea::-webkit-scrollbar-corner {
+    background: hsl(var(--color-background));
+}
+
+/* Style the scrollbar to be subtle and match the theme */
+.edit-prompt-textarea::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+.edit-prompt-textarea::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.edit-prompt-textarea::-webkit-scrollbar-thumb {
+    background: hsl(var(--color-muted-foreground) / 0.3);
+    border-radius: 4px;
+}
+
+.edit-prompt-textarea::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--color-muted-foreground) / 0.5);
 }
 
 /* Shared focus style for textareas and inputs - clean, subtle, no heavy ring */

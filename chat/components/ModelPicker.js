@@ -421,6 +421,17 @@ export default class ModelPicker {
             ${shortcutHtml}
         `;
         this.app.elements.modelPickerBtn.classList.add('gap-1.5');
+
+        // Also update the edit form model picker button if it exists (keeps it in sync)
+        const editModelPickerBtn = document.getElementById('edit-model-picker-btn');
+        if (editModelPickerBtn) {
+            editModelPickerBtn.innerHTML = `
+                <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 ${bgClass}">
+                    ${iconContent}
+                </div>
+                <span class="model-name-container min-w-0 truncate">${shortModelName}</span>
+            `;
+        }
     }
 
     /**

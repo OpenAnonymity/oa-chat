@@ -227,24 +227,38 @@ function buildUserMessage(message, options = {}) {
                             rows="3"
                             data-message-id="${message.id}"
                         >${escapeHtml(message.content)}</textarea>
-                        <div class="flex items-center justify-end gap-2 mt-2">
+                        <div class="flex items-center justify-between gap-2 mt-2">
                             <button
-                                class="cancel-edit-btn group inline-flex items-center justify-center gap-2 rounded-md text-xs font-medium transition-colors hover-highlight text-muted-foreground hover:text-foreground px-3 py-1.5 border border-transparent"
+                                id="edit-model-picker-btn"
+                                class="edit-model-picker-btn btn-ghost-hover inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 border border-input h-7 px-2 gap-1.5"
                                 data-message-id="${message.id}"
+                                title="Select model for regeneration"
                             >
-                                <span>Cancel</span>
-                                <kbd class="pointer-events-none inline-flex h-4 select-none items-center gap-1 rounded border border-border bg-muted px-1 font-mono text-[10px] font-medium opacity-100">Esc</kbd>
+                                <!-- Content will be populated by ChatArea.updateEditModelPickerButton -->
+                                <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 bg-muted">
+                                    <span class="text-[10px] font-semibold">...</span>
+                                </div>
+                                <span class="model-name-container min-w-0 truncate">Loading...</span>
                             </button>
-                            <button
-                                class="confirm-edit-btn group inline-flex items-center justify-center gap-2 rounded-md text-xs font-medium transition-colors border border-border px-3 py-1.5 shadow-sm"
-                                data-message-id="${message.id}"
-                            >
-                                <span>Save</span>
-                                <span class="flex items-center gap-0.5 text-muted-foreground">
-                                    <kbd class="pointer-events-none inline-flex h-4 select-none items-center gap-1 rounded border border-border bg-muted px-1 font-mono text-[10px] font-medium opacity-100">⌘</kbd>
-                                    <kbd class="pointer-events-none inline-flex h-4 select-none items-center gap-1 rounded border border-border bg-muted px-1 font-mono text-[10px] font-medium opacity-100">↵</kbd>
-                                </span>
-                            </button>
+                            <div class="flex items-center gap-2">
+                                <button
+                                    class="cancel-edit-btn group inline-flex items-center justify-center gap-2 rounded-md text-xs font-medium transition-colors hover-highlight text-muted-foreground hover:text-foreground px-3 py-1.5 border border-transparent"
+                                    data-message-id="${message.id}"
+                                >
+                                    <span>Cancel</span>
+                                    <kbd class="pointer-events-none inline-flex h-4 select-none items-center gap-1 rounded border border-border bg-muted px-1 font-mono text-[10px] font-medium opacity-100">Esc</kbd>
+                                </button>
+                                <button
+                                    class="confirm-edit-btn group inline-flex items-center justify-center gap-2 rounded-md text-xs font-medium transition-colors border border-border px-3 py-1.5 shadow-sm"
+                                    data-message-id="${message.id}"
+                                >
+                                    <span>Save</span>
+                                    <span class="flex items-center gap-0.5 text-muted-foreground pointer-events-none text-xs">
+                                        <span class="opacity-60">⌘</span>
+                                        <span class="opacity-60">↵</span>
+                                    </span>
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
