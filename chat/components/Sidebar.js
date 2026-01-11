@@ -92,7 +92,16 @@ export default class Sidebar {
             `;
         }).join('');
 
-        this.app.elements.sessionsList.innerHTML = html;
+        let footerHtml = '';
+        if (this.app.sessionSearchQuery.trim()) {
+            if (this.app.state.sessionSearchPending) {
+                footerHtml = `<div class="px-3 py-2 text-xs text-muted-foreground">Searching...</div>`;
+            }
+        } else if (this.app.state.hasMoreSessions) {
+            footerHtml = `<div class="px-3 py-2 text-xs text-muted-foreground">${this.app.state.isLoadingSessions ? 'Loading more...' : 'Scroll to load more'}</div>`;
+        }
+
+        this.app.elements.sessionsList.innerHTML = html + footerHtml;
 
         // Wire up event listeners
         this.attachEventListeners();
@@ -108,7 +117,7 @@ export default class Sidebar {
         const titleClass = session.title === 'New Chat' ? 'italic text-muted-foreground' : '';
         const isShared = !!session.shareInfo?.shareId;
         // Show imported indicator for both pure imports and forked imports
-        const isImported = !!(session.importedFrom || session.forkedFrom);
+        const isImported = !!(session.importedFrom || session.forkedFrom || session.importedSource);
         const shareLabel = isShared ? 'Update Share' : 'Share';
 
         // Build indicator icons
@@ -355,4 +364,3 @@ export default class Sidebar {
         input.blur();
     }
 }
-

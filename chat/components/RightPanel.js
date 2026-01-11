@@ -1183,7 +1183,7 @@ class RightPanel {
 
     getSessionInfo(sessionId) {
         if (!this.app || !sessionId) return null;
-        const session = this.app.state.sessions.find(s => s.id === sessionId);
+        const session = this.app.state.sessionsById?.get(sessionId) || this.app.state.sessions.find(s => s.id === sessionId);
         return session;
     }
 

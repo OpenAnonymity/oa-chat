@@ -1,8 +1,12 @@
 // IndexedDB implementation for chat history storage
+function normalizeId(id) {
+    return (id || '').toString().replace(/-/g, '').toUpperCase();
+}
+
 class ChatDatabase {
     constructor() {
         this.dbName = 'openrouter-chat';
-        this.version = 2;
+        this.version = 3;
         this.db = null;
     }
 
@@ -11,6 +15,7 @@ class ChatDatabase {
             const request = indexedDB.open(this.dbName, this.version);
 
             request.onerror = () => reject(request.error);
+            request.onblocked = () => reject(new Error('Database upgrade blocked by another tab.'));
             request.onsuccess = () => {
                 this.db = request.result;
                 resolve(this.db);
@@ -19,10 +24,19 @@ class ChatDatabase {
             request.onupgradeneeded = (event) => {
                 const db = event.target.result;
 
-                // Create sessions store
+                let sessionsStore;
                 if (!db.objectStoreNames.contains('sessions')) {
-                    const sessionsStore = db.createObjectStore('sessions', { keyPath: 'id' });
+                    sessionsStore = db.createObjectStore('sessions', { keyPath: 'id' });
                     sessionsStore.createIndex('createdAt', 'createdAt', { unique: false });
+                } else {
+                    sessionsStore = event.target.transaction.objectStore('sessions');
+                }
+
+                if (sessionsStore && !sessionsStore.indexNames.contains('updatedAt')) {
+                    sessionsStore.createIndex('updatedAt', 'updatedAt', { unique: false });
+                }
+                if (sessionsStore && !sessionsStore.indexNames.contains('updatedAt_id')) {
+                    sessionsStore.createIndex('updatedAt_id', ['updatedAt', 'id'], { unique: false });
                 }
 
                 // Create messages store
@@ -59,6 +73,33 @@ class ChatDatabase {
         });
     }
 
+    async saveSessionWithMessages(session, messages) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['sessions', 'messages'], 'readwrite');
+            const sessionsStore = transaction.objectStore('sessions');
+            const messagesStore = transaction.objectStore('messages');
+
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = () => reject(transaction.error);
+
+            sessionsStore.put(session);
+            (messages || []).forEach(message => {
+                messagesStore.put(message);
+            });
+        });
+    }
+
+    async getSession(sessionId) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['sessions'], 'readonly');
+            const store = transaction.objectStore('sessions');
+            const request = store.get(sessionId);
+
+            request.onsuccess = () => resolve(request.result || null);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
     async getAllSessions() {
         return new Promise((resolve, reject) => {
             const transaction = this.db.transaction(['sessions'], 'readonly');
@@ -66,6 +107,174 @@ class ChatDatabase {
             const request = store.getAll();
 
             request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async getSessionsPage(limit = 80, cursor = null) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['sessions'], 'readonly');
+            const store = transaction.objectStore('sessions');
+            let source;
+            try {
+                source = store.index('updatedAt_id');
+            } catch (error) {
+                source = store;
+            }
+
+            let range = null;
+            if (cursor && cursor.updatedAt !== undefined && cursor.updatedAt !== null && cursor.id) {
+                range = IDBKeyRange.upperBound([cursor.updatedAt, cursor.id], true);
+            }
+
+            const request = source.openCursor(range, 'prev');
+            const sessions = [];
+            let lastKey = null;
+
+            request.onsuccess = (event) => {
+                const cursorResult = event.target.result;
+                if (!cursorResult) {
+                    resolve({ sessions, nextCursor: null });
+                    return;
+                }
+
+                sessions.push(cursorResult.value);
+                lastKey = cursorResult.key;
+                if (sessions.length >= limit) {
+                    resolve({
+                        sessions,
+                        nextCursor: lastKey && Array.isArray(lastKey)
+                            ? { updatedAt: lastKey[0], id: lastKey[1] }
+                            : null
+                    });
+                    return;
+                }
+
+                cursorResult.continue();
+            };
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async searchSessions(matchFn, limit = 200) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['sessions'], 'readonly');
+            const store = transaction.objectStore('sessions');
+            const request = store.openCursor();
+            const matches = [];
+            let done = false;
+
+            request.onsuccess = (event) => {
+                if (done) return;
+                const cursor = event.target.result;
+                if (!cursor) {
+                    done = true;
+                    resolve(matches);
+                    return;
+                }
+                const session = cursor.value;
+                if (matchFn(session)) {
+                    matches.push(session);
+                    if (matches.length >= limit) {
+                        done = true;
+                        resolve(matches);
+                        return;
+                    }
+                }
+                cursor.continue();
+            };
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async findSessionByShareId(shareId) {
+        const normalized = normalizeId(shareId);
+        return this.findSession(session =>
+            session.shareInfo?.shareId && normalizeId(session.shareInfo.shareId) === normalized
+        );
+    }
+
+    async findSessionByImportedFrom(importedFrom) {
+        const normalized = normalizeId(importedFrom);
+        return this.findSession(session =>
+            session.importedFrom && normalizeId(session.importedFrom) === normalized
+        );
+    }
+
+    async findSessionByForkedFrom(forkedFrom) {
+        const normalized = normalizeId(forkedFrom);
+        return this.findSession(session =>
+            session.forkedFrom && normalizeId(session.forkedFrom) === normalized
+        );
+    }
+
+    async findSession(matchFn) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['sessions'], 'readonly');
+            const store = transaction.objectStore('sessions');
+            const request = store.openCursor();
+
+            request.onsuccess = (event) => {
+                const cursor = event.target.result;
+                if (!cursor) {
+                    resolve(null);
+                    return;
+                }
+                if (matchFn(cursor.value)) {
+                    resolve(cursor.value);
+                    return;
+                }
+                cursor.continue();
+            };
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async backfillMissingUpdatedAt() {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['sessions'], 'readwrite');
+            const store = transaction.objectStore('sessions');
+            const request = store.openCursor();
+
+            request.onsuccess = (event) => {
+                const cursor = event.target.result;
+                if (!cursor) {
+                    resolve();
+                    return;
+                }
+                const session = cursor.value;
+                if (!session.updatedAt && session.createdAt) {
+                    session.updatedAt = session.createdAt;
+                    cursor.update(session);
+                }
+                cursor.continue();
+            };
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async collectImportedSessionKeys(source) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['sessions'], 'readonly');
+            const store = transaction.objectStore('sessions');
+            const request = store.openCursor();
+            const keys = new Set();
+
+            request.onsuccess = (event) => {
+                const cursor = event.target.result;
+                if (!cursor) {
+                    resolve(keys);
+                    return;
+                }
+                const session = cursor.value;
+                if (session.importedSource === source && session.importedExternalId) {
+                    keys.add(`${source}:${session.importedExternalId}`);
+                }
+                if (session.importedFrom && session.importedFrom.startsWith(`${source}:`)) {
+                    keys.add(session.importedFrom);
+                }
+                cursor.continue();
+            };
             request.onerror = () => reject(request.error);
         });
     }
@@ -254,4 +463,3 @@ class ChatDatabase {
 
 // Export for use in app.js
 const chatDB = new ChatDatabase();
-

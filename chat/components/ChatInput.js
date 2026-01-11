@@ -104,7 +104,7 @@ export default class ChatInput {
         // Settings menu actions
         this.app.elements.settingsMenu.addEventListener('click', async (e) => {
             if (e.target.tagName === 'BUTTON') {
-                const action = e.target.textContent.trim();
+                const action = e.target.dataset.action || e.target.textContent.trim();
 
                 // Copy Markdown functionality (temporarily disabled)
                 // if (action === 'Copy Markdown') {
@@ -121,6 +121,9 @@ export default class ChatInput {
                 //         this.app.renderCurrentModel();
                 //     }
                 // }
+                if (action === 'import-history') {
+                    this.app.chatHistoryImportModal?.open();
+                }
                 this.app.elements.settingsMenu.classList.add('hidden');
             }
         });
@@ -339,4 +342,3 @@ export default class ChatInput {
         }
     }
 }
-

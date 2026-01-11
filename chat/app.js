@@ -8,6 +8,7 @@ import Sidebar from './components/Sidebar.js';
 import ChatArea from './components/ChatArea.js';
 import ChatInput from './components/ChatInput.js';
 import ModelPicker from './components/ModelPicker.js';
+import ChatHistoryImportModal from './components/ChatHistoryImportModal.js';
 import { buildTypingIndicator } from './components/MessageTemplates.js';
 import apiKeyStore from './services/apiKeyStore.js';
 import themeManager from './services/themeManager.js';
@@ -25,6 +26,10 @@ import { initPinnedModels } from './services/modelConfig.js';
 
 const DEFAULT_MODEL_ID = 'openai/gpt-5.2-chat';
 const DEFAULT_MODEL_NAME = 'OpenAI: GPT-5.2 Instant';
+const SESSION_PAGE_SIZE = 80;
+const SESSION_SEARCH_LIMIT = 300;
+const SESSION_SCROLL_LOAD_THRESHOLD = 160;
+const SESSION_SEARCH_DEBOUNCE = 180;  // ms wait before triggering search
 
 // Layout constants for toolbar overlay prediction
 const SIDEBAR_WIDTH = 256;      // 16rem = 256px
@@ -65,6 +70,13 @@ class ChatApp {
     constructor() {
         this.state = {
             sessions: [],
+            sessionsById: new Map(),
+            sessionsPageCursor: null,
+            hasMoreSessions: true,
+            isLoadingSessions: false,
+            sessionSearchResults: null,
+            sessionSearchResultsQuery: '',
+            sessionSearchPending: false,
             currentSessionId: null,
             models: [],
             modelsLoading: false,
@@ -118,6 +130,8 @@ class ChatApp {
         this.searchEnabled = true;
         this.reasoningEnabled = true;
         this.sessionSearchQuery = '';
+        this.sessionSearchDebounce = null;
+        this.sessionSearchRequestId = 0;
         this.uploadedFiles = [];
         this.fileUndoStack = []; // Track file paste operations for undo
         this.rightPanel = null;
@@ -1045,11 +1059,22 @@ class ChatApp {
         this.chatArea = new ChatArea(this);
         this.chatInput = new ChatInput(this);
         this.modelPicker = new ModelPicker(this);
+        this.chatHistoryImportModal = new ChatHistoryImportModal(this);
         this.rightPanel = new RightPanel(this);
         this.rightPanel.mount();
 
         // Wait for DB before loading data
-        await dbReady;
+        try {
+            await dbReady;
+        } catch (error) {
+            console.error('Failed to initialize local database:', error);
+            this.state.sessions = [];
+            this.state.sessionsById = new Map();
+            this.state.hasMoreSessions = false;
+            this.renderSessions();
+            this.showToast('Failed to open local chat storage. Close other tabs and reload.', 'error');
+            return;
+        }
 
         // Initialize network proxy in background (don't block UI)
         networkProxy.initialize().catch(err => console.warn('Proxy init failed:', err));
@@ -1071,23 +1096,32 @@ class ChatApp {
         initModelTiers();
         initPinnedModels();
 
-        // Load all data from IndexedDB in PARALLEL for speed
-        const [sessions, storedModelPreference, savedSearchEnabled, savedReasoningEnabled] = await Promise.all([
-            chatDB.getAllSessions(),
+        // Load settings from IndexedDB in PARALLEL for speed
+        const [storedModelPreference, savedSearchEnabled, savedReasoningEnabled] = await Promise.all([
             chatDB.getSetting('selectedModel'),
             chatDB.getSetting('searchEnabled'),
             chatDB.getSetting('reasoningEnabled')
         ]);
 
-        this.state.sessions = sessions;
+        await this.loadInitialSessions();
 
         // Migrate sessions in background (don't block UI)
-        this.migrateSessionsInBackground(sessions);
+        this.migrateSessionsInBackground(this.state.sessions);
+        const scheduleBackfill = () => chatDB.backfillMissingUpdatedAt()
+            .catch(err => console.warn('UpdatedAt backfill failed:', err));
+        if (typeof requestIdleCallback === 'function') {
+            requestIdleCallback(scheduleBackfill);
+        } else {
+            setTimeout(scheduleBackfill, 1200);
+        }
 
         // Restore session from sessionStorage (persists across refreshes, not across tabs)
         const savedSessionId = sessionStorage.getItem(SESSION_STORAGE_KEY);
-        if (savedSessionId && this.state.sessions.some(s => s.id === savedSessionId)) {
-            this.state.currentSessionId = savedSessionId;
+        if (savedSessionId) {
+            await this.ensureSessionLoaded(savedSessionId);
+            if (this.state.sessionsById.has(savedSessionId)) {
+                this.state.currentSessionId = savedSessionId;
+            }
         }
 
         // Process model preference
@@ -1227,25 +1261,44 @@ class ChatApp {
         const normalizedInput = this.normalizeId(sessionId);
 
         // Check if it's a local session by ID
-        const localSessionById = this.state.sessions.find(s => this.normalizeId(s.id) === normalizedInput);
+        let localSessionById = this.state.sessions.find(s => this.normalizeId(s.id) === normalizedInput);
+        if (!localSessionById) {
+            const directSession = await chatDB.getSession(sessionId);
+            if (directSession && this.normalizeId(directSession.id) === normalizedInput) {
+                localSessionById = directSession;
+                this.insertSessionIntoList(directSession);
+            }
+        }
         if (localSessionById) {
-            this.switchSession(localSessionById.id);
+            await this.switchSession(localSessionById.id);
             return;
         }
 
         // Check if it's a local session by shareId (for sessions we shared)
-        const localSessionByShareId = this.state.sessions.find(s =>
+        let localSessionByShareId = this.state.sessions.find(s =>
             s.shareInfo?.shareId && this.normalizeId(s.shareInfo.shareId) === normalizedInput
         );
+        if (!localSessionByShareId) {
+            localSessionByShareId = await chatDB.findSessionByShareId(sessionId);
+            if (localSessionByShareId) {
+                this.insertSessionIntoList(localSessionByShareId);
+            }
+        }
         if (localSessionByShareId) {
-            this.switchSession(localSessionByShareId.id);
+            await this.switchSession(localSessionByShareId.id);
             return;
         }
 
         // Check if it's a session we imported (by importedFrom field) - can receive updates
-        const importedSession = this.state.sessions.find(s =>
+        let importedSession = this.state.sessions.find(s =>
             s.importedFrom && this.normalizeId(s.importedFrom) === normalizedInput
         );
+        if (!importedSession) {
+            importedSession = await chatDB.findSessionByImportedFrom(sessionId);
+            if (importedSession) {
+                this.insertSessionIntoList(importedSession);
+            }
+        }
         if (importedSession) {
             // User already imported this share - check for updates
             await this.checkForShareUpdates(sessionId, importedSession);
@@ -1253,9 +1306,15 @@ class ChatApp {
         }
 
         // Check if it's a session we forked from this share - user made their own changes
-        const forkedSession = this.state.sessions.find(s =>
+        let forkedSession = this.state.sessions.find(s =>
             s.forkedFrom && this.normalizeId(s.forkedFrom) === normalizedInput
         );
+        if (!forkedSession) {
+            forkedSession = await chatDB.findSessionByForkedFrom(sessionId);
+            if (forkedSession) {
+                this.insertSessionIntoList(forkedSession);
+            }
+        }
         if (forkedSession) {
             // User has a forked copy - ask if they want their copy or a fresh import
             const wantsFresh = await this.showForkedSessionPrompt(forkedSession);
@@ -1264,7 +1323,7 @@ class ChatApp {
                 await this.importSharedSession(sessionId);
             } else {
                 // User wants their forked copy
-                this.switchSession(forkedSession.id);
+                await this.switchSession(forkedSession.id);
             }
             return;
         }
@@ -1294,15 +1353,15 @@ class ChatApp {
         );
 
         if (!hasUpdates || !shareData) {
-                this.switchSession(existingSession.id);
-                return;
-            }
+            await this.switchSession(existingSession.id);
+            return;
+        }
 
-            const wantsFresh = await this.showImportUpdatePrompt(existingSession);
-            if (wantsFresh) {
+        const wantsFresh = await this.showImportUpdatePrompt(existingSession);
+        if (wantsFresh) {
             await this.importSharedSessionWithData(shareId, shareData);
-            } else {
-            this.switchSession(existingSession.id);
+        } else {
+            await this.switchSession(existingSession.id);
         }
     }
 
@@ -1411,7 +1470,13 @@ class ChatApp {
     async importSharedSessionWithData(shareId, encryptedData) {
         // Normalize shareId for consistent comparison and URL display
         const normalizedShareId = shareService.normalizeShareId(shareId);
-        const existingSession = this.state.sessions.find(s => s.importedFrom === normalizedShareId);
+        let existingSession = this.state.sessions.find(s => s.importedFrom === normalizedShareId);
+        if (!existingSession) {
+            existingSession = await chatDB.findSessionByImportedFrom(normalizedShareId);
+            if (existingSession) {
+                this.insertSessionIntoList(existingSession);
+            }
+        }
         if (!existingSession) {
             await this.importSharedSession(normalizedShareId);
             return;
@@ -1424,7 +1489,7 @@ class ChatApp {
                 'Enter the password to decrypt the updated chat:'
             );
             if (!payload) {
-                this.switchSession(existingSession.id);
+                await this.switchSession(existingSession.id);
                 return;
             }
 
@@ -1458,7 +1523,7 @@ class ChatApp {
             if (payload.sharedApiKey?.key) {
                 const verifiedKeyData = await this.verifySharedApiKey(payload.sharedApiKey);
                 if (verifiedKeyData === 'cancel') {
-                    this.switchSession(existingSession.id);
+                    await this.switchSession(existingSession.id);
                     return;
                 }
                 if (verifiedKeyData) {
@@ -1504,9 +1569,15 @@ class ChatApp {
         } catch (error) {
             console.error('Failed to import shared session:', error);
             this.showToast(error.message || 'Failed to import shared chat', 'error');
-            const session = this.state.sessions.find(s => s.importedFrom === normalizedShareId);
+            let session = this.state.sessions.find(s => s.importedFrom === normalizedShareId);
+            if (!session) {
+                session = await chatDB.findSessionByImportedFrom(normalizedShareId);
+                if (session) {
+                    this.insertSessionIntoList(session);
+                }
+            }
             if (session) {
-                this.switchSession(session.id);
+                await this.switchSession(session.id);
             }
         }
     }
@@ -1587,6 +1658,7 @@ class ChatApp {
 
             // Save session to DB
             this.state.sessions.unshift(session);
+            this.state.sessionsById.set(session.id, session);
             await chatDB.saveSession(session);
 
             // Save messages with new session ID
@@ -2030,6 +2102,7 @@ class ChatApp {
         this.state.pendingModelName = null;
 
         this.state.sessions.unshift(session);
+        this.state.sessionsById.set(session.id, session);
         this.state.currentSessionId = session.id;
 
         this.chatInput.updateSearchToggleUI();
@@ -2069,10 +2142,12 @@ class ChatApp {
      * Switches to a different session.
      * @param {string} sessionId - ID of the session to switch to
      */
-    switchSession(sessionId) {
+    async switchSession(sessionId) {
         if (!sessionId || sessionId === this.state.currentSessionId) {
             return;
         }
+
+        await this.ensureSessionLoaded(sessionId);
 
         this.saveCurrentSessionScrollPosition();
 
@@ -2084,7 +2159,7 @@ class ChatApp {
         chatDB.saveSetting('currentSessionId', sessionId);
 
         // Keep current search state (global setting)
-        const session = this.state.sessions.find(s => s.id === sessionId);
+        const session = this.state.sessionsById.get(sessionId) || this.state.sessions.find(s => s.id === sessionId);
         if (session) {
             this.chatInput.updateSearchToggleUI();
         }
@@ -2127,7 +2202,9 @@ class ChatApp {
      * @returns {Object|undefined} Current session or undefined
      */
     getCurrentSession() {
-        return this.state.sessions.find(s => s.id === this.state.currentSessionId);
+        const sessionId = this.state.currentSessionId;
+        if (!sessionId) return null;
+        return this.state.sessionsById.get(sessionId) || this.state.sessions.find(s => s.id === sessionId);
     }
 
     /**
@@ -3484,6 +3561,7 @@ class ChatApp {
         const index = this.state.sessions.findIndex(s => s.id === sessionId);
         if (index > -1) {
             this.state.sessions.splice(index, 1);
+            this.state.sessionsById.delete(sessionId);
 
             // Delete from DB
             await chatDB.deleteSession(sessionId);
@@ -3687,6 +3765,7 @@ class ChatApp {
         // Save new session
         await chatDB.saveSession(newSession);
         this.state.sessions.unshift(newSession);
+        this.state.sessionsById.set(newSession.id, newSession);
 
         // Copy messages to new session
         const baseTime = Date.now();
@@ -3767,6 +3846,7 @@ class ChatApp {
         this.sessionScrollPositions.clear();
 
         this.state.sessions = [];
+        this.state.sessionsById = new Map();
         this.state.currentSessionId = null;
 
         if (typeof chatDB.clearAllChats === 'function') {
@@ -3927,6 +4007,156 @@ class ChatApp {
         return div.innerHTML;
     }
 
+    cacheSessions(sessions) {
+        if (!Array.isArray(sessions)) return;
+        sessions.forEach(session => {
+            if (session && session.id) {
+                this.state.sessionsById.set(session.id, session);
+            }
+        });
+    }
+
+    insertSessionIntoList(session) {
+        if (!session || !session.id) return;
+        if (this.state.sessionsById.has(session.id)) return;
+
+        const updatedAt = session.updatedAt || session.createdAt || 0;
+        let insertIndex = this.state.sessions.length;
+        for (let i = 0; i < this.state.sessions.length; i += 1) {
+            const compareSession = this.state.sessions[i];
+            const compareUpdatedAt = compareSession.updatedAt || compareSession.createdAt || 0;
+            if (updatedAt > compareUpdatedAt) {
+                insertIndex = i;
+                break;
+            }
+        }
+
+        this.state.sessions.splice(insertIndex, 0, session);
+        this.state.sessionsById.set(session.id, session);
+    }
+
+    async loadInitialSessions() {
+        this.state.isLoadingSessions = true;
+        try {
+            if (typeof chatDB.getSessionsPage === 'function') {
+                const { sessions, nextCursor } = await chatDB.getSessionsPage(SESSION_PAGE_SIZE);
+                this.state.sessions = sessions;
+                this.state.sessionsById = new Map();
+                this.cacheSessions(sessions);
+                this.state.sessionsPageCursor = nextCursor;
+                this.state.hasMoreSessions = Boolean(nextCursor);
+                return;
+            }
+
+            const fallbackSessions = await chatDB.getAllSessions();
+            fallbackSessions.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
+            const page = fallbackSessions.slice(0, SESSION_PAGE_SIZE);
+            this.state.sessions = page;
+            this.state.sessionsById = new Map();
+            this.cacheSessions(page);
+            this.state.sessionsPageCursor = null;
+            this.state.hasMoreSessions = fallbackSessions.length > page.length;
+        } finally {
+            this.state.isLoadingSessions = false;
+        }
+    }
+
+    async loadMoreSessions() {
+        if (this.state.isLoadingSessions || !this.state.hasMoreSessions) return;
+        if (this.sessionSearchQuery.trim()) return;
+
+        this.state.isLoadingSessions = true;
+        try {
+            const { sessions, nextCursor } = await chatDB.getSessionsPage(
+                SESSION_PAGE_SIZE,
+                this.state.sessionsPageCursor
+            );
+            const newSessions = sessions.filter(session => !this.state.sessionsById.has(session.id));
+            this.cacheSessions(newSessions);
+            this.state.sessions.push(...newSessions);
+            this.state.sessionsPageCursor = nextCursor;
+            this.state.hasMoreSessions = Boolean(nextCursor);
+        } finally {
+            this.state.isLoadingSessions = false;
+        }
+        this.renderSessions();
+    }
+
+    async ensureSessionLoaded(sessionId) {
+        if (!sessionId || this.state.sessionsById.has(sessionId)) return;
+        const session = await chatDB.getSession(sessionId);
+        if (session) {
+            this.insertSessionIntoList(session);
+        }
+    }
+
+    async reloadSessions() {
+        this.state.sessions = [];
+        this.state.sessionsById = new Map();
+        this.state.sessionsById = new Map();
+        this.state.sessionsPageCursor = null;
+        this.state.hasMoreSessions = true;
+        this.state.sessionSearchResults = null;
+        this.state.sessionSearchResultsQuery = '';
+        this.state.sessionSearchPending = false;
+        await this.loadInitialSessions();
+        await this.ensureSessionLoaded(this.state.currentSessionId);
+        this.renderSessions();
+    }
+
+    mergeSessionLists(primary, secondary) {
+        const merged = [];
+        const seen = new Set();
+        [primary, secondary].forEach(list => {
+            if (!Array.isArray(list)) return;
+            list.forEach(session => {
+                if (!session || seen.has(session.id)) return;
+                seen.add(session.id);
+                merged.push(session);
+            });
+        });
+        merged.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
+        return merged;
+    }
+
+    async updateSessionSearchResults() {
+        const rawQuery = this.sessionSearchQuery.trim();
+        if (!rawQuery) {
+            this.state.sessionSearchResults = null;
+            this.state.sessionSearchResultsQuery = '';
+            this.state.sessionSearchPending = false;
+            this.renderSessions();
+            return;
+        }
+
+        if (typeof chatDB.searchSessions !== 'function') {
+            this.state.sessionSearchResults = null;
+            this.state.sessionSearchResultsQuery = '';
+            this.state.sessionSearchPending = false;
+            this.renderSessions();
+            return;
+        }
+
+        const query = rawQuery.toLowerCase();
+        const requestId = ++this.sessionSearchRequestId;
+        this.state.sessionSearchPending = true;
+
+        const results = await chatDB.searchSessions(session => {
+            const title = (session.title || '').toLowerCase();
+            return this.fuzzyMatch(query, title);
+        }, SESSION_SEARCH_LIMIT);
+
+        if (requestId !== this.sessionSearchRequestId) {
+            return;
+        }
+
+        this.state.sessionSearchResults = results;
+        this.state.sessionSearchResultsQuery = query;
+        this.state.sessionSearchPending = false;
+        this.cacheSessions(results);
+        this.renderSessions();
+    }
+
     /**
      * Filters sessions based on search query using fuzzy subsequence matching.
      * @returns {Array} Filtered sessions array
@@ -3937,10 +4167,16 @@ class ChatApp {
         }
 
         const query = this.sessionSearchQuery.toLowerCase();
-        return this.state.sessions.filter(session => {
-            const title = session.title.toLowerCase();
+        const inMemory = this.state.sessions.filter(session => {
+            const title = (session.title || '').toLowerCase();
             return this.fuzzyMatch(query, title);
         });
+
+        if (this.state.sessionSearchResults && this.state.sessionSearchResultsQuery === query) {
+            return this.mergeSessionLists(inMemory, this.state.sessionSearchResults);
+        }
+
+        return inMemory;
     }
 
     /**
@@ -4220,7 +4456,25 @@ class ChatApp {
             this.elements.searchRoomsInput.addEventListener('input', (e) => {
                 this.sessionSearchQuery = e.target.value;
                 this.renderSessions();
+                clearTimeout(this.sessionSearchDebounce);
+                if (!this.sessionSearchQuery.trim()) {
+                    this.updateSessionSearchResults();
+                    return;
+                }
+                this.sessionSearchDebounce = setTimeout(() => {
+                    this.updateSessionSearchResults();
+                }, SESSION_SEARCH_DEBOUNCE);
             });
+        }
+
+        if (this.elements.sessionsScrollArea) {
+            this.elements.sessionsScrollArea.addEventListener('scroll', () => {
+                if (this.sessionSearchQuery.trim()) return;
+                const { scrollTop, scrollHeight, clientHeight } = this.elements.sessionsScrollArea;
+                if (scrollHeight - scrollTop - clientHeight < SESSION_SCROLL_LOAD_THRESHOLD) {
+                    this.loadMoreSessions();
+                }
+            }, { passive: true });
         }
 
         // File upload button - triggers file input
