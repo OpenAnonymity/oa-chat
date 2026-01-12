@@ -5,11 +5,58 @@ const MEDIA_CONTENT_TYPES = new Map([
     ['real_time_user_audio_video_asset_pointer', 'audio/video']
 ]);
 
+const TAG_START = '\uE200';
+const TAG_END = '\uE201';
+const TAG_SEPARATOR = '\uE202';
+
 const SKIP_CONTENT_TYPES = new Set([
     'user_editable_context',
-    'thoughts',
     'reasoning_recap'
 ]);
+
+function isChatGptInternalToolCodeBlock(content) {
+    if (!content || typeof content !== 'object') return false;
+    const contentType = content.content_type || content.contentType || '';
+    if (contentType !== 'code') return false;
+    if (typeof content.text !== 'string') return false;
+
+    const language = typeof content.language === 'string' ? content.language.trim().toLowerCase() : '';
+    const likelyInternalLanguage = !language || language === 'unknown';
+    if (!likelyInternalLanguage) return false;
+
+    const raw = content.text.trim();
+    if (!raw.startsWith('{') || !raw.endsWith('}')) return false;
+
+    let parsed = null;
+    try {
+        parsed = JSON.parse(raw);
+    } catch (error) {
+        return false;
+    }
+    if (!parsed || typeof parsed !== 'object') return false;
+
+    // Detect search/image query payloads
+    const hasSearchQueries = Array.isArray(parsed.search_query) && parsed.search_query.some(entry =>
+        entry && typeof entry.q === 'string' && entry.q.trim().length > 0
+    );
+    const hasImageQueries = Array.isArray(parsed.image_query) && parsed.image_query.some(entry =>
+        entry && typeof entry.q === 'string' && entry.q.trim().length > 0
+    );
+    if (hasSearchQueries || hasImageQueries) return true;
+
+    // Detect "open" payloads (internal tool for opening references)
+    const hasOpenRefs = Array.isArray(parsed.open) && parsed.open.some(entry =>
+        entry && typeof entry.ref_id === 'string'
+    );
+    if (hasOpenRefs) return true;
+
+    // Detect response_length without any actual content (internal control payload)
+    const hasResponseLength = typeof parsed.response_length === 'string';
+    const hasNoRealContent = !parsed.text && !parsed.content && !parsed.message;
+    if (hasResponseLength && hasNoRealContent) return true;
+
+    return false;
+}
 
 function decodeHtmlEntities(text) {
     if (!text || text.indexOf('&') === -1) {
@@ -85,6 +132,10 @@ function extractTextAndMedia(content) {
     }
 
     if (contentType === 'code' && typeof content.text === 'string') {
+        // Skip ChatGPT internal tool payloads (search queries, open refs, etc.).
+        if (isChatGptInternalToolCodeBlock(content)) {
+            return { text: '', mediaTypes: [] };
+        }
         const language = content.language ? content.language.trim() : '';
         const fence = language ? `\`\`\`${language}\n${content.text}\n\`\`\`` : `\`\`\`\n${content.text}\n\`\`\``;
         textParts.push(fence);
@@ -104,6 +155,174 @@ function extractTextAndMedia(content) {
         text: textParts.join('\n').trim(),
         mediaTypes
     };
+}
+
+function buildContentReferenceLookup(contentReferences) {
+    const lookup = new Map();
+    if (!Array.isArray(contentReferences)) return lookup;
+    contentReferences.forEach(ref => {
+        if (!ref || typeof ref !== 'object') return;
+        const matchedText = ref.matched_text;
+        if (typeof matchedText === 'string' && matchedText.includes(TAG_START)) {
+            if (!lookup.has(matchedText)) {
+                lookup.set(matchedText, ref);
+            }
+        }
+    });
+    return lookup;
+}
+
+function buildCitationFromContentReference(ref) {
+    if (!ref || typeof ref !== 'object') return null;
+    const item = Array.isArray(ref.items) && ref.items.length > 0 ? ref.items[0] : null;
+    const url = item?.url || (Array.isArray(ref.safe_urls) ? ref.safe_urls[0] : null) || null;
+    if (!url || typeof url !== 'string') return null;
+
+    return {
+        url,
+        title: item?.title || null,
+        description: item?.snippet || null,
+        domain: item?.attribution || null
+    };
+}
+
+function processCitationTags(text, contentReferences) {
+    if (typeof text !== 'string' || text.length === 0) {
+        return { cleanedText: text || '', citations: [] };
+    }
+    if (!text.includes(TAG_START)) {
+        return { cleanedText: text, citations: [] };
+    }
+
+    const lookup = buildContentReferenceLookup(contentReferences);
+    const outputParts = [];
+    const citations = [];
+    const seenUrls = new Set();
+    let nextIndex = 1;
+    let cursor = 0;
+
+    while (cursor < text.length) {
+        const startIndex = text.indexOf(TAG_START, cursor);
+        if (startIndex === -1) {
+            outputParts.push(text.slice(cursor));
+            break;
+        }
+
+        if (startIndex > cursor) {
+            outputParts.push(text.slice(cursor, startIndex));
+        }
+
+        const endIndex = text.indexOf(TAG_END, startIndex + 1);
+        if (endIndex === -1) {
+            // Malformed tag; skip just the tag start char to avoid spewing private-use glyphs.
+            cursor = startIndex + 1;
+            continue;
+        }
+
+        const matchedText = text.slice(startIndex, endIndex + 1);
+        const inner = matchedText.slice(1, -1);
+        const parts = inner.split(TAG_SEPARATOR);
+        const tagType = parts[0];
+
+        if (tagType === 'cite') {
+            const ref = lookup.get(matchedText);
+            const citation = ref ? buildCitationFromContentReference(ref) : null;
+            if (citation && citation.url) {
+                // Insert markdown link inline - the app's enhanceInlineLinks will style it.
+                const linkText = citation.domain || citation.title || extractDomainFromUrl(citation.url);
+                outputParts.push(`[${linkText}](${citation.url})`);
+
+                // Also collect for the citations list at the bottom (dedupe by URL)
+                if (!seenUrls.has(citation.url)) {
+                    seenUrls.add(citation.url);
+                    citations.push({
+                        ...citation,
+                        index: nextIndex
+                    });
+                    nextIndex += 1;
+                }
+            }
+        }
+        // Image tags ('i') and unknown tags are stripped silently.
+
+        cursor = endIndex + 1;
+    }
+
+    return { cleanedText: outputParts.join('').trim(), citations };
+}
+
+function extractDomainFromUrl(url) {
+    try {
+        const parsed = new URL(url);
+        return parsed.hostname.replace(/^www\./, '');
+    } catch {
+        return url;
+    }
+}
+
+function extractImages(contentReferences) {
+    const images = [];
+    if (!Array.isArray(contentReferences)) return images;
+    const seen = new Set();
+
+    contentReferences.forEach(ref => {
+        if (!ref || typeof ref !== 'object') return;
+        if (ref.type !== 'image_v2') return;
+        const refImages = Array.isArray(ref.images) ? ref.images : [];
+        refImages.forEach(image => {
+            const thumbnailUrl = image?.thumbnail_url;
+            const fullUrl = image?.content_url || image?.url;
+            const url = thumbnailUrl || fullUrl;
+            if (typeof url !== 'string' || url.trim().length === 0) return;
+            if (seen.has(url)) return;
+            seen.add(url);
+            images.push({
+                type: 'imported_thumbnail',
+                thumbnail_url: thumbnailUrl || url,
+                full_url: fullUrl || url,
+                title: image?.title || null,
+                source_url: image?.url || null
+            });
+        });
+    });
+
+    return images;
+}
+
+function formatThoughts(thoughts) {
+    if (!Array.isArray(thoughts) || thoughts.length === 0) return '';
+    const blocks = thoughts
+        .map(thought => {
+            if (!thought || typeof thought !== 'object') return '';
+            const summary = typeof thought.summary === 'string' ? thought.summary.trim() : '';
+            const content = typeof thought.content === 'string' ? thought.content.trim() : '';
+            if (!summary && !content) return '';
+            if (summary && content) return `## ${summary}\n${content}`;
+            if (summary) return `## ${summary}`;
+            return content;
+        })
+        .filter(Boolean);
+    return blocks.join('\n\n').trim();
+}
+
+function parseReasoningDurationMs(message) {
+    const metadataSeconds = message?.metadata?.finished_duration_sec;
+    if (typeof metadataSeconds === 'number' && Number.isFinite(metadataSeconds) && metadataSeconds >= 0) {
+        return Math.round(metadataSeconds * 1000);
+    }
+
+    const recapText = message?.content?.content;
+    if (typeof recapText !== 'string') return null;
+    const text = recapText.trim();
+    if (!text) return null;
+
+    // Examples: "Thought for 2m 17s", "Thought for 12s"
+    const match = text.match(/(\d+)\s*m\s*(\d+)\s*s|(\d+)\s*s/);
+    if (!match) return null;
+    const mins = match[1] ? parseInt(match[1], 10) : 0;
+    const secs = match[2] ? parseInt(match[2], 10) : match[3] ? parseInt(match[3], 10) : 0;
+    if (!Number.isFinite(mins) || !Number.isFinite(secs)) return null;
+    return (mins * 60 + secs) * 1000;
 }
 
 function buildMediaPlaceholder(mediaTypes) {
@@ -154,6 +373,8 @@ function normalizeChatGptConversation(conversation, options = {}) {
 
     const rawMessages = getConversationPathMessages(conversation);
     let lastTimestamp = null;
+    let pendingReasoning = '';
+    let pendingReasoningDuration = null;
 
     rawMessages.forEach(message => {
         const authorRole = message?.author?.role;
@@ -167,12 +388,36 @@ function normalizeChatGptConversation(conversation, options = {}) {
         }
 
         const contentType = message?.content?.content_type || message?.content?.contentType;
+        if (contentType === 'reasoning_recap') {
+            const durationMs = parseReasoningDurationMs(message);
+            if (durationMs !== null) {
+                const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+                if (lastMessage && lastMessage.role === 'assistant' && lastMessage.reasoning && !lastMessage.reasoningDuration) {
+                    lastMessage.reasoningDuration = durationMs;
+                } else {
+                    pendingReasoningDuration = durationMs;
+                }
+            }
+            return;
+        }
+
+        if (contentType === 'thoughts') {
+            const formatted = formatThoughts(message?.content?.thoughts);
+            if (formatted) {
+                pendingReasoning = pendingReasoning ? `${pendingReasoning}\n\n${formatted}` : formatted;
+            }
+            return;
+        }
+
         if (SKIP_CONTENT_TYPES.has(contentType)) {
             return;
         }
 
         const { text, mediaTypes } = extractTextAndMedia(message?.content);
-        if (!text && mediaTypes.length === 0) {
+        const contentReferences = message?.metadata?.content_references || message?.metadata?.contentReferences || [];
+        const images = extractImages(contentReferences);
+
+        if (!text && mediaTypes.length === 0 && images.length === 0) {
             return;
         }
 
@@ -196,24 +441,43 @@ function normalizeChatGptConversation(conversation, options = {}) {
         lastTimestamp = timestamp;
 
         const mediaNote = buildMediaPlaceholder(mediaTypes);
-        const hasText = Boolean(text);
         let finalText = text || '';
         if (options.decodeHtmlEntities) {
             finalText = decodeHtmlEntities(finalText);
         }
+
+        // Process citation tags into inline markdown links + collect for bottom list
+        let citations = [];
+        if (finalText && finalText.includes(TAG_START)) {
+            const processed = processCitationTags(finalText, contentReferences);
+            finalText = processed.cleanedText;
+            citations = processed.citations || [];
+        }
+
         if (mediaNote) {
             finalText = finalText ? `${finalText}\n\n${mediaNote}` : mediaNote;
         }
 
+        const hasText = Boolean(finalText && finalText.trim().length > 0);
+        const hasMedia = mediaTypes.length > 0 || images.length > 0;
+
         messages.push({
             role,
             content: isSystemLike ? '' : finalText,
-            reasoning: isSystemLike ? finalText : null,
+            reasoning: isSystemLike ? finalText : (role === 'assistant' && pendingReasoning ? pendingReasoning : null),
+            reasoningDuration: role === 'assistant' && pendingReasoningDuration !== null ? pendingReasoningDuration : null,
             timestamp,
             model: message?.metadata?.model_slug || message?.metadata?.model?.slug || null,
-            hasMedia: mediaTypes.length > 0,
-            hasText
+            hasMedia,
+            hasText,
+            citations: citations.length > 0 ? citations : null,
+            images: images.length > 0 ? images : null
         });
+
+        if (role === 'assistant' && !isSystemLike) {
+            pendingReasoning = '';
+            pendingReasoningDuration = null;
+        }
     });
 
     const createdAt = typeof conversation?.create_time === 'number'

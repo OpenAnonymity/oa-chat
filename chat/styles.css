@@ -466,6 +466,37 @@ html.switching-theme *::after {
     font-size: 0.875rem;
 }
 
+/* Imported thumbnails row (e.g., from ChatGPT exports) */
+.imported-thumbnails-row {
+    scrollbar-width: thin;
+    scrollbar-color: var(--slate-5) transparent;
+}
+
+.imported-thumbnails-row::-webkit-scrollbar {
+    height: 4px;
+}
+
+.imported-thumbnails-row::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.imported-thumbnails-row::-webkit-scrollbar-thumb {
+    background-color: var(--slate-5);
+    border-radius: 2px;
+}
+
+.imported-thumbnail-card {
+    display: block;
+}
+
+.imported-thumbnail-card img {
+    transition: transform 0.15s ease, opacity 0.15s ease;
+}
+
+.imported-thumbnail-card:hover img {
+    transform: scale(1.05);
+}
+
 /* Reasoning trace styles for thinking models */
 /* NOTE: Removed fadeIn animation to prevent flash on session switch.
    Animation is added via .fade-in class in appendMessage() for new messages only. */

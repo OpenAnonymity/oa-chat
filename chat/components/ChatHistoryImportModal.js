@@ -99,7 +99,8 @@ class ChatHistoryImportModal {
                     <p class="text-sm text-foreground">Import ChatGPT chat history into your local browser database.</p>
                     <div class="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground space-y-2">
                         <div>Use <strong>conversations.json</strong> from the ChatGPT export. chat.html is not supported yet.</div>
-                        <div>Text-only import for now. Images and audio are shown as placeholders.</div>
+                        <div>Imports text, reasoning trace, citations, and web-search thumbnails if possible.</div>
+                        <div>Other media is shown as placeholders.</div>
                         <div>Everything stays in your browser. Nothing is uploaded.</div>
                     </div>
                     <div class="flex items-center justify-between gap-2">
@@ -146,7 +147,7 @@ class ChatHistoryImportModal {
                         </div>
                     </div>
                     <div class="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
-                        Text-only import for now. Images and audio are shown as placeholders.
+                        Imports text, reasoning trace, citations, and web-search thumbnails if possible. Other media is shown as placeholders.
                     </div>
                     <div class="flex items-center justify-between gap-2">
                         <button id="chat-import-pick-file" class="px-3 py-2 text-sm font-medium rounded-md border border-border hover-highlight transition-colors">Choose another file</button>
@@ -422,13 +423,15 @@ class ChatHistoryImportModal {
                 role: message.role,
                 content: message.content,
                 reasoning: message.reasoning || null,
+                reasoningDuration: message.reasoningDuration || null,
                 timestamp: message.timestamp,
                 model: message.model || sessionModel,
                 tokenCount: null,
                 streamingTokens: null,
                 files: null,
                 searchEnabled: false,
-                citations: null,
+                citations: message.citations || null,
+                images: message.images || null,
                 isLocalOnly: false
             }));
 

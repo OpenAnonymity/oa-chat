@@ -92,8 +92,12 @@ function escapeHtml(text) {
 function buildGeneratedImages(images) {
     if (!images || images.length === 0) return '';
 
-    let imagesHtml = images.map((image, index) => {
-        if (image.type === 'image_url' && image.image_url?.url) {
+    // Filter out imported thumbnails - they're rendered separately
+    const generatedImages = images.filter(img => img.type === 'image_url');
+    if (generatedImages.length === 0) return '';
+
+    let imagesHtml = generatedImages.map((image, index) => {
+        if (image.image_url?.url) {
             const imageId = `image-${Date.now()}-${index}`;
             return `
                 <div class="relative inline-block max-w-full">
@@ -120,6 +124,50 @@ function buildGeneratedImages(images) {
     }).join('');
 
     return imagesHtml || '';
+}
+
+/**
+ * Builds HTML for imported thumbnail images (e.g., from ChatGPT exports).
+ * Renders as a horizontal scrollable row of small thumbnails.
+ * @param {Array} images - Array of image objects with type 'imported_thumbnail'
+ * @returns {string} HTML string for thumbnail display
+ */
+function buildImportedThumbnails(images) {
+    if (!images || images.length === 0) return '';
+
+    const thumbnails = images.filter(img => img.type === 'imported_thumbnail');
+    if (thumbnails.length === 0) return '';
+
+    const thumbsHtml = thumbnails.map((image, index) => {
+        const thumbUrl = image.thumbnail_url || image.full_url;
+        const fullUrl = image.full_url || image.thumbnail_url;
+        const sourceUrl = image.source_url || fullUrl;
+        const title = image.title || 'Image';
+        const imageId = `imported-thumb-${Date.now()}-${index}`;
+
+        return `
+            <a href="${escapeHtml(sourceUrl)}"
+               target="_blank"
+               rel="noopener noreferrer"
+               class="imported-thumbnail-card flex-shrink-0 group"
+               title="${escapeHtml(title)}">
+                <img
+                    src="${escapeHtml(thumbUrl)}"
+                    alt="${escapeHtml(title)}"
+                    class="w-32 h-24 rounded-lg border border-border object-cover bg-muted hover:opacity-90 transition-opacity"
+                    data-image-id="${imageId}"
+                    loading="lazy"
+                    onerror="this.parentElement.style.display='none';"
+                />
+            </a>
+        `;
+    }).join('');
+
+    return `
+        <div class="imported-thumbnails-row flex gap-2 overflow-x-auto pb-2 mb-2 scrollbar-thin">
+            ${thumbsHtml}
+        </div>
+    `;
 }
 
 /**
@@ -959,10 +1007,14 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
         </div>
     ` : '';
 
-    // Build image bubble if there are images
-    const imageBubble = (message.images && message.images.length > 0) ? `
+    // Build imported thumbnails (small horizontal row before text)
+    const thumbnailsBubble = buildImportedThumbnails(message.images);
+
+    // Build image bubble for generated images (large, after text)
+    const generatedImagesHtml = buildGeneratedImages(message.images);
+    const imageBubble = generatedImagesHtml ? `
         <div class="font-normal message-assistant-images w-full">
-            ${buildGeneratedImages(message.images)}
+            ${generatedImagesHtml}
         </div>
     ` : '';
 
@@ -995,6 +1047,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
                     ${tokenDisplay}
                 </div>
                 ${reasoningBubble}
+                ${thumbnailsBubble}
                 ${textBubble}
                 ${imageBubble}
                 <div class="flex items-center justify-between gap-2 w-full -mt-1">
