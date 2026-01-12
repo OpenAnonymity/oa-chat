@@ -25,6 +25,15 @@ function isChatGptInternalToolCodeBlock(content) {
     if (!likelyInternalLanguage) return false;
 
     const raw = content.text.trim();
+
+    // Detect function-call style tool invocations: search("..."), web.search("..."), etc.
+    // These are NOT JSON but look like: search("query text")
+    const functionCallPattern = /^[a-z_][a-z0-9_.]*\s*\(/i;
+    if (functionCallPattern.test(raw)) {
+        return true;
+    }
+
+    // For JSON payloads, continue with existing checks
     if (!raw.startsWith('{') || !raw.endsWith('}')) return false;
 
     let parsed = null;
@@ -378,7 +387,13 @@ function normalizeChatGptConversation(conversation, options = {}) {
 
     rawMessages.forEach(message => {
         const authorRole = message?.author?.role;
-        const isSystemLike = authorRole === 'system' || authorRole === 'tool' || authorRole === 'developer';
+
+        // Skip tool messages entirely - they're internal search results, not user-facing content
+        if (authorRole === 'tool') {
+            return;
+        }
+
+        const isSystemLike = authorRole === 'system' || authorRole === 'developer';
         const role = isSystemLike ? 'assistant' : authorRole;
         if (role !== 'user' && role !== 'assistant') {
             return;
@@ -417,6 +432,7 @@ function normalizeChatGptConversation(conversation, options = {}) {
         const contentReferences = message?.metadata?.content_references || message?.metadata?.contentReferences || [];
         const images = extractImages(contentReferences);
 
+        // Skip empty messages - they're placeholders in the ChatGPT tree structure
         if (!text && mediaTypes.length === 0 && images.length === 0) {
             return;
         }
