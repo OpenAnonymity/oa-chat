@@ -1,4 +1,9 @@
-import { parseChatHistoryFile, buildImportPlan } from '../services/chatHistoryImporters.js';
+import {
+    parseChatHistoryFile,
+    buildImportPlan,
+    getChatHistoryImporters,
+    getChatHistoryImportAccept
+} from '../services/chatHistoryImporters.js';
 
 function formatBytes(bytes) {
     if (!Number.isFinite(bytes)) return '0 B';
@@ -25,7 +30,10 @@ class ChatHistoryImportModal {
         return {
             step: 'select',
             file: null,
+            importer: null,
             importerLabel: null,
+            importerSource: null,
+            importerDescription: null,
             preview: null,
             plan: [],
             progress: {
@@ -81,7 +89,9 @@ class ChatHistoryImportModal {
         const {
             step,
             file,
+            importer,
             importerLabel,
+            importerDescription,
             preview,
             progress,
             parseError,
@@ -91,17 +101,44 @@ class ChatHistoryImportModal {
         } = this.state;
 
         const fileInfo = file ? `${file.name} (${formatBytes(file.size)})` : 'No file selected';
+        const importers = getChatHistoryImporters();
+        const visibleImporters = importers.filter(entry => entry.showInList !== false);
+        const acceptTypes = getChatHistoryImportAccept();
+        const detectedLabel = importerLabel || importer?.label || 'Chat history';
+        const detectedDescription = importerDescription || importer?.description || '';
 
         let bodyHtml = '';
         if (step === 'select') {
+            const importerListHtml = visibleImporters.length
+                ? `
+                    <div class="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground space-y-2">
+                        <div class="text-xs text-muted-foreground">Supported exports</div>
+                        ${visibleImporters.map(entry => {
+                            const status = entry.enabled === false ? 'Coming soon' : 'Ready';
+                            const statusClass = entry.enabled === false ? 'text-muted-foreground' : 'text-foreground';
+                            const hint = entry.fileHint || entry.label;
+                            return `
+                                <div class="space-y-1">
+                                    <div class="flex items-center justify-between gap-2">
+                                        <div class="text-sm text-foreground">${entry.label}</div>
+                                        <div class="text-xs ${statusClass}">${status}</div>
+                                    </div>
+                                    <div class="text-[11px] text-muted-foreground">${hint}</div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                `
+                : '';
             bodyHtml = `
                 <div class="space-y-3">
-                    <p class="text-sm text-foreground">Import ChatGPT chat history into your local browser database.</p>
+                    <p class="text-sm text-foreground">Import chat history into your local browser database.</p>
+                    ${importerListHtml}
                     <div class="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground space-y-2">
-                        <div>Use <strong>conversations.json</strong> from the ChatGPT export. chat.html is not supported yet.</div>
                         <div>Imports text, reasoning trace, citations, and web-search thumbnails if possible.</div>
                         <div>Other media is shown as placeholders.</div>
                         <div>Everything stays in your browser. Nothing is uploaded.</div>
+                        <div>More sources can be added over time.</div>
                     </div>
                     <div class="flex items-center justify-between gap-2">
                         <div class="text-xs text-muted-foreground">${fileInfo}</div>
@@ -125,7 +162,8 @@ class ChatHistoryImportModal {
                 <div class="space-y-4 text-sm">
                     <div class="rounded-lg border border-border bg-muted/40 p-3 space-y-2">
                         <div class="text-xs text-muted-foreground">Detected format</div>
-                        <div class="text-sm text-foreground font-medium">${importerLabel || 'Chat history'}</div>
+                        <div class="text-sm text-foreground font-medium">${detectedLabel}</div>
+                        ${detectedDescription ? `<div class="text-xs text-muted-foreground">${detectedDescription}</div>` : ''}
                         <div class="text-xs text-muted-foreground">${fileInfo}</div>
                     </div>
                     <div class="grid grid-cols-2 gap-3">
@@ -240,7 +278,7 @@ class ChatHistoryImportModal {
                     </button>
                 </div>
                 <div class="p-4">
-                    <input id="chat-import-input" type="file" class="hidden" accept=".json,application/json">
+                    <input id="chat-import-input" type="file" class="hidden" accept="${acceptTypes}">
                     ${bodyHtml}
                 </div>
             </div>
@@ -302,13 +340,17 @@ class ChatHistoryImportModal {
     async handleFileSelected(file) {
         this.state.file = file;
         this.state.parseError = null;
+        this.state.importer = null;
+        this.state.importerLabel = null;
+        this.state.importerSource = null;
+        this.state.importerDescription = null;
         this.state.step = 'parsing';
         this.render();
         this.setupEventListeners();
 
         try {
             const { importer, parsed } = await parseChatHistoryFile(file);
-            const plan = buildImportPlan(parsed.sessions);
+            const plan = buildImportPlan(parsed.sessions, importer);
             const planStats = plan.reduce((acc, session) => {
                 acc.messageCount += session.messages.length;
                 session.messages.forEach(message => {
@@ -316,7 +358,11 @@ class ChatHistoryImportModal {
                 });
                 return acc;
             }, { messageCount: 0, mediaMessages: 0 });
-            this.state.importerLabel = importer.label;
+            const importerSource = importer?.source || parsed?.source || importer?.id || 'imported';
+            this.state.importer = importer;
+            this.state.importerLabel = importer?.label || null;
+            this.state.importerSource = importerSource;
+            this.state.importerDescription = importer?.description || importer?.fileHint || null;
             this.state.preview = {
                 ...parsed.stats,
                 ...planStats,
@@ -385,8 +431,14 @@ class ChatHistoryImportModal {
     }
 
     async importSessions() {
+        const importer = this.state.importer;
+        const source = this.state.importerSource || importer?.source || 'imported';
+        const getExternalId = typeof importer?.getExternalId === 'function'
+            ? importer.getExternalId.bind(importer)
+            : (session) => session.sourceId || null;
+
         const knownIds = typeof chatDB.collectImportedSessionKeys === 'function'
-            ? await chatDB.collectImportedSessionKeys('chatgpt')
+            ? await chatDB.collectImportedSessionKeys(source)
             : new Set();
         if (knownIds.size === 0 && typeof chatDB.collectImportedSessionKeys !== 'function') {
             const existingSessions = await chatDB.getAllSessions();
@@ -394,7 +446,7 @@ class ChatHistoryImportModal {
                 if (session.importedSource && session.importedExternalId) {
                     knownIds.add(`${session.importedSource}:${session.importedExternalId}`);
                 }
-                if (session.importedFrom && session.importedFrom.startsWith('chatgpt:')) {
+                if (session.importedFrom && session.importedFrom.startsWith(`${source}:`)) {
                     knownIds.add(session.importedFrom);
                 }
             });
@@ -406,7 +458,8 @@ class ChatHistoryImportModal {
             }
 
             const sessionData = this.state.plan[index];
-            const sourceKey = sessionData.sourceId ? `chatgpt:${sessionData.sourceId}` : null;
+            const externalId = getExternalId(sessionData);
+            const sourceKey = externalId ? `${source}:${externalId}` : null;
             if (sourceKey && knownIds.has(sourceKey)) {
                 this.state.progress.skipped += 1;
                 this.state.progress.duplicates += 1;
@@ -447,8 +500,8 @@ class ChatHistoryImportModal {
                 apiKeyInfo: null,
                 expiresAt: null,
                 searchEnabled: this.app.searchEnabled,
-                importedSource: 'chatgpt',
-                importedExternalId: sessionData.sourceId || null,
+                importedSource: source,
+                importedExternalId: externalId,
                 importedAt: Date.now(),
                 importedMessageCount: messages.length
             };
