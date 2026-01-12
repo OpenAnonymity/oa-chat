@@ -8,16 +8,32 @@ class ChatDatabase {
         this.dbName = 'openrouter-chat';
         this.version = 3;
         this.db = null;
+        this.compatMode = false;
+        this.initInFlight = null;
     }
 
     async init() {
-        return new Promise((resolve, reject) => {
-            const request = indexedDB.open(this.dbName, this.version);
+        if (this.db) return this.db;
+        if (this.initInFlight) return this.initInFlight;
 
-            request.onerror = () => reject(request.error);
-            request.onblocked = () => reject(new Error('Database upgrade blocked by another tab.'));
-            request.onsuccess = () => {
-                this.db = request.result;
+        this.initInFlight = new Promise((resolve, reject) => {
+            let settled = false;
+            let fallbackRequested = false;
+            let timeoutId = null;
+
+            const cleanup = () => {
+                if (timeoutId) {
+                    clearTimeout(timeoutId);
+                    timeoutId = null;
+                }
+            };
+
+            const finalize = (db, compatMode) => {
+                if (settled) return;
+                settled = true;
+                cleanup();
+                this.db = db;
+                this.compatMode = compatMode;
                 this.db.onversionchange = () => {
                     this.db.close();
                     this.db = null;
@@ -25,7 +41,46 @@ class ChatDatabase {
                         window.dispatchEvent(new CustomEvent('oa-db-versionchange'));
                     }
                 };
+                if (compatMode && typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('oa-db-compat-mode'));
+                }
+                this.initInFlight = null;
                 resolve(this.db);
+            };
+
+            const fail = (error) => {
+                if (settled) return;
+                settled = true;
+                cleanup();
+                this.initInFlight = null;
+                reject(error);
+            };
+
+            const openFallback = (error) => {
+                if (settled || fallbackRequested) return;
+                fallbackRequested = true;
+                const fallbackRequest = indexedDB.open(this.dbName);
+                fallbackRequest.onerror = () => {
+                    fail(fallbackRequest.error || error);
+                };
+                fallbackRequest.onblocked = () => {
+                    fail(new Error('Database upgrade blocked by another tab.'));
+                };
+                fallbackRequest.onsuccess = () => {
+                    finalize(fallbackRequest.result, true);
+                };
+            };
+
+            const request = indexedDB.open(this.dbName, this.version);
+
+            request.onerror = () => {
+                openFallback(request.error);
+            };
+            request.onblocked = () => {
+                openFallback(new Error('Database upgrade blocked by another tab.'));
+            };
+            request.onsuccess = () => {
+                finalize(request.result, false);
             };
 
             request.onupgradeneeded = (event) => {
@@ -65,7 +120,15 @@ class ChatDatabase {
                     logsStore.createIndex('sessionId', 'sessionId', { unique: false });
                 }
             };
+
+            timeoutId = setTimeout(() => {
+                if (!settled) {
+                    openFallback(new Error('Database initialization timed out.'));
+                }
+            }, 2500);
         });
+
+        return this.initInFlight;
     }
 
     // Sessions

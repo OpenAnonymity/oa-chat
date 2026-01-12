@@ -1075,8 +1075,16 @@ class ChatApp {
             return;
         }
 
+        if (chatDB.compatMode) {
+            this.showToast('Chat storage upgrade blocked by another tab. Close other tabs and reload to finish upgrade.', 'error');
+        }
+
         window.addEventListener('oa-db-versionchange', () => {
             this.showToast('Chat storage updated in another tab. Reload to continue.', 'error');
+        });
+
+        window.addEventListener('oa-db-compat-mode', () => {
+            this.showToast('Chat storage upgrade blocked by another tab. Close other tabs and reload to finish upgrade.', 'error');
         });
 
         // Initialize network proxy in background (don't block UI)
