@@ -352,12 +352,31 @@ export default class ModelPicker {
     }
 
     /**
+     * Checks if a model name/id exists in the available models list.
+     * @param {string} modelName - Model name or ID to check
+     * @returns {boolean} True if model exists in available models
+     */
+    isModelAvailable(modelName) {
+        if (!modelName || !Array.isArray(this.app.state.models) || this.app.state.models.length === 0) {
+            return false;
+        }
+        // Check by name or id (imported chats may have model slugs or IDs)
+        return this.app.state.models.some(m => m.name === modelName || m.id === modelName);
+    }
+
+    /**
      * Renders the current model display in the input area.
      */
     renderCurrentModel() {
         const session = this.app.getCurrentSession();
-        // Show model from session if exists and not null, otherwise show pending model or default
-        const currentModelName = (session && session.model) || this.app.state.pendingModelName || this.defaultModelName;
+        // Get raw model from session, pending state, or default
+        const rawModelName = (session && session.model) || this.app.state.pendingModelName || null;
+
+        // If model exists in available models, use it; otherwise fall back to default
+        // This handles imported chats that may have models not available in OA (e.g., ChatGPT slugs)
+        const currentModelName = (rawModelName && this.isModelAvailable(rawModelName))
+            ? rawModelName
+            : this.defaultModelName;
 
         // Guard against elements not being available
         if (!this.app.elements.modelPickerBtn) {
