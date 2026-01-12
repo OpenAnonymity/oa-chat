@@ -602,4 +602,61 @@ export default class Sidebar {
             sessionEl.scrollIntoView({ block: 'nearest' });
         }
     }
+
+    /**
+     * Gets sessions in their display order (flattened from grouped structure).
+     * @returns {Array} Array of sessions in display order
+     */
+    getSessionsInDisplayOrder() {
+        const sessionsToRender = this.app.getFilteredSessions();
+        const grouped = this.groupSessionsByDate(sessionsToRender);
+        const groupOrder = ['Today', 'Yesterday', 'Previous 7 Days', 'Previous 30 Days', 'Older'];
+
+        const orderedSessions = [];
+        groupOrder.forEach(groupName => {
+            const sessions = grouped[groupName];
+            if (sessions && sessions.length > 0) {
+                orderedSessions.push(...sessions);
+            }
+        });
+
+        return orderedSessions;
+    }
+
+    /**
+     * Navigates to the neighboring session based on direction.
+     * @param {'up' | 'down'} direction - Direction to navigate
+     * @returns {boolean} True if navigation occurred
+     */
+    navigateSession(direction) {
+        const orderedSessions = this.getSessionsInDisplayOrder();
+        if (orderedSessions.length === 0) return false;
+
+        const currentId = this.app.state.currentSessionId;
+        const currentIndex = orderedSessions.findIndex(s => s.id === currentId);
+
+        let targetIndex;
+        if (direction === 'up') {
+            // If no current session or at the top, don't move
+            if (currentIndex <= 0) return false;
+            targetIndex = currentIndex - 1;
+        } else {
+            // 'down'
+            // If no current session, go to first; otherwise go to next
+            if (currentIndex === -1) {
+                targetIndex = 0;
+            } else if (currentIndex >= orderedSessions.length - 1) {
+                return false; // Already at bottom
+            } else {
+                targetIndex = currentIndex + 1;
+            }
+        }
+
+        const targetSession = orderedSessions[targetIndex];
+        if (targetSession) {
+            this.app.switchSession(targetSession.id);
+            return true;
+        }
+        return false;
+    }
 }

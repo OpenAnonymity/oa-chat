@@ -4566,6 +4566,44 @@ class ChatApp {
                 });
             }
 
+            // Arrow key navigation for sidebar sessions
+            if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && this.sidebar) {
+                const active = document.activeElement;
+                const isSearchFocused = active === this.elements.searchRoomsInput;
+                const isTextInputFocused = active && (
+                    active.tagName === 'TEXTAREA' ||
+                    (active.tagName === 'INPUT' && !isSearchFocused) ||
+                    active.isContentEditable
+                );
+
+                // Don't interfere with text input navigation
+                if (isTextInputFocused) {
+                    return;
+                }
+
+                // If search input is focused and pressing down, navigate to first result
+                if (isSearchFocused && e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    const orderedSessions = this.sidebar.getSessionsInDisplayOrder();
+                    if (orderedSessions.length > 0) {
+                        this.switchSession(orderedSessions[0].id);
+                        this.elements.searchRoomsInput.blur();
+                    }
+                    return;
+                }
+
+                // If search is focused and up is pressed, do nothing (stay in input)
+                if (isSearchFocused && e.key === 'ArrowUp') {
+                    return;
+                }
+
+                // Navigate between sessions when no text input is focused
+                e.preventDefault();
+                const direction = e.key === 'ArrowUp' ? 'up' : 'down';
+                this.sidebar.navigateSession(direction);
+                return;
+            }
+
             // Check if any input field is currently focused
             const activeElement = document.activeElement;
             const isInputFocused = activeElement && (
