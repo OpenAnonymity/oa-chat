@@ -282,108 +282,21 @@ export function formatFileSize(bytes) {
 }
 
 /**
- * Exports all chat sessions and messages as a downloadable JSON file
+ * Exports all chat sessions and messages as a downloadable JSON file.
+ * @deprecated Use exportChats from globalExport.js instead.
+ * This function is kept for backward compatibility and delegates to exportChats.
  */
 export async function downloadAllChats() {
-    try {
-        // Get all sessions and messages from IndexedDB
-        const sessions = await chatDB.getAllSessions();
-
-        // For each session, get its messages
-        const chatsData = await Promise.all(
-            sessions.map(async (session) => {
-                const messages = await chatDB.getSessionMessages(session.id);
-                return {
-                    id: session.id,
-                    title: session.title,
-                    model: session.model,
-                    createdAt: session.createdAt,
-                    lastUpdated: session.lastUpdated,
-                    messages: messages.map(msg => ({
-                        role: msg.role,
-                        content: msg.content,
-                        timestamp: msg.timestamp,
-                        tokenCount: msg.tokenCount,
-                        files: msg.files
-                    }))
-                };
-            })
-        );
-
-        // Create the export object
-        const exportData = {
-            exportDate: new Date().toISOString(),
-            version: '1.0',
-            totalSessions: chatsData.length,
-            chats: chatsData
-        };
-
-        // Convert to JSON and create a blob
-        const jsonString = JSON.stringify(exportData, null, 2);
-        const blob = new Blob([jsonString], { type: 'application/json' });
-
-        // Create download link and trigger download
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `oa-fastchat-local-history-${new Date().toISOString().split('T')[0]}.json`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-
-        return true;
-    } catch (error) {
-        console.error('Error exporting chat history:', error);
-        return false;
-    }
+    const { exportChats } = await import('./globalExport.js');
+    return exportChats();
 }
 
 /**
- * Exports all inference tickets from localStorage as a downloadable JSON file
+ * Exports all inference tickets from localStorage as a downloadable JSON file.
+ * @deprecated Use exportTickets from globalExport.js instead.
+ * This function is kept for backward compatibility and delegates to exportTickets.
  */
-export function downloadInferenceTickets() {
-    try {
-        // Get tickets from localStorage
-        const ticketsJson = localStorage.getItem('inference_tickets');
-        const tickets = ticketsJson ? JSON.parse(ticketsJson) : [];
-        const archiveJson = localStorage.getItem('inference_tickets_archive');
-        const archivedTickets = archiveJson ? JSON.parse(archiveJson) : [];
-
-        // Create the export object
-        const exportData = {
-            exportDate: new Date().toISOString(),
-            version: '2.0',
-            totalTickets: tickets.length + archivedTickets.length,
-            unusedTickets: tickets.length,
-            usedTickets: archivedTickets.length,
-            tickets: [
-                ...tickets.map(ticket => ({ ...ticket, status: 'active' })),
-                ...archivedTickets.map(ticket => ({ ...ticket, status: 'archived' }))
-            ],
-            activeTickets: tickets,
-            archivedTickets: archivedTickets
-        };
-
-        // Convert to JSON and create a blob
-        const jsonString = JSON.stringify(exportData, null, 2);
-        const blob = new Blob([jsonString], { type: 'application/json' });
-
-        // Create download link and trigger download
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `oa-fastchat-inference-tickets-${new Date().toISOString().split('T')[0]}.json`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-
-        console.log(`✅ Exported ${tickets.length} inference tickets`);
-        return true;
-    } catch (error) {
-        console.error('Error exporting inference tickets:', error);
-        alert('Failed to export inference tickets. Please check the console for details.');
-        return false;
-    }
+export async function downloadInferenceTickets() {
+    const { exportTickets } = await import('./globalExport.js');
+    return exportTickets();
 }

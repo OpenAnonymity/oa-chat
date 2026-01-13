@@ -487,16 +487,9 @@ class RightPanel {
                     message: 'No new tickets found in that file.'
                 };
             } else {
-                const parts = [];
-                if (result.addedActive > 0) {
-                    parts.push(`${result.addedActive} active`);
-                }
-                if (result.addedArchived > 0) {
-                    parts.push(`${result.addedArchived} archived`);
-                }
                 this.importStatus = {
                     type: 'success',
-                    message: `Imported ${parts.join(' and ')} ticket${totalAdded !== 1 ? 's' : ''}.`
+                    message: `Imported ${totalAdded} ticket${totalAdded !== 1 ? 's' : ''} (${result.addedActive} active, ${result.addedArchived} used).`
                 };
             }
         } catch (error) {
@@ -513,9 +506,9 @@ class RightPanel {
         }
     }
 
-    handleExportTickets() {
+    async handleExportTickets() {
         try {
-            const success = downloadInferenceTickets();
+            const success = await downloadInferenceTickets();
             this.importStatus = {
                 type: success ? 'success' : 'error',
                 message: success
@@ -1261,7 +1254,7 @@ class RightPanel {
                     <input
                         id="import-tickets-input"
                         type="file"
-                        accept="application/json"
+                        accept="application/json,.json"
                         class="hidden"
                     />
                     <button
@@ -1330,9 +1323,24 @@ class RightPanel {
             <!-- Ticket Visualization Section -->
             <div id="ticket-info-panel" class="mx-3 ${this.showTicketInfo ? 'mb-3 max-h-[480px] opacity-100 translate-y-0' : 'mb-0 max-h-0 opacity-0 -translate-y-1 pointer-events-none'} overflow-hidden transition-all duration-200 ease-in-out" aria-hidden="${this.showTicketInfo ? 'false' : 'true'}">
                 <div class="p-2 bg-muted/5 rounded-lg border border-border">
-                        <div class="flex items-center gap-2">
-                            <span class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-border text-[9px] text-muted-foreground">?</span>
-                            <span class="text-xs font-semibold text-foreground">How Inference Tickets Work</span>
+                        <div id="ticket-info-header" class="flex items-center gap-2 cursor-pointer group">
+                            <button
+                                id="ticket-info-question-btn"
+                                class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-border text-[9px] text-muted-foreground hover:text-foreground hover:bg-accent hover:border-foreground/20 transition-all"
+                                title="Collapse ticket info"
+                                type="button"
+                            >?</button>
+                            <span class="text-xs font-semibold text-foreground flex-1">How Inference Tickets Work</span>
+                            <button
+                                id="ticket-info-collapse-btn"
+                                class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-border text-muted-foreground hover:text-foreground hover:bg-accent hover:border-foreground/20 transition-all"
+                                title="Collapse ticket info"
+                                type="button"
+                            >
+                                <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 15l7-7 7 7"></path>
+                                </svg>
+                            </button>
                         </div>
                     <p class="text-[10px] text-muted-foreground leading-snug mt-1">
                     Inference tickets are privacy-preserving payment tokens that are detached from your identity (think cash or casino chips).
@@ -1664,6 +1672,30 @@ class RightPanel {
                 this.updateTicketInfoVisibility();
                 this.updateTicketInfoToggleButton();
             };
+        }
+
+        // Ticket info panel header toggle buttons (inside the panel)
+        const ticketInfoHeader = document.getElementById('ticket-info-header');
+        const ticketInfoQuestionBtn = document.getElementById('ticket-info-question-btn');
+        const ticketInfoCollapseBtn = document.getElementById('ticket-info-collapse-btn');
+
+        const handleTicketInfoCollapse = (e) => {
+            e.stopPropagation();
+            this.showTicketInfo = false;
+            localStorage.setItem('oa-ticket-info-visible', 'false');
+            this.updateTicketInfoVisibility();
+            this.updateTicketInfoToggleButton();
+        };
+
+        if (ticketInfoQuestionBtn) {
+            ticketInfoQuestionBtn.onclick = handleTicketInfoCollapse;
+        }
+        if (ticketInfoCollapseBtn) {
+            ticketInfoCollapseBtn.onclick = handleTicketInfoCollapse;
+        }
+        // Make the whole header row clickable too
+        if (ticketInfoHeader) {
+            ticketInfoHeader.onclick = handleTicketInfoCollapse;
         }
 
         // Invitation code form

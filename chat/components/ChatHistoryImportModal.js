@@ -440,14 +440,26 @@ class ChatHistoryImportModal {
         const knownIds = typeof chatDB.collectImportedSessionKeys === 'function'
             ? await chatDB.collectImportedSessionKeys(source)
             : new Set();
+        let existingSessions = null;
         if (knownIds.size === 0 && typeof chatDB.collectImportedSessionKeys !== 'function') {
-            const existingSessions = await chatDB.getAllSessions();
+            existingSessions = await chatDB.getAllSessions();
             existingSessions.forEach(session => {
                 if (session.importedSource && session.importedExternalId) {
                     knownIds.add(`${session.importedSource}:${session.importedExternalId}`);
                 }
                 if (session.importedFrom && session.importedFrom.startsWith(`${source}:`)) {
                     knownIds.add(session.importedFrom);
+                }
+            });
+        }
+
+        if (source === 'oa-fastchat') {
+            if (!existingSessions) {
+                existingSessions = await chatDB.getAllSessions();
+            }
+            existingSessions.forEach(session => {
+                if (session?.id) {
+                    knownIds.add(`${source}:${session.id}`);
                 }
             });
         }

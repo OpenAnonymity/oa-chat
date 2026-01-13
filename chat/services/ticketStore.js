@@ -96,10 +96,29 @@ class TicketStore {
             throw new Error('Invalid ticket file.');
         }
 
+        if (payload.data && typeof payload.data === 'object') {
+            if (payload.data.tickets) {
+                return this.extractImportTickets(payload.data.tickets);
+            }
+            if (Array.isArray(payload.data.active) || Array.isArray(payload.data.archived)) {
+                return {
+                    activeTickets: Array.isArray(payload.data.active) ? payload.data.active : [],
+                    archivedTickets: Array.isArray(payload.data.archived) ? payload.data.archived : []
+                };
+            }
+        }
+
         if (Array.isArray(payload.activeTickets) || Array.isArray(payload.archivedTickets)) {
             return {
                 activeTickets: Array.isArray(payload.activeTickets) ? payload.activeTickets : [],
                 archivedTickets: Array.isArray(payload.archivedTickets) ? payload.archivedTickets : []
+            };
+        }
+
+        if (Array.isArray(payload.active) || Array.isArray(payload.archived)) {
+            return {
+                activeTickets: Array.isArray(payload.active) ? payload.active : [],
+                archivedTickets: Array.isArray(payload.archived) ? payload.archived : []
             };
         }
 

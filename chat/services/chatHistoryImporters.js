@@ -1,6 +1,7 @@
 import './importers/chatgptImporter.js';
 import './importers/claudeImporter.js';
 import './importers/geminiImporter.js';
+import './importers/oaImporter.js';
 
 export {
     registerChatHistoryImporter,

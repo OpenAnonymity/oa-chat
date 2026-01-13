@@ -5,6 +5,9 @@
  */
 
 import themeManager from '../services/themeManager.js';
+import { exportAllData, exportChats, exportTickets } from '../services/globalExport.js';
+import { importFromFile, formatImportSummary } from '../services/globalImport.js';
+import ticketClient from '../services/ticketClient.js';
 
 export default class ChatInput {
     /**
@@ -102,7 +105,9 @@ export default class ChatInput {
         });
 
         // Settings menu actions
+        // Stop propagation for all clicks inside the menu to prevent document click handler from closing it
         this.app.elements.settingsMenu.addEventListener('click', async (e) => {
+            e.stopPropagation();
             if (e.target.tagName === 'BUTTON') {
                 const action = e.target.dataset.action || e.target.textContent.trim();
 
@@ -121,12 +126,50 @@ export default class ChatInput {
                 //         this.app.renderCurrentModel();
                 //     }
                 // }
-                if (action === 'import-history') {
+                if (action === 'export-all-data') {
+                    await this.handleExportAllData();
+                } else if (action === 'import-data') {
+                    this.handleImportData();
+                    return; // Don't close menu until file is selected
+                } else if (action === 'export-chats') {
+                    await this.handleExportChats();
+                } else if (action === 'import-history') {
                     this.app.chatHistoryImportModal?.open();
+                } else if (action === 'export-tickets') {
+                    await this.handleExportTickets();
+                } else if (action === 'import-tickets') {
+                    this.handleImportTickets();
+                    return; // Don't close menu until file is selected
                 }
                 this.app.elements.settingsMenu.classList.add('hidden');
             }
         });
+
+        // Global import file input handler
+        const globalImportInput = document.getElementById('global-import-input');
+        if (globalImportInput) {
+            globalImportInput.addEventListener('change', async (e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                    await this.processImportFile(file);
+                }
+                // Reset input so the same file can be selected again
+                e.target.value = '';
+            });
+        }
+
+        // Tickets import file input handler
+        const ticketsImportInput = document.getElementById('tickets-import-input');
+        if (ticketsImportInput) {
+            ticketsImportInput.addEventListener('change', async (e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                    await this.processTicketsImportFile(file);
+                }
+                // Reset input so the same file can be selected again
+                e.target.value = '';
+            });
+        }
 
         // Clear chat functionality (temporarily disabled)
         // this.app.elements.clearChatBtn.addEventListener('click', async () => {
@@ -339,6 +382,154 @@ export default class ChatInput {
             if (buttonElement) {
                 this.app.elements.settingsMenu.classList.add('hidden');
             }
+        }
+    }
+
+    /**
+     * Handles the Export All Data action.
+     * Exports all user data (chats, tickets, preferences) as a JSON file.
+     */
+    async handleExportAllData() {
+        try {
+            const success = await exportAllData();
+            if (success) {
+                this.app.showToast?.('Data exported successfully', 'success');
+            } else {
+                this.app.showToast?.('Failed to export data', 'error');
+            }
+        } catch (error) {
+            console.error('Export failed:', error);
+            this.app.showToast?.('Failed to export data', 'error');
+        }
+    }
+
+    /**
+     * Handles the Export Chats action.
+     * Exports only chat sessions and messages as a JSON file.
+     */
+    async handleExportChats() {
+        try {
+            const success = await exportChats();
+            if (success) {
+                this.app.showToast?.('Chats exported successfully', 'success');
+            } else {
+                this.app.showToast?.('Failed to export chats', 'error');
+            }
+        } catch (error) {
+            console.error('Chat export failed:', error);
+            this.app.showToast?.('Failed to export chats', 'error');
+        }
+    }
+
+    /**
+     * Handles the Export Tickets action.
+     * Exports inference tickets as a JSON file.
+     */
+    async handleExportTickets() {
+        try {
+            const success = await exportTickets();
+            if (success) {
+                this.app.showToast?.('Tickets exported successfully', 'success');
+            } else {
+                this.app.showToast?.('Failed to export tickets', 'error');
+            }
+        } catch (error) {
+            console.error('Ticket export failed:', error);
+            this.app.showToast?.('Failed to export tickets', 'error');
+        }
+    }
+
+    /**
+     * Handles the Import Tickets action.
+     * Opens the file picker to select a tickets JSON file.
+     */
+    handleImportTickets() {
+        const input = document.getElementById('tickets-import-input');
+        if (input) {
+            input.click();
+        }
+        this.app.elements.settingsMenu.classList.add('hidden');
+    }
+
+    /**
+     * Processes the selected tickets import file.
+     * @param {File} file - The tickets JSON file
+     */
+    async processTicketsImportFile(file) {
+        const dismissToast = this.app.showLoadingToast?.('Importing tickets...');
+        try {
+            const text = await file.text();
+            const payload = JSON.parse(text);
+
+            const result = await ticketClient.importTickets(payload);
+            const addedActive = result.addedActive || 0;
+            const addedArchived = result.addedArchived || 0;
+            const totalAdded = addedActive + addedArchived;
+
+            if (totalAdded > 0) {
+                this.app.showToast?.(
+                    `Imported ${totalAdded} ticket${totalAdded !== 1 ? 's' : ''} (${addedActive} active, ${addedArchived} used).`,
+                    'success'
+                );
+
+                // Refresh right panel if it exists
+                this.app.rightPanel?.loadNextTicket?.();
+            } else {
+                this.app.showToast?.('No new tickets to import', 'info');
+            }
+        } catch (error) {
+            console.error('Ticket import failed:', error);
+            this.app.showToast?.(error.message || 'Failed to import tickets', 'error');
+        } finally {
+            dismissToast?.();
+        }
+    }
+
+    /**
+     * Handles the Import Data action.
+     * Opens the file picker to select a backup JSON file.
+     */
+    handleImportData() {
+        const input = document.getElementById('global-import-input');
+        if (input) {
+            input.click();
+        }
+        this.app.elements.settingsMenu.classList.add('hidden');
+    }
+
+    /**
+     * Processes the selected import file.
+     * @param {File} file - The backup JSON file
+     */
+    async processImportFile(file) {
+        const dismissToast = this.app.showLoadingToast?.('Importing data...');
+        try {
+            const result = await importFromFile(file);
+
+            if (result.success) {
+                const message = formatImportSummary(result.summary);
+                this.app.showToast?.(message, 'success');
+
+                // Refresh UI to reflect imported data
+                if (result.summary.importedSessions > 0) {
+                    if (typeof this.app.reloadSessions === 'function') {
+                        try {
+                            await this.app.reloadSessions();
+                        } catch (error) {
+                            console.warn('Failed to reload sessions after import:', error);
+                        }
+                    }
+                }
+
+                // Preferences are applied inline; avoid blocking UI with reload prompts.
+            } else {
+                this.app.showToast?.(result.error || 'Import failed', 'error');
+            }
+        } catch (error) {
+            console.error('Import processing failed:', error);
+            this.app.showToast?.('Failed to import data', 'error');
+        } finally {
+            dismissToast?.();
         }
     }
 }
