@@ -1297,7 +1297,7 @@ class RightPanel {
                         >
                             ${this.isRegistering ? 'Registering...' : 'Register Code'}
                         </button>
-                        <p class="text-[10px] text-muted-foreground leading-relaxed">Register with an invitation code to obtain inference tickets. Ticket are privacy-preserving tokens to redeem a short-lived OpenRouter API key for each chat session.</p>
+                        <p class="text-[10px] text-muted-foreground leading-relaxed">Register with an invitation code to obtain inference tickets. Ticket are privacy-preserving tokens to redeem a short-lived, single-use OpenRouter API key for each chat session.</p>
                     </form>
 
                     ${this.registrationProgress ? `
@@ -1335,8 +1335,8 @@ class RightPanel {
                             <span class="text-xs font-semibold text-foreground">How Inference Tickets Work</span>
                         </div>
                     <p class="text-[10px] text-muted-foreground leading-snug mt-1">
-                    Inference tickets are privacy-preserving payment tokens that are detached from your identity (think cash, vouchers, or casino chips).
-                    When you start a new chat session by sending a message, your device auto-redeems tickets to mint a short-lived API key just for this session, unlinkable to you.<br><br>
+                    Inference tickets are privacy-preserving payment tokens that are detached from your identity (think cash or casino chips).
+                    When you start a new chat session, your device auto-redeems tickets to mint a short-lived, single-use API key just for this session (think prepaid SIM cards) that is unlinkable to you.<br><br>
                     Cryptographically, tickets are implemented with <a href="https://en.wikipedia.org/wiki/Blind_signature" class="underline hover:text-foreground transition-colors" target="_blank" rel="noopener noreferrer">blind signatures</a>: your device generates and blinds them, the OA server blind-signs them to make them valid, and you unblind them for later use.
                     </p>
 
@@ -1396,7 +1396,7 @@ class RightPanel {
                             <svg class="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
                             </svg>
-                            <span class="text-xs font-medium">Untraceable OpenRouter API Key</span>
+                            <span class="text-xs font-medium">Single-Use OpenRouter API Key</span>
                         </div>
                         <div class="flex items-center justify-between text-[10px] font-mono bg-muted/20 p-2 rounded-md border border-border break-all text-foreground">
                             <span>${this.maskApiKey(this.apiKey)}</span>
