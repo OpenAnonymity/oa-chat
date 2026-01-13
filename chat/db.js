@@ -3,6 +3,39 @@ function normalizeId(id) {
     return (id || '').toString().replace(/-/g, '').toUpperCase();
 }
 
+const COMPAT_RELOAD_KEY = 'oa-db-force-compat';
+
+function canUseSessionStorage() {
+    try {
+        sessionStorage.setItem('__oa_db_test__', '1');
+        sessionStorage.removeItem('__oa_db_test__');
+        return true;
+    } catch (error) {
+        return false;
+    }
+}
+
+function consumeCompatFlag() {
+    try {
+        const value = sessionStorage.getItem(COMPAT_RELOAD_KEY) === '1';
+        if (value) {
+            sessionStorage.removeItem(COMPAT_RELOAD_KEY);
+        }
+        return value;
+    } catch (error) {
+        return false;
+    }
+}
+
+function setCompatFlag() {
+    try {
+        sessionStorage.setItem(COMPAT_RELOAD_KEY, '1');
+        return true;
+    } catch (error) {
+        return false;
+    }
+}
+
 class ChatDatabase {
     constructor() {
         this.dbName = 'openrouter-chat';
@@ -18,8 +51,21 @@ class ChatDatabase {
 
         this.initInFlight = new Promise((resolve, reject) => {
             let settled = false;
-            let fallbackRequested = false;
             let timeoutId = null;
+            let upgradeStarted = false;
+            const storageAvailable = canUseSessionStorage();
+            const forceCompat = storageAvailable && consumeCompatFlag();
+
+            const startTimeout = () => {
+                if (timeoutId) {
+                    clearTimeout(timeoutId);
+                }
+                timeoutId = setTimeout(() => {
+                    if (!settled && !upgradeStarted) {
+                        triggerCompatReload(new Error('Database upgrade timed out.'));
+                    }
+                }, 2500);
+            };
 
             const cleanup = () => {
                 if (timeoutId) {
@@ -56,35 +102,51 @@ class ChatDatabase {
                 reject(error);
             };
 
-            const openFallback = (error) => {
-                if (settled || fallbackRequested) return;
-                fallbackRequested = true;
-                const fallbackRequest = indexedDB.open(this.dbName);
-                fallbackRequest.onerror = () => {
-                    fail(fallbackRequest.error || error);
-                };
-                fallbackRequest.onblocked = () => {
-                    fail(new Error('Database upgrade blocked by another tab.'));
-                };
-                fallbackRequest.onsuccess = () => {
-                    finalize(fallbackRequest.result, true);
-                };
+            const triggerCompatReload = (error) => {
+                if (settled) return;
+                if (!storageAvailable || typeof window === 'undefined') {
+                    fail(error);
+                    return;
+                }
+                if (!setCompatFlag()) {
+                    fail(error);
+                    return;
+                }
+                settled = true;
+                cleanup();
+                this.initInFlight = null;
+                window.location.reload();
             };
 
-            const request = indexedDB.open(this.dbName, this.version);
+            const request = (forceCompat || !storageAvailable)
+                ? indexedDB.open(this.dbName)
+                : indexedDB.open(this.dbName, this.version);
+
+            if (!forceCompat && storageAvailable) {
+                startTimeout();
+            }
 
             request.onerror = () => {
-                openFallback(request.error);
+                if (!forceCompat && storageAvailable) {
+                    triggerCompatReload(request.error || new Error('Database open failed.'));
+                } else {
+                    fail(request.error);
+                }
             };
             request.onblocked = () => {
-                openFallback(new Error('Database upgrade blocked by another tab.'));
+                if (!forceCompat && storageAvailable) {
+                    triggerCompatReload(new Error('Database upgrade blocked by another tab.'));
+                } else {
+                    fail(new Error('Database open blocked by another tab.'));
+                }
             };
             request.onsuccess = () => {
-                finalize(request.result, false);
+                finalize(request.result, forceCompat);
             };
 
             request.onupgradeneeded = (event) => {
                 const db = event.target.result;
+                upgradeStarted = true;
 
                 let sessionsStore;
                 if (!db.objectStoreNames.contains('sessions')) {
@@ -120,12 +182,6 @@ class ChatDatabase {
                     logsStore.createIndex('sessionId', 'sessionId', { unique: false });
                 }
             };
-
-            timeoutId = setTimeout(() => {
-                if (!settled) {
-                    openFallback(new Error('Database initialization timed out.'));
-                }
-            }, 2500);
         });
 
         return this.initInFlight;
