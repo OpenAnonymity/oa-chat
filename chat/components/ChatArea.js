@@ -29,6 +29,8 @@ export default class ChatArea {
         this.reasoningAutoScrollPaused = false;
         // Pending animation frame for debounced auto-grow
         this.pendingAutoGrowFrame = null;
+        // Render generation counter - used to cancel stale renders during rapid session switching
+        this.renderGeneration = 0;
         this.setupEventListeners();
     }
 
@@ -413,6 +415,9 @@ export default class ChatArea {
      *    so only NEW content that arrives after the switch animates.
      */
     async render() {
+        // Increment render generation - used to cancel stale renders during rapid session switching
+        const currentGeneration = ++this.renderGeneration;
+
         // Clear debounce timer but DON'T clear buffer content - it persists across
         // session switches to enable seamless restoration of streaming state
         if (this.reasoningBuffer.timeout) {
@@ -436,6 +441,11 @@ export default class ChatArea {
 
         // Load messages from IndexedDB
         const messages = await chatDB.getSessionMessages(session.id);
+
+        // Check if this render is stale (a newer render was triggered while we were loading messages)
+        if (currentGeneration !== this.renderGeneration) {
+            return; // Bail out - a newer render is in progress
+        }
 
         if (messages.length === 0) {
             messagesContainer.innerHTML = buildEmptyState();
