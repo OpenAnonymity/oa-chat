@@ -1,8 +1,12 @@
 import openRouterBackend from './backends/openRouterBackend.js';
+import enclaveStationBackend from './backends/enclaveStationBackend.js';
+import providerDirectBackend from './backends/providerDirectBackend.js';
 import transportHints from './transportHints.js';
 
 const backends = new Map([
-    [openRouterBackend.id, openRouterBackend]
+    [openRouterBackend.id, openRouterBackend],
+    [enclaveStationBackend.id, enclaveStationBackend],
+    [providerDirectBackend.id, providerDirectBackend]
 ]);
 
 const DEFAULT_BACKEND_ID = openRouterBackend.id;
@@ -191,12 +195,17 @@ const inferenceService = {
         return null;
     },
     maskAccessToken(session, token) {
+        const prefix = 'ek-oa-v1-';
         const backend = getBackendForSession(session);
+        let masked = null;
         if (typeof backend.maskAccessToken === 'function') {
-            return backend.maskAccessToken(token);
+            masked = backend.maskAccessToken(token);
+        } else if (token) {
+            masked = `${token.slice(0, 6)}...${token.slice(-4)}`;
         }
-        if (!token) return '';
-        return `${token.slice(0, 6)}...${token.slice(-4)}`;
+        if (!masked) return '';
+        if (masked.startsWith(prefix)) return masked;
+        return `${prefix}${masked}`;
     },
     buildCurlCommand(session, token, modelId) {
         const backend = getBackendForSession(session);

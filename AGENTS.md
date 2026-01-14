@@ -31,6 +31,8 @@ The app runs entirely in the browser and is organized as ES modules:
   - `inference/`: Backend abstraction for access issuance, inference calls, TLS capture hints, and sharing metadata.
     - `inferenceService.js`: Registry + adapter to route access/streaming/verification based on session backend.
     - `backends/openRouterBackend.js`: OpenRouter implementation (default backend).
+    - `backends/enclaveStationBackend.js`: Stub for enclaved station session-based backend.
+    - `backends/providerDirectBackend.js`: Stub for provider-direct ephemeral token backend.
     - `transportHints.js`: TLS capture configuration for `networkProxy`.
   - `networkProxy.js`: Encrypted WebSocket proxy using libcurl.js/mbedTLS, TLS inspection, settings persistence, and fallback-to-direct handling.
   - `verifier.js`: Station verification broadcast polling, staleness tracking, and cached verifier data in IndexedDB.

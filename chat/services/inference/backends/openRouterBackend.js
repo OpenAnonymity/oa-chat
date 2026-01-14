@@ -155,7 +155,7 @@ const openRouterBackend = {
     },
     maskAccessToken(token) {
         if (!token) return '';
-        return `ek-oa-v1-${token.slice(9, 15)}...${token.slice(-4)}`;
+        return `${token.slice(9, 15)}...${token.slice(-4)}`;
     },
     buildCurlCommand(token, modelId) {
         return `curl ${OPENROUTER_CHAT_COMPLETIONS_URL} \\\n  -H "Content-Type: application/json" \\\n  -H "Authorization: Bearer ${token}" \\\n  -d '{"model":"${modelId}","messages":[{"role":"user","content":"Hi"}]}' \\\n  | grep -o '"content":"[^"]*"' | head -1`;
