@@ -10,8 +10,8 @@ The app runs entirely in the browser and is organized as ES modules:
 - `app.js`: Main controller (`ChatApp`).
   - Orchestrates state (sessions/models/streaming), DOM refs, component lifecycle, keyboard shortcuts, reliable auto-scroll, and session/message CRUD via `chatDB`.
   - Handles file uploads + multimodal conversion, search toggle/wide mode persistence, delete-history modal, PDF export, and link-preview/citation enrichment.
-  - Streams completions with token updates, reasoning traces, and citations; initializes the network proxy and station verifier.
-- `api.js`: OpenRouter client.
+  - Streams completions with token updates, reasoning traces, and citations; initializes the network proxy and station verifier via the inference backend abstraction.
+- `api.js`: OpenRouter client used by the inference backend layer.
   - Fetches models (with categorization + display name overrides), sends and streams chat completions (SSE), supports multimodal content, reasoning traces, and web-search citations.
   - Routes requests through `services/networkProxy.js` with fallback confirmation; logs requests via `services/networkLogger.js`. Provides offline fallbacks.
 - `db.js`: IndexedDB (`ChatDatabase`) for persistent local data.
@@ -28,6 +28,10 @@ The app runs entirely in the browser and is organized as ES modules:
   - `ProxyInfoModal.js`: Explains the inference proxy and encrypted relay flow.
   - `TLSSecurityModal.js`: Displays TLS/libcurl integrity info and live proxy connection details.
 - `services/`:
+  - `inference/`: Backend abstraction for access issuance, inference calls, TLS capture hints, and sharing metadata.
+    - `inferenceService.js`: Registry + adapter to route access/streaming/verification based on session backend.
+    - `backends/openRouterBackend.js`: OpenRouter implementation (default backend).
+    - `transportHints.js`: TLS capture configuration for `networkProxy`.
   - `networkProxy.js`: Encrypted WebSocket proxy using libcurl.js/mbedTLS, TLS inspection, settings persistence, and fallback-to-direct handling.
   - `verifier.js`: Station verification broadcast polling, staleness tracking, and cached verifier data in IndexedDB.
   - `modelConfig.js`: Pinned/blocked model config and display-name overrides persisted in IndexedDB.
@@ -36,10 +40,10 @@ The app runs entirely in the browser and is organized as ES modules:
   - `pdfExport.js`: HTML-to-PDF export (lazy-loads html2pdf.js).
   - `networkLogger.js`: In-memory log aggregator with session tagging and safe header masking.
   - `networkLogRenderer.js`: Shared description/icon/formatting helpers for logs and minimal views.
-  - `apiKeyStore.js`: LocalStorage-backed key store (`openrouter_api_key_data`) with change events.
+  - `apiKeyStore.js`: LocalStorage-backed legacy key store (`openrouter_api_key_data`).
   - `fileUtils.js`: Validation (10MB cap), type detection, base64, multimodal conversion, and local export of chats/tickets.
   - `privacyPass.js`: Privacy Pass/cryptographic helpers (WASM-backed) for ticket flows.
-  - `station.js`: Ticket lifecycle and API key issuance (`alphaRegister`, `requestApiKey`), integrates with Privacy Pass artifacts and proxy fallback.
+  - `ticketClient.js`: Ticket lifecycle and access issuance (`alphaRegister`, `requestApiKey`), integrates with Privacy Pass artifacts and proxy fallback.
   - `providerIcons.js`: Maps provider names to icons under `img/`.
   - `themeManager.js`: System/light/dark preference management with pre-hydration application.
 - `wasm/`: WebAssembly artifacts for inference ticket/Privacy Pass operations (`oa_inference_ticket.js` + `.wasm`).
@@ -80,12 +84,12 @@ There is no automated test harness yet. Manually verify:
 Existing commits use short, present-tense descriptions (e.g. “changes in UI, activity, latex fix”). Follow that tone, keep the first line under ~70 characters, and group related changes together. Pull requests should include: a concise summary of the user-facing impact, screenshots or gifs for UI updates, notes on manual testing performed, and references to any related issues or discussions.
 
 ## API Keys & Security
-- Keys are ephemeral and acquired anonymously via ticket redemption (`services/station.js` + Privacy Pass). Do not hard-code keys.
-- Active key data lives in session state and in LocalStorage (`openrouter_api_key_data`) via `services/apiKeyStore.js`. Inference tickets are stored in LocalStorage (`inference_tickets`) and can be exported via `services/fileUtils.js`.
+- Keys/tokens are ephemeral and acquired anonymously via ticket redemption (`services/ticketClient.js` + Privacy Pass). Do not hard-code keys.
+- Active access data lives in session state; legacy OpenRouter key data may exist in LocalStorage (`openrouter_api_key_data`). Inference tickets are stored in LocalStorage (`inference_tickets`) and can be exported via `services/fileUtils.js`.
 - Network proxy traffic uses libcurl.js/mbedTLS to tunnel TLS over WebSocket; fallback to direct requests requires explicit user confirmation.
 - Do not log secrets. When instrumenting requests, route through `services/networkLogger.js` and rely on `sanitizeHeaders` (Authorization masking).
-- All prompts/responses are sent directly from the browser to OpenRouter using the user’s ephemeral key; Open Anonymity infrastructure only handles ticketing and key issuance.
-- When adding providers/integrations, funnel credentials through the existing key store and document any required manual steps in the PR.
+- All prompts/responses are sent directly from the browser to the selected inference backend using the user’s ephemeral access credential; Open Anonymity infrastructure only handles ticketing and access issuance.
+- When adding providers/integrations, implement a backend in `services/inference/backends/`, route through `inferenceService`, and document any required manual steps in the PR.
 
 ## Notes & Shortcuts
 - Keyboard shortcuts:

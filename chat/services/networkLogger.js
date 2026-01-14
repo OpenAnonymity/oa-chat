@@ -21,7 +21,7 @@ class NetworkLogger {
     /**
      * Log a network request or local event
      * @param {Object} details - Event details
-     * @param {string} details.type - Type of event (ticket, api-key, openrouter, local)
+     * @param {string} details.type - Type of event (ticket, api-key, openrouter, inference, local)
      * @param {string} details.method - HTTP method or 'LOCAL' for local events
      * @param {string} details.url - Request URL (optional for local events)
      * @param {number} details.status - HTTP status code or event status
@@ -307,4 +307,3 @@ if (typeof window !== 'undefined') {
 }
 
 export default networkLogger;
-

@@ -1,4 +1,5 @@
 import { PROXY_URL } from '../config.js';
+import transportHints from './inference/transportHints.js';
 const LOCAL_STORAGE_KEY = 'oa-network-proxy-settings';
 
 const DEFAULT_SETTINGS = {
@@ -13,7 +14,7 @@ const TLS_PATTERNS = {
     // Also match: "TLSv1.3 (OUT)" style output
     version: /(?:SSL connection using |mbedTLS:\s*|Using\s+)(TLS[v\s\d.]+|SSLv[\d.]+)/i,
     cipher: /(?:SSL connection using .+?[\/,]\s*|cipher(?:\s+is)?\s*[:=]?\s*)([A-Z][A-Z0-9_-]+(?:_[A-Z0-9_]+)*)/i,
-    // mbedTLS: "*  subject name      : CN=openrouter.ai"
+    // mbedTLS: "*  subject name      : CN=provider.example"
     // OpenSSL: "* subject: CN=..."
     // Also: "server certificate:" followed by subject info
     certSubject: /\*?\s*(?:subject(?:\s+name)?|common\s+name)\s*[:=]\s*(.+)/i,
@@ -269,7 +270,7 @@ class NetworkProxy {
 
     // Force a fresh TLS handshake by closing current session and making a new request
     // This is only needed if user wants to re-verify TLS (normally TLS info is captured automatically)
-    async verifyTls(targetUrl = 'https://openrouter.ai/api/v1/models') {
+    async verifyTls(targetUrl = transportHints.getTransportHints().tlsVerifyUrl) {
         if (!this.state.settings.enabled) {
             throw new Error('Proxy not enabled');
         }
@@ -503,7 +504,7 @@ class NetworkProxy {
     async verifyConnection() {
         console.log('[networkProxy] Verifying proxy connection...');
         // Use example.com for ultra-lightweight verification (~1KB response)
-        // TLS info is captured from actual OpenRouter requests, not this test
+        // TLS info is captured from actual inference requests, not this test
         const testUrl = 'https://example.com/';
 
         if (!this.httpSession) {
@@ -604,10 +605,11 @@ class NetworkProxy {
             console.log('[networkProxy.fetch] 🔐 Using HTTPSession.fetch (encrypted via proxy) for:', url?.substring(0, 100));
             const startTime = Date.now();
 
-            // Auto-enable verbose mode for OpenRouter requests to capture TLS info
-            // This ensures users see OpenRouter's certificate, not internal test endpoints
-            const isOpenRouter = url?.includes('openrouter.ai');
-            const needsTlsCapture = isOpenRouter && !this.tlsInfo.certSubject?.includes('openrouter');
+            // Auto-enable verbose mode for inference requests to capture TLS info
+            // This ensures users see the inference provider certificate, not internal test endpoints
+            const captureHost = transportHints.shouldCaptureTlsForUrl(url);
+            const certSubject = this.tlsInfo.certSubject?.toLowerCase() || '';
+            const needsTlsCapture = !!captureHost && !certSubject.includes(captureHost.toLowerCase());
             const fetchInit = (config.inspectTls || needsTlsCapture) ? { ...init, _libcurl_verbose: 1 } : init;
             const response = await this.httpSession.fetch(resource, fetchInit);
             const duration = Date.now() - startTime;
@@ -660,5 +662,3 @@ window.networkProxy = networkProxy;
 // Module initialization - libcurl is managed by index.html
 
 export default networkProxy;
-
-

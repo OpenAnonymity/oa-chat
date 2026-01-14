@@ -6,6 +6,7 @@
 import { encrypt, decrypt } from './shareEncryption.js';
 import networkProxy from './networkProxy.js';
 import { ORG_API_BASE, SHARE_BASE_URL } from '../config.js';
+import inferenceService from './inference/inferenceService.js';
 
 // ========== Share ID Normalization ==========
 
@@ -208,7 +209,8 @@ export function buildSharePayload(session, messages, opts = {}) {
             model: session.model,
             createdAt: session.createdAt,
             updatedAt: session.updatedAt,
-            searchEnabled: session.searchEnabled
+            searchEnabled: session.searchEnabled,
+            inferenceBackend: session.inferenceBackend || inferenceService.getDefaultBackendId()
         },
         messages: messages.map(m => ({
             role: m.role,
@@ -222,17 +224,16 @@ export function buildSharePayload(session, messages, opts = {}) {
         }))
     };
 
-    // Include API key with verification signatures if requested
-    if (opts.shareApiKeyMetadata && session.apiKey && session.apiKeyInfo) {
-        payload.sharedApiKey = {
-            key: session.apiKey,
-            stationId: session.apiKeyInfo.stationId || session.apiKeyInfo.station_name,
-            expiresAt: session.expiresAt,
-            expiresAtUnix: session.apiKeyInfo.expiresAtUnix,
-            stationSignature: session.apiKeyInfo.stationSignature,
-            orgSignature: session.apiKeyInfo.orgSignature,
-            usage: session.apiKeyInfo.usage || null
-        };
+    // Include shared access payload (legacy sharedApiKey preserved for compatibility)
+    if (opts.shareApiKeyMetadata) {
+        const sharedAccess = inferenceService.buildSharedAccessPayload(session);
+        if (sharedAccess) {
+            payload.sharedAccess = sharedAccess;
+            const legacySharedApiKey = inferenceService.buildLegacySharedApiKey(session, sharedAccess);
+            if (legacySharedApiKey) {
+                payload.sharedApiKey = legacySharedApiKey;
+            }
+        }
     }
 
     return payload;
@@ -319,30 +320,29 @@ export function buildShareUrl(shareId) {
  * @returns {Object} Session object ready for saving
  */
 export function createSessionFromPayload(payload, shareId, ciphertext, generateId) {
-    return {
+    const backendId = payload.session?.inferenceBackend || payload.sharedAccess?.backendId || inferenceService.getDefaultBackendId();
+    const sharedAccess = payload.sharedAccess || inferenceService.legacySharedApiKeyToSharedAccess(payload.sharedApiKey, backendId);
+    const sessionAccess = sharedAccess
+        ? inferenceService.sharedAccessToSessionAccess(backendId, sharedAccess)
+        : null;
+
+    const session = {
         id: generateId(),
         title: payload.session.title || 'Imported Chat',
         createdAt: Date.now(),
         updatedAt: Date.now(),
         model: payload.session.model,
-        apiKey: payload.sharedApiKey?.key || null,
-        apiKeyInfo: payload.sharedApiKey ? {
-            stationId: payload.sharedApiKey.stationId,
-            station_name: payload.sharedApiKey.stationId,
-            usage: payload.sharedApiKey.usage,
-            isShared: true,
-            // Include signature fields for verification
-            key: payload.sharedApiKey.key,
-            expiresAtUnix: payload.sharedApiKey.expiresAtUnix,
-            stationSignature: payload.sharedApiKey.stationSignature,
-            orgSignature: payload.sharedApiKey.orgSignature
-        } : null,
-        expiresAt: payload.sharedApiKey?.expiresAt || null,
+        inferenceBackend: backendId,
+        apiKey: sessionAccess?.token || null,
+        apiKeyInfo: sessionAccess?.info || null,
+        expiresAt: sessionAccess?.expiresAt || null,
         searchEnabled: payload.session.searchEnabled ?? true,
         importedFrom: normalizeShareId(shareId),
         importedMessageCount: payload.messages.length,
         importedCiphertext: ciphertext
     };
+
+    return session;
 }
 
 /**

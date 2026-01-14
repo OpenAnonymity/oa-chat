@@ -4,6 +4,7 @@
  */
 
 import networkProxy from '../services/networkProxy.js';
+import inferenceService from '../services/inference/inferenceService.js';
 import { ORG_API_BASE } from '../config.js';
 const LIBCURL_CDN_URL = 'https://cdn.jsdelivr.net/npm/libcurl.js@0.7.1/libcurl_full.js';
 const LIBCURL_VERSION = '0.7.1';
@@ -98,6 +99,7 @@ class TLSSecurityModal {
         const isEncrypted = status.enabled && status.usingProxy;
         const libcurl = window.libcurl;
 
+        const tlsTargetName = inferenceService.getTlsDisplayName();
         this.overlay.innerHTML = `
             <div class="tls-modal-content bg-background border border-border rounded-xl shadow-2xl max-w-lg w-full mx-4 animate-in zoom-in-95 overflow-hidden">
                 <!-- Header -->
@@ -197,7 +199,7 @@ class TLSSecurityModal {
                                     <p>Capture traffic on your network interface:</p>
                                     <ul class="list-disc list-inside pl-2">
                                         <li>WebSocket frames to proxy should contain TLS records</li>
-                                        <li>You should NOT see plaintext HTTP to OpenRouter</li>
+                                        <li>You should NOT see plaintext HTTP to ${tlsTargetName}</li>
                                         <li>The proxy only sees encrypted blobs</li>
                                     </ul>
                                 </div>

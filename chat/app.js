@@ -10,22 +10,19 @@ import ChatInput from './components/ChatInput.js';
 import ModelPicker from './components/ModelPicker.js';
 import ChatHistoryImportModal from './components/ChatHistoryImportModal.js';
 import { buildTypingIndicator } from './components/MessageTemplates.js';
-import apiKeyStore from './services/apiKeyStore.js';
 import themeManager from './services/themeManager.js';
 import { downloadInferenceTickets, downloadAllChats, getFileIconSvg } from './services/fileUtils.js';
 import { parseReasoningContent } from './services/reasoningParser.js';
 import { fetchUrlMetadata } from './services/urlMetadata.js';
 import networkProxy from './services/networkProxy.js';
-import stationVerifier from './services/verifier.js';
-import openRouterAPI from './api.js';
+import inferenceService from './services/inference/inferenceService.js';
 import ticketClient from './services/ticketClient.js';
 import shareService from './services/shareService.js';
 import shareModals from './components/ShareModals.js';
 import { getTicketCost, initModelTiers } from './services/modelTiers.js';
 import { initPinnedModels } from './services/modelConfig.js';
 
-const DEFAULT_MODEL_ID = 'openai/gpt-5.2-chat';
-const DEFAULT_MODEL_NAME = 'OpenAI: GPT-5.2 Instant';
+const DEFAULT_MODEL_NAME = inferenceService.getDefaultModelName();
 const SESSION_PAGE_SIZE = 80;
 const SESSION_SEARCH_LIMIT = 300;
 const SESSION_SCROLL_LOAD_THRESHOLD = 160;
@@ -161,11 +158,11 @@ class ChatApp {
     }
 
     getDefaultModelId() {
-        return DEFAULT_MODEL_ID;
+        return inferenceService.getDefaultModelId(this.getCurrentSession());
     }
 
     getDefaultModelName() {
-        return DEFAULT_MODEL_NAME;
+        return inferenceService.getDefaultModelName(this.getCurrentSession());
     }
 
     attachDownloadLinkHandler(rootEl) {
@@ -200,7 +197,7 @@ class ChatApp {
     /**
      * Adds images to an array while detecting near-duplicates.
      *
-     * Problem: Image generation models (e.g., Gemini via OpenRouter) sometimes stream
+     * Problem: Image generation models (e.g., Gemini via inference backend) sometimes stream
      * the same image multiple times with minor encoding differences (~0.01% size variance).
      * These appear as visually identical images but have slightly different base64 data.
      *
@@ -1175,7 +1172,7 @@ class ChatApp {
         // Set up event listeners
         this.setupEventListeners();
 
-        // Load models from OpenRouter API in background (non-blocking)
+        // Load models from inference backend in background (non-blocking)
         // Updates model picker with icons once loaded
         this.loadModels().then(() => {
             this.renderCurrentModel(); // Re-render button with model icons
@@ -1411,25 +1408,46 @@ class ChatApp {
     }
 
     /**
-     * Verify a shared API key with the verifier service
-     * @param {Object|null} sharedApiKey - Shared key data from payload
-     * @returns {Promise<Object|null|'cancel'>} Key data if valid, null to strip key, 'cancel' to abort import
+     * Normalize shared access payload (supports legacy sharedApiKey).
+     * @param {Object|null} payload - Decoded share payload
+     * @returns {Object|null} Normalized sharedAccess object
      */
-    async verifySharedApiKey(sharedApiKey) {
-        // No key to verify
-        if (!sharedApiKey?.key) return null;
+    getSharedAccessFromPayload(payload) {
+        if (!payload) return null;
+        if (payload.sharedAccess?.token) {
+            const backendId = payload.sharedAccess.backendId ||
+                payload.session?.inferenceBackend ||
+                inferenceService.getDefaultBackendId();
+            return { ...payload.sharedAccess, backendId };
+        }
+        if (payload.sharedApiKey?.key) {
+            return inferenceService.legacySharedApiKeyToSharedAccess(
+                payload.sharedApiKey,
+                payload.session?.inferenceBackend
+            );
+        }
+        return null;
+    }
 
-        // Check if key has required signature fields for verification
-        const hasSignatures = sharedApiKey.stationSignature &&
-                             sharedApiKey.orgSignature &&
-                             sharedApiKey.expiresAtUnix;
+    /**
+     * Verify shared access credentials with the backend verifier (if supported).
+     * @param {Object|null} sharedAccess - Shared access data from payload
+     * @returns {Promise<Object|null|'cancel'>} Access data if valid, null to strip, 'cancel' to abort import
+     */
+    async verifySharedAccess(sharedAccess) {
+        // No access data to verify
+        if (!sharedAccess?.token) return null;
 
-        if (!hasSignatures) {
-            // Legacy share without signatures - show verification failed modal
-            console.warn('⚠️ Shared key missing signature fields, cannot verify');
+        const backendId = sharedAccess.backendId || inferenceService.getDefaultBackendId();
+        const backend = inferenceService.getBackend(backendId);
+        const verifier = backend?.verification;
+
+        const validation = inferenceService.validateSharedAccess(sharedAccess, backendId);
+        if (!validation.ok) {
+            console.warn('⚠️ Shared access missing signature fields, cannot verify');
             const choice = await shareModals.showSharedKeyVerificationFailedPrompt({
                 error: 'Shared key is missing cryptographic signatures (legacy share format)',
-                stationId: sharedApiKey.stationId,
+                stationId: sharedAccess.stationId,
                 isBanned: false,
                 banReason: null
             });
@@ -1438,25 +1456,26 @@ class ChatApp {
 
         // Check if key is already expired - silently strip without warning
         const nowUnix = Math.floor(Date.now() / 1000);
-        if (sharedApiKey.expiresAtUnix && sharedApiKey.expiresAtUnix <= nowUnix) {
-            console.log('⏰ Shared key expired, stripping silently');
+        if (sharedAccess.expiresAtUnix && sharedAccess.expiresAtUnix <= nowUnix) {
+            console.log('⏰ Shared access expired, stripping silently');
             return null;
         }
 
+        if (!verifier?.supports) {
+            return sharedAccess;
+        }
+
+        const sessionAccess = inferenceService.sharedAccessToSessionAccess(backendId, sharedAccess);
+        const accessInfo = sessionAccess?.info || sharedAccess;
+
         // Attempt verification with verifier
         try {
-            console.log('🔐 Verifying shared API key...');
-            await stationVerifier.submitKey({
-                stationId: sharedApiKey.stationId,
-                key: sharedApiKey.key,
-                expiresAtUnix: sharedApiKey.expiresAtUnix,
-                stationSignature: sharedApiKey.stationSignature,
-                orgSignature: sharedApiKey.orgSignature
-            });
-            console.log('✅ Shared API key verified successfully');
-            return sharedApiKey; // Return original data on success
+            console.log('🔐 Verifying shared access...');
+            await verifier.submitAccess(accessInfo);
+            console.log('✅ Shared access verified successfully');
+            return sharedAccess;
         } catch (verifyError) {
-            console.warn('⚠️ Shared key verification failed:', verifyError.message);
+            console.warn('⚠️ Shared access verification failed:', verifyError.message);
 
             // Check if it's a banned station
             const isBanned = verifyError.status === 'banned';
@@ -1464,7 +1483,7 @@ class ChatApp {
 
             const choice = await shareModals.showSharedKeyVerificationFailedPrompt({
                 error: verifyError.message,
-                stationId: sharedApiKey.stationId,
+                stationId: sharedAccess.stationId,
                 isBanned,
                 banReason
             });
@@ -1526,35 +1545,31 @@ class ChatApp {
             existingSession.title = payload.session.title || existingSession.title;
             existingSession.model = payload.session.model;
             existingSession.searchEnabled = payload.session.searchEnabled ?? true;
+            existingSession.inferenceBackend = payload.session.inferenceBackend || existingSession.inferenceBackend || inferenceService.getDefaultBackendId();
             existingSession.updatedAt = Date.now();
             existingSession.importedMessageCount = payload.messages.length;
             existingSession.importedCiphertext = encryptedData.ciphertext;
 
-            // Verify and apply shared API key if present
-            if (payload.sharedApiKey?.key) {
-                const verifiedKeyData = await this.verifySharedApiKey(payload.sharedApiKey);
-                if (verifiedKeyData === 'cancel') {
+            // Verify and apply shared access if present
+            const sharedAccess = this.getSharedAccessFromPayload(payload);
+            if (sharedAccess?.token) {
+                const verifiedAccess = await this.verifySharedAccess(sharedAccess);
+                if (verifiedAccess === 'cancel') {
                     await this.switchSession(existingSession.id);
                     return;
                 }
-                if (verifiedKeyData) {
-                    existingSession.apiKey = payload.sharedApiKey.key;
-                    existingSession.apiKeyInfo = {
-                        stationId: payload.sharedApiKey.stationId,
-                        station_name: payload.sharedApiKey.stationId,
-                        usage: payload.sharedApiKey.usage,
-                        isShared: true,
-                        key: payload.sharedApiKey.key,
-                        expiresAtUnix: payload.sharedApiKey.expiresAtUnix,
-                        stationSignature: payload.sharedApiKey.stationSignature,
-                        orgSignature: payload.sharedApiKey.orgSignature
-                    };
-                    existingSession.expiresAt = payload.sharedApiKey.expiresAt;
+                if (verifiedAccess) {
+                    const backendId = verifiedAccess.backendId || inferenceService.getDefaultBackendId();
+                    const sessionAccess = inferenceService.sharedAccessToSessionAccess(backendId, verifiedAccess);
+                    existingSession.inferenceBackend = backendId;
+                    if (sessionAccess) {
+                        existingSession.apiKey = sessionAccess.token;
+                        existingSession.apiKeyInfo = sessionAccess.info;
+                        existingSession.expiresAt = sessionAccess.expiresAt;
+                    }
                 } else {
-                    // Verification failed, user chose to proceed without key
-                    existingSession.apiKey = null;
-                    existingSession.apiKeyInfo = null;
-                    existingSession.expiresAt = null;
+                    // Verification failed, user chose to proceed without access
+                    inferenceService.clearAccessInfo(existingSession);
                 }
             }
             await chatDB.saveSession(existingSession);
@@ -1649,14 +1664,17 @@ class ChatApp {
             // Validate payload structure
             shareService.validatePayload(payload);
 
-            // Verify shared API key if present with signature data
-            const verifiedKeyData = await this.verifySharedApiKey(payload.sharedApiKey);
-            if (verifiedKeyData === 'cancel') {
+            // Verify shared access if present with signature data
+            const sharedAccess = this.getSharedAccessFromPayload(payload);
+            const verifiedAccess = await this.verifySharedAccess(sharedAccess);
+            if (verifiedAccess === 'cancel') {
                 window.history.replaceState({}, '', window.location.pathname);
                 return;
             }
-            // Apply verified key data (null if verification failed and user chose to proceed)
-            if (verifiedKeyData === null) {
+            if (verifiedAccess) {
+                payload.sharedAccess = verifiedAccess;
+            } else {
+                payload.sharedAccess = null;
                 payload.sharedApiKey = null;
             }
 
@@ -1921,14 +1939,20 @@ class ChatApp {
      * Initialize the verifier service for station verification
      */
     initVerifier() {
+        const verifier = inferenceService.getVerificationAdapter();
+        if (!verifier?.supports) {
+            return;
+        }
+
         // Initialize verifier (loads cached broadcast data)
-        stationVerifier.init();
+        verifier.init();
 
         // Set up banned warning callback - show warning and clear API key when station gets banned
-        stationVerifier.setBannedWarningCallback(async ({ stationId, reason, bannedAt, session }) => {
+        verifier.setBannedWarningCallback(async ({ stationId, reason, bannedAt, session }) => {
             console.log(`🚫 Station ${stationId} banned: ${reason}`);
 
-            if (session && session.apiKeyInfo?.stationId === stationId) {
+            const accessInfo = session ? inferenceService.getAccessInfo(session) : null;
+            if (accessInfo?.info?.stationId === stationId) {
                 // Show warning modal (which also clears the key)
                 await this.showBannedStationWarningModal({
                     stationId,
@@ -1940,7 +1964,7 @@ class ChatApp {
         });
 
         // Start periodic broadcast checks
-        stationVerifier.startBroadcastCheck(() => this.getCurrentSession());
+        verifier.startBroadcastCheck(() => this.getCurrentSession());
     }
 
     setupInputAreaObserver() {
@@ -1973,7 +1997,7 @@ class ChatApp {
         }
 
         try {
-            this.state.models = await openRouterAPI.fetchModels();
+            this.state.models = await inferenceService.fetchModels(this.getCurrentSession());
         } catch (error) {
             console.error('Failed to load models:', error);
             // Fallback models are already set in API
@@ -2001,6 +2025,11 @@ class ChatApp {
             const normalizedModel = this.normalizeModelName(session.model);
             if (normalizedModel !== session.model) {
                 session.model = normalizedModel;
+                needsSave = true;
+            }
+
+            if (!session.inferenceBackend) {
+                session.inferenceBackend = inferenceService.getDefaultBackendId();
                 needsSave = true;
             }
 
@@ -2058,7 +2087,7 @@ class ChatApp {
      *
      * Accepts:
      * - A model ID (e.g. "openai/gpt-5.1-chat"), which is converted via
-     *   OpenRouter display-name overrides when available.
+     *   backend display-name overrides when available.
      * - Legacy aliases (e.g. "OpenAI: GPT-5.1 Chat"), which are mapped to
      *   canonical display names.
      *
@@ -2073,12 +2102,9 @@ class ChatApp {
             return modelIdOrName;
         }
 
-        // If model ID, get display name from OpenRouter API
+        // If model ID, get display name from backend overrides
         if (modelIdOrName.includes('/')) {
-            if (typeof openRouterAPI !== 'undefined' && typeof openRouterAPI.getDisplayName === 'function') {
-                return openRouterAPI.getDisplayName(modelIdOrName, modelIdOrName);
-            }
-            return modelIdOrName;
+            return inferenceService.getDisplayName(modelIdOrName, modelIdOrName, this.getCurrentSession());
         }
 
         if (MODEL_NAME_ALIASES.has(modelIdOrName)) {
@@ -2129,6 +2155,7 @@ class ChatApp {
             createdAt: Date.now(),
             updatedAt: Date.now(),
             model: modelNameForNewSession,
+            inferenceBackend: inferenceService.getDefaultBackendId(),
             apiKey: null,
             apiKeyInfo: null,
             expiresAt: null,
@@ -2244,7 +2271,11 @@ class ChatApp {
     getCurrentSession() {
         const sessionId = this.state.currentSessionId;
         if (!sessionId) return null;
-        return this.state.sessionsById.get(sessionId) || this.state.sessions.find(s => s.id === sessionId);
+        const session = this.state.sessionsById.get(sessionId) || this.state.sessions.find(s => s.id === sessionId);
+        if (session) {
+            inferenceService.ensureSessionBackend(session);
+        }
+        return session;
     }
 
     /**
@@ -2597,15 +2628,17 @@ class ChatApp {
 
         try {
             // Automatically acquire API key if needed
-            const isKeyExpired = session.expiresAt ? new Date(session.expiresAt) <= new Date() : true;
-            if (!session.apiKey || isKeyExpired) {
+            const hasAccessToken = !!inferenceService.getAccessToken(session);
+            const isAccessExpired = inferenceService.isAccessExpired(session);
+            const accessLabel = inferenceService.getAccessLabel(session);
+            if (!hasAccessToken || isAccessExpired) {
                 try {
                     if (this.floatingPanel) {
-                        this.floatingPanel.showMessage('Acquiring API key...', 'info');
+                        this.floatingPanel.showMessage(`Acquiring ${accessLabel}...`, 'info');
                     }
-                    await this.acquireAndSetApiKey(session);
+                    await this.acquireAndSetAccess(session);
                     if (this.floatingPanel) {
-                        this.floatingPanel.showMessage('Successfully acquired API key!', 'success', 2000);
+                        this.floatingPanel.showMessage(`Successfully acquired ${accessLabel}!`, 'success', 2000);
                     }
                 } catch (error) {
                     if (this.floatingPanel) {
@@ -2616,44 +2649,44 @@ class ChatApp {
                 }
 
                 // Verify key with verifier before proceeding
-                try {
-                    if (this.floatingPanel) {
-                        this.floatingPanel.showMessage('Verifying key...', 'info');
-                    }
-                    await stationVerifier.submitKey(session.apiKeyInfo);
+                const verifier = inferenceService.getVerificationAdapter(session);
+                if (verifier?.supports) {
+                    try {
+                        if (this.floatingPanel) {
+                            this.floatingPanel.showMessage(`Verifying ${accessLabel}...`, 'info');
+                        }
+                        const accessInfo = inferenceService.getAccessInfo(session);
+                        await inferenceService.verifyAccess(session, accessInfo?.info);
+                        inferenceService.setCurrentAccess(session, accessInfo?.info);
+                    } catch (verifyError) {
+                        // Clear the API key since it failed verification
+                        inferenceService.clearAccessInfo(session);
+                        await chatDB.saveSession(session);
 
-                    // Set current station for broadcast monitoring
-                    stationVerifier.setCurrentStation(session.apiKeyInfo.stationId, session);
-                } catch (verifyError) {
-                    // Clear the API key since it failed verification
-                    session.apiKey = null;
-                    session.apiKeyInfo = null;
-                    session.expiresAt = null;
-                    await chatDB.saveSession(session);
+                        // Update UI components
+                        if (this.rightPanel) {
+                            this.rightPanel.onSessionChange(session);
+                        }
 
-                    // Update UI components
-                    if (this.rightPanel) {
-                        this.rightPanel.onSessionChange(session);
-                    }
+                        if (this.floatingPanel) {
+                            this.floatingPanel.showMessage(verifyError.message, 'error', 5000);
+                        }
 
-                    if (this.floatingPanel) {
-                        this.floatingPanel.showMessage(verifyError.message, 'error', 5000);
+                        // Show detailed error for banned stations
+                        let errorMessage;
+                        if (verifyError.status === 'banned' && verifyError.bannedStation) {
+                            const bs = verifyError.bannedStation;
+                            const bannedDate = bs.bannedAt ? new Date(bs.bannedAt).toLocaleString() : 'Unknown';
+                            errorMessage = `**Station Banned**\n\n${verifyError.message}\n\n` +
+                                `- **Station ID:** \`${bs.stationId}\`\n` +
+                                `- **Reason:** ${bs.reason || 'Not specified'}\n` +
+                                `- **Banned at:** ${bannedDate}`;
+                        } else {
+                            errorMessage = `**Verification Error:** ${verifyError.message}`;
+                        }
+                        await this.addMessage('assistant', errorMessage, { isLocalOnly: true });
+                        return; // Block inference if verification fails
                     }
-
-                    // Show detailed error for banned stations
-                    let errorMessage;
-                    if (verifyError.status === 'banned' && verifyError.bannedStation) {
-                        const bs = verifyError.bannedStation;
-                        const bannedDate = bs.bannedAt ? new Date(bs.bannedAt).toLocaleString() : 'Unknown';
-                        errorMessage = `**Station Banned**\n\n${verifyError.message}\n\n` +
-                            `- **Station ID:** \`${bs.stationId}\`\n` +
-                            `- **Reason:** ${bs.reason || 'Not specified'}\n` +
-                            `- **Banned at:** ${bannedDate}`;
-                    } else {
-                        errorMessage = `**Verification Error:** ${verifyError.message}`;
-                    }
-                    await this.addMessage('assistant', errorMessage, { isLocalOnly: true });
-                    return; // Block inference if verification fails
                 }
             }
 
@@ -2669,7 +2702,8 @@ class ChatApp {
             }
 
             if (!modelNameToUse) {
-                const defaultModel = this.state.models.find(m => m.id === DEFAULT_MODEL_ID);
+                const defaultModelId = inferenceService.getDefaultModelId(session);
+                const defaultModel = this.state.models.find(m => m.id === defaultModelId);
                 if (defaultModel) {
                     modelNameToUse = this.normalizeModelName(defaultModel.name);
                 } else {
@@ -2700,7 +2734,7 @@ class ChatApp {
             if (selectedModelEntry) {
                 modelIdForRequest = selectedModelEntry.id;
             } else {
-                modelIdForRequest = 'openai/gpt-4o';
+                modelIdForRequest = inferenceService.getDefaultModelId(session);
             }
 
             // Show typing indicator (only if still viewing this session)
@@ -2712,7 +2746,7 @@ class ChatApp {
             let firstChunkReceived = false;
 
             try {
-                // Get AI response from OpenRouter with streaming
+                // Get AI response from inference backend with streaming
                 const messages = await chatDB.getSessionMessages(session.id);
                 const filteredMessages = messages.filter(msg => !msg.isLocalOnly);
 
@@ -2745,10 +2779,10 @@ class ChatApp {
                 let reasoningStartTime = null;
 
                 // Stream the response with token tracking
-                const tokenData = await openRouterAPI.streamCompletion(
+                const tokenData = await inferenceService.streamCompletion(
                     processedMessages,
                     modelIdForRequest,
-                    session.apiKey,
+                    session,
                     async (chunk, imageData) => {
                         // On first chunk (of any kind), remove typing indicator and append message
                         if (!firstChunkReceived) {
@@ -3029,20 +3063,22 @@ class ChatApp {
         // }
 
         // Block sending if station is banned (check both state and cached broadcast data)
-        const stationId = session.apiKeyInfo?.stationId;
-        if (stationId) {
-            const stationState = stationVerifier.getStationState(stationId);
+        const verifier = inferenceService.getVerificationAdapter(session);
+        const accessInfo = inferenceService.getAccessInfo(session);
+        const accessId = verifier?.getAccessId(accessInfo?.info);
+        if (verifier?.supports && accessId) {
+            const stationState = verifier.getAccessState(accessId);
             // Also check cached broadcast data directly
-            const isBannedInCache = stationVerifier.isStationBanned(stationId);
+            const isBannedInCache = verifier.isAccessBanned(accessId);
 
             if (stationState?.banned || isBannedInCache) {
-                console.log(`🚫 Station ${stationId} is banned (state: ${stationState?.banned}, cache: ${isBannedInCache})`);
+                console.log(`🚫 Station ${accessId} is banned (state: ${stationState?.banned}, cache: ${isBannedInCache})`);
                 // Get ban info from state or cache
-                const broadcastData = stationVerifier.getLastBroadcastData();
-                const bannedInfo = broadcastData?.banned_stations?.find(s => s.station_id === stationId);
+                const broadcastData = verifier.getLastBroadcastData();
+                const bannedInfo = broadcastData?.banned_stations?.find(s => s.station_id === accessId);
 
                 this.showBannedStationWarningModal({
-                    stationId: stationId,
+                    stationId: accessId,
                     reason: stationState?.banReason || bannedInfo?.reason || 'Unknown',
                     bannedAt: stationState?.bannedAt || bannedInfo?.banned_at,
                     sessionId: session.id
@@ -3115,15 +3151,17 @@ class ChatApp {
             }
 
             // Automatically acquire API key if needed
-            const isKeyExpired = session.expiresAt ? new Date(session.expiresAt) <= new Date() : true;
-            if (!session.apiKey || isKeyExpired) {
+            const hasAccessToken = !!inferenceService.getAccessToken(session);
+            const isAccessExpired = inferenceService.isAccessExpired(session);
+            const accessLabel = inferenceService.getAccessLabel(session);
+            if (!hasAccessToken || isAccessExpired) {
                 try {
                     if (this.floatingPanel) {
-                        this.floatingPanel.showMessage('Acquiring API key...', 'info');
+                        this.floatingPanel.showMessage(`Acquiring ${accessLabel}...`, 'info');
                     }
-                    await this.acquireAndSetApiKey(session);
+                    await this.acquireAndSetAccess(session);
                     if (this.floatingPanel) {
-                        this.floatingPanel.showMessage('Successfully acquired API key!', 'success', 2000);
+                        this.floatingPanel.showMessage(`Successfully acquired ${accessLabel}!`, 'success', 2000);
                     }
                 } catch (error) {
                     if (this.floatingPanel) {
@@ -3134,44 +3172,44 @@ class ChatApp {
                 }
 
                 // Verify key with verifier before proceeding
-                try {
-                    if (this.floatingPanel) {
-                        this.floatingPanel.showMessage('Verifying key...', 'info');
-                    }
-                    await stationVerifier.submitKey(session.apiKeyInfo);
+                const verifier = inferenceService.getVerificationAdapter(session);
+                if (verifier?.supports) {
+                    try {
+                        if (this.floatingPanel) {
+                            this.floatingPanel.showMessage(`Verifying ${accessLabel}...`, 'info');
+                        }
+                        const accessInfo = inferenceService.getAccessInfo(session);
+                        await inferenceService.verifyAccess(session, accessInfo?.info);
+                        inferenceService.setCurrentAccess(session, accessInfo?.info);
+                    } catch (verifyError) {
+                        // Clear the API key since it failed verification
+                        inferenceService.clearAccessInfo(session);
+                        await chatDB.saveSession(session);
 
-                    // Set current station for broadcast monitoring
-                    stationVerifier.setCurrentStation(session.apiKeyInfo.stationId, session);
-                } catch (verifyError) {
-                    // Clear the API key since it failed verification
-                    session.apiKey = null;
-                    session.apiKeyInfo = null;
-                    session.expiresAt = null;
-                    await chatDB.saveSession(session);
+                        // Update UI components
+                        if (this.rightPanel) {
+                            this.rightPanel.onSessionChange(session);
+                        }
 
-                    // Update UI components
-                    if (this.rightPanel) {
-                        this.rightPanel.onSessionChange(session);
-                    }
+                        if (this.floatingPanel) {
+                            this.floatingPanel.showMessage(verifyError.message, 'error', 5000);
+                        }
 
-                    if (this.floatingPanel) {
-                        this.floatingPanel.showMessage(verifyError.message, 'error', 5000);
+                        // Show detailed error for banned stations
+                        let errorMessage;
+                        if (verifyError.status === 'banned' && verifyError.bannedStation) {
+                            const bs = verifyError.bannedStation;
+                            const bannedDate = bs.bannedAt ? new Date(bs.bannedAt).toLocaleString() : 'Unknown';
+                            errorMessage = `**Station Banned**\n\n${verifyError.message}\n\n` +
+                                `- **Station ID:** \`${bs.stationId}\`\n` +
+                                `- **Reason:** ${bs.reason || 'Not specified'}\n` +
+                                `- **Banned at:** ${bannedDate}`;
+                        } else {
+                            errorMessage = `**Verification Error:** ${verifyError.message}`;
+                        }
+                        await this.addMessage('assistant', errorMessage, { isLocalOnly: true });
+                        return; // Block inference if verification fails
                     }
-
-                    // Show detailed error for banned stations
-                    let errorMessage;
-                    if (verifyError.status === 'banned' && verifyError.bannedStation) {
-                        const bs = verifyError.bannedStation;
-                        const bannedDate = bs.bannedAt ? new Date(bs.bannedAt).toLocaleString() : 'Unknown';
-                        errorMessage = `**Station Banned**\n\n${verifyError.message}\n\n` +
-                            `- **Station ID:** \`${bs.stationId}\`\n` +
-                            `- **Reason:** ${bs.reason || 'Not specified'}\n` +
-                            `- **Banned at:** ${bannedDate}`;
-                    } else {
-                        errorMessage = `**Verification Error:** ${verifyError.message}`;
-                    }
-                    await this.addMessage('assistant', errorMessage, { isLocalOnly: true });
-                    return; // Block inference if verification fails
                 }
             }
 
@@ -3186,9 +3224,10 @@ class ChatApp {
                 await chatDB.saveSession(session);
             }
 
-            // Use GPT-5.2 Chat as default
+            // Use backend default model as fallback
             if (!modelNameToUse) {
-                const defaultModel = this.state.models.find(m => m.id === DEFAULT_MODEL_ID);
+                const defaultModelId = inferenceService.getDefaultModelId(session);
+                const defaultModel = this.state.models.find(m => m.id === defaultModelId);
                 if (defaultModel) {
                     modelNameToUse = this.normalizeModelName(defaultModel.name);
                 } else {
@@ -3220,7 +3259,7 @@ class ChatApp {
                 modelIdForRequest = selectedModelEntry.id;
             } else {
                 // Models may not be loaded yet - fall back to default
-                modelIdForRequest = DEFAULT_MODEL_ID;
+                modelIdForRequest = inferenceService.getDefaultModelId(session);
             }
 
             // Show typing indicator (only if still viewing this session)
@@ -3251,7 +3290,7 @@ class ChatApp {
 
             retryLoop: while (retryCount <= MAX_RETRIES) {
             try {
-                // Get AI response from OpenRouter with streaming
+                // Get AI response from inference backend with streaming
                 const messages = await chatDB.getSessionMessages(session.id);
                 const filteredMessages = messages.filter(msg => !msg.isLocalOnly);
 
@@ -3287,10 +3326,10 @@ class ChatApp {
                 let reasoningEndTime = null;
 
                 // Stream the response with token tracking
-                const tokenData = await openRouterAPI.streamCompletion(
+                const tokenData = await inferenceService.streamCompletion(
                     processedMessages,
                     modelIdForRequest,
-                    session.apiKey,
+                    session,
                     async (chunk, imageData) => {
                         // On first chunk (of any kind), remove typing indicator and append message
                         if (!firstChunkReceived) {
@@ -3510,7 +3549,7 @@ class ChatApp {
                 // Customize messages for specific error types
                 let userFriendlyMessage = `Sorry, I encountered an error while processing your request. Try re-submitting the query. **Error**: ${errorMessage}`;
 
-                // The following are OpenRouter's API HTTP status codes, not OA infra
+                // The following are inference backend HTTP status codes, not OA infra
                 if (error.status === 402) {
                     // Credit/token limit errors
                     // userFriendlyMessage = `Ephemeral key is out of credit limit. Renew or extend the key`;
@@ -3782,7 +3821,7 @@ class ChatApp {
         // Copy messages up to and including the fork point
         const messagesToCopy = messages.slice(0, messageIndex + 1);
 
-        // Create new session with same model and API key
+        // Create new session with same model and access context
         const newSessionId = this.generateId();
         const firstUserMessage = messagesToCopy.find(m => m.role === 'user');
         const title = firstUserMessage
@@ -3795,12 +3834,20 @@ class ChatApp {
             createdAt: Date.now(),
             updatedAt: Date.now(),
             model: session.model,
-            apiKey: session.apiKey, // Reuse the same ephemeral key
-            apiKeyInfo: session.apiKeyInfo,
-            expiresAt: session.expiresAt,
+            inferenceBackend: session.inferenceBackend || inferenceService.getDefaultBackendId(),
+            apiKey: null,
+            apiKeyInfo: null,
+            expiresAt: null,
             searchEnabled: this.searchEnabled,
             forkedFrom: session.id
         };
+
+        const accessInfo = inferenceService.getAccessInfo(session);
+        if (accessInfo?.token) {
+            newSession.apiKey = accessInfo.token;
+            newSession.apiKeyInfo = accessInfo.info;
+            newSession.expiresAt = accessInfo.expiresAt;
+        }
 
         // Save new session
         await chatDB.saveSession(newSession);
@@ -3844,7 +3891,7 @@ class ChatApp {
                 response: {
                     sourceSessionId: session.id,
                     messagesCopied: messagesToCopy.length,
-                    sharedApiKey: !!session.apiKey
+                    sharedAccess: !!accessInfo?.token
                 }
             });
         }
@@ -5007,9 +5054,7 @@ class ChatApp {
 
         if (session) {
             // Clear the API key
-            session.apiKey = null;
-            session.apiKeyInfo = null;
-            session.expiresAt = null;
+            inferenceService.clearAccessInfo(session);
             await chatDB.saveSession(session);
 
             // Update UI
@@ -5158,18 +5203,19 @@ Your API key has been cleared. A new key from a different station will be obtain
     }
 
 
-    async acquireAndSetApiKey(session) {
+    async acquireAndSetAccess(session) {
         if (!session) throw new Error("No active session found.");
 
+        const backend = inferenceService.getBackendForSession(session);
         const availableTickets = ticketClient.getTicketCount();
         if (availableTickets === 0) {
             throw new Error("You have no inference tickets. Please open the right panel to enter an invitation code and get tickets.");
         }
 
         // Determine model ID from session model name
-        const modelName = session.model || DEFAULT_MODEL_NAME;
+        const modelName = session.model || inferenceService.getDefaultModelName(session);
         const modelEntry = this.state.models.find(m => m.name === modelName);
-        const modelId = modelEntry?.id || DEFAULT_MODEL_ID;
+        const modelId = modelEntry?.id || inferenceService.getDefaultModelId(session);
 
         // Calculate ticket cost based on model tier and reasoning state
         const ticketsRequired = getTicketCost(modelId, this.reasoningEnabled);
@@ -5185,11 +5231,12 @@ Your API key has been cleared. A new key from a different station will be obtain
         }
 
         try {
-            const result = await ticketClient.requestApiKey('OA-WebApp-Key', ticketsRequired);
+            const result = await inferenceService.requestAccess(session, {
+                name: backend.requestName,
+                ticketsRequired
+            });
 
-            session.apiKey = result.key;
-            session.apiKeyInfo = result;
-            session.expiresAt = result.expiresAt;
+            inferenceService.setAccessInfo(session, result);
 
             // Clear apiKeyShared flag - new key hasn't been shared yet
             if (session.shareInfo?.apiKeyShared) {
@@ -5203,9 +5250,9 @@ Your API key has been cleared. A new key from a different station will be obtain
                 this.rightPanel.onSessionChange(session);
             }
 
-            return result.key;
+            return inferenceService.getAccessToken(session);
         } catch (error) {
-            console.error('Failed to automatically acquire API key:', error);
+            console.error('Failed to automatically acquire API access:', error);
             // Pass through the original error message without wrapping
             throw error;
         }

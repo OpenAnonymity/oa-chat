@@ -6,6 +6,7 @@
 import ticketClient from '../services/ticketClient.js';
 import networkLogger from '../services/networkLogger.js';
 import networkProxy from '../services/networkProxy.js';
+import inferenceService from '../services/inference/inferenceService.js';
 import tlsSecurityModal from './TLSSecurityModal.js';
 import proxyInfoModal from './ProxyInfoModal.js';
 import { getActivityDescription, getActivityIcon, getStatusDotClass, formatTimestamp } from '../services/networkLogRenderer.js';
@@ -113,9 +114,11 @@ class RightPanel {
         }
 
         // Load API key from current session
-        this.apiKey = this.currentSession.apiKey || null;
-        this.apiKeyInfo = this.currentSession.apiKeyInfo || null;
-        this.expiresAt = this.currentSession.expiresAt || null;
+        inferenceService.ensureSessionBackend(this.currentSession);
+        const accessInfo = inferenceService.getAccessInfo(this.currentSession);
+        this.apiKey = accessInfo?.token || null;
+        this.apiKeyInfo = accessInfo?.info || null;
+        this.expiresAt = accessInfo?.expiresAt || null;
 
         // Load ALL network logs globally (not just for this session)
         this.networkLogs = networkLogger.getAllLogs();
@@ -546,10 +549,12 @@ class RightPanel {
 
         if (!this.currentSession) return; // Safety check
 
+        inferenceService.ensureSessionBackend(this.currentSession);
+
         // Calculate ticket cost based on selected model and reasoning state
-        const modelName = this.currentSession.model || this.app.state.pendingModelName || 'OpenAI: GPT-5.2 Instant';
+        const modelName = this.currentSession.model || this.app.state.pendingModelName || inferenceService.getDefaultModelName(this.currentSession);
         const modelEntry = this.app.state.models.find(m => m.name === modelName);
-        const modelId = modelEntry?.id || 'openai/gpt-5.2-chat';
+        const modelId = modelEntry?.id || inferenceService.getDefaultModelId(this.currentSession);
         const reasoningEnabled = this.app.reasoningEnabled ?? true;
         const ticketsRequired = getTicketCost(modelId, reasoningEnabled);
 
@@ -584,20 +589,23 @@ class RightPanel {
             this.isRequestingKey = true;
             this.renderTopSectionOnly();
 
-            const result = await ticketClient.requestApiKey('OA-WebApp-Key', ticketsRequired);
+            const backend = inferenceService.getBackendForSession(this.currentSession);
+            const result = await inferenceService.requestAccess(this.currentSession, {
+                name: backend.requestName,
+                ticketsRequired
+            });
 
-            // Store API key in current session
-            this.currentSession.apiKey = result.key;
-            this.currentSession.apiKeyInfo = result;
-            this.currentSession.expiresAt = result.expiresAt;
+            // Store access in current session
+            inferenceService.setAccessInfo(this.currentSession, result);
 
             // Save session to DB
             await chatDB.saveSession(this.currentSession);
 
             // Update local state
-            this.apiKey = result.key;
-            this.apiKeyInfo = result;
-            this.expiresAt = result.expiresAt;
+            const accessInfo = inferenceService.getAccessInfo(this.currentSession);
+            this.apiKey = accessInfo?.token || null;
+            this.apiKeyInfo = accessInfo?.info || null;
+            this.expiresAt = accessInfo?.expiresAt || null;
 
             // Success - reset for next ticket
             setTimeout(() => {
@@ -613,7 +621,8 @@ class RightPanel {
             }, 500);
         } catch (error) {
             console.error('Error requesting API key:', error);
-            alert(`Failed to request API key: ${error.message}`);
+            const accessLabel = inferenceService.getAccessLabel(this.currentSession);
+            alert(`Failed to request ${accessLabel}: ${error.message}`);
 
             // Reset state even on error
             setTimeout(() => {
@@ -629,7 +638,8 @@ class RightPanel {
 
     async handleVerifyApiKey() {
         if (!this.apiKey || !this.currentSession) {
-            alert('No API key available to verify');
+            const accessLabel = inferenceService.getAccessLabel(this.currentSession);
+            alert(`No ${accessLabel} available to verify`);
             return;
         }
 
@@ -639,9 +649,7 @@ class RightPanel {
     async handleClearApiKey() {
         if (!this.currentSession) return;
 
-        this.currentSession.apiKey = null;
-        this.currentSession.apiKeyInfo = null;
-        this.currentSession.expiresAt = null;
+        inferenceService.clearAccessInfo(this.currentSession);
 
         await chatDB.saveSession(this.currentSession);
 
@@ -677,16 +685,14 @@ class RightPanel {
         // Store return focus element
         this.verifyModalReturnFocusEl = document.activeElement;
 
+        const accessLabel = inferenceService.getAccessLabel(this.currentSession);
+        const accessLabelTitle = accessLabel.replace(/\b\w/g, (char) => char.toUpperCase());
         const modelIdForTest = (this.app && typeof this.app.getDefaultModelId === 'function')
             ? this.app.getDefaultModelId()
-            : 'openai/gpt-5.2-chat';
+            : inferenceService.getDefaultModelId(this.currentSession);
 
         // Generate curl command with actual key and output truncation
-        const curlCommand = `curl https://openrouter.ai/api/v1/chat/completions \\
-  -H "Content-Type: application/json" \\
-  -H "Authorization: Bearer ${this.apiKey}" \\
-  -d '{"model":"${modelIdForTest}","messages":[{"role":"user","content":"Hi"}]}' \\
-  | grep -o '"content":"[^"]*"' | head -1`;
+        const curlCommand = inferenceService.buildCurlCommand(this.currentSession, this.apiKey, modelIdForTest);
 
         // Generate simplified modal content
         modal.innerHTML = `
@@ -699,7 +705,7 @@ class RightPanel {
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
                             </svg>
                         </div>
-                        <h2 class="text-lg font-semibold text-foreground">Verify API Key</h2>
+                        <h2 class="text-lg font-semibold text-foreground">Verify ${accessLabelTitle}</h2>
                     </div>
                     <button id="close-verify-modal" class="text-muted-foreground hover:text-foreground transition-colors p-1.5 rounded-lg hover:bg-accent">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -712,7 +718,7 @@ class RightPanel {
                 <div class="overflow-y-auto flex-1 p-5 space-y-5">
                     <!-- Key Display -->
                     <div class="space-y-3">
-                        <h3 class="text-sm font-semibold text-foreground">Active Ephemeral API Key</h3>
+                        <h3 class="text-sm font-semibold text-foreground">Active Ephemeral ${accessLabelTitle}</h3>
                         <div class="rounded-lg border border-border bg-card p-4">
                             <div class="flex items-center gap-2">
                                 <code class="text-xs font-mono text-foreground flex-1 bg-muted/20 dark:bg-muted/30 px-3 py-2 rounded border border-border">${this.maskApiKey(this.apiKey)}</code>
@@ -764,7 +770,7 @@ class RightPanel {
                                         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                                         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                                     </svg>
-                                    <span>Testing API key...</span>
+                                    <span>Testing ${accessLabel}...</span>
                                 </div>
                             </div>
                         </div>
@@ -875,6 +881,9 @@ class RightPanel {
         if (!testResult) return;
 
         try {
+            const accessLabel = inferenceService.getAccessLabel(this.currentSession);
+            const accessLabelTitle = accessLabel.replace(/\b\w/g, (char) => char.toUpperCase());
+
             // Tag this request with session ID
             if (this.currentSession && window.networkLogger) {
                 networkLogger.setCurrentSession(this.currentSession.id);
@@ -882,21 +891,9 @@ class RightPanel {
 
             const modelIdForTest = (this.app && typeof this.app.getDefaultModelId === 'function')
                 ? this.app.getDefaultModelId()
-                : 'openai/gpt-5.2-chat';
+                : inferenceService.getDefaultModelId(this.currentSession);
 
-            const response = await networkProxy.fetch('https://openrouter.ai/api/v1/chat/completions', {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${this.apiKey}`,
-                    'HTTP-Referer': window.location.origin,
-                    'X-Title': 'OA-WebApp',
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    model: modelIdForTest,
-                    messages: [{ role: 'user', content: 'Hi' }]
-                })
-            });
+            const response = await inferenceService.testAccessToken(this.currentSession, this.apiKey, modelIdForTest);
 
             if (response.ok) {
                 const data = await response.json();
@@ -907,7 +904,7 @@ class RightPanel {
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                         </svg>
-                        <span>API Key is Valid</span>
+                        <span>${accessLabelTitle} is Valid</span>
                     </div>
                     <div class="bg-green-50 dark:bg-green-500/10 border border-green-200 dark:border-green-500/30 rounded-lg p-3">
                         <div class="text-xs space-y-1.5">
@@ -925,7 +922,7 @@ class RightPanel {
                         </svg>
                         <div>
                             <p class="font-semibold">Verification Failed</p>
-                            <p class="text-xs mt-1">Key expired or ${this.escapeHtml(error.error?.message || 'Unknown error')}</p>
+                            <p class="text-xs mt-1">${accessLabelTitle} expired or ${this.escapeHtml(error.error?.message || 'Unknown error')}</p>
                         </div>
                     </div>
                 `;
@@ -962,8 +959,7 @@ class RightPanel {
     }
 
     maskApiKey(key) {
-        if (!key) return '';
-        return `ek-oa-v1-${key.slice(9, 15)}...${key.slice(-4)}`;
+        return inferenceService.maskAccessToken(this.currentSession, key);
     }
 
     getTimerClasses(isKeyShared = null) {
@@ -1159,8 +1155,13 @@ class RightPanel {
     }
 
     getTypeBadge(type) {
+        const inferenceBadge = {
+            text: inferenceService.getAccessShortLabel(this.currentSession),
+            class: 'bg-blue-500 text-white'
+        };
         const badges = {
-            'openrouter': { text: 'API', class: 'bg-blue-500 text-white' },
+            'openrouter': inferenceBadge,
+            'inference': inferenceBadge,
             'ticket': { text: 'Ticket', class: 'bg-purple-500 text-white' },
             'api-key': { text: 'Key', class: 'bg-green-500 text-white' }
         };
@@ -1208,7 +1209,7 @@ class RightPanel {
     getSessionKey(sessionId) {
         const session = this.getSessionInfo(sessionId);
         if (!session) return null;
-        return session.apiKey;
+        return inferenceService.getAccessInfo(session)?.token || null;
     }
 
     /**
@@ -1218,7 +1219,7 @@ class RightPanel {
     getSharedKeyCount() {
         if (!this.apiKey || !this.app) return 0;
 
-        return this.app.state.sessions.filter(s => s.apiKey === this.apiKey).length;
+        return this.app.state.sessions.filter(s => inferenceService.getAccessInfo(s)?.token === this.apiKey).length;
     }
 
     /**

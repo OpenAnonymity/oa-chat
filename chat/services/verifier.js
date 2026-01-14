@@ -57,7 +57,7 @@ class StationVerifier {
     }
     
     /**
-     * Record a completion request (called from app.js when sending to OpenRouter)
+     * Record a completion request (called from app.js when sending to inference backend)
      */
     recordCompletionRequest() {
         const now = Date.now();

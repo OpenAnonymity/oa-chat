@@ -15,7 +15,7 @@ const reasoningExpandedState = new Set();
 // Edit this markdown string to customize the intro message shown on new chat sessions
 // Supports full markdown: **bold**, *italic*, lists, links, etc.
 // Title and subtitle support inline markdown - use backticks for monospace: `code`
-const WELCOME_CONTENT = {
+const DEFAULT_WELCOME_CONTENT = {
     title: '`oa-fastchat`',
     subtitle: 'A minimal, fast, and anonymous chat client by The Open Anonymity Project', // Optional subtitle that appears centered below the title
     content: `
@@ -39,6 +39,15 @@ const WELCOME_CONTENT = {
     // Future: Add diagram/image support
     // diagram: null,
 };
+
+function getWelcomeContent() {
+    if (typeof window !== 'undefined' &&
+        window.inferenceService &&
+        typeof window.inferenceService.getWelcomeContent === 'function') {
+        return window.inferenceService.getWelcomeContent();
+    }
+    return DEFAULT_WELCOME_CONTENT;
+}
 
 // Shared class constants (copied verbatim from existing markup)
 // NOTE: Removed 'fade-in' from wrappers to prevent flash on session switch.
@@ -1118,21 +1127,22 @@ function buildTypingIndicator(id, providerName) {
  * @returns {string} HTML string
  */
 function buildEmptyState() {
+    const welcomeContent = getWelcomeContent();
     // Parse markdown content using marked (loaded from CDN)
     const contentHtml = typeof marked !== 'undefined'
-        ? marked.parse(WELCOME_CONTENT.content)
-        : escapeHtml(WELCOME_CONTENT.content);
+        ? marked.parse(welcomeContent.content)
+        : escapeHtml(welcomeContent.content);
 
     // Parse title as inline markdown (for monospace/bold/italic support)
     const titleHtml = typeof marked !== 'undefined' && marked.parseInline
-        ? marked.parseInline(WELCOME_CONTENT.title)
-        : escapeHtml(WELCOME_CONTENT.title);
+        ? marked.parseInline(welcomeContent.title)
+        : escapeHtml(welcomeContent.title);
 
     // Parse optional subtitle as inline markdown
-    const subtitleHtml = WELCOME_CONTENT.subtitle
+    const subtitleHtml = welcomeContent.subtitle
         ? (typeof marked !== 'undefined' && marked.parseInline
-            ? marked.parseInline(WELCOME_CONTENT.subtitle)
-            : escapeHtml(WELCOME_CONTENT.subtitle))
+            ? marked.parseInline(welcomeContent.subtitle)
+            : escapeHtml(welcomeContent.subtitle))
         : '';
 
     return `
@@ -1329,4 +1339,3 @@ if (typeof window !== 'undefined') {
         }
     };
 }
-
