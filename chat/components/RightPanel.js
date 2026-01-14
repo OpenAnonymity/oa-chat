@@ -638,25 +638,23 @@ class RightPanel {
     async handleClearApiKey() {
         if (!this.currentSession) return;
 
-        if (confirm('Are you sure you want to remove the current API key?')) {
-            this.currentSession.apiKey = null;
-            this.currentSession.apiKeyInfo = null;
-            this.currentSession.expiresAt = null;
+        this.currentSession.apiKey = null;
+        this.currentSession.apiKeyInfo = null;
+        this.currentSession.expiresAt = null;
 
-            await chatDB.saveSession(this.currentSession);
+        await chatDB.saveSession(this.currentSession);
 
-            this.apiKey = null;
-            this.apiKeyInfo = null;
-            this.expiresAt = null;
+        this.apiKey = null;
+        this.apiKeyInfo = null;
+        this.expiresAt = null;
 
-            if (this.timerInterval) {
-                clearInterval(this.timerInterval);
-                this.timerInterval = null;
-            }
-
-            this.renderTopSectionOnly();
-            this.updateStatusIndicator(); // Ensure dot updates
+        if (this.timerInterval) {
+            clearInterval(this.timerInterval);
+            this.timerInterval = null;
         }
+
+        this.renderTopSectionOnly();
+        this.updateStatusIndicator(); // Ensure dot updates
     }
 
     handleRenewApiKey() {
@@ -957,8 +955,7 @@ class RightPanel {
 
     maskApiKey(key) {
         if (!key) return '';
-        // Show sk-or-v1-xxxx...yyyy (first 4 chars after prefix, last 4 chars)
-        return `${key.slice(0, 13)}...${key.slice(-4)}`;
+        return `key-${key.slice(9, 17)}...${key.slice(-8)}`;
     }
 
     getTimerClasses(isKeyShared = null) {
@@ -1290,7 +1287,6 @@ class RightPanel {
                         >
                             ${this.isRegistering ? 'Registering...' : 'Register Code'}
                         </button>
-                        <p class="text-[10px] text-muted-foreground leading-relaxed">Register with an invitation code to obtain inference tickets. Ticket are privacy-preserving tokens to redeem a short-lived, single-use OpenRouter API key for each chat session.</p>
                     </form>
 
                     ${this.registrationProgress ? `
@@ -1344,7 +1340,7 @@ class RightPanel {
                         </div>
                     <p class="text-[10px] text-muted-foreground leading-snug mt-1">
                     Inference tickets are privacy-preserving payment tokens that are detached from your identity (think cash or casino chips).
-                    When you start a new chat session, your device auto-redeems tickets to mint a short-lived, single-use API key just for this session (think prepaid SIM cards) that is unlinkable to you.<br><br>
+                    When you start a new chat session, your device auto-redeems tickets for a short-lived, credit-limited access key just for this session (think prepaid SIM cards), making your inference traffic unlinkable to you.<br><br>
                     Cryptographically, tickets are implemented with <a href="https://en.wikipedia.org/wiki/Blind_signature" class="underline hover:text-foreground transition-colors" target="_blank" rel="noopener noreferrer">blind signatures</a>: your device generates and blinds them, the OA server blind-signs them to make them valid, and you unblind them for later use.
                     </p>
 
@@ -1404,7 +1400,7 @@ class RightPanel {
                             <svg class="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
                             </svg>
-                            <span class="text-xs font-medium">Single-Use OpenRouter API Key</span>
+                            <span class="text-xs font-medium">Ephemeral Access Key</span>
                         </div>
                         <div class="flex items-center justify-between text-[10px] font-mono bg-muted/20 p-2 rounded-md border border-border break-all text-foreground">
                             <span>${this.maskApiKey(this.apiKey)}</span>
@@ -1431,27 +1427,6 @@ class RightPanel {
                         ` : ''}
                     </div>
 
-                    <div class="grid grid-cols-3 gap-1.5">
-                        <button
-                            id="verify-key-btn"
-                            class="btn-ghost-hover text-[10px] px-2 py-1.5 rounded-md border border-border bg-background text-foreground transition-all duration-200 hover:shadow-sm"
-                            ${this.isExpired ? 'disabled' : ''}
-                        >
-                            Verify
-                        </button>
-                        <button
-                            id="renew-key-btn"
-                            class="btn-ghost-hover text-[10px] px-2 py-1.5 rounded-md border border-border bg-background text-foreground transition-all duration-200 hover:shadow-sm"
-                        >
-                            Renew
-                        </button>
-                        <button
-                            id="clear-key-btn"
-                            class="btn-destructive-hover text-[10px] px-2 py-1.5 rounded-md border border-red-300 dark:border-red-800 text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-900/30 transition-all duration-200"
-                        >
-                            Remove
-                        </button>
-                    </div>
                 </div>
             ` : ''}
 

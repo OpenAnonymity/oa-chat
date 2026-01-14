@@ -600,7 +600,7 @@ function isChatGptHtmlFile(file, sample) {
 
 registerChatHistoryImporter({
     id: 'chatgpt-json',
-    label: 'ChatGPT (JSON export)',
+    label: 'ChatGPT',
     source: 'chatgpt',
     description: 'Use conversations.json from the ChatGPT export.',
     fileHint: 'conversations.json',

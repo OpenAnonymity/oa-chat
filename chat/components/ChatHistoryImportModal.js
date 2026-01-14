@@ -112,7 +112,7 @@ class ChatHistoryImportModal {
             const importerListHtml = visibleImporters.length
                 ? `
                     <div class="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground space-y-2">
-                        <div class="text-xs text-muted-foreground">Supported exports</div>
+                        <div class="text-xs text-muted-foreground">Supported Formats</div>
                         ${visibleImporters.map(entry => {
                             const status = entry.enabled === false ? 'Coming soon' : 'Ready';
                             const statusClass = entry.enabled === false ? 'text-muted-foreground' : 'text-foreground';
@@ -135,6 +135,15 @@ class ChatHistoryImportModal {
                     <p class="text-sm text-foreground">Import chat history into your local browser database.</p>
                     ${importerListHtml}
                     <div class="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground space-y-2">
+                        <div class="text-xs text-muted-foreground">Find your ChatGPT export</div>
+                        <ol class="list-decimal list-inside space-y-1">
+                            <li>Open ChatGPT Settings and go to Data Controls.</li>
+                            <li>Select "Export data" and confirm via email.</li>
+                            <li>Download and unzip the export archive.</li>
+                            <li>Choose <span class="font-mono">conversations.json</span> below.</li>
+                        </ol>
+                    </div>
+                    <div class="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground space-y-2">
                         <div>Imports text, reasoning trace, citations, and web-search thumbnails if possible.</div>
                         <div>Other media is shown as placeholders.</div>
                         <div>Everything stays in your browser. Nothing is uploaded.</div>
@@ -142,7 +151,7 @@ class ChatHistoryImportModal {
                     </div>
                     <div class="flex items-center justify-between gap-2">
                         <div class="text-xs text-muted-foreground">${fileInfo}</div>
-                        <button id="chat-import-pick-file" class="px-3 py-2 text-sm font-medium rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">Choose file</button>
+                        <button id="chat-import-pick-file" class="btn-primary-bright px-3 py-2 text-sm font-medium rounded-md bg-blue-600 text-white transition-all duration-200">Choose file</button>
                     </div>
                     ${parseError ? `<div class="text-sm text-red-600">${parseError}</div>` : ''}
                 </div>
