@@ -1992,7 +1992,12 @@ class ChatApp {
         const dismissBtn = document.createElement('button');
         dismissBtn.type = 'button';
         dismissBtn.className = 'update-toast__dismiss';
-        dismissBtn.textContent = 'Later';
+        dismissBtn.setAttribute('aria-label', 'Dismiss update');
+        dismissBtn.innerHTML = `
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+                <path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+            </svg>
+        `;
         dismissBtn.addEventListener('click', () => {
             this.updateToastDismissed = true;
             this.clearUpdateToast();

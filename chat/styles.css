@@ -3103,13 +3103,13 @@ html {
 .update-toast {
     position: fixed;
     left: 50%;
-    bottom: 7.5rem;
+    bottom: 7.25rem;
     transform: translateX(-50%);
     z-index: 55;
     display: flex;
     align-items: center;
-    gap: 0.6rem;
-    padding: 0.45rem 0.75rem;
+    gap: 0.5rem;
+    padding: 0.35rem 0.4rem 0.35rem 0.7rem;
     border-radius: 9999px;
     background: hsl(var(--color-card) / 0.92);
     border: 1px solid hsl(var(--color-border) / 0.7);
@@ -3120,34 +3120,40 @@ html {
 }
 
 .update-toast__label {
-    font-size: 0.875rem;
+    font-size: 0.8125rem;
     letter-spacing: 0.01em;
 }
 
 .update-toast__action {
     border-radius: 9999px;
-    padding: 0.25rem 0.7rem;
-    font-size: 0.75rem;
+    padding: 0.22rem 0.6rem;
+    font-size: 0.7rem;
     font-weight: 600;
-    background-color: hsl(var(--color-primary));
+    background-color: #2563eb;
     border: 1px solid transparent;
-    color: hsl(var(--color-primary-foreground));
-    transition: background-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+    color: #ffffff;
+    transition: background-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .update-toast__action:hover {
-    background-color: hsl(217 91% 50%);
-    box-shadow: 0 4px 10px hsl(217 91% 60% / 0.25);
+    background-color: #1d4ed8;
+    box-shadow: 0 4px 10px rgba(37, 99, 235, 0.25);
 }
 
 .update-toast__dismiss {
     border-radius: 9999px;
-    padding: 0.2rem 0.5rem;
-    font-size: 0.75rem;
+    padding: 0.2rem;
+    margin-left: -0.15rem;
+    line-height: 0;
     border: 1px solid transparent;
     background: transparent;
     color: hsl(var(--color-muted-foreground));
     transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.update-toast__dismiss svg {
+    width: 14px;
+    height: 14px;
 }
 
 .update-toast__dismiss:hover {
