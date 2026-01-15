@@ -41,8 +41,6 @@ const UPDATE_ASSET_EXTENSIONS = new Set([
     '.png',
     '.jpg',
     '.jpeg',
-    '.gif',
-    '.webp',
     '.ico'
 ]);
 
