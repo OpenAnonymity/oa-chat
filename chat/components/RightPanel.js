@@ -1462,7 +1462,28 @@ class RightPanel {
                     </div>
 
                 </div>
-            ` : ''}
+            ` : `
+                <div class="p-3">
+                    <div class="mb-3">
+                        <div class="flex items-center gap-1.5 mb-2">
+                            <svg class="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
+                            </svg>
+                            <span class="text-xs font-medium">Ephemeral Access Key</span>
+                        </div>
+                        <div class="flex items-center justify-between text-[10px] bg-muted/10 p-2 rounded-md border border-dashed border-border text-muted-foreground">
+                            <span class="flex-1 min-w-0">Requested on message send</span>
+                            <span class="font-medium px-1 py-0.5 rounded-full text-[10px] flex-shrink-0 bg-muted/30 text-muted-foreground">Pending</span>
+                        </div>
+                    </div>
+                    <div class="space-y-2 mb-3">
+                        <div class="flex items-center justify-between p-2 bg-background rounded-md border border-dashed border-border">
+                            <span class="text-[10px] text-muted-foreground">Issuing Station</span>
+                            <span class="text-[10px] font-medium text-muted-foreground">To be assigned</span>
+                        </div>
+                    </div>
+                </div>
+            `}
 
             ${this.generateProxySectionHTML()}
         `;

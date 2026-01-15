@@ -58,7 +58,7 @@ class ProxyInfoModal {
                 <div class="p-4 space-y-4">
                     <div class="space-y-3 text-sm text-foreground">
                         <p>
-                            OA provides an <strong>in-browser, VPN-like encrypted tunnel</strong> when accessing the models with OA-issued ephemeral API keys. This hides your IP/metadata side-channels from the model provider.
+                            OA provides an <strong>in-browser, VPN-like encrypted tunnel</strong> when accessing the models with OA-issued ephemeral access keys. This hides your IP/metadata side-channels from the model provider, preventing network-level fingerprinting.
                         </p>
 
                         <div class="p-3 rounded-lg border border-border bg-slate-100 dark:bg-slate-800/50 space-y-2">

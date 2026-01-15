@@ -102,7 +102,7 @@ export function getActivityDescription(log, detailed = false) {
             } else if (action === 'session-fork') {
                 const messageCount = response?.messagesCopied || 0;
                 const hasSharedKey = response?.sharedApiKey;
-                return `Created a new conversation branch with ${messageCount} message${messageCount !== 1 ? 's' : ''} from the original session${hasSharedKey ? ', reusing the same ephemeral API key' : ''}.`;
+                return `Created a new conversation branch with ${messageCount} message${messageCount !== 1 ? 's' : ''} from the original session${hasSharedKey ? ', reusing the same ephemeral access key' : ''}.`;
             }
             return message || 'Local cryptographic operation completed successfully.';
         }
@@ -136,7 +136,7 @@ export function getActivityDescription(log, detailed = false) {
         if (type === 'api-key' && path.includes('request_key')) {
             if (!detailed) {
                 if (status >= 200 && status < 300) {
-                    return 'Ephemeral API key granted';
+                    return 'Ephemeral access key granted';
                 } else if (status === 0) {
                     return 'Failed to obtain ephemeral key';
                 }
