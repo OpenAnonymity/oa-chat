@@ -2153,7 +2153,16 @@ class ChatApp {
         return fingerprints.map(fingerprint => fingerprint || '').join('|');
     }
 
+    isElectronEnvironment() {
+        const ua = navigator?.userAgent || '';
+        return !!(window?.process?.versions?.electron || ua.includes('Electron'));
+    }
+
     initUpdateWatcher() {
+        if (this.isElectronEnvironment()) {
+            return;
+        }
+
         const checkForUpdate = async () => {
             if (this.updateCheckInFlight) {
                 return;
