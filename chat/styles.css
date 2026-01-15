@@ -6,8 +6,13 @@
     --font-sans: 'SF Pro Text', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
     --font-mono: 'SF Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
 
-    /* Accent color (user bubbles, active toggles, primary highlights) */
-    --color-accent-primary: 217.2 91.2% 59.8%;  /* Blue - change this to customize */
+    /* Blue palette */
+    --blue-500: 217.2 91.2% 59.8%;
+    --blue-600: 221.2 83.2% 53.3%;
+    --blue-700: 224.3 76.3% 48%;
+
+    /* Accent color (active toggles, primary highlights) */
+    --color-accent-primary: var(--blue-500);
     --color-accent-primary-foreground: 0 0% 100%;
 
     /* Frosted glass effect - adjust opacity (0-1) and blur (px) */
@@ -394,7 +399,7 @@ html.switching-theme *::after {
 /* Message styles */
 .message-user {
     position: relative;
-    background-color: hsl(var(--color-accent-primary));
+    background-color: hsl(var(--blue-700));
     color: hsl(var(--color-accent-primary-foreground));
     border-radius: 0.875rem;
     font-size: 0.875rem;
@@ -425,7 +430,7 @@ html.switching-theme *::after {
     left: 0;
     right: 0;
     height: 2.5rem;
-    background: linear-gradient(to bottom, transparent 0%, hsl(var(--color-accent-primary) / 0.85) 100%);
+    background: linear-gradient(to bottom, transparent 0%, hsl(var(--blue-700) / 0.85) 100%);
     pointer-events: none;
 }
 
