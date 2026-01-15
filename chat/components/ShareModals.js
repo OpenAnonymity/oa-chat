@@ -167,6 +167,26 @@ function sanitizePinInput(value) {
     return value.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 6);
 }
 
+const PIN_CHARSET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+
+function generateRandomPin(length = 6) {
+    const output = [];
+    const max = 256 - (256 % PIN_CHARSET.length);
+
+    while (output.length < length) {
+        const bytes = new Uint8Array(length);
+        crypto.getRandomValues(bytes);
+        for (let i = 0; i < bytes.length && output.length < length; i++) {
+            const value = bytes[i];
+            if (value < max) {
+                output.push(PIN_CHARSET[value % PIN_CHARSET.length]);
+            }
+        }
+    }
+
+    return output.join('');
+}
+
 /**
  * Password visibility toggle icon SVGs
  */
@@ -177,6 +197,13 @@ const EYE_CLOSED_SVG = `<svg class="w-4 h-4" fill="none" stroke="currentColor" v
 const EYE_OPEN_SVG = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
     <path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
     <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+</svg>`;
+
+const RANDOM_ICON_SVG = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="5" y="5" width="14" height="14" rx="2" />
+    <circle cx="9" cy="9" r="0.9" fill="currentColor" stroke="none" />
+    <circle cx="12" cy="12" r="0.9" fill="currentColor" stroke="none" />
+    <circle cx="15" cy="15" r="0.9" fill="currentColor" stroke="none" />
 </svg>`;
 
 const COPY_ICON_SVG = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
@@ -411,6 +438,7 @@ class ShareModals {
         const pinInput = container.querySelector('.pin-hidden-input');
         const boxes = container.querySelectorAll('.pin-box');
         const toggleBtn = container.querySelector('.toggle-pin-visibility');
+        const randomBtn = container.querySelector('.random-pin-btn');
         if (!pinInput || !boxes.length) return;
 
         let isRevealed = true; // Show PIN by default (low-stakes sharing)
@@ -458,6 +486,15 @@ class ShareModals {
                 toggleBtn.querySelector('.eye-open')?.classList.toggle('hidden', !isRevealed);
                 toggleBtn.querySelector('.eye-closed')?.classList.toggle('hidden', isRevealed);
                 updateBoxes();
+            };
+        }
+
+        if (randomBtn) {
+            randomBtn.onmousedown = (e) => e.preventDefault();
+            randomBtn.onclick = () => {
+                pinInput.value = generateRandomPin();
+                updateBoxes();
+                pinInput.focus();
             };
         }
 
@@ -995,12 +1032,16 @@ class ShareModals {
                                     </div>
                                 </div>
                                 <div class="flex items-center justify-center gap-2 mt-1.5">
-                                    <button type="button" class="toggle-pin-visibility text-muted-foreground hover:text-foreground flex items-center p-1 rounded-md hover-highlight transition-colors">
+                                    <span class="text-xs text-muted-foreground">Leave empty for no encryption</span>
+                                    <span class="text-muted-foreground">·</span>
+                                    <button type="button" class="random-pin-btn text-muted-foreground hover:text-foreground flex items-center p-1 rounded-md hover-highlight transition-colors" title="Generate random PIN" aria-label="Generate random PIN">
+                                        ${RANDOM_ICON_SVG}
+                                    </button>
+                                    <span class="text-muted-foreground">·</span>
+                                    <button type="button" class="toggle-pin-visibility text-muted-foreground hover:text-foreground flex items-center p-1 rounded-md hover-highlight transition-colors" title="Toggle PIN visibility" aria-label="Toggle PIN visibility">
                                         <span class="eye-closed hidden">${EYE_CLOSED_SVG}</span>
                                         <span class="eye-open">${EYE_OPEN_SVG}</span>
                                     </button>
-                                    <span class="text-muted-foreground">·</span>
-                                    <span class="text-xs text-muted-foreground">Leave empty for no encryption</span>
                                 </div>
                             </div>
 
@@ -1285,12 +1326,16 @@ class ShareModals {
                                     </div>
                                 </div>
                                 <div class="flex items-center justify-center gap-2 mt-1.5">
-                                    <button type="button" class="toggle-pin-visibility text-muted-foreground hover:text-foreground flex items-center p-1 rounded-md hover-highlight transition-colors">
+                                    <span class="text-xs text-muted-foreground">Leave empty for no encryption</span>
+                                    <span class="text-muted-foreground">·</span>
+                                    <button type="button" class="random-pin-btn text-muted-foreground hover:text-foreground flex items-center p-1 rounded-md hover-highlight transition-colors" title="Generate random PIN" aria-label="Generate random PIN">
+                                        ${RANDOM_ICON_SVG}
+                                    </button>
+                                    <span class="text-muted-foreground">·</span>
+                                    <button type="button" class="toggle-pin-visibility text-muted-foreground hover:text-foreground flex items-center p-1 rounded-md hover-highlight transition-colors" title="Toggle PIN visibility" aria-label="Toggle PIN visibility">
                                         <span class="eye-closed hidden">${EYE_CLOSED_SVG}</span>
                                         <span class="eye-open">${EYE_OPEN_SVG}</span>
                                     </button>
-                                    <span class="text-muted-foreground">·</span>
-                                    <span class="text-xs text-muted-foreground">Leave empty for no encryption</span>
                                 </div>
                             </div>
 
@@ -1612,4 +1657,3 @@ class ShareModals {
 
 const shareModals = new ShareModals();
 export default shareModals;
-
