@@ -108,6 +108,10 @@ export default class ChatInput {
         // Stop propagation for all clicks inside the menu to prevent document click handler from closing it
         this.app.elements.settingsMenu.addEventListener('click', async (e) => {
             e.stopPropagation();
+            // Skip toggle buttons - they have their own handlers
+            if (e.target.closest('.display-toggle-container') || e.target.closest('.theme-toggle-container')) {
+                return;
+            }
             if (e.target.tagName === 'BUTTON') {
                 const action = e.target.dataset.action || e.target.textContent.trim();
 
@@ -208,6 +212,9 @@ export default class ChatInput {
         // Setup flat mode (display mode) controls
         this.setupFlatModeControls();
 
+        // Setup font mode controls
+        this.setupFontModeControls();
+
         // Mark input as ready for the inline script to defer handling
         window.chatInputReady = true;
     }
@@ -257,6 +264,52 @@ export default class ChatInput {
 
         flatModeToggle.querySelectorAll('.display-toggle-btn').forEach(btn => {
             btn.setAttribute('aria-checked', btn.dataset.mode === activeMode ? 'true' : 'false');
+        });
+    }
+
+    /**
+     * Sets up font mode toggle controls and listeners.
+     * Toggles between sans-serif and serif fonts in the chat area.
+     */
+    setupFontModeControls() {
+        const fontModeToggle = document.getElementById('font-mode-toggle');
+        if (!fontModeToggle) return;
+
+        // Sync initial visual state with localStorage
+        this.updateFontModeControls();
+
+        fontModeToggle.addEventListener('click', (event) => {
+            event.stopPropagation(); // Prevent settings menu from closing
+            const btn = event.target.closest('.display-toggle-btn');
+            if (btn) {
+                const font = btn.dataset.font;
+                const isSerifMode = font === 'serif';
+
+                // Update HTML class for CSS styling
+                document.documentElement.classList.toggle('serif-mode', isSerifMode);
+
+                // Persist preference to localStorage
+                localStorage.setItem('oa-font-mode', isSerifMode ? 'serif' : 'sans');
+
+                // Update toggle visual state
+                this.updateFontModeControls();
+            }
+        });
+    }
+
+    /**
+     * Updates the visual state of font mode toggle based on current HTML class.
+     * Syncs aria-checked attributes with actual font-mode state.
+     */
+    updateFontModeControls() {
+        const fontModeToggle = document.getElementById('font-mode-toggle');
+        if (!fontModeToggle) return;
+
+        const isSerifMode = document.documentElement.classList.contains('serif-mode');
+        const activeFont = isSerifMode ? 'serif' : 'sans';
+
+        fontModeToggle.querySelectorAll('.display-toggle-btn').forEach(btn => {
+            btn.setAttribute('aria-checked', btn.dataset.font === activeFont ? 'true' : 'false');
         });
     }
 

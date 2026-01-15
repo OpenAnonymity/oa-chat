@@ -59,11 +59,29 @@
             }
         })();
     </script>
+    <script>
+        // Apply font mode state immediately to prevent flash (default: sans)
+        (function () {
+            try {
+                if (localStorage.getItem('oa-font-mode') === 'serif') {
+                    document.documentElement.classList.add('serif-mode');
+                }
+            } catch (error) {
+                console.warn('Unable to apply font mode state:', error);
+            }
+        })();
+    </script>
     <!-- Preload critical resources for faster loading -->
     <link rel="preconnect" href="https://cdn.tailwindcss.com" crossorigin>
     <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
     <link rel="dns-prefetch" href="https://openrouter.ai">
     <link rel="dns-prefetch" href="https://org.openanonymity.ai">
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant:ital,wght@0,300..700;1,300..700&family=Fira+Code:wght@300..700&family=Libre+Caslon+Text:ital,wght@0,400;0,700;1,400&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=PT+Serif:ital,wght@0,400;0,700;1,400;1,700&display=swap" rel="stylesheet">
+
 
     <!-- Tailwind CSS - critical, must be blocking -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -467,23 +485,34 @@
                                                     <input type="file" id="tickets-import-input" accept="application/json,.json" class="hidden" />
                                                 </div>
 
-                                                <!-- Display section with flat mode toggle -->
+                                                <!-- Display section with flat mode and font toggles -->
                                                 <div class="mt-2 border-t border-border pt-2">
                                                     <p class="px-3 pb-1.5 text-xs font-light tracking-wide text-muted-foreground">Display</p>
-                                                    <div class="px-3 pb-2">
-                                                        <div id="flat-mode-toggle" class="display-toggle-container" role="radiogroup" aria-label="Display mode">
+                                                    <div class="px-3 pb-2 flex justify-center gap-4">
+                                                        <div id="flat-mode-toggle" class="display-toggle-container display-toggle-compact" role="radiogroup" aria-label="Display mode">
                                                             <div class="display-toggle-indicator"></div>
                                                             <!-- Flat mode: text lines without bubble -->
                                                             <button type="button" class="display-toggle-btn" data-mode="flat" aria-checked="true" title="Flat mode">
-                                                                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                                                <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                                                                     <path stroke-linecap="round" d="M4 7h16M4 12h12M4 17h14"/>
                                                                 </svg>
                                                             </button>
                                                             <!-- Bubble mode: text lines inside chat bubble -->
                                                             <button type="button" class="display-toggle-btn" data-mode="bubble" aria-checked="false" title="Bubble mode">
-                                                                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                                                <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                                                                     <path stroke-linecap="round" stroke-linejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z"/>
                                                                 </svg>
+                                                            </button>
+                                                        </div>
+                                                        <div id="font-mode-toggle" class="display-toggle-container display-toggle-compact" role="radiogroup" aria-label="Font style">
+                                                            <div class="display-toggle-indicator"></div>
+                                                            <!-- Sans-serif font -->
+                                                            <button type="button" class="display-toggle-btn" data-font="sans" aria-checked="true" title="Sans-serif">
+                                                                <span class="text-sm font-medium" style="font-family: system-ui, sans-serif;">Aa</span>
+                                                            </button>
+                                                            <!-- Serif font -->
+                                                            <button type="button" class="display-toggle-btn" data-font="serif" aria-checked="false" title="Serif">
+                                                                <span class="text-sm font-medium" style="font-family: 'PT Serif', Georgia, serif;">Aa</span>
                                                             </button>
                                                         </div>
                                                     </div>
@@ -496,19 +525,19 @@
                                                             <div class="theme-toggle-indicator"></div>
                                                             <!-- Light theme -->
                                                             <button type="button" class="theme-toggle-btn" data-theme-option="light" aria-checked="false" title="Light">
-                                                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                                                                <svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                                                                     <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1.5m0 15V21m9-9h-1.5M4.5 12H3m15.364-6.364-1.06 1.06M6.697 17.303l-1.06 1.06m0-12.728 1.06 1.06m9.607 9.607 1.06 1.06M12 8.25a3.75 3.75 0 1 1 0 7.5 3.75 3.75 0 0 1 0-7.5z"></path>
                                                                 </svg>
                                                             </button>
                                                             <!-- Dark theme -->
                                                             <button type="button" class="theme-toggle-btn" data-theme-option="dark" aria-checked="false" title="Dark">
-                                                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                                                                <svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                                                                     <path stroke-linecap="round" stroke-linejoin="round" d="M21 12.79A9 9 0 0 1 11.21 3 7.5 7.5 0 1 0 21 12.79z"></path>
                                                                 </svg>
                                                             </button>
                                                             <!-- System theme -->
                                                             <button type="button" class="theme-toggle-btn" data-theme-option="system" aria-checked="false" title="System">
-                                                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                                                                <svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                                                                     <path stroke-linecap="round" stroke-linejoin="round" d="M9 17v2h6v-2m2 0h.75A2.25 2.25 0 0 0 20 14.75V7.25A2.25 2.25 0 0 0 17.75 5H6.25A2.25 2.25 0 0 0 4 7.25v7.5A2.25 2.25 0 0 0 6.25 17H7.5"></path>
                                                                 </svg>
                                                             </button>
