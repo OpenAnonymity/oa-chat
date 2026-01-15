@@ -1682,16 +1682,9 @@ html.serif-mode #font-mode-toggle .display-toggle-indicator {
     transform: translateX(calc(100% + 2px));
 }
 
-/* Serif mode: apply serif font to message text content only */
-html.serif-mode .message-user {
-    font-family: var(--font-serif);
-    /* font-weight: 350; */
-    font-size: 15px;
-}
-
+/* Serif mode: apply serif font to model outputs only */
 html.serif-mode .message-content {
     font-family: var(--font-serif);
-    /* font-weight: 350; */
     font-size: 15px;
 }
 
