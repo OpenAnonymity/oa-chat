@@ -3099,6 +3099,84 @@ html {
     box-shadow: 0 2px 8px hsl(217 91% 60% / 0.4);
 }
 
+/* Update toast */
+.update-toast {
+    position: fixed;
+    left: 50%;
+    bottom: 7.5rem;
+    transform: translateX(-50%);
+    z-index: 55;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.45rem 0.75rem;
+    border-radius: 9999px;
+    background: hsl(var(--color-card) / 0.92);
+    border: 1px solid hsl(var(--color-border) / 0.7);
+    color: hsl(var(--color-foreground));
+    box-shadow: 0 12px 30px -18px rgba(0, 0, 0, 0.35);
+    backdrop-filter: blur(10px);
+    animation: updateToastIn 0.2s ease-out;
+}
+
+.update-toast__label {
+    font-size: 0.875rem;
+    letter-spacing: 0.01em;
+}
+
+.update-toast__action {
+    border-radius: 9999px;
+    padding: 0.25rem 0.7rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    background-color: hsl(var(--color-primary));
+    border: 1px solid transparent;
+    color: hsl(var(--color-primary-foreground));
+    transition: background-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.update-toast__action:hover {
+    background-color: hsl(217 91% 50%);
+    box-shadow: 0 4px 10px hsl(217 91% 60% / 0.25);
+}
+
+.update-toast__dismiss {
+    border-radius: 9999px;
+    padding: 0.2rem 0.5rem;
+    font-size: 0.75rem;
+    border: 1px solid transparent;
+    background: transparent;
+    color: hsl(var(--color-muted-foreground));
+    transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.update-toast__dismiss:hover {
+    color: hsl(var(--color-foreground));
+    background-color: hsl(var(--color-hover));
+}
+
+.update-toast button:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px hsl(var(--color-ring) / 0.5);
+}
+
+@keyframes updateToastIn {
+    from {
+        opacity: 0;
+        transform: translate(-50%, 8px);
+    }
+    to {
+        opacity: 1;
+        transform: translate(-50%, 0);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .update-toast {
+        animation: none;
+    }
+}
+
 /* Input Area Wrapper - ensure it's above message content */
 .absolute.bottom-0.left-0.right-0 {
     z-index: 20; /* Above message elements like .user-message-show-more (z-1) and .message-user-actions (z-10) */

@@ -27,6 +27,24 @@ const SESSION_PAGE_SIZE = 80;
 const SESSION_SEARCH_LIMIT = 300;
 const SESSION_SCROLL_LOAD_THRESHOLD = 160;
 const SESSION_SEARCH_DEBOUNCE = 180;  // ms wait before triggering search
+const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
+const UPDATE_CHECK_INITIAL_DELAY_MS = 45 * 1000;
+const UPDATE_CHECK_TIMEOUT_MS = 6000;
+const UPDATE_ASSET_PATHS = ['app.js', 'styles.css', 'index.html'];
+const UPDATE_ASSET_EXTENSIONS = new Set([
+    '.js',
+    '.css',
+    '.html',
+    '.json',
+    '.wasm',
+    '.svg',
+    '.png',
+    '.jpg',
+    '.jpeg',
+    '.gif',
+    '.webp',
+    '.ico'
+]);
 
 // Layout constants for toolbar overlay prediction
 const SIDEBAR_WIDTH = 256;      // 16rem = 256px
@@ -145,6 +163,12 @@ class ChatApp {
         this.scrollButtonCheckInterval = null; // Interval for checking button visibility during streaming
         this.deleteHistoryReturnFocusEl = null;
         this.isDeletingAllChats = false;
+        this.appVersionSignature = null;
+        this.updateAvailableSignature = null;
+        this.updateToastVisible = false;
+        this.updateToastDismissed = false;
+        this.updateCheckInterval = null;
+        this.updateCheckInFlight = false;
 
         // Link preview state
         this.linkPreviewCard = document.getElementById('link-preview-card');
@@ -1242,6 +1266,9 @@ class ChatApp {
         // Check for session in URL (?s=sessionId)
         this.checkForUrlSession();
 
+        // Start update checks for new app versions
+        this.initUpdateWatcher();
+
         // Periodic check for share expiry status (every 30 seconds)
         setInterval(() => this.updateShareButtonUI(), 30000);
     }
@@ -1933,6 +1960,252 @@ class ChatApp {
             toast.classList.add('animate-out', 'fade-out', 'slide-out-to-bottom-4');
             setTimeout(() => toast.remove(), 150);
         };
+    }
+
+    showUpdateToast() {
+        if (this.updateToastVisible) {
+            return;
+        }
+
+        const existingToast = document.getElementById('app-update-toast');
+        if (existingToast) {
+            existingToast.remove();
+        }
+
+        const toast = document.createElement('div');
+        toast.id = 'app-update-toast';
+        toast.className = 'update-toast';
+        toast.setAttribute('role', 'status');
+        toast.setAttribute('aria-live', 'polite');
+
+        const label = document.createElement('span');
+        label.className = 'update-toast__label';
+        label.textContent = 'Update available';
+
+        const refreshBtn = document.createElement('button');
+        refreshBtn.type = 'button';
+        refreshBtn.className = 'update-toast__action';
+        refreshBtn.textContent = 'Refresh';
+        refreshBtn.addEventListener('click', () => {
+            this.clearUpdateToast();
+            window.location.reload();
+        });
+
+        const dismissBtn = document.createElement('button');
+        dismissBtn.type = 'button';
+        dismissBtn.className = 'update-toast__dismiss';
+        dismissBtn.textContent = 'Later';
+        dismissBtn.addEventListener('click', () => {
+            this.updateToastDismissed = true;
+            this.clearUpdateToast();
+        });
+
+        toast.appendChild(label);
+        toast.appendChild(refreshBtn);
+        toast.appendChild(dismissBtn);
+        document.body.appendChild(toast);
+        this.updateToastVisible = true;
+    }
+
+    clearUpdateToast() {
+        document.getElementById('app-update-toast')?.remove();
+        this.updateToastVisible = false;
+    }
+
+    getUpdateFingerprint(response) {
+        const etag = response.headers.get('etag');
+        if (etag) {
+            return etag.trim();
+        }
+
+        const lastModified = response.headers.get('last-modified');
+        if (lastModified) {
+            return lastModified.trim();
+        }
+
+        return null;
+    }
+
+    hashText(input) {
+        let hash = 5381;
+        for (let i = 0; i < input.length; i += 1) {
+            hash = ((hash << 5) + hash) + input.charCodeAt(i);
+        }
+        return `h${hash >>> 0}`;
+    }
+
+    async fetchAssetFingerprint(pathname) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), UPDATE_CHECK_TIMEOUT_MS);
+
+        try {
+            let response = null;
+            try {
+                response = await fetch(pathname, {
+                    method: 'HEAD',
+                    cache: 'no-store',
+                    headers: {
+                        'cache-control': 'no-cache',
+                        pragma: 'no-cache'
+                    },
+                    signal: controller.signal
+                });
+            } catch (error) {
+                response = null;
+            }
+
+            if (response && response.ok) {
+                const fingerprint = this.getUpdateFingerprint(response);
+                if (fingerprint) {
+                    return fingerprint;
+                }
+            }
+
+            response = await fetch(pathname, {
+                method: 'GET',
+                cache: 'no-store',
+                headers: {
+                    'cache-control': 'no-cache',
+                    pragma: 'no-cache'
+                },
+                signal: controller.signal
+            });
+
+            if (!response || !response.ok) {
+                return null;
+            }
+
+            const fingerprint = this.getUpdateFingerprint(response);
+            if (fingerprint) {
+                return fingerprint;
+            }
+
+            if (response.bodyUsed || response.type === 'opaqueredirect') {
+                return null;
+            }
+
+            const text = await response.text();
+            return text ? this.hashText(text) : null;
+        } catch (error) {
+            return null;
+        } finally {
+            clearTimeout(timeoutId);
+        }
+    }
+
+    getUpdateAssetPaths() {
+        const paths = new Set(UPDATE_ASSET_PATHS);
+        const basePath = new URL(document.baseURI).pathname;
+        const normalizedBase = basePath.endsWith('/') ? basePath : `${basePath}/`;
+
+        const entries = performance.getEntriesByType('resource');
+        for (const entry of entries) {
+            if (!entry?.name) {
+                continue;
+            }
+
+            let url = null;
+            try {
+                url = new URL(entry.name);
+            } catch (error) {
+                continue;
+            }
+
+            if (url.origin !== window.location.origin) {
+                continue;
+            }
+
+            if (!url.pathname.startsWith(normalizedBase)) {
+                continue;
+            }
+
+            const relativePath = url.pathname.slice(normalizedBase.length);
+            if (!relativePath) {
+                paths.add('index.html');
+                continue;
+            }
+
+            const extension = relativePath.includes('.')
+                ? `.${relativePath.split('.').pop()}`.toLowerCase()
+                : '';
+            if (!UPDATE_ASSET_EXTENSIONS.has(extension)) {
+                continue;
+            }
+
+            paths.add(relativePath);
+        }
+
+        return Array.from(paths).sort();
+    }
+
+    async fetchUpdateSignature() {
+        const assetPaths = this.getUpdateAssetPaths();
+        const fingerprints = await Promise.all(
+            assetPaths.map(pathname => this.fetchAssetFingerprint(pathname))
+        );
+        if (fingerprints.every(fingerprint => !fingerprint)) {
+            return null;
+        }
+
+        return fingerprints.map(fingerprint => fingerprint || '').join('|');
+    }
+
+    initUpdateWatcher() {
+        const checkForUpdate = async () => {
+            if (this.updateCheckInFlight) {
+                return;
+            }
+
+            if (this.updateAvailableSignature && this.updateToastDismissed) {
+                return;
+            }
+
+            this.updateCheckInFlight = true;
+            try {
+                const latestSignature = await this.fetchUpdateSignature();
+                if (!latestSignature) {
+                    return;
+                }
+
+                if (!this.appVersionSignature) {
+                    this.appVersionSignature = latestSignature;
+                    return;
+                }
+
+                if (latestSignature === this.appVersionSignature) {
+                    return;
+                }
+
+                if (this.updateAvailableSignature === latestSignature) {
+                    if (!this.updateToastVisible && !this.updateToastDismissed) {
+                        this.showUpdateToast();
+                    }
+                    return;
+                }
+
+                this.updateAvailableSignature = latestSignature;
+                this.updateToastDismissed = false;
+                this.showUpdateToast();
+            } finally {
+                this.updateCheckInFlight = false;
+            }
+        };
+
+        setTimeout(() => {
+            checkForUpdate().catch(() => {});
+        }, UPDATE_CHECK_INITIAL_DELAY_MS);
+
+        this.updateCheckInterval = setInterval(() => {
+            if (document.visibilityState === 'visible') {
+                checkForUpdate().catch(() => {});
+            }
+        }, UPDATE_CHECK_INTERVAL_MS);
+
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                checkForUpdate().catch(() => {});
+            }
+        });
     }
 
     /**
