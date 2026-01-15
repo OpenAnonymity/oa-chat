@@ -1,6 +1,6 @@
 ## `oa-fastchat`
 
-A minimal, fast chat client that talks directly to OpenRouter using ephemeral, anonymous API keys obtained via the Open Anonymity network. Everything runs directly in the browser; no backend, no build step — just open and chat.
+A minimal, fast chat client that talks directly to the selected inference backend (OpenRouter by default) using ephemeral, anonymous access credentials obtained via the Open Anonymity network. Everything runs directly in the browser; no backend, no build step — just open and chat.
 
 ### Highlights
 - **Standalone**: Pure ES modules loaded in the browser; no server required.
@@ -9,8 +9,8 @@ A minimal, fast chat client that talks directly to OpenRouter using ephemeral, a
 - **Streaming UX**: Incremental token updates with reliable auto‑scroll.
 - **Markdown + LaTeX**: Rendered with Marked and KaTeX (from CDNs).
 - **Model picker**: Fuzzy search, pinned models, and per‑session selection.
-- **Multimodal**: Images, PDFs, and audio attachments (converted to OpenRouter formats).
-- **Right panel**: Ticket registration, key issuance/expiry, and an activity timeline (logs are memory‑only per tab).
+- **Multimodal**: Images, PDFs, and audio attachments (converted to OpenRouter-compatible formats).
+- **Right panel**: Ticket registration, access issuance/expiry, and an activity timeline (logs are memory‑only per tab).
 
 ### Quick start
 1. Clone the repo.
@@ -24,7 +24,7 @@ A minimal, fast chat client that talks directly to OpenRouter using ephemeral, a
 ### Architecture (1‑minute overview)
 - `index.html` bootstraps Tailwind, Marked, KaTeX, then loads ES modules.
 - `app.js` coordinates state, components, streaming, and CRUD through `chatDB`.
-- `api.js` handles OpenRouter calls (fetch models, stream completions).
+- `services/inference/` selects the inference backend; `api.js` handles OpenRouter calls (fetch models, stream completions).
 - `db.js` provides an IndexedDB wrapper for sessions/messages/settings.
 - `components/` contain UI pieces (sidebar, chat area, input, model picker, right panel, templates, message navigation).
 - `services/` provide logging, key storage, file utilities, ticket/key flows, provider icons, and theme management.
@@ -33,11 +33,10 @@ A minimal, fast chat client that talks directly to OpenRouter using ephemeral, a
 For a deeper breakdown, see `AGENTS.md`.
 
 ### Privacy & security
-- No server in this repo. The browser requests an ephemeral OpenRouter key using a redeemable ticket, then talks to OpenRouter directly over HTTPS.
+- No server in this repo. The browser requests an ephemeral access credential using a redeemable ticket, then talks to the inference backend directly over HTTPS.
 - Keys are stored in session state and `localStorage` only; do not hard‑code secrets.
 - Network logs are memory‑only (per tab) to avoid persistence.
 
 ### Development
 - Keep devtools open — console warnings surface integration issues early.
 - No bundler required; modules are authored as standard ES modules with 4‑space indentation and trailing semicolons.
-

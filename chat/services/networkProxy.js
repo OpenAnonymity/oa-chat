@@ -274,6 +274,9 @@ class NetworkProxy {
         if (!this.state.settings.enabled) {
             throw new Error('Proxy not enabled');
         }
+        if (!targetUrl) {
+            throw new Error('No TLS verification target configured for this backend.');
+        }
 
         // Ensure inspection is enabled
         this.enableTlsInspection();

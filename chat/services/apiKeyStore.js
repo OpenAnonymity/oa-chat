@@ -1,7 +1,9 @@
 /**
  * API Key Store
- * Manages OpenRouter API key lifecycle in localStorage
+ * Legacy access key lifecycle in localStorage.
  */
+
+const ACCESS_STORAGE_KEY = 'oa_access_key_data';
 
 class ApiKeyStore {
     constructor() {
@@ -32,7 +34,7 @@ class ApiKeyStore {
 
     loadApiKey() {
         try {
-            const stored = localStorage.getItem('openrouter_api_key_data');
+            const stored = localStorage.getItem(ACCESS_STORAGE_KEY);
             if (stored) {
                 const data = JSON.parse(stored);
                 this.state = {
@@ -58,7 +60,7 @@ class ApiKeyStore {
                 ticketUsed: apiKeyData.ticketUsed || apiKeyData.ticket_used
             };
 
-            localStorage.setItem('openrouter_api_key_data', JSON.stringify(apiKeyData));
+            localStorage.setItem(ACCESS_STORAGE_KEY, JSON.stringify(apiKeyData));
             console.log('💾 Saved API key to localStorage');
             
             window.dispatchEvent(new CustomEvent('apikey-changed'));
@@ -77,7 +79,7 @@ class ApiKeyStore {
             ticketUsed: null
         };
 
-        localStorage.removeItem('openrouter_api_key_data');
+        localStorage.removeItem(ACCESS_STORAGE_KEY);
         console.log('🗑️  Cleared API key');
         
         window.dispatchEvent(new CustomEvent('apikey-cleared'));
@@ -112,6 +114,5 @@ if (typeof window !== 'undefined') {
 }
 
 export default apiKeyStore;
-
 
 

@@ -26,21 +26,28 @@ function ensureSessionBackend(session) {
     return session.inferenceBackend;
 }
 
+function registerBackendTransportHints(backend) {
+    if (!backend?.tls) return;
+    transportHints.registerBackendHints(backend.id, {
+        tlsCaptureHosts: backend.tls.captureHosts || [],
+        tlsVerifyUrl: backend.tls.verifyUrl || '',
+        tlsDisplayName: backend.tls.displayName || backend.label
+    });
+}
+
 function getBackendForSession(session) {
     const backendId = session?.inferenceBackend;
     const backend = getBackend(backendId);
-    if (backend?.tls) {
-        transportHints.setTransportHints({
-            tlsCaptureHosts: backend.tls.captureHosts || [],
-            tlsVerifyUrl: backend.tls.verifyUrl || '',
-            tlsDisplayName: backend.tls.displayName || backend.label
-        });
-    }
+    registerBackendTransportHints(backend);
     return backend;
 }
 
 function syncTransportHints(session) {
-    getBackendForSession(session);
+    if (session) {
+        getBackendForSession(session);
+        return;
+    }
+    backends.forEach(backend => registerBackendTransportHints(backend));
 }
 
 function getWelcomeContent(backend = getBackend()) {

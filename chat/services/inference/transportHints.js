@@ -1,42 +1,71 @@
 const DEFAULT_HINTS = {
-    tlsCaptureHosts: ['openrouter.ai'],
-    tlsVerifyUrl: 'https://openrouter.ai/api/v1/models',
-    tlsDisplayName: 'OpenRouter'
+    tlsCaptureHosts: [],
+    tlsVerifyUrl: '',
+    tlsDisplayName: 'Inference backend'
 };
 
-const hints = { ...DEFAULT_HINTS };
+const captureHosts = new Set(DEFAULT_HINTS.tlsCaptureHosts);
+const backendHints = new Map();
 
-function setTransportHints(nextHints = {}) {
-    if (!nextHints) return;
-    if (Array.isArray(nextHints.tlsCaptureHosts)) {
-        hints.tlsCaptureHosts = [...nextHints.tlsCaptureHosts];
+function normalizeHints(nextHints = {}) {
+    const normalized = {
+        tlsCaptureHosts: Array.isArray(nextHints.tlsCaptureHosts)
+            ? nextHints.tlsCaptureHosts.filter(Boolean)
+            : [],
+        tlsVerifyUrl: typeof nextHints.tlsVerifyUrl === 'string' ? nextHints.tlsVerifyUrl : '',
+        tlsDisplayName: typeof nextHints.tlsDisplayName === 'string'
+            ? nextHints.tlsDisplayName
+            : DEFAULT_HINTS.tlsDisplayName
+    };
+    return normalized;
+}
+
+function registerBackendHints(backendId, nextHints = {}) {
+    if (!backendId) return;
+    const normalized = normalizeHints(nextHints);
+    normalized.tlsCaptureHosts.forEach(host => captureHosts.add(host));
+    backendHints.set(backendId, normalized);
+}
+
+function getBackendHints(backendId) {
+    if (backendId && backendHints.has(backendId)) {
+        const stored = backendHints.get(backendId);
+        return {
+            tlsCaptureHosts: [...stored.tlsCaptureHosts],
+            tlsVerifyUrl: stored.tlsVerifyUrl,
+            tlsDisplayName: stored.tlsDisplayName
+        };
     }
-    if (typeof nextHints.tlsVerifyUrl === 'string') {
-        hints.tlsVerifyUrl = nextHints.tlsVerifyUrl;
-    }
-    if (typeof nextHints.tlsDisplayName === 'string') {
-        hints.tlsDisplayName = nextHints.tlsDisplayName;
-    }
+    return {
+        tlsCaptureHosts: [...captureHosts],
+        tlsVerifyUrl: DEFAULT_HINTS.tlsVerifyUrl,
+        tlsDisplayName: DEFAULT_HINTS.tlsDisplayName
+    };
 }
 
 function getTransportHints() {
     return {
-        tlsCaptureHosts: [...hints.tlsCaptureHosts],
-        tlsVerifyUrl: hints.tlsVerifyUrl,
-        tlsDisplayName: hints.tlsDisplayName
+        tlsCaptureHosts: [...captureHosts],
+        tlsVerifyUrl: DEFAULT_HINTS.tlsVerifyUrl,
+        tlsDisplayName: DEFAULT_HINTS.tlsDisplayName
     };
 }
 
 function shouldCaptureTlsForUrl(url) {
     if (!url) return null;
-    const hostMatch = hints.tlsCaptureHosts.find(host => url.includes(host));
-    return hostMatch || null;
+    for (const host of captureHosts) {
+        if (url.includes(host)) {
+            return host;
+        }
+    }
+    return null;
 }
 
-export { setTransportHints, getTransportHints, shouldCaptureTlsForUrl };
+export { registerBackendHints, getBackendHints, getTransportHints, shouldCaptureTlsForUrl };
 
 export default {
-    setTransportHints,
+    registerBackendHints,
+    getBackendHints,
     getTransportHints,
     shouldCaptureTlsForUrl
 };

@@ -20,14 +20,14 @@ const DEFAULT_WELCOME_CONTENT = {
     subtitle: 'A minimal, fast, and anonymous chat client by The Open Anonymity Project', // Optional subtitle that appears centered below the title
     content: `
 1. **Chats are end-to-end anonymous.**\\
-   Every chat requests an *ephemeral and cryptographically unlinkable* OpenRouter API key from a random proxy (*oa-stations*) with blind-signed tokens (*inference tickets*). Because users hit different oa-stations who issue such ephemeral keys to many users, model providers only see anonymous and mixed traffic.
-2. **Chat prompts and responses *never* go through Open Anonymity.**\\
-   Because the ephemeral key itself is unlinkably issued to *you*, your browser talks to models on OpenRouter *directly* via encrypted HTTPS.
+   Every chat requests an *ephemeral and cryptographically unlinkable* access key from a random proxy (*oa-stations*) with blind-signed tokens (*inference tickets*). Because users hit different oa-stations who issue such ephemeral keys to many users, model providers only see anonymous and mixed traffic.
+2. **Chat prompts and responses are *never* seen by OA infra.**\\
+   Because the ephemeral key itself is unlinkably issued to *you*, your browser either talks to models on the provider *directly* via encrypted HTTPS or through an enclaved inference proxy.
    Open Anonymity simply handles the key issuance, rotation, and encrypted tunneling.
 3. **Chat history is entirely local.**\\
    Because every chat takes a random anonymous path to the model, *only you* have your full chat history, [saved locally](#download-chats-link).
 4. **This chat client is lightweight, fast, and disposable.**\\
-    The entire client is less than 1MB. All it does is fetching API keys, sending prompts, and streaming responses on your behalf. You can (and should) <a href="javascript:void(0)" onclick="window.downloadInferenceTickets()">export</a> your tickets to make the same API calls without this client.
+    The entire client is less than 1MB. All it does is fetching ephemeral keys, sending prompts, and streaming responses on your behalf. You can (and should) <a href="javascript:void(0)" onclick="window.downloadInferenceTickets()">export</a> your tickets to make the same API calls without this client.
 
 **The OA project is actively developed at Stanford and Michigan.** This client is currently in closed alpha and more details coming soon. We appreciate your [feedback](https://forms.gle/HEmvxnJpN1jQC7CfA)!
 

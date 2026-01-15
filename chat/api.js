@@ -2,6 +2,8 @@
 import networkProxy from './services/networkProxy.js';
 import { loadModelConfig, getDefaultModelConfig } from './services/modelConfig.js';
 
+const ACCESS_STORAGE_KEY = 'oa_access_key_data';
+
 // System prompt to prepend to all conversations
 // Modify this function to change the default AI behavior
 // Use template literals (backticks) for multi-line prompts
@@ -52,7 +54,7 @@ class OpenRouterAPI {
     // Get API key - only use ticket-based key
     getApiKey() {
         try {
-            const stored = localStorage.getItem('openrouter_api_key_data');
+            const stored = localStorage.getItem(ACCESS_STORAGE_KEY);
             if (stored) {
                 const data = JSON.parse(stored);
                 if (data.key) {
@@ -962,4 +964,3 @@ if (typeof window !== 'undefined') {
 }
 
 export default openRouterAPI;
-

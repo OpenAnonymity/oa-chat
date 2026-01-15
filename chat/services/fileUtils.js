@@ -244,7 +244,7 @@ export async function fileToMultimodalContent(file) {
     }
 
     if (fileType === 'pdf') {
-        // OpenRouter PDF format: type: 'file' with filename and file_data
+        // Default file format for inference backends (OpenRouter-compatible).
         return {
             type: 'file',
             file: {
@@ -255,7 +255,7 @@ export async function fileToMultimodalContent(file) {
     }
 
     if (fileType === 'audio') {
-        // OpenRouter audio format: type: 'file' with filename and file_data
+        // Default file format for inference backends (OpenRouter-compatible).
         return {
             type: 'file',
             file: {

@@ -42,7 +42,7 @@ The app runs entirely in the browser and is organized as ES modules:
   - `pdfExport.js`: HTML-to-PDF export (lazy-loads html2pdf.js).
   - `networkLogger.js`: In-memory log aggregator with session tagging and safe header masking.
   - `networkLogRenderer.js`: Shared description/icon/formatting helpers for logs and minimal views.
-  - `apiKeyStore.js`: LocalStorage-backed legacy key store (`openrouter_api_key_data`).
+  - `apiKeyStore.js`: LocalStorage-backed legacy access store (`oa_access_key_data`).
   - `fileUtils.js`: Validation (10MB cap), type detection, base64, multimodal conversion, and local export of chats/tickets.
   - `privacyPass.js`: Privacy Pass/cryptographic helpers (WASM-backed) for ticket flows.
   - `ticketClient.js`: Ticket lifecycle and access issuance (`alphaRegister`, `requestApiKey`), integrates with Privacy Pass artifacts and proxy fallback.
@@ -87,7 +87,7 @@ Existing commits use short, present-tense descriptions (e.g. “changes in UI, a
 
 ## API Keys & Security
 - Keys/tokens are ephemeral and acquired anonymously via ticket redemption (`services/ticketClient.js` + Privacy Pass). Do not hard-code keys.
-- Active access data lives in session state; legacy OpenRouter key data may exist in LocalStorage (`openrouter_api_key_data`). Inference tickets are stored in LocalStorage (`inference_tickets`) and can be exported via `services/fileUtils.js`.
+- Active access data lives in session state; legacy access data may exist in LocalStorage (`oa_access_key_data`). Inference tickets are stored in LocalStorage (`inference_tickets`) and can be exported via `services/fileUtils.js`.
 - Network proxy traffic uses libcurl.js/mbedTLS to tunnel TLS over WebSocket; fallback to direct requests requires explicit user confirmation.
 - Do not log secrets. When instrumenting requests, route through `services/networkLogger.js` and rely on `sanitizeHeaders` (Authorization masking).
 - All prompts/responses are sent directly from the browser to the selected inference backend using the user’s ephemeral access credential; Open Anonymity infrastructure only handles ticketing and access issuance.
