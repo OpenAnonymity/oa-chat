@@ -86,6 +86,9 @@ class RightPanel {
     initializeState() {
         // Load initial ticket count
         this.ticketCount = ticketClient.getTicketCount();
+        if (this.ticketCount === 0) {
+            this.showInvitationForm = true;
+        }
 
         // Load current ticket for animation
         this.loadNextTicket();
@@ -198,7 +201,11 @@ class RightPanel {
     setupEventListeners() {
         // Listen for ticket updates
         window.addEventListener('tickets-updated', () => {
+            const previousTicketCount = this.ticketCount;
             this.ticketCount = ticketClient.getTicketCount();
+            if (this.ticketCount === 0 && previousTicketCount > 0) {
+                this.showInvitationForm = true;
+            }
             this.loadNextTicket();
             this.renderTopSectionOnly(); // Only update top section, not logs
             this.updateStatusIndicator();
@@ -1259,8 +1266,8 @@ class RightPanel {
                         id="toggle-invitation-form-btn"
                         class="btn-ghost-hover inline-flex items-center gap-1 px-2 py-1 text-[10px] rounded-md border border-border bg-background transition-all duration-200 shadow-sm"
                     >
-                        <span>${this.showInvitationForm || this.ticketCount === 0 ? 'Hide' : 'Add'}</span>
-                        <svg class="w-2.5 h-2.5 transition-transform ${this.showInvitationForm || this.ticketCount === 0 ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <span>${this.showInvitationForm ? 'Hide' : 'Add'}</span>
+                        <svg class="w-2.5 h-2.5 transition-transform ${this.showInvitationForm ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
                         </svg>
                     </button>
@@ -1289,7 +1296,7 @@ class RightPanel {
                     </button>
                 </div>
 
-                ${this.showInvitationForm || this.ticketCount === 0 ? `
+                ${this.showInvitationForm ? `
                     <form id="invitation-code-form" class="space-y-2 mt-3 p-3 bg-muted/10 rounded-lg">
                         <input
                             id="invitation-code-input"
