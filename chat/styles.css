@@ -3134,6 +3134,86 @@ html {
     border-color: hsl(var(--color-foreground) / 0.3) !important;
 }
 
+/* Sidebar account tab */
+.account-tab-btn {
+    position: absolute;
+    left: 0.75rem;
+    bottom: 0.75rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.35rem 0.6rem;
+    border-radius: 9999px;
+    border: 1px solid hsl(var(--color-border));
+    background-color: hsl(var(--color-background));
+    color: hsl(var(--color-foreground));
+    font-size: 0.7rem;
+    font-weight: 600;
+    box-shadow: 0 6px 16px hsl(var(--color-foreground) / 0.08);
+    transition: transform 0.2s ease, border-color 0.2s ease, background-color 0.2s ease;
+    z-index: 5;
+}
+
+.account-tab-btn:hover {
+    background-color: hsl(var(--color-hover));
+    border-color: hsl(var(--color-foreground) / 0.3);
+    transform: translateY(-1px);
+}
+
+.account-tab-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 9999px;
+    background-color: hsl(var(--color-muted-foreground));
+}
+
+.account-tab-btn[data-status="logged-in"] .account-tab-dot {
+    background-color: hsl(142 71% 45%);
+}
+
+/* Logged-in glow effect for account button */
+.account-tab-btn[data-status="logged-in"] {
+    border-color: hsl(142 71% 45% / 0.5);
+}
+
+/* ============================================
+   ACCOUNT CREATION ANIMATIONS
+   ============================================ */
+
+/* Success checkmark animation */
+@keyframes checkmarkDraw {
+    0% { stroke-dashoffset: 24; }
+    100% { stroke-dashoffset: 0; }
+}
+
+.success-checkmark {
+    stroke-dasharray: 24;
+    stroke-dashoffset: 24;
+    animation: checkmarkDraw 0.4s ease-out 0.2s forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .success-checkmark {
+        animation: none;
+        stroke-dashoffset: 0;
+    }
+}
+
+/* ============================================
+   ACCOUNT MODAL - Fixed Layout System
+   ============================================ */
+
+.account-modal-panel {
+    width: 100%;
+    max-width: 28rem;
+}
+
+/* Account Number Display - simple text with tracking */
+.account-number-text {
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.15em;
+}
+
 /* Destructive ghost hover */
 .btn-destructive-hover:hover {
     background-color: hsl(var(--color-destructive) / 0.2) !important;
@@ -3357,6 +3437,7 @@ html {
     #model-picker-modal,
     #delete-history-modal,
     #verify-key-modal,
+    #account-modal,
     #link-preview-card,
     .message-user-actions,
     .copy-message-btn,

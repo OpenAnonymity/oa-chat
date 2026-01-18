@@ -230,7 +230,7 @@
 
     <div id="app" class="flex flex-col md:flex-row h-full w-full">
         <!-- Left Sidebar: Chat Sessions -->
-        <aside id="sidebar" class="flex-shrink-0 flex flex-col bg-background border-r border-border h-full min-h-0 overflow-hidden transition-[width,border-width] duration-300 ease-in-out w-64">
+        <aside id="sidebar" class="relative flex-shrink-0 flex flex-col bg-background border-r border-border h-full min-h-0 overflow-hidden transition-[width,border-width] duration-300 ease-in-out w-64">
             <div class="flex h-full w-full flex-col gap-2 p-2">
                 <div class="flex w-full items-center gap-1 pr-1">
                     <button id="new-chat-btn" class="btn-ghost-hover flex-1 inline-flex items-center whitespace-nowrap transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 gap-2 bg-card border border-border text-foreground shadow-sm h-9 rounded-md px-3 justify-start">
@@ -287,6 +287,10 @@
                     </div>
                 </div>
             </div>
+            <button id="account-tab-btn" data-status="none" class="account-tab-btn" type="button" aria-label="Account" aria-controls="account-modal" aria-expanded="false">
+                <span class="account-tab-dot" aria-hidden="true"></span>
+                <span>Account</span>
+            </button>
         </aside>
 
         <div class="flex flex-1 min-w-0">
@@ -630,6 +634,9 @@
 
     <!-- API Key Verification Modal -->
     <div id="verify-key-modal" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"></div>
+
+    <!-- Account Modal -->
+    <div id="account-modal" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"></div>
 
     <!-- Model Picker Modal -->
     <div id="model-picker-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">

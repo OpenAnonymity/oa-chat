@@ -9,6 +9,7 @@ import ChatArea from './components/ChatArea.js';
 import ChatInput from './components/ChatInput.js';
 import ModelPicker from './components/ModelPicker.js';
 import ChatHistoryImportModal from './components/ChatHistoryImportModal.js';
+import AccountModal from './components/AccountModal.js';
 import { buildTypingIndicator } from './components/MessageTemplates.js';
 import themeManager from './services/themeManager.js';
 import { downloadInferenceTickets, downloadAllChats, getFileIconSvg } from './services/fileUtils.js';
@@ -21,6 +22,7 @@ import shareService from './services/shareService.js';
 import shareModals from './components/ShareModals.js';
 import { getTicketCost, initModelTiers } from './services/modelTiers.js';
 import { initPinnedModels } from './services/modelConfig.js';
+import accountService from './services/accountService.js';
 
 const DEFAULT_MODEL_NAME = inferenceService.getDefaultModelName();
 const SESSION_PAGE_SIZE = 80;
@@ -1078,6 +1080,7 @@ class ChatApp {
         this.chatInput = new ChatInput(this);
         this.modelPicker = new ModelPicker(this);
         this.chatHistoryImportModal = new ChatHistoryImportModal(this);
+        this.accountModal = new AccountModal(this);
         this.rightPanel = new RightPanel(this);
         this.rightPanel.mount();
 
@@ -1105,6 +1108,13 @@ class ChatApp {
         window.addEventListener('oa-db-compat-mode', () => {
             this.showToast('Chat storage is running in compatibility mode. Close other tabs and reload to finish the upgrade.', 'error');
         });
+
+        await accountService.init();
+        if (typeof requestIdleCallback === 'function') {
+            requestIdleCallback(() => accountService.maybeAutoUnlock());
+        } else {
+            setTimeout(() => accountService.maybeAutoUnlock(), 800);
+        }
 
         // Initialize network proxy in background (don't block UI)
         networkProxy.initialize().catch(err => console.warn('Proxy init failed:', err));
@@ -1923,7 +1933,7 @@ class ChatApp {
         const toast = document.createElement('div');
         toast.id = 'app-toast';
         const bgColor = type === 'error' ? 'bg-destructive text-destructive-foreground' : 'bg-primary text-primary-foreground';
-        toast.className = `fixed bottom-36 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg shadow-lg text-sm ${bgColor} animate-in fade-in slide-in-from-bottom-4`;
+        toast.className = `fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] px-4 py-2 rounded-lg shadow-lg text-sm ${bgColor} animate-in fade-in slide-in-from-bottom-4`;
         toast.textContent = message;
         document.body.appendChild(toast);
         this._toastTimeout = setTimeout(() => {

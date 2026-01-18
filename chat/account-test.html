@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Account Service Test Harness</title>
+    <base href="/chat/">
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 2rem;
+            background: #1a1a1a;
+            color: #e0e0e0;
+        }
+        h1 { color: #fff; margin-bottom: 0.5rem; }
+        .subtitle { color: #888; margin-bottom: 2rem; }
+        .card {
+            background: #2a2a2a;
+            border: 1px solid #3a3a3a;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+        }
+        .card h2 { margin-top: 0; font-size: 1rem; color: #fff; }
+        button {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.875rem;
+            margin-right: 0.5rem;
+            margin-bottom: 0.5rem;
+        }
+        button:hover { background: #2563eb; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        button.secondary {
+            background: #4a4a4a;
+        }
+        button.secondary:hover { background: #5a5a5a; }
+        button.danger { background: #dc2626; }
+        button.danger:hover { background: #b91c1c; }
+        .log {
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 4px;
+            padding: 1rem;
+            font-family: monospace;
+            font-size: 0.75rem;
+            max-height: 300px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+        .log-entry { margin: 0.25rem 0; }
+        .log-entry.pass { color: #22c55e; }
+        .log-entry.fail { color: #ef4444; }
+        .log-entry.info { color: #888; }
+        .log-entry.warn { color: #f59e0b; }
+        .status {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+        .status.none { background: #333; color: #888; }
+        .status.locked { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+        .status.unlocked { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
+        .status.busy { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
+        .dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: currentColor;
+        }
+        .state-display {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 0.5rem 1rem;
+            font-size: 0.75rem;
+        }
+        .state-label { color: #888; }
+        .state-value { font-family: monospace; }
+        input {
+            background: #1a1a1a;
+            border: 1px solid #333;
+            color: #e0e0e0;
+            padding: 0.5rem;
+            border-radius: 4px;
+            font-size: 0.875rem;
+            width: 100%;
+            margin-bottom: 0.5rem;
+        }
+        input:focus { outline: none; border-color: #3b82f6; }
+        .flex { display: flex; gap: 0.5rem; align-items: center; }
+        .mt { margin-top: 1rem; }
+    </style>
+</head>
+<body>
+    <h1>Account Service Test Harness</h1>
+    <p class="subtitle">Local testing for passkey + recovery code authentication</p>
+
+    <div class="card">
+        <h2>Test Harness Controls</h2>
+        <button id="install-mocks">Install Mocks</button>
+        <button id="uninstall-mocks" class="secondary">Uninstall Mocks</button>
+        <button id="reset-mocks" class="secondary">Reset State</button>
+        <button id="run-all-tests">Run All Tests</button>
+        <p id="mock-status" style="font-size: 0.75rem; color: #888; margin-top: 0.5rem;">Mocks not installed</p>
+    </div>
+
+    <div class="card">
+        <h2>Account State</h2>
+        <div class="flex" style="margin-bottom: 1rem;">
+            <span class="status none" id="account-status">
+                <span class="dot"></span>
+                <span id="status-label">No Account</span>
+            </span>
+        </div>
+        <div class="state-display" id="state-display">
+            <span class="state-label">Account ID:</span>
+            <span class="state-value" id="state-accountId">-</span>
+            <span class="state-label">Credential ID:</span>
+            <span class="state-value" id="state-credentialId">-</span>
+            <span class="state-label">Recovery Confirmed:</span>
+            <span class="state-value" id="state-recoveryConfirmed">-</span>
+            <span class="state-label">Passkey Supported:</span>
+            <span class="state-value" id="state-passkeySupported">-</span>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Manual Actions</h2>
+        <div class="flex">
+            <button id="create-account">Create Account</button>
+            <button id="lock-account" class="secondary">Lock</button>
+            <button id="clear-account" class="danger">Clear</button>
+        </div>
+        <div class="mt">
+            <input type="text" id="account-id-input" placeholder="Account ID (for unlock)">
+            <button id="unlock-passkey">Unlock with Passkey</button>
+        </div>
+        <div class="mt">
+            <input type="text" id="recovery-code-input" placeholder="Recovery code (e.g., tuba-kemo-fila-groe-bazi)">
+            <button id="unlock-recovery">Unlock with Recovery</button>
+        </div>
+        <div class="mt">
+            <button id="register-device" class="secondary">Register This Device</button>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Recovery Code</h2>
+        <p style="font-size: 0.75rem; color: #888;">After creating an account, the recovery code appears here.</p>
+        <div id="recovery-display" style="font-family: monospace; font-size: 1.25rem; padding: 0.5rem; background: #1a1a1a; border-radius: 4px;">-</div>
+        <button id="confirm-recovery" class="secondary mt">I Saved This Code</button>
+    </div>
+
+    <div class="card">
+        <h2>Test Log</h2>
+        <button id="clear-log" class="secondary" style="margin-bottom: 0.5rem;">Clear Log</button>
+        <div class="log" id="test-log"></div>
+    </div>
+
+    <!-- Load hash-wasm for Argon2id -->
+    <script src="https://cdn.jsdelivr.net/npm/hash-wasm@4.11.0/dist/argon2.umd.min.js"></script>
+    <script>
+        window.initHashWasm = async () => {
+            // hash-wasm auto-initializes
+        };
+        window.argon2id = async (params) => {
+            return hashwasm.argon2id(params);
+        };
+    </script>
+
+    <script type="module">
+        import { AccountTestHarness, runTests } from './services/__tests__/accountTestHarness.js';
+        import accountService from './services/accountService.js';
+
+        const harness = new AccountTestHarness();
+        let mocksInstalled = false;
+
+        // Logging
+        const logEl = document.getElementById('test-log');
+        function log(message, type = 'info') {
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logEl.appendChild(entry);
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        // State display
+        function updateStateDisplay() {
+            const state = accountService.getState();
+            const statusEl = document.getElementById('account-status');
+            const labelEl = document.getElementById('status-label');
+
+            statusEl.className = `status ${state.status}`;
+            labelEl.textContent = {
+                none: 'No Account',
+                locked: 'Locked',
+                unlocked: 'Unlocked',
+                busy: 'Working...'
+            }[state.status] || 'Unknown';
+
+            document.getElementById('state-accountId').textContent = state.accountId || '-';
+            document.getElementById('state-credentialId').textContent =
+                state.credentialId ? state.credentialId.slice(0, 16) + '...' : '-';
+            document.getElementById('state-recoveryConfirmed').textContent = state.recoveryConfirmed ? 'Yes' : 'No';
+            document.getElementById('state-passkeySupported').textContent = state.passkeySupported ? 'Yes' : 'No';
+
+            document.getElementById('recovery-display').textContent = state.recoveryCode || '-';
+
+            if (state.error) {
+                log(`Error: ${state.error}`, 'fail');
+            }
+        }
+
+        // Subscribe to state changes
+        accountService.subscribe(updateStateDisplay);
+
+        // Initialize
+        await accountService.init();
+        updateStateDisplay();
+
+        // Mock controls
+        document.getElementById('install-mocks').onclick = () => {
+            harness.install();
+            mocksInstalled = true;
+            document.getElementById('mock-status').textContent = 'Mocks installed - server calls intercepted';
+            log('Mocks installed', 'pass');
+        };
+
+        document.getElementById('uninstall-mocks').onclick = () => {
+            harness.uninstall();
+            mocksInstalled = false;
+            document.getElementById('mock-status').textContent = 'Mocks not installed';
+            log('Mocks uninstalled', 'info');
+        };
+
+        document.getElementById('reset-mocks').onclick = () => {
+            harness.reset();
+            log('Mock state reset', 'info');
+        };
+
+        document.getElementById('run-all-tests').onclick = async () => {
+            log('Running all tests...', 'info');
+            const results = await harness.runAllTests();
+            const passed = results.filter(r => r.passed).length;
+            log(`Tests complete: ${passed}/${results.length} passed`, passed === results.length ? 'pass' : 'warn');
+            updateStateDisplay();
+        };
+
+        // Manual actions
+        document.getElementById('create-account').onclick = async () => {
+            if (!mocksInstalled) {
+                log('Install mocks first for local testing', 'warn');
+                return;
+            }
+            log('Creating account...', 'info');
+            const success = await accountService.createAccount();
+            log(success ? 'Account created' : 'Account creation failed', success ? 'pass' : 'fail');
+            updateStateDisplay();
+        };
+
+        document.getElementById('lock-account').onclick = () => {
+            accountService.lock();
+            log('Account locked', 'info');
+            updateStateDisplay();
+        };
+
+        document.getElementById('clear-account').onclick = async () => {
+            await accountService.clearLocalAccount();
+            log('Account cleared', 'info');
+            updateStateDisplay();
+        };
+
+        document.getElementById('unlock-passkey').onclick = async () => {
+            if (!mocksInstalled) {
+                log('Install mocks first for local testing', 'warn');
+                return;
+            }
+            const accountId = document.getElementById('account-id-input').value.trim() || undefined;
+            log('Unlocking with passkey...', 'info');
+            const success = await accountService.unlockWithPasskey(accountId);
+            log(success ? 'Unlocked with passkey' : 'Passkey unlock failed', success ? 'pass' : 'fail');
+            updateStateDisplay();
+        };
+
+        document.getElementById('unlock-recovery').onclick = async () => {
+            if (!mocksInstalled) {
+                log('Install mocks first for local testing', 'warn');
+                return;
+            }
+            const accountId = document.getElementById('account-id-input').value.trim() || undefined;
+            const recoveryCode = document.getElementById('recovery-code-input').value.trim();
+            log('Unlocking with recovery code...', 'info');
+            const success = await accountService.unlockWithRecoveryCode(accountId, recoveryCode);
+            log(success ? 'Unlocked with recovery code' : 'Recovery unlock failed', success ? 'pass' : 'fail');
+            updateStateDisplay();
+        };
+
+        document.getElementById('register-device').onclick = async () => {
+            if (!mocksInstalled) {
+                log('Install mocks first for local testing', 'warn');
+                return;
+            }
+            log('Registering device...', 'info');
+            const success = await accountService.registerCurrentDevice();
+            log(success ? 'Device registered' : 'Device registration failed', success ? 'pass' : 'fail');
+            updateStateDisplay();
+        };
+
+        document.getElementById('confirm-recovery').onclick = () => {
+            accountService.confirmRecoveryCodeSaved();
+            log('Recovery code confirmed as saved', 'info');
+            updateStateDisplay();
+        };
+
+        document.getElementById('clear-log').onclick = () => {
+            logEl.innerHTML = '';
+        };
+
+        // Expose for console debugging
+        window.accountService = accountService;
+        window.harness = harness;
+        window.runTests = runTests;
+
+        log('Test harness ready. Click "Install Mocks" to begin.', 'info');
+    </script>
+</body>
+</html>
