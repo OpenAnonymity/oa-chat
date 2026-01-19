@@ -1,5 +1,4 @@
 // Main application logic
-import { ulid } from 'https://esm.sh/ulidx@2.3.0';
 import RightPanel from './components/RightPanel.js';
 // FEATURE DISABLED: Status indicator and activity banner - uncomment to re-enable
 import FloatingPanel from './components/FloatingPanel.js';
@@ -12,6 +11,9 @@ import ChatHistoryImportModal from './components/ChatHistoryImportModal.js';
 import AccountModal from './components/AccountModal.js';
 import { buildTypingIndicator } from './components/MessageTemplates.js';
 import themeManager from './services/themeManager.js';
+import preferencesStore, { PREF_KEYS } from './services/preferencesStore.js';
+import storageManager from './services/storageManager.js';
+import storageEvents from './services/storageEvents.js';
 import { downloadInferenceTickets, downloadAllChats, getFileIconSvg } from './services/fileUtils.js';
 import { parseReasoningContent } from './services/reasoningParser.js';
 import { fetchUrlMetadata } from './services/urlMetadata.js';
@@ -23,6 +25,8 @@ import shareModals from './components/ShareModals.js';
 import { getTicketCost, initModelTiers } from './services/modelTiers.js';
 import { initPinnedModels } from './services/modelConfig.js';
 import accountService from './services/accountService.js';
+import apiKeyStore from './services/apiKeyStore.js';
+import { generateUlid21 } from './services/ulid.js';
 
 const DEFAULT_MODEL_NAME = inferenceService.getDefaultModelName();
 const SESSION_PAGE_SIZE = 80;
@@ -67,6 +71,10 @@ const MODEL_NAME_ALIASES = new Map([
     ['OpenAI: GPT-5 Chat', 'OpenAI: GPT-5 Instant'],
     ['GPT-5 Chat', 'OpenAI: GPT-5 Instant'],
 ]);
+
+function generateSessionId() {
+    return generateUlid21();
+}
 const SESSION_STORAGE_KEY = 'oa-current-session'; // Tab-scoped session persistence
 const DELETE_HISTORY_COPY = {
     title: 'Delete all chat history',
@@ -169,6 +177,8 @@ class ChatApp {
         this.updateToastDismissed = false;
         this.updateCheckInterval = null;
         this.updateCheckInFlight = false;
+        this.pendingStorageRefresh = false;
+        this.storageReloadTimer = null;
 
         // Link preview state
         this.linkPreviewCard = document.getElementById('link-preview-card');
@@ -1061,15 +1071,29 @@ class ChatApp {
         };
 
         // Setup global function to download inference tickets
-        window.downloadInferenceTickets = () => {
-            downloadInferenceTickets();
+        window.downloadInferenceTickets = async () => {
+            try {
+                const success = await downloadInferenceTickets();
+                if (success) {
+                    this.showToast('Tickets exported successfully', 'success');
+                } else {
+                    this.showToast('Failed to export tickets', 'error');
+                }
+            } catch (error) {
+                console.error('Ticket export failed:', error);
+                this.showToast('Failed to export tickets', 'error');
+            }
         };
+
+        // Initialize storage events early for multi-tab sync.
+        window.storageEvents = storageEvents;
+        storageEvents.init();
 
         // Initialize theme FIRST (sync, fast, prevents flash)
         themeManager.init();
 
-        // Initialize wide mode state from localStorage
-        this.initWideMode();
+        // Initialize wide mode state from persistent storage (async).
+        void this.initWideMode();
 
         // Start DB init in background - components can show skeleton state
         const dbReady = chatDB.init();
@@ -1109,6 +1133,9 @@ class ChatApp {
             this.showToast('Chat storage is running in compatibility mode. Close other tabs and reload to finish the upgrade.', 'error');
         });
 
+        await storageManager.init();
+        await apiKeyStore.loadApiKey();
+
         await accountService.init();
         if (typeof requestIdleCallback === 'function') {
             requestIdleCallback(() => accountService.maybeAutoUnlock());
@@ -1117,6 +1144,7 @@ class ChatApp {
         }
 
         // Initialize network proxy in background (don't block UI)
+        await networkProxy.syncWithPreferences().catch(err => console.warn('Proxy pref sync failed:', err));
         networkProxy.initialize().catch(err => console.warn('Proxy init failed:', err));
 
         // Now set up theme controls after chatInput is initialized
@@ -1124,6 +1152,24 @@ class ChatApp {
         this.themeUnsubscribe = themeManager.onChange((preference, effectiveTheme) => {
             this.updateThemeControls(preference, effectiveTheme);
         });
+
+        this.preferencesUnsubscribe = preferencesStore.onChange((key, value) => {
+            if (key === PREF_KEYS.wideMode) {
+                this.applyWideMode(!!value);
+            }
+        });
+
+        this.storageEventsUnsubscribe = [
+            storageEvents.on('sessions-updated', (payload) => {
+                this.handleStorageEvent('sessions-updated', payload);
+            }),
+            storageEvents.on('sessions-cleared', (payload) => {
+                this.handleStorageEvent('sessions-cleared', payload);
+            }),
+            storageEvents.on('messages-updated', (payload) => {
+                this.handleStorageEvent('messages-updated', payload);
+            })
+        ];
 
         // FEATURE DISABLED: Status indicator and activity banner - uncomment to re-enable
         // Initialize floating panel
@@ -2347,7 +2393,7 @@ class ChatApp {
      * @returns {string} Unique ULID with dashes for readability
      */
     generateId() {
-        const raw = ulid().slice(0, 21).toLowerCase(); // Truncate to 21 chars, lowercase
+        const raw = generateSessionId();
         return `${raw.slice(0,5)}-${raw.slice(5,10)}-${raw.slice(10,15)}-${raw.slice(15)}`;
     }
 
@@ -2618,6 +2664,10 @@ class ChatApp {
         } else if (!isStreaming && this.scrollButtonCheckInterval) {
             clearInterval(this.scrollButtonCheckInterval);
             this.scrollButtonCheckInterval = null;
+        }
+
+        if (!isStreaming) {
+            this.flushPendingStorageRefresh();
         }
 
         // Update UI when streaming state changes
@@ -4485,6 +4535,39 @@ class ChatApp {
         this.renderSessions();
     }
 
+    handleStorageEvent(type, payload) {
+        if (this.isCurrentSessionStreaming()) {
+            this.pendingStorageRefresh = true;
+            return;
+        }
+
+        if (type === 'sessions-updated' || type === 'sessions-cleared') {
+            this.scheduleStorageReload();
+        }
+
+        if (type === 'messages-updated') {
+            const sessionId = payload?.sessionId;
+            if (!sessionId || sessionId === this.state.currentSessionId) {
+                void this.renderMessages();
+            }
+        }
+    }
+
+    scheduleStorageReload() {
+        if (this.storageReloadTimer) return;
+        this.storageReloadTimer = setTimeout(async () => {
+            this.storageReloadTimer = null;
+            await this.reloadSessions();
+        }, 400);
+    }
+
+    flushPendingStorageRefresh() {
+        if (!this.pendingStorageRefresh) return;
+        this.pendingStorageRefresh = false;
+        this.scheduleStorageReload();
+        void this.renderMessages();
+    }
+
     mergeSessionLists(primary, secondary) {
         const merged = [];
         const seen = new Set();
@@ -4653,23 +4736,25 @@ class ChatApp {
     }
 
     /**
-     * Initializes wide mode state from localStorage.
+     * Initializes wide mode state from persistent preferences.
      */
-    initWideMode() {
-        const isWide = localStorage.getItem('oa-wide-mode') === 'true';
-        if (isWide) {
-            document.documentElement.classList.add('wide-mode');
-            this.elements.wideModeBtn?.classList.add('wide-active');
-        }
+    async initWideMode() {
+        const isWide = await preferencesStore.getPreference(PREF_KEYS.wideMode);
+        this.applyWideMode(!!isWide);
+    }
+
+    applyWideMode(isWide) {
+        document.documentElement.classList.toggle('wide-mode', isWide);
+        this.elements.wideModeBtn?.classList.toggle('wide-active', isWide);
     }
 
     /**
      * Toggles wide mode on/off.
      */
     toggleWideMode() {
-        const isWide = document.documentElement.classList.toggle('wide-mode');
-        localStorage.setItem('oa-wide-mode', isWide ? 'true' : 'false');
-        this.elements.wideModeBtn?.classList.toggle('wide-active', isWide);
+        const isWide = !document.documentElement.classList.contains('wide-mode');
+        this.applyWideMode(isWide);
+        preferencesStore.savePreference(PREF_KEYS.wideMode, isWide);
         // Recalculate toolbar divider after max-width transition completes (200ms)
         setTimeout(() => this.updateToolbarDivider(), 200);
     }

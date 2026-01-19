@@ -3,54 +3,72 @@
  * Collects all user data (chats, tickets, preferences) and exports as a single JSON file.
  */
 
+import preferencesStore, { PREF_KEYS } from './preferencesStore.js';
+import ticketStore from './ticketStore.js';
+
 const FORMAT_VERSION = '1.0';
 const APP_NAME = 'oa-fastchat';
 
 /**
- * Collect all localStorage preferences.
+ * Collect persisted preferences.
  * @returns {Object} Preferences object
  */
-function collectPreferencesFromLocalStorage() {
+async function collectPreferencesFromStore() {
     const preferences = {};
 
-    // Theme preference
-    const theme = localStorage.getItem('oa-theme-preference');
-    if (theme !== null) {
+    const theme = await preferencesStore.getPreference(PREF_KEYS.theme);
+    if (theme) {
         preferences.theme = theme;
     }
 
-    // Wide mode
-    const wideMode = localStorage.getItem('oa-wide-mode');
-    if (wideMode !== null) {
-        preferences.wideMode = wideMode === 'true';
+    const wideMode = await preferencesStore.getPreference(PREF_KEYS.wideMode);
+    if (wideMode !== undefined) {
+        preferences.wideMode = !!wideMode;
     }
 
-    // Flat mode (display mode)
-    const flatMode = localStorage.getItem('oa-flat-mode');
-    if (flatMode !== null) {
-        preferences.flatMode = flatMode !== 'false';
+    const flatMode = await preferencesStore.getPreference(PREF_KEYS.flatMode);
+    if (flatMode !== undefined) {
+        preferences.flatMode = flatMode !== false;
     }
 
-    // Right panel visibility
-    const rightPanelVisible = localStorage.getItem('oa-right-panel-visible');
-    if (rightPanelVisible !== null) {
-        preferences.rightPanelVisible = rightPanelVisible === 'true';
+    const fontMode = await preferencesStore.getPreference(PREF_KEYS.fontMode);
+    if (fontMode) {
+        preferences.fontMode = fontMode;
     }
 
-    // Ticket info visibility
-    const ticketInfoVisible = localStorage.getItem('oa-ticket-info-visible');
-    if (ticketInfoVisible !== null) {
-        preferences.ticketInfoVisible = ticketInfoVisible === 'true';
+    const rightPanelVisible = await preferencesStore.getPreference(PREF_KEYS.rightPanelVisible);
+    if (rightPanelVisible !== undefined && rightPanelVisible !== null) {
+        preferences.rightPanelVisible = !!rightPanelVisible;
     }
 
-    // Proxy settings
-    const proxySettings = localStorage.getItem('oa-network-proxy-settings');
+    const ticketInfoVisible = await preferencesStore.getPreference(PREF_KEYS.ticketInfoVisible);
+    if (ticketInfoVisible !== undefined) {
+        preferences.ticketInfoVisible = !!ticketInfoVisible;
+    }
+
+    const proxySettings = await preferencesStore.getPreference(PREF_KEYS.proxySettings);
     if (proxySettings) {
-        try {
-            preferences.proxySettings = JSON.parse(proxySettings);
-        } catch (e) {
-            console.warn('Failed to parse proxy settings:', e);
-        }
+        preferences.proxySettings = proxySettings;
+    }
+
+    const sharePasswordMode = await preferencesStore.getPreference(PREF_KEYS.sharePasswordMode);
+    if (sharePasswordMode) {
+        preferences.sharePasswordMode = sharePasswordMode;
+    }
+
+    const shareExpiryTtl = await preferencesStore.getPreference(PREF_KEYS.shareExpiryTtl);
+    if (Number.isFinite(shareExpiryTtl)) {
+        preferences.shareExpiryTtl = shareExpiryTtl;
+    }
+
+    const shareCustomExpiryValue = await preferencesStore.getPreference(PREF_KEYS.shareCustomExpiryValue);
+    if (Number.isFinite(shareCustomExpiryValue)) {
+        preferences.shareCustomExpiryValue = shareCustomExpiryValue;
+    }
+
+    const shareCustomExpiryUnit = await preferencesStore.getPreference(PREF_KEYS.shareCustomExpiryUnit);
+    if (shareCustomExpiryUnit) {
+        preferences.shareCustomExpiryUnit = shareCustomExpiryUnit;
     }
 
     return preferences;
@@ -115,32 +133,12 @@ export async function collectChats() {
 }
 
 /**
- * Collect all tickets from localStorage.
+ * Collect all tickets from persistent storage.
  * @returns {Object} Object with active and archived ticket arrays
  */
-export function collectTickets() {
-    const tickets = { active: [], archived: [] };
-
-    try {
-        const activeJson = localStorage.getItem('inference_tickets');
-        if (activeJson) {
-            const parsed = JSON.parse(activeJson);
-            if (Array.isArray(parsed)) {
-                tickets.active = parsed;
-            }
-        }
-
-        const archivedJson = localStorage.getItem('inference_tickets_archive');
-        if (archivedJson) {
-            const parsed = JSON.parse(archivedJson);
-            if (Array.isArray(parsed)) {
-                tickets.archived = parsed;
-            }
-        }
-    } catch (e) {
-        console.error('Failed to collect tickets:', e);
-    }
-
+export async function collectTickets() {
+    await ticketStore.init();
+    const tickets = { active: ticketStore.getTickets(), archived: ticketStore.getArchiveTickets() };
     return tickets;
 }
 
@@ -188,9 +186,9 @@ export async function exportChats() {
  * Uses the same format as the tickets section in the full export.
  * @returns {boolean} True if export succeeded
  */
-export function exportTickets() {
+export async function exportTickets() {
     try {
-        const tickets = collectTickets();
+        const tickets = await collectTickets();
 
         const exportData = {
             formatVersion: FORMAT_VERSION,
@@ -230,8 +228,8 @@ export async function exportAllData() {
     try {
         // Collect all data
         const chats = await collectChats();
-        const tickets = collectTickets();
-        const localPreferences = collectPreferencesFromLocalStorage();
+        const tickets = await collectTickets();
+        const localPreferences = await collectPreferencesFromStore();
         const dbPreferences = await collectPreferencesFromIndexedDB();
         const preferences = { ...localPreferences, ...dbPreferences };
 

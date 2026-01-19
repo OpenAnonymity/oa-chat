@@ -292,7 +292,7 @@ export async function downloadAllChats() {
 }
 
 /**
- * Exports all inference tickets from localStorage as a downloadable JSON file.
+ * Exports all inference tickets from persistent storage as a downloadable JSON file.
  * @deprecated Use exportTickets from globalExport.js instead.
  * This function is kept for backward compatibility and delegates to exportTickets.
  */

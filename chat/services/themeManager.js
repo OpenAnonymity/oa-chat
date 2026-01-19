@@ -1,4 +1,5 @@
-const STORAGE_KEY = 'oa-theme-preference';
+import preferencesStore, { PREF_KEYS } from './preferencesStore.js';
+
 const PREFERENCE_SYSTEM = 'system';
 const VALID_PREFERENCES = new Set(['light', 'dark', PREFERENCE_SYSTEM]);
 
@@ -31,35 +32,27 @@ class ThemeManager {
             this.mediaQuery.addListener(this.mediaListener);
         }
 
-        const storedPreference = this.safeReadPreference();
-        if (storedPreference && VALID_PREFERENCES.has(storedPreference)) {
-            this.preference = storedPreference;
-        }
+        preferencesStore.getPreference(PREF_KEYS.theme).then((storedPreference) => {
+            if (storedPreference && VALID_PREFERENCES.has(storedPreference)) {
+                this.preference = storedPreference;
+                this.applyTheme();
+                this.notify();
+            }
+        });
+
+        // Listen for preference changes (e.g., from import or multi-tab sync)
+        preferencesStore.onChange((key, value) => {
+            if (key !== PREF_KEYS.theme) return;
+            if (value && VALID_PREFERENCES.has(value) && value !== this.preference) {
+                this.preference = value;
+                this.applyTheme();
+                this.notify();
+            }
+        });
 
         this.applyTheme();
         this.notify();
         this.initialized = true;
-    }
-
-    safeReadPreference() {
-        try {
-            return localStorage.getItem(STORAGE_KEY);
-        } catch (error) {
-            console.warn('Unable to read stored theme preference:', error);
-            return null;
-        }
-    }
-
-    safeStorePreference(value) {
-        try {
-            if (value === PREFERENCE_SYSTEM) {
-                localStorage.removeItem(STORAGE_KEY);
-            } else {
-                localStorage.setItem(STORAGE_KEY, value);
-            }
-        } catch (error) {
-            console.warn('Unable to persist theme preference:', error);
-        }
     }
 
     applyTheme() {
@@ -106,7 +99,7 @@ class ThemeManager {
         }
 
         this.preference = preference;
-        this.safeStorePreference(preference);
+        preferencesStore.savePreference(PREF_KEYS.theme, preference);
         this.applyTheme();
         this.notify();
     }

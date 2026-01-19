@@ -93,6 +93,11 @@ Existing commits use short, present-tense descriptions (e.g. “changes in UI, a
 - All prompts/responses are sent directly from the browser to the selected inference backend using the user’s ephemeral access credential; Open Anonymity infrastructure only handles ticketing and access issuance.
 - When adding providers/integrations, implement a backend in `services/inference/backends/`, route through `inferenceService`, and document any required manual steps in the PR.
 
+## Storage Hardening Notes
+- The app now requests persistent storage (`navigator.storage.persist`) and stores chats/tickets/preferences in IndexedDB; caches may still use localStorage.
+- If you need strict “no third-party script access to data,” self-host all JS/CSS assets and add a CSP that only allows `script-src 'self'` (analytics should be removed or sandboxed).
+- Data growth is currently acceptable (5k+ sessions verified); future improvements could include session/message compaction, optional archive buckets, and quota telemetry via `navigator.storage.estimate()`.
+
 ## Notes & Shortcuts
 - Keyboard shortcuts:
   - ⌘/ new chat, ⌘K model picker, ⌘⇧F focus session search, Esc closes modals/menus.

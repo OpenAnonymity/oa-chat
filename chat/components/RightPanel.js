@@ -12,6 +12,7 @@ import proxyInfoModal from './ProxyInfoModal.js';
 import { getActivityDescription, getActivityIcon, getStatusDotClass, formatTimestamp } from '../services/networkLogRenderer.js';
 import { getTicketCost } from '../services/modelTiers.js';
 import { downloadInferenceTickets } from '../services/fileUtils.js';
+import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 
 // Layout constant for toolbar overlay prediction
 const RIGHT_PANEL_WIDTH = 320; // 20rem = 320px (w-80)
@@ -24,13 +25,8 @@ class RightPanel {
         // Responsive behavior
         this.isDesktop = window.innerWidth >= 1024;
 
-        // Load saved panel state from localStorage
-        const savedState = localStorage.getItem('oa-right-panel-visible');
-        if (savedState !== null) {
-            this.isVisible = savedState === 'true';
-        } else {
-            this.isVisible = this.isDesktop; // Show by default on desktop
-        }
+        // Default panel state (preferences load asynchronously).
+        this.isVisible = this.isDesktop;
 
         this.ticketCount = 0;
         this.apiKey = null;
@@ -75,12 +71,44 @@ class RightPanel {
 
         // Invitation code dropdown state
         this.showInvitationForm = false;
-        const storedTicketInfo = localStorage.getItem('oa-ticket-info-visible');
-        this.showTicketInfo = storedTicketInfo !== null ? storedTicketInfo === 'true' : true;
+        this.showTicketInfo = true;
 
         this.initializeState();
         this.setupEventListeners();
         this.setupResponsive();
+
+        this.loadPreferences();
+    }
+
+    loadPreferences() {
+        preferencesStore.getPreference(PREF_KEYS.rightPanelVisible, { isDesktop: this.isDesktop })
+            .then((isVisible) => {
+                if (typeof isVisible === 'boolean') {
+                    this.isVisible = isVisible;
+                    this.updatePanelVisibility();
+                }
+            });
+
+        preferencesStore.getPreference(PREF_KEYS.ticketInfoVisible)
+            .then((showTicketInfo) => {
+                if (typeof showTicketInfo === 'boolean') {
+                    this.showTicketInfo = showTicketInfo;
+                    this.updateTicketInfoVisibility();
+                    this.updateTicketInfoToggleButton();
+                }
+            });
+
+        preferencesStore.onChange((key, value) => {
+            if (key === PREF_KEYS.rightPanelVisible && typeof value === 'boolean') {
+                this.isVisible = value;
+                this.updatePanelVisibility();
+            }
+            if (key === PREF_KEYS.ticketInfoVisible && typeof value === 'boolean') {
+                this.showTicketInfo = value;
+                this.updateTicketInfoVisibility();
+                this.updateTicketInfoToggleButton();
+            }
+        });
     }
 
     initializeState() {
@@ -335,7 +363,7 @@ class RightPanel {
 
     show() {
         this.isVisible = true;
-        localStorage.setItem('oa-right-panel-visible', 'true');
+        preferencesStore.savePreference(PREF_KEYS.rightPanelVisible, true);
         this.updatePanelVisibility();
         // Predict final width: panel is opening, main area will be NARROWER
         // Only affects width on desktop (>=1024px), on mobile it overlays
@@ -345,7 +373,7 @@ class RightPanel {
 
     hide() {
         this.isVisible = false;
-        localStorage.setItem('oa-right-panel-visible', 'false');
+        preferencesStore.savePreference(PREF_KEYS.rightPanelVisible, false);
         this.updatePanelVisibility();
         // Predict final width: panel is closing, main area will be WIDER
         // Only affects width on desktop (>=1024px), on mobile it overlays
@@ -356,7 +384,7 @@ class RightPanel {
         // Toggle the right panel visibility
         const wasVisible = this.isVisible;
         this.isVisible = !this.isVisible;
-        localStorage.setItem('oa-right-panel-visible', this.isVisible.toString());
+        preferencesStore.savePreference(PREF_KEYS.rightPanelVisible, this.isVisible);
         this.updatePanelVisibility();
         // Predict final width based on toggle direction
         // Only affects width on desktop (>=1024px), on mobile it overlays
@@ -366,7 +394,7 @@ class RightPanel {
     closeRightPanel() {
         // Close the right panel (works in both desktop and mobile)
         this.isVisible = false;
-        localStorage.setItem('oa-right-panel-visible', 'false');
+        preferencesStore.savePreference(PREF_KEYS.rightPanelVisible, false);
         this.updatePanelVisibility();
         // Predict final width: panel is closing, main area will be WIDER
         // Only affects width on desktop (>=1024px), on mobile it overlays
@@ -1705,7 +1733,7 @@ class RightPanel {
         if (toggleInfoBtn) {
             toggleInfoBtn.onclick = () => {
                 this.showTicketInfo = !this.showTicketInfo;
-                localStorage.setItem('oa-ticket-info-visible', this.showTicketInfo ? 'true' : 'false');
+                preferencesStore.savePreference(PREF_KEYS.ticketInfoVisible, this.showTicketInfo);
                 this.updateTicketInfoVisibility();
                 this.updateTicketInfoToggleButton();
             };
@@ -1719,7 +1747,7 @@ class RightPanel {
         const handleTicketInfoCollapse = (e) => {
             e.stopPropagation();
             this.showTicketInfo = false;
-            localStorage.setItem('oa-ticket-info-visible', 'false');
+            preferencesStore.savePreference(PREF_KEYS.ticketInfoVisible, false);
             this.updateTicketInfoVisibility();
             this.updateTicketInfoToggleButton();
         };

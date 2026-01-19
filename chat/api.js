@@ -1,8 +1,7 @@
 // OpenRouter API integration
 import networkProxy from './services/networkProxy.js';
 import { loadModelConfig, getDefaultModelConfig } from './services/modelConfig.js';
-
-const ACCESS_STORAGE_KEY = 'oa_access_key_data';
+import apiKeyStore from './services/apiKeyStore.js';
 
 // System prompt to prepend to all conversations
 // Modify this function to change the default AI behavior
@@ -53,23 +52,10 @@ class OpenRouterAPI {
 
     // Get API key - only use ticket-based key
     getApiKey() {
-        try {
-            const stored = localStorage.getItem(ACCESS_STORAGE_KEY);
-            if (stored) {
-                const data = JSON.parse(stored);
-                if (data.key) {
-                    // Check if not expired
-                    const expiresAt = data.expiresAt || data.expires_at;
-                    const expiryDate = new Date(expiresAt);
-                    if (expiryDate > new Date()) {
-                        return data.key;
-                    }
-                }
-            }
-        } catch (error) {
-            console.error('Error loading ticket-based API key:', error);
-        }
-        return null; // No API key available
+        const key = apiKeyStore.getApiKey();
+        if (!key) return null;
+        if (apiKeyStore.isExpired()) return null;
+        return key;
     }
 
     // Fetch available models from OpenRouter

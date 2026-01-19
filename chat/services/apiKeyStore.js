@@ -1,9 +1,10 @@
 /**
  * API Key Store
- * Legacy access key lifecycle in localStorage.
+ * Legacy access key lifecycle with IndexedDB persistence.
  */
 
 const ACCESS_STORAGE_KEY = 'oa_access_key_data';
+const ACCESS_DB_KEY = 'apiKeyData';
 
 class ApiKeyStore {
     constructor() {
@@ -32,18 +33,50 @@ class ApiKeyStore {
         this.listeners.forEach(listener => listener());
     }
 
-    loadApiKey() {
+    async loadApiKey() {
         try {
-            const stored = localStorage.getItem(ACCESS_STORAGE_KEY);
-            if (stored) {
-                const data = JSON.parse(stored);
+            if (typeof chatDB !== 'undefined') {
+                if (!chatDB.db && typeof chatDB.init === 'function') {
+                    await chatDB.init();
+                }
+                const stored = await chatDB.getSetting(ACCESS_DB_KEY);
+                if (stored) {
+                    this.state = {
+                        apiKey: stored.key,
+                        apiKeyInfo: stored,
+                        expiresAt: stored.expiresAt || stored.expires_at, // Support both formats
+                        ticketUsed: stored.ticketUsed || stored.ticket_used
+                    };
+                    console.log('📥 Loaded API key from IndexedDB');
+                    this.notify();
+                    return;
+                }
+            }
+
+            const legacyStored = localStorage.getItem(ACCESS_STORAGE_KEY);
+            if (legacyStored) {
+                const data = JSON.parse(legacyStored);
                 this.state = {
                     apiKey: data.key,
                     apiKeyInfo: data,
-                    expiresAt: data.expiresAt || data.expires_at, // Support both formats
+                    expiresAt: data.expiresAt || data.expires_at,
                     ticketUsed: data.ticketUsed || data.ticket_used
                 };
-                console.log('📥 Loaded API key from localStorage');
+                let persisted = false;
+                if (typeof chatDB !== 'undefined' && chatDB.db) {
+                    try {
+                        await chatDB.saveSetting(ACCESS_DB_KEY, data);
+                        persisted = true;
+                    } catch (error) {
+                        console.warn('Failed to persist API key during migration:', error);
+                    }
+                }
+                if (persisted) {
+                    localStorage.removeItem(ACCESS_STORAGE_KEY);
+                    console.log('📥 Migrated API key from localStorage');
+                } else {
+                    console.warn('📥 Loaded API key from localStorage (IndexedDB unavailable)');
+                }
                 this.notify();
             }
         } catch (error) {
@@ -51,7 +84,7 @@ class ApiKeyStore {
         }
     }
 
-    setApiKey(apiKeyData) {
+    async setApiKey(apiKeyData) {
         try {
             this.state = {
                 apiKey: apiKeyData.key,
@@ -60,8 +93,24 @@ class ApiKeyStore {
                 ticketUsed: apiKeyData.ticketUsed || apiKeyData.ticket_used
             };
 
-            localStorage.setItem(ACCESS_STORAGE_KEY, JSON.stringify(apiKeyData));
-            console.log('💾 Saved API key to localStorage');
+            let persisted = false;
+            if (typeof chatDB !== 'undefined') {
+                if (!chatDB.db && typeof chatDB.init === 'function') {
+                    await chatDB.init();
+                }
+                if (chatDB.db) {
+                    await chatDB.saveSetting(ACCESS_DB_KEY, apiKeyData);
+                    persisted = true;
+                }
+            }
+
+            if (persisted) {
+                localStorage.removeItem(ACCESS_STORAGE_KEY);
+                console.log('💾 Saved API key to IndexedDB');
+            } else {
+                localStorage.setItem(ACCESS_STORAGE_KEY, JSON.stringify(apiKeyData));
+                console.warn('💾 Saved API key to localStorage (IndexedDB unavailable)');
+            }
             
             window.dispatchEvent(new CustomEvent('apikey-changed'));
             this.notify();
@@ -79,6 +128,9 @@ class ApiKeyStore {
             ticketUsed: null
         };
 
+        if (typeof chatDB !== 'undefined' && chatDB.db) {
+            chatDB.saveSetting(ACCESS_DB_KEY, null).catch(() => {});
+        }
         localStorage.removeItem(ACCESS_STORAGE_KEY);
         console.log('🗑️  Cleared API key');
         
@@ -114,5 +166,3 @@ if (typeof window !== 'undefined') {
 }
 
 export default apiKeyStore;
-
-

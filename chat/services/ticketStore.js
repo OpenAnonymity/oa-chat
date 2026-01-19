@@ -1,32 +1,71 @@
 /**
  * Ticket Store
- * Manages inference tickets with atomic operations and localStorage persistence.
+ * Manages inference tickets with atomic operations and IndexedDB persistence.
  */
+
+import storageEvents from './storageEvents.js';
 
 const STORAGE_KEY = 'inference_tickets';
 const ARCHIVE_KEY = 'inference_tickets_archive';
+const DB_ACTIVE_KEY = 'tickets-active';
+const DB_ARCHIVE_KEY = 'tickets-archive';
 const LOCK_NAME = 'oa-inference-tickets';
 const TICKETS_UPDATED_EVENT = 'tickets-updated';
 
 class TicketStore {
     constructor() {
         this.lockQueue = Promise.resolve();
-        this.tickets = this.readTicketsFromStorage();
-        this.archive = this.readArchiveFromStorage();
+        this.tickets = [];
+        this.archive = [];
+        this.initPromise = null;
+        this.storageUnsubscribe = null;
+    }
 
-        window.addEventListener('storage', (event) => {
-            if (event.key === STORAGE_KEY && event.newValue !== event.oldValue) {
-                this.tickets = this.readTicketsFromStorage();
-                window.dispatchEvent(new CustomEvent(TICKETS_UPDATED_EVENT));
-                return;
-            }
-            if (event.key === ARCHIVE_KEY && event.newValue !== event.oldValue) {
-                this.archive = this.readArchiveFromStorage();
-                window.dispatchEvent(new CustomEvent(TICKETS_UPDATED_EVENT));
-            }
-        });
+    async init() {
+        if (this.initPromise) {
+            return this.initPromise;
+        }
 
-        this.cleanLegacyTickets();
+        this.initPromise = (async () => {
+            storageEvents.init();
+            await this.ensureDbReady();
+            await this.migrateFromLocalStorage();
+            await this.loadFromDatabase({ emitUpdate: false });
+            await this.cleanLegacyTickets();
+
+            if (!this.storageUnsubscribe) {
+                this.storageUnsubscribe = storageEvents.on('tickets-updated', () => {
+                    this.loadFromDatabase({ emitUpdate: true, skipBroadcast: true });
+                });
+            }
+
+            this.emitUpdate();
+        })();
+
+        return this.initPromise;
+    }
+
+    ensureInit() {
+        if (!this.initPromise) {
+            void this.init();
+        }
+    }
+
+    async ensureDbReady() {
+        if (typeof chatDB === 'undefined') return;
+        if (!chatDB.db && typeof chatDB.init === 'function') {
+            try {
+                await chatDB.init();
+            } catch (error) {
+                console.warn('Failed to initialize ticket storage:', error);
+            }
+        }
+    }
+
+    emitUpdate() {
+        if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent(TICKETS_UPDATED_EVENT));
+        }
     }
 
     async withLock(handler) {
@@ -39,28 +78,6 @@ class TicketStore {
         const run = this.lockQueue.then(handler, handler);
         this.lockQueue = run.catch(() => {});
         return run;
-    }
-
-    readRawTickets() {
-        try {
-            const stored = localStorage.getItem(STORAGE_KEY);
-            const parsed = stored ? JSON.parse(stored) : [];
-            return Array.isArray(parsed) ? parsed : [];
-        } catch (error) {
-            console.error('❌ Error loading tickets:', error);
-            return [];
-        }
-    }
-
-    readRawArchive() {
-        try {
-            const stored = localStorage.getItem(ARCHIVE_KEY);
-            const parsed = stored ? JSON.parse(stored) : [];
-            return Array.isArray(parsed) ? parsed : [];
-        } catch (error) {
-            console.error('❌ Error loading ticket archive:', error);
-            return [];
-        }
     }
 
     splitTicketsByStatus(tickets) {
@@ -185,40 +202,6 @@ class TicketStore {
         return { tickets: normalized, archived, changed };
     }
 
-    readTicketsFromStorage() {
-        const raw = this.readRawTickets();
-        const { tickets } = this.normalizeTickets(raw);
-        this.tickets = tickets;
-        return tickets;
-    }
-
-    readArchiveFromStorage() {
-        const raw = this.readRawArchive();
-        const { tickets } = this.normalizeTickets(raw, { allowUsed: true });
-        this.archive = tickets;
-        return tickets;
-    }
-
-    writeTickets(tickets) {
-        try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(tickets));
-            this.tickets = tickets;
-            window.dispatchEvent(new CustomEvent(TICKETS_UPDATED_EVENT));
-        } catch (error) {
-            console.error('❌ Error saving tickets:', error);
-        }
-    }
-
-    writeArchive(tickets) {
-        try {
-            localStorage.setItem(ARCHIVE_KEY, JSON.stringify(tickets));
-            this.archive = tickets;
-            window.dispatchEvent(new CustomEvent(TICKETS_UPDATED_EVENT));
-        } catch (error) {
-            console.error('❌ Error saving ticket archive:', error);
-        }
-    }
-
     mergeTickets(existing, incoming) {
         const combined = [...existing];
         const seen = new Set(existing.map(ticket => ticket.finalized_ticket));
@@ -233,39 +216,155 @@ class TicketStore {
         return combined;
     }
 
+    async readFromDatabase() {
+        if (typeof chatDB === 'undefined' || !chatDB.db) {
+            return { active: [], archived: [] };
+        }
+
+        try {
+            const [active, archived] = await Promise.all([
+                chatDB.getSetting(DB_ACTIVE_KEY),
+                chatDB.getSetting(DB_ARCHIVE_KEY)
+            ]);
+
+            return {
+                active: Array.isArray(active) ? active : [],
+                archived: Array.isArray(archived) ? archived : []
+            };
+        } catch (error) {
+            console.warn('Failed to load tickets from IndexedDB:', error);
+            return { active: [], archived: [] };
+        }
+    }
+
+    async persistTickets(activeTickets, archivedTickets, options = {}) {
+        let persisted = false;
+        if (typeof chatDB !== 'undefined' && chatDB.db) {
+            try {
+                if (typeof chatDB.saveSettings === 'function') {
+                    await chatDB.saveSettings([
+                        { key: DB_ACTIVE_KEY, value: activeTickets },
+                        { key: DB_ARCHIVE_KEY, value: archivedTickets }
+                    ]);
+                } else {
+                    await chatDB.saveSetting(DB_ACTIVE_KEY, activeTickets);
+                    await chatDB.saveSetting(DB_ARCHIVE_KEY, archivedTickets);
+                }
+                persisted = true;
+            } catch (error) {
+                console.warn('Failed to persist tickets:', error);
+            }
+        }
+
+        this.tickets = activeTickets;
+        this.archive = archivedTickets;
+        if (options.emitUpdate !== false) {
+            this.emitUpdate();
+        }
+        if (!options.skipBroadcast) {
+            storageEvents.broadcast('tickets-updated', { updatedAt: Date.now() });
+        }
+
+        return persisted;
+    }
+
+    async loadFromDatabase(options = {}) {
+        if (typeof chatDB === 'undefined' || !chatDB.db) {
+            if (options.emitUpdate !== false) {
+                this.emitUpdate();
+            }
+            return;
+        }
+        const { active, archived } = await this.readFromDatabase();
+        const { tickets: normalizedActive, archived: reclassified, changed } = this.normalizeTickets(active);
+        const { tickets: normalizedArchive, changed: archiveChanged } = this.normalizeTickets(archived, { allowUsed: true });
+        const mergedArchive = this.mergeTickets(normalizedArchive, reclassified);
+
+        if (changed || archiveChanged || reclassified.length > 0) {
+            await this.persistTickets(normalizedActive, mergedArchive, {
+                skipBroadcast: options.skipBroadcast,
+                emitUpdate: options.emitUpdate
+            });
+            return;
+        }
+
+        this.tickets = normalizedActive;
+        this.archive = normalizedArchive;
+        if (options.emitUpdate !== false) {
+            this.emitUpdate();
+        }
+    }
+
+    async migrateFromLocalStorage() {
+        if (typeof localStorage === 'undefined') return;
+
+        const rawActive = localStorage.getItem(STORAGE_KEY);
+        const rawArchive = localStorage.getItem(ARCHIVE_KEY);
+        if (!rawActive && !rawArchive) return;
+
+        let parsedActive = [];
+        let parsedArchive = [];
+
+        try {
+            parsedActive = rawActive ? JSON.parse(rawActive) : [];
+        } catch (error) {
+            console.warn('Failed to parse legacy ticket storage:', error);
+        }
+
+        try {
+            parsedArchive = rawArchive ? JSON.parse(rawArchive) : [];
+        } catch (error) {
+            console.warn('Failed to parse legacy ticket archive:', error);
+        }
+
+        const { tickets: normalizedActive, archived: reclassified } = this.normalizeTickets(parsedActive);
+        const { tickets: normalizedArchive } = this.normalizeTickets(parsedArchive, { allowUsed: true });
+        const mergedArchive = this.mergeTickets(normalizedArchive, reclassified);
+
+        const existing = await this.readFromDatabase();
+        const combinedActive = this.mergeTickets(existing.active, normalizedActive);
+        const combinedArchive = this.mergeTickets(existing.archived, mergedArchive);
+        const archivedIds = new Set(combinedArchive.map(ticket => ticket.finalized_ticket));
+        const filteredActive = combinedActive.filter(ticket => !archivedIds.has(ticket.finalized_ticket));
+
+        const persisted = await this.persistTickets(filteredActive, combinedArchive, { skipBroadcast: true, emitUpdate: false });
+        if (persisted) {
+            localStorage.removeItem(STORAGE_KEY);
+            localStorage.removeItem(ARCHIVE_KEY);
+        } else {
+            this.tickets = filteredActive;
+            this.archive = combinedArchive;
+        }
+    }
+
     async cleanLegacyTickets() {
         await this.withLock(async () => {
-            const rawTickets = this.readRawTickets();
-            const rawArchive = this.readRawArchive();
-            const { tickets, archived, changed } = this.normalizeTickets(rawTickets);
-            const { tickets: normalizedArchive, changed: archiveChanged } = this.normalizeTickets(rawArchive, { allowUsed: true });
-            const combinedArchive = this.mergeTickets(normalizedArchive, archived);
-
-            if (changed) this.writeTickets(tickets);
-            else this.tickets = tickets;
-
-            if (archiveChanged || archived.length > 0) this.writeArchive(combinedArchive);
-            else this.archive = normalizedArchive;
+            await this.loadFromDatabase({ emitUpdate: false, skipBroadcast: true });
         });
     }
 
     getTickets() {
+        this.ensureInit();
         return [...this.tickets];
     }
 
     getCount() {
+        this.ensureInit();
         return this.tickets.length;
     }
 
     getArchiveTickets() {
+        this.ensureInit();
         return [...this.archive];
     }
 
     getArchiveCount() {
+        this.ensureInit();
         return this.archive.length;
     }
 
     peekTickets(count = 1) {
+        this.ensureInit();
         if (count <= 0) return [];
         return this.tickets.slice(0, count);
     }
@@ -276,17 +375,20 @@ class TicketStore {
 
     async addTickets(newTickets) {
         return this.withLock(async () => {
-            const existing = this.readTicketsFromStorage();
+            await this.ensureDbReady();
+            const { active, archived } = await this.readFromDatabase();
             const { tickets } = this.normalizeTickets(newTickets);
-            const combined = this.mergeTickets(existing, tickets);
-            this.writeTickets(combined);
+            const combined = this.mergeTickets(active, tickets);
+            await this.persistTickets(combined, archived);
             return combined.length;
         });
     }
 
     async clearTickets() {
         return this.withLock(async () => {
-            this.writeTickets([]);
+            await this.ensureDbReady();
+            const { archived } = await this.readFromDatabase();
+            await this.persistTickets([], archived);
         });
     }
 
@@ -299,9 +401,9 @@ class TicketStore {
                 consumed_at: ticket.consumed_at || timestamp
             }));
 
-        const existing = this.readArchiveFromStorage();
-        const merged = this.mergeTickets(existing, normalized);
-        this.writeArchive(merged);
+        const { active, archived } = await this.readFromDatabase();
+        const merged = this.mergeTickets(archived, normalized);
+        await this.persistTickets(active, merged);
         return merged.length;
     }
 
@@ -311,7 +413,8 @@ class TicketStore {
         }
 
         return this.withLock(async () => {
-            const available = this.readTicketsFromStorage();
+            await this.ensureDbReady();
+            const { active, archived } = await this.readFromDatabase();
 
             if (count <= 0) {
                 const error = new Error('Ticket count must be greater than zero.');
@@ -319,39 +422,45 @@ class TicketStore {
                 throw error;
             }
 
-            if (available.length === 0) {
+            if (active.length === 0) {
                 const error = new Error('No inference tickets available. Please register with an invitation code first.');
                 error.code = 'NO_TICKETS';
                 throw error;
             }
 
-            if (available.length < count) {
-                const error = new Error(`Not enough tickets. Need ${count}, but only ${available.length} available.`);
+            if (active.length < count) {
+                const error = new Error(`Not enough tickets. Need ${count}, but only ${active.length} available.`);
                 error.code = 'INSUFFICIENT_TICKETS';
                 throw error;
             }
 
-            const selected = available.slice(0, count);
-            const remaining = available.slice(count);
+            const selected = active.slice(0, count);
+            const remaining = active.slice(count);
 
             try {
                 const result = await handler({
                     tickets: selected,
-                    totalCount: available.length,
+                    totalCount: active.length,
                     remainingCount: remaining.length
                 });
-                this.writeTickets(remaining);
-                await this.archiveTickets(selected);
+                const updatedArchive = this.mergeTickets(archived, selected.map(ticket => ({
+                    ...ticket,
+                    consumed_at: ticket.consumed_at || new Date().toISOString()
+                })));
+                await this.persistTickets(remaining, updatedArchive);
                 return {
                     tickets: selected,
-                    totalCount: available.length,
+                    totalCount: active.length,
                     remainingCount: remaining.length,
                     result
                 };
             } catch (error) {
                 if (error && error.consumeTickets) {
-                    this.writeTickets(remaining);
-                    await this.archiveTickets(selected);
+                    const updatedArchive = this.mergeTickets(archived, selected.map(ticket => ({
+                        ...ticket,
+                        consumed_at: ticket.consumed_at || new Date().toISOString()
+                    })));
+                    await this.persistTickets(remaining, updatedArchive);
                 }
                 throw error;
             }
@@ -360,24 +469,23 @@ class TicketStore {
 
     async importTickets(payload) {
         return this.withLock(async () => {
+            await this.ensureDbReady();
             const { activeTickets, archivedTickets } = this.extractImportTickets(payload);
             const { tickets: normalizedActive } = this.normalizeTickets(activeTickets);
             const { tickets: normalizedArchived } = this.normalizeTickets(archivedTickets, { allowUsed: true });
 
-            const existingActive = this.readTicketsFromStorage();
-            const existingArchived = this.readArchiveFromStorage();
+            const { active, archived } = await this.readFromDatabase();
 
-            const mergedActive = this.mergeTickets(existingActive, normalizedActive);
-            const mergedArchived = this.mergeTickets(existingArchived, normalizedArchived);
+            const mergedActive = this.mergeTickets(active, normalizedActive);
+            const mergedArchived = this.mergeTickets(archived, normalizedArchived);
             const archivedIds = new Set(mergedArchived.map(ticket => ticket.finalized_ticket));
             const filteredActive = mergedActive.filter(ticket => !archivedIds.has(ticket.finalized_ticket));
 
-            this.writeTickets(filteredActive);
-            this.writeArchive(mergedArchived);
+            await this.persistTickets(filteredActive, mergedArchived);
 
             return {
-                addedActive: Math.max(0, filteredActive.length - existingActive.length),
-                addedArchived: Math.max(0, mergedArchived.length - existingArchived.length),
+                addedActive: Math.max(0, filteredActive.length - active.length),
+                addedArchived: Math.max(0, mergedArchived.length - archived.length),
                 totalActive: filteredActive.length,
                 totalArchived: mergedArchived.length
             };

@@ -43,6 +43,7 @@ class ChatDatabase {
         this.db = null;
         this.compatMode = false;
         this.initInFlight = null;
+        this.broadcastTimers = new Map();
     }
 
     async init() {
@@ -194,7 +195,10 @@ class ChatDatabase {
             const store = transaction.objectStore('sessions');
             const request = store.put(session);
 
-            request.onsuccess = () => resolve();
+            request.onsuccess = () => {
+                this.emitStorageEvent('sessions-updated', { sessionId: session.id });
+                resolve();
+            };
             request.onerror = () => reject(request.error);
         });
     }
@@ -205,7 +209,11 @@ class ChatDatabase {
             const sessionsStore = transaction.objectStore('sessions');
             const messagesStore = transaction.objectStore('messages');
 
-            transaction.oncomplete = () => resolve();
+            transaction.oncomplete = () => {
+                this.emitStorageEvent('sessions-updated', { sessionId: session.id });
+                this.emitStorageEventDebounced('messages-updated', session.id, { sessionId: session.id }, 500);
+                resolve();
+            };
             transaction.onerror = () => reject(transaction.error);
 
             sessionsStore.put(session);
@@ -411,7 +419,10 @@ class ChatDatabase {
             const store = transaction.objectStore('sessions');
             const request = store.delete(sessionId);
 
-            request.onsuccess = () => resolve();
+            request.onsuccess = () => {
+                this.emitStorageEvent('sessions-updated', { sessionId });
+                resolve();
+            };
             request.onerror = () => reject(request.error);
         });
     }
@@ -424,7 +435,10 @@ class ChatDatabase {
 
             const handleError = (event) => reject(event.target.error);
 
-            transaction.oncomplete = () => resolve();
+            transaction.oncomplete = () => {
+                this.emitStorageEvent('sessions-cleared', {});
+                resolve();
+            };
             transaction.onerror = handleError;
 
             const sessionClearRequest = sessionsStore.clear();
@@ -442,7 +456,10 @@ class ChatDatabase {
             const store = transaction.objectStore('messages');
             const request = store.put(message);
 
-            request.onsuccess = () => resolve();
+            request.onsuccess = () => {
+                this.emitStorageEventDebounced('messages-updated', message.sessionId, { sessionId: message.sessionId }, 500);
+                resolve();
+            };
             request.onerror = () => reject(request.error);
         });
     }
@@ -477,6 +494,7 @@ class ChatDatabase {
                     cursor.delete();
                     cursor.continue();
                 } else {
+                    this.emitStorageEvent('messages-updated', { sessionId });
                     resolve();
                 }
             };
@@ -490,7 +508,10 @@ class ChatDatabase {
             const store = transaction.objectStore('messages');
             const request = store.delete(messageId);
 
-            request.onsuccess = () => resolve();
+            request.onsuccess = () => {
+                this.emitStorageEvent('messages-updated', { messageId });
+                resolve();
+            };
             request.onerror = () => reject(request.error);
         });
     }
@@ -507,6 +528,20 @@ class ChatDatabase {
         });
     }
 
+    async saveSettings(entries) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['settings'], 'readwrite');
+            const store = transaction.objectStore('settings');
+
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = () => reject(transaction.error);
+
+            (entries || []).forEach(({ key, value }) => {
+                store.put({ key, value });
+            });
+        });
+    }
+
     async getSetting(key) {
         return new Promise((resolve, reject) => {
             const transaction = this.db.transaction(['settings'], 'readonly');
@@ -516,6 +551,30 @@ class ChatDatabase {
             request.onsuccess = () => resolve(request.result?.value);
             request.onerror = () => reject(request.error);
         });
+    }
+
+    emitStorageEvent(type, detail) {
+        if (typeof window === 'undefined') return;
+        const events = window.storageEvents;
+        if (events && typeof events.broadcast === 'function') {
+            events.broadcast(type, detail);
+        }
+    }
+
+    emitStorageEventDebounced(type, key, detail, delayMs = 250) {
+        if (typeof window === 'undefined') return;
+        const events = window.storageEvents;
+        if (events && typeof events.broadcastDebounced === 'function') {
+            events.broadcastDebounced(type, key, detail, delayMs);
+        } else if (events && typeof events.broadcast === 'function') {
+            const debounceKey = `${type}:${key || ''}`;
+            if (this.broadcastTimers.has(debounceKey)) return;
+            const timer = setTimeout(() => {
+                this.broadcastTimers.delete(debounceKey);
+                events.broadcast(type, detail);
+            }, delayMs);
+            this.broadcastTimers.set(debounceKey, timer);
+        }
     }
 
     // Network logs

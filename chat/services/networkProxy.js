@@ -1,6 +1,6 @@
 import { PROXY_URL } from '../config.js';
 import transportHints from './inference/transportHints.js';
-const LOCAL_STORAGE_KEY = 'oa-network-proxy-settings';
+import preferencesStore, { PREF_KEYS } from './preferencesStore.js';
 
 const DEFAULT_SETTINGS = {
     enabled: false,
@@ -34,7 +34,7 @@ class NetworkProxy {
     constructor() {
         this.eventTarget = new EventTarget();
         this.state = {
-            settings: this.normalizeSettings(this.readLocalSettings() || {}),
+            settings: this.normalizeSettings({}),
             activeProxyUrl: null,
             ready: false,
             usingProxy: false,
@@ -46,6 +46,13 @@ class NetworkProxy {
             initialized: false,
             transport: 'idle'
         };
+
+        this.prefUnsubscribe = preferencesStore.onChange((key, value) => {
+            if (key !== PREF_KEYS.proxySettings || !value) return;
+            this.updateSettings(value, { skipPersist: true }).catch((error) => {
+                console.warn('Failed to sync proxy settings from preferences:', error);
+            });
+        });
 
         this.libcurlReadyPromise = null;
         // Managed HTTPSession - closed and recreated on proxy switch
@@ -81,22 +88,13 @@ class NetworkProxy {
         };
     }
 
-    readLocalSettings() {
-        try {
-            const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
-            return stored ? JSON.parse(stored) : null;
-        } catch (error) {
-            console.warn('Unable to read proxy settings from localStorage:', error);
-            return null;
+    async syncWithPreferences() {
+        const stored = await preferencesStore.getPreference(PREF_KEYS.proxySettings);
+        if (stored && typeof stored === 'object') {
+            await this.updateSettings(stored, { skipPersist: true, silent: true });
+            this.emitChange();
         }
-    }
-
-    persistLocalSettings(settings) {
-        try {
-            localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(settings));
-        } catch (error) {
-            console.warn('Unable to persist proxy settings to localStorage:', error);
-        }
+        return this.getSettings();
     }
 
     getSettings() {
@@ -371,9 +369,9 @@ class NetworkProxy {
         this.emitChange();
     }
 
-    saveSettings(settings) {
+    async saveSettings(settings) {
         // Only persist enabled and fallbackToDirect (URL is hardcoded)
-        this.persistLocalSettings({
+        await preferencesStore.savePreference(PREF_KEYS.proxySettings, {
             enabled: settings.enabled,
             fallbackToDirect: settings.fallbackToDirect
         });
@@ -389,7 +387,7 @@ class NetworkProxy {
         this.state.settings = this.normalizeSettings({ ...this.state.settings, ...partial });
 
         if (!options.skipPersist) {
-            this.saveSettings(this.state.settings);
+            await this.saveSettings(this.state.settings);
         }
 
         if (this.state.settings.enabled) {
@@ -652,7 +650,7 @@ class NetworkProxy {
             console.warn('[networkProxy.fetch] Proxy failed, silently disabling and retrying direct:', url?.substring(0, 100));
             this.state.settings.enabled = false;
             this.state.fallbackActive = true;
-            this.saveSettings(this.state.settings); // Sync persist to localStorage
+            await this.saveSettings(this.state.settings);
             this.emitChange();
             return fetch(resource, init);
         }

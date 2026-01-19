@@ -5,12 +5,7 @@
  */
 
 import shareService from '../services/shareService.js';
-
-// LocalStorage keys for share preferences
-const PASSWORD_MODE_KEY = 'oa-share-password-mode';
-const EXPIRY_TTL_KEY = 'oa-share-expiry-ttl';
-const CUSTOM_EXPIRY_VALUE_KEY = 'oa-share-custom-expiry-value';
-const CUSTOM_EXPIRY_UNIT_KEY = 'oa-share-custom-expiry-unit';
+import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 
 // TTL preset options for segmented control
 const TTL_PRESETS = [
@@ -108,56 +103,69 @@ function formatKeyExpiry(expiresAt) {
     return { text, isExpired: false };
 }
 
-/**
- * Get saved password mode preference
- */
+let cachedPasswordMode = 'pin';
+let cachedExpiryTtl = 604800;
+let cachedCustomExpiryValue = 1;
+let cachedCustomExpiryUnit = '86400';
+
+async function loadSharePreferences() {
+    cachedPasswordMode = await preferencesStore.getPreference(PREF_KEYS.sharePasswordMode) || 'pin';
+    const expiryTtl = await preferencesStore.getPreference(PREF_KEYS.shareExpiryTtl);
+    cachedExpiryTtl = Number.isFinite(expiryTtl) ? expiryTtl : 604800;
+    const customValue = await preferencesStore.getPreference(PREF_KEYS.shareCustomExpiryValue);
+    cachedCustomExpiryValue = Number.isFinite(customValue) ? customValue : 1;
+    const customUnit = await preferencesStore.getPreference(PREF_KEYS.shareCustomExpiryUnit);
+    cachedCustomExpiryUnit = customUnit || '86400';
+}
+
+void loadSharePreferences();
+
+preferencesStore.onChange((key, value) => {
+    if (key === PREF_KEYS.sharePasswordMode) {
+        cachedPasswordMode = value || 'pin';
+    }
+    if (key === PREF_KEYS.shareExpiryTtl) {
+        cachedExpiryTtl = Number.isFinite(value) ? value : 604800;
+    }
+    if (key === PREF_KEYS.shareCustomExpiryValue) {
+        cachedCustomExpiryValue = Number.isFinite(value) ? value : 1;
+    }
+    if (key === PREF_KEYS.shareCustomExpiryUnit) {
+        cachedCustomExpiryUnit = value || '86400';
+    }
+});
+
 function getPasswordMode() {
-    return localStorage.getItem(PASSWORD_MODE_KEY) || 'pin';
+    return cachedPasswordMode;
 }
 
-/**
- * Save password mode preference
- */
 function setPasswordMode(mode) {
-    localStorage.setItem(PASSWORD_MODE_KEY, mode);
+    cachedPasswordMode = mode || 'pin';
+    preferencesStore.savePreference(PREF_KEYS.sharePasswordMode, cachedPasswordMode);
 }
 
-/**
- * Get saved expiry TTL preference
- */
 function getExpiryTtl() {
-    const saved = localStorage.getItem(EXPIRY_TTL_KEY);
-    return saved !== null ? parseInt(saved, 10) : 604800; // Default to 7 days
+    return cachedExpiryTtl;
 }
 
-/**
- * Save expiry TTL preference
- */
 function setExpiryTtl(ttl) {
-    localStorage.setItem(EXPIRY_TTL_KEY, ttl.toString());
+    cachedExpiryTtl = ttl;
+    preferencesStore.savePreference(PREF_KEYS.shareExpiryTtl, ttl);
 }
 
-/**
- * Get saved custom expiry value
- */
 function getCustomExpiryValue() {
-    const saved = localStorage.getItem(CUSTOM_EXPIRY_VALUE_KEY);
-    return saved !== null ? parseInt(saved, 10) : 1;
+    return cachedCustomExpiryValue;
 }
 
-/**
- * Get saved custom expiry unit
- */
 function getCustomExpiryUnit() {
-    return localStorage.getItem(CUSTOM_EXPIRY_UNIT_KEY) || '86400';
+    return cachedCustomExpiryUnit;
 }
 
-/**
- * Save custom expiry value and unit
- */
 function setCustomExpiry(value, unit) {
-    localStorage.setItem(CUSTOM_EXPIRY_VALUE_KEY, value.toString());
-    localStorage.setItem(CUSTOM_EXPIRY_UNIT_KEY, unit);
+    cachedCustomExpiryValue = value;
+    cachedCustomExpiryUnit = unit;
+    preferencesStore.savePreference(PREF_KEYS.shareCustomExpiryValue, value);
+    preferencesStore.savePreference(PREF_KEYS.shareCustomExpiryUnit, unit);
 }
 
 /**

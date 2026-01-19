@@ -5,6 +5,7 @@
  */
 
 import themeManager from '../services/themeManager.js';
+import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import { exportAllData, exportChats, exportTickets } from '../services/globalExport.js';
 import { importFromFile, formatImportSummary } from '../services/globalImport.js';
 import ticketClient from '../services/ticketClient.js';
@@ -229,8 +230,17 @@ export default class ChatInput {
         const flatModeToggle = document.getElementById('flat-mode-toggle');
         if (!flatModeToggle) return;
 
-        // Sync initial visual state with localStorage (HTML may have stale defaults)
-        this.updateFlatModeControls();
+        // Sync initial visual state with persistent preferences.
+        preferencesStore.getPreference(PREF_KEYS.flatMode).then((isFlatMode) => {
+            document.documentElement.classList.toggle('flat-mode', isFlatMode !== false);
+            this.updateFlatModeControls();
+        });
+
+        preferencesStore.onChange((key, value) => {
+            if (key !== PREF_KEYS.flatMode) return;
+            document.documentElement.classList.toggle('flat-mode', value !== false);
+            this.updateFlatModeControls();
+        });
 
         flatModeToggle.addEventListener('click', (event) => {
             event.stopPropagation(); // Prevent settings menu from closing
@@ -242,8 +252,8 @@ export default class ChatInput {
                 // Update HTML class for CSS styling
                 document.documentElement.classList.toggle('flat-mode', isFlatMode);
 
-                // Persist preference to localStorage
-                localStorage.setItem('oa-flat-mode', isFlatMode ? 'true' : 'false');
+                // Persist preference to IndexedDB
+                preferencesStore.savePreference(PREF_KEYS.flatMode, isFlatMode);
 
                 // Update toggle visual state
                 this.updateFlatModeControls();
@@ -275,8 +285,17 @@ export default class ChatInput {
         const fontModeToggle = document.getElementById('font-mode-toggle');
         if (!fontModeToggle) return;
 
-        // Sync initial visual state with localStorage
-        this.updateFontModeControls();
+        // Sync initial visual state with persistent preferences.
+        preferencesStore.getPreference(PREF_KEYS.fontMode).then((fontMode) => {
+            document.documentElement.classList.toggle('serif-mode', fontMode === 'serif');
+            this.updateFontModeControls();
+        });
+
+        preferencesStore.onChange((key, value) => {
+            if (key !== PREF_KEYS.fontMode) return;
+            document.documentElement.classList.toggle('serif-mode', value === 'serif');
+            this.updateFontModeControls();
+        });
 
         fontModeToggle.addEventListener('click', (event) => {
             event.stopPropagation(); // Prevent settings menu from closing
@@ -288,8 +307,8 @@ export default class ChatInput {
                 // Update HTML class for CSS styling
                 document.documentElement.classList.toggle('serif-mode', isSerifMode);
 
-                // Persist preference to localStorage
-                localStorage.setItem('oa-font-mode', isSerifMode ? 'serif' : 'sans');
+                // Persist preference to IndexedDB
+                preferencesStore.savePreference(PREF_KEYS.fontMode, isSerifMode ? 'serif' : 'sans');
 
                 // Update toggle visual state
                 this.updateFontModeControls();

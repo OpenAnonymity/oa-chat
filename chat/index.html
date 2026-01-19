@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" class="theme-light">
+<html lang="en" class="theme-light flat-mode">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
@@ -71,6 +71,18 @@
             }
         })();
     </script>
+    <script>
+        // Apply wide mode state immediately to prevent flash
+        (function () {
+            try {
+                if (localStorage.getItem('oa-wide-mode') === 'true') {
+                    document.documentElement.classList.add('wide-mode');
+                }
+            } catch (error) {
+                console.warn('Unable to apply wide mode state:', error);
+            }
+        })();
+    </script>
     <!-- Preload critical resources for faster loading -->
     <link rel="preconnect" href="https://cdn.tailwindcss.com" crossorigin>
     <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
@@ -83,6 +95,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Cormorant:ital,wght@0,300..700;1,300..700&family=Fira+Code:wght@300..700&family=Libre+Caslon+Text:ital,wght@0,400;0,700;1,400&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=PT+Serif:ital,wght@0,400;0,700;1,400;1,700&display=swap" rel="stylesheet">
 
 
+    <!-- SECURITY NOTE: Self-host these assets to avoid third-party script access. -->
     <!-- Tailwind CSS - critical, must be blocking -->
     <script src="https://cdn.tailwindcss.com"></script>
 
@@ -174,7 +187,7 @@
     </script>
 
     <!-- Vercel Web Analytics -->
-    <script defer src="/_vercel/insights/script.js"></script>
+    <!-- Vercel insights removed to avoid third-party script access to local data. -->
 
     <script>
         tailwind.config = {

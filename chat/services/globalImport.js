@@ -4,6 +4,7 @@
  */
 
 import ticketStore from './ticketStore.js';
+import preferencesStore, { PREF_KEYS } from './preferencesStore.js';
 
 const SUPPORTED_FORMAT_VERSIONS = ['1.0'];
 
@@ -167,39 +168,60 @@ async function applyPreferences(preferences) {
         return applied;
     }
 
-    // LocalStorage preferences
+    // Persistent preferences
     if ('theme' in preferences) {
-        if (preferences.theme === 'system') {
-            localStorage.removeItem('oa-theme-preference');
-        } else {
-            localStorage.setItem('oa-theme-preference', preferences.theme);
-        }
+        await preferencesStore.savePreference(PREF_KEYS.theme, preferences.theme);
         applied.push('theme');
     }
 
     if ('wideMode' in preferences) {
-        localStorage.setItem('oa-wide-mode', preferences.wideMode ? 'true' : 'false');
+        await preferencesStore.savePreference(PREF_KEYS.wideMode, !!preferences.wideMode);
         applied.push('wideMode');
     }
 
     if ('flatMode' in preferences) {
-        localStorage.setItem('oa-flat-mode', preferences.flatMode ? 'true' : 'false');
+        await preferencesStore.savePreference(PREF_KEYS.flatMode, preferences.flatMode !== false);
         applied.push('flatMode');
     }
 
+    if ('fontMode' in preferences) {
+        await preferencesStore.savePreference(PREF_KEYS.fontMode, preferences.fontMode === 'serif' ? 'serif' : 'sans');
+        applied.push('fontMode');
+    }
+
     if ('rightPanelVisible' in preferences) {
-        localStorage.setItem('oa-right-panel-visible', preferences.rightPanelVisible ? 'true' : 'false');
+        await preferencesStore.savePreference(PREF_KEYS.rightPanelVisible, !!preferences.rightPanelVisible);
         applied.push('rightPanelVisible');
     }
 
     if ('ticketInfoVisible' in preferences) {
-        localStorage.setItem('oa-ticket-info-visible', preferences.ticketInfoVisible ? 'true' : 'false');
+        await preferencesStore.savePreference(PREF_KEYS.ticketInfoVisible, !!preferences.ticketInfoVisible);
         applied.push('ticketInfoVisible');
     }
 
     if ('proxySettings' in preferences && preferences.proxySettings) {
-        localStorage.setItem('oa-network-proxy-settings', JSON.stringify(preferences.proxySettings));
+        await preferencesStore.savePreference(PREF_KEYS.proxySettings, preferences.proxySettings);
         applied.push('proxySettings');
+    }
+
+    if ('sharePasswordMode' in preferences) {
+        await preferencesStore.savePreference(PREF_KEYS.sharePasswordMode, preferences.sharePasswordMode);
+        applied.push('sharePasswordMode');
+    }
+
+    if ('shareExpiryTtl' in preferences) {
+        await preferencesStore.savePreference(PREF_KEYS.shareExpiryTtl, preferences.shareExpiryTtl);
+        applied.push('shareExpiryTtl');
+    }
+
+    if ('shareCustomExpiryValue' in preferences) {
+        await preferencesStore.savePreference(PREF_KEYS.shareCustomExpiryValue, preferences.shareCustomExpiryValue);
+        applied.push('shareCustomExpiryValue');
+    }
+
+    if ('shareCustomExpiryUnit' in preferences) {
+        await preferencesStore.savePreference(PREF_KEYS.shareCustomExpiryUnit, preferences.shareCustomExpiryUnit);
+        applied.push('shareCustomExpiryUnit');
     }
 
     // IndexedDB preferences
