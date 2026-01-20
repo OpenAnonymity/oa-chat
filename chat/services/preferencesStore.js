@@ -7,6 +7,7 @@ const PREF_KEYS = {
     fontMode: 'pref-font-mode',
     rightPanelVisible: 'pref-right-panel-visible',
     ticketInfoVisible: 'pref-ticket-info-visible',
+    invitationFormVisible: 'pref-invitation-form-visible',
     proxySettings: 'pref-network-proxy-settings',
     sharePasswordMode: 'pref-share-password-mode',
     shareExpiryTtl: 'pref-share-expiry-ttl',
@@ -21,6 +22,7 @@ const LOCAL_STORAGE_KEYS = {
     fontMode: 'oa-font-mode',
     rightPanelVisible: 'oa-right-panel-visible',
     ticketInfoVisible: 'oa-ticket-info-visible',
+    invitationFormVisible: 'oa-invitation-form-visible',
     proxySettings: 'oa-network-proxy-settings',
     sharePasswordMode: 'oa-share-password-mode',
     shareExpiryTtl: 'oa-share-expiry-ttl',
@@ -35,6 +37,7 @@ const DEFAULT_PREFERENCES = {
     [PREF_KEYS.fontMode]: 'sans',
     [PREF_KEYS.rightPanelVisible]: null,
     [PREF_KEYS.ticketInfoVisible]: true,
+    [PREF_KEYS.invitationFormVisible]: null,
     [PREF_KEYS.proxySettings]: {
         enabled: false,
         fallbackToDirect: true
@@ -51,7 +54,8 @@ const PREF_SNAPSHOT_KEYS = new Set([
     PREF_KEYS.flatMode,
     PREF_KEYS.fontMode,
     PREF_KEYS.rightPanelVisible,
-    PREF_KEYS.ticketInfoVisible
+    PREF_KEYS.ticketInfoVisible,
+    PREF_KEYS.invitationFormVisible
 ]);
 
 const PREF_SNAPSHOT_MAP = new Map([
@@ -60,7 +64,8 @@ const PREF_SNAPSHOT_MAP = new Map([
     [PREF_KEYS.flatMode, LOCAL_STORAGE_KEYS.flatMode],
     [PREF_KEYS.fontMode, LOCAL_STORAGE_KEYS.fontMode],
     [PREF_KEYS.rightPanelVisible, LOCAL_STORAGE_KEYS.rightPanelVisible],
-    [PREF_KEYS.ticketInfoVisible, LOCAL_STORAGE_KEYS.ticketInfoVisible]
+    [PREF_KEYS.ticketInfoVisible, LOCAL_STORAGE_KEYS.ticketInfoVisible],
+    [PREF_KEYS.invitationFormVisible, LOCAL_STORAGE_KEYS.invitationFormVisible]
 ]);
 
 class PreferencesStore {
@@ -136,6 +141,11 @@ class PreferencesStore {
             {
                 key: PREF_KEYS.ticketInfoVisible,
                 storageKey: LOCAL_STORAGE_KEYS.ticketInfoVisible,
+                parse: (value) => value === 'true'
+            },
+            {
+                key: PREF_KEYS.invitationFormVisible,
+                storageKey: LOCAL_STORAGE_KEYS.invitationFormVisible,
                 parse: (value) => value === 'true'
             },
             {
@@ -303,7 +313,7 @@ class PreferencesStore {
                 serialized = value === 'serif' ? 'serif' : 'sans';
             } else if (key === PREF_KEYS.flatMode) {
                 serialized = value === false ? 'false' : 'true';
-            } else if (key === PREF_KEYS.rightPanelVisible || key === PREF_KEYS.ticketInfoVisible || key === PREF_KEYS.wideMode) {
+            } else if (key === PREF_KEYS.rightPanelVisible || key === PREF_KEYS.ticketInfoVisible || key === PREF_KEYS.invitationFormVisible || key === PREF_KEYS.wideMode) {
                 if (value === null || value === undefined) {
                     serialized = null;
                 } else {

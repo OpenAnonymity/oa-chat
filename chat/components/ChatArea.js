@@ -5,7 +5,7 @@
  */
 
 import { buildMessageHTML, buildEmptyState, buildSharedIndicator, buildImportedIndicator, buildTypingIndicator } from './MessageTemplates.js';
-import { downloadAllChats } from '../services/fileUtils.js';
+import { exportChats, exportTickets } from '../services/globalExport.js';
 import { parseStreamingReasoningContent, parseReasoningContent } from '../services/reasoningParser.js';
 
 export default class ChatArea {
@@ -49,6 +49,33 @@ export default class ChatArea {
                 e.preventDefault();
                 this.handleToggleUserMessage(showMoreBtn);
                 return;
+            }
+
+            // File attachments use data attributes instead of inline JS for safer clicks.
+            const attachmentCard = e.target.closest('.file-attachment-card');
+            if (attachmentCard && attachmentCard.dataset.attachmentAction) {
+                e.preventDefault();
+                const action = attachmentCard.dataset.attachmentAction;
+                if (action === 'expand-image') {
+                    const imageId = attachmentCard.dataset.imageId;
+                    if (imageId && typeof window.expandImage === 'function') {
+                        window.expandImage(imageId);
+                    }
+                    return;
+                }
+                if (action === 'download') {
+                    const url = attachmentCard.dataset.downloadUrl;
+                    if (url) {
+                        const name = attachmentCard.dataset.downloadName || 'download';
+                        const anchor = document.createElement('a');
+                        anchor.href = url;
+                        anchor.download = name;
+                        document.body.appendChild(anchor);
+                        anchor.click();
+                        document.body.removeChild(anchor);
+                    }
+                    return;
+                }
             }
 
             // Code block copy button
@@ -1563,12 +1590,25 @@ export default class ChatArea {
      */
     attachDownloadHandler() {
         const downloadLink = document.querySelector('a[href="#download-chats-link"]');
-        if (downloadLink) {
+        if (downloadLink && downloadLink.dataset.downloadChatsBound !== 'true') {
+            downloadLink.dataset.downloadChatsBound = 'true';
             downloadLink.addEventListener('click', async (e) => {
                 e.preventDefault();
-                const success = await downloadAllChats();
+                const success = await exportChats();
                 if (!success) {
                     console.error('Failed to download chat history');
+                }
+            });
+        }
+
+        const exportLink = document.querySelector('a[href="#download-tickets-link"]');
+        if (exportLink && exportLink.dataset.downloadTicketsBound !== 'true') {
+            exportLink.dataset.downloadTicketsBound = 'true';
+            exportLink.addEventListener('click', async (e) => {
+                e.preventDefault();
+                const success = await exportTickets();
+                if (!success) {
+                    console.error('Failed to export inference tickets');
                 }
             });
         }

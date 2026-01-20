@@ -65,7 +65,7 @@ function getWelcomeContent(backend = getBackend()) {
 3. **Chat history is entirely local.**\\
    Because every chat takes a random anonymous path to the model, *only you* have your full chat history, [saved locally](#download-chats-link).
 4. **This chat client is lightweight, fast, and disposable.**\\
-    The entire client is less than 1MB. All it does is fetching ${accessLabel}s, sending prompts, and streaming responses on your behalf. You can (and should) <a href="javascript:void(0)" onclick="window.downloadInferenceTickets()">export</a> your tickets to make the same API calls without this client.
+    The entire client is less than 1MB. All it does is fetching ${accessLabel}s, sending prompts, and streaming responses on your behalf. You can (and should) [export](#download-tickets-link) your tickets to make the same API calls without this client.
 
 **The OA project is actively developed at Stanford and Michigan.** This client is currently in closed alpha and more details coming soon. We appreciate your [feedback](https://forms.gle/HEmvxnJpN1jQC7CfA)!
 

@@ -14,7 +14,9 @@ import themeManager from './services/themeManager.js';
 import preferencesStore, { PREF_KEYS } from './services/preferencesStore.js';
 import storageManager from './services/storageManager.js';
 import storageEvents from './services/storageEvents.js';
-import { downloadInferenceTickets, downloadAllChats, getFileIconSvg } from './services/fileUtils.js';
+import { getFileIconSvg } from './services/fileUtils.js';
+import { exportChats } from './services/globalExport.js';
+import { exportTickets } from './services/globalExport.js';
 import { parseReasoningContent } from './services/reasoningParser.js';
 import { fetchUrlMetadata } from './services/urlMetadata.js';
 import networkProxy from './services/networkProxy.js';
@@ -211,7 +213,7 @@ class ChatApp {
         downloadLink.addEventListener('click', async (event) => {
             event.preventDefault();
             try {
-                const success = await downloadAllChats();
+                const success = await exportChats();
                 if (!success) {
                     console.error('Failed to download chat history from modal link');
                 }
@@ -284,6 +286,9 @@ class ChatApp {
      */
     configureMarkedRenderer() {
         const renderer = new marked.Renderer();
+        const escapeHtml = this.escapeHtml.bind(this);
+        const escapeHtmlAttribute = this.escapeHtmlAttribute.bind(this);
+        const sanitizeUrl = this.sanitizeUrl.bind(this);
 
         // Custom code block renderer with header (language + copy button)
         renderer.code = (code, language) => {
@@ -312,7 +317,7 @@ class ChatApp {
             return `<div class="code-block-wrapper">
                 <div class="code-block-header">
                     <span class="code-block-lang">${displayLang}</span>
-                    <button class="code-block-copy-btn" data-code="${this.escapeHtmlAttribute(code)}">
+                    <button class="code-block-copy-btn" data-code="${escapeHtmlAttribute(code)}">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="copy-icon">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
                         </svg>
@@ -321,6 +326,23 @@ class ChatApp {
                 </div>
                 <pre><code class="hljs${lang ? ` language-${lang}` : ''}">${highlightedCode}</code></pre>
             </div>`;
+        };
+
+        renderer.html = (html) => escapeHtml(html);
+
+        renderer.link = (href, title, text) => {
+            const safeHref = sanitizeUrl(href);
+            if (!safeHref) return text;
+            const safeTitle = title ? ` title="${escapeHtmlAttribute(title)}"` : '';
+            return `<a href="${escapeHtmlAttribute(safeHref)}"${safeTitle}>${text}</a>`;
+        };
+
+        renderer.image = (href, title, text) => {
+            const safeSrc = sanitizeUrl(href, { allowHash: false, allowMailto: false, allowTel: false });
+            if (!safeSrc) return escapeHtml(text || '');
+            const safeTitle = title ? ` title="${escapeHtmlAttribute(title)}"` : '';
+            const safeAlt = escapeHtmlAttribute(text || '');
+            return `<img src="${escapeHtmlAttribute(safeSrc)}" alt="${safeAlt}"${safeTitle} />`;
         };
 
         marked.setOptions({ renderer });
@@ -380,6 +402,39 @@ class ChatApp {
     }
 
     /**
+     * Allowlist URL sanitizer for markdown output.
+     */
+    sanitizeUrl(url, options = {}) {
+        if (!url || typeof url !== 'string') return null;
+        const trimmed = url.trim();
+        if (!trimmed) return null;
+
+        const {
+            allowRelative = true,
+            allowHash = true,
+            allowMailto = true,
+            allowTel = true,
+            allowData = false,
+            allowBlob = false
+        } = options;
+
+        const lower = trimmed.toLowerCase();
+        const normalized = lower.replace(/[\u0000-\u001f\u007f\s]+/g, '');
+
+        if (allowHash && trimmed.startsWith('#')) return trimmed;
+        if (allowRelative && (trimmed.startsWith('/') || trimmed.startsWith('./') || trimmed.startsWith('../'))) {
+            return trimmed;
+        }
+        if (allowMailto && normalized.startsWith('mailto:')) return trimmed;
+        if (allowTel && normalized.startsWith('tel:')) return trimmed;
+        if (allowData && normalized.startsWith('data:')) return trimmed;
+        if (allowBlob && normalized.startsWith('blob:')) return trimmed;
+        if (normalized.startsWith('http://') || normalized.startsWith('https://')) return trimmed;
+
+        return null;
+    }
+
+    /**
      * Process content with protected LaTeX expressions
      * This prevents marked from breaking LaTeX delimiters
      */
@@ -392,21 +447,21 @@ class ChatApp {
         // Extract block LaTeX \[...\] and replace with placeholders
         processedContent = processedContent.replace(/\\\[([\s\S]*?)\\\]/g, (match, latex) => {
             const placeholder = `BLOCKLATEX${blockLatexPlaceholders.length}PLACEHOLDER`;
-            blockLatexPlaceholders.push(match);
+            blockLatexPlaceholders.push(this.escapeHtml(match));
             return `\n\n${placeholder}\n\n`;
         });
 
         // Extract block LaTeX $$...$$ and replace with placeholders
         processedContent = processedContent.replace(/\$\$([\s\S]*?)\$\$/g, (match, latex) => {
             const placeholder = `BLOCKLATEX${blockLatexPlaceholders.length}PLACEHOLDER`;
-            blockLatexPlaceholders.push(match);
+            blockLatexPlaceholders.push(this.escapeHtml(match));
             return `\n\n${placeholder}\n\n`;
         });
 
         // Extract inline LaTeX \(...\) and replace with placeholders
         processedContent = processedContent.replace(/\\\(([\s\S]*?)\\\)/g, (match, latex) => {
             const placeholder = `INLINELATEX${inlineLatexPlaceholders.length}PLACEHOLDER`;
-            inlineLatexPlaceholders.push(match);
+            inlineLatexPlaceholders.push(this.escapeHtml(match));
             return placeholder;
         });
 
@@ -1073,7 +1128,7 @@ class ChatApp {
         // Setup global function to download inference tickets
         window.downloadInferenceTickets = async () => {
             try {
-                const success = await downloadInferenceTickets();
+                const success = await exportTickets();
                 if (success) {
                     this.showToast('Tickets exported successfully', 'success');
                 } else {

@@ -56,6 +56,22 @@ export function getStatusDotClass(status, isAborted = false) {
     return 'bg-gray-500';
 }
 
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text == null ? '' : String(text);
+    return div.innerHTML;
+}
+
+function escapeHtmlAttribute(text) {
+    return String(text == null ? '' : text)
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/\n/g, '&#10;');
+}
+
 /**
  * Get user-friendly activity description based on log type and endpoint
  */
@@ -372,7 +388,10 @@ export function getActivityIcon(log) {
 export function renderNetworkLog(log, isExpanded = false, isMinimal = false) {
     const statusIcon = getStatusIcon(log.status);
     const statusClass = getStatusClass(log.status);
-    const description = getActivityDescription(log);
+    // Escape log-derived strings before injecting into HTML.
+    const descriptionRaw = getActivityDescription(log);
+    const description = escapeHtml(descriptionRaw);
+    const descriptionAttr = escapeHtmlAttribute(descriptionRaw);
     const icon = getActivityIcon(log);
 
     if (isMinimal && !isExpanded) {
@@ -382,7 +401,7 @@ export function renderNetworkLog(log, isExpanded = false, isMinimal = false) {
                 <span class="flex-shrink-0 text-muted-foreground">
                     ${icon}
                 </span>
-                <span class="truncate flex-1 font-medium" title="${description}">
+                <span class="truncate flex-1 font-medium" title="${descriptionAttr}">
                     ${description}
                 </span>
                 <span class="text-muted-foreground font-mono ml-auto" style="font-size: 10px;">
@@ -403,7 +422,7 @@ export function renderNetworkLog(log, isExpanded = false, isMinimal = false) {
                     <span class="flex-shrink-0 text-muted-foreground">
                         ${icon}
                     </span>
-                    <span class="truncate flex-1 font-medium" title="${description}">
+                    <span class="truncate flex-1 font-medium" title="${descriptionAttr}">
                         ${description}
                     </span>
                     <span class="text-muted-foreground font-mono ml-auto" style="font-size: 10px;">
@@ -417,7 +436,7 @@ export function renderNetworkLog(log, isExpanded = false, isMinimal = false) {
                 </div>
                 <!-- Detailed description -->
                 <div class="px-3 pt-3 pb-2 border-b border-border/50">
-                    <div class="text-xs text-foreground leading-relaxed">${getActivityDescription(log, true)}</div>
+                    <div class="text-xs text-foreground leading-relaxed">${escapeHtml(getActivityDescription(log, true))}</div>
                 </div>
 
                 <!-- Technical Summary -->
@@ -447,7 +466,7 @@ export function renderNetworkLog(log, isExpanded = false, isMinimal = false) {
 
                     ${log.error ? `
                         <div class="text-[10px] text-red-600 dark:text-red-400 bg-red-50/50 dark:bg-red-900/30 p-1.5 rounded border border-red-200/50 dark:border-red-800/50">
-                            ${log.error}
+                            ${escapeHtml(log.error)}
                         </div>
                     ` : ''}
                 </div>

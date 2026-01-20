@@ -19,6 +19,12 @@ class FloatingPanel {
         setTimeout(() => this.show(), 100);
     }
 
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text == null ? '' : String(text);
+        return div.innerHTML;
+    }
+
     show() {
         if (this.isVisible) return;
 
@@ -143,7 +149,7 @@ class FloatingPanel {
                 <div class="p-3 text-xs">
                     <div class="flex items-center ${colorClass}">
                         ${icon}
-                        <span>${this.message.text}</span>
+                        <span>${this.escapeHtml(this.message.text)}</span>
                     </div>
                 </div>
             `;

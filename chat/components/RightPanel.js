@@ -11,7 +11,7 @@ import tlsSecurityModal from './TLSSecurityModal.js';
 import proxyInfoModal from './ProxyInfoModal.js';
 import { getActivityDescription, getActivityIcon, getStatusDotClass, formatTimestamp } from '../services/networkLogRenderer.js';
 import { getTicketCost } from '../services/modelTiers.js';
-import { downloadInferenceTickets } from '../services/fileUtils.js';
+import { exportTickets } from '../services/globalExport.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 
 // Layout constant for toolbar overlay prediction
@@ -69,9 +69,14 @@ class RightPanel {
             }
         });
 
-        // Invitation code dropdown state
-        this.showInvitationForm = false;
-        this.showTicketInfo = true;
+        // Invitation code dropdown state - check localStorage snapshot first to avoid flash
+        const savedFormVisible = localStorage.getItem('oa-invitation-form-visible');
+        this.invitationFormPreference = savedFormVisible === 'true' ? true : savedFormVisible === 'false' ? false : null;
+        this.showInvitationForm = this.invitationFormPreference ?? false;
+
+        // Ticket info panel state - check localStorage snapshot first to avoid flash
+        const savedTicketInfoVisible = localStorage.getItem('oa-ticket-info-visible');
+        this.showTicketInfo = savedTicketInfoVisible === 'false' ? false : true;
 
         this.initializeState();
         this.setupEventListeners();
@@ -98,6 +103,17 @@ class RightPanel {
                 }
             });
 
+        preferencesStore.getPreference(PREF_KEYS.invitationFormVisible)
+            .then((invitationFormVisible) => {
+                // Only apply saved preference if it's an explicit boolean
+                // null means "auto" - use ticket count to determine visibility
+                if (typeof invitationFormVisible === 'boolean') {
+                    this.showInvitationForm = invitationFormVisible;
+                    this.invitationFormPreference = invitationFormVisible;
+                    this.renderTopSectionOnly();
+                }
+            });
+
         preferencesStore.onChange((key, value) => {
             if (key === PREF_KEYS.rightPanelVisible && typeof value === 'boolean') {
                 this.isVisible = value;
@@ -108,13 +124,19 @@ class RightPanel {
                 this.updateTicketInfoVisibility();
                 this.updateTicketInfoToggleButton();
             }
+            if (key === PREF_KEYS.invitationFormVisible && typeof value === 'boolean') {
+                this.showInvitationForm = value;
+                this.invitationFormPreference = value;
+                this.renderTopSectionOnly();
+            }
         });
     }
 
     initializeState() {
         // Load initial ticket count
         this.ticketCount = ticketClient.getTicketCount();
-        if (this.ticketCount === 0) {
+        // Only auto-show form when no tickets if user hasn't explicitly set a preference
+        if (this.ticketCount === 0 && this.invitationFormPreference === null) {
             this.showInvitationForm = true;
         }
 
@@ -201,6 +223,16 @@ class RightPanel {
         return div.innerHTML;
     }
 
+    escapeHtmlAttribute(text) {
+        return String(text == null ? '' : text)
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/\n/g, '&#10;');
+    }
+
     updateTicketInfoVisibility() {
         const panel = document.getElementById('ticket-info-panel');
         if (!panel) return;
@@ -231,7 +263,8 @@ class RightPanel {
         window.addEventListener('tickets-updated', () => {
             const previousTicketCount = this.ticketCount;
             this.ticketCount = ticketClient.getTicketCount();
-            if (this.ticketCount === 0 && previousTicketCount > 0) {
+            // Only auto-show form when tickets run out if user hasn't explicitly set a preference
+            if (this.ticketCount === 0 && previousTicketCount > 0 && this.invitationFormPreference === null) {
                 this.showInvitationForm = true;
             }
             this.loadNextTicket();
@@ -547,7 +580,7 @@ class RightPanel {
 
     async handleExportTickets() {
         try {
-            const success = await downloadInferenceTickets();
+            const success = await exportTickets();
             this.importStatus = {
                 type: success ? 'success' : 'error',
                 message: success
@@ -1023,7 +1056,7 @@ class RightPanel {
             <div class="activity-log-details mt-2 text-xs bg-muted/10 rounded-lg border border-border/50 overflow-hidden" style="animation: slideDown 0.2s ease-out;">
                     <!-- Detailed description -->
                     <div class="px-3 pt-2.5 pb-2 bg-muted/5 border-b border-border/50">
-                        <div class="text-foreground leading-relaxed">${getActivityDescription(log, true)}</div>
+                        <div class="text-foreground leading-relaxed">${this.escapeHtml(getActivityDescription(log, true))}</div>
                     </div>
 
                 <!-- Technical Details -->
@@ -1043,7 +1076,7 @@ class RightPanel {
                         </div>
                         <div class="flex items-center gap-1.5">
                             <span class="text-[10px] text-muted-foreground">Method:</span>
-                            <span class="text-[10px] font-medium px-1.5 py-0.5 bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 rounded">${log.method}</span>
+                            <span class="text-[10px] font-medium px-1.5 py-0.5 bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 rounded">${this.escapeHtml(log.method)}</span>
                         </div>
                     </div>
 
@@ -1051,7 +1084,7 @@ class RightPanel {
                     <div class="space-y-1">
                         <div class="text-[10px] text-muted-foreground font-medium">Destination</div>
                         <div class="text-[10px] font-mono bg-background p-2 rounded border border-border/50 break-all">
-                            ${log.url}
+                            ${this.escapeHtml(log.url)}
                         </div>
                     </div>
 
@@ -1062,7 +1095,7 @@ class RightPanel {
                                 <div class="space-y-1">
                                     <div class="text-[10px] text-muted-foreground font-medium">Authorization</div>
                                     <div class="text-[10px] font-mono text-muted-foreground bg-background p-2 rounded border border-border/50 break-words">
-                                        ${networkLogger.sanitizeHeaders({ Authorization: log.request.headers.Authorization }).Authorization}
+                                        ${this.escapeHtml(networkLogger.sanitizeHeaders({ Authorization: log.request.headers.Authorization }).Authorization)}
                                     </div>
                                 </div>
                             ` : ''}
@@ -1070,7 +1103,7 @@ class RightPanel {
                                 <div class="space-y-1">
                                     <div class="text-[10px] text-muted-foreground font-medium">Application</div>
                                     <div class="text-[10px] font-mono text-muted-foreground bg-background p-2 rounded border border-border/50">
-                                        ${log.request.headers['X-Title']}
+                                        ${this.escapeHtml(log.request.headers['X-Title'])}
                                     </div>
                                 </div>
                             ` : ''}
@@ -1078,7 +1111,7 @@ class RightPanel {
                                 <div class="space-y-1">
                                     <div class="text-[10px] text-muted-foreground font-medium">Content Type</div>
                                     <div class="text-[10px] font-mono text-muted-foreground bg-background p-2 rounded border border-border/50">
-                                        ${log.request.headers['Content-Type']}
+                                        ${this.escapeHtml(log.request.headers['Content-Type'])}
                                     </div>
                                 </div>
                             ` : ''}
@@ -1097,7 +1130,7 @@ class RightPanel {
                         <div class="space-y-1">
                             <div class="text-[10px] text-muted-foreground font-medium">Response Summary</div>
                             <div class="text-[10px] text-muted-foreground bg-background p-2 rounded border border-border/50 break-words">
-                                ${networkLogger.getResponseSummary(log.response, log.status) || 'Request completed successfully'}
+                                ${this.escapeHtml(networkLogger.getResponseSummary(log.response, log.status) || 'Request completed successfully')}
                             </div>
                         </div>
                     ` : ''}
@@ -1725,6 +1758,8 @@ class RightPanel {
         if (toggleFormBtn) {
             toggleFormBtn.onclick = () => {
                 this.showInvitationForm = !this.showInvitationForm;
+                this.invitationFormPreference = this.showInvitationForm;
+                preferencesStore.savePreference(PREF_KEYS.invitationFormVisible, this.showInvitationForm);
                 this.renderTopSectionOnly();
             };
         }
@@ -1961,7 +1996,9 @@ class RightPanel {
 
         return logsToShow.map((log, index) => {
             const isExpanded = this.expandedLogIds.has(log.id);
-            const description = getActivityDescription(log);
+            const descriptionRaw = getActivityDescription(log);
+            const description = this.escapeHtml(descriptionRaw);
+            const descriptionAttr = this.escapeHtmlAttribute(descriptionRaw);
             const icon = getActivityIcon(log);
             const dotClass = getStatusDotClass(log.status, log.isAborted);
             const isFirst = index === 0;
@@ -1981,7 +2018,10 @@ class RightPanel {
 
             // Check if we need a session separator
             const needsSeparator = effectiveSessionId !== lastSessionId;
-            const sessionTitle = this.getSessionTitle(log.sessionId);
+            const sessionTitleRaw = this.getSessionTitle(log.sessionId);
+            const sessionTitleAttr = this.escapeHtmlAttribute(sessionTitleRaw);
+            const sessionTitleDisplayRaw = sessionTitleRaw.length > 14 ? sessionTitleRaw.substring(0, 14) + '...' : sessionTitleRaw;
+            const sessionTitleDisplay = this.escapeHtml(sessionTitleDisplayRaw);
             const isCurrentSess = this.isCurrentSession(log.sessionId);
             const sessionKey = this.getSessionKey(log.sessionId);
             lastSessionId = effectiveSessionId;
@@ -2004,15 +2044,15 @@ class RightPanel {
                     `;
                 } else if (log.sessionId) {
                     // Chat session separator
-                    const keyDisplay = sessionKey ? `<span class="text-[10px] font-mono whitespace-nowrap ${isCurrentSess ? 'text-foreground' : 'text-muted-foreground'} ml-auto">${this.maskApiKey(sessionKey)}</span>` : '';
+                    const keyDisplay = sessionKey ? `<span class="text-[10px] font-mono whitespace-nowrap ${isCurrentSess ? 'text-foreground' : 'text-muted-foreground'} ml-auto">${this.escapeHtml(this.maskApiKey(sessionKey))}</span>` : '';
                     sessionSeparator = `
                         <div class="session-separator mb-2 mt-2">
                             <div class="flex items-center gap-2 px-2 py-1.5 rounded-md border whitespace-nowrap ${isCurrentSess ? 'border-foreground bg-primary/10' : 'border-border'}">
                                 <svg class="w-3 h-3 ${isCurrentSess ? 'text-foreground' : 'text-muted-foreground'} flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path>
                                 </svg>
-                                <span class="text-[10px] font-medium whitespace-nowrap ${isCurrentSess ? 'text-foreground' : 'text-muted-foreground'}" title="${sessionTitle}">
-                                    ${sessionTitle.length > 14 ? sessionTitle.substring(0, 14) + '...' : sessionTitle}
+                                <span class="text-[10px] font-medium whitespace-nowrap ${isCurrentSess ? 'text-foreground' : 'text-muted-foreground'}" title="${sessionTitleAttr}">
+                                    ${sessionTitleDisplay}
                                 </span>
                                 ${keyDisplay}
                             </div>
@@ -2045,7 +2085,7 @@ class RightPanel {
                                 <span class="flex-shrink-0 text-muted-foreground">
                                     ${icon}
                                 </span>
-                                <span class="truncate flex-1 font-medium" title="${description}">
+                                <span class="truncate flex-1 font-medium" title="${descriptionAttr}">
                                     ${description}
                                 </span>
                                 <span class="text-muted-foreground font-mono ml-auto" style="font-size: 10px;">

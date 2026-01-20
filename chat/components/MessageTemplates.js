@@ -27,7 +27,7 @@ const DEFAULT_WELCOME_CONTENT = {
 3. **Chat history is entirely local.**\\
    Because every chat takes a random anonymous path to the model, *only you* have your full chat history, [saved locally](#download-chats-link).
 4. **This chat client is lightweight, fast, and disposable.**\\
-    The entire client is less than 1MB. All it does is fetching ephemeral keys, sending prompts, and streaming responses on your behalf. You can (and should) <a href="javascript:void(0)" onclick="window.downloadInferenceTickets()">export</a> your tickets to make the same API calls without this client.
+    The entire client is less than 1MB. All it does is fetching ephemeral keys, sending prompts, and streaming responses on your behalf. You can (and should) [export](#download-tickets-link) your tickets to make the same API calls without this client.
 
 **The OA project is actively developed at Stanford and Michigan.** This client is currently in closed alpha and more details coming soon. We appreciate your [feedback](https://forms.gle/HEmvxnJpN1jQC7CfA)!
 
@@ -93,6 +93,49 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+function escapeHtmlAttribute(text) {
+    return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/\n/g, '&#10;');
+}
+
+/**
+ * Allowlist URL sanitizer for link/image attributes.
+ */
+function sanitizeUrl(url, options = {}) {
+    if (!url || typeof url !== 'string') return null;
+    const trimmed = url.trim();
+    if (!trimmed) return null;
+
+    const {
+        allowRelative = true,
+        allowHash = true,
+        allowMailto = true,
+        allowTel = true,
+        allowData = false,
+        allowBlob = false
+    } = options;
+
+    const lower = trimmed.toLowerCase();
+    const normalized = lower.replace(/[\u0000-\u001f\u007f\s]+/g, '');
+
+    if (allowHash && trimmed.startsWith('#')) return trimmed;
+    if (allowRelative && (trimmed.startsWith('/') || trimmed.startsWith('./') || trimmed.startsWith('../'))) {
+        return trimmed;
+    }
+    if (allowMailto && normalized.startsWith('mailto:')) return trimmed;
+    if (allowTel && normalized.startsWith('tel:')) return trimmed;
+    if (allowData && normalized.startsWith('data:')) return trimmed;
+    if (allowBlob && normalized.startsWith('blob:')) return trimmed;
+    if (normalized.startsWith('http://') || normalized.startsWith('https://')) return trimmed;
+
+    return null;
+}
+
 /**
  * Builds HTML for generated images in a message.
  * @param {Array} images - Array of image objects with type and image_url
@@ -107,14 +150,16 @@ function buildGeneratedImages(images) {
 
     let imagesHtml = generatedImages.map((image, index) => {
         if (image.image_url?.url) {
+            const safeUrl = sanitizeUrl(image.image_url.url, { allowData: true, allowBlob: true, allowHash: false, allowMailto: false, allowTel: false });
+            if (!safeUrl) return '';
             const imageId = `image-${Date.now()}-${index}`;
             return `
                 <div class="relative inline-block max-w-full">
                     <img
-                        src="${escapeHtml(image.image_url.url)}"
+                        src="${escapeHtmlAttribute(safeUrl)}"
                         alt="Generated image"
                         class="w-full max-w-xl max-h-96 rounded-lg border object-contain cursor-pointer hover:opacity-95 transition-opacity"
-                        data-image-id="${imageId}"
+                        data-image-id="${escapeHtmlAttribute(imageId)}"
                         onclick="window.expandImage('${imageId}')"
                     />
                     <button
@@ -153,18 +198,21 @@ function buildImportedThumbnails(images) {
         const sourceUrl = image.source_url || fullUrl;
         const title = image.title || 'Image';
         const imageId = `imported-thumb-${Date.now()}-${index}`;
+        const safeThumbUrl = sanitizeUrl(thumbUrl, { allowData: true, allowBlob: true, allowMailto: false, allowTel: false, allowHash: false });
+        if (!safeThumbUrl) return '';
+        const safeSourceUrl = sanitizeUrl(sourceUrl, { allowData: false, allowBlob: false });
+        const linkHref = safeSourceUrl || '#';
+        const linkExtras = safeSourceUrl ? ' target="_blank" rel="noopener noreferrer"' : ' aria-disabled="true"';
 
         return `
-            <a href="${escapeHtml(sourceUrl)}"
-               target="_blank"
-               rel="noopener noreferrer"
+            <a href="${escapeHtmlAttribute(linkHref)}"${linkExtras}
                class="imported-thumbnail-card flex-shrink-0 group"
-               title="${escapeHtml(title)}">
+               title="${escapeHtmlAttribute(title)}">
                 <img
-                    src="${escapeHtml(thumbUrl)}"
-                    alt="${escapeHtml(title)}"
+                    src="${escapeHtmlAttribute(safeThumbUrl)}"
+                    alt="${escapeHtmlAttribute(title)}"
                     class="w-32 h-24 rounded-lg border border-border object-cover bg-muted hover:opacity-90 transition-opacity"
-                    data-image-id="${imageId}"
+                    data-image-id="${escapeHtmlAttribute(imageId)}"
                     loading="lazy"
                     onerror="this.parentElement.style.display='none';"
                 />
@@ -195,19 +243,25 @@ function buildFileAttachments(files) {
 
         const isImage = file.type.startsWith('image/');
         let iconOrPreview = '';
-        let clickHandler = '';
+        // Use data attributes for actions so rendering stays HTML-only.
+        let attachmentAttrs = '';
+        let interactiveClass = '';
 
         if (isImage && file.dataUrl) {
             const imageId = `uploaded-image-${Date.now()}-${index}`;
+            const safeDataUrl = sanitizeUrl(file.dataUrl, { allowData: true, allowBlob: true, allowMailto: false, allowTel: false, allowHash: false });
+            if (safeDataUrl) {
+                attachmentAttrs = `data-attachment-action="expand-image" data-image-id="${escapeHtmlAttribute(imageId)}"`;
+                interactiveClass = 'cursor-pointer';
+            }
             iconOrPreview = `
                 <img
-                    src="${file.dataUrl}"
+                    src="${escapeHtmlAttribute(safeDataUrl || '')}"
                     class="w-full h-full object-cover hover:opacity-90 transition-opacity"
-                    alt="${escapeHtml(file.name)}"
-                    data-image-id="${imageId}"
+                    alt="${escapeHtmlAttribute(file.name)}"
+                    data-image-id="${escapeHtmlAttribute(imageId)}"
                 >
             `;
-            clickHandler = `onclick="window.expandImage('${imageId}')" style="cursor: pointer;"`;
         } else {
             const isPdf = file.type === 'application/pdf';
             const isAudio = file.type.startsWith('audio/');
@@ -232,12 +286,16 @@ function buildFileAttachments(files) {
 
             // For non-images, trigger download by creating a link from dataUrl
             if (file.dataUrl) {
-                clickHandler = `onclick="(function() { const a = document.createElement('a'); a.href = '${file.dataUrl}'; a.download = '${escapeHtml(file.name)}'; a.click(); })()" style="cursor: pointer;"`;
+                const safeDataUrl = sanitizeUrl(file.dataUrl, { allowData: true, allowBlob: true, allowMailto: false, allowTel: false, allowHash: false });
+                if (safeDataUrl) {
+                    attachmentAttrs = `data-attachment-action="download" data-download-url="${escapeHtmlAttribute(safeDataUrl)}" data-download-name="${escapeHtmlAttribute(file.name)}"`;
+                    interactiveClass = 'cursor-pointer';
+                }
             }
         }
 
         return `
-            <div class="file-attachment-card group relative flex items-center p-2 gap-3 rounded-xl w-auto max-w-[240px] transition-all select-none overflow-hidden shadow-sm backdrop-blur-sm" ${clickHandler}>
+            <div class="file-attachment-card group relative flex items-center p-2 gap-3 rounded-xl w-auto max-w-[240px] transition-all select-none overflow-hidden shadow-sm backdrop-blur-sm ${interactiveClass}" ${attachmentAttrs}>
                 <!-- Icon/Preview Container -->
                 <div class="file-attachment-icon flex-shrink-0 w-10 h-10 rounded-lg overflow-hidden flex items-center justify-center shadow-sm">
                     ${iconOrPreview}
@@ -245,7 +303,7 @@ function buildFileAttachments(files) {
 
                 <!-- Text Info -->
                 <div class="flex flex-col min-w-0 pr-2">
-                    <span class="text-xs font-medium truncate leading-tight" title="${escapeHtml(file.name)}">
+                    <span class="text-xs font-medium truncate leading-tight" title="${escapeHtmlAttribute(file.name)}">
                         ${escapeHtml(file.name)}
                     </span>
                     <span class="text-[10px] opacity-70 truncate">
@@ -661,9 +719,13 @@ function enhanceInlineLinks(content, messageId) {
         const url = link.href;
         const originalText = link.textContent;
         const domain = extractDomain(url);
+        const safeUrl = sanitizeUrl(url, { allowData: false, allowBlob: false, allowHash: true });
 
         // Skip javascript: and internal links
         if (url.startsWith('javascript:') || url.startsWith('#')) {
+            return;
+        }
+        if (!safeUrl) {
             return;
         }
 
@@ -689,16 +751,16 @@ function enhanceInlineLinks(content, messageId) {
         // Get favicon URL from DuckDuckGo (privacy-friendly)
         const faviconUrl = `https://icons.duckduckgo.com/ip3/${domain}.ico`;
 
-        enhancedLink.innerHTML = ` <a href="${escapeHtml(url)}"
+        enhancedLink.innerHTML = ` <a href="${escapeHtmlAttribute(safeUrl)}"
             target="_blank"
             rel="noopener noreferrer"
             class="inline-link-button"
-            data-link-id="${linkId}"
-            data-url="${escapeHtml(url)}"
-            data-domain="${escapeHtml(domain)}">
+            data-link-id="${escapeHtmlAttribute(linkId)}"
+            data-url="${escapeHtmlAttribute(safeUrl)}"
+            data-domain="${escapeHtmlAttribute(domain)}">
             <img class="inline-link-icon"
-                 src="${escapeHtml(faviconUrl)}"
-                 alt="${escapeHtml(domain)}"
+                 src="${escapeHtmlAttribute(faviconUrl)}"
+                 alt="${escapeHtmlAttribute(domain)}"
                  onerror="this.style.display='none'; this.nextElementSibling.style.display='inline-block';" />
             <svg class="inline-link-icon-fallback" style="display: none;" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244" />
@@ -737,13 +799,18 @@ function buildCitationsToggleButton(citations, messageId) {
     }
 
     // Build stacked favicon HTML
-    const faviconsHtml = uniqueFavicons.map((f, i) => `
-        <img src="${escapeHtml(f.favicon)}"
-             alt="${escapeHtml(f.domain)}"
+    const faviconsHtml = uniqueFavicons.map((f, i) => {
+        const fallbackFavicon = `https://icons.duckduckgo.com/ip3/${f.domain}.ico`;
+        const safeFavicon = sanitizeUrl(f.favicon, { allowRelative: false, allowHash: false, allowMailto: false, allowTel: false }) ||
+            sanitizeUrl(fallbackFavicon, { allowRelative: false, allowHash: false, allowMailto: false, allowTel: false });
+        if (!safeFavicon) return '';
+        return `
+        <img src="${escapeHtmlAttribute(safeFavicon)}"
+             alt="${escapeHtmlAttribute(f.domain)}"
              class="citations-toggle-favicon"
              style="z-index: ${uniqueFavicons.length - i};"
-             onerror="this.style.display='none';" />`
-    ).join('');
+             onerror="this.style.display='none';" />`;
+    }).join('');
 
     return `
         <button
@@ -810,7 +877,12 @@ function buildCitationsSection(citations, messageId) {
             }
         }
 
-        const favicon = citation.favicon || `https://icons.duckduckgo.com/ip3/${domain}.ico`;
+        const fallbackFavicon = `https://icons.duckduckgo.com/ip3/${domain}.ico`;
+        const safeCitationUrl = sanitizeUrl(citation.url, { allowData: false, allowBlob: false });
+        const linkHref = safeCitationUrl || '#';
+        const linkExtras = safeCitationUrl ? ' target="_blank" rel="noopener noreferrer"' : ' aria-disabled="true"';
+        const safeFavicon = sanitizeUrl(citation.favicon, { allowRelative: false, allowHash: false, allowMailto: false, allowTel: false }) ||
+            sanitizeUrl(fallbackFavicon, { allowRelative: false, allowHash: false, allowMailto: false, allowTel: false });
 
         // Get description/preview from content or description (enrichment), distinct from title
         let description = '';
@@ -824,16 +896,14 @@ function buildCitationsSection(citations, messageId) {
         }
 
         return `
-            <a href="${escapeHtml(citation.url)}"
-               target="_blank"
-               rel="noopener noreferrer"
+            <a href="${escapeHtmlAttribute(linkHref)}"${linkExtras}
                id="citation-${messageId}-${displayIndex}"
                class="citation-card-modern group"
                data-citation-index="${displayIndex}"
-               title="${escapeHtml(citation.url)}">
+               title="${escapeHtmlAttribute(citation.url)}">
                 <div class="citation-card-header">
-                    <img src="${escapeHtml(favicon)}"
-                         alt="${escapeHtml(domain)}"
+                    <img src="${escapeHtmlAttribute(safeFavicon || '')}"
+                         alt="${escapeHtmlAttribute(domain)}"
                          class="citation-favicon"
                          loading="lazy"
                          onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />
