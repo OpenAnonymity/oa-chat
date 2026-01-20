@@ -25,8 +25,9 @@ class RightPanel {
         // Responsive behavior
         this.isDesktop = window.innerWidth >= 1024;
 
-        // Default panel state (preferences load asynchronously).
-        this.isVisible = this.isDesktop;
+        // Panel visibility - check localStorage snapshot first to avoid flash
+        const savedPanelVisible = localStorage.getItem('oa-right-panel-visible');
+        this.isVisible = savedPanelVisible === 'true' ? true : savedPanelVisible === 'false' ? false : this.isDesktop;
 
         this.ticketCount = 0;
         this.apiKey = null;
