@@ -7,6 +7,10 @@ export default class MessageNavigation {
         this.container = null;
         this.isVisible = false;
         this.hideTimeout = null;
+        this.isNavigating = false; // Flag to prevent scroll handler from overriding click navigation
+        this.clickedIndex = null; // Tracks user-clicked bar, null = use viewport-based detection
+        this.awaitingScrollEnd = false; // True while waiting for programmatic scroll to finish
+        this.scrollEndTimer = null;
 
         this.init();
     }
@@ -273,9 +277,10 @@ export default class MessageNavigation {
     }
 
     updateIndicators() {
+        const activeIndex = this.clickedIndex !== null ? this.clickedIndex : this.currentMessageIndex;
         const indicators = document.querySelectorAll('.message-indicator');
         indicators.forEach((indicator, index) => {
-            if (index === this.currentMessageIndex) {
+            if (index === activeIndex) {
                 indicator.classList.add('active');
                 indicator.setAttribute('aria-current', 'true');
             } else {
@@ -300,19 +305,42 @@ export default class MessageNavigation {
     navigateToMessage(index) {
         if (index < 0 || index >= this.messages.length) return;
 
+        // Set flag to prevent scroll handler from overriding during navigation
+        this.isNavigating = true;
+        this.clickedIndex = index; // Remember which bar was clicked
+
         this.currentMessageIndex = index;
         const message = this.messages[index];
 
-        // Scroll to message
+        // Scroll to message with custom logic to avoid scrolling past content bounds
         const messageElement = document.querySelector(`[data-message-id="${message.id}"]`);
-        if (messageElement) {
-            messageElement.scrollIntoView({
-                behavior: 'smooth',
-                block: 'center'
-            });
+        const chatArea = document.getElementById('chat-area');
+        const toolbar = document.getElementById('chat-toolbar');
+
+        if (messageElement && chatArea) {
+            const messageTop = messageElement.offsetTop;
+            const viewportHeight = chatArea.clientHeight;
+            const maxScroll = chatArea.scrollHeight - viewportHeight;
+
+            // Account for toolbar height + small gap so message appears below it with spacing
+            const toolbarHeight = toolbar ? toolbar.offsetHeight : 0;
+            const gap = 12; // Small gap between toolbar and message
+
+            // Calculate target: put message top below toolbar with gap, but clamp to valid scroll range
+            let targetScroll = messageTop - toolbarHeight - gap;
+            targetScroll = Math.min(targetScroll, maxScroll); // Don't scroll past bottom
+            targetScroll = Math.max(targetScroll, 0); // Don't scroll past top
+
+            chatArea.scrollTo({ top: targetScroll, behavior: 'smooth' });
         }
 
         this.updateIndicators();
+
+        // Clear navigation flag after initial delay, then wait for scroll to truly stop
+        setTimeout(() => {
+            this.isNavigating = false;
+            this.awaitingScrollEnd = true; // Still waiting for scroll animation to finish
+        }, 300);
     }
 
     show() {
@@ -335,13 +363,28 @@ export default class MessageNavigation {
         }
         this.messages = [];
         this.currentMessageIndex = 0;
+        this.clickedIndex = null;
+        this.awaitingScrollEnd = false;
+        clearTimeout(this.scrollEndTimer);
     }
 
     // Track scroll position to update current message
     handleScroll() {
-        if (this.isVisible) {
-            this.updateCurrentMessageIndex();
+        if (!this.isVisible) return;
+        if (this.isNavigating) return; // Still in programmatic scroll
+
+        // If waiting for scroll animation to end, use debounce to detect scroll stop
+        if (this.awaitingScrollEnd) {
+            clearTimeout(this.scrollEndTimer);
+            this.scrollEndTimer = setTimeout(() => {
+                this.awaitingScrollEnd = false;
+            }, 150); // Scroll has stopped for 150ms, ready to track manual scroll
+            return;
         }
+
+        // User is scrolling manually - clear clicked state
+        this.clickedIndex = null;
+        this.updateCurrentMessageIndex();
     }
 }
 

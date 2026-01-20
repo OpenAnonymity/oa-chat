@@ -1556,6 +1556,11 @@ export default class ChatArea {
             if (message.citations && message.citations.length > 0) {
                 this.setupCitationCarouselScroll();
             }
+
+            // Update message navigation to reflect final content (fixes preview + indicator height)
+            if (this.app.messageNavigation) {
+                this.app.messageNavigation.update();
+            }
             return;
         }
 
@@ -1582,6 +1587,11 @@ export default class ChatArea {
                 throwOnError: false
             });
             this.setupCitationCarouselScroll();
+        }
+
+        // Update message navigation to reflect final content (fixes preview + indicator height)
+        if (this.app.messageNavigation) {
+            this.app.messageNavigation.update();
         }
     }
 
