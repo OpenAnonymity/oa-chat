@@ -1979,7 +1979,7 @@ class ChatApp {
         const toast = document.createElement('div');
         toast.id = 'app-toast';
         const bgColor = type === 'error' ? 'bg-destructive text-destructive-foreground' : 'bg-primary text-primary-foreground';
-        toast.className = `fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] px-4 py-2 rounded-lg shadow-lg text-sm ${bgColor} animate-in fade-in slide-in-from-bottom-4`;
+        toast.className = `fixed bottom-36 left-1/2 -translate-x-1/2 z-[100] px-4 py-2 rounded-lg shadow-lg text-sm ${bgColor} animate-in fade-in slide-in-from-bottom-4`;
         toast.textContent = message;
         document.body.appendChild(toast);
         this._toastTimeout = setTimeout(() => {
@@ -5361,6 +5361,8 @@ class ChatApp {
             this.renderFilePreviews();
             this.updateFileCountBadge();
             this.updateInputState();
+            // Focus the input field so user can immediately type
+            this.elements.messageInput.focus();
         }
 
         if (errors.length > 0) {
