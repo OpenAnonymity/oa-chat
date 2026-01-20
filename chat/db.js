@@ -38,8 +38,8 @@ function setCompatFlag() {
 
 class ChatDatabase {
     constructor() {
-        this.dbName = 'oa-fastchat';
-        this.version = 4;
+        this.dbName = 'openrouter-chat';
+        this.version = 3;
         this.db = null;
         this.compatMode = false;
         this.initInFlight = null;
