@@ -1699,6 +1699,12 @@ html.serif-mode .reasoning-trace {
     font-family: var(--font-sans);
 }
 
+/* Exclude share preview from serif font */
+html.serif-mode .share-preview-content {
+    font-family: var(--font-sans);
+    font-size: inherit;
+}
+
 /* ----------------------------------------
    Theme Toggle (3-way Segmented Control)
    Light / Dark / System
