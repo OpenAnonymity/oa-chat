@@ -445,6 +445,14 @@
                                                     </svg>
                                                 </a>
 
+                                                <!-- Migration Export -->
+                                                <button data-action="export-all-data" class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight rounded-md transition-colors flex items-center justify-between">
+                                                    <span>Export All Data</span>
+                                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                                                    </svg>
+                                                </button>
+
                                                 <!-- Reasoning toggle section -->
                                                 <div class="border-t border-border pt-2 mt-2">
                                                     <div id="reasoning-toggle-row" class="flex items-center justify-between px-3 py-1.5 cursor-pointer hover-highlight rounded-md">
@@ -589,6 +597,48 @@
             </div>
         </div>
     </template>
+
+    <!-- Migration Modal -->
+    <div id="migration-modal" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div role="dialog" aria-modal="true" class="w-full max-w-md rounded-2xl border border-border bg-background shadow-2xl">
+            <div class="p-6">
+                <div class="flex items-center gap-3 mb-4">
+                    <div class="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M9 8.25H7.5a2.25 2.25 0 0 0-2.25 2.25v9a2.25 2.25 0 0 0 2.25 2.25h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25H15m0-3-3-3m0 0-3 3m3-3V15" />
+                        </svg>
+                    </div>
+                    <div>
+                        <h2 class="text-lg font-semibold text-foreground">We're moving to Beta!</h2>
+                    </div>
+                </div>
+
+                <div class="space-y-3 text-sm text-muted-foreground">
+                    <p>We're migrating to <a href="https://beta.openanonymity.ai/chat" target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:underline font-medium">beta.openanonymity.ai/chat</a>.</p>
+                    <p>Since all of your data is stored locally in your browser, we can't automatically sync it for you.</p>
+                    <p>Click <strong class="text-foreground">Export</strong> to download your chat history, tickets, and preferences as a single file. Upload this file on the beta site to restore everything at once.</p>
+                    <p class="text-muted-foreground/80">You can also find the export button in the settings menu.</p>
+                </div>
+
+                <div class="mt-5 flex items-center gap-2">
+                    <input type="checkbox" id="migration-modal-snooze" class="h-4 w-4 rounded border-border text-primary focus:ring-primary">
+                    <label for="migration-modal-snooze" class="text-xs text-muted-foreground select-none cursor-pointer">Don't show again today</label>
+                </div>
+
+                <div class="mt-4 flex justify-end gap-2">
+                    <button id="migration-modal-dismiss" class="btn-ghost-hover inline-flex items-center justify-center rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-foreground shadow-sm transition-all duration-200">
+                        Later
+                    </button>
+                    <button id="migration-modal-export" class="inline-flex items-center justify-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-all duration-200 hover:bg-blue-700">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                        </svg>
+                        Export
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <!-- API Key Verification Modal -->
     <div id="verify-key-modal" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"></div>

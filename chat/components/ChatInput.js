@@ -104,7 +104,7 @@ export default class ChatInput {
         // Settings menu actions
         this.app.elements.settingsMenu.addEventListener('click', async (e) => {
             if (e.target.tagName === 'BUTTON') {
-                const action = e.target.textContent.trim();
+                const action = e.target.dataset.action || e.target.textContent.trim();
 
                 // Copy Markdown functionality (temporarily disabled)
                 // if (action === 'Copy Markdown') {
@@ -121,6 +121,12 @@ export default class ChatInput {
                 //         this.app.renderCurrentModel();
                 //     }
                 // }
+
+                // Export all data for migration
+                if (action === 'export-all-data') {
+                    await this.handleExportAllData();
+                }
+
                 this.app.elements.settingsMenu.classList.add('hidden');
             }
         });
@@ -162,8 +168,65 @@ export default class ChatInput {
         // Setup flat mode (display mode) controls
         this.setupFlatModeControls();
 
+        // Setup migration modal handlers
+        this.setupMigrationModal();
+
         // Mark input as ready for the inline script to defer handling
         window.chatInputReady = true;
+    }
+
+    /**
+     * Sets up the migration modal and its event handlers.
+     * Shows on startup unless snoozed (3 days).
+     */
+    setupMigrationModal() {
+        const modal = document.getElementById('migration-modal');
+        if (!modal) return;
+
+        const dismissBtn = document.getElementById('migration-modal-dismiss');
+        const exportBtn = document.getElementById('migration-modal-export');
+        const snoozeCheckbox = document.getElementById('migration-modal-snooze');
+
+        const SNOOZE_DURATION_MS = 24 * 60 * 60 * 1000; // 1 day
+
+        const closeModal = () => {
+            modal.classList.add('hidden');
+            // Only snooze if checkbox is checked
+            if (snoozeCheckbox?.checked) {
+                const snoozeUntil = Date.now() + SNOOZE_DURATION_MS;
+                localStorage.setItem('oa-migration-modal-snooze-until', snoozeUntil.toString());
+            }
+        };
+
+        // Check if snoozed
+        const snoozeUntil = localStorage.getItem('oa-migration-modal-snooze-until');
+        const isSnoozed = snoozeUntil && Date.now() < parseInt(snoozeUntil, 10);
+
+        // Show modal on startup if not snoozed
+        if (!isSnoozed) {
+            modal.classList.remove('hidden');
+        }
+
+        dismissBtn?.addEventListener('click', closeModal);
+
+        exportBtn?.addEventListener('click', async () => {
+            await this.handleExportAllData();
+            closeModal();
+        });
+
+        // Close on backdrop click
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                closeModal();
+            }
+        });
+
+        // Close on Escape key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && !modal.classList.contains('hidden')) {
+                closeModal();
+            }
+        });
     }
 
     /**
@@ -336,6 +399,24 @@ export default class ChatInput {
             if (buttonElement) {
                 this.app.elements.settingsMenu.classList.add('hidden');
             }
+        }
+    }
+
+    /**
+     * Exports all user data for migration to beta.
+     */
+    async handleExportAllData() {
+        try {
+            const { exportAllData } = await import('../services/globalExport.js');
+            const success = await exportAllData();
+            if (success) {
+                this.app.showToast?.('Data exported successfully', 'success');
+            } else {
+                this.app.showToast?.('Failed to export data', 'error');
+            }
+        } catch (error) {
+            console.error('Export error:', error);
+            this.app.showToast?.('Export failed', 'error');
         }
     }
 }
