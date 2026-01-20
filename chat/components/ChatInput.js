@@ -5,6 +5,7 @@
  */
 
 import themeManager from '../services/themeManager.js';
+import MigrationModal from './MigrationModal.js';
 
 export default class ChatInput {
     /**
@@ -168,65 +169,12 @@ export default class ChatInput {
         // Setup flat mode (display mode) controls
         this.setupFlatModeControls();
 
-        // Setup migration modal handlers
-        this.setupMigrationModal();
+        // Initialize migration modal
+        this.migrationModal = new MigrationModal();
+        this.migrationModal.init();
 
         // Mark input as ready for the inline script to defer handling
         window.chatInputReady = true;
-    }
-
-    /**
-     * Sets up the migration modal and its event handlers.
-     * Shows on startup unless snoozed (3 days).
-     */
-    setupMigrationModal() {
-        const modal = document.getElementById('migration-modal');
-        if (!modal) return;
-
-        const dismissBtn = document.getElementById('migration-modal-dismiss');
-        const exportBtn = document.getElementById('migration-modal-export');
-        const snoozeCheckbox = document.getElementById('migration-modal-snooze');
-
-        const SNOOZE_DURATION_MS = 24 * 60 * 60 * 1000; // 1 day
-
-        const closeModal = () => {
-            modal.classList.add('hidden');
-            // Only snooze if checkbox is checked
-            if (snoozeCheckbox?.checked) {
-                const snoozeUntil = Date.now() + SNOOZE_DURATION_MS;
-                localStorage.setItem('oa-migration-modal-snooze-until', snoozeUntil.toString());
-            }
-        };
-
-        // Check if snoozed
-        const snoozeUntil = localStorage.getItem('oa-migration-modal-snooze-until');
-        const isSnoozed = snoozeUntil && Date.now() < parseInt(snoozeUntil, 10);
-
-        // Show modal on startup if not snoozed
-        if (!isSnoozed) {
-            modal.classList.remove('hidden');
-        }
-
-        dismissBtn?.addEventListener('click', closeModal);
-
-        exportBtn?.addEventListener('click', async () => {
-            await this.handleExportAllData();
-            closeModal();
-        });
-
-        // Close on backdrop click
-        modal.addEventListener('click', (e) => {
-            if (e.target === modal) {
-                closeModal();
-            }
-        });
-
-        // Close on Escape key
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && !modal.classList.contains('hidden')) {
-                closeModal();
-            }
-        });
     }
 
     /**
