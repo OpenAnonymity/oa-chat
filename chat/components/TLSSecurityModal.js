@@ -59,7 +59,8 @@ class TLSSecurityModal {
             try {
                 const response = await fetch(LIBCURL_CDN_URL, {
                     signal: AbortSignal.timeout(10000),
-                    cache: 'force-cache' // Use cached version (same as what browser loaded)
+                    cache: 'force-cache', // Use cached version (same as what browser loaded)
+                    credentials: 'omit'
                 });
                 if (response.ok) {
                     const jsBuffer = await response.arrayBuffer();

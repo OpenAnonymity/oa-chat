@@ -686,8 +686,8 @@ function enhanceInlineLinks(content, messageId) {
         const enhancedLink = doc.createElement('span');
         enhancedLink.className = 'inline-link-citation';
 
-        // Get favicon URL - use sz=32 for crisp rendering on high-DPI displays
-        const faviconUrl = `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
+        // Get favicon URL from DuckDuckGo (privacy-friendly)
+        const faviconUrl = `https://icons.duckduckgo.com/ip3/${domain}.ico`;
 
         enhancedLink.innerHTML = ` <a href="${escapeHtml(url)}"
             target="_blank"
@@ -731,7 +731,7 @@ function buildCitationsToggleButton(citations, messageId) {
         const domain = extractDomain(c.url);
         if (!seenDomains.has(domain)) {
             seenDomains.add(domain);
-            uniqueFavicons.push({ domain, favicon: c.favicon || `https://www.google.com/s2/favicons?domain=${domain}&sz=64` });
+            uniqueFavicons.push({ domain, favicon: c.favicon || `https://icons.duckduckgo.com/ip3/${domain}.ico` });
             if (uniqueFavicons.length >= 4) break;
         }
     }
@@ -810,7 +810,7 @@ function buildCitationsSection(citations, messageId) {
             }
         }
 
-        const favicon = citation.favicon || `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
+        const favicon = citation.favicon || `https://icons.duckduckgo.com/ip3/${domain}.ico`;
 
         // Get description/preview from content or description (enrichment), distinct from title
         let description = '';

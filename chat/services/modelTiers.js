@@ -97,7 +97,7 @@ function saveCache(data) {
  */
 async function fetchModelTickets() {
     try {
-        const response = await fetch(`${ORG_API_BASE}/chat/model-tickets`);
+        const response = await fetch(`${ORG_API_BASE}/chat/model-tickets`, { credentials: 'omit' });
         if (!response.ok) return null;
         return await response.json();
     } catch (e) {

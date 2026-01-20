@@ -73,7 +73,7 @@ function loadPinnedCache() {
  */
 async function fetchPinnedModels() {
     try {
-        const response = await fetch(`${ORG_API_BASE}/chat/pinned-models`);
+        const response = await fetch(`${ORG_API_BASE}/chat/pinned-models`, { credentials: 'omit' });
         if (!response.ok) return null;
         return await response.json();
     } catch (e) {

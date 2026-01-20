@@ -592,7 +592,8 @@ class NetworkProxy {
             console.log('[networkProxy.fetch] Using direct fetch (proxy disabled)');
             this.state.transport = 'direct';
             // Don't set fallbackActive here - this is an intentional bypass, not a failure fallback
-            return fetch(resource, init);
+            // Use credentials: 'omit' to prevent third-party cookie storage
+            return fetch(resource, { ...init, credentials: 'omit' });
         }
 
         try {
@@ -652,7 +653,8 @@ class NetworkProxy {
             this.state.fallbackActive = true;
             await this.saveSettings(this.state.settings);
             this.emitChange();
-            return fetch(resource, init);
+            // Use credentials: 'omit' to prevent third-party cookie storage
+            return fetch(resource, { ...init, credentials: 'omit' });
         }
     }
 }

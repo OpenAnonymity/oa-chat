@@ -2103,6 +2103,7 @@ class ChatApp {
                 response = await fetch(pathname, {
                     method: 'HEAD',
                     cache: 'no-store',
+                    credentials: 'omit',
                     headers: {
                         'cache-control': 'no-cache',
                         pragma: 'no-cache'
@@ -2123,6 +2124,7 @@ class ChatApp {
             response = await fetch(pathname, {
                 method: 'GET',
                 cache: 'no-store',
+                credentials: 'omit',
                 headers: {
                     'cache-control': 'no-cache',
                     pragma: 'no-cache'

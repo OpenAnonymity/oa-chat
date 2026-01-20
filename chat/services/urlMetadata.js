@@ -49,7 +49,7 @@ async function fetchUrlMetadata(url) {
     const defaultMetadata = {
         title: domain,
         description: url,
-        favicon: `https://www.google.com/s2/favicons?domain=${domain}&sz=32`,
+        favicon: `https://icons.duckduckgo.com/ip3/${domain}.ico`,
         domain: domain,
         url: url
     };
@@ -75,6 +75,7 @@ async function fetchUrlMetadata(url) {
             try {
                 response = await fetch(proxyUrl, {
                     signal: controller.signal,
+                    credentials: 'omit',
                     headers: {
                         'Accept': 'text/html',
                         'User-Agent': 'Mozilla/5.0 (compatible; LinkPreview/1.0)'
@@ -121,7 +122,7 @@ async function fetchUrlMetadata(url) {
 
         // Extract favicon - always use Google's favicon service for consistency
         // This is more reliable than trying to parse from HTML
-        let favicon = `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
+        let favicon = `https://icons.duckduckgo.com/ip3/${domain}.ico`;
 
         const metadata = {
             title: title.trim().substring(0, 100),
@@ -182,7 +183,7 @@ function addToCache(url, metadata) {
     metadataCache.set(url, {
         title: metadata.title || extractDomain(url),
         description: metadata.description || '',
-        favicon: metadata.favicon || `https://www.google.com/s2/favicons?domain=${extractDomain(url)}&sz=32`,
+        favicon: metadata.favicon || `https://icons.duckduckgo.com/ip3/${extractDomain(url)}.ico`,
         domain: metadata.domain || extractDomain(url),
         url: url
     });
