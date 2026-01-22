@@ -4,6 +4,9 @@ function normalizeId(id) {
 }
 
 const COMPAT_RELOAD_KEY = 'oa-db-force-compat';
+const OPEN_TIMEOUT_MS = 2500;
+const UPGRADE_TIMEOUT_MS = 12000;
+const OVERALL_TIMEOUT_MS = 20000;
 
 function canUseSessionStorage() {
     try {
@@ -53,7 +56,12 @@ class ChatDatabase {
         this.initInFlight = new Promise((resolve, reject) => {
             let settled = false;
             let timeoutId = null;
+            let upgradeTimeoutId = null;
+            let overallTimeoutId = null;
             let upgradeStarted = false;
+            let fallbackStarted = false;
+            let versionedFailed = null;
+            let fallbackFailed = null;
             const storageAvailable = canUseSessionStorage();
             const forceCompat = storageAvailable && consumeCompatFlag();
 
@@ -63,9 +71,31 @@ class ChatDatabase {
                 }
                 timeoutId = setTimeout(() => {
                     if (!settled && !upgradeStarted) {
-                        triggerCompatReload(new Error('Database upgrade timed out.'));
+                        triggerCompatFallback(new Error('Database open timed out.'));
                     }
-                }, 2500);
+                }, OPEN_TIMEOUT_MS);
+            };
+
+            const startUpgradeTimeout = () => {
+                if (upgradeTimeoutId) {
+                    clearTimeout(upgradeTimeoutId);
+                }
+                upgradeTimeoutId = setTimeout(() => {
+                    if (!settled) {
+                        triggerCompatFallback(new Error('Database upgrade stalled.'));
+                    }
+                }, UPGRADE_TIMEOUT_MS);
+            };
+
+            const startOverallTimeout = () => {
+                if (overallTimeoutId) {
+                    clearTimeout(overallTimeoutId);
+                }
+                overallTimeoutId = setTimeout(() => {
+                    if (!settled) {
+                        fail(new Error('Database open timed out.'));
+                    }
+                }, OVERALL_TIMEOUT_MS);
             };
 
             const cleanup = () => {
@@ -73,14 +103,23 @@ class ChatDatabase {
                     clearTimeout(timeoutId);
                     timeoutId = null;
                 }
+                if (upgradeTimeoutId) {
+                    clearTimeout(upgradeTimeoutId);
+                    upgradeTimeoutId = null;
+                }
+                if (overallTimeoutId) {
+                    clearTimeout(overallTimeoutId);
+                    overallTimeoutId = null;
+                }
             };
 
             const finalize = (db, compatMode) => {
                 if (settled) return;
                 settled = true;
                 cleanup();
+                const resolvedCompatMode = compatMode && db.version < this.version;
                 this.db = db;
-                this.compatMode = compatMode;
+                this.compatMode = resolvedCompatMode;
                 this.db.onversionchange = () => {
                     this.db.close();
                     this.db = null;
@@ -88,7 +127,7 @@ class ChatDatabase {
                         window.dispatchEvent(new CustomEvent('oa-db-versionchange'));
                     }
                 };
-                if (compatMode && typeof window !== 'undefined') {
+                if (resolvedCompatMode && typeof window !== 'undefined') {
                     window.dispatchEvent(new CustomEvent('oa-db-compat-mode'));
                 }
                 this.initInFlight = null;
@@ -103,58 +142,16 @@ class ChatDatabase {
                 reject(error);
             };
 
-            const triggerCompatReload = (error) => {
-                if (settled) return;
-                if (!storageAvailable || typeof window === 'undefined') {
-                    fail(error);
-                    return;
-                }
-                if (!setCompatFlag()) {
-                    fail(error);
-                    return;
-                }
-                settled = true;
-                cleanup();
-                this.initInFlight = null;
-                window.location.reload();
-            };
-
-            const request = (forceCompat || !storageAvailable)
-                ? indexedDB.open(this.dbName)
-                : indexedDB.open(this.dbName, this.version);
-
-            if (!forceCompat && storageAvailable) {
-                startTimeout();
-            }
-
-            request.onerror = () => {
-                if (!forceCompat && storageAvailable) {
-                    triggerCompatReload(request.error || new Error('Database open failed.'));
-                } else {
-                    fail(request.error);
-                }
-            };
-            request.onblocked = () => {
-                if (!forceCompat && storageAvailable) {
-                    triggerCompatReload(new Error('Database upgrade blocked by another tab.'));
-                } else {
-                    fail(new Error('Database open blocked by another tab.'));
-                }
-            };
-            request.onsuccess = () => {
-                finalize(request.result, forceCompat);
-            };
-
-            request.onupgradeneeded = (event) => {
+            const upgradeSchema = (event) => {
                 const db = event.target.result;
-                upgradeStarted = true;
+                const transaction = event.target.transaction;
 
                 let sessionsStore;
                 if (!db.objectStoreNames.contains('sessions')) {
                     sessionsStore = db.createObjectStore('sessions', { keyPath: 'id' });
                     sessionsStore.createIndex('createdAt', 'createdAt', { unique: false });
-                } else {
-                    sessionsStore = event.target.transaction.objectStore('sessions');
+                } else if (transaction && transaction.objectStore) {
+                    sessionsStore = transaction.objectStore('sessions');
                 }
 
                 if (sessionsStore && !sessionsStore.indexNames.contains('updatedAt')) {
@@ -164,24 +161,92 @@ class ChatDatabase {
                     sessionsStore.createIndex('updatedAt_id', ['updatedAt', 'id'], { unique: false });
                 }
 
-                // Create messages store
                 if (!db.objectStoreNames.contains('messages')) {
                     const messagesStore = db.createObjectStore('messages', { keyPath: 'id' });
                     messagesStore.createIndex('sessionId', 'sessionId', { unique: false });
                     messagesStore.createIndex('timestamp', 'timestamp', { unique: false });
                 }
 
-                // Create settings store
                 if (!db.objectStoreNames.contains('settings')) {
                     db.createObjectStore('settings', { keyPath: 'key' });
                 }
 
-                // Create network logs store
                 if (!db.objectStoreNames.contains('networkLogs')) {
                     const logsStore = db.createObjectStore('networkLogs', { keyPath: 'id' });
                     logsStore.createIndex('timestamp', 'timestamp', { unique: false });
                     logsStore.createIndex('sessionId', 'sessionId', { unique: false });
                 }
+            };
+
+            const maybeFinalizeOrClose = (request, compatMode) => {
+                if (settled) {
+                    try {
+                        request.result?.close();
+                    } catch (error) {
+                        // Ignore cleanup errors
+                    }
+                    return;
+                }
+                finalize(request.result, compatMode);
+            };
+
+            const recordFailure = (slot, error) => {
+                if (slot === 'versioned') {
+                    versionedFailed = error || new Error('Database open failed.');
+                } else {
+                    fallbackFailed = error || new Error('Database open failed.');
+                }
+
+                if (versionedFailed && fallbackFailed) {
+                    fail(versionedFailed);
+                }
+            };
+
+            const triggerCompatFallback = (error) => {
+                if (settled || fallbackStarted) return;
+                fallbackStarted = true;
+                const fallbackRequest = indexedDB.open(this.dbName);
+
+                fallbackRequest.onerror = () => recordFailure('fallback', fallbackRequest.error || error);
+                fallbackRequest.onblocked = () => recordFailure('fallback', new Error('Database open blocked by another tab.'));
+                fallbackRequest.onsuccess = () => maybeFinalizeOrClose(fallbackRequest, true);
+                fallbackRequest.onupgradeneeded = (event) => {
+                    upgradeSchema(event);
+                };
+            };
+
+            startOverallTimeout();
+
+            if (forceCompat || !storageAvailable) {
+                const request = indexedDB.open(this.dbName);
+                request.onerror = () => fail(request.error);
+                request.onblocked = () => fail(new Error('Database open blocked by another tab.'));
+                request.onsuccess = () => finalize(request.result, forceCompat);
+                request.onupgradeneeded = (event) => {
+                    upgradeSchema(event);
+                };
+                return;
+            }
+
+            const request = indexedDB.open(this.dbName, this.version);
+            startTimeout();
+
+            request.onerror = () => {
+                recordFailure('versioned', request.error || new Error('Database open failed.'));
+                triggerCompatFallback(request.error);
+            };
+            request.onblocked = () => {
+                recordFailure('versioned', new Error('Database upgrade blocked by another tab.'));
+                triggerCompatFallback(new Error('Database upgrade blocked by another tab.'));
+            };
+            request.onsuccess = () => {
+                maybeFinalizeOrClose(request, false);
+            };
+
+            request.onupgradeneeded = (event) => {
+                upgradeStarted = true;
+                startUpgradeTimeout();
+                upgradeSchema(event);
             };
         });
 

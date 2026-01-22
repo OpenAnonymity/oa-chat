@@ -1189,6 +1189,17 @@ class ChatApp {
             this.showToast('Chat storage is running in compatibility mode. Close other tabs and reload to finish the upgrade.', 'error');
         });
 
+        // Load sessions ASAP so the sidebar doesn't stay in a loading state.
+        try {
+            await this.loadInitialSessions();
+        } catch (error) {
+            console.warn('Failed to load initial sessions:', error);
+            this.state.sessions = [];
+            this.state.sessionsById = new Map();
+            this.state.hasMoreSessions = false;
+        }
+        this.renderSessions();
+
         await storageManager.init();
         await apiKeyStore.loadApiKey();
 
@@ -1244,8 +1255,6 @@ class ChatApp {
             chatDB.getSetting('searchEnabled'),
             chatDB.getSetting('reasoningEnabled')
         ]);
-
-        await this.loadInitialSessions();
 
         // Migrate sessions in background (don't block UI)
         this.migrateSessionsInBackground(this.state.sessions);
