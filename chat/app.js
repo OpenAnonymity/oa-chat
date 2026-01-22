@@ -2043,7 +2043,7 @@ class ChatApp {
 
         const toast = document.createElement('div');
         toast.id = 'app-toast';
-        const bgColor = type === 'error' ? 'bg-destructive text-destructive-foreground' : 'bg-primary text-primary-foreground';
+        const bgColor = type === 'error' ? 'bg-destructive text-destructive-foreground' : 'bg-zinc-700 text-zinc-100';
         toast.className = `fixed bottom-36 left-1/2 -translate-x-1/2 z-[100] px-4 py-2 rounded-lg shadow-lg text-sm ${bgColor} animate-in fade-in slide-in-from-bottom-4`;
         toast.textContent = message;
         document.body.appendChild(toast);
@@ -5679,32 +5679,48 @@ Your API key has been cleared. A new key from a different station will be obtain
             window.networkLogger.setCurrentSession(session.id);
         }
 
-        try {
-            const result = await inferenceService.requestAccess(session, {
-                name: backend.requestName,
-                ticketsRequired
-            });
+        // Retry loop for spent tickets (they get auto-archived on failure)
+        let result;
+        let retries = 0;
+        const maxRetries = Math.min(availableTickets, ticketsRequired + 10);
 
-            inferenceService.setAccessInfo(session, result);
-
-            // Clear apiKeyShared flag - new key hasn't been shared yet
-            if (session.shareInfo?.apiKeyShared) {
-                session.shareInfo.apiKeyShared = false;
+        while (retries < maxRetries) {
+            try {
+                result = await inferenceService.requestAccess(session, {
+                    name: backend.requestName,
+                    ticketsRequired
+                });
+                break;  // Success
+            } catch (error) {
+                if (error.code === 'TICKET_USED') {
+                    retries++;
+                    this.showToast(`Ticket already used, trying next available`);
+                    continue;
+                }
+                console.error('Failed to automatically acquire API access:', error);
+                throw error;  // Non-retryable error
             }
-
-            await chatDB.saveSession(session);
-
-            // Update the UI components
-            if (this.rightPanel) {
-                this.rightPanel.onSessionChange(session);
-            }
-
-            return inferenceService.getAccessToken(session);
-        } catch (error) {
-            console.error('Failed to automatically acquire API access:', error);
-            // Pass through the original error message without wrapping
-            throw error;
         }
+
+        if (!result) {
+            throw new Error('All available tickets were already spent');
+        }
+
+        inferenceService.setAccessInfo(session, result);
+
+        // Clear apiKeyShared flag - new key hasn't been shared yet
+        if (session.shareInfo?.apiKeyShared) {
+            session.shareInfo.apiKeyShared = false;
+        }
+
+        await chatDB.saveSession(session);
+
+        // Update the UI components
+        if (this.rightPanel) {
+            this.rightPanel.onSessionChange(session);
+        }
+
+        return inferenceService.getAccessToken(session);
     }
 
     /**

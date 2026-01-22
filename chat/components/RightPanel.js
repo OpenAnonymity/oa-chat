@@ -660,10 +660,33 @@ class RightPanel {
             this.renderTopSectionOnly();
 
             const backend = inferenceService.getBackendForSession(this.currentSession);
-            const result = await inferenceService.requestAccess(this.currentSession, {
-                name: backend.requestName,
-                ticketsRequired
-            });
+
+            // Retry loop for spent tickets (they get auto-archived on failure)
+            let result;
+            let retries = 0;
+            const maxRetries = Math.min(availableTickets, ticketsRequired + 10);
+
+            while (retries < maxRetries) {
+                try {
+                    result = await inferenceService.requestAccess(this.currentSession, {
+                        name: backend.requestName,
+                        ticketsRequired
+                    });
+                    break;  // Success
+                } catch (error) {
+                    console.log('🔄 Request error:', error.message, 'code:', error.code, 'consumeTickets:', error.consumeTickets);
+                    if (error.code === 'TICKET_USED') {
+                        retries++;
+                        this.app.showToast(`Ticket already used, trying next...`);
+                        continue;
+                    }
+                    throw error;  // Non-retryable error
+                }
+            }
+
+            if (!result) {
+                throw new Error('All available tickets were already spent');
+            }
 
             // Store access in current session
             inferenceService.setAccessInfo(this.currentSession, result);
