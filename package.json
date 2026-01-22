@@ -1,0 +1,12 @@
+{
+  "name": "oa-fastchat",
+  "private": true,
+  "devDependencies": {
+    "tailwindcss": "^3.4.17"
+  },
+  "scripts": {
+    "tailwind:build": "tailwindcss -c tailwind.config.js -i chat/tailwind.input.css -o chat/tailwind.generated.css --minify",
+    "tailwind:watch": "tailwindcss -c tailwind.config.js -i chat/tailwind.input.css -o chat/tailwind.generated.css --watch",
+    "fonts:sync": "node scripts/sync-fonts.mjs"
+  }
+}

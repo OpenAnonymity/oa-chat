@@ -6,7 +6,7 @@
 import networkProxy from '../services/networkProxy.js';
 import inferenceService from '../services/inference/inferenceService.js';
 import { ORG_API_BASE } from '../config.js';
-const LIBCURL_CDN_URL = 'https://cdn.jsdelivr.net/npm/libcurl.js@0.7.1/libcurl_full.js';
+const LIBCURL_ASSET_URL = 'vendor/libcurl/libcurl_full.js';
 const LIBCURL_VERSION = '0.7.1';
 
 class TLSSecurityModal {
@@ -50,14 +50,14 @@ class TLSSecurityModal {
 
         try {
             // libcurl.js bundles WASM inside libcurl_full.js (no separate .wasm file)
-            // We verify the JS file from jsDelivr CDN which has its own integrity guarantees
+            // Verify the locally hosted JS asset that the app loads
 
             let localHash = null;
-            let source = 'jsdelivr';
+            let source = 'local';
 
-            // Fetch the libcurl_full.js from CDN and compute hash
+            // Fetch the local libcurl_full.js and compute hash
             try {
-                const response = await fetch(LIBCURL_CDN_URL, {
+                const response = await fetch(LIBCURL_ASSET_URL, {
                     signal: AbortSignal.timeout(10000),
                     cache: 'force-cache', // Use cached version (same as what browser loaded)
                     credentials: 'omit'
@@ -70,19 +70,17 @@ class TLSSecurityModal {
                         .join('');
                 }
             } catch (e) {
-                console.debug('Could not fetch libcurl_full.js from CDN:', e);
+                console.debug('Could not fetch local libcurl_full.js:', e);
             }
 
-            // jsDelivr provides npm package integrity - we can check against npm registry
-            // For now, just show the hash and CDN source for transparency
+            // For now, just show the hash and local source for transparency
             this.wasmIntegrity = {
                 localHash,
                 source,
                 version: LIBCURL_VERSION,
-                cdnUrl: LIBCURL_CDN_URL,
-                // jsDelivr CDN is trusted (npm package + SRI available)
-                verified: !!localHash, // If we got a hash from CDN, it's verified by jsDelivr
-                error: !localHash ? 'Could not fetch from CDN' : null
+                assetUrl: LIBCURL_ASSET_URL,
+                verified: !!localHash,
+                error: !localHash ? 'Could not fetch local asset' : null
             };
         } catch (e) {
             console.error('WASM integrity verification failed:', e);
@@ -232,8 +230,8 @@ class TLSSecurityModal {
                             <div class="flex items-start gap-2">
                                 <span class="text-green-500">✓</span>
                                 <div>
-                                    <strong class="text-foreground">jsDelivr CDN</strong>
-                                    <span class="text-muted-foreground"> — serves npm packages with integrity checks</span>
+                                    <strong class="text-foreground">Local static assets</strong>
+                                    <span class="text-muted-foreground"> — bundled locally for consistent integrity</span>
                                 </div>
                             </div>
                             <div class="mt-2 p-2 bg-slate-100 dark:bg-slate-800/50 rounded text-slate-600 dark:text-slate-300">
@@ -258,7 +256,7 @@ class TLSSecurityModal {
         if (this.isVerifying) {
             return `
                 <div class="flex justify-between items-start gap-2">
-                    <span class="text-xs text-muted-foreground shrink-0">CDN Source</span>
+                    <span class="text-xs text-muted-foreground shrink-0">Asset Source</span>
                     <span class="text-xs font-mono text-muted-foreground">⏳ Verifying...</span>
                 </div>
             `;
@@ -268,7 +266,7 @@ class TLSSecurityModal {
         if (!integrity) {
             return `
                 <div class="flex justify-between items-start gap-2">
-                    <span class="text-xs text-muted-foreground shrink-0">CDN Source</span>
+                    <span class="text-xs text-muted-foreground shrink-0">Asset Source</span>
                     <span class="text-xs font-mono text-muted-foreground">Not checked</span>
                 </div>
             `;
@@ -277,8 +275,8 @@ class TLSSecurityModal {
         if (integrity.verified && integrity.localHash) {
             return `
                 <div class="flex justify-between items-start gap-2">
-                    <span class="text-xs text-muted-foreground shrink-0">CDN Source</span>
-                    <a href="${integrity.cdnUrl}" target="_blank" rel="noopener" class="text-xs font-mono text-blue-500 hover:underline">jsDelivr (npm)</a>
+                    <span class="text-xs text-muted-foreground shrink-0">Asset Source</span>
+                    <a href="${integrity.assetUrl}" target="_blank" rel="noopener" class="text-xs font-mono text-blue-500 hover:underline">Local asset</a>
                 </div>
                 <div class="flex justify-between items-start gap-2">
                     <span class="text-xs text-muted-foreground shrink-0">SHA-256</span>
@@ -290,11 +288,11 @@ class TLSSecurityModal {
         if (integrity.error) {
             return `
                 <div class="flex justify-between items-start gap-2">
-                    <span class="text-xs text-muted-foreground shrink-0">CDN Source</span>
-                    <span class="text-xs font-mono text-amber-600 dark:text-amber-400">jsDelivr (cached)</span>
+                    <span class="text-xs text-muted-foreground shrink-0">Asset Source</span>
+                    <span class="text-xs font-mono text-amber-600 dark:text-amber-400">Local asset</span>
                 </div>
                 <div class="text-xs text-muted-foreground">
-                    Hash check unavailable (CORS)
+                    Hash check unavailable
                 </div>
             `;
         }

@@ -5,7 +5,8 @@ The app runs entirely in the browser and is organized as ES modules:
 
 - `index.html`: Boots the app and pre-applies theme/right-panel visibility to avoid FOUC.
   - Uses `<base href="/chat/">` to resolve all relative paths for deployment flexibility.
-  - Loads CDNs: Tailwind, Marked, KaTeX (+ auto-render), Highlight.js, libcurl.js (lazy for proxy), and Vercel analytics.
+  - Loads local vendor assets: Marked, KaTeX (+ auto-render + fonts), Highlight.js, libcurl.js (lazy for proxy), hash-wasm, and html2pdf.
+  - Uses a precompiled Tailwind stylesheet (`tailwind.generated.css`).
   - Prerenders the empty state via `components/MessageTemplates.js`, then loads `db.js` and `app.js`.
 - `app.js`: Main controller (`ChatApp`).
   - Orchestrates state (sessions/models/streaming), DOM refs, component lifecycle, keyboard shortcuts, reliable auto-scroll, and session/message CRUD via `chatDB`.
@@ -50,22 +51,35 @@ The app runs entirely in the browser and is organized as ES modules:
   - `themeManager.js`: System/light/dark preference management with pre-hydration application.
 - `wasm/`: WebAssembly artifacts for inference ticket/Privacy Pass operations (`oa_inference_ticket.js` + `.wasm`).
 - `styles.css`: Design tokens synced with Tailwind config, prose formatting, reasoning/citation styles, proxy modals, message navigation styling, scroll behaviors, wide mode, and responsive states.
+- `tailwind.config.js`: Tailwind CLI configuration (root).
+- `tailwind.input.css` / `tailwind.generated.css`: Tailwind build input/output.
+- `vendor/`: Self-hosted third-party JS/CSS (Marked, KaTeX, Highlight.js, libcurl.js, hash-wasm, html2pdf).
+- `fonts/`: Self-hosted Google Fonts (`fonts.css` + WOFF2 files). Managed by `scripts/sync-fonts.mjs`.
 - `img/`: Provider and app icons.
 - `README.md`: Legacy, not the source of truth for architecture; see this file.
 
 ## Build, Test, and Development Commands
-No bundler is required. For local development, serve from the repo root:
+No bundler is required. Tailwind uses a lightweight CLI build. For local development, serve from the repo root:
 ```bash
 python3 -m http.server 8080
 # visit http://localhost:8080/chat
 ```
 The app uses a `<base href="/chat/">` tag to resolve all relative asset paths, so always access via `/chat` path. Keep the tab's devtools open; console warnings often highlight integration issues early.
 
+Tailwind and font helper commands:
+```bash
+npm run tailwind:build   # build chat/tailwind.generated.css
+npm run tailwind:watch   # rebuild Tailwind on file changes
+npm run fonts:sync       # sync Google Fonts into chat/fonts (optional URL arg)
+```
+
 ## Coding Style & Naming Conventions
 - ES modules, 4-space indentation, trailing semicolons.
 - Prefer `const`/`let`; class components in PascalCase; methods/helpers in camelCase.
 - Use relative paths for all assets (resolved via `<base href="/chat/">` in `index.html`). Never hardcode `/chat/` in asset URLs.
 - Reuse Tailwind utility patterns established in `index.html`; put tweaks in `styles.css` with concise rationale.
+- Update `tailwind.generated.css` via `npm run tailwind:build` after changes to Tailwind config or classes.
+- Manage Google Fonts via `npm run fonts:sync` instead of manual edits in `chat/fonts`.
 - Persisted data goes through `chatDB` in `db.js`; follow existing object store patterns and keep transactions minimal and readable.
 - Keep code small and modular; avoid duplicating functionality already encapsulated in components/services.
 

@@ -84,33 +84,30 @@
         })();
     </script>
     <!-- Preload critical resources for faster loading -->
-    <link rel="preconnect" href="https://cdn.tailwindcss.com" crossorigin>
-    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+    
     <link rel="dns-prefetch" href="https://openrouter.ai">
     <link rel="dns-prefetch" href="https://org.openanonymity.ai">
 
-    <!-- Google Fonts -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Cormorant:ital,wght@0,300..700;1,300..700&family=Fira+Code:wght@300..700&family=Libre+Caslon+Text:ital,wght@0,400;0,700;1,400&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=PT+Serif:ital,wght@0,400;0,700;1,400;1,700&display=swap" rel="stylesheet">
+    <!-- Local Fonts -->
+    <link rel="stylesheet" href="fonts/fonts.css">
 
 
     <!-- SECURITY NOTE: Self-host these assets to avoid third-party script access. -->
-    <!-- Tailwind CSS - critical, must be blocking -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Tailwind CSS (precompiled) -->
+    <link rel="stylesheet" href="tailwind.generated.css">
 
     <!-- Marked.js for Markdown - defer since only used by module scripts -->
-    <script defer src="https://cdn.jsdelivr.net/npm/marked@11.0.0/marked.min.js"></script>
+    <script defer src="vendor/marked/marked.min.js"></script>
 
     <!-- KaTeX for LaTeX - CSS critical, JS uses defer to ensure correct load order -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
-    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+    <link rel="stylesheet" href="vendor/katex/katex.min.css">
+    <script defer src="vendor/katex/katex.min.js"></script>
+    <script defer src="vendor/katex/auto-render.min.js"></script>
 
     <!-- Highlight.js - CSS critical, JS async (theme sync happens on first use) -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github.min.css" id="hljs-light">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css" id="hljs-dark" disabled>
-    <script async src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+    <link rel="stylesheet" href="vendor/highlight/github.min.css" id="hljs-light">
+    <link rel="stylesheet" href="vendor/highlight/github-dark.min.css" id="hljs-dark" disabled>
+    <script async src="vendor/highlight/highlight.min.js"></script>
     <script>
         // Sync highlight.js theme with app theme (runs when hljs loads)
         (function() {
@@ -146,7 +143,7 @@
                 loadStarted = true;
 
                 const script = document.createElement('script');
-                script.src = 'https://cdn.jsdelivr.net/npm/libcurl.js@0.7.1/libcurl_full.js';
+                script.src = 'vendor/libcurl/libcurl_full.js';
                 script.onload = () => libcurl.load_wasm();
                 document.head.appendChild(script);
 
@@ -175,12 +172,26 @@
         window.hashWasmReadyPromise = null;
         window.initHashWasm = () => {
             if (!window.hashWasmReadyPromise) {
-                window.hashWasmReadyPromise = import('https://esm.sh/hash-wasm@4.11.0')
-                    .then(module => {
-                        window.argon2id = module.argon2id;
-                        console.log('[hash-wasm] ✅ Argon2id ready');
-                        return module.argon2id;
-                    });
+                window.hashWasmReadyPromise = new Promise((resolve, reject) => {
+                    if (window.hashwasm && window.hashwasm.argon2id) {
+                        window.argon2id = window.hashwasm.argon2id;
+                        resolve(window.argon2id);
+                        return;
+                    }
+                    const script = document.createElement('script');
+                    script.src = 'vendor/hash-wasm/argon2.umd.min.js';
+                    script.onload = () => {
+                        if (window.hashwasm && window.hashwasm.argon2id) {
+                            window.argon2id = window.hashwasm.argon2id;
+                            console.log('[hash-wasm] ✅ Argon2id ready');
+                            resolve(window.argon2id);
+                        } else {
+                            reject(new Error('hash-wasm loaded but argon2id is missing'));
+                        }
+                    };
+                    script.onerror = () => reject(new Error('Failed to load hash-wasm'));
+                    document.head.appendChild(script);
+                });
             }
             return window.hashWasmReadyPromise;
         };
@@ -188,52 +199,6 @@
 
     <!-- Vercel Web Analytics -->
     <!-- Vercel insights removed to avoid third-party script access to local data. -->
-
-    <script>
-        tailwind.config = {
-            darkMode: 'class',
-            theme: {
-                extend: {
-                    colors: {
-                        /* All colors use CSS variables for dark mode support */
-                        border: "hsl(var(--color-border))",
-                        input: "hsl(var(--color-input))",
-                        ring: "hsl(var(--color-ring))",
-                        background: "hsl(var(--color-background))",
-                        foreground: "hsl(var(--color-foreground))",
-                        primary: {
-                            DEFAULT: "hsl(var(--color-primary))",
-                            foreground: "hsl(var(--color-primary-foreground))",
-                        },
-                        secondary: {
-                            DEFAULT: "hsl(var(--color-secondary))",
-                            foreground: "hsl(var(--color-secondary-foreground))",
-                        },
-                        destructive: {
-                            DEFAULT: "hsl(var(--color-destructive))",
-                            foreground: "hsl(var(--color-destructive-foreground))",
-                        },
-                        muted: {
-                            DEFAULT: "hsl(var(--color-muted))",
-                            foreground: "hsl(var(--color-muted-foreground))",
-                        },
-                        accent: {
-                            DEFAULT: "hsl(var(--color-accent))",
-                            foreground: "hsl(var(--color-accent-foreground))",
-                        },
-                        popover: {
-                            DEFAULT: "hsl(var(--color-popover))",
-                            foreground: "hsl(var(--color-popover-foreground))",
-                        },
-                        card: {
-                            DEFAULT: "hsl(var(--color-card))",
-                            foreground: "hsl(var(--color-card-foreground))",
-                        },
-                    },
-                }
-            }
-        }
-    </script>
 
     <link rel="stylesheet" href="styles.css">
 </head>

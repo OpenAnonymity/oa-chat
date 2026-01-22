@@ -7,7 +7,7 @@
 let html2pdfLoaded = false;
 
 /**
- * Lazy-loads the html2pdf library from CDN.
+ * Lazy-loads the html2pdf library from local assets.
  * @returns {Promise<void>}
  */
 async function ensureHtml2Pdf() {
@@ -18,7 +18,7 @@ async function ensureHtml2Pdf() {
 
     return new Promise((resolve, reject) => {
         const script = document.createElement('script');
-        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
+        script.src = 'vendor/html2pdf/html2pdf.bundle.min.js';
         script.onload = () => {
             html2pdfLoaded = true;
             resolve();
@@ -214,4 +214,3 @@ export async function exportToPdf(messagesContainer) {
         return false;
     }
 }
-

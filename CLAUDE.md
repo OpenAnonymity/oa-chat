@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-oa-fastchat is a browser-based chat client that communicates directly with inference backends (OpenRouter by default) using ephemeral, anonymous access credentials via the Open Anonymity network. No bundler or build step required — pure ES modules running entirely in the browser.
+oa-fastchat is a browser-based chat client that communicates directly with inference backends (OpenRouter by default) using ephemeral, anonymous access credentials via the Open Anonymity network. No bundler required; Tailwind is built via a lightweight CLI step.
 
 ## Development Commands
 
@@ -16,10 +16,19 @@ python3 -m http.server 8080
 
 The app uses `<base href="/chat/">` to resolve all relative paths — always access via the `/chat` path. Keep devtools open; console warnings highlight integration issues early.
 
+```bash
+# Tailwind
+npm run tailwind:build
+npm run tailwind:watch
+
+# Fonts (self-hosted Google Fonts)
+npm run fonts:sync
+```
+
 ## Architecture
 
 **Entry Point Flow:**
-- `index.html` → pre-hydrates theme/panel state → loads CDNs (Tailwind, Marked, KaTeX, Highlight.js) → lazy-loads libcurl.js for proxy → boots `db.js` then `app.js`
+- `index.html` → pre-hydrates theme/panel state → loads local vendor assets + precompiled Tailwind CSS → lazy-loads libcurl.js for proxy → boots `db.js` then `app.js`
 
 **Core Files:**
 - `app.js`: Main `ChatApp` controller — orchestrates state, components, streaming, keyboard shortcuts, and session/message CRUD via `chatDB`
@@ -42,12 +51,16 @@ The app uses `<base href="/chat/">` to resolve all relative paths — always acc
 **WebAssembly (`wasm/`):**
 - Privacy Pass/ticket cryptographic operations
 
+**Local Assets:**
+- `chat/vendor/`: Marked, KaTeX (+ fonts), Highlight.js, libcurl.js, hash-wasm, html2pdf
+- `chat/fonts/`: self-hosted Google Fonts (`fonts.css` + WOFF2 files, managed via `scripts/sync-fonts.mjs`)
+
 ## Code Style
 
 - ES modules with 4-space indentation, trailing semicolons
 - PascalCase for classes, camelCase for functions/methods
 - Use relative paths for assets (resolved via `<base href="/chat/">`) — never hardcode `/chat/`
-- Tailwind utilities from `index.html`; custom tweaks in `styles.css` with rationale
+- Tailwind utilities from `tailwind.generated.css`; custom tweaks in `styles.css` with rationale
 - All persisted data flows through `chatDB`; keep transactions minimal
 
 ## Key Patterns
