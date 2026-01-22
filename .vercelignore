@@ -1,9 +1,12 @@
-# Deploy only /chat directory and Vercel config
-# This prevents root-level files (README.md, AGENTS.md, etc.) from being accessible
+# Deploy only runtime/build essentials and /chat assets.
+# Keep package.json + build scripts so Vercel can run npm install/build.
 
 /*
 !/chat
 !/chat/**
+!/scripts
+!/scripts/**
+!/package.json
+!/package-lock.json
 !/vercel.json
 !/.vercelignore
-
