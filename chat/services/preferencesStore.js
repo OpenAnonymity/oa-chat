@@ -1,4 +1,5 @@
 import storageEvents from './storageEvents.js';
+import { chatDB } from '../db.js';
 
 const PREF_KEYS = {
     theme: 'pref-theme',

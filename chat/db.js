@@ -646,5 +646,10 @@ class ChatDatabase {
     }
 }
 
-// Export for use in app.js
+// Export for use in app.js and preserve legacy global access.
 const chatDB = new ChatDatabase();
+if (typeof window !== 'undefined') {
+    window.chatDB = chatDB;
+}
+
+export { chatDB };

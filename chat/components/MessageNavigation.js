@@ -1,3 +1,5 @@
+import { chatDB } from '../db.js';
+
 // Message Navigation Component
 export default class MessageNavigation {
     constructor(app) {
@@ -387,4 +389,3 @@ export default class MessageNavigation {
         this.updateCurrentMessageIndex();
     }
 }
-

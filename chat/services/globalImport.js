@@ -5,6 +5,7 @@
 
 import ticketStore from './ticketStore.js';
 import preferencesStore, { PREF_KEYS } from './preferencesStore.js';
+import { chatDB } from '../db.js';
 
 const SUPPORTED_FORMAT_VERSIONS = ['1.0'];
 

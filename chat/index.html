@@ -644,19 +644,13 @@
     </div>
 
     <!-- Prerender landing content early (skip if restoring a session) -->
-    <script type="module">
-        try {
-            const container = document.getElementById('messages-container');
-            const hasSavedSession = sessionStorage.getItem('oa-current-session');
-            if (container && container.childElementCount === 0 && !hasSavedSession) {
-                const { buildEmptyState } = await import('./components/MessageTemplates.js');
-                container.innerHTML = buildEmptyState();
-            }
-        } catch (e) { console.warn('Prerender failed:', e); }
-    </script>
+    <!-- BUNDLE:PRELUDE -->
+    <script type="module" src="prelude.js"></script>
+    <!-- /BUNDLE:PRELUDE -->
 
-    <!-- Single entry point - db.js is loaded inline for speed, then app bootstraps -->
-    <script src="db.js"></script>
+    <!-- Single entry point - app bootstraps -->
+    <!-- BUNDLE:APP -->
     <script type="module" src="app.js"></script>
+    <!-- /BUNDLE:APP -->
 </body>
 </html>

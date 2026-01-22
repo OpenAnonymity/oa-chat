@@ -182,9 +182,12 @@
     <script type="module">
         import { AccountTestHarness, runTests } from './services/__tests__/accountTestHarness.js';
         import accountService from './services/accountService.js';
+        import { chatDB } from './db.js';
 
         const harness = new AccountTestHarness();
         let mocksInstalled = false;
+
+        await chatDB.init();
 
         // Logging
         const logEl = document.getElementById('test-log');

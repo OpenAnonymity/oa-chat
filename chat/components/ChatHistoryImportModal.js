@@ -4,6 +4,7 @@ import {
     getChatHistoryImporters,
     getChatHistoryImportAccept
 } from '../services/chatHistoryImporters.js';
+import { chatDB } from '../db.js';
 
 function formatBytes(bytes) {
     if (!Number.isFinite(bytes)) return '0 B';

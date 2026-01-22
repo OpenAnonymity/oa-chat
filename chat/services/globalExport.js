@@ -5,6 +5,7 @@
 
 import preferencesStore, { PREF_KEYS } from './preferencesStore.js';
 import ticketStore from './ticketStore.js';
+import { chatDB } from '../db.js';
 
 const FORMAT_VERSION = '1.0';
 const APP_NAME = 'oa-fastchat';

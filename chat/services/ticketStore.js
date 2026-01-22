@@ -4,6 +4,7 @@
  */
 
 import storageEvents from './storageEvents.js';
+import { chatDB } from '../db.js';
 
 const STORAGE_KEY = 'inference_tickets';
 const ARCHIVE_KEY = 'inference_tickets_archive';

@@ -7,6 +7,7 @@
 import { buildMessageHTML, buildEmptyState, buildSharedIndicator, buildImportedIndicator, buildTypingIndicator } from './MessageTemplates.js';
 import { exportChats, exportTickets } from '../services/globalExport.js';
 import { parseStreamingReasoningContent, parseReasoningContent } from '../services/reasoningParser.js';
+import { chatDB } from '../db.js';
 
 export default class ChatArea {
     /**

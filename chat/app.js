@@ -29,6 +29,7 @@ import { initPinnedModels } from './services/modelConfig.js';
 import accountService from './services/accountService.js';
 import apiKeyStore from './services/apiKeyStore.js';
 import { generateUlid21 } from './services/ulid.js';
+import { chatDB } from './db.js';
 
 const DEFAULT_MODEL_NAME = inferenceService.getDefaultModelName();
 const SESSION_PAGE_SIZE = 80;

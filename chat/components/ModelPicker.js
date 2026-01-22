@@ -11,6 +11,7 @@
 import { getProviderIcon } from '../services/providerIcons.js';
 import { loadModelConfig, getDefaultModelConfig, onPinnedModelsUpdate } from '../services/modelConfig.js';
 import { getTicketCost, onModelTiersUpdate } from '../services/modelTiers.js';
+import { chatDB } from '../db.js';
 
 export default class ModelPicker {
     /**
@@ -516,4 +517,3 @@ export default class ModelPicker {
         }
     }
 }
-

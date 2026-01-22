@@ -7,7 +7,7 @@ The app runs entirely in the browser and is organized as ES modules:
   - Uses `<base href="/chat/">` to resolve all relative paths for deployment flexibility.
   - Loads local vendor assets: Marked, KaTeX (+ auto-render + fonts), Highlight.js, libcurl.js (lazy for proxy), hash-wasm, and html2pdf.
   - Uses a precompiled Tailwind stylesheet (`tailwind.generated.css`).
-  - Prerenders the empty state via `components/MessageTemplates.js`, then loads `db.js` and `app.js`.
+  - Prerenders the empty state via `prelude.js`, then loads `app.js`.
 - `app.js`: Main controller (`ChatApp`).
   - Orchestrates state (sessions/models/streaming), DOM refs, component lifecycle, keyboard shortcuts, reliable auto-scroll, and session/message CRUD via `chatDB`.
   - Handles file uploads + multimodal conversion, search toggle/wide mode persistence, delete-history modal, PDF export, and link-preview/citation enrichment.
@@ -16,7 +16,7 @@ The app runs entirely in the browser and is organized as ES modules:
   - Fetches models (with categorization + display name overrides), sends and streams chat completions (SSE), supports multimodal content, reasoning traces, and web-search citations.
   - Routes requests through `services/networkProxy.js` with fallback confirmation; logs requests via `services/networkLogger.js`. Provides offline fallbacks.
 - `db.js`: IndexedDB (`ChatDatabase`) for persistent local data.
-  - Stores `sessions`, `messages`, and `settings` (model config, search toggle, verifier broadcast cache). A `networkLogs` store exists but persistence is disabled (logs are memory-only this release). Exposes a `chatDB` singleton on `window`.
+  - Stores `sessions`, `messages`, and `settings` (model config, search toggle, verifier broadcast cache). A `networkLogs` store exists but persistence is disabled (logs are memory-only this release). Exposes a `chatDB` singleton for module imports and legacy globals.
 - `components/`:
   - `Sidebar.js`: Renders/grouped sessions, search UI, and session actions.
   - `ChatArea.js`: Renders message list, LaTeX, incremental streaming updates, reasoning traces, citations, and empty-state with export.
@@ -59,11 +59,20 @@ The app runs entirely in the browser and is organized as ES modules:
 - `README.md`: Legacy, not the source of truth for architecture; see this file.
 
 ## Build, Test, and Development Commands
-No bundler is required. Tailwind uses a lightweight CLI build. For local development, serve from the repo root:
+The app is still HTML-first for development, but production builds are bundled and minified with esbuild.
+
+Local development (no build step required):
 ```bash
-python3 -m http.server 8080
+npm run dev
 # visit http://localhost:8080/chat
 ```
+
+Production build + local preview:
+```bash
+npm run build      # outputs dist/chat with hashed bundles
+npm run preview    # serve dist on http://localhost:8080/chat
+```
+
 The app uses a `<base href="/chat/">` tag to resolve all relative asset paths, so always access via `/chat` path. Keep the tab's devtools open; console warnings often highlight integration issues early.
 
 Tailwind and font helper commands:

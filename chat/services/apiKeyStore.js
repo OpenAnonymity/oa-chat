@@ -3,6 +3,8 @@
  * Legacy access key lifecycle with IndexedDB persistence.
  */
 
+import { chatDB } from '../db.js';
+
 const ACCESS_STORAGE_KEY = 'oa_access_key_data';
 const ACCESS_DB_KEY = 'apiKeyData';
 

@@ -6,6 +6,7 @@
 import networkLogger from './networkLogger.js';
 import networkProxy from './networkProxy.js';
 import { VERIFIER_URL } from '../config.js';
+import { chatDB } from '../db.js';
 
 // Staleness thresholds
 const STALE_WARNING_MS = 60 * 1000;      // 1 minute - show orange indicator

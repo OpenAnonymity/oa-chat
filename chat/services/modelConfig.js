@@ -6,6 +6,7 @@
  */
 
 import { ORG_API_BASE } from '../config.js';
+import { chatDB } from '../db.js';
 
 // Cache key for pinned models
 const PINNED_CACHE_KEY = 'oa-pinned-models-cache';

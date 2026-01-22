@@ -22,6 +22,7 @@
  */
 
 import { ORG_API_BASE } from '../config.js';
+import { chatDB } from '../db.js';
 import { generateRecoveryCode, isValidRecoveryCode, normalizeRecoveryCode } from './recoveryCode.js';
 
 const ACCOUNT_SETTINGS_KEY = 'account-settings';
@@ -528,11 +529,14 @@ class AccountService {
 
     async init() {
         if (this.state.isReady) return;
-        if (!window.chatDB) {
+        if (!chatDB) {
             this.setState({ isReady: true });
             return;
         }
-        const settings = await window.chatDB.getSetting(ACCOUNT_SETTINGS_KEY).catch(() => null);
+        if (!chatDB.db && typeof chatDB.init === 'function') {
+            await chatDB.init();
+        }
+        const settings = await chatDB.getSetting(ACCOUNT_SETTINGS_KEY).catch(() => null);
         if (settings?.accountId) {
             this.state.accountId = settings.accountId;
             this.state.credentialId = settings.credentialId || null;
@@ -544,14 +548,14 @@ class AccountService {
     }
 
     async persistSettings() {
-        if (!window.chatDB) return;
+        if (!chatDB) return;
         const payload = {
             accountId: this.state.accountId,
             credentialId: this.state.credentialId,
             recoveryConfirmed: this.state.recoveryConfirmed,
             updatedAt: Date.now()
         };
-        await window.chatDB.saveSetting(ACCOUNT_SETTINGS_KEY, payload);
+        await chatDB.saveSetting(ACCOUNT_SETTINGS_KEY, payload);
     }
 
     clearErrors() {

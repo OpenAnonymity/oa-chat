@@ -3,6 +3,8 @@
  * Tracks and stores network requests for debugging and monitoring
  */
 
+import { chatDB } from '../db.js';
+
 class NetworkLogger {
     constructor() {
         this.logs = [];

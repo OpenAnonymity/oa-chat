@@ -4,19 +4,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-oa-fastchat is a browser-based chat client that communicates directly with inference backends (OpenRouter by default) using ephemeral, anonymous access credentials via the Open Anonymity network. No bundler required; Tailwind is built via a lightweight CLI step.
+oa-fastchat is a browser-based chat client that communicates directly with inference backends (OpenRouter by default) using ephemeral, anonymous access credentials via the Open Anonymity network. Development is HTML-first; production builds are bundled with esbuild.
 
 ## Development Commands
 
 ```bash
 # Local development server (from repo root)
-python3 -m http.server 8080
+npm run dev
 # Visit http://localhost:8080/chat
 ```
 
 The app uses `<base href="/chat/">` to resolve all relative paths — always access via the `/chat` path. Keep devtools open; console warnings highlight integration issues early.
 
 ```bash
+# Production build + preview
+npm run build
+npm run preview
+
 # Tailwind
 npm run tailwind:build
 npm run tailwind:watch
@@ -28,12 +32,12 @@ npm run fonts:sync
 ## Architecture
 
 **Entry Point Flow:**
-- `index.html` → pre-hydrates theme/panel state → loads local vendor assets + precompiled Tailwind CSS → lazy-loads libcurl.js for proxy → boots `db.js` then `app.js`
+- `index.html` → pre-hydrates theme/panel state → loads local vendor assets + precompiled Tailwind CSS → lazy-loads libcurl.js for proxy → runs `prelude.js` (empty-state render) → boots `app.js`
 
 **Core Files:**
 - `app.js`: Main `ChatApp` controller — orchestrates state, components, streaming, keyboard shortcuts, and session/message CRUD via `chatDB`
 - `api.js`: OpenRouter client for fetching models and streaming completions
-- `db.js`: IndexedDB wrapper (`ChatDatabase`) exposing `window.chatDB` singleton — stores sessions, messages, settings
+- `db.js`: IndexedDB wrapper (`ChatDatabase`) exported as `chatDB` — stores sessions, messages, settings (also assigned to `window.chatDB` for legacy access)
 
 **Components (`components/`):**
 - `Sidebar.js`, `ChatArea.js`, `ChatInput.js`, `ModelPicker.js`, `RightPanel.js`, `MessageTemplates.js`, `MessageNavigation.js`

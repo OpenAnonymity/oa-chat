@@ -9,6 +9,7 @@ import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import { exportAllData, exportChats, exportTickets } from '../services/globalExport.js';
 import { importFromFile, formatImportSummary } from '../services/globalImport.js';
 import ticketClient from '../services/ticketClient.js';
+import { chatDB } from '../db.js';
 
 export default class ChatInput {
     /**

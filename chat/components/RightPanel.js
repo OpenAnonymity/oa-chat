@@ -13,6 +13,7 @@ import { getActivityDescription, getActivityIcon, getStatusDotClass, formatTimes
 import { getTicketCost } from '../services/modelTiers.js';
 import { exportTickets } from '../services/globalExport.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
+import { chatDB } from '../db.js';
 
 // Layout constant for toolbar overlay prediction
 const RIGHT_PANEL_WIDTH = 320; // 20rem = 320px (w-80)
