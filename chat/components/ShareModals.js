@@ -450,26 +450,31 @@ class ShareModals {
         if (!pinInput || !boxes.length) return;
 
         let isRevealed = true; // Show PIN by default (low-stakes sharing)
+        let cursorPos = 0;
 
         const updateBoxes = () => {
             const value = pinInput.value;
+            // Highlight the box that backspace would delete (cursorPos - 1),
+            // or box 0 if cursor is at start
+            const activeIndex = Math.min(Math.max(cursorPos - 1, 0), 5);
             boxes.forEach((box, i) => {
                 const char = value[i] || '';
-                if (char) {
-                    box.textContent = isRevealed ? char : '•';
-                    box.classList.add('filled');
-                } else {
-                    box.textContent = '';
-                    box.classList.remove('filled');
-                }
-                // Highlight current box
-                box.classList.toggle('active', i === value.length && value.length < 6);
+                box.textContent = char ? (isRevealed ? char : '•') : '';
+                box.classList.toggle('filled', !!char);
+                box.classList.toggle('active', i === activeIndex);
             });
         };
 
+        const setCursor = (pos) => {
+            cursorPos = Math.max(0, Math.min(pos, pinInput.value.length, 6));
+            pinInput.setSelectionRange(cursorPos, cursorPos);
+            updateBoxes();
+        };
+
         // Handle input
-        pinInput.addEventListener('input', (e) => {
-            pinInput.value = sanitizePinInput(e.target.value);
+        pinInput.addEventListener('input', () => {
+            pinInput.value = sanitizePinInput(pinInput.value);
+            cursorPos = pinInput.selectionStart ?? pinInput.value.length;
             updateBoxes();
         });
 
@@ -478,12 +483,48 @@ class ShareModals {
             e.preventDefault();
             const pasted = (e.clipboardData || window.clipboardData).getData('text');
             pinInput.value = sanitizePinInput(pasted);
+            cursorPos = pinInput.value.length;
             updateBoxes();
         });
 
-        // Click on container focuses input
-        container.querySelector('.pin-input-container')?.addEventListener('click', () => {
-            pinInput.focus();
+        // Handle arrow keys
+        pinInput.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowLeft') {
+                e.preventDefault();
+                setCursor(cursorPos - 1);
+            } else if (e.key === 'ArrowRight') {
+                e.preventDefault();
+                setCursor(cursorPos + 1);
+            } else if (e.key === 'Home') {
+                e.preventDefault();
+                setCursor(0);
+            } else if (e.key === 'End') {
+                e.preventDefault();
+                setCursor(pinInput.value.length);
+            }
+        });
+
+        // Click on individual box positions cursor after it (so backspace deletes that box)
+        boxes.forEach((box, i) => {
+            box.style.cursor = 'text';
+            box.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                pinInput.focus();
+                // Position cursor AFTER the clicked box so backspace deletes it
+                // For empty boxes beyond value, clamp to value.length
+                const value = pinInput.value;
+                const pos = i < value.length ? i + 1 : value.length;
+                setCursor(pos);
+            });
+        });
+
+        // Click on container focuses input at end
+        container.querySelector('.pin-input-container')?.addEventListener('mousedown', (e) => {
+            if (e.target === e.currentTarget || e.target.classList.contains('pin-boxes') || e.target.classList.contains('pin-separator')) {
+                e.preventDefault();
+                pinInput.focus();
+                setCursor(pinInput.value.length);
+            }
         });
 
         // Toggle visibility - prevent button from stealing focus
