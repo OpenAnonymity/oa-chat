@@ -259,7 +259,7 @@ function buildPreviewContainerHtml(previewHtml, label = 'Shared content preview'
                 ${UPLOAD_ICON_SVG}
                 ${label}
             </div>
-            <div class="share-cutoff-chat max-h-32 overflow-y-auto py-2 px-2 flex flex-col gap-1">
+            <div class="share-cutoff-chat max-h-32 overflow-y-auto py-2 px-2 flex flex-col gap-1 text-xs">
                 ${previewHtml}
             </div>
         </div>
