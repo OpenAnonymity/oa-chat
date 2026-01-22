@@ -1,6 +1,6 @@
 ## `oa-fastchat`
 
-A minimal, fast chat client that talks directly to the selected inference backend (OpenRouter by default) using ephemeral, anonymous access credentials obtained via the Open Anonymity network. Everything runs directly in the browser with no backend; development is HTML-first, while production builds are bundled with esbuild.
+A minimal, fast chat client that talks directly to the selected inference backend (OpenRouter by default) using ephemeral, anonymous access credentials obtained via the Open Anonymity network. Everything runs directly in the browser with no backend; development is HTML-first, while production builds are bundled with esbuild and minified with terser.
 
 ### Highlights
 - **Standalone**: Pure ES modules loaded in the browser; no server required.

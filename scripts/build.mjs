@@ -2,6 +2,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs/promises';
 import esbuild from 'esbuild';
+import { minify } from 'terser';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -25,6 +26,20 @@ const replaceBundleBlock = (html, name, scriptPath) => {
         throw new Error(`Missing BUNDLE:${name} block in index.html`);
     }
     return html.replace(blockRegex, tag);
+};
+
+const collectJsFiles = async (dir) => {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    const files = [];
+    for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+            files.push(...await collectJsFiles(fullPath));
+        } else if (entry.isFile() && entry.name.endsWith('.js')) {
+            files.push(fullPath);
+        }
+    }
+    return files;
 };
 
 const build = async () => {
@@ -67,6 +82,21 @@ const build = async () => {
     html = replaceBundleBlock(html, 'APP', appScriptPath);
 
     await fs.writeFile(indexPath, html, 'utf8');
+
+    const jsFiles = await collectJsFiles(assetsDir);
+    await Promise.all(jsFiles.map(async (filePath) => {
+        const code = await fs.readFile(filePath, 'utf8');
+        const result = await minify(code, {
+            module: true,
+            compress: true,
+            mangle: true,
+            format: { comments: false }
+        });
+        if (!result.code) {
+            throw new Error(`Terser produced no output for ${filePath}`);
+        }
+        await fs.writeFile(filePath, result.code, 'utf8');
+    }));
 
     console.log(`Built app bundle: ${appScriptPath}`);
     console.log(`Built prelude bundle: ${preludeScriptPath}`);

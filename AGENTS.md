@@ -59,7 +59,7 @@ The app runs entirely in the browser and is organized as ES modules:
 - `README.md`: Legacy, not the source of truth for architecture; see this file.
 
 ## Build, Test, and Development Commands
-The app is still HTML-first for development, but production builds are bundled and minified with esbuild.
+The app is still HTML-first for development, but production builds are bundled with esbuild and minified with terser.
 
 Local development (no build step required):
 ```bash
