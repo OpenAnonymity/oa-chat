@@ -5,6 +5,7 @@
 
 import storageEvents from './storageEvents.js';
 import { chatDB } from '../db.js';
+import syncService from './syncService.js';
 
 const STORAGE_KEY = 'inference_tickets';
 const ARCHIVE_KEY = 'inference_tickets_archive';
@@ -20,6 +21,7 @@ class TicketStore {
         this.archive = [];
         this.initPromise = null;
         this.storageUnsubscribe = null;
+        this.syncUnsubscribe = null;
     }
 
     async init() {
@@ -37,6 +39,15 @@ class TicketStore {
             if (!this.storageUnsubscribe) {
                 this.storageUnsubscribe = storageEvents.on('tickets-updated', () => {
                     this.loadFromDatabase({ emitUpdate: true, skipBroadcast: true });
+                });
+            }
+
+            // Reload from database when sync completes (sync writes directly to settings)
+            if (!this.syncUnsubscribe) {
+                this.syncUnsubscribe = syncService.subscribe((payload) => {
+                    if (payload.event === 'blob_received' && payload.data?.type === 'tickets') {
+                        this.loadFromDatabase({ emitUpdate: true, skipBroadcast: true });
+                    }
                 });
             }
 
@@ -266,6 +277,11 @@ class TicketStore {
             storageEvents.broadcast('tickets-updated', { updatedAt: Date.now() });
         }
 
+        // Trigger sync on local changes (debounced)
+        if (!options.skipSync) {
+            syncService.triggerSync();
+        }
+
         return persisted;
     }
 
@@ -412,6 +428,9 @@ class TicketStore {
         if (typeof handler !== 'function') {
             throw new Error('Ticket handler must be a function.');
         }
+
+        // No sync needed here - background polling keeps DB fresh
+        // See syncService.startPeriodicSync() for status check polling
 
         return this.withLock(async () => {
             await this.ensureDbReady();

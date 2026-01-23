@@ -1,4 +1,5 @@
 import accountService from '../services/accountService.js';
+import syncService from '../services/syncService.js';
 
 /**
  * Account Modal Component
@@ -35,6 +36,9 @@ class AccountModal {
         this.revealedDigits = 0;
         this.animationTimeouts = [];
 
+        // Sync state
+        this.syncStatus = syncService.getStatus();
+
         // UI state
         this.returnFocusEl = null;
         this.escapeHandler = null;
@@ -43,6 +47,13 @@ class AccountModal {
             this.accountState = state;
             this.updateTabIndicator();
             if (this.isOpen && (this.creationStep === 'idle' || this.creationStep === 'complete')) {
+                this.render();
+            }
+        });
+
+        this.syncUnsubscribe = syncService.subscribe(() => {
+            this.syncStatus = syncService.getStatus();
+            if (this.isOpen && this.accountState?.accountId) {
                 this.render();
             }
         });
@@ -141,6 +152,19 @@ class AccountModal {
         if (!accountId) return '';
         const normalized = accountId.replace(/\s+/g, '');
         return normalized.match(/.{1,4}/g)?.join(' ') || normalized;
+    }
+
+    formatTimeAgo(timestamp) {
+        if (!timestamp) return '';
+        const seconds = Math.floor((Date.now() - timestamp) / 1000);
+        if (seconds < 10) return 'just now';
+        if (seconds < 60) return `${seconds}s ago`;
+        const minutes = Math.floor(seconds / 60);
+        if (minutes < 60) return `${minutes}m ago`;
+        const hours = Math.floor(minutes / 60);
+        if (hours < 24) return `${hours}h ago`;
+        const days = Math.floor(hours / 24);
+        return `${days}d ago`;
     }
 
     // =========================================================================
@@ -596,23 +620,74 @@ class AccountModal {
 
         // Logged in state - don't show errors here since login was successful
         if (accountId) {
+            // Always get fresh status
+            const syncStatus = syncService.getStatus();
+            const isSyncing = syncStatus.syncing;
+            const lastSync = syncStatus.lastSyncTime;
+            const lastResult = syncStatus.lastSyncResult;
+
+            // Determine sync freshness for indicator color
+            const syncAgeMs = lastSync ? Date.now() - lastSync : Infinity;
+            const isFresh = syncAgeMs < 60 * 1000;  // < 1 minute = fresh
+            const isStale = syncAgeMs > 5 * 60 * 1000;  // > 5 minutes = stale
+
+            const syncIndicatorColor = (() => {
+                if (isSyncing) return 'bg-blue-500';
+                if (!lastSync) return 'bg-muted-foreground';
+                if (lastResult?.success === false) return 'bg-amber-500';
+                if (isStale) return 'bg-amber-500';
+                return 'bg-emerald-500';
+            })();
+
+            const syncStatusText = (() => {
+                if (isSyncing) return 'Syncing...';
+                if (lastSync) {
+                    const ago = this.formatTimeAgo(lastSync);
+                    if (lastResult?.success === false) return `Sync failed ${ago}`;
+                    return `Synced ${ago}`;
+                }
+                return 'Not synced yet';
+            })();
+
+            const syncStatusColor = (() => {
+                if (isSyncing) return 'text-blue-500';
+                if (!lastSync) return 'text-muted-foreground';
+                if (lastResult?.success === false) return 'text-amber-500';
+                if (isStale) return 'text-amber-500';
+                return 'text-emerald-500';
+            })();
+
             return `
                 <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}">
                     ${this.renderHeader('Account')}
                     <div class="flex-1 flex flex-col items-center justify-center py-4">
-                        <div class="flex items-center gap-2 mb-4">
-                            <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
-                            <span class="text-xs text-muted-foreground">Logged in</span>
+                        <div class="flex items-center gap-4 mb-3">
+                            <div class="flex items-center gap-1.5">
+                                <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+                                <span class="text-xs text-muted-foreground">Logged in</span>
+                            </div>
+                            <div class="flex items-center gap-1.5">
+                                <span class="w-2 h-2 rounded-full ${syncIndicatorColor} ${isSyncing ? 'animate-pulse' : ''}"></span>
+                                <span class="text-xs ${syncStatusColor}">${syncStatusText}</span>
+                            </div>
                         </div>
-                        <p class="account-number-text font-mono text-lg tracking-widest text-foreground mb-2 whitespace-nowrap">${this.escapeHtml(formattedAccountId)}</p>
-                        <p class="text-xs text-muted-foreground">Encrypted sync coming soon</p>
-                    </div>
-                    <div class="flex gap-3 mt-4">
-                        <button id="account-copy-id-btn" class="flex-1 h-9 rounded-lg text-sm border border-border bg-background hover:bg-accent transition-colors" type="button">
-                            Copy ID
+                        <button id="account-copy-id-btn" class="account-number-text font-mono text-lg tracking-widest text-foreground mb-1 whitespace-nowrap hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer bg-transparent border-none p-0" type="button" title="Copy account ID">
+                            ${this.escapeHtml(formattedAccountId)}
                         </button>
+                        <p class="text-[11px] text-muted-foreground">Encrypted sync for tickets & preferences</p>
+                    </div>
+                    
+                    <p class="text-[11px] text-muted-foreground text-center mb-3">Chat history sync coming soon</p>
+                    
+                    <div class="flex gap-3">
                         <button id="account-clear-btn" class="flex-1 h-9 rounded-lg text-sm border border-border bg-background hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30 transition-colors" type="button">
                             Log out
+                        </button>
+                        <button id="account-sync-btn" class="flex-1 h-9 rounded-lg text-sm border border-border bg-background hover:bg-accent transition-colors disabled:opacity-50 flex items-center justify-center gap-2" type="button" ${isSyncing ? 'disabled' : ''}>
+                            <svg class="w-4 h-4 ${isSyncing ? 'animate-spin' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"></path>
+                            </svg>
+                            ${isSyncing ? 'Syncing...' : 'Sync'}
                         </button>
                     </div>
                 </div>
@@ -818,6 +893,23 @@ class AccountModal {
 
         const clearBtn = document.getElementById('account-clear-btn');
         if (clearBtn) clearBtn.onclick = () => this.handleAccountClear();
+
+        const syncBtn = document.getElementById('account-sync-btn');
+        if (syncBtn) syncBtn.onclick = () => this.handleSyncNow();
+    }
+
+    async handleSyncNow() {
+        // syncService.sync() will set syncInProgress and notify immediately
+        try {
+            const result = await syncService.sync();
+            if (result.success) {
+                this.app?.showToast?.('Synced successfully.', 'success');
+            } else if (result.error !== 'Sync already in progress') {
+                this.app?.showToast?.(result.error || 'Sync failed.', 'error');
+            }
+        } catch (error) {
+            this.app?.showToast?.('Sync failed.', 'error');
+        }
     }
 
     destroy() {
@@ -825,6 +917,10 @@ class AccountModal {
         if (this.accountUnsubscribe) {
             this.accountUnsubscribe();
             this.accountUnsubscribe = null;
+        }
+        if (this.syncUnsubscribe) {
+            this.syncUnsubscribe();
+            this.syncUnsubscribe = null;
         }
     }
 }

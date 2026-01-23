@@ -1,5 +1,6 @@
 import storageEvents from './storageEvents.js';
 import { chatDB } from '../db.js';
+import syncService from './syncService.js';
 
 const PREF_KEYS = {
     theme: 'pref-theme',
@@ -75,6 +76,7 @@ class PreferencesStore {
         this.listeners = new Set();
         this.initPromise = null;
         this.storageUnsubscribe = null;
+        this.syncUnsubscribe = null;
     }
 
     async init() {
@@ -92,6 +94,16 @@ class PreferencesStore {
                     if (!payload || !payload.key) return;
                     this.cache.set(payload.key, payload.value);
                     this.notify(payload.key, payload.value);
+                });
+            }
+
+            // Reload preferences when sync completes (sync writes directly to settings)
+            if (!this.syncUnsubscribe) {
+                this.syncUnsubscribe = syncService.subscribe((payload) => {
+                    if (payload.event === 'blob_received' && payload.data?.type === 'preferences') {
+                        // Reload the specific preference that was synced
+                        this.preloadKnownPreferences();
+                    }
                 });
             }
         })();
@@ -280,6 +292,11 @@ class PreferencesStore {
         }
 
         this.updateSnapshot(key, value);
+
+        // Trigger sync on local changes (debounced)
+        if (!options.skipSync) {
+            syncService.triggerSync();
+        }
 
         return persisted;
     }

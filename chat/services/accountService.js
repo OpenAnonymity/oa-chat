@@ -24,9 +24,11 @@
 import { ORG_API_BASE } from '../config.js';
 import { chatDB } from '../db.js';
 import { generateRecoveryCode, isValidRecoveryCode, normalizeRecoveryCode } from './recoveryCode.js';
+import syncService from './syncService.js';
 
 const ACCOUNT_SETTINGS_KEY = 'account-settings';
 const MASTER_CRYPTO_KEY = 'master-crypto-key';
+const MASTER_KEY_BYTES = 'master-key-bytes';  // Raw bytes for sync HKDF
 const ACCOUNT_REQUEST_TIMEOUT_MS = 10000;
 
 // Platform detection for auth token handling
@@ -553,29 +555,31 @@ class AccountService {
     // =========================================================================
 
     /**
-     * Persist the master key as a non-extractable CryptoKey in IndexedDB.
-     * This allows session restoration on page refresh without re-authentication.
-     * XSS cannot extract the raw key bytes, only use the key while page is open.
+     * Persist the master key in IndexedDB.
+     * Stores both:
+     * - Non-extractable CryptoKey (for local AES-GCM encryption)
+     * - Raw bytes (for sync HKDF key derivation)
      */
     async persistMasterKey(masterKeyBytes) {
         if (!chatDB) return;
         
-        // Import as non-extractable CryptoKey
+        // Import as non-extractable CryptoKey for local encryption
         const cryptoKey = await crypto.subtle.importKey(
             'raw',
             masterKeyBytes,
             { name: 'AES-GCM' },
-            false,  // extractable = false (critical for XSS protection!)
+            false,  // extractable = false
             ['encrypt', 'decrypt']
         );
         
-        // Store in IndexedDB
+        // Store both in IndexedDB
         await chatDB.saveSetting(MASTER_CRYPTO_KEY, cryptoKey);
+        await chatDB.saveSetting(MASTER_KEY_BYTES, new Uint8Array(masterKeyBytes));
         this.cryptoKey = cryptoKey;
     }
 
     /**
-     * Load the persisted CryptoKey from IndexedDB.
+     * Load the persisted master key from IndexedDB.
      * Called during init() to restore session on page refresh.
      * @returns {Promise<boolean>} True if key was loaded, false otherwise
      */
@@ -583,11 +587,20 @@ class AccountService {
         if (!chatDB) return false;
         
         try {
-            const cryptoKey = await chatDB.getSetting(MASTER_CRYPTO_KEY);
+            const [cryptoKey, keyBytes] = await Promise.all([
+                chatDB.getSetting(MASTER_CRYPTO_KEY),
+                chatDB.getSetting(MASTER_KEY_BYTES)
+            ]);
+            
             if (cryptoKey && cryptoKey instanceof CryptoKey) {
                 this.cryptoKey = cryptoKey;
-                return true;
             }
+            
+            if (keyBytes && keyBytes instanceof Uint8Array) {
+                this.masterKey = new Uint8Array(keyBytes);
+            }
+            
+            return !!(this.cryptoKey && this.masterKey);
         } catch (error) {
             console.warn('Failed to load master key from IndexedDB:', error);
         }
@@ -595,14 +608,17 @@ class AccountService {
     }
 
     /**
-     * Clear the persisted CryptoKey from IndexedDB.
+     * Clear the persisted master key from IndexedDB.
      * Called during logout to fully clear the session.
      */
     async clearPersistedMasterKey() {
         if (!chatDB) return;
         
         try {
-            await chatDB.deleteSetting(MASTER_CRYPTO_KEY);
+            await Promise.all([
+                chatDB.deleteSetting(MASTER_CRYPTO_KEY),
+                chatDB.deleteSetting(MASTER_KEY_BYTES)
+            ]);
         } catch (error) {
             console.warn('Failed to delete master key from IndexedDB:', error);
         }
@@ -713,6 +729,10 @@ class AccountService {
                     this.state.isReady = true;
                     this.updateStatus();
                     this.notify();
+                    
+                    // Initialize sync for restored session
+                    this.initializeSync(false).catch(() => {});
+                    
                     return;
                 }
                 // Token refresh failed but we have the key - might be offline
@@ -925,7 +945,48 @@ class AccountService {
         this.updateStatus();
         this.notify();
 
+        // Initialize and enable sync for new account
+        await this.initializeSync(true);
+
         return true;
+    }
+
+    /**
+     * Initialize sync service after login/unlock.
+     * @param {boolean} enableForNewAccount - If true, enables sync (for new accounts)
+     */
+    async initializeSync(enableForNewAccount = false) {
+        try {
+            // Set credentials on sync service (avoids circular dependency)
+            const masterKey = this.getMasterKey();
+            const accessToken = this.getAccessToken();
+            
+            if (!masterKey || !accessToken) {
+                console.warn('[AccountService] Cannot initialize sync without credentials');
+                return;
+            }
+            
+            // Provide refresh callback that syncService can call
+            const refreshCallback = async () => {
+                const success = await this.refreshAccessToken();
+                if (success) {
+                    return { accessToken: this.accessToken };
+                }
+                return null;
+            };
+            
+            syncService.setCredentials(masterKey, accessToken, refreshCallback);
+            await syncService.init();
+            
+            // Sync is automatically enabled when credentials are set
+            // Start sync immediately
+            syncService.sync().catch(err => {
+                console.warn('[AccountService] Initial sync failed:', err);
+            });
+            syncService.startPeriodicSync();
+        } catch (error) {
+            console.warn('[AccountService] Failed to initialize sync:', error);
+        }
     }
 
     /**
@@ -1041,6 +1102,10 @@ class AccountService {
             await this.persistSettings();
             this.updateStatus();
             this.notify();
+            
+            // Initialize and enable sync for new account
+            await this.initializeSync(true);
+            
             return true;
         } catch (error) {
             this.setState({ busy: false, action: null });
@@ -1144,6 +1209,10 @@ class AccountService {
             await this.persistSettings();
             this.updateStatus();
             this.notify();
+            
+            // Initialize sync for existing account
+            await this.initializeSync(false);
+            
             return true;
         } catch (error) {
             // Record failed attempt for rate limiting (unless silent)
@@ -1274,6 +1343,9 @@ class AccountService {
             this.updateStatus();
             this.notify();
 
+            // Initialize sync for existing account
+            await this.initializeSync(false);
+
             return true;
         } catch (error) {
             console.error('[AccountService] Recovery failed:', error);
@@ -1345,6 +1417,13 @@ class AccountService {
      * - Requires full passkey re-authentication to log back in
      */
     async logout() {
+        // Stop sync and clear sync data
+        try {
+            await syncService.clearAll();
+        } catch (error) {
+            console.warn('Failed to clear sync data:', error);
+        }
+        
         // Clear local state
         if (this.masterKey) {
             this.masterKey.fill(0);
