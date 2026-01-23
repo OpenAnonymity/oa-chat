@@ -2,14 +2,10 @@ import accountService from '../services/accountService.js';
 
 /**
  * Account Modal Component
- *
- * FIXED HEIGHT MODAL: 380px total height for all states
- * - Header: 48px
- * - Content: 272px (flex, centers smaller content)
- * - Footer: 60px
+ * Modern, clean design matching ShareModals aesthetic
  */
 
-const MODAL_CLASSES = 'account-modal-panel w-full max-w-sm h-[380px] flex flex-col rounded-xl border border-border bg-background shadow-2xl mx-4';
+const MODAL_CLASSES = 'w-full max-w-sm rounded-xl border border-border bg-background shadow-2xl p-5 mx-4 flex flex-col';
 
 class AccountModal {
     constructor(app) {
@@ -22,6 +18,9 @@ class AccountModal {
         this.accountInputValue = '';
         this.recoveryInputValue = '';
         this.showRecoveryInput = false;
+
+        // Recovery flow state (for multi-step recovery UI)
+        this.recoveryStep = 'idle'; // 'idle' | 'verifying' | 'adding_passkey' | 'complete'
 
         // Creation flow state
         this.creationStep = 'idle';
@@ -72,6 +71,9 @@ class AccountModal {
         this.returnFocusEl = document.activeElement;
 
         this.resetCreationFlow();
+        this.recoveryStep = 'idle';
+        // Clear any stale errors when opening
+        accountService.clearErrors();
         this.render();
         this.overlay.classList.remove('hidden');
 
@@ -264,8 +266,42 @@ class AccountModal {
 
     async handleAccountRecoveryUnlock() {
         const accountId = this.accountState?.accountId || this.accountInputValue?.trim();
-        const success = await accountService.unlockWithRecoveryCode(accountId, this.recoveryInputValue);
-        if (success) this.app?.showToast?.('Account unlocked with recovery code.', 'success');
+        const recoveryCode = this.recoveryInputValue;
+        
+        // Clear any previous errors before starting
+        accountService.clearErrors();
+        
+        // Show "adding passkey" state before prompting
+        this.recoveryStep = 'adding_passkey';
+        this.render();
+
+        // Brief delay for user to see the message before passkey prompt
+        await new Promise(resolve => setTimeout(resolve, 0));
+
+        try {
+            // Step 3: Call recovery (this triggers the passkey prompt)
+            const success = await accountService.unlockWithRecoveryCode(accountId, recoveryCode);
+            
+            if (success) {
+                // Step 4: Show success
+                this.recoveryStep = 'complete';
+                this.render();
+                // Brief delay to show success state
+                setTimeout(() => {
+                    this.recoveryStep = 'idle';
+                    this.showRecoveryInput = false;
+                    this.recoveryInputValue = '';
+                    this.render();
+                    this.app?.showToast?.('Account recovered successfully!', 'success');
+                }, 1500);
+            } else {
+                this.recoveryStep = 'idle';
+                this.render();
+            }
+        } catch (error) {
+            this.recoveryStep = 'idle';
+            this.render();
+        }
     }
 
     async handleAccountCopyId() {
@@ -312,35 +348,31 @@ class AccountModal {
         this.attachEventListeners();
     }
 
-    renderHeader(title, subtitle = null) {
+    renderHeader(title, showClose = true) {
         return `
-            <div class="flex items-center justify-between border-b border-border px-5 h-12 shrink-0">
-                <div class="flex items-center gap-2">
-                    <h2 class="text-sm font-semibold text-foreground">${title}</h2>
-                    ${subtitle ? `<span class="text-xs text-muted-foreground">${subtitle}</span>` : ''}
-                </div>
-                <button id="close-account-modal" class="text-muted-foreground hover:text-foreground transition-colors p-1.5 -mr-1.5 rounded-lg hover:bg-accent" aria-label="Close">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
-                    </svg>
-                </button>
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-base font-medium text-foreground">${title}</h3>
+                ${showClose ? `
+                    <button id="close-account-modal" class="text-muted-foreground hover:text-foreground transition-colors p-1 -mr-1 rounded-lg hover:bg-accent" aria-label="Close">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                ` : ''}
             </div>
         `;
     }
 
     renderCreationFlow() {
         const step = this.creationStep;
-        const title = step === 'complete' ? 'Account Created' : step === 'error' ? 'Error' : 'Create Account';
 
         return `
             <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}">
-                ${this.renderHeader(title)}
-                <div class="flex-1 px-5 flex items-center justify-center overflow-hidden">
-                    <div class="w-full">
-                        ${this.renderCreationBody(step)}
-                    </div>
+                ${this.renderHeader(step === 'complete' ? 'Account Created' : step === 'error' ? 'Error' : 'Create Account')}
+                <div class="flex-1 flex items-center justify-center">
+                    ${this.renderCreationBody(step)}
                 </div>
-                <div class="px-5 pb-5 shrink-0">
+                <div class="mt-4">
                     ${this.renderCreationActions(step)}
                 </div>
             </div>
@@ -357,7 +389,7 @@ class AccountModal {
                     : '\u2007\u2007\u2007\u2007 \u2007\u2007\u2007\u2007 \u2007\u2007\u2007\u2007 \u2007\u2007\u2007\u2007';
 
                 const errorMsg = step === 'passkey_retry' ? `
-                    <div class="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs text-amber-600 dark:text-amber-400 mb-5">
+                    <div class="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs text-amber-600 dark:text-amber-400 mb-4">
                         <svg class="w-4 h-4 text-amber-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"></path>
                         </svg>
@@ -366,26 +398,26 @@ class AccountModal {
                 ` : '';
 
                 return `
-                    <div class="text-center">
+                    <div class="w-full text-center">
                         ${errorMsg}
-                        <div class="text-xs text-muted-foreground mb-3">Your account number</div>
-                        <div class="account-number-text font-mono text-2xl tracking-widest text-foreground mb-4 ${isWaiting ? 'animate-pulse' : ''}">
+                        <p class="text-xs text-muted-foreground mb-3">Your account number</p>
+                        <div class="account-number-text font-mono text-xl tracking-widest text-foreground mb-4 whitespace-nowrap ${isWaiting ? 'animate-pulse' : ''}">
                             ${displayText}
                         </div>
-                        <div class="text-sm text-muted-foreground">
+                        <p class="text-sm text-muted-foreground">
                             ${isWaiting ? 'Generating...' : 'Complete passkey registration...'}
-                        </div>
+                        </p>
                     </div>
                 `;
             }
 
             case 'recovery':
                 return `
-                    <div class="space-y-4">
+                    <div class="w-full space-y-4">
                         <div class="flex items-center justify-between">
                             <div>
-                                <div class="text-xs text-muted-foreground mb-1">Account</div>
-                                <div class="font-mono text-base tracking-wide text-foreground">${this.formatAccountId(this.generatedAccountId)}</div>
+                                <p class="text-xs text-muted-foreground mb-1">Account</p>
+                                <p class="font-mono text-sm tracking-wide text-foreground">${this.formatAccountId(this.generatedAccountId)}</p>
                             </div>
                             <div class="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
@@ -401,45 +433,45 @@ class AccountModal {
                                     ${this.recoveryCodeCopied ? 'Copied!' : 'Copy'}
                                 </button>
                             </div>
-                            <code class="block font-mono text-base text-foreground bg-muted/50 rounded-lg px-4 py-3 select-all border border-border">
+                            <code class="block font-mono text-sm text-foreground bg-muted/50 rounded-lg px-3 py-2.5 select-all border border-border">
                                 ${this.escapeHtml(this.generatedRecoveryCode || '')}
                             </code>
                         </div>
-                        <p class="text-xs text-muted-foreground text-center">Save this code somewhere safe. You'll need it to recover your account.</p>
+                        <p class="text-[11px] text-muted-foreground text-center">Save this code somewhere safe. You'll need it to recover your account if you lose access.</p>
                     </div>
                 `;
 
             case 'confirming':
                 return `
-                    <div class="text-center">
-                        <div class="w-12 h-12 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-                        <div class="text-sm text-muted-foreground">Securing your account...</div>
+                    <div class="w-full text-center py-6">
+                        <div class="w-10 h-10 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
+                        <p class="text-sm text-muted-foreground">Securing your account...</p>
                     </div>
                 `;
 
             case 'complete':
                 return `
-                    <div class="text-center">
-                        <div class="w-16 h-16 bg-emerald-100 dark:bg-emerald-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
-                            <svg class="w-8 h-8 text-emerald-600 dark:text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                    <div class="w-full text-center py-4">
+                        <div class="w-14 h-14 bg-emerald-100 dark:bg-emerald-500/20 rounded-full flex items-center justify-center mx-auto mb-3">
+                            <svg class="w-7 h-7 text-emerald-600 dark:text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path>
                             </svg>
                         </div>
-                        <div class="text-lg font-medium text-foreground mb-1">You're all set!</div>
-                        <div class="font-mono text-sm text-muted-foreground">${this.formatAccountId(this.generatedAccountId)}</div>
+                        <p class="text-base font-medium text-foreground mb-1">You're all set!</p>
+                        <p class="account-number-text font-mono text-sm text-muted-foreground whitespace-nowrap">${this.formatAccountId(this.generatedAccountId)}</p>
                     </div>
                 `;
 
             case 'error':
                 return `
-                    <div class="text-center">
-                        <div class="w-16 h-16 bg-destructive/10 rounded-full flex items-center justify-center mx-auto mb-4">
-                            <svg class="w-8 h-8 text-destructive" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <div class="w-full text-center py-4">
+                        <div class="w-14 h-14 bg-destructive/10 rounded-full flex items-center justify-center mx-auto mb-3">
+                            <svg class="w-7 h-7 text-destructive" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
                             </svg>
                         </div>
-                        <div class="text-base text-destructive font-medium mb-1">Something went wrong</div>
-                        <div class="text-sm text-muted-foreground">${this.escapeHtml(this.creationError || 'Please try again.')}</div>
+                        <p class="text-base text-destructive font-medium mb-1">Something went wrong</p>
+                        <p class="text-sm text-muted-foreground">${this.escapeHtml(this.creationError || 'Please try again.')}</p>
                     </div>
                 `;
 
@@ -452,7 +484,7 @@ class AccountModal {
         switch (step) {
             case 'passkey':
                 return `
-                    <button id="cancel-creation-btn" class="w-full h-10 rounded-lg text-sm border border-border bg-background text-foreground hover:bg-accent transition-colors" type="button">
+                    <button id="cancel-creation-btn" class="w-full h-9 rounded-lg text-sm border border-border bg-background text-foreground hover:bg-accent transition-colors" type="button">
                         Cancel
                     </button>
                 `;
@@ -460,10 +492,10 @@ class AccountModal {
             case 'passkey_retry':
                 return `
                     <div class="flex gap-3">
-                        <button id="cancel-creation-btn" class="flex-1 h-10 rounded-lg text-sm border border-border bg-background text-foreground hover:bg-accent transition-colors" type="button">
+                        <button id="cancel-creation-btn" class="flex-1 h-9 rounded-lg text-sm border border-border bg-background text-foreground hover:bg-accent transition-colors" type="button">
                             Cancel
                         </button>
-                        <button id="retry-passkey-btn" class="flex-1 h-10 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors" type="button">
+                        <button id="retry-passkey-btn" class="flex-1 h-9 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors" type="button">
                             Try Again
                         </button>
                     </div>
@@ -471,28 +503,28 @@ class AccountModal {
 
             case 'recovery':
                 return `
-                    <button id="confirm-saved-btn" class="w-full h-10 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" type="button" ${this.recoveryCodeCopied ? '' : 'disabled'}>
+                    <button id="confirm-saved-btn" class="w-full h-9 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" type="button" ${this.recoveryCodeCopied ? '' : 'disabled'}>
                         I've saved my recovery code
                     </button>
                 `;
 
             case 'confirming':
                 return `
-                    <button class="w-full h-10 rounded-lg text-sm bg-muted text-muted-foreground cursor-not-allowed" type="button" disabled>
+                    <button class="w-full h-9 rounded-lg text-sm bg-muted text-muted-foreground cursor-not-allowed" type="button" disabled>
                         Creating account...
                     </button>
                 `;
 
             case 'complete':
                 return `
-                    <button id="close-complete-btn" class="w-full h-10 rounded-lg text-sm border border-border bg-background text-foreground hover:bg-accent transition-colors" type="button">
+                    <button id="close-complete-btn" class="w-full h-9 rounded-lg text-sm border border-border bg-background text-foreground hover:bg-accent transition-colors" type="button">
                         Done
                     </button>
                 `;
 
             case 'error':
                 return `
-                    <button id="start-over-btn" class="w-full h-10 rounded-lg text-sm border border-border bg-background text-foreground hover:bg-accent transition-colors" type="button">
+                    <button id="start-over-btn" class="w-full h-9 rounded-lg text-sm border border-border bg-background text-foreground hover:bg-accent transition-colors" type="button">
                         Start Over
                     </button>
                 `;
@@ -507,33 +539,39 @@ class AccountModal {
         const accountId = state.accountId;
         const formattedAccountId = accountId ? this.formatAccountId(accountId) : '';
         const passkeySupported = state.passkeySupported;
+        const isBusy = state.busy;
+        const action = state.action;
 
-        const errorMessage = state.error ? `
-            <div class="text-xs text-destructive mt-3">${this.escapeHtml(state.error)}</div>
-        ` : '';
+        // Recovery flow UI (verifying/adding passkey)
+        if (this.recoveryStep === 'verifying' || this.recoveryStep === 'adding_passkey') {
+            return this.renderRecoveryFlowUI();
+        }
 
-        // Logged in state
+        // Recovery complete UI
+        if (this.recoveryStep === 'complete') {
+            return this.renderRecoveryCompleteUI();
+        }
+
+        // Logged in state - don't show errors here since login was successful
         if (accountId) {
             return `
                 <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}">
-                    ${this.renderHeader('Account', '<span class="inline-flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>Logged in</span>')}
-                    <div class="flex-1 px-5 flex items-center justify-center overflow-hidden">
-                        <div class="w-full text-center">
-                            <div class="text-xs text-muted-foreground mb-2">Account ID</div>
-                            <div class="font-mono text-2xl tracking-widest text-foreground mb-3">${this.escapeHtml(formattedAccountId)}</div>
-                            <div class="text-sm text-muted-foreground">Encrypted sync coming soon</div>
+                    ${this.renderHeader('Account')}
+                    <div class="flex-1 flex flex-col items-center justify-center py-4">
+                        <div class="flex items-center gap-2 mb-4">
+                            <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+                            <span class="text-xs text-muted-foreground">Logged in</span>
                         </div>
+                        <p class="account-number-text font-mono text-lg tracking-widest text-foreground mb-2 whitespace-nowrap">${this.escapeHtml(formattedAccountId)}</p>
+                        <p class="text-xs text-muted-foreground">Encrypted sync coming soon</p>
                     </div>
-                    <div class="px-5 pb-5 shrink-0">
-                        <div class="flex gap-3">
-                            <button id="account-copy-id-btn" class="flex-1 h-10 rounded-lg text-sm border border-border bg-background hover:bg-accent transition-colors" type="button">
-                                Copy ID
-                            </button>
-                            <button id="account-clear-btn" class="flex-1 h-10 rounded-lg text-sm border border-border bg-background hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30 transition-colors" type="button">
-                                Log out
-                            </button>
-                        </div>
-                        ${errorMessage}
+                    <div class="flex gap-3 mt-4">
+                        <button id="account-copy-id-btn" class="flex-1 h-9 rounded-lg text-sm border border-border bg-background hover:bg-accent transition-colors" type="button">
+                            Copy ID
+                        </button>
+                        <button id="account-clear-btn" class="flex-1 h-9 rounded-lg text-sm border border-border bg-background hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30 transition-colors" type="button">
+                            Log out
+                        </button>
                     </div>
                 </div>
             `;
@@ -543,72 +581,130 @@ class AccountModal {
         const accountValue = this.escapeHtml(this.accountInputValue || '');
         const recoveryValue = this.escapeHtml(this.recoveryInputValue || '');
         const showRecovery = this.showRecoveryInput;
-        const isBusy = state.busy;
-        const action = state.action;
 
         return `
             <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}">
-                ${this.renderHeader('Account', 'for encrypted sync')}
-                <div class="flex-1 px-5 flex flex-col justify-center overflow-y-auto">
-                    ${!passkeySupported ? `
-                        <div class="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive mb-4 shrink-0">
-                            Passkeys are not supported in this browser.
-                        </div>
-                    ` : ''}
-
-                    <!-- Create section -->
-                    <button id="generate-account-btn" class="w-full h-10 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50 shrink-0" type="button" ${!passkeySupported ? 'disabled' : ''}>
-                        Create new account
-                    </button>
-
-                    <!-- Divider -->
-                    <div class="relative my-4 shrink-0">
-                        <div class="absolute inset-0 flex items-center">
-                            <div class="w-full border-t border-border"></div>
-                        </div>
-                        <div class="relative flex justify-center">
-                            <span class="bg-background px-3 text-xs text-muted-foreground">or log in</span>
-                        </div>
+                ${this.renderHeader('Account')}
+                
+                <p class="text-xs text-muted-foreground mb-4">Create or log in to enable encrypted sync across devices.</p>
+                
+                ${!passkeySupported ? `
+                    <div class="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive mb-4">
+                        Passkeys are not supported in this browser.
                     </div>
+                ` : ''}
 
-                    <!-- Login section -->
-                    <div class="space-y-3 shrink-0">
+                <!-- Create account button -->
+                <button id="generate-account-btn" class="w-full h-9 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50" type="button" ${!passkeySupported ? 'disabled' : ''}>
+                    Create new account
+                </button>
+
+                <!-- Divider -->
+                <div class="flex items-center gap-3 my-4">
+                    <div class="flex-1 h-px bg-border"></div>
+                    <span class="text-xs text-muted-foreground">or log in</span>
+                    <div class="flex-1 h-px bg-border"></div>
+                </div>
+
+                <!-- Login section -->
+                <div class="space-y-3">
+                    <input
+                        id="account-id-input"
+                        type="text"
+                        inputmode="numeric"
+                        maxlength="19"
+                        placeholder="0000 0000 0000 0000"
+                        class="w-full h-9 px-3 text-center font-mono text-sm tracking-widest border border-border rounded-lg bg-background text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                        value="${accountValue}"
+                        autocomplete="off"
+                    />
+
+                    ${showRecovery ? `
                         <input
-                            id="account-id-input"
+                            id="account-recovery-code-input"
                             type="text"
-                            inputmode="numeric"
-                            maxlength="19"
-                            placeholder="0000 0000 0000 0000"
-                            class="w-full h-10 px-4 text-center font-mono text-sm tracking-widest border border-border rounded-lg bg-background text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
-                            value="${accountValue}"
-                            autocomplete="off"
+                            placeholder="Enter recovery code"
+                            class="w-full h-9 px-3 text-center font-mono text-sm border border-border rounded-lg bg-background text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                            value="${recoveryValue}"
+                            ${isBusy ? 'disabled' : ''}
                         />
+                        <button id="account-recovery-submit-btn" class="w-full h-9 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50" type="button" ${isBusy ? 'disabled' : ''}>
+                            ${isBusy && action === 'recover' ? 'Recovering...' : 'Recover account'}
+                        </button>
+                        <button id="account-recovery-toggle-btn" class="w-full text-xs text-muted-foreground hover:text-foreground transition-colors py-1" type="button">
+                            Back to passkey login
+                        </button>
+                    ` : `
+                        <button id="account-passkey-btn" class="w-full h-9 rounded-lg text-sm border border-border bg-background text-foreground hover:bg-accent transition-colors disabled:opacity-50" type="button" ${isBusy || !passkeySupported ? 'disabled' : ''}>
+                            ${isBusy && action === 'unlock' ? 'Logging in...' : 'Log in with passkey'}
+                        </button>
 
-                        <div class="flex gap-3">
-                            <button id="account-passkey-btn" class="flex-1 h-10 rounded-lg text-sm border border-border bg-background text-foreground hover:bg-accent transition-colors disabled:opacity-50" type="button" ${isBusy || !passkeySupported ? 'disabled' : ''}>
-                                ${isBusy && action === 'unlock' ? 'Logging in...' : 'Log in with passkey'}
-                            </button>
-                            <button id="account-recovery-toggle-btn" class="h-10 px-4 rounded-lg text-sm border border-border bg-background hover:bg-accent transition-colors" type="button">
-                                ${showRecovery ? 'Hide' : 'Recovery'}
-                            </button>
-                        </div>
+                        <button id="account-recovery-toggle-btn" class="w-full text-xs text-muted-foreground hover:text-foreground transition-colors py-1" type="button">
+                            Recover your account
+                        </button>
+                    `}
+                </div>
 
-                        ${showRecovery ? `
-                            <input
-                                id="account-recovery-code-input"
-                                type="text"
-                                placeholder="recovery-code-words"
-                                class="w-full h-10 px-4 text-sm font-mono border border-border rounded-lg bg-background text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
-                                value="${recoveryValue}"
-                                ${isBusy ? 'disabled' : ''}
-                            />
-                            <button id="account-recovery-submit-btn" class="w-full h-10 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50" type="button" ${isBusy ? 'disabled' : ''}>
-                                ${isBusy && action === 'recover' ? 'Logging in...' : 'Log in with recovery'}
-                            </button>
-                        ` : ''}
+                ${state.error ? `<p class="text-xs text-destructive mt-3 text-center">${this.escapeHtml(state.error)}</p>` : ''}
+            </div>
+        `;
+    }
+
+    renderRecoveryFlowUI() {
+        const state = this.accountState || {};
+        const isVerifying = this.recoveryStep === 'verifying';
+        const isAddingPasskey = this.recoveryStep === 'adding_passkey';
+        
+        if (isVerifying) {
+            return `
+                <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}">
+                    ${this.renderHeader('Recovering Account', false)}
+                    <div class="flex-1 flex flex-col items-center justify-center py-8">
+                        <div class="w-10 h-10 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div>
+                        <p class="text-sm font-medium text-foreground mb-1">Verifying recovery code...</p>
+                        <p class="text-xs text-muted-foreground text-center">Please wait while we verify your code.</p>
                     </div>
+                    ${state.error ? `<p class="text-xs text-destructive mt-3 text-center">${this.escapeHtml(state.error)}</p>` : ''}
+                </div>
+            `;
+        }
+        
+        // Adding passkey step - show explanation before passkey prompt
+        return `
+            <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}">
+                ${this.renderHeader('Replace Passkey', false)}
+                <div class="flex-1 flex flex-col items-center justify-center py-6">
+                    <div class="w-12 h-12 bg-blue-100 dark:bg-blue-500/20 rounded-full flex items-center justify-center mb-4">
+                        <svg class="w-6 h-6 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z"></path>
+                        </svg>
+                    </div>
+                    <p class="text-sm font-medium text-foreground mb-2">Add a new passkey</p>
+                    <p class="text-xs text-muted-foreground text-center max-w-[260px]">
+                        Your recovery code was verified. You'll now be prompted to add a new passkey to secure your account.
+                    </p>
+                </div>
+                ${state.error ? `<p class="text-xs text-destructive mt-3 text-center">${this.escapeHtml(state.error)}</p>` : ''}
+            </div>
+        `;
+    }
 
-                    ${errorMessage}
+    renderRecoveryCompleteUI() {
+        const accountId = this.accountState?.accountId;
+        const formattedAccountId = accountId ? this.formatAccountId(accountId) : '';
+
+        return `
+            <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}">
+                ${this.renderHeader('Account Recovered', false)}
+                <div class="flex-1 flex flex-col items-center justify-center py-6">
+                    <div class="w-14 h-14 bg-emerald-100 dark:bg-emerald-500/20 rounded-full flex items-center justify-center mb-3">
+                        <svg class="w-7 h-7 text-emerald-600 dark:text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path>
+                        </svg>
+                    </div>
+                    <p class="text-base font-medium text-foreground mb-1">Account recovered!</p>
+                    <p class="account-number-text font-mono text-sm text-muted-foreground mb-2 whitespace-nowrap">${this.escapeHtml(formattedAccountId)}</p>
+                    <p class="text-xs text-muted-foreground">New passkey has been added.</p>
                 </div>
             </div>
         `;

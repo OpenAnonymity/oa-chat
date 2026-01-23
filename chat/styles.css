@@ -3206,15 +3206,10 @@ html {
 }
 
 /* ============================================
-   ACCOUNT MODAL - Fixed Layout System
+   ACCOUNT MODAL
    ============================================ */
 
-.account-modal-panel {
-    width: 100%;
-    max-width: 28rem;
-}
-
-/* Account Number Display - simple text with tracking */
+/* Account Number Display - tabular nums for consistent digit width */
 .account-number-text {
     font-variant-numeric: tabular-nums;
     letter-spacing: 0.15em;

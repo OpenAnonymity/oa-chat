@@ -618,6 +618,17 @@ class ChatDatabase {
         });
     }
 
+    async deleteSetting(key) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['settings'], 'readwrite');
+            const store = transaction.objectStore('settings');
+            const request = store.delete(key);
+
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        });
+    }
+
     emitStorageEvent(type, detail) {
         if (typeof window === 'undefined') return;
         const events = window.storageEvents;

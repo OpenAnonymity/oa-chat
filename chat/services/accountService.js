@@ -26,7 +26,11 @@ import { chatDB } from '../db.js';
 import { generateRecoveryCode, isValidRecoveryCode, normalizeRecoveryCode } from './recoveryCode.js';
 
 const ACCOUNT_SETTINGS_KEY = 'account-settings';
+const MASTER_CRYPTO_KEY = 'master-crypto-key';
 const ACCOUNT_REQUEST_TIMEOUT_MS = 10000;
+
+// Platform detection for auth token handling
+const PLATFORM = (typeof window !== 'undefined' && window?.process?.versions?.electron) ? 'electron' : 'web';
 
 // Argon2id parameters for recovery code KDF.
 // These values balance security vs. UX on mobile devices.
@@ -163,7 +167,13 @@ async function decryptBytes(key, payload) {
  */
 async function deriveRecoveryKey(code, saltBytes) {
     if (!window.argon2id) {
+        if (typeof window.initHashWasm !== 'function') {
+            throw new Error('Hash library not loaded. Please refresh the page.');
+        }
         await window.initHashWasm();
+    }
+    if (typeof window.argon2id !== 'function') {
+        throw new Error('Argon2 not available. Please refresh the page.');
     }
     const derivedBytes = await window.argon2id({
         password: code,
@@ -175,6 +185,35 @@ async function deriveRecoveryKey(code, saltBytes) {
         outputType: 'binary'
     });
     return importAesKey(derivedBytes);
+}
+
+/**
+ * Compute a hash of the recovery code for server-side verification.
+ * Uses Argon2id with accountId as salt (same params as deriveRecoveryKey).
+ * This proves knowledge of the recovery code without revealing it.
+ * Server stores this hash and verifies it before returning wrapped key.
+ */
+async function computeRecoveryCodeHash(recoveryCode, accountId) {
+    if (!window.argon2id) {
+        if (typeof window.initHashWasm !== 'function') {
+            throw new Error('Hash library not loaded. Please refresh the page.');
+        }
+        await window.initHashWasm();
+    }
+    if (typeof window.argon2id !== 'function') {
+        throw new Error('Argon2 not available. Please refresh the page.');
+    }
+    const saltBytes = textEncoder.encode(accountId);
+    const hash = await window.argon2id({
+        password: recoveryCode,
+        salt: saltBytes,
+        parallelism: ARGON2_PARALLELISM,
+        iterations: ARGON2_ITERATIONS,
+        memorySize: ARGON2_MEMORY,
+        hashLength: ARGON2_HASH_LENGTH,
+        outputType: 'hex'
+    });
+    return hash;
 }
 
 /**
@@ -313,23 +352,31 @@ function assertionToJSON(assertion) {
 }
 
 /**
- * Fetch JSON from the auth API with CSRF protection.
- * CSRF token is read from the 'oa-csrf' cookie and sent in X-CSRF-Token header.
- * This prevents cross-origin requests from forging authenticated actions.
+ * Custom error for token invalidation (e.g., after recovery on another device).
+ * Callers should catch this and trigger re-authentication.
  */
-async function fetchJson(path, body, { timeoutMs = ACCOUNT_REQUEST_TIMEOUT_MS, csrfToken = null } = {}) {
+class TokenInvalidatedError extends Error {
+    constructor(message = 'Session invalidated. Please sign in again.') {
+        super(message);
+        this.name = 'TokenInvalidatedError';
+        this.code = 'INVALID_TOKEN';
+    }
+}
+
+// Global callback for token invalidation - set by AccountService
+let onTokenInvalidated = null;
+
+/**
+ * Fetch JSON from the auth API.
+ * CSRF protection provided by SameSite=Strict cookie + WebAuthn challenge-response.
+ */
+async function fetchJson(path, body, { timeoutMs = ACCOUNT_REQUEST_TIMEOUT_MS } = {}) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
-    // Build headers with optional CSRF token
-    const headers = { 'Content-Type': 'application/json' };
-    if (csrfToken) {
-        headers['X-CSRF-Token'] = csrfToken;
-    }
-
     const response = await fetch(`${ORG_API_BASE}${path}`, {
         method: 'POST',
-        headers,
+        headers: { 'Content-Type': 'application/json', 'X-Client-Platform': PLATFORM },
         credentials: 'include',
         body: JSON.stringify(body || {}),
         signal: controller.signal
@@ -342,6 +389,13 @@ async function fetchJson(path, body, { timeoutMs = ACCOUNT_REQUEST_TIMEOUT_MS, c
         data = null;
     }
     if (!response.ok) {
+        // Detect token invalidation (e.g., after recovery on another device)
+        if (response.status === 401 && data?.code === 'INVALID_TOKEN') {
+            if (onTokenInvalidated) {
+                onTokenInvalidated();
+            }
+            throw new TokenInvalidatedError(data?.error || data?.message);
+        }
         const message = data?.error || data?.message || response.statusText || 'Request failed';
         throw new Error(message);
     }
@@ -353,6 +407,8 @@ function toFriendlyError(error) {
     if (error.name === 'AbortError') return 'Request timed out. Please try again.';
     if (error.name === 'NotAllowedError') return 'Passkey prompt was cancelled.';
     if (error.name === 'NotFoundError') return 'No passkey found for this account on this device.';
+    if (error.name === 'OperationError') return 'Invalid recovery code. Please check and try again.';
+    if (error.name === 'TokenInvalidatedError') return 'Session expired. Please sign in again.';
     return error.message || 'Unexpected error';
 }
 
@@ -382,38 +438,20 @@ class AccountService {
         this.failedAttempts = [];
         this.lockedUntil = 0;
 
-        // CSRF token (fetched from server on first request)
-        this.csrfToken = null;
-
         // Pending account for multi-step creation flow
         // Holds { accountId, masterKey, credential, prfBytes, recoveryCode } during creation
         this.pendingAccount = null;
+
+        // Session persistence: access token (memory) and CryptoKey (IndexedDB)
+        this.accessToken = null;
+        this.cryptoKey = null;  // Non-extractable CryptoKey for encryption
+
+        // Set up global callback for token invalidation
+        onTokenInvalidated = () => this.handleTokenInvalidation();
     }
 
     getState() {
         return { ...this.state };
-    }
-
-    // =========================================================================
-    // CSRF Protection
-    // =========================================================================
-
-    /**
-     * Read CSRF token from cookie set by server.
-     * Cookie name: 'oa-csrf' (must be set by server with appropriate flags).
-     */
-    getCsrfToken() {
-        if (this.csrfToken) return this.csrfToken;
-        const match = document.cookie.match(/(?:^|;\s*)oa-csrf=([^;]*)/);
-        this.csrfToken = match ? decodeURIComponent(match[1]) : null;
-        return this.csrfToken;
-    }
-
-    /**
-     * Clear cached CSRF token (e.g., after logout or on error).
-     */
-    clearCsrfToken() {
-        this.csrfToken = null;
     }
 
     // =========================================================================
@@ -495,6 +533,127 @@ class AccountService {
         return this.masterKey ? new Uint8Array(this.masterKey) : null;
     }
 
+    /**
+     * Get the non-extractable CryptoKey for encryption operations.
+     * Returns the CryptoKey if available, null otherwise.
+     */
+    getCryptoKey() {
+        return this.cryptoKey;
+    }
+
+    /**
+     * Get the current access token for API authentication.
+     */
+    getAccessToken() {
+        return this.accessToken;
+    }
+
+    // =========================================================================
+    // Master Key Persistence (Non-Extractable CryptoKey in IndexedDB)
+    // =========================================================================
+
+    /**
+     * Persist the master key as a non-extractable CryptoKey in IndexedDB.
+     * This allows session restoration on page refresh without re-authentication.
+     * XSS cannot extract the raw key bytes, only use the key while page is open.
+     */
+    async persistMasterKey(masterKeyBytes) {
+        if (!chatDB) return;
+        
+        // Import as non-extractable CryptoKey
+        const cryptoKey = await crypto.subtle.importKey(
+            'raw',
+            masterKeyBytes,
+            { name: 'AES-GCM' },
+            false,  // extractable = false (critical for XSS protection!)
+            ['encrypt', 'decrypt']
+        );
+        
+        // Store in IndexedDB
+        await chatDB.saveSetting(MASTER_CRYPTO_KEY, cryptoKey);
+        this.cryptoKey = cryptoKey;
+    }
+
+    /**
+     * Load the persisted CryptoKey from IndexedDB.
+     * Called during init() to restore session on page refresh.
+     * @returns {Promise<boolean>} True if key was loaded, false otherwise
+     */
+    async loadMasterKey() {
+        if (!chatDB) return false;
+        
+        try {
+            const cryptoKey = await chatDB.getSetting(MASTER_CRYPTO_KEY);
+            if (cryptoKey && cryptoKey instanceof CryptoKey) {
+                this.cryptoKey = cryptoKey;
+                return true;
+            }
+        } catch (error) {
+            console.warn('Failed to load master key from IndexedDB:', error);
+        }
+        return false;
+    }
+
+    /**
+     * Clear the persisted CryptoKey from IndexedDB.
+     * Called during logout to fully clear the session.
+     */
+    async clearPersistedMasterKey() {
+        if (!chatDB) return;
+        
+        try {
+            await chatDB.deleteSetting(MASTER_CRYPTO_KEY);
+        } catch (error) {
+            console.warn('Failed to delete master key from IndexedDB:', error);
+        }
+        this.cryptoKey = null;
+    }
+
+    // =========================================================================
+    // Access Token Management
+    // =========================================================================
+
+    /**
+     * Refresh the access token using the refresh token (HttpOnly cookie for web).
+     * Called during init() to restore session, and when access token expires.
+     * @returns {Promise<boolean>} True if token was refreshed, false otherwise
+     */
+    async refreshAccessToken() {
+        try {
+            const response = await fetch(`${ORG_API_BASE}/auth/refresh`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Client-Platform': PLATFORM
+                },
+                credentials: 'include'  // Sends HttpOnly cookie automatically
+            });
+            
+            if (!response.ok) {
+                this.accessToken = null;
+                return false;
+            }
+            
+            const data = await response.json();
+            if (data.accessToken) {
+                this.accessToken = data.accessToken;
+                return true;
+            }
+            return false;
+        } catch (error) {
+            console.warn('Failed to refresh access token:', error);
+            this.accessToken = null;
+            return false;
+        }
+    }
+
+    /**
+     * Clear the access token from memory.
+     */
+    clearAccessToken() {
+        this.accessToken = null;
+    }
+
     getFormattedAccountId() {
         return formatAccountId(this.state.accountId);
     }
@@ -512,7 +671,8 @@ class AccountService {
     updateStatus() {
         if (this.state.busy) {
             this.state.status = 'busy';
-        } else if (this.masterKey) {
+        } else if (this.masterKey || this.cryptoKey) {
+            // Unlocked if we have either raw masterKey or persisted CryptoKey
             this.state.status = 'unlocked';
         } else if (this.state.accountId) {
             this.state.status = 'locked';
@@ -536,12 +696,31 @@ class AccountService {
         if (!chatDB.db && typeof chatDB.init === 'function') {
             await chatDB.init();
         }
+        // Load account settings (accountId, credentialId, etc.)
         const settings = await chatDB.getSetting(ACCOUNT_SETTINGS_KEY).catch(() => null);
         if (settings?.accountId) {
             this.state.accountId = settings.accountId;
             this.state.credentialId = settings.credentialId || null;
             this.state.recoveryConfirmed = !!settings.recoveryConfirmed;
+            
+            // Try to restore session from persisted CryptoKey
+            const hasKey = await this.loadMasterKey();
+            if (hasKey) {
+                // Try to refresh the access token
+                const tokenRefreshed = await this.refreshAccessToken().catch(() => false);
+                if (tokenRefreshed) {
+                    // Session fully restored - no passkey needed!
+                    this.state.isReady = true;
+                    this.updateStatus();
+                    this.notify();
+                    return;
+                }
+                // Token refresh failed but we have the key - might be offline
+                // Keep the cryptoKey, user can still work locally
+            }
+            // No persisted key or token refresh failed - will need passkey
         }
+        
         this.state.isReady = true;
         this.updateStatus();
         this.notify();
@@ -581,8 +760,7 @@ class AccountService {
         this.cancelPendingAccount();
 
         // Request account ID and challenge from server
-        const csrfToken = this.getCsrfToken();
-        const initData = await fetchJson('/auth/init', {}, { csrfToken });
+        const initData = await fetchJson('/auth/init', {});
 
         const accountId = normalizeAccountId(initData.accountId || initData.account_id);
         if (!accountId) {
@@ -712,14 +890,17 @@ class AccountService {
             salt: bytesToBase64(recoverySalt)
         });
 
+        // Compute recovery code hash for server verification
+        const recoveryCodeHash = await computeRecoveryCodeHash(recoveryCode, accountId);
+
         // Register with server
-        const csrfToken = this.getCsrfToken();
-        await fetchJson('/auth/register', {
+        const registerData = await fetchJson('/auth/register', {
             accountId,
             credential: credentialToJSON(credential),
             wrappedKeyPasskey: wrappedPasskey,
-            wrappedKeyRecovery: wrappedRecovery
-        }, { csrfToken });
+            wrappedKeyRecovery: wrappedRecovery,
+            recoveryCodeHash
+        });
 
         // Success - update state
         this.masterKey = masterKey;
@@ -728,6 +909,14 @@ class AccountService {
         this.state.credentialId = credential.id;
         this.state.recoveryConfirmed = true;  // User already confirmed before this step
         this.state.recoveryCode = null;
+
+        // Handle access token from response
+        if (registerData?.accessToken) {
+            this.accessToken = registerData.accessToken;
+        }
+        
+        // Persist master key as non-extractable CryptoKey for session restoration
+        await this.persistMasterKey(masterKey);
 
         // Clear pending account (don't zero masterKey since we're using it)
         this.pendingAccount = null;
@@ -785,9 +974,8 @@ class AccountService {
         });
 
         try {
-            const csrfToken = this.getCsrfToken();
             const masterKey = crypto.getRandomValues(new Uint8Array(32));
-            const initData = await fetchJson('/auth/init', {}, { csrfToken });
+            const initData = await fetchJson('/auth/init', {});
             const accountId = normalizeAccountId(initData.accountId || initData.account_id);
             if (!accountId) {
                 throw new Error('Account ID missing from server.');
@@ -821,12 +1009,16 @@ class AccountService {
                 salt: bytesToBase64(recoverySalt)
             });
 
-            await fetchJson('/auth/register', {
+            // Compute recovery code hash for server verification
+            const recoveryCodeHash = await computeRecoveryCodeHash(recoveryCode, accountId);
+
+            const registerData = await fetchJson('/auth/register', {
                 accountId,
                 credential: credentialToJSON(credential),
                 wrappedKeyPasskey: wrappedPasskey,
-                wrappedKeyRecovery: wrappedRecovery
-            }, { csrfToken });
+                wrappedKeyRecovery: wrappedRecovery,
+                recoveryCodeHash
+            });
 
             this.masterKey = masterKey;
             this.recoveryPayload = wrappedRecovery;
@@ -837,6 +1029,15 @@ class AccountService {
             this.state.busy = false;
             this.state.action = null;
             this.state.error = null;
+            
+            // Handle access token from response
+            if (registerData?.accessToken) {
+                this.accessToken = registerData.accessToken;
+            }
+            
+            // Persist master key as non-extractable CryptoKey for session restoration
+            await this.persistMasterKey(masterKey);
+            
             await this.persistSettings();
             this.updateStatus();
             this.notify();
@@ -872,11 +1073,10 @@ class AccountService {
 
         this.setState({ busy: true, action: 'unlock', error: null, recoveryRequired: false });
         try {
-            const csrfToken = this.getCsrfToken();
             const challengeData = await fetchJson('/auth/challenge', {
                 accountId,
                 credentialId: this.state.credentialId || undefined
-            }, { csrfToken });
+            });
             if (challengeData?.wrappedKeyRecovery) {
                 this.recoveryPayload = normalizeWrappedKeyPayload(challengeData.wrappedKeyRecovery);
             }
@@ -909,7 +1109,7 @@ class AccountService {
                 accountId,
                 credentialId: assertion.id,
                 assertion: assertionToJSON(assertion)
-            }, { csrfToken });
+            });
 
             if (loginData?.wrappedKeyRecovery) {
                 this.recoveryPayload = normalizeWrappedKeyPayload(loginData.wrappedKeyRecovery);
@@ -932,6 +1132,15 @@ class AccountService {
             this.state.action = null;
             this.state.error = null;
             this.state.recoveryRequired = false;
+            
+            // Handle access token from response
+            if (loginData.accessToken) {
+                this.accessToken = loginData.accessToken;
+            }
+            
+            // Persist master key as non-extractable CryptoKey for session restoration
+            await this.persistMasterKey(masterKey);
+            
             await this.persistSettings();
             this.updateStatus();
             this.notify();
@@ -985,115 +1194,93 @@ class AccountService {
             return false;
         }
 
+        // Passkey is required for recovery (single passkey per account)
+        if (!this.state.passkeySupported) {
+            this.setError('Passkeys are required for account recovery but not supported in this browser.');
+            return false;
+        }
+
         this.setState({ busy: true, action: 'recover', error: null });
         try {
-            const csrfToken = this.getCsrfToken();
-            if (!this.recoveryPayload) {
-                const recoveryData = await fetchJson('/auth/recovery', { accountId }, { csrfToken });
-                this.recoveryPayload = normalizeWrappedKeyPayload(recoveryData?.wrappedKeyRecovery);
-            }
-            const wrappedRecovery = decodeWrappedKey(this.recoveryPayload);
-            if (!wrappedRecovery?.ciphertext || !wrappedRecovery?.iv || !wrappedRecovery?.salt) {
+            // 1. Compute recovery code hash to prove knowledge
+            const recoveryCodeHash = await computeRecoveryCodeHash(normalizedCode, accountId);
+
+            // 2. Call /auth/recovery with hash - server verifies before returning data
+            const recoveryData = await fetchJson('/auth/recovery', { 
+                accountId, 
+                recoveryCodeHash 
+            });
+            
+            const wrappedRecovery = normalizeWrappedKeyPayload(recoveryData?.wrappedKeyRecovery);
+            const decoded = decodeWrappedKey(wrappedRecovery);
+            if (!decoded?.ciphertext || !decoded?.iv || !decoded?.salt) {
                 throw new Error('Recovery data missing from server.');
             }
 
-            const saltBytes = base64ToBytes(wrappedRecovery.salt);
+            // 3. Decrypt master key using recovery code
+            const saltBytes = base64ToBytes(decoded.salt);
             const recoveryKey = await deriveRecoveryKey(normalizedCode, saltBytes);
-            const masterKey = await decryptBytes(recoveryKey, wrappedRecovery);
+            const masterKey = await decryptBytes(recoveryKey, decoded);
 
-            // Success - clear rate limit and update state
-            this.clearRateLimit();
-            this.masterKey = masterKey;
-            this.state.accountId = accountId;
-            this.state.busy = false;
-            this.state.action = null;
-            this.state.error = null;
-            this.state.recoveryRequired = false;
-            await this.persistSettings();
-            this.updateStatus();
-            this.notify();
-
-            if (this.state.passkeySupported && !this.state.credentialId) {
-                await this.registerCurrentDevice({ silent: true });
-            }
-            return true;
-        } catch (error) {
-            // Record failed attempt for rate limiting
-            this.recordFailedAttempt();
-            this.setState({ busy: false, action: null });
-            this.setError(toFriendlyError(error));
-            return false;
-        }
-    }
-
-    async registerCurrentDevice({ silent = false } = {}) {
-        if (this.state.busy) return false;
-        if (!this.masterKey) {
-            if (!silent) this.setError('Unlock your account before adding this device.');
-            return false;
-        }
-        if (!this.state.passkeySupported) {
-            if (!silent) this.setError('Passkeys are not supported in this browser.');
-            return false;
-        }
-
-        const accountId = normalizeAccountId(this.state.accountId);
-        if (!accountId) {
-            if (!silent) this.setError('Account ID missing.');
-            return false;
-        }
-
-        this.setState({
-            busy: true,
-            action: 'register',
-            ...(silent ? {} : { error: null })
-        });
-        try {
-            const csrfToken = this.getCsrfToken();
-            const initData = await fetchJson('/auth/init', { accountId }, { csrfToken });
+            // 4. Create new passkey using challenge from recovery response
             const prfInput = await digestAccountId(accountId);
-            const publicKey = buildCreationOptions(initData, accountId, prfInput);
+            const publicKey = buildCreationOptions(recoveryData, accountId, prfInput);
+            
             const credential = await navigator.credentials.create({ publicKey });
             if (!credential) {
-                throw new Error('Passkey creation failed.');
+                throw new Error('Passkey creation was cancelled.');
             }
 
             const prfBytes = getPrfOutput(credential);
             if (!prfBytes) {
                 this.state.prfSupported = false;
-                throw new Error('Passkey did not return PRF output.');
+                throw new Error('Passkey did not return PRF output. Recovery requires a passkey with PRF support.');
             }
             this.state.prfSupported = true;
 
+            // 5. Wrap master key with new passkey's PRF
             const prfKey = await importAesKey(prfBytes);
             const wrappedPasskey = encodeWrappedKey(
-                await encryptBytes(prfKey, this.masterKey)
+                await encryptBytes(prfKey, masterKey)
             );
 
-            const payload = {
+            // 6. Complete recovery with new passkey
+            const completeData = await fetchJson('/auth/recovery/complete', {
                 accountId,
                 credential: credentialToJSON(credential),
                 wrappedKeyPasskey: wrappedPasskey
-            };
-            if (this.recoveryPayload) {
-                payload.wrappedKeyRecovery = this.recoveryPayload;
-            }
+            });
 
-            await fetchJson('/auth/register', payload, { csrfToken });
-
+            // 7. Success - clear rate limit and update state
+            this.clearRateLimit();
+            this.masterKey = masterKey;
+            this.recoveryPayload = wrappedRecovery;
+            this.state.accountId = accountId;
             this.state.credentialId = credential.id;
             this.state.busy = false;
             this.state.action = null;
             this.state.error = null;
+            this.state.recoveryRequired = false;
+            
+            // Handle access token from response
+            if (completeData?.accessToken) {
+                this.accessToken = completeData.accessToken;
+            }
+            
+            // Persist master key as non-extractable CryptoKey for session restoration
+            await this.persistMasterKey(masterKey);
+            
             await this.persistSettings();
             this.updateStatus();
             this.notify();
+
             return true;
         } catch (error) {
+            console.error('[AccountService] Recovery failed:', error);
+            // Record failed attempt for rate limiting
+            this.recordFailedAttempt();
             this.setState({ busy: false, action: null });
-            if (!silent) {
-                this.setError(toFriendlyError(error));
-            }
+            this.setError(toFriendlyError(error));
             return false;
         }
     }
@@ -1111,29 +1298,103 @@ class AccountService {
      * We zero the buffer to reduce exposure window, though JS GC may retain copies.
      * This is the best-effort approach available in browser environments.
      */
+    /**
+     * Handle token invalidation (e.g., after recovery on another device).
+     * Clears all session data and forces re-authentication.
+     * Called automatically by fetchJson when 401 INVALID_TOKEN is detected.
+     */
+    async handleTokenInvalidation() {
+        console.warn('[AccountService] Token invalidated - clearing session');
+        
+        // Clear in-memory state
+        if (this.masterKey) {
+            this.masterKey.fill(0);
+        }
+        this.masterKey = null;
+        this.cryptoKey = null;
+        this.accessToken = null;
+        
+        // Clear persisted CryptoKey from IndexedDB
+        await this.clearPersistedMasterKey();
+        
+        // Update status to 'locked' and notify UI
+        this.updateStatus();
+        this.notify();
+    }
+
+    /**
+     * Lock the account - clears keys from memory but keeps persisted data.
+     * User can re-unlock with passkey without needing to re-login to server.
+     */
     lock() {
         if (this.masterKey) {
             this.masterKey.fill(0);
         }
         this.masterKey = null;
+        this.cryptoKey = null;  // Clear from memory (IndexedDB copy remains for re-unlock)
+        this.accessToken = null;
+        this.updateStatus();
+        this.notify();
+    }
+
+    /**
+     * Full logout - clears all session data and notifies server.
+     * This is different from lock() in that it:
+     * - Clears the persisted CryptoKey from IndexedDB
+     * - Invalidates the refresh token on the server
+     * - Requires full passkey re-authentication to log back in
+     */
+    async logout() {
+        // Clear local state
+        if (this.masterKey) {
+            this.masterKey.fill(0);
+        }
+        this.masterKey = null;
+        this.cryptoKey = null;
+        this.accessToken = null;
+        
+        // Clear persisted CryptoKey from IndexedDB
+        await this.clearPersistedMasterKey();
+        
+        // Notify server to invalidate refresh token
+        try {
+            await fetch(`${ORG_API_BASE}/auth/logout`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Client-Platform': PLATFORM
+                },
+                credentials: 'include'  // Sends HttpOnly cookie to be invalidated
+            });
+        } catch (error) {
+            // Server logout failure shouldn't prevent local logout
+            console.warn('Server logout failed:', error);
+        }
+        
         this.updateStatus();
         this.notify();
     }
 
     async clearLocalAccount() {
-        this.lock();
+        await this.logout();  // Use logout instead of lock for full cleanup
         this.state.accountId = null;
         this.state.credentialId = null;
         this.state.recoveryConfirmed = false;
         this.state.recoveryCode = null;
         this.state.recoveryRequired = false;
         this.recoveryPayload = null;
-        await this.persistSettings();
+        // Delete account settings from IndexedDB (not just set to null)
+        if (chatDB) {
+            await chatDB.deleteSetting(ACCOUNT_SETTINGS_KEY).catch(() => {});
+        }
         this.updateStatus();
         this.notify();
     }
 
     async maybeAutoUnlock() {
+        // Skip if already unlocked (session restored from IndexedDB)
+        if (this.masterKey || this.cryptoKey) return;
+        
         if (!this.state.accountId || !this.state.passkeySupported || this.state.busy) return;
         if (typeof PublicKeyCredential?.isConditionalMediationAvailable !== 'function') return;
         const supportsConditional = await PublicKeyCredential.isConditionalMediationAvailable();
