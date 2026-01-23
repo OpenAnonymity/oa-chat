@@ -26,6 +26,7 @@ class AccountModal {
         this.creationStep = 'idle';
         this.generatedAccountId = null;
         this.generatedRecoveryCode = null;
+        this.accountIdCopied = false;
         this.recoveryCodeCopied = false;
         this.creationError = null;
         this.isLoadingAccountId = false;
@@ -86,6 +87,10 @@ class AccountModal {
     }
 
     handleCloseAttempt() {
+        // Don't allow closing during recovery step - user must save their codes
+        if (this.creationStep === 'recovery') {
+            return;
+        }
         if (this.creationStep !== 'idle' && this.creationStep !== 'complete') {
             this.handleCancelCreation();
         }
@@ -113,6 +118,7 @@ class AccountModal {
         this.creationStep = 'idle';
         this.generatedAccountId = null;
         this.generatedRecoveryCode = null;
+        this.accountIdCopied = false;
         this.recoveryCodeCopied = false;
         this.creationError = null;
         this.isLoadingAccountId = false;
@@ -183,8 +189,10 @@ class AccountModal {
     updateDigitDisplay() {
         const display = this.overlay.querySelector('.account-number-text');
         if (!display || !this.generatedAccountId) return;
-        const digits = this.generatedAccountId.substring(0, this.revealedDigits);
-        display.textContent = this.formatAccountId(digits.padEnd(16, ' '));
+        const revealed = this.generatedAccountId.substring(0, this.revealedDigits);
+        const placeholder = '\u2007'.repeat(16 - this.revealedDigits);
+        const full = revealed + placeholder;
+        display.textContent = full.match(/.{1,4}/g)?.join(' ') || full;
     }
 
     async handlePasskeyRegistration() {
@@ -212,6 +220,19 @@ class AccountModal {
         this.animationTimeouts.push(timeoutId);
     }
 
+    async handleCopyAccountId() {
+        if (!this.generatedAccountId) return;
+        try {
+            await navigator.clipboard.writeText(this.generatedAccountId);
+            this.accountIdCopied = true;
+            this.render();
+            this.app?.showToast?.('Account ID copied.', 'success');
+        } catch (error) {
+            console.error('Failed to copy account ID:', error);
+            this.app?.showToast?.('Failed to copy. Please copy manually.', 'error');
+        }
+    }
+
     async handleCopyRecoveryCode() {
         if (!this.generatedRecoveryCode) return;
         try {
@@ -221,6 +242,21 @@ class AccountModal {
             this.app?.showToast?.('Recovery code copied.', 'success');
         } catch (error) {
             console.error('Failed to copy recovery code:', error);
+            this.app?.showToast?.('Failed to copy. Please copy manually.', 'error');
+        }
+    }
+
+    async handleCopyBoth() {
+        if (!this.generatedAccountId || !this.generatedRecoveryCode) return;
+        try {
+            const text = `Account ID: ${this.generatedAccountId}\nRecovery code: ${this.generatedRecoveryCode}`;
+            await navigator.clipboard.writeText(text);
+            this.accountIdCopied = true;
+            this.recoveryCodeCopied = true;
+            this.render();
+            this.app?.showToast?.('Both copied.', 'success');
+        } catch (error) {
+            console.error('Failed to copy:', error);
             this.app?.showToast?.('Failed to copy. Please copy manually.', 'error');
         }
     }
@@ -384,9 +420,16 @@ class AccountModal {
             case 'passkey':
             case 'passkey_retry': {
                 const isWaiting = this.isLoadingAccountId || this.revealedDigits < 16;
-                const displayText = this.generatedAccountId
-                    ? this.formatAccountId(this.generatedAccountId.substring(0, this.revealedDigits).padEnd(16, '\u2007'))
-                    : '\u2007\u2007\u2007\u2007 \u2007\u2007\u2007\u2007 \u2007\u2007\u2007\u2007 \u2007\u2007\u2007\u2007';
+                // Build display text manually to avoid formatAccountId stripping figure spaces
+                const displayText = (() => {
+                    if (!this.generatedAccountId || this.revealedDigits === 0) {
+                        return '\u2007\u2007\u2007\u2007 \u2007\u2007\u2007\u2007 \u2007\u2007\u2007\u2007 \u2007\u2007\u2007\u2007';
+                    }
+                    const revealed = this.generatedAccountId.substring(0, this.revealedDigits);
+                    const placeholder = '\u2007'.repeat(16 - this.revealedDigits);
+                    const full = revealed + placeholder;
+                    return full.match(/.{1,4}/g)?.join(' ') || full;
+                })();
 
                 const errorMsg = step === 'passkey_retry' ? `
                     <div class="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs text-amber-600 dark:text-amber-400 mb-4">
@@ -413,31 +456,28 @@ class AccountModal {
 
             case 'recovery':
                 return `
-                    <div class="w-full space-y-4">
-                        <div class="flex items-center justify-between">
-                            <div>
-                                <p class="text-xs text-muted-foreground mb-1">Account</p>
-                                <p class="font-mono text-sm tracking-wide text-foreground">${this.formatAccountId(this.generatedAccountId)}</p>
-                            </div>
-                            <div class="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                                    <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path>
-                                </svg>
-                                <span class="text-xs font-medium">Passkey saved</span>
-                            </div>
+                    <div class="w-full">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-xs text-muted-foreground">Your account number</span>
+                            <button id="copy-account-btn" class="text-xs text-blue-600 dark:text-blue-400 hover:underline" type="button">
+                                ${this.accountIdCopied ? 'Copied!' : 'Copy'}
+                            </button>
                         </div>
-                        <div>
-                            <div class="flex items-center justify-between mb-2">
-                                <span class="text-xs text-muted-foreground">Recovery code</span>
-                                <button id="copy-recovery-btn" class="text-xs text-blue-600 dark:text-blue-400 hover:underline" type="button">
-                                    ${this.recoveryCodeCopied ? 'Copied!' : 'Copy'}
-                                </button>
-                            </div>
-                            <code class="block font-mono text-sm text-foreground bg-muted/50 rounded-lg px-3 py-2.5 select-all border border-border">
-                                ${this.escapeHtml(this.generatedRecoveryCode || '')}
-                            </code>
+                        <div class="account-number-text font-mono text-xl tracking-widest text-foreground mb-4 whitespace-nowrap text-center">
+                            ${this.formatAccountId(this.generatedAccountId)}
                         </div>
-                        <p class="text-[11px] text-muted-foreground text-center">Save this code somewhere safe. You'll need it to recover your account if you lose access.</p>
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-xs text-muted-foreground">Recovery code</span>
+                            <button id="copy-recovery-btn" class="text-xs text-blue-600 dark:text-blue-400 hover:underline" type="button">
+                                ${this.recoveryCodeCopied ? 'Copied!' : 'Copy'}
+                            </button>
+                        </div>
+                        <code class="block font-mono text-sm text-foreground select-all text-center mb-4">
+                            ${this.escapeHtml(this.generatedRecoveryCode || '')}
+                        </code>
+                        <p class="text-[11px] text-muted-foreground mt-4 text-center">
+                            <button id="copy-both-btn" class="text-blue-600 dark:text-blue-400 hover:underline" type="button">${this.accountIdCopied && this.recoveryCodeCopied ? 'Both copied' : 'Copy both'}</button> to continue
+                        </p>
                     </div>
                 `;
 
@@ -501,12 +541,14 @@ class AccountModal {
                     </div>
                 `;
 
-            case 'recovery':
+            case 'recovery': {
+                const bothCopied = this.accountIdCopied && this.recoveryCodeCopied;
                 return `
-                    <button id="confirm-saved-btn" class="w-full h-9 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" type="button" ${this.recoveryCodeCopied ? '' : 'disabled'}>
-                        I've saved my recovery code
+                    <button id="confirm-saved-btn" class="w-full h-9 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" type="button" ${bothCopied ? '' : 'disabled'}>
+                        I've saved both
                     </button>
                 `;
+            }
 
             case 'confirming':
                 return `
@@ -730,8 +772,14 @@ class AccountModal {
         const retryPasskeyBtn = document.getElementById('retry-passkey-btn');
         if (retryPasskeyBtn) retryPasskeyBtn.onclick = () => this.handleRetryPasskey();
 
+        const copyAccountBtn = document.getElementById('copy-account-btn');
+        if (copyAccountBtn) copyAccountBtn.onclick = () => this.handleCopyAccountId();
+
         const copyRecoveryBtn = document.getElementById('copy-recovery-btn');
         if (copyRecoveryBtn) copyRecoveryBtn.onclick = () => this.handleCopyRecoveryCode();
+
+        const copyBothBtn = document.getElementById('copy-both-btn');
+        if (copyBothBtn) copyBothBtn.onclick = () => this.handleCopyBoth();
 
         const confirmSavedBtn = document.getElementById('confirm-saved-btn');
         if (confirmSavedBtn) confirmSavedBtn.onclick = () => this.handleConfirmRecoverySaved();
