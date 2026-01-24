@@ -527,9 +527,12 @@ class RightPanel {
             const input = document.getElementById('invitation-code-input');
             if (input) input.value = '';
 
-            // Auto-close progress after success
+            // Auto-close progress and form after success
             setTimeout(() => {
                 this.registrationProgress = null;
+                this.showInvitationForm = false;
+                this.invitationFormPreference = false;
+                preferencesStore.savePreference(PREF_KEYS.invitationFormVisible, false);
                 this.renderTopSectionOnly();
             }, 2000);
         } catch (error) {
