@@ -4,7 +4,7 @@
 The app runs entirely in the browser and is organized as ES modules:
 
 - `index.html`: Boots the app and pre-applies theme/right-panel visibility to avoid FOUC.
-  - Uses `<base href="/chat/">` to resolve all relative paths for deployment flexibility.
+  - Uses `<base href="/">` to resolve all relative paths.
   - Loads local vendor assets: Marked, KaTeX (+ auto-render + fonts), Highlight.js, libcurl.js (lazy for proxy), hash-wasm, and html2pdf.
   - Uses a precompiled Tailwind stylesheet (`tailwind.generated.css`).
   - Prerenders the empty state via `prelude.js`, then loads `app.js`.
@@ -64,16 +64,16 @@ The app is still HTML-first for development, but production builds are bundled w
 Local development (no build step required):
 ```bash
 npm run dev
-# visit http://localhost:8080/chat
+# visit http://localhost:8080
 ```
 
 Production build + local preview:
 ```bash
-npm run build      # outputs dist/chat with hashed bundles
-npm run preview    # serve dist on http://localhost:8080/chat
+npm run build      # outputs dist with hashed bundles
+npm run preview    # serve dist on http://localhost:8080
 ```
 
-The app uses a `<base href="/chat/">` tag to resolve all relative asset paths, so always access via `/chat` path. Keep the tab's devtools open; console warnings often highlight integration issues early.
+The app uses a `<base href="/">` tag to resolve all relative asset paths. Keep the tab's devtools open; console warnings often highlight integration issues early.
 
 Tailwind and font helper commands:
 ```bash
@@ -85,7 +85,7 @@ npm run fonts:sync       # sync Google Fonts into chat/fonts (optional URL arg)
 ## Coding Style & Naming Conventions
 - ES modules, 4-space indentation, trailing semicolons.
 - Prefer `const`/`let`; class components in PascalCase; methods/helpers in camelCase.
-- Use relative paths for all assets (resolved via `<base href="/chat/">` in `index.html`). Never hardcode `/chat/` in asset URLs.
+- Use relative paths for all assets (resolved via `<base href="/">` in `index.html`). Never hardcode absolute paths in asset URLs.
 - Reuse Tailwind utility patterns established in `index.html`; put tweaks in `styles.css` with concise rationale.
 - Update `tailwind.generated.css` via `npm run tailwind:build` after changes to Tailwind config or classes.
 - Manage Google Fonts via `npm run fonts:sync` instead of manual edits in `chat/fonts`.

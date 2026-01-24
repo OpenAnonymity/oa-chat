@@ -11,10 +11,10 @@ oa-fastchat is a browser-based chat client that communicates directly with infer
 ```bash
 # Local development server (from repo root)
 npm run dev
-# Visit http://localhost:8080/chat
+# Visit http://localhost:8080
 ```
 
-The app uses `<base href="/chat/">` to resolve all relative paths — always access via the `/chat` path. Keep devtools open; console warnings highlight integration issues early.
+The app uses `<base href="/">` to resolve all relative paths. Keep devtools open; console warnings highlight integration issues early.
 
 ```bash
 # Production build + preview
@@ -63,7 +63,7 @@ npm run fonts:sync
 
 - ES modules with 4-space indentation, trailing semicolons
 - PascalCase for classes, camelCase for functions/methods
-- Use relative paths for assets (resolved via `<base href="/chat/">`) — never hardcode `/chat/`
+- Use relative paths for assets (resolved via `<base href="/">`) — never hardcode absolute paths
 - Tailwind utilities from `tailwind.generated.css`; custom tweaks in `styles.css` with rationale
 - All persisted data flows through `chatDB`; keep transactions minimal
 

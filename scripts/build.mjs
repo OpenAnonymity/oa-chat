@@ -9,7 +9,7 @@ const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 
 const srcDir = path.join(repoRoot, 'chat');
-const outDir = path.join(repoRoot, 'dist', 'chat');
+const outDir = path.join(repoRoot, 'dist');
 const assetsDir = path.join(outDir, 'assets');
 
 const entryPoints = {

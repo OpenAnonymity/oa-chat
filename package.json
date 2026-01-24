@@ -9,7 +9,7 @@
   "scripts": {
     "build": "if [ -f scripts/build.mjs ]; then node scripts/build.mjs; else rm -rf dist && mkdir -p dist && cp -R chat dist/; fi",
     "preview": "python3 -m http.server 8080 -d dist",
-    "dev": "python3 -m http.server 8080",
+    "dev": "python3 -m http.server 8080 -d chat",
     "tailwind:build": "tailwindcss -c tailwind.config.js -i chat/tailwind.input.css -o chat/tailwind.generated.css --minify",
     "tailwind:watch": "tailwindcss -c tailwind.config.js -i chat/tailwind.input.css -o chat/tailwind.generated.css --watch",
     "fonts:sync": "node scripts/sync-fonts.mjs"
