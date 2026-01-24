@@ -15,3 +15,6 @@ export const PROXY_URL = 'wss://websocket-proxy-server-twilight-feather-9805.fly
 
 // Base URL for shared chat links
 export const SHARE_BASE_URL = 'https://alpha.openanonymity.ai/chat';
+
+// Retry up to this fraction of available tickets when tickets are already-used
+export const TICKET_RETRY_RATIO = 0.5;

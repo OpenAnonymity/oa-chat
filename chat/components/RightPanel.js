@@ -14,6 +14,7 @@ import { getTicketCost } from '../services/modelTiers.js';
 import { exportTickets } from '../services/globalExport.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import { chatDB } from '../db.js';
+import { TICKET_RETRY_RATIO } from '../config.js';
 
 // Layout constant for toolbar overlay prediction
 const RIGHT_PANEL_WIDTH = 320; // 20rem = 320px (w-80)
@@ -664,7 +665,11 @@ class RightPanel {
             // Retry loop for spent tickets (they get auto-archived on failure)
             let result;
             let retries = 0;
-            const maxRetries = Math.min(availableTickets, ticketsRequired + 10);
+            let toastShown = false;
+            const maxRetries = Math.min(
+                availableTickets,
+                Math.max(ticketsRequired + 5, Math.floor(availableTickets * TICKET_RETRY_RATIO))
+            );
 
             while (retries < maxRetries) {
                 try {
@@ -677,7 +682,10 @@ class RightPanel {
                     console.log('🔄 Request error:', error.message, 'code:', error.code, 'consumeTickets:', error.consumeTickets);
                     if (error.code === 'TICKET_USED') {
                         retries++;
-                        this.app.showToast(`Ticket already used, trying next...`);
+                        if (!toastShown) {
+                            this.app.showToast(`Ticket already used, trying next...`);
+                            toastShown = true;
+                        }
                         continue;
                     }
                     throw error;  // Non-retryable error
