@@ -98,8 +98,18 @@ const build = async () => {
         await fs.writeFile(filePath, result.code, 'utf8');
     }));
 
+    // Extract content hash from esbuild output filename for update checking
+    const appHash = appOutput[0].match(/-([a-z0-9]+)\.js$/i)?.[1];
+    if (appHash) {
+        await fs.writeFile(
+            path.join(outDir, 'build.json'),
+            JSON.stringify({ hash: appHash, builtAt: new Date().toISOString() }, null, 2)
+        );
+    }
+
     console.log(`Built app bundle: ${appScriptPath}`);
     console.log(`Built prelude bundle: ${preludeScriptPath}`);
+    if (appHash) console.log(`Build hash: ${appHash}`);
 };
 
 build().catch((error) => {

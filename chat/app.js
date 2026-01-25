@@ -38,20 +38,6 @@ const SESSION_SCROLL_LOAD_THRESHOLD = 160;
 const SESSION_SEARCH_DEBOUNCE = 180;  // ms wait before triggering search
 const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const UPDATE_CHECK_INITIAL_DELAY_MS = 45 * 1000;
-const UPDATE_CHECK_TIMEOUT_MS = 6000;
-const UPDATE_ASSET_PATHS = ['app.js', 'styles.css', 'index.html'];
-const UPDATE_ASSET_EXTENSIONS = new Set([
-    '.js',
-    '.css',
-    '.html',
-    '.json',
-    '.wasm',
-    '.svg',
-    '.png',
-    '.jpg',
-    '.jpeg',
-    '.ico'
-]);
 
 // Layout constants for toolbar overlay prediction
 const SIDEBAR_WIDTH = 256;      // 16rem = 256px
@@ -2136,144 +2122,29 @@ class ChatApp {
         this.updateToastVisible = false;
     }
 
-    getUpdateFingerprint(response) {
-        const etag = response.headers.get('etag');
-        if (etag) {
-            return etag.trim();
+    getCurrentAppHash() {
+        // Extract hash from the loaded app script tag (e.g., app-a1b2c3d4.js)
+        const scripts = document.querySelectorAll('script[src*="app-"]');
+        for (const script of scripts) {
+            const match = script.src.match(/app-([a-z0-9]+)\.js/i);
+            if (match) return match[1];
         }
-
-        const lastModified = response.headers.get('last-modified');
-        if (lastModified) {
-            return lastModified.trim();
-        }
-
         return null;
     }
 
-    hashText(input) {
-        let hash = 5381;
-        for (let i = 0; i < input.length; i += 1) {
-            hash = ((hash << 5) + hash) + input.charCodeAt(i);
-        }
-        return `h${hash >>> 0}`;
-    }
-
-    async fetchAssetFingerprint(pathname) {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), UPDATE_CHECK_TIMEOUT_MS);
-
+    async fetchBuildHash() {
         try {
-            let response = null;
-            try {
-                response = await fetch(pathname, {
-                    method: 'HEAD',
-                    cache: 'no-store',
-                    credentials: 'omit',
-                    headers: {
-                        'cache-control': 'no-cache',
-                        pragma: 'no-cache'
-                    },
-                    signal: controller.signal
-                });
-            } catch (error) {
-                response = null;
-            }
-
-            if (response && response.ok) {
-                const fingerprint = this.getUpdateFingerprint(response);
-                if (fingerprint) {
-                    return fingerprint;
-                }
-            }
-
-            response = await fetch(pathname, {
-                method: 'GET',
+            const response = await fetch('/build.json', {
                 cache: 'no-store',
                 credentials: 'omit',
-                headers: {
-                    'cache-control': 'no-cache',
-                    pragma: 'no-cache'
-                },
-                signal: controller.signal
+                headers: { 'cache-control': 'no-cache', pragma: 'no-cache' }
             });
-
-            if (!response || !response.ok) {
-                return null;
-            }
-
-            const fingerprint = this.getUpdateFingerprint(response);
-            if (fingerprint) {
-                return fingerprint;
-            }
-
-            if (response.bodyUsed || response.type === 'opaqueredirect') {
-                return null;
-            }
-
-            const text = await response.text();
-            return text ? this.hashText(text) : null;
-        } catch (error) {
-            return null;
-        } finally {
-            clearTimeout(timeoutId);
-        }
-    }
-
-    getUpdateAssetPaths() {
-        const paths = new Set(UPDATE_ASSET_PATHS);
-        const basePath = new URL(document.baseURI).pathname;
-        const normalizedBase = basePath.endsWith('/') ? basePath : `${basePath}/`;
-
-        const entries = performance.getEntriesByType('resource');
-        for (const entry of entries) {
-            if (!entry?.name) {
-                continue;
-            }
-
-            let url = null;
-            try {
-                url = new URL(entry.name);
-            } catch (error) {
-                continue;
-            }
-
-            if (url.origin !== window.location.origin) {
-                continue;
-            }
-
-            if (!url.pathname.startsWith(normalizedBase)) {
-                continue;
-            }
-
-            const relativePath = url.pathname.slice(normalizedBase.length);
-            if (!relativePath) {
-                paths.add('index.html');
-                continue;
-            }
-
-            const extension = relativePath.includes('.')
-                ? `.${relativePath.split('.').pop()}`.toLowerCase()
-                : '';
-            if (!UPDATE_ASSET_EXTENSIONS.has(extension)) {
-                continue;
-            }
-
-            paths.add(relativePath);
-        }
-
-        return Array.from(paths).sort();
-    }
-
-    async fetchUpdateSignature() {
-        const assetPaths = this.getUpdateAssetPaths();
-        const fingerprints = await Promise.all(
-            assetPaths.map(pathname => this.fetchAssetFingerprint(pathname))
-        );
-        if (fingerprints.every(fingerprint => !fingerprint)) {
+            if (!response.ok) return null;
+            const data = await response.json();
+            return data?.hash || null;
+        } catch {
             return null;
         }
-
-        return fingerprints.map(fingerprint => fingerprint || '').join('|');
     }
 
     isElectronEnvironment() {
@@ -2282,45 +2153,25 @@ class ChatApp {
     }
 
     initUpdateWatcher() {
-        if (this.isElectronEnvironment()) {
+        // Skip in Electron or dev mode (no hashed script)
+        const currentHash = this.getCurrentAppHash();
+        if (this.isElectronEnvironment() || !currentHash) {
             return;
         }
 
         const checkForUpdate = async () => {
-            if (this.updateCheckInFlight) {
-                return;
-            }
-
-            if (this.updateAvailableSignature && this.updateToastDismissed) {
+            if (this.updateCheckInFlight || this.updateToastDismissed) {
                 return;
             }
 
             this.updateCheckInFlight = true;
             try {
-                const latestSignature = await this.fetchUpdateSignature();
-                if (!latestSignature) {
-                    return;
-                }
+                const latestHash = await this.fetchBuildHash();
+                if (!latestHash) return;
 
-                if (!this.appVersionSignature) {
-                    this.appVersionSignature = latestSignature;
-                    return;
+                if (latestHash !== currentHash) {
+                    this.showUpdateToast();
                 }
-
-                if (latestSignature === this.appVersionSignature) {
-                    return;
-                }
-
-                if (this.updateAvailableSignature === latestSignature) {
-                    if (!this.updateToastVisible && !this.updateToastDismissed) {
-                        this.showUpdateToast();
-                    }
-                    return;
-                }
-
-                this.updateAvailableSignature = latestSignature;
-                this.updateToastDismissed = false;
-                this.showUpdateToast();
             } finally {
                 this.updateCheckInFlight = false;
             }
