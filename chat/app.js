@@ -1067,7 +1067,7 @@ class ChatApp {
 
         // Setup image expand functionality
         window.expandImage = (imageId) => {
-            const img = document.querySelector(`[data-image-id="${imageId}"]`);
+            const img = document.querySelector(`img[data-image-id="${imageId}"]`);
             if (!img) return;
 
             // Create modal overlay
