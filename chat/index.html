@@ -197,8 +197,11 @@
         };
     </script>
 
-    <!-- Vercel Web Analytics -->
-    <!-- Vercel insights removed to avoid third-party script access to local data. -->
+    <!-- Page View Analytics -->
+    <script type="module">
+        import { ORG_API_BASE } from './config.js';
+        fetch(`${ORG_API_BASE}/chat/v1/analytics/pageview`, { method: 'POST' }).catch(() => {});
+    </script>
 
     <link rel="stylesheet" href="styles.css">
 </head>
