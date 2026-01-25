@@ -17,14 +17,14 @@ A minimal, fast chat client that talks directly to the selected inference backen
 2. Serve from the repo root:
    ```bash
    npm run dev
-   # visit http://localhost:8080/chat
+   # visit http://localhost:8080
    ```
 
 Production build + preview:
 ```bash
 npm run build
 npm run preview
-# visit http://localhost:8080/chat
+# visit http://localhost:8080
 ```
 
 ### Architecture (1‑minute overview)
