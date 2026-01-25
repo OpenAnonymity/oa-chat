@@ -607,7 +607,7 @@ html.switching-theme *::after {
 .reasoning-content {
     padding: 0.25rem 0 0 0;
     margin-left: 1.75rem;
-    line-height: 1.6;
+    line-height: 1.4;
     white-space: normal; /* avoid rendering inter-element newlines as extra lines */
     word-wrap: break-word;
     opacity: 0.85;
