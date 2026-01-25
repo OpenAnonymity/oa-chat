@@ -530,13 +530,17 @@ class RightPanel {
             const input = document.getElementById('invitation-code-input');
             if (input) input.value = '';
 
-            // Auto-close progress and form after success
+            // Auto-close progress, form, and ticket info panel after success
             setTimeout(() => {
                 this.registrationProgress = null;
                 this.showInvitationForm = false;
                 this.invitationFormPreference = false;
                 preferencesStore.savePreference(PREF_KEYS.invitationFormVisible, false);
+                this.showTicketInfo = false;
+                preferencesStore.savePreference(PREF_KEYS.ticketInfoVisible, false);
                 this.renderTopSectionOnly();
+                this.updateTicketInfoVisibility();
+                this.updateTicketInfoToggleButton();
             }, 2000);
         } catch (error) {
             this.registrationError = error.message;
