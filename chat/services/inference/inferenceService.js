@@ -203,6 +203,14 @@ const inferenceService = {
     },
     maskAccessToken(session, token) {
         const prefix = 'ek-oa-v1-';
+
+        // Use current ephemeral key ID if available
+        if (session?.currentEphemeralKeyId && session?.ephemeralKeyMappings) {
+            const id = session.currentEphemeralKeyId;
+            return `${prefix}${id.slice(0, 6)}...${id.slice(-4)}`;
+        }
+
+        // Fallback to backend-specific masking
         const backend = getBackendForSession(session);
         let masked = null;
         if (typeof backend.maskAccessToken === 'function') {
@@ -213,6 +221,29 @@ const inferenceService = {
         if (!masked) return '';
         if (masked.startsWith(prefix)) return masked;
         return `${prefix}${masked}`;
+    },
+    getUnderlyingKeyInfo(session) {
+        const currentId = session?.currentEphemeralKeyId;
+        const mappings = session?.ephemeralKeyMappings;
+        if (!currentId || !mappings || !mappings[currentId]) return null;
+
+        const mapping = mappings[currentId];
+        const backend = getBackend(mapping.backendId);
+
+        // Mask the underlying key using backend-specific masking
+        let underlyingMask = null;
+        if (typeof backend.maskAccessToken === 'function') {
+            underlyingMask = backend.maskAccessToken(mapping.underlyingKeyId);
+        } else if (mapping.underlyingKeyId) {
+            underlyingMask = `${mapping.underlyingKeyId.slice(0, 6)}...${mapping.underlyingKeyId.slice(-4)}`;
+        }
+
+        return {
+            backendId: mapping.backendId,
+            backendLabel: backend?.label || 'Unknown',
+            accessType: backend?.accessLabel || 'API key',
+            underlyingMask: underlyingMask || ''
+        };
     },
     buildCurlCommand(session, token, modelId) {
         const backend = getBackendForSession(session);

@@ -3043,6 +3043,43 @@ html {
     animation: tooltipFadeInTop 0.15s ease-out;
 }
 
+/* Multiline tooltip support for ephemeral key details */
+[data-tooltip-multiline="true"]:hover::after {
+    white-space: pre-line;
+    min-width: 280px;
+    max-width: 420px;
+    text-align: left;
+    line-height: 1.5;
+    /* Override monospace inheritance from parent - use system font for text */
+    font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
+}
+
+/* Tooltip position: right-aligned (for right panel elements) */
+[data-tooltip-position="right"]:hover::after {
+    left: auto;
+    right: 0;
+    transform: translateY(8px);
+    animation: tooltipFadeInRight 0.15s ease-out;
+}
+
+[data-tooltip-position="right"]:hover::before {
+    left: auto;
+    right: 12px;
+    transform: translateY(0px);
+    animation: tooltipFadeInRight 0.15s ease-out;
+}
+
+@keyframes tooltipFadeInRight {
+    from {
+        opacity: 0;
+        transform: translateY(4px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(8px);
+    }
+}
+
 /* Dark mode tooltip adjustment */
 .dark [data-tooltip]:hover::after {
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);

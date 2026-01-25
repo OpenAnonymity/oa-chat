@@ -7,6 +7,12 @@ const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 const OPENROUTER_MODELS_URL = `${OPENROUTER_BASE_URL}/models`;
 const OPENROUTER_CHAT_COMPLETIONS_URL = `${OPENROUTER_BASE_URL}/chat/completions`;
 
+function generateEphemeralKeyId() {
+    const bytes = new Uint8Array(5); // 5 bytes = 10 hex chars
+    crypto.getRandomValues(bytes);
+    return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+}
+
 const openRouterBackend = {
     id: 'openrouter',
     label: 'OpenRouter',
@@ -57,12 +63,40 @@ const openRouterBackend = {
         session.apiKey = accessInfo.key || accessInfo.token || null;
         session.apiKeyInfo = accessInfo;
         session.expiresAt = accessInfo.expiresAt || accessInfo.expires_at || null;
+
+        // Accumulate ephemeral key mappings (ephemeralKeyId -> underlying key info)
+        if (session.apiKey) {
+            if (!session.ephemeralKeyMappings) {
+                session.ephemeralKeyMappings = {};
+            }
+
+            // Check if this underlying key already has a mapping
+            const existingId = Object.keys(session.ephemeralKeyMappings).find(
+                id => session.ephemeralKeyMappings[id].underlyingKeyId === session.apiKey
+            );
+
+            if (existingId) {
+                // Reuse existing ephemeral ID for this underlying key
+                session.currentEphemeralKeyId = existingId;
+            } else {
+                // Generate new ephemeral ID for new underlying key
+                const newEphemeralId = generateEphemeralKeyId();
+                session.ephemeralKeyMappings[newEphemeralId] = {
+                    underlyingKeyId: session.apiKey,
+                    backendId: openRouterBackend.id,
+                    createdAt: Date.now()
+                };
+                session.currentEphemeralKeyId = newEphemeralId;
+            }
+        }
     },
     clearAccessInfo(session) {
         if (!session) return;
         session.apiKey = null;
         session.apiKeyInfo = null;
         session.expiresAt = null;
+        // Keep ephemeralKeyMappings for history, just clear current pointer
+        session.currentEphemeralKeyId = null;
     },
     isAccessExpired(session) {
         if (!session?.apiKey) return true;
@@ -155,7 +189,7 @@ const openRouterBackend = {
     },
     maskAccessToken(token) {
         if (!token) return '';
-        return `${token.slice(9, 15)}...${token.slice(-4)}`;
+        return `${token.slice(0, 15)}...${token.slice(-4)}`;
     },
     buildCurlCommand(token, modelId) {
         return `curl ${OPENROUTER_CHAT_COMPLETIONS_URL} \\\n  -H "Content-Type: application/json" \\\n  -H "Authorization: Bearer ${token}" \\\n  -d '{"model":"${modelId}","messages":[{"role":"user","content":"Hi"}]}' \\\n  | grep -o '"content":"[^"]*"' | head -1`;

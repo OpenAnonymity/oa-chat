@@ -19,6 +19,9 @@ import { TICKET_RETRY_RATIO } from '../config.js';
 // Layout constant for toolbar overlay prediction
 const RIGHT_PANEL_WIDTH = 320; // 20rem = 320px (w-80)
 
+// Feature flag for showing underlying implementation on hover
+const SHOW_UNDERLYING_KEY_DETAILS = true;
+
 class RightPanel {
     constructor(app) {
         this.app = app; // Reference to main app
@@ -1066,6 +1069,72 @@ class RightPanel {
         return inferenceService.maskAccessToken(this.currentSession, key);
     }
 
+    getKeyDisplayInfo() {
+        const displayMask = inferenceService.maskAccessToken(this.currentSession, this.apiKey);
+
+        if (!SHOW_UNDERLYING_KEY_DETAILS) {
+            return { displayMask, hoverContentHtml: null };
+        }
+
+        const underlyingInfo = inferenceService.getUnderlyingKeyInfo(this.currentSession);
+        if (!underlyingInfo) {
+            return { displayMask, hoverContentHtml: null };
+        }
+
+        // HTML content with monospace keys
+        const hoverContentHtml = `
+            <div>This Ephemeral Access Key is implemented as:</div>
+            <div class="mt-2 pt-2 border-t border-border/50">
+            <b>Short-lived ${this.escapeHtml(underlyingInfo.backendLabel)} ${this.escapeHtml(underlyingInfo.accessType)}</b><br><code class="font-mono bg-muted/30 px-1 rounded text-[11px]">${this.escapeHtml(underlyingInfo.underlyingMask)}</code></div>
+        `;
+
+        return { displayMask, hoverContentHtml };
+    }
+
+    showKeyTooltip(targetEl, htmlContent) {
+        this.hideKeyTooltip();
+
+        const tooltip = document.createElement('div');
+        tooltip.id = 'ephemeral-key-tooltip';
+        tooltip.className = 'bg-popover text-popover-foreground border border-border rounded-lg shadow-lg p-3 text-xs pointer-events-none';
+        // Use inline styles to avoid Tailwind class generation issues
+        Object.assign(tooltip.style, {
+            position: 'fixed',
+            zIndex: '99999',
+            maxWidth: '225px',
+            opacity: '0' // Start invisible to calculate position first
+        });
+        tooltip.innerHTML = htmlContent;
+
+        document.body.appendChild(tooltip);
+
+        // Position tooltip below and right-aligned to target
+        const rect = targetEl.getBoundingClientRect();
+        const tooltipRect = tooltip.getBoundingClientRect();
+
+        let top = rect.bottom + 8;
+        let left = rect.right - tooltipRect.width;
+
+        // Keep within viewport
+        if (left < 8) left = 8;
+        if (top + tooltipRect.height > window.innerHeight - 8) {
+            top = rect.top - tooltipRect.height - 8;
+        }
+
+        // Set position and fade in
+        Object.assign(tooltip.style, {
+            top: `${top}px`,
+            left: `${left}px`,
+            opacity: '1',
+            transition: 'opacity 0.15s ease-out'
+        });
+    }
+
+    hideKeyTooltip() {
+        const existing = document.getElementById('ephemeral-key-tooltip');
+        if (existing) existing.remove();
+    }
+
     getTimerClasses(isKeyShared = null) {
         if (this.isExpired) return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400';
         // Check passed param, or check session for shared status
@@ -1526,7 +1595,12 @@ class RightPanel {
                             <span class="text-xs font-medium">Ephemeral Access Key</span>
                         </div>
                         <div class="flex items-center justify-between text-[10px] font-mono bg-muted/20 p-2 rounded-md border border-border break-all text-foreground">
-                            <span class="flex-1 min-w-0 transition-colors ${this.isRenewingKey ? 'text-muted-foreground opacity-70' : ''}">${this.maskApiKey(this.apiKey)}</span>
+                            ${(() => {
+                                const keyInfo = this.getKeyDisplayInfo();
+                                const hoverClasses = keyInfo.hoverContentHtml ? 'cursor-help hover:bg-muted/40 rounded px-1 -mx-1' : '';
+                                return `<span id="ephemeral-key-display" class="flex-1 min-w-0 transition-colors ${this.isRenewingKey ? 'text-muted-foreground opacity-70' : ''} ${hoverClasses}"
+                                    ${keyInfo.hoverContentHtml ? 'data-has-tooltip="true"' : ''}>${keyInfo.displayMask}</span>`;
+                            })()}
                             <div class="flex items-center gap-0 flex-shrink-0 ml-1">
                                 <button
                                     id="renew-key-btn"
@@ -1915,6 +1989,16 @@ class RightPanel {
             renewBtn.onclick = () => this.handleRenewApiKey();
         }
 
+        // Ephemeral key tooltip (JS-based for HTML content with monospace keys)
+        const keyDisplay = document.getElementById('ephemeral-key-display');
+        if (keyDisplay && keyDisplay.dataset.hasTooltip === 'true') {
+            const keyInfo = this.getKeyDisplayInfo();
+            if (keyInfo.hoverContentHtml) {
+                keyDisplay.onmouseenter = () => this.showKeyTooltip(keyDisplay, keyInfo.hoverContentHtml);
+                keyDisplay.onmouseleave = () => this.hideKeyTooltip();
+            }
+        }
+
         const clearBtn = document.getElementById('clear-key-btn');
         if (clearBtn) {
             clearBtn.onclick = () => this.handleClearApiKey();
@@ -2157,7 +2241,7 @@ class RightPanel {
                 </div>
             </div>
 
-            <div class="flex flex-col h-full overflow-hidden">
+            <div class="flex flex-col h-full">
             <!-- Top Section: Tickets and API Key (non-scrollable) -->
             <div class="flex-shrink-0">
                 ${this.generateTopSectionHTML()}
