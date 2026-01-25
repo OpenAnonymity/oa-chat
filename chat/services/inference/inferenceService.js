@@ -204,23 +204,21 @@ const inferenceService = {
     maskAccessToken(session, token) {
         const prefix = 'ek-oa-v1-';
 
-        // Use current ephemeral key ID if available
+        // Use current ephemeral key ID if available (with ek-oa-v1- prefix)
         if (session?.currentEphemeralKeyId && session?.ephemeralKeyMappings) {
             const id = session.currentEphemeralKeyId;
             return `${prefix}${id.slice(0, 6)}...${id.slice(-4)}`;
         }
 
-        // Fallback to backend-specific masking
+        // Fallback to backend-specific masking (no prefix - not an ephemeral key)
         const backend = getBackendForSession(session);
-        let masked = null;
         if (typeof backend.maskAccessToken === 'function') {
-            masked = backend.maskAccessToken(token);
-        } else if (token) {
-            masked = `${token.slice(0, 6)}...${token.slice(-4)}`;
+            return backend.maskAccessToken(token) || '';
         }
-        if (!masked) return '';
-        if (masked.startsWith(prefix)) return masked;
-        return `${prefix}${masked}`;
+        if (token) {
+            return `${token.slice(0, 6)}...${token.slice(-4)}`;
+        }
+        return '';
     },
     getUnderlyingKeyInfo(session) {
         const currentId = session?.currentEphemeralKeyId;
