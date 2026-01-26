@@ -170,12 +170,12 @@ async function decryptBytes(key, payload) {
 async function deriveRecoveryKey(code, saltBytes) {
     if (!window.argon2id) {
         if (typeof window.initHashWasm !== 'function') {
-            throw new Error('Hash library not loaded. Please refresh the page.');
+            throw new Error('Hash library not loaded, please refresh the page');
         }
         await window.initHashWasm();
     }
     if (typeof window.argon2id !== 'function') {
-        throw new Error('Argon2 not available. Please refresh the page.');
+        throw new Error('Argon2 not available, please refresh the page');
     }
     const derivedBytes = await window.argon2id({
         password: code,
@@ -198,12 +198,12 @@ async function deriveRecoveryKey(code, saltBytes) {
 async function computeRecoveryCodeHash(recoveryCode, accountId) {
     if (!window.argon2id) {
         if (typeof window.initHashWasm !== 'function') {
-            throw new Error('Hash library not loaded. Please refresh the page.');
+            throw new Error('Hash library not loaded, please refresh the page');
         }
         await window.initHashWasm();
     }
     if (typeof window.argon2id !== 'function') {
-        throw new Error('Argon2 not available. Please refresh the page.');
+        throw new Error('Argon2 not available, please refresh the page');
     }
     const saltBytes = textEncoder.encode(accountId);
     const hash = await window.argon2id({
@@ -358,7 +358,7 @@ function assertionToJSON(assertion) {
  * Callers should catch this and trigger re-authentication.
  */
 class TokenInvalidatedError extends Error {
-    constructor(message = 'Session invalidated. Please sign in again.') {
+    constructor(message = 'Session invalidated, please sign in again') {
         super(message);
         this.name = 'TokenInvalidatedError';
         this.code = 'INVALID_TOKEN';
@@ -406,11 +406,11 @@ async function fetchJson(path, body, { timeoutMs = ACCOUNT_REQUEST_TIMEOUT_MS } 
 
 function toFriendlyError(error) {
     if (!error) return 'Unexpected error';
-    if (error.name === 'AbortError') return 'Request timed out. Please try again.';
-    if (error.name === 'NotAllowedError') return 'Passkey prompt was cancelled.';
-    if (error.name === 'NotFoundError') return 'No passkey found for this account on this device.';
-    if (error.name === 'OperationError') return 'Invalid recovery code. Please check and try again.';
-    if (error.name === 'TokenInvalidatedError') return 'Session expired. Please sign in again.';
+    if (error.name === 'AbortError') return 'Request timed out, please try again';
+    if (error.name === 'NotAllowedError') return 'Passkey prompt was cancelled';
+    if (error.name === 'NotFoundError') return 'No passkey found for this account on this device';
+    if (error.name === 'OperationError') return 'Invalid recovery code, please check and try again';
+    if (error.name === 'TokenInvalidatedError') return 'Session expired, please sign in again';
     return error.message || 'Unexpected error';
 }
 
@@ -812,7 +812,7 @@ class AccountService {
             throw new Error('No pending account. Call prepareAccount() first.');
         }
         if (!this.state.passkeySupported) {
-            throw new Error('Passkeys are not supported in this browser.');
+            throw new Error('Passkeys are not supported in this browser');
         }
 
         const { accountId, initData } = this.pendingAccount;
@@ -830,17 +830,17 @@ class AccountService {
             // User cancelled or other WebAuthn error - don't clear pending account
             // so they can retry with the same account number
             if (error.name === 'NotAllowedError') {
-                this.state.error = 'Passkey creation was cancelled.';
+                this.state.error = 'Passkey creation was cancelled';
                 this.notify();
                 return false;
             }
-            this.state.error = error.message || 'Passkey creation failed.';
+            this.state.error = error.message || 'Passkey creation failed';
             this.notify();
             return false;
         }
 
         if (!credential) {
-            this.state.error = 'Passkey creation failed.';
+            this.state.error = 'Passkey creation failed';
             this.notify();
             return false;
         }
@@ -849,7 +849,7 @@ class AccountService {
         const prfBytes = getPrfOutput(credential);
         if (!prfBytes) {
             this.state.prfSupported = false;
-            this.state.error = 'Passkey did not return PRF output. Your authenticator may not support this feature.';
+            this.state.error = 'Passkey did not return PRF output, your authenticator may not support this feature';
             this.notify();
             return false;
         }
@@ -1022,7 +1022,7 @@ class AccountService {
 
     async createAccount() {
         if (!this.state.passkeySupported) {
-            this.setError('Passkeys are not supported in this browser.');
+            this.setError('Passkeys are not supported in this browser');
             return false;
         }
         if (this.state.busy) return false;
@@ -1046,13 +1046,13 @@ class AccountService {
             const publicKey = buildCreationOptions(initData, accountId, prfInput);
             const credential = await navigator.credentials.create({ publicKey });
             if (!credential) {
-                throw new Error('Passkey creation failed.');
+                throw new Error('Passkey creation failed');
             }
 
             const prfBytes = getPrfOutput(credential);
             if (!prfBytes) {
                 this.state.prfSupported = false;
-                throw new Error('Passkey did not return PRF output.');
+                throw new Error('Passkey did not return PRF output');
             }
             this.state.prfSupported = true;
 
@@ -1117,7 +1117,7 @@ class AccountService {
     async unlockWithPasskey(accountIdInput, { mediation, silent = false } = {}) {
         if (this.state.busy) return false;
         if (!this.state.passkeySupported) {
-            if (!silent) this.setError('Passkeys are not supported in this browser.');
+            if (!silent) this.setError('Passkeys are not supported in this browser');
             return false;
         }
 
@@ -1132,7 +1132,7 @@ class AccountService {
 
         const accountId = normalizeAccountId(accountIdInput || this.state.accountId);
         if (!accountId) {
-            if (!silent) this.setError('Enter your account ID to continue.');
+            if (!silent) this.setError('Enter your account ID to continue');
             return false;
         }
 
@@ -1154,7 +1154,7 @@ class AccountService {
             });
 
             if (!assertion) {
-                throw new Error('Passkey request was cancelled.');
+                throw new Error('Passkey request was cancelled');
             }
 
             const prfBytes = getPrfOutput(assertion);
@@ -1164,7 +1164,7 @@ class AccountService {
                     busy: false,
                     action: null,
                     recoveryRequired: true,
-                    error: 'This passkey does not provide PRF output. Use your recovery code.'
+                    error: 'This passkey does not provide PRF output, use your recovery code'
                 });
                 return false;
             }
@@ -1254,18 +1254,18 @@ class AccountService {
 
         const accountId = normalizeAccountId(accountIdInput || this.state.accountId);
         if (!accountId) {
-            this.setError('Enter your account ID to continue.');
+            this.setError('Enter your account ID to continue');
             return false;
         }
         const normalizedCode = normalizeRecoveryCode(recoveryCodeInput);
         if (!isValidRecoveryCode(normalizedCode)) {
-            this.setError('Recovery code should be five words.');
+            this.setError('Recovery code should be five words');
             return false;
         }
 
         // Passkey is required for recovery (single passkey per account)
         if (!this.state.passkeySupported) {
-            this.setError('Passkeys are required for account recovery but not supported in this browser.');
+            this.setError('Passkeys are required for account recovery but not supported in this browser');
             return false;
         }
 
@@ -1297,13 +1297,13 @@ class AccountService {
             
             const credential = await navigator.credentials.create({ publicKey });
             if (!credential) {
-                throw new Error('Passkey creation was cancelled.');
+                throw new Error('Passkey creation was cancelled');
             }
 
             const prfBytes = getPrfOutput(credential);
             if (!prfBytes) {
                 this.state.prfSupported = false;
-                throw new Error('Passkey did not return PRF output. Recovery requires a passkey with PRF support.');
+                throw new Error('Passkey did not return PRF output, recovery requires a passkey with PRF support');
             }
             this.state.prfSupported = true;
 

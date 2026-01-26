@@ -1722,7 +1722,7 @@ class ChatApp {
             }
 
             console.log(`✅ Updated imported session: ${existingSession.title}`);
-            this.showToast('Updated to latest version!', 'success');
+            this.showToast('Updated to latest version', 'success');
 
         } catch (error) {
             console.error('Failed to import shared session:', error);
@@ -1769,7 +1769,7 @@ class ChatApp {
         url.searchParams.set('s', session.id);
 
         await navigator.clipboard.writeText(url.toString());
-        this.showToast('Link copied to clipboard!', 'success');
+        this.showToast('Link copied to clipboard', 'success');
     }
 
     /**
@@ -1849,7 +1849,7 @@ class ChatApp {
             }
 
             console.log(`✅ Imported shared session: ${session.title}`);
-            this.showToast('Imported shared chat!', 'success');
+            this.showToast('Imported shared chat', 'success');
 
         } catch (error) {
             console.error('Failed to import shared session:', error);
@@ -1905,7 +1905,7 @@ class ChatApp {
             await chatDB.saveSession(session);
 
             await navigator.clipboard.writeText(result.shareUrl);
-            this.showToast(isUpdate ? 'Share updated and link copied!' : 'Share link copied to clipboard!', 'success');
+            this.showToast(isUpdate ? 'Share updated and link copied' : 'Share link copied to clipboard', 'success');
 
             this.renderSessions();
             if (this.rightPanel) this.rightPanel.render();

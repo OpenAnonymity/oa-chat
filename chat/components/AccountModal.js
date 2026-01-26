@@ -250,10 +250,10 @@ class AccountModal {
             await navigator.clipboard.writeText(this.generatedAccountId);
             this.accountIdCopied = true;
             this.render();
-            this.app?.showToast?.('Account ID copied.', 'success');
+            this.app?.showToast?.('Account ID copied', 'success');
         } catch (error) {
             console.error('Failed to copy account ID:', error);
-            this.app?.showToast?.('Failed to copy. Please copy manually.', 'error');
+            this.app?.showToast?.('Failed to copy, please copy manually', 'error');
         }
     }
 
@@ -263,10 +263,10 @@ class AccountModal {
             await navigator.clipboard.writeText(this.generatedRecoveryCode);
             this.recoveryCodeCopied = true;
             this.render();
-            this.app?.showToast?.('Recovery code copied.', 'success');
+            this.app?.showToast?.('Recovery code copied', 'success');
         } catch (error) {
             console.error('Failed to copy recovery code:', error);
-            this.app?.showToast?.('Failed to copy. Please copy manually.', 'error');
+            this.app?.showToast?.('Failed to copy, please copy manually', 'error');
         }
     }
 
@@ -278,10 +278,10 @@ class AccountModal {
             this.accountIdCopied = true;
             this.recoveryCodeCopied = true;
             this.render();
-            this.app?.showToast?.('Both copied.', 'success');
+            this.app?.showToast?.('Both copied', 'success');
         } catch (error) {
             console.error('Failed to copy:', error);
-            this.app?.showToast?.('Failed to copy. Please copy manually.', 'error');
+            this.app?.showToast?.('Failed to copy, please copy manually', 'error');
         }
     }
 
@@ -294,7 +294,7 @@ class AccountModal {
             await accountService.completeAccountRegistration();
             this.creationStep = 'complete';
             this.render();
-            this.app?.showToast?.('Account created successfully!', 'success');
+            this.app?.showToast?.('Account created successfully', 'success');
         } catch (error) {
             this.creationStep = 'error';
             this.creationError = error.message || 'Registration failed.';
@@ -321,7 +321,7 @@ class AccountModal {
     async handleAccountPasskeyUnlock() {
         const accountId = this.accountState?.accountId || this.accountInputValue?.trim();
         const success = await accountService.unlockWithPasskey(accountId);
-        if (success) this.app?.showToast?.('Account unlocked.', 'success');
+        if (success) this.app?.showToast?.('Account unlocked', 'success');
     }
 
     async handleAccountRecoveryUnlock() {
@@ -352,7 +352,7 @@ class AccountModal {
                     this.showRecoveryInput = false;
                     this.recoveryInputValue = '';
                     this.render();
-                    this.app?.showToast?.('Account recovered successfully!', 'success');
+                    this.app?.showToast?.('Account recovered successfully', 'success');
                 }, 1500);
             } else {
                 this.recoveryStep = 'idle';
@@ -368,7 +368,7 @@ class AccountModal {
         if (!this.accountState?.accountId) return;
         try {
             await navigator.clipboard.writeText(this.accountState.accountId);
-            this.app?.showToast?.('Account ID copied.', 'success');
+            this.app?.showToast?.('Account ID copied', 'success');
         } catch (error) {
             console.error('Failed to copy account ID:', error);
         }
@@ -386,7 +386,7 @@ class AccountModal {
         this.showRecoveryInput = false;
         this.resetCreationFlow();
         this.render();
-        this.app?.showToast?.('Logged out.', 'success');
+        this.app?.showToast?.('Logged out', 'success');
     }
 
     // =========================================================================
@@ -903,12 +903,12 @@ class AccountModal {
         try {
             const result = await syncService.sync();
             if (result.success) {
-                this.app?.showToast?.('Synced successfully.', 'success');
+                this.app?.showToast?.('Synced successfully', 'success');
             } else if (result.error !== 'Sync already in progress') {
-                this.app?.showToast?.(result.error || 'Sync failed.', 'error');
+                this.app?.showToast?.(result.error || 'Sync failed', 'error');
             }
         } catch (error) {
-            this.app?.showToast?.('Sync failed.', 'error');
+            this.app?.showToast?.('Sync failed', 'error');
         }
     }
 
