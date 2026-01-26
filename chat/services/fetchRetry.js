@@ -10,7 +10,16 @@
  * - Works with both native fetch and networkProxy.fetch
  */
 
-import networkProxy from './networkProxy.js';
+// Lazy-load networkProxy to avoid circular dependency:
+// preferencesStore → syncService → fetchRetry → networkProxy → preferencesStore
+let _networkProxy = null;
+async function getNetworkProxy() {
+    if (!_networkProxy) {
+        const module = await import('./networkProxy.js');
+        _networkProxy = module.default;
+    }
+    return _networkProxy;
+}
 
 // HTTP status codes that are safe to retry (transient errors)
 const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
@@ -167,8 +176,12 @@ export async function fetchRetry(url, init = {}, config = {}) {
                 ...(fetchSignal && { signal: fetchSignal })
             };
 
-            // Make the request
-            const fetchFn = useProxy ? networkProxy.fetch.bind(networkProxy) : fetch;
+            // Make the request (lazy-load networkProxy to avoid circular dependency)
+            let fetchFn = fetch;
+            if (useProxy) {
+                const proxy = await getNetworkProxy();
+                fetchFn = proxy.fetch.bind(proxy);
+            }
             const response = await fetchFn(url, fetchInit, proxyConfig);
 
             // Check if response indicates a retryable error
