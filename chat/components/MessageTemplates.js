@@ -11,6 +11,9 @@ import { getFileIconSvg } from '../services/fileUtils.js';
 // In-memory cache for reasoning trace expanded state (persists across session switches)
 const reasoningExpandedState = new Set();
 
+// Welcome screen configuration
+const WELCOME_SHOW_LOGO = false;  // Set to true to show the logo icon
+
 // Welcome content is managed by inferenceService.js (single source of truth)
 // This getter delegates to inferenceService with a minimal structural fallback
 function getWelcomeContent() {
@@ -1189,34 +1192,56 @@ function buildEmptyState() {
             : escapeHtml(welcomeContent.subtitle))
         : '';
 
-    return `
-        <div class="${CLASSES.emptyStateWrapper}">
+    // Logo SVG - shown when WELCOME_SHOW_LOGO is true
+    const logoHtml = WELCOME_SHOW_LOGO ? `
             <svg xmlns="http://www.w3.org/2000/svg" class="${CLASSES.emptyStateIcon}" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M8.7,14.2C8,14.7,7.1,15,6.2,15H4c-0.6,0-1,0.4-1,1s0.4,1,1,1h2.2c1.3,0,2.6-0.4,3.7-1.2c0.4-0.3,0.5-1,0.2-1.4C9.7,13.9,9.1,13.8,8.7,14.2z"/>
                 <path d="M13,10.7c0.3,0,0.6-0.1,0.8-0.3C14.5,9.5,15.6,9,16.8,9h0.8l-0.3,0.3c-0.4,0.4-0.4,1,0,1.4c0.2,0.2,0.5,0.3,0.7,0.3s0.5-0.1,0.7-0.3l2-2c0.1-0.1,0.2-0.2,0.2-0.3c0.1-0.2,0.1-0.5,0-0.8c-0.1-0.1-0.1-0.2-0.2-0.3l-2-2c-0.4-0.4-1-0.4-1.4,0s-0.4,1,0,1.4L17.6,7h-0.8c-1.8,0-3.4,0.8-4.6,2.1c-0.4,0.4-0.3,1,0.1,1.4C12.5,10.7,12.8,10.7,13,10.7z"/>
                 <path d="M20.7,15.3l-2-2c-0.4-0.4-1-0.4-1.4,0s-0.4,1,0,1.4l0.3,0.3h-1.5c-1.6,0-2.9-0.9-3.6-2.3l-1.2-2.4C10.3,8.3,8.2,7,5.9,7H4C3.4,7,3,7.4,3,8s0.4,1,1,1h1.9c1.6,0,2.9,0.9,3.6,2.3l1.2,2.4c1,2.1,3.1,3.4,5.4,3.4h1.5l-0.3,0.3c-0.4,0.4-0.4,1,0,1.4c0.2,0.2,0.5,0.3,0.7,0.3s0.5-0.1,0.7-0.3l2-2C21.1,16.3,21.1,15.7,20.7,15.3z"/>
-            </svg>
-            <p class="${CLASSES.emptyStateTitle}">${titleHtml}</p>
-            ${subtitleHtml ? `<p class="${CLASSES.emptyStateSubtitle}">${subtitleHtml}</p>` : ''}
-            <div class="max-w-2xl px-20 mx-auto mt-4 prose prose-sm text-left" style="font-size: 0.75rem !important;">
-                <style>
-                    .welcome-content p,
-                    .welcome-content li,
-                    .welcome-content a,
-                    .welcome-content strong,
-                    .welcome-content em,
-                    .welcome-content ol,
-                    .welcome-content ul {
-                        font-size: 0.75rem !important;
-                    }
-                    .welcome-content a {
-                        text-decoration: underline;
-                    }
-                </style>
-                <div class="welcome-content">
-                    ${contentHtml}
-                </div>
-            </div>
+            </svg>` : '';
+
+    return `
+        <div class="${CLASSES.emptyStateWrapper} welcome-landing">
+            <style>
+                .welcome-landing {
+                    margin-top: 12vh;
+                }
+                .welcome-title {
+                    font-size: 1.25rem;
+                    font-weight: 500;
+                    color: hsl(var(--color-foreground));
+                    margin-bottom: 0.375rem;
+                }
+                .welcome-subtitle {
+                    font-size: 0.875rem;
+                    color: hsl(var(--color-muted-foreground));
+                }
+                .welcome-subtitle a {
+                    color: hsl(var(--color-muted-foreground));
+                    text-decoration: none;
+                    border-bottom: 1px solid hsl(var(--color-border));
+                    transition: all 0.15s ease;
+                }
+                .welcome-subtitle a:hover {
+                    color: hsl(var(--color-foreground));
+                    border-bottom-color: hsl(var(--color-foreground) / 0.5);
+                }
+                .welcome-content {
+                    font-size: 0.75rem !important;
+                }
+                .welcome-content p,
+                .welcome-content li,
+                .welcome-content a {
+                    font-size: 0.75rem !important;
+                }
+                .welcome-content a {
+                    text-decoration: underline;
+                }
+            </style>
+            ${logoHtml}
+            <p class="welcome-title">${titleHtml}</p>
+            ${subtitleHtml ? `<p class="welcome-subtitle">${subtitleHtml}</p>` : ''}
+            ${contentHtml ? `<div class="max-w-2xl px-20 mx-auto mt-6 prose prose-sm text-left"><div class="welcome-content">${contentHtml}</div></div>` : ''}
         </div>
     `;
 }
