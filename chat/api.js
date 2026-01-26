@@ -2,7 +2,6 @@
 import networkProxy from './services/networkProxy.js';
 import { loadModelConfig, getDefaultModelConfig } from './services/modelConfig.js';
 import apiKeyStore from './services/apiKeyStore.js';
-import { fetchRetry, fetchRetryJson } from './services/fetchRetry.js';
 
 // System prompt to prepend to all conversations
 // Modify this function to change the default AI behavior
@@ -70,14 +69,13 @@ class OpenRouterAPI {
         try {
             // Models catalog is public data - bypass proxy to avoid blocking app startup
             // Use retry with 3 attempts for transient failures
-            const { response, data } = await fetchRetryJson(
+            const { response, data } = await networkProxy.fetchWithRetryJson(
                 url,
                 { method: 'GET', headers },
                 {
                     context: 'Model catalog',
                     maxAttempts: 3,
                     timeoutMs: 15000,
-                    useProxy: true,
                     proxyConfig: { bypassProxy: true }
                 }
             );
@@ -263,7 +261,7 @@ class OpenRouterAPI {
         try {
             // POST is idempotent for same input - safe to retry
             // No timeout - provider manages timeouts; completions can take long
-            const { response, data } = await fetchRetryJson(
+            const { response, data } = await networkProxy.fetchWithRetryJson(
                 url,
                 {
                     method: 'POST',
@@ -596,7 +594,7 @@ class OpenRouterAPI {
             // Retry only the initial connection, not mid-stream
             // Once streaming starts, errors should surface to user
             // No timeout - provider manages timeouts; streams can take long
-            const response = await fetchRetry(
+            const response = await networkProxy.fetchWithRetry(
                 url,
                 fetchOptions,
                 {

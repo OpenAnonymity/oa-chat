@@ -95,8 +95,7 @@ async function fetchModelTickets() {
             {
                 context: 'Model tickets',
                 maxAttempts: 3,
-                timeoutMs: 10000,
-                useProxy: false  // Use native fetch for this public endpoint
+                timeoutMs: 10000
             }
         );
         if (!response.ok) return null;

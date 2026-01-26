@@ -4,9 +4,9 @@
  */
 
 import networkLogger from './networkLogger.js';
+import networkProxy from './networkProxy.js';
 import { VERIFIER_URL } from '../config.js';
 import { chatDB } from '../db.js';
-import { fetchRetryJson } from './fetchRetry.js';
 
 // Staleness thresholds
 const STALE_WARNING_MS = 60 * 1000;      // 1 minute - show orange indicator
@@ -429,7 +429,7 @@ class StationVerifier {
         console.log('📡 Querying broadcast for station verification status...');
 
         try {
-            const { response, data } = await fetchRetryJson(
+            const { response, data } = await networkProxy.fetchWithRetryJson(
                 `${VERIFIER_URL}/broadcast`,
                 {},
                 {
@@ -610,7 +610,7 @@ class StationVerifier {
         console.log('🔐 Fetching attestation from verifier...');
 
         try {
-            const { response, data } = await fetchRetryJson(
+            const { response, data } = await networkProxy.fetchWithRetryJson(
                 `${VERIFIER_URL}/attestation`,
                 {},
                 {
@@ -681,7 +681,7 @@ class StationVerifier {
 
         try {
             // submitKey is idempotent (validation only, no state change) - safe to retry
-            const { response, data } = await fetchRetryJson(
+            const { response, data } = await networkProxy.fetchWithRetryJson(
                 `${VERIFIER_URL}/submit_key`,
                 {
                     method: 'POST',

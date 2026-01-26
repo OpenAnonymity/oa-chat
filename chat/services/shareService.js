@@ -6,7 +6,7 @@
 import { encrypt, decrypt } from './shareEncryption.js';
 import { ORG_API_BASE, SHARE_BASE_URL } from '../config.js';
 import inferenceService from './inference/inferenceService.js';
-import { fetchRetry, fetchRetryJson } from './fetchRetry.js';
+import networkProxy from './networkProxy.js';
 
 // ========== Share ID Normalization ==========
 
@@ -64,7 +64,7 @@ async function createShareApi(shareId, encryptedData, expiresInSeconds = 604800)
     }
 
     // POST with client-generated ID - use 2 retries (409 Conflict means ID exists)
-    const { response, data, text } = await fetchRetryJson(
+    const { response, data, text } = await networkProxy.fetchWithRetryJson(
         url,
         {
             method: 'POST',
@@ -116,7 +116,7 @@ async function updateShareApi(shareId, token, encryptedData, expiresInSeconds = 
     }
 
     // PATCH is idempotent with token - safe to retry
-    const { response, data } = await fetchRetryJson(
+    const { response, data } = await networkProxy.fetchWithRetryJson(
         url,
         {
             method: 'PATCH',
@@ -158,7 +158,7 @@ async function deleteShareApi(shareId, token) {
     const url = `${ORG_API_BASE}/chat/share/${normalizedId}`;
 
     // DELETE is idempotent - safe to retry
-    const response = await fetchRetry(
+    const response = await networkProxy.fetchWithRetry(
         url,
         {
             method: 'DELETE',
@@ -189,7 +189,7 @@ async function downloadShareApi(shareId) {
     const url = `${ORG_API_BASE}/chat/share/${normalizedId}`;
 
     // GET is idempotent - safe to retry
-    const { response, data } = await fetchRetryJson(
+    const { response, data } = await networkProxy.fetchWithRetryJson(
         url,
         { method: 'GET' },
         {

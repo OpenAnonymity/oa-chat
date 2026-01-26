@@ -358,13 +358,12 @@ class SyncService {
     }
 
     async fetchWithRetry(url, options, context = 'Sync') {
-        // Use shared retry utility with native fetch (useProxy: false)
+        // Use shared retry utility with native fetch (default)
         // Sync operations are idempotent (version-based) - safe to retry
         return fetchRetry(url, options, {
             context,
             maxAttempts: 3,
-            timeoutMs: 30000,
-            useProxy: false  // Use native fetch for sync endpoints
+            timeoutMs: 30000
         });
     }
 

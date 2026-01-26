@@ -7,19 +7,8 @@
  * - Exponential backoff with jitter (prevents thundering herd)
  * - Respects Retry-After header for 429 responses
  * - Configurable timeout per request
- * - Works with both native fetch and networkProxy.fetch
+ * - Transport-agnostic: accepts any fetch function via config.fetchFn
  */
-
-// Lazy-load networkProxy to avoid circular dependency:
-// preferencesStore → syncService → fetchRetry → networkProxy → preferencesStore
-let _networkProxy = null;
-async function getNetworkProxy() {
-    if (!_networkProxy) {
-        const module = await import('./networkProxy.js');
-        _networkProxy = module.default;
-    }
-    return _networkProxy;
-}
 
 // HTTP status codes that are safe to retry (transient errors)
 const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
@@ -122,8 +111,8 @@ function sleep(ms) {
  * @param {number} [config.baseDelayMs=300] - Base delay between retries
  * @param {number} [config.maxDelayMs=5000] - Maximum delay between retries
  * @param {number} [config.timeoutMs=30000] - Timeout per request
- * @param {boolean} [config.useProxy=true] - Use networkProxy.fetch instead of native fetch
- * @param {Object} [config.proxyConfig={}] - Config to pass to networkProxy.fetch
+ * @param {function} [config.fetchFn=fetch] - Fetch function to use (e.g., networkProxy.fetch.bind(networkProxy))
+ * @param {Object} [config.fetchConfig={}] - Extra config to pass to fetchFn (3rd argument)
  * @param {AbortSignal} [config.signal] - External abort signal (user cancellation)
  * @param {string} [config.context='Request'] - Context for error messages
  * @param {function} [config.onRetry] - Callback called before each retry (attempt, error, response)
@@ -136,8 +125,8 @@ export async function fetchRetry(url, init = {}, config = {}) {
         baseDelayMs = DEFAULT_CONFIG.baseDelayMs,
         maxDelayMs = DEFAULT_CONFIG.maxDelayMs,
         timeoutMs = DEFAULT_CONFIG.timeoutMs,
-        useProxy = true,
-        proxyConfig = {},
+        fetchFn = fetch,
+        fetchConfig = {},
         signal: externalSignal,
         context = 'Request',
         onRetry
@@ -176,13 +165,8 @@ export async function fetchRetry(url, init = {}, config = {}) {
                 ...(fetchSignal && { signal: fetchSignal })
             };
 
-            // Make the request (lazy-load networkProxy to avoid circular dependency)
-            let fetchFn = fetch;
-            if (useProxy) {
-                const proxy = await getNetworkProxy();
-                fetchFn = proxy.fetch.bind(proxy);
-            }
-            const response = await fetchFn(url, fetchInit, proxyConfig);
+            // Make the request using the provided fetch function
+            const response = await fetchFn(url, fetchInit, fetchConfig);
 
             // Check if response indicates a retryable error
             if (RETRYABLE_STATUS.has(response.status)) {

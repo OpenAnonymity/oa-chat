@@ -5,9 +5,9 @@
 
 import privacyPassProvider from './privacyPass.js';
 import networkLogger from './networkLogger.js';
+import networkProxy from './networkProxy.js';
 import ticketStore from './ticketStore.js';
 import { ORG_API_BASE } from '../config.js';
-import { fetchRetryJson } from './fetchRetry.js';
 
 class TicketClient {
     constructor() {
@@ -81,7 +81,7 @@ class TicketClient {
 
             let publicKey;
             try {
-                const { data: keyData } = await fetchRetryJson(
+                const { data: keyData } = await networkProxy.fetchWithRetryJson(
                     `${ORG_API_BASE}/api/ticket/issue/public-key`,
                     {},
                     { context: 'Public key', maxAttempts: 3, timeoutMs: 10000 }
@@ -138,7 +138,7 @@ class TicketClient {
 
             let signData;
             try {
-                const { response: signResponse, data } = await fetchRetryJson(
+                const { response: signResponse, data } = await networkProxy.fetchWithRetryJson(
                     registerUrl,
                     {
                         method: 'POST',
@@ -315,7 +315,7 @@ class TicketClient {
                     let data;
 
                     try {
-                        ({ response, data } = await fetchRetryJson(
+                        ({ response, data } = await networkProxy.fetchWithRetryJson(
                             requestKeyUrl,
                             {
                                 method: 'POST',

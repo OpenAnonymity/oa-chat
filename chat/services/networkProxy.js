@@ -1,6 +1,7 @@
 import { PROXY_URL } from '../config.js';
 import transportHints from './inference/transportHints.js';
 import preferencesStore, { PREF_KEYS } from './preferencesStore.js';
+import { fetchRetry, fetchRetryJson } from './fetchRetry.js';
 
 const DEFAULT_SETTINGS = {
     enabled: false,
@@ -656,6 +657,45 @@ class NetworkProxy {
             // Use credentials: 'omit' to prevent third-party cookie storage
             return fetch(resource, { ...init, credentials: 'omit' });
         }
+    }
+
+    /**
+     * Fetch with automatic retry using this proxy's transport.
+     * Combines networkProxy.fetch with retry logic from fetchRetry.
+     * 
+     * @param {string|Request} url - URL or Request object
+     * @param {RequestInit} [init={}] - Fetch options
+     * @param {Object} [config={}] - Retry and proxy configuration
+     * @param {Object} [config.proxyConfig] - Config passed to networkProxy.fetch (e.g., { bypassProxy: true })
+     * @param {number} [config.maxAttempts] - Max retry attempts
+     * @param {number} [config.timeoutMs] - Timeout per request
+     * @param {string} [config.context] - Context for error messages
+     * @returns {Promise<Response>} The HTTP response
+     */
+    async fetchWithRetry(url, init = {}, config = {}) {
+        const { proxyConfig, ...retryConfig } = config;
+        return fetchRetry(url, init, {
+            ...retryConfig,
+            fetchFn: this.fetch.bind(this),
+            fetchConfig: proxyConfig
+        });
+    }
+
+    /**
+     * Fetch with retry and JSON parsing using this proxy's transport.
+     * 
+     * @param {string|Request} url - URL or Request object
+     * @param {RequestInit} [init={}] - Fetch options
+     * @param {Object} [config={}] - Retry and proxy configuration
+     * @returns {Promise<{response: Response, data: any, text: string}>}
+     */
+    async fetchWithRetryJson(url, init = {}, config = {}) {
+        const { proxyConfig, ...retryConfig } = config;
+        return fetchRetryJson(url, init, {
+            ...retryConfig,
+            fetchFn: this.fetch.bind(this),
+            fetchConfig: proxyConfig
+        });
     }
 }
 
