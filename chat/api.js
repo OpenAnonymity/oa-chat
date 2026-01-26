@@ -2,6 +2,7 @@
 import networkProxy from './services/networkProxy.js';
 import { loadModelConfig, getDefaultModelConfig } from './services/modelConfig.js';
 import apiKeyStore from './services/apiKeyStore.js';
+import { fetchRetry, fetchRetryJson } from './services/fetchRetry.js';
 
 // System prompt to prepend to all conversations
 // Modify this function to change the default AI behavior
@@ -68,24 +69,18 @@ class OpenRouterAPI {
 
         try {
             // Models catalog is public data - bypass proxy to avoid blocking app startup
-            const response = await networkProxy.fetch(url, {
-                method: 'GET',
-                headers: headers
-            }, { bypassProxy: true });
-
-            const data = await response.json();
-
-            // Log successful request - TEMPORARILY DISABLED for model catalog
-            // if (window.networkLogger) {
-            //     window.networkLogger.logRequest({
-            //         type: 'openrouter',
-            //         method: 'GET',
-            //         url: url,
-            //         status: response.status,
-            //         request: { headers: window.networkLogger.sanitizeHeaders(headers) },
-            //         response: { data: data.data ? `${data.data.length} models` : data }
-            //     });
-            // }
+            // Use retry with 3 attempts for transient failures
+            const { response, data } = await fetchRetryJson(
+                url,
+                { method: 'GET', headers },
+                {
+                    context: 'Model catalog',
+                    maxAttempts: 3,
+                    timeoutMs: 15000,
+                    useProxy: true,
+                    proxyConfig: { bypassProxy: true }
+                }
+            );
 
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
@@ -95,23 +90,8 @@ class OpenRouterAPI {
         } catch (error) {
             console.error('Error fetching models from OpenRouter:', error);
 
-            // Log failed request - TEMPORARILY DISABLED for model catalog
-            // if (window.networkLogger) {
-            //     window.networkLogger.logRequest({
-            //         type: 'openrouter',
-            //         method: 'GET',
-            //         url: url,
-            //         status: 0,
-            //         request: { headers: window.networkLogger.sanitizeHeaders(headers) },
-            //         error: error.message
-            //     });
-            // }
-
             // Return a fallback list of models
-            return [
-                { name: 'OpenAI: GPT-5.2 Instant', id: 'openai/gpt-5.2-chat', category: 'OpenAI', provider: 'OpenAI' },
-                { name: 'OpenAI: GPT-5.1 Instant', id: 'openai/gpt-5.1-chat', category: 'OpenAI', provider: 'OpenAI' },
-            ];
+            return this.getFallbackModels();
         }
     }
 
@@ -281,13 +261,21 @@ class OpenRouterAPI {
         };
 
         try {
-            const response = await networkProxy.fetch(url, {
-                method: 'POST',
-                headers: headers,
-                body: JSON.stringify(body)
-            });
-
-            const data = await response.json();
+            // POST is idempotent for same input - safe to retry
+            // No timeout - provider manages timeouts; completions can take long
+            const { response, data } = await fetchRetryJson(
+                url,
+                {
+                    method: 'POST',
+                    headers: headers,
+                    body: JSON.stringify(body)
+                },
+                {
+                    context: 'Inference completion',
+                    maxAttempts: 3,
+                    timeoutMs: 0  // No timeout - let OpenRouter manage
+                }
+            );
 
             // Log successful request
             if (window.networkLogger) {
@@ -605,12 +593,19 @@ class OpenRouterAPI {
                 body: JSON.stringify(requestBody)
             };
 
-            // Add abort signal if provided
-            if (abortController) {
-                fetchOptions.signal = abortController.signal;
-            }
-
-            const response = await networkProxy.fetch(url, fetchOptions);
+            // Retry only the initial connection, not mid-stream
+            // Once streaming starts, errors should surface to user
+            // No timeout - provider manages timeouts; streams can take long
+            const response = await fetchRetry(
+                url,
+                fetchOptions,
+                {
+                    context: 'Inference stream',
+                    maxAttempts: 3,
+                    timeoutMs: 0,  // No timeout - let OpenRouter manage
+                    signal: abortController?.signal
+                }
+            );
 
             // Handle pre-stream errors
             if (!response.ok) {

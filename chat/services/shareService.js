@@ -4,9 +4,9 @@
  */
 
 import { encrypt, decrypt } from './shareEncryption.js';
-import networkProxy from './networkProxy.js';
 import { ORG_API_BASE, SHARE_BASE_URL } from '../config.js';
 import inferenceService from './inference/inferenceService.js';
+import { fetchRetry, fetchRetryJson } from './fetchRetry.js';
 
 // ========== Share ID Normalization ==========
 
@@ -63,19 +63,27 @@ async function createShareApi(shareId, encryptedData, expiresInSeconds = 604800)
         requestBody.expires_in = expiresInSeconds;
     }
 
-    const response = await networkProxy.fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody)
-    });
+    // POST with client-generated ID - use 2 retries (409 Conflict means ID exists)
+    const { response, data, text } = await fetchRetryJson(
+        url,
+        {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(requestBody)
+        },
+        {
+            context: 'Share create',
+            maxAttempts: 2,
+            timeoutMs: 30000
+        }
+    );
 
     if (!response.ok) {
-        const errorText = await response.text().catch(() => 'Unable to read error body');
+        const errorText = text || 'Unable to read error body';
         console.error('[shareService] Share creation failed:', response.status, errorText);
         throw new Error(`Failed to create share (${response.status}): ${errorText}`);
     }
 
-    const data = await response.json();
     return {
         id: data.id,
         token: data.token,
@@ -107,14 +115,23 @@ async function updateShareApi(shareId, token, encryptedData, expiresInSeconds = 
         requestBody.expires_in = expiresInSeconds;
     }
 
-    const response = await networkProxy.fetch(url, {
-        method: 'PATCH',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
+    // PATCH is idempotent with token - safe to retry
+    const { response, data } = await fetchRetryJson(
+        url,
+        {
+            method: 'PATCH',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify(requestBody)
         },
-        body: JSON.stringify(requestBody)
-    });
+        {
+            context: 'Share update',
+            maxAttempts: 3,
+            timeoutMs: 30000
+        }
+    );
 
     if (!response.ok) {
         if (response.status === 403) throw new Error('Invalid token - cannot update share');
@@ -122,7 +139,6 @@ async function updateShareApi(shareId, token, encryptedData, expiresInSeconds = 
         throw new Error(`Failed to update share (${response.status})`);
     }
 
-    const data = await response.json();
     return {
         id: data.id,
         created_at: data.created_at,
@@ -140,10 +156,20 @@ async function updateShareApi(shareId, token, encryptedData, expiresInSeconds = 
 async function deleteShareApi(shareId, token) {
     const normalizedId = normalizeShareId(shareId);
     const url = `${ORG_API_BASE}/chat/share/${normalizedId}`;
-    const response = await networkProxy.fetch(url, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
-    });
+
+    // DELETE is idempotent - safe to retry
+    const response = await fetchRetry(
+        url,
+        {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${token}` }
+        },
+        {
+            context: 'Share delete',
+            maxAttempts: 3,
+            timeoutMs: 30000
+        }
+    );
 
     if (!response.ok) {
         if (response.status === 404) throw new Error('Share not found or already deleted');
@@ -161,15 +187,24 @@ async function deleteShareApi(shareId, token) {
 async function downloadShareApi(shareId) {
     const normalizedId = normalizeShareId(shareId);
     const url = `${ORG_API_BASE}/chat/share/${normalizedId}`;
-    const response = await networkProxy.fetch(url, { method: 'GET' });
+
+    // GET is idempotent - safe to retry
+    const { response, data } = await fetchRetryJson(
+        url,
+        { method: 'GET' },
+        {
+            context: 'Share download',
+            maxAttempts: 3,
+            timeoutMs: 30000
+        }
+    );
 
     if (!response.ok) {
         if (response.status === 404) throw new Error('Share not found or has expired');
         throw new Error(`Failed to download share (${response.status})`);
     }
 
-    const data = await response.json();
-    if (!data.ciphertext) {
+    if (!data?.ciphertext) {
         throw new Error('Invalid share data received');
     }
 
@@ -218,7 +253,6 @@ export function buildSharePayload(session, messages, opts = {}) {
             timestamp: m.timestamp,
             model: m.model,
             images: m.images,
-            files: m.files,
             reasoning: m.reasoning,
             reasoningDuration: m.reasoningDuration,
             tokenCount: m.tokenCount

@@ -1,22 +1,14 @@
 /**
  * Model Tiers Service
  * Maps AI models to ticket costs for the inference ticket system.
- * Fetches tiers from org API with localStorage caching.
- *
- * TIER STRUCTURE:
- * - Tier 1 (1 ticket): Instant/small models - fast, affordable
- * - Tier 2 (2 tickets): Standard thinking models - reasoning enabled
- * - Tier 3 (3 tickets): Premium models - large/image generation
- * - Tier 4 (10 tickets): Pro models - highest capability
+ * Fetches costs from org API with localStorage caching.
+ * 
+ * Ticket costs are dynamic and set by the API. Pattern-based fallbacks
+ * are used for models not explicitly configured.
  */
 
 import { ORG_API_BASE } from '../config.js';
-
-// Ticket cost constants
-export const TIER_INSTANT = 1;
-export const TIER_THINKING = 2;
-export const TIER_PREMIUM = 3;
-export const TIER_PRO = 10;
+import { fetchRetryJson } from './fetchRetry.js';
 
 // Cache key
 const CACHE_KEY = 'oa-model-tickets-cache';
@@ -97,9 +89,18 @@ function saveCache(data) {
  */
 async function fetchModelTickets() {
     try {
-        const response = await fetch(`${ORG_API_BASE}/chat/model-tickets`, { credentials: 'omit' });
+        const { response, data } = await fetchRetryJson(
+            `${ORG_API_BASE}/chat/model-tickets`,
+            { credentials: 'omit' },
+            {
+                context: 'Model tickets',
+                maxAttempts: 3,
+                timeoutMs: 10000,
+                useProxy: false  // Use native fetch for this public endpoint
+            }
+        );
         if (!response.ok) return null;
-        return await response.json();
+        return data;
     } catch (e) {
         console.warn('Failed to fetch model tickets:', e);
         return null;
@@ -143,7 +144,7 @@ export function onModelTiersUpdate(callback) {
  * @returns {number} Number of tickets required
  */
 export function getTicketCost(modelId, reasoningEnabled = false) {
-    if (!modelId) return TIER_INSTANT;
+    if (!modelId) return 1;
 
     // Strip :online suffix for pricing (web search doesn't change tier)
     const baseModelId = modelId.replace(/:online$/, '');
@@ -154,26 +155,24 @@ export function getTicketCost(modelId, reasoningEnabled = false) {
     }
 
     // Fallback: pattern-based detection for untiered models
-    // Note: Pro tier uses explicit mappings only (no pattern fallback)
-
-    // Check Premium patterns
+    // Check Premium patterns (3 tickets)
     if (PREMIUM_PATTERNS.some(p => p.test(baseModelId))) {
-        return TIER_PREMIUM;
+        return 3;
     }
 
-    // Check Thinking patterns
+    // Check Thinking patterns (2 tickets)
     if (THINKING_PATTERNS.some(p => p.test(baseModelId))) {
-        return TIER_THINKING;
+        return 2;
     }
 
-    // Check Instant patterns
+    // Check Instant patterns (1 ticket)
     if (INSTANT_PATTERNS.some(p => p.test(baseModelId))) {
-        return TIER_INSTANT;
+        return 1;
     }
 
     // Default fallback: use reasoning state
-    // If thinking/reasoning is enabled, charge tier 2; otherwise tier 1
-    return reasoningEnabled ? TIER_THINKING : TIER_INSTANT;
+    // If thinking/reasoning is enabled, charge 2; otherwise 1
+    return reasoningEnabled ? 2 : 1;
 }
 
 /**
@@ -183,13 +182,7 @@ export function getTicketCost(modelId, reasoningEnabled = false) {
  * @returns {string} Human-readable label
  */
 export function getTierLabel(cost) {
-    switch (cost) {
-        case TIER_INSTANT: return '1 ticket';
-        case TIER_THINKING: return '2 tickets';
-        case TIER_PREMIUM: return '3 tickets';
-        case TIER_PRO: return '10 tickets';
-        default: return `${cost} ticket${cost !== 1 ? 's' : ''}`;
-    }
+    return `${cost} ticket${cost !== 1 ? 's' : ''}`;
 }
 
 /**

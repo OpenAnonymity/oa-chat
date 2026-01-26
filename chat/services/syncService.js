@@ -14,6 +14,7 @@
 
 import { ORG_API_BASE } from '../config.js';
 import { chatDB } from '../db.js';
+import { fetchRetry } from './fetchRetry.js';
 
 const SYNC_LOCK_NAME = 'oa-sync';
 const SYNC_SALT = 'oa-sync-v1';
@@ -44,9 +45,6 @@ const LOGICAL_IDS = {
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
-
-const MAX_RETRIES = 3;
-const BASE_BACKOFF_MS = 1000;
 
 function bytesToBase64(bytes) {
     let binary = '';
@@ -359,22 +357,15 @@ class SyncService {
         return false;
     }
 
-    async fetchWithBackoff(url, options) {
-        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-            const response = await fetch(url, options);
-
-            if (response.status === 429) {
-                if (attempt === MAX_RETRIES) {
-                    throw new Error('Rate limit exceeded after retries');
-                }
-                const retryAfter = parseInt(response.headers.get('Retry-After'), 10) ||
-                    Math.pow(2, attempt) * BASE_BACKOFF_MS;
-                await new Promise(r => setTimeout(r, retryAfter));
-                continue;
-            }
-
-            return response;
-        }
+    async fetchWithRetry(url, options, context = 'Sync') {
+        // Use shared retry utility with native fetch (useProxy: false)
+        // Sync operations are idempotent (version-based) - safe to retry
+        return fetchRetry(url, options, {
+            context,
+            maxAttempts: 3,
+            timeoutMs: 30000,
+            useProxy: false  // Use native fetch for sync endpoints
+        });
     }
 
     async sync() {
@@ -444,7 +435,7 @@ class SyncService {
     async _pull(masterKey, accessToken) {
         const lastSync = await chatDB.getSetting(SYNC_LAST_TIME_KEY) || 0;
 
-        const response = await this.fetchWithBackoff(
+        const response = await this.fetchWithRetry(
             `${ORG_API_BASE}/auth/sync?since=${lastSync}`,
             {
                 method: 'GET',
@@ -453,7 +444,8 @@ class SyncService {
                     'Content-Type': 'application/json'
                 },
                 credentials: 'include'
-            }
+            },
+            'Sync pull'
         );
 
         if (!response.ok) {
@@ -581,7 +573,7 @@ class SyncService {
             return { count: 0 };
         }
 
-        const response = await this.fetchWithBackoff(
+        const response = await this.fetchWithRetry(
             `${ORG_API_BASE}/auth/sync`,
             {
                 method: 'POST',
@@ -591,7 +583,8 @@ class SyncService {
                 },
                 credentials: 'include',
                 body: JSON.stringify({ blobs })
-            }
+            },
+            'Sync push'
         );
 
         if (!response.ok) {

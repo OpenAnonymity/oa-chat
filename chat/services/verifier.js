@@ -4,9 +4,9 @@
  */
 
 import networkLogger from './networkLogger.js';
-import networkProxy from './networkProxy.js';
 import { VERIFIER_URL } from '../config.js';
 import { chatDB } from '../db.js';
+import { fetchRetryJson } from './fetchRetry.js';
 
 // Staleness thresholds
 const STALE_WARNING_MS = 60 * 1000;      // 1 minute - show orange indicator
@@ -429,18 +429,21 @@ class StationVerifier {
         console.log('📡 Querying broadcast for station verification status...');
 
         try {
-            const response = await networkProxy.fetch(
+            const { response, data } = await fetchRetryJson(
                 `${VERIFIER_URL}/broadcast`,
                 {},
-                { bypassProxy: true }
+                {
+                    context: 'Verifier broadcast',
+                    maxAttempts: 3,
+                    timeoutMs: 15000,
+                    proxyConfig: { bypassProxy: true }
+                }
             );
-
-            const data = await response.json();
 
             // Note: Not logging broadcast polls to avoid cluttering activity panel
 
             if (!response.ok) {
-                throw new Error(data.detail || `Broadcast query failed: ${response.status}`);
+                throw new Error(data?.detail || `Broadcast query failed: ${response.status}`);
             }
 
             // Mark verifier as online
@@ -607,24 +610,27 @@ class StationVerifier {
         console.log('🔐 Fetching attestation from verifier...');
 
         try {
-            const response = await networkProxy.fetch(
+            const { response, data } = await fetchRetryJson(
                 `${VERIFIER_URL}/attestation`,
                 {},
-                { bypassProxy: true }
+                {
+                    context: 'Verifier attestation',
+                    maxAttempts: 3,
+                    timeoutMs: 15000,
+                    proxyConfig: { bypassProxy: true }
+                }
             );
-
-            const data = await response.json();
 
             networkLogger.logRequest({
                 type: 'verification',
                 method: 'GET',
                 url: `${VERIFIER_URL}/attestation`,
                 status: response.status,
-                response: { summary: data.summary }
+                response: { summary: data?.summary }
             });
 
             if (!response.ok) {
-                throw new Error(data.detail || `Attestation fetch failed: ${response.status}`);
+                throw new Error(data?.detail || `Attestation fetch failed: ${response.status}`);
             }
 
             // Cache the result
@@ -674,23 +680,21 @@ class StationVerifier {
         };
 
         try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
-            
-            const response = await networkProxy.fetch(
+            // submitKey is idempotent (validation only, no state change) - safe to retry
+            const { response, data } = await fetchRetryJson(
                 `${VERIFIER_URL}/submit_key`,
                 {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(requestBody),
-                    signal: controller.signal
+                    body: JSON.stringify(requestBody)
                 },
-                { bypassProxy: true }
+                {
+                    context: 'Verifier submit_key',
+                    maxAttempts: 3,
+                    timeoutMs: 30000,
+                    proxyConfig: { bypassProxy: true }
+                }
             );
-            
-            clearTimeout(timeoutId);
-
-            const data = await response.json();
 
             networkLogger.logRequest({
                 type: 'verification',
@@ -702,11 +706,11 @@ class StationVerifier {
             });
 
             if (!response.ok) {
-                const errorMessage = data.error || data.detail || data.message || 'Verification failed';
+                const errorMessage = data?.error || data?.detail || data?.message || 'Verification failed';
                 const error = new Error(errorMessage);
                 
                 // Attach detailed banned station info if available
-                if (data.status === 'banned' && data.banned_station) {
+                if (data?.status === 'banned' && data?.banned_station) {
                     error.status = 'banned';
                     error.bannedStation = {
                         stationId: data.banned_station.station_id,

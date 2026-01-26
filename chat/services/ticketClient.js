@@ -5,19 +5,9 @@
 
 import privacyPassProvider from './privacyPass.js';
 import networkLogger from './networkLogger.js';
-import networkProxy from './networkProxy.js';
 import ticketStore from './ticketStore.js';
 import { ORG_API_BASE } from '../config.js';
-// Retry configuration - tuned for snappy UX
-const RETRY_DEFAULTS = {
-    maxAttempts: 2,       // Fail fast and surface errors quickly
-    baseDelayMs: 200,     // Short initial delay
-    maxDelayMs: 1000,     // Cap delays at 1s
-    timeoutMs: 2000       // 2s timeout - fail fast, try next
-};
-
-// HTTP status codes that should trigger retry
-const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
+import { fetchRetryJson } from './fetchRetry.js';
 
 class TicketClient {
     constructor() {
@@ -26,103 +16,6 @@ class TicketClient {
         this.ticketStore = ticketStore;
 
         console.log(`📊 TicketClient ready with ${this.ticketStore.getCount()} tickets`);
-    }
-
-    /**
-     * Reusable fetch with retry, backoff, and safe JSON parsing.
-     * @param {string} url - Request URL
-     * @param {RequestInit} init - Fetch options
-     * @param {object} opts - Retry options
-     * @param {string} opts.context - Description for error messages
-     * @param {number} opts.maxAttempts - Max retry attempts (default 3)
-     * @param {number} opts.baseDelayMs - Initial backoff delay (default 500)
-     * @param {number} opts.timeoutMs - Request timeout (default 30000)
-     * @param {boolean} opts.parseJson - Whether to parse response as JSON (default true)
-     * @returns {Promise<{response: Response, data: any}>}
-     */
-    async fetchWithRetry(url, init = {}, opts = {}) {
-        const {
-            context = 'API',
-            maxAttempts = RETRY_DEFAULTS.maxAttempts,
-            baseDelayMs = RETRY_DEFAULTS.baseDelayMs,
-            timeoutMs = RETRY_DEFAULTS.timeoutMs,
-            parseJson = true
-        } = opts;
-
-        let lastError = null;
-
-        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-            try {
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-                const response = await networkProxy.fetch(url, {
-                    ...init,
-                    signal: controller.signal
-                });
-
-                clearTimeout(timeoutId);
-
-                // Parse JSON if requested
-                if (parseJson) {
-                    const { data, error } = await this.parseResponseBody(response, context);
-                    if (error) {
-                        // Non-JSON response - check if retryable
-                        if (RETRYABLE_STATUS.has(response.status) && attempt < maxAttempts) {
-                            lastError = error;
-                            await this.backoff(attempt, baseDelayMs);
-                            continue;
-                        }
-                        throw error;
-                    }
-                    return { response, data };
-                }
-
-                return { response, data: null };
-
-            } catch (error) {
-                // Convert AbortError to user-friendly timeout message
-                if (error.name === 'AbortError') {
-                    lastError = new Error(`Request timed out. Please try again. (Are you connected to the Internet?)`);
-                } else {
-                    lastError = error;
-                }
-
-                const isRetryable = this.isRetryableError(error);
-
-                if (isRetryable && attempt < maxAttempts) {
-                    console.warn(`⚠️ ${context} attempt ${attempt}/${maxAttempts} failed: ${error.message}. Retrying...`);
-                    await this.backoff(attempt, baseDelayMs);
-                    continue;
-                }
-
-                // Final attempt or non-retryable error
-                throw lastError;
-            }
-        }
-
-        throw lastError || new Error(`${context} failed after ${maxAttempts} attempts`);
-    }
-
-    /**
-     * Determine if an error is transient and worth retrying.
-     */
-    isRetryableError(error) {
-        if (error.name === 'AbortError') return true; // Timeout
-        if (error.message?.includes('NetworkError')) return true;
-        if (error.message?.includes('fetch')) return true;
-        return false;
-    }
-
-    /**
-     * Exponential backoff with jitter.
-     */
-    async backoff(attempt, baseDelayMs) {
-        const delay = Math.min(
-            baseDelayMs * Math.pow(2, attempt - 1) + Math.random() * 100,
-            RETRY_DEFAULTS.maxDelayMs
-        );
-        await new Promise(r => setTimeout(r, delay));
     }
 
     getNextTicket() {
@@ -188,10 +81,10 @@ class TicketClient {
 
             let publicKey;
             try {
-                const { data: keyData } = await this.fetchWithRetry(
+                const { data: keyData } = await fetchRetryJson(
                     `${ORG_API_BASE}/api/ticket/issue/public-key`,
                     {},
-                    { context: 'Public key' }
+                    { context: 'Public key', maxAttempts: 3, timeoutMs: 10000 }
                 );
                 publicKey = keyData.public_key;
 
@@ -245,14 +138,18 @@ class TicketClient {
 
             let signData;
             try {
-                const { response: signResponse, data } = await this.fetchWithRetry(
+                const { response: signResponse, data } = await fetchRetryJson(
                     registerUrl,
                     {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(registerBody)
                     },
-                    { context: 'Alpha register', timeoutMs: Math.max(120000, ticketCount * 50) }
+                    {
+                        context: 'Alpha register',
+                        maxAttempts: 1,  // No retry - blinded tickets consumed on success
+                        timeoutMs: Math.max(120000, ticketCount * 50)
+                    }
                 );
 
                 signData = data;
@@ -418,7 +315,7 @@ class TicketClient {
                     let data;
 
                     try {
-                        ({ response, data } = await this.fetchWithRetry(
+                        ({ response, data } = await fetchRetryJson(
                             requestKeyUrl,
                             {
                                 method: 'POST',
@@ -427,7 +324,7 @@ class TicketClient {
                             },
                             {
                                 context: 'Org API key',
-                                maxAttempts: 1,    // No retries - tickets would be consumed
+                                maxAttempts: 3,    // Retry transient failures (network/5xx/429)
                                 timeoutMs: 30000   // 30s timeout - org has internal station timeout
                             }
                         ));
@@ -522,50 +419,6 @@ class TicketClient {
         } catch (error) {
             console.error('Request API key error:', error);
             throw error;
-        }
-    }
-
-    async parseResponseBody(response, context) {
-        const contentType = response.headers.get('content-type') || 'unknown';
-        const rawText = await response.text();
-        const trimmed = rawText.trim();
-        const preview = trimmed.substring(0, 200) || '';
-        const looksJson = contentType.includes('application/json') ||
-            trimmed.startsWith('{') ||
-            trimmed.startsWith('[');
-
-        if (!looksJson) {
-            const errorMessage = `${context} expected JSON but received ${contentType} (status ${response.status}). Body preview: ${preview || '[empty response]'}`;
-            return {
-                data: null,
-                logPayload: {
-                    contentType,
-                    status: response.status,
-                    preview: preview || '[empty response]'
-                },
-                error: new Error(errorMessage)
-            };
-        }
-
-        try {
-            const data = trimmed ? JSON.parse(rawText) : {};
-            return {
-                data,
-                logPayload: data,
-                error: null
-            };
-        } catch (err) {
-            const errorMessage = `${context} returned invalid JSON (status ${response.status}): ${preview || '[empty response]'}`;
-            return {
-                data: null,
-                logPayload: {
-                    contentType,
-                    status: response.status,
-                    preview: preview || '[empty response]',
-                    parseError: err.message
-                },
-                error: new Error(errorMessage)
-            };
         }
     }
 
