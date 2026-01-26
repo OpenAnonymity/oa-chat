@@ -269,6 +269,12 @@ export function buildSharePayload(session, messages, opts = {}) {
             if (legacySharedApiKey) {
                 payload.sharedApiKey = legacySharedApiKey;
             }
+
+            // Include ephemeral key ID so the sharee sees the same key identifier
+            // (only the ID, not the underlying implementation details)
+            if (session.currentEphemeralKeyId) {
+                payload.sharedEphemeralKeyId = session.currentEphemeralKeyId;
+            }
         }
     }
 
@@ -377,6 +383,21 @@ export function createSessionFromPayload(payload, shareId, ciphertext, generateI
         importedMessageCount: payload.messages.length,
         importedCiphertext: ciphertext
     };
+
+    // Restore ephemeral key ID from shared payload (so sharee sees same key identifier)
+    // Only the ID is shared, not the underlying key details
+    if (payload.sharedEphemeralKeyId && sessionAccess) {
+        session.currentEphemeralKeyId = payload.sharedEphemeralKeyId;
+        // Create minimal mapping (no underlyingKeyId) so maskAccessToken uses the ephemeral ID
+        // but getUnderlyingKeyInfo returns null (no hover tooltip)
+        session.ephemeralKeyMappings = {
+            [payload.sharedEphemeralKeyId]: {
+                backendId: backendId,
+                createdAt: Date.now(),
+                isShared: true
+            }
+        };
+    }
 
     return session;
 }

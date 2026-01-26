@@ -1080,6 +1080,11 @@ class RightPanel {
             return { displayMask, hoverContentHtml: null };
         }
 
+        // Disable hover tooltip for shared keys (only the sharer should see underlying key details)
+        if (this.currentSession?.apiKeyInfo?.isShared) {
+            return { displayMask, hoverContentHtml: null };
+        }
+
         const underlyingInfo = inferenceService.getUnderlyingKeyInfo(this.currentSession);
         if (!underlyingInfo) {
             return { displayMask, hoverContentHtml: null };
