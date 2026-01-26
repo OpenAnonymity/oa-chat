@@ -1205,6 +1205,12 @@ function buildEmptyState() {
             <style>
                 .welcome-landing {
                     margin-top: 12vh;
+                    opacity: 0;
+                    animation: welcomeFadeIn 0.2s ease-out 0.05s forwards;
+                }
+                @keyframes welcomeFadeIn {
+                    from { opacity: 0; }
+                    to { opacity: 1; }
                 }
                 .welcome-title {
                     font-size: 1.25rem;
