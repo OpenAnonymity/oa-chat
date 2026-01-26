@@ -252,6 +252,7 @@ export function buildSharePayload(session, messages, opts = {}) {
             content: m.content,
             timestamp: m.timestamp,
             model: m.model,
+            files: m.files,
             images: m.images,
             reasoning: m.reasoning,
             reasoningDuration: m.reasoningDuration,
