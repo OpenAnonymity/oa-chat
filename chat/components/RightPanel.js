@@ -2245,7 +2245,7 @@ class RightPanel {
                 </div>
             </div>
 
-            <div class="flex flex-col h-full">
+            <div class="flex flex-col flex-1 min-h-0">
             <!-- Top Section: Tickets and API Key (non-scrollable) -->
             <div class="flex-shrink-0">
                 ${this.generateTopSectionHTML()}
