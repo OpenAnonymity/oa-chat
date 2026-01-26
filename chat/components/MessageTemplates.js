@@ -11,42 +11,16 @@ import { getFileIconSvg } from '../services/fileUtils.js';
 // In-memory cache for reasoning trace expanded state (persists across session switches)
 const reasoningExpandedState = new Set();
 
-// Welcome message content configuration
-// Edit this markdown string to customize the intro message shown on new chat sessions
-// Supports full markdown: **bold**, *italic*, lists, links, etc.
-// Title and subtitle support inline markdown - use backticks for monospace: `code`
-const DEFAULT_WELCOME_CONTENT = {
-    title: '`oa-fastchat`',
-    subtitle: 'A minimal, fast, and anonymous chat client by The Open Anonymity Project', // Optional subtitle that appears centered below the title
-    content: `
-1. **Chats are end-to-end anonymous.**\\
-   Every chat requests an *ephemeral and cryptographically unlinkable* access key from a random proxy (*oa-stations*) with blind-signed tokens (*inference tickets*). Because users hit different oa-stations who issue such ephemeral keys to many users, model providers only see anonymous and mixed traffic.
-2. **Chat prompts and responses are *never* seen by OA infra.**\\
-   Because the ephemeral key itself is unlinkably issued to *you*, your browser either talks to models on the provider *directly* via encrypted HTTPS or through an enclaved inference proxy.
-   Open Anonymity simply handles the key issuance, rotation, and encrypted tunneling.
-3. **Chat history is entirely local.**\\
-   Because every chat takes a random anonymous path to the model, *only you* have your full chat history, [saved locally](#download-chats-link).
-4. **This chat client is lightweight, fast, and disposable.**\\
-    The entire client is less than 1MB. All it does is fetching ephemeral keys, sending prompts, and streaming responses on your behalf. You can (and should) [export](#download-tickets-link) your tickets to make the same API calls without this client.
-
-**The OA project is actively developed at Stanford and Michigan.** This client is currently in closed alpha and more details coming soon. We appreciate your [feedback](https://forms.gle/HEmvxnJpN1jQC7CfA)!
-
-[12/16/2025] Various UI/UX improvements & GPT-5.2 Instant/Thinking\\
-[11/26/2025] Added Claude Opus 4.5, Gemini 3 Pro, and GPT-5.1 Instant and Thinking\\
-[11/25/2025] Added TLS-over-WebSocket inference proxy\\
-[11/19/2025] Added prompt editing and chat branching + UI fixes
-    `.trim(),
-    // Future: Add diagram/image support
-    // diagram: null,
-};
-
+// Welcome content is managed by inferenceService.js (single source of truth)
+// This getter delegates to inferenceService with a minimal structural fallback
 function getWelcomeContent() {
     if (typeof window !== 'undefined' &&
         window.inferenceService &&
         typeof window.inferenceService.getWelcomeContent === 'function') {
         return window.inferenceService.getWelcomeContent();
     }
-    return DEFAULT_WELCOME_CONTENT;
+    // Minimal fallback structure - inferenceService should always be loaded by render time
+    return { title: '`oa-fastchat`', subtitle: '', content: '' };
 }
 
 // Shared class constants (copied verbatim from existing markup)

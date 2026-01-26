@@ -55,27 +55,11 @@ function getWelcomeContent(backend = getBackend()) {
     const accessLabel = backend.accessLabel;
     return {
         title: '`oa-fastchat`',
-        subtitle: 'A minimal, fast, and anonymous chat client by The Open Anonymity Project',
-        content: `
-1. **Chats are end-to-end anonymous.**\\
-   Every chat requests an *ephemeral and cryptographically unlinkable* ${providerName} ${accessLabel} from a random proxy (*oa-stations*) with blind-signed tokens (*inference tickets*). Because users hit different oa-stations who issue such ephemeral keys to many users, model providers only see anonymous and mixed traffic.
-2. **Chat prompts and responses *never* go through Open Anonymity.**\\
-   Because the ephemeral ${accessLabel} itself is unlinkably issued to *you*, your browser talks to models on ${providerName} *directly* via encrypted HTTPS.
-   Open Anonymity simply handles the key issuance, rotation, and encrypted tunneling.
-3. **Chat history is entirely local.**\\
-   Because every chat takes a random anonymous path to the model, *only you* have your full chat history, [saved locally](#download-chats-link).
-4. **This chat client is lightweight, fast, and disposable.**\\
-    The entire client is less than 1MB. All it does is fetching ${accessLabel}s, sending prompts, and streaming responses on your behalf. You can (and should) [export](#download-tickets-link) your tickets to make the same API calls without this client.
-
-**The OA project is actively developed at Stanford and Michigan.** This client is currently in closed alpha and more details coming soon. We appreciate your [feedback](https://forms.gle/HEmvxnJpN1jQC7CfA)!
-
-[12/16/2025] Various UI/UX improvements & GPT-5.2 Instant/Thinking\\
-[11/26/2025] Added Claude Opus 4.5, Gemini 3 Pro, and GPT-5.1 Instant and Thinking\\
-[11/25/2025] Added TLS-over-WebSocket inference proxy\\
-[11/19/2025] Added prompt editing and chat branching + UI fixes
-        `.trim()
+        subtitle: 'A simple and extremely fast chat client by [The Open Anonymity Project](',
+        content: ``.trim()
     };
 }
+
 
 const inferenceService = {
     getBackend,
