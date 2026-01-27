@@ -233,6 +233,10 @@
                     </button>
                 </div>
 
+                <button id="process-memory-btn" class="w-full inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground bg-card border border-border text-foreground shadow-sm h-9 px-3" title="Process chat history into memory store">
+                    <span class="text-sm">Process Memory</span>
+                </button>
+
                 <div class="flex-1 min-h-0 overflow-hidden p-px">
                     <div class="flex h-full min-h-0 w-full flex-col gap-2">
                         <div class="relative shrink-0">
@@ -644,6 +648,11 @@
                 <div id="models-list" class="space-y-1"></div>
             </div>
         </div>
+    </div>
+
+    <!-- Mention Popup -->
+    <div id="mention-popup" class="hidden fixed z-50 bg-background border border-border rounded-lg shadow-xl">
+        <div class="mention-list"></div>
     </div>
 
     <!-- Prerender landing content early (skip if restoring a session) -->

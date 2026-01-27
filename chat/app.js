@@ -29,6 +29,7 @@ import { initPinnedModels } from './services/modelConfig.js';
 import accountService from './services/accountService.js';
 import apiKeyStore from './services/apiKeyStore.js';
 import { generateUlid21 } from './services/ulid.js';
+import { memoryService } from './services/memoryService.js';
 import { chatDB } from './db.js';
 
 const DEFAULT_MODEL_NAME = inferenceService.getDefaultModelName();
@@ -97,6 +98,7 @@ class ChatApp {
 
         this.elements = {
             newChatBtn: document.getElementById('new-chat-btn'),
+            processMemoryBtn: document.getElementById('process-memory-btn'),
             sessionsList: document.getElementById('sessions-list'),
             searchRoomsInput: document.getElementById('search-rooms'),
             chatArea: document.getElementById('chat-area'),
@@ -3278,9 +3280,16 @@ class ChatApp {
      */
     async sendMessage() {
         // Check if there's content to send
-        const content = this.elements.messageInput.value.trim();
+        let content = this.elements.messageInput.value.trim();
         const hasFiles = this.uploadedFiles.length > 0;
         if (!content && !hasFiles) return;
+
+        // Enrich message with memory context if it contains @memory mention
+        const { memoryEnrichmentService } = await import('./services/memoryEnrichmentService.js');
+        const enrichmentResult = await memoryEnrichmentService.enrichMessage(content);
+        const displayContent = enrichmentResult.displayMessage;  // What user sees
+        let apiContent = enrichmentResult.apiMessage;  // What gets sent to API
+        const hasMemoryContext = enrichmentResult.hasMemory;
 
         // Create session if none exists (first message creates the session)
         if (!this.getCurrentSession()) {
@@ -3289,6 +3298,11 @@ class ChatApp {
 
         let session = this.getCurrentSession();
         if (!session) return; // Safety check
+        
+        // Store the API content for use later in streaming (if memory was used)
+        if (hasMemoryContext) {
+            this._lastApiContent = apiContent;
+        }
 
         // If this is an imported session and URL still shows the original share ID,
         // "fork" it - update URL to local session ID and mark as forked
@@ -3386,7 +3400,7 @@ class ChatApp {
                 metadata.searchEnabled = true;
             }
             this.isAutoScrollPaused = true;
-            const userMessage = await this.addMessage('user', content || '', metadata);
+            const userMessage = await this.addMessage('user', displayContent || '', metadata);
 
             // Clear input and files
             this.elements.messageInput.value = '';
@@ -3558,7 +3572,16 @@ class ChatApp {
                 const filteredMessages = messages.filter(msg => !msg.isLocalOnly);
 
                 // Process messages to include file content from stored metadata
-                const processedMessages = this.processMessagesWithFiles(filteredMessages, modelIdForRequest);
+                let processedMessages = this.processMessagesWithFiles(filteredMessages, modelIdForRequest);
+
+                // If we have stored API content (from @memory enrichment), replace the last message with it
+                if (this._lastApiContent && processedMessages.length > 0) {
+                    const lastMsg = processedMessages[processedMessages.length - 1];
+                    if (lastMsg.role === 'user') {
+                        lastMsg.content = this._lastApiContent;
+                        delete this._lastApiContent;  // Clear for next message
+                    }
+                }
 
                 // Create a placeholder message for streaming
                 const streamingMessageId = this.generateId();
@@ -4763,6 +4786,24 @@ class ChatApp {
         // New chat button
         this.elements.newChatBtn.addEventListener('click', () => {
             this.handleNewChatRequest();
+        });
+
+        // Process memory button
+        this.elements.processMemoryBtn?.addEventListener('click', async () => {
+            this.elements.processMemoryBtn.disabled = true;
+            try {
+                const onProgress = (message) => {
+                    console.log('Processing progress:', message);
+                    this.showToast?.(message, 'info');
+                };
+                await memoryService.processMemory(onProgress);
+                this.showToast?.('Memory processing complete!', 'success');
+            } catch (error) {
+                console.error('Memory processing failed:', error);
+                this.showToast?.(error.message || 'Memory processing failed', 'error');
+            } finally {
+                this.elements.processMemoryBtn.disabled = false;
+            }
         });
 
         // Status dot button handler - toggles floating panel

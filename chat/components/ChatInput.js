@@ -10,6 +10,7 @@ import { exportAllData, exportChats, exportTickets } from '../services/globalExp
 import { importFromFile, formatImportSummary } from '../services/globalImport.js';
 import ticketClient from '../services/ticketClient.js';
 import { chatDB } from '../db.js';
+import { mentionService } from '../services/mentionService.js';
 
 export default class ChatInput {
     /**
@@ -23,17 +24,34 @@ export default class ChatInput {
      * Sets up all event listeners for the input area controls.
      */
     setupEventListeners() {
+        // Initialize mention service
+        const mentionPopup = document.getElementById('mention-popup');
+        mentionService.initialize(mentionPopup, this.app.elements.messageInput);
+
         // Auto-resize textarea and clear file undo stack on text input
-        this.app.elements.messageInput.addEventListener('input', () => {
+        this.app.elements.messageInput.addEventListener('input', (e) => {
             this.app.elements.messageInput.style.height = '24px';
             this.app.elements.messageInput.style.height = Math.min(this.app.elements.messageInput.scrollHeight, 384) + 'px';
             this.app.updateInputState();
+            
+            // Check for mention context
+            this.handleMentionInput();
+
             // Clear file undo stack - text input should take undo precedence
             this.app.fileUndoStack = [];
         });
 
         // Send on Enter (not Shift+Enter and not composing with IME)
         this.app.elements.messageInput.addEventListener('keydown', (e) => {
+            const mentionPopup = document.getElementById('mention-popup');
+            const isMentionPopupVisible = mentionPopup && !mentionPopup.classList.contains('hidden');
+
+            // Close mention popup on Escape
+            if (e.key === 'Escape' && isMentionPopupVisible) {
+                mentionService.hideMentionPopup();
+                return;
+            }
+
             if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
                 window.oaPendingSend = false; // Clear pending flag if we're handling it live
                 e.preventDefault();
@@ -48,6 +66,30 @@ export default class ChatInput {
         });
 
         // Note: Paste events (files + text) are handled globally in app.js
+
+        // Setup mention popup click handler
+        const mentionPopupElement = document.getElementById('mention-popup');
+        if (mentionPopupElement) {
+            mentionPopupElement.addEventListener('click', (e) => {
+                const mentionItem = e.target.closest('.mention-item');
+                if (mentionItem) {
+                    const mentionName = mentionItem.dataset.mention;
+                    if (mentionName) {
+                        mentionService.insertMention(mentionName);
+                    }
+                }
+            });
+        }
+
+        // Close mention popup when clicking outside
+        document.addEventListener('click', (e) => {
+            const mentionPopup = document.getElementById('mention-popup');
+            if (mentionPopup && !mentionPopup.classList.contains('hidden')) {
+                if (!mentionPopup.contains(e.target) && e.target !== this.app.elements.messageInput) {
+                    mentionService.hideMentionPopup();
+                }
+            }
+        });
 
         // Send button click - handles both send and stop
         this.app.elements.sendBtn.addEventListener('click', () => {
@@ -605,4 +647,22 @@ export default class ChatInput {
             dismissToast?.();
         }
     }
+
+    /**
+     * Handles mention input detection and popup display.
+     * Detects @ symbol and shows mention suggestions.
+     */
+    handleMentionInput() {
+        const context = mentionService.checkMentionContext();
+
+        if (!context) {
+            // Hide popup if no @ context
+            mentionService.hideMentionPopup();
+            return;
+        }
+
+        // Show popup with filtered suggestions (empty query shows all)
+        mentionService.showMentionPopup(context);
+    }
 }
+
