@@ -446,6 +446,7 @@ class AccountService {
 
         // Session persistence: access token (memory) and CryptoKey (IndexedDB)
         this.accessToken = null;
+        this.refreshToken = null;  // For Electron (web uses HttpOnly cookie)
         this.cryptoKey = null;  // Non-extractable CryptoKey for encryption
 
         // Set up global callback for token invalidation
@@ -636,13 +637,19 @@ class AccountService {
      */
     async refreshAccessToken() {
         try {
+            const headers = {
+                'Content-Type': 'application/json',
+                'X-Client-Platform': PLATFORM
+            };
+            // Electron: send refresh token in header (web uses HttpOnly cookie)
+            if (this.refreshToken) {
+                headers['Authorization'] = `Bearer ${this.refreshToken}`;
+            }
+
             const response = await fetch(`${ORG_API_BASE}/auth/refresh`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Client-Platform': PLATFORM
-                },
-                credentials: 'include'  // Sends HttpOnly cookie automatically
+                headers,
+                credentials: 'include'
             });
             
             if (!response.ok) {
@@ -651,11 +658,9 @@ class AccountService {
             }
             
             const data = await response.json();
-            if (data.accessToken) {
-                this.accessToken = data.accessToken;
-                return true;
-            }
-            return false;
+            if (data.accessToken) this.accessToken = data.accessToken;
+            if (data.refreshToken) this.refreshToken = data.refreshToken;  // May rotate
+            return !!data.accessToken;
         } catch (error) {
             console.warn('Failed to refresh access token:', error);
             this.accessToken = null;
@@ -931,9 +936,8 @@ class AccountService {
         this.state.recoveryCode = null;
 
         // Handle access token from response
-        if (registerData?.accessToken) {
-            this.accessToken = registerData.accessToken;
-        }
+        if (registerData?.accessToken) this.accessToken = registerData.accessToken;
+        if (registerData?.refreshToken) this.refreshToken = registerData.refreshToken;
         
         // Persist master key as non-extractable CryptoKey for session restoration
         await this.persistMasterKey(masterKey);
@@ -1092,9 +1096,8 @@ class AccountService {
             this.state.error = null;
             
             // Handle access token from response
-            if (registerData?.accessToken) {
-                this.accessToken = registerData.accessToken;
-            }
+            if (registerData?.accessToken) this.accessToken = registerData.accessToken;
+            if (registerData?.refreshToken) this.refreshToken = registerData.refreshToken;
             
             // Persist master key as non-extractable CryptoKey for session restoration
             await this.persistMasterKey(masterKey);
@@ -1199,9 +1202,8 @@ class AccountService {
             this.state.recoveryRequired = false;
             
             // Handle access token from response
-            if (loginData.accessToken) {
-                this.accessToken = loginData.accessToken;
-            }
+            if (loginData.accessToken) this.accessToken = loginData.accessToken;
+            if (loginData.refreshToken) this.refreshToken = loginData.refreshToken;
             
             // Persist master key as non-extractable CryptoKey for session restoration
             await this.persistMasterKey(masterKey);
@@ -1332,9 +1334,8 @@ class AccountService {
             this.state.recoveryRequired = false;
             
             // Handle access token from response
-            if (completeData?.accessToken) {
-                this.accessToken = completeData.accessToken;
-            }
+            if (completeData?.accessToken) this.accessToken = completeData.accessToken;
+            if (completeData?.refreshToken) this.refreshToken = completeData.refreshToken;
             
             // Persist master key as non-extractable CryptoKey for session restoration
             await this.persistMasterKey(masterKey);
@@ -1385,6 +1386,7 @@ class AccountService {
         this.masterKey = null;
         this.cryptoKey = null;
         this.accessToken = null;
+        this.refreshToken = null;
         
         // Clear persisted CryptoKey from IndexedDB
         await this.clearPersistedMasterKey();
@@ -1405,6 +1407,7 @@ class AccountService {
         this.masterKey = null;
         this.cryptoKey = null;  // Clear from memory (IndexedDB copy remains for re-unlock)
         this.accessToken = null;
+        this.refreshToken = null;
         this.updateStatus();
         this.notify();
     }
@@ -1424,6 +1427,9 @@ class AccountService {
             console.warn('Failed to clear sync data:', error);
         }
         
+        // Capture refresh token before clearing (needed for Electron logout)
+        const refreshToken = this.refreshToken;
+        
         // Clear local state
         if (this.masterKey) {
             this.masterKey.fill(0);
@@ -1431,19 +1437,25 @@ class AccountService {
         this.masterKey = null;
         this.cryptoKey = null;
         this.accessToken = null;
+        this.refreshToken = null;
         
         // Clear persisted CryptoKey from IndexedDB
         await this.clearPersistedMasterKey();
         
         // Notify server to invalidate refresh token
         try {
+            const headers = {
+                'Content-Type': 'application/json',
+                'X-Client-Platform': PLATFORM
+            };
+            // Electron: send refresh token in header (web uses HttpOnly cookie)
+            if (refreshToken) {
+                headers['Authorization'] = `Bearer ${refreshToken}`;
+            }
             await fetch(`${ORG_API_BASE}/auth/logout`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Client-Platform': PLATFORM
-                },
-                credentials: 'include'  // Sends HttpOnly cookie to be invalidated
+                headers,
+                credentials: 'include'
             });
         } catch (error) {
             // Server logout failure shouldn't prevent local logout
