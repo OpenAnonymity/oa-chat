@@ -632,20 +632,6 @@ class RightPanel {
 
         inferenceService.ensureSessionBackend(this.currentSession);
 
-        // Calculate ticket cost based on selected model and reasoning state
-        const modelName = this.currentSession.model || this.app.state.pendingModelName || inferenceService.getDefaultModelName(this.currentSession);
-        const modelEntry = this.app.state.models.find(m => m.name === modelName);
-        const modelId = modelEntry?.id || inferenceService.getDefaultModelId(this.currentSession);
-        const reasoningEnabled = this.app.reasoningEnabled ?? true;
-        const ticketsRequired = getTicketCost(modelId, reasoningEnabled);
-
-        // Check if user has enough tickets
-        const availableTickets = ticketClient.getTicketCount();
-        if (availableTickets < ticketsRequired) {
-            alert(`Not enough tickets for this model. Need ${ticketsRequired}, but only ${availableTickets} available.`);
-            return;
-        }
-
         try {
             // Set current session for network logging
             if (this.currentSession && window.networkLogger) {
@@ -666,53 +652,13 @@ class RightPanel {
             // Wait for the transformation animation
             await new Promise(resolve => setTimeout(resolve, 1000));
 
-            // Actually request the API key
+            // Actually request the API key (uses unified flow with verification)
             this.isRequestingKey = true;
             this.renderTopSectionOnly();
 
-            const backend = inferenceService.getBackendForSession(this.currentSession);
+            await this.app.acquireAndSetAccess(this.currentSession);
 
-            // Retry loop for spent tickets (they get auto-archived on failure)
-            let result;
-            let retries = 0;
-            let toastShown = false;
-            const maxRetries = Math.min(
-                availableTickets,
-                Math.max(ticketsRequired + 5, Math.floor(availableTickets * TICKET_RETRY_RATIO))
-            );
-
-            while (retries < maxRetries) {
-                try {
-                    result = await inferenceService.requestAccess(this.currentSession, {
-                        name: backend.requestName,
-                        ticketsRequired
-                    });
-                    break;  // Success
-                } catch (error) {
-                    console.log('🔄 Request error:', error.message, 'code:', error.code, 'consumeTickets:', error.consumeTickets);
-                    if (error.code === 'TICKET_USED') {
-                        retries++;
-                        if (!toastShown) {
-                            this.app.showToast(`Ticket already used, trying next...`);
-                            toastShown = true;
-                        }
-                        continue;
-                    }
-                    throw error;  // Non-retryable error
-                }
-            }
-
-            if (!result) {
-                throw new Error('All available tickets were already spent');
-            }
-
-            // Store access in current session
-            inferenceService.setAccessInfo(this.currentSession, result);
-
-            // Save session to DB
-            await chatDB.saveSession(this.currentSession);
-
-            // Update local state
+            // Update local state from session
             const accessInfo = inferenceService.getAccessInfo(this.currentSession);
             this.apiKey = accessInfo?.token || null;
             this.apiKeyInfo = accessInfo?.info || null;
@@ -1170,7 +1116,7 @@ class RightPanel {
             <div class="activity-log-details mt-2 text-xs bg-muted/10 rounded-lg border border-border/50 overflow-hidden" style="animation: slideDown 0.2s ease-out;">
                     <!-- Detailed description -->
                     <div class="px-3 pt-2.5 pb-2 bg-muted/5 border-b border-border/50">
-                        <div class="text-foreground leading-relaxed">${this.escapeHtml(getActivityDescription(log, true))}</div>
+                        <div class="text-foreground leading-relaxed">${log.status === 'pending' || log.status === 'queued' ? getActivityDescription(log, true) : this.escapeHtml(getActivityDescription(log, true))}</div>
                     </div>
 
                 <!-- Technical Details -->

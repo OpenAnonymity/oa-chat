@@ -19,6 +19,47 @@ const HIGH_ACTIVITY_INTERVAL_MS = 30 * 1000; // 30 seconds when active
 const ACTIVITY_WINDOW_MS = 60 * 1000;    // 1 minute activity window
 const HIGH_ACTIVITY_THRESHOLD = 2;       // 2+ requests = high activity
 
+// Pending submission retry settings (exponential backoff)
+const PENDING_BASE_BACKOFF_MS = 5000;    // 5 seconds initial backoff
+const PENDING_MAX_BACKOFF_MS = 300000;   // 5 minutes max backoff
+const PENDING_MAX_ATTEMPTS = 10;         // Max retry attempts
+
+/**
+ * Classify whether a submitKey error is a hard failure (reject key) or soft failure (retry)
+ * Hard failures: banned station, 400/401/403/404 validation errors, invalid signatures
+ * Soft failures: network errors, timeouts, 429 rate limits, 5xx server errors
+ */
+function isHardFailure(error, response, data) {
+    // Banned station = hard failure
+    if (data?.status === 'banned') return true;
+    if (error?.status === 'banned') return true;
+    
+    // Explicit hard failures from verifier (request/validation/auth/ban/not found)
+    if ([400, 401, 403, 404].includes(response?.status)) {
+        return true;
+    }
+    
+    // Signature/validation errors from verifier = hard failure
+    const errorMsg = (error?.message || data?.detail || data?.error || '').toLowerCase();
+    if (errorMsg.includes('invalid signature') || 
+        errorMsg.includes('signature mismatch') ||
+        errorMsg.includes('expired') ||
+        errorMsg.includes('invalid key')) {
+        return true;
+    }
+    
+    // Everything else (network errors, timeouts, 5xx, 429) = soft failure
+    return false;
+}
+
+/**
+ * Calculate next backoff delay with jitter
+ */
+function getNextBackoff(currentBackoff) {
+    const jitter = Math.random() * 0.3 * currentBackoff; // 0-30% jitter
+    return Math.min(currentBackoff * 2 + jitter, PENDING_MAX_BACKOFF_MS);
+}
+
 class StationVerifier {
     constructor() {
         // Verification state per station
@@ -55,6 +96,10 @@ class StationVerifier {
         
         // Completion request tracking for dynamic interval
         this.completionRequests = []; // timestamps of recent completion requests
+        
+        // Pending key submissions for background retry
+        // Map<keyHash, {keyData, attempts, nextRetryAt, backoffMs, stationId, logId}>
+        this.pendingSubmissions = new Map();
     }
     
     /**
@@ -657,8 +702,17 @@ class StationVerifier {
     /**
      * Submit key data to verifier for validation before AI inference
      * POST /submit_key
+     * 
+     * Returns a status object:
+     * - { status: 'verified', data: {...} } - Success (or trusted station skip)
+     * - { status: 'pending', ... } - Soft failure, queued for background retry
+     * - { status: 'rejected', error: Error, bannedStation?: {...} } - Hard failure
+     * 
+     * For trusted stations, soft failures (network/5xx) are silently skipped.
+     * For non-trusted stations, soft failures queue for background retry.
+     * 
      * @param {object} keyData - Key data from org's /request_key response
-     * @returns {Promise<{status: string, station_id: string, key_hash: string}>}
+     * @returns {Promise<{status: 'verified'|'pending'|'rejected', ...}>}
      */
     async submitKey(keyData) {
         console.log('🔐 Submitting key to verifier for validation...');
@@ -668,7 +722,10 @@ class StationVerifier {
             !keyData?.expiresAtUnix ||
             !keyData?.stationSignature ||
             !keyData?.orgSignature) {
-            throw new Error('Invalid API key response. Please request a new key.');
+            return {
+                status: 'rejected',
+                error: new Error('Invalid API key response. Please request a new key.')
+            };
         }
 
         const requestBody = {
@@ -678,6 +735,9 @@ class StationVerifier {
             station_signature: keyData.stationSignature,
             org_signature: keyData.orgSignature
         };
+
+        // Generate key hash for tracking
+        const keyHash = await this._hashKey(keyData.key);
 
         try {
             // submitKey is idempotent (validation only, no state change) - safe to retry
@@ -696,6 +756,70 @@ class StationVerifier {
                 }
             );
 
+            if (!response.ok) {
+                const errorMessage = data?.error || data?.detail || data?.message || 'Verification failed';
+                const error = new Error(errorMessage);
+                
+                // Check if this is a hard failure (4xx, banned, signature errors)
+                if (isHardFailure(error, response, data)) {
+                    networkLogger.logRequest({
+                        type: 'verification',
+                        method: 'POST',
+                        url: `${VERIFIER_URL}/submit_key`,
+                        status: response.status,
+                        request: { station_id: keyData.stationId },
+                        response: data
+                    });
+                    
+                    console.error('❌ Key verification hard failure:', errorMessage);
+                    
+                    // Attach detailed banned station info if available
+                    if (data?.status === 'banned' && data?.banned_station) {
+                        error.status = 'banned';
+                        return {
+                            status: 'rejected',
+                            error,
+                            bannedStation: {
+                                stationId: data.banned_station.station_id,
+                                publicKey: data.banned_station.public_key,
+                                reason: data.banned_station.reason,
+                                bannedAt: data.banned_station.banned_at
+                            }
+                        };
+                    }
+                    
+                    return { status: 'rejected', error };
+                }
+                
+                // Soft failure - only recently attested stations get retry
+                if (keyData.recentlyAttested) {
+                    console.warn('⚠️ Key verification soft failure, queuing for retry:', errorMessage);
+                    const logEntry = networkLogger.logRequest({
+                        type: 'verification',
+                        method: 'POST',
+                        url: `${VERIFIER_URL}/submit_key`,
+                        status: 'pending',
+                        request: { station_id: keyData.stationId },
+                        response: { message: 'The verifier is currently unreachable. Station integrity will be attested as soon as verifier comes <a href="https://verifier.openanonymity.ai/health" target="_blank" rel="noopener noreferrer" class="underline hover:text-amber-700 dark:hover:text-amber-300">online</a>. You can continue sending messages normally because this station was recently attested by other users.' }
+                    });
+                    this._queuePendingSubmission(keyData, keyHash, logEntry.id);
+                    return { status: 'pending', keyHash };
+                }
+                
+                // Non-recently attested station - all failures are hard failures
+                networkLogger.logRequest({
+                    type: 'verification',
+                    method: 'POST',
+                    url: `${VERIFIER_URL}/submit_key`,
+                    status: response.status,
+                    request: { station_id: keyData.stationId },
+                    response: data
+                });
+                console.error('❌ Key verification failed:', errorMessage);
+                return { status: 'rejected', error };
+            }
+
+            // Success
             networkLogger.logRequest({
                 type: 'verification',
                 method: 'POST',
@@ -704,34 +828,35 @@ class StationVerifier {
                 request: { station_id: keyData.stationId },
                 response: data
             });
-
-            if (!response.ok) {
-                const errorMessage = data?.error || data?.detail || data?.message || 'Verification failed';
-                const error = new Error(errorMessage);
-                
-                // Attach detailed banned station info if available
-                if (data?.status === 'banned' && data?.banned_station) {
-                    error.status = 'banned';
-                    error.bannedStation = {
-                        stationId: data.banned_station.station_id,
-                        publicKey: data.banned_station.public_key,
-                        reason: data.banned_station.reason,
-                        bannedAt: data.banned_station.banned_at
-                    };
-                }
-                throw error;
-            }
-
+            
+            // Remove from pending if it was queued
+            this.pendingSubmissions.delete(keyHash);
+            
             console.log('✅ Key verified:', data.status);
-            return data;
+            return { status: 'verified', data };
+
         } catch (error) {
             // Convert AbortError to user-friendly message
             const friendlyError = error.name === 'AbortError' 
-                ? new Error('Verification request timed out. Please try again.')
+                ? new Error('Verification request timed out.')
                 : error;
-            
-            console.error('❌ Key verification failed:', friendlyError.message);
 
+            // Network/timeout errors - only recently attested stations get retry
+            if (!isHardFailure(error, null, null) && keyData.recentlyAttested) {
+                console.warn('⚠️ Key verification soft failure (network), queuing for retry:', friendlyError.message);
+                const logEntry = networkLogger.logRequest({
+                    type: 'verification',
+                    method: 'POST',
+                    url: `${VERIFIER_URL}/submit_key`,
+                    status: 'pending',
+                    request: { station_id: keyData.stationId },
+                    response: { message: 'The verifier is currently unreachable. Station integrity will be attested as soon as verifier comes <a href="https://verifier.openanonymity.ai/health" target="_blank" rel="noopener noreferrer" class="underline hover:text-amber-700 dark:hover:text-amber-300">online</a>. You can continue sending messages normally because this station was recently attested by other users.' }
+                });
+                this._queuePendingSubmission(keyData, keyHash, logEntry.id);
+                return { status: 'pending', keyHash };
+            }
+
+            // Non-recently attested or hard failure - reject
             networkLogger.logRequest({
                 type: 'verification',
                 method: 'POST',
@@ -741,7 +866,131 @@ class StationVerifier {
                 error: friendlyError.message
             });
 
-            throw friendlyError;
+            console.error('❌ Key verification failed:', friendlyError.message);
+            return { status: 'rejected', error: friendlyError };
+        }
+    }
+    
+    /**
+     * Generate a hash for a key (for tracking)
+     */
+    async _hashKey(key) {
+        if (!key) return null;
+        try {
+            const encoder = new TextEncoder();
+            const data = encoder.encode(key);
+            const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+            const hashArray = Array.from(new Uint8Array(hashBuffer));
+            return hashArray.slice(0, 8).map(b => b.toString(16).padStart(2, '0')).join('');
+        } catch {
+            return `${key.slice(0, 8)}...${key.slice(-4)}`;
+        }
+    }
+    
+    /**
+     * Queue a key submission for background retry
+     */
+    _queuePendingSubmission(keyData, keyHash, logId) {
+        if (!keyHash || !keyData) return;
+        
+        const existing = this.pendingSubmissions.get(keyHash);
+        if (existing) {
+            existing.attempts++;
+            existing.backoffMs = getNextBackoff(existing.backoffMs);
+            existing.nextRetryAt = Date.now() + existing.backoffMs;
+        } else {
+            this.pendingSubmissions.set(keyHash, {
+                keyData,
+                stationId: keyData.stationId,
+                attempts: 1,
+                backoffMs: PENDING_BASE_BACKOFF_MS,
+                nextRetryAt: Date.now() + PENDING_BASE_BACKOFF_MS,
+                logId
+            });
+        }
+        console.log(`📋 Queued verification retry for ${keyHash}, next attempt in ${Math.round((this.pendingSubmissions.get(keyHash).backoffMs)/1000)}s`);
+    }
+    
+    /**
+     * Process pending submissions - called from broadcast check interval
+     */
+    async _processPendingSubmissions() {
+        if (this.pendingSubmissions.size === 0) return;
+        
+        const now = Date.now();
+        
+        for (const [keyHash, pending] of this.pendingSubmissions) {
+            if (now < pending.nextRetryAt) continue;
+            
+            // Check max attempts
+            if (pending.attempts >= PENDING_MAX_ATTEMPTS) {
+                console.warn(`⚠️ Verification retry ${keyHash} exceeded max attempts, giving up`);
+                this.pendingSubmissions.delete(keyHash);
+                continue;
+            }
+            
+            console.log(`🔄 Retrying verification for ${keyHash} (attempt ${pending.attempts + 1})`);
+            
+            try {
+                const { response, data } = await networkProxy.fetchWithRetryJson(
+                    `${VERIFIER_URL}/submit_key`,
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            station_id: pending.keyData.stationId,
+                            api_key: pending.keyData.key,
+                            key_valid_till: pending.keyData.expiresAtUnix,
+                            station_signature: pending.keyData.stationSignature,
+                            org_signature: pending.keyData.orgSignature
+                        })
+                    },
+                    {
+                        context: 'Verifier submit_key retry',
+                        maxAttempts: 2,
+                        timeoutMs: 15000,
+                        proxyConfig: { bypassProxy: true }
+                    }
+                );
+                
+                if (response.ok) {
+                    console.log(`✅ Verification retry ${keyHash} succeeded`);
+                    // Log success
+                    networkLogger.logRequest({
+                        type: 'verification',
+                        method: 'POST',
+                        url: `${VERIFIER_URL}/submit_key`,
+                        status: response.status,
+                        request: { station_id: pending.keyData.stationId },
+                        response: data
+                    });
+                    this.pendingSubmissions.delete(keyHash);
+                } else if (isHardFailure(null, response, data)) {
+                    // Hard failure on retry - give up and log rejection
+                    console.error(`❌ Verification retry ${keyHash} hard failure:`, data?.detail || data?.error);
+                    networkLogger.logRequest({
+                        type: 'verification',
+                        method: 'POST',
+                        url: `${VERIFIER_URL}/submit_key`,
+                        status: response.status,
+                        request: { station_id: pending.keyData.stationId },
+                        error: data?.detail || data?.error || 'Verification rejected'
+                    });
+                    this.pendingSubmissions.delete(keyHash);
+                } else {
+                    // Soft failure - increment backoff and try again later
+                    pending.attempts++;
+                    pending.backoffMs = getNextBackoff(pending.backoffMs);
+                    pending.nextRetryAt = Date.now() + pending.backoffMs;
+                    console.log(`⏳ Verification retry ${keyHash} still failing, next attempt in ${Math.round(pending.backoffMs/1000)}s`);
+                }
+            } catch (error) {
+                // Network error - increment backoff
+                pending.attempts++;
+                pending.backoffMs = getNextBackoff(pending.backoffMs);
+                pending.nextRetryAt = Date.now() + pending.backoffMs;
+                console.warn(`⚠️ Verification retry ${keyHash} network error:`, error.message);
+            }
         }
     }
 
@@ -756,7 +1005,10 @@ class StationVerifier {
         }
 
         const checkBroadcast = async () => {
-            // Only check if we have a current station
+            // Process pending verification retries
+            await this._processPendingSubmissions();
+            
+            // Only check broadcast if we have a current station
             if (!this.currentStationId) {
                 try {
                     // Still query to update online status

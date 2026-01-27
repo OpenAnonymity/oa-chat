@@ -408,6 +408,7 @@ class TicketClient {
                 expiresAtUnix: data.expires_at_unix,
                 stationId: data.station_id,
                 stationUrl: data.station_url,
+                recentlyAttested: data.station_recently_attested || false,
                 stationSignature: data.station_signature,
                 orgSignature: data.org_signature,
                 ticketsUsed: tickets.map(t => ({

@@ -20,6 +20,8 @@ export function getHostFromUrl(url) {
 export function getStatusIcon(status, isAborted = false) {
     if (isAborted) {
         return '⊗'; // Interrupted/stopped icon
+    } else if (status === 'queued' || status === 'pending') {
+        return '◎'; // Queued/pending icon
     } else if (status >= 200 && status < 300) {
         return '✓';
     } else if (status === 0) {
@@ -33,6 +35,8 @@ export function getStatusIcon(status, isAborted = false) {
 export function getStatusClass(status, isAborted = false) {
     if (isAborted) {
         return 'text-orange-600'; // Orange for user-interrupted
+    } else if (status === 'queued' || status === 'pending') {
+        return 'text-amber-600'; // Amber for queued/pending
     } else if (status >= 200 && status < 300) {
         return 'text-green-600';
     } else if (status === 0) {
@@ -46,12 +50,12 @@ export function getStatusClass(status, isAborted = false) {
 export function getStatusDotClass(status, isAborted = false) {
     if (isAborted) {
         return 'bg-orange-500'; // Orange dot for user-interrupted
+    } else if (status === 'queued' || status === 'pending') {
+        return 'bg-amber-500'; // Amber dot for queued/pending
     } else if (status >= 200 && status < 300) {
         return 'bg-green-500';
-    } else if (status === 0) {
-        return 'bg-red-500';
-    } else if (status >= 400) {
-        return 'bg-orange-500';
+    } else if (status >= 400 || status === 0) {
+        return 'bg-red-500'; // Red for errors (4xx, 5xx, network failures)
     }
     return 'bg-gray-500';
 }
@@ -253,21 +257,25 @@ export function getActivityDescription(log, detailed = false) {
         }
 
         // Verifier endpoint - station integrity verification
-        if (urlObj.host === 'verifier.openanonymity.ai') {
+        if (type === 'verification' || urlObj.host === 'verifier.openanonymity.ai' || urlObj.host.includes('localhost')) {
             if (!detailed) {
-                if (status >= 200 && status < 300) {
+                if (status === 'queued' || status === 'pending') {
+                    return 'Verifying station integrity';
+                } else if (status >= 200 && status < 300) {
                     return 'Verified station integrity';
-                } else if (status === 0) {
-                    return 'Failed to verify station integrity';
+                } else if (status >= 400 || status === 0) {
+                    return 'Station verification failed';
                 }
                 return 'Verifying station integrity';
             } else {
-                if (status >= 200 && status < 300) {
+                if (status === 'queued' || status === 'pending') {
+                    return 'The verifier is currently unreachable. Station integrity will be attested as soon as verifier comes <a href="https://verifier.openanonymity.ai/health" target="_blank" rel="noopener noreferrer" class="underline hover:text-amber-700 dark:hover:text-amber-300">online</a>. You can continue sending messages normally because this station was recently attested by other users.';
+                } else if (status >= 200 && status < 300) {
                     return 'Successfully verified the integrity of the key issuing station.';
-                } else if (status === 0) {
-                    return 'Failed to verify station integrity. The verifier may be unavailable.';
+                } else if (status >= 400 || status === 0) {
+                    return 'Station verification failed. The station may not be registered or was rejected.';
                 }
-                return 'Verifying the issuing station\'s integrity against its registration record';
+                return 'Verifying the issuing station\'s integrity against its registration record...';
             }
         }
 
@@ -446,11 +454,12 @@ export function renderNetworkLog(log, isExpanded = false, isMinimal = false) {
                             <span class="text-muted-foreground">Status:</span>
                             <span class="font-medium px-1.5 py-0.5 rounded text-[10px] ${
                                 log.isAborted ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400' :
+                                (log.status === 'queued' || log.status === 'pending') ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400' :
                                 log.status >= 200 && log.status < 300 ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' :
                                 log.status === 0 ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' :
                                 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
                             }">
-                                ${log.isAborted ? 'INTERRUPTED' : (log.status || 'ERROR')}
+                                ${log.isAborted ? 'INTERRUPTED' : (log.status === 'queued' || log.status === 'pending') ? 'PENDING' : (log.status || 'ERROR')}
                             </span>
                         </div>
                         <div class="flex items-center gap-1">
@@ -464,7 +473,11 @@ export function renderNetworkLog(log, isExpanded = false, isMinimal = false) {
                         <div class="font-mono break-all">${log.url}</div>
                     </div>
 
-                    ${log.error ? `
+                    ${(log.status === 'queued' || log.status === 'pending') && log.response?.message ? `
+                        <div class="text-[10px] text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 p-1.5 rounded border border-amber-200 dark:border-amber-800/50">
+                            ${log.response.message}
+                        </div>
+                    ` : log.error ? `
                         <div class="text-[10px] text-red-600 dark:text-red-400 bg-red-50/50 dark:bg-red-900/30 p-1.5 rounded border border-red-200/50 dark:border-red-800/50">
                             ${escapeHtml(log.error)}
                         </div>

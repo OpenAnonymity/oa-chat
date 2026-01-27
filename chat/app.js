@@ -1601,20 +1601,29 @@ class ChatApp {
         const accessInfo = sessionAccess?.info || sharedAccess;
 
         // Attempt verification with verifier
-        try {
-            console.log('🔐 Verifying shared access...');
-            await verifier.submitAccess(accessInfo);
+        console.log('🔐 Verifying shared access...');
+        const verifyResult = await verifier.submitAccess(accessInfo);
+        
+        if (verifyResult?.status === 'verified') {
             console.log('✅ Shared access verified successfully');
             return sharedAccess;
-        } catch (verifyError) {
-            console.warn('⚠️ Shared access verification failed:', verifyError.message);
+        }
+        
+        if (verifyResult?.status === 'pending') {
+            // Soft failure - verifier offline, allow import with warning
+            console.warn('⚠️ Shared access verification pending (verifier offline), allowing import');
+            return sharedAccess;
+        }
+        
+        if (verifyResult?.status === 'rejected') {
+            console.warn('⚠️ Shared access verification failed:', verifyResult.error?.message);
 
             // Check if it's a banned station
-            const isBanned = verifyError.status === 'banned';
-            const banReason = verifyError.bannedStation?.reason;
+            const isBanned = !!verifyResult.bannedStation;
+            const banReason = verifyResult.bannedStation?.reason;
 
             const choice = await shareModals.showSharedKeyVerificationFailedPrompt({
-                error: verifyError.message,
+                error: verifyResult.error?.message || 'Verification failed',
                 stationId: sharedAccess.stationId,
                 isBanned,
                 banReason
@@ -1622,6 +1631,9 @@ class ChatApp {
 
             return choice === 'import_without_key' ? null : 'cancel';
         }
+        
+        // Unknown status - allow import
+        return sharedAccess;
     }
 
     /**
@@ -2910,47 +2922,6 @@ class ChatApp {
                     await this.addMessage('assistant', `**Error:** ${error.message}`, { isLocalOnly: true });
                     return;
                 }
-
-                // Verify key with verifier before proceeding
-                const verifier = inferenceService.getVerificationAdapter(session);
-                if (verifier?.supports) {
-                    try {
-                        if (this.floatingPanel) {
-                            this.floatingPanel.showMessage(`Verifying ${accessLabel}...`, 'info');
-                        }
-                        const accessInfo = inferenceService.getAccessInfo(session);
-                        await inferenceService.verifyAccess(session, accessInfo?.info);
-                        inferenceService.setCurrentAccess(session, accessInfo?.info);
-                    } catch (verifyError) {
-                        // Clear the API key since it failed verification
-                        inferenceService.clearAccessInfo(session);
-                        await chatDB.saveSession(session);
-
-                        // Update UI components
-                        if (this.rightPanel) {
-                            this.rightPanel.onSessionChange(session);
-                        }
-
-                        if (this.floatingPanel) {
-                            this.floatingPanel.showMessage(verifyError.message, 'error', 5000);
-                        }
-
-                        // Show detailed error for banned stations
-                        let errorMessage;
-                        if (verifyError.status === 'banned' && verifyError.bannedStation) {
-                            const bs = verifyError.bannedStation;
-                            const bannedDate = bs.bannedAt ? new Date(bs.bannedAt).toLocaleString() : 'Unknown';
-                            errorMessage = `**Station Banned**\n\n${verifyError.message}\n\n` +
-                                `- **Station ID:** \`${bs.stationId}\`\n` +
-                                `- **Reason:** ${bs.reason || 'Not specified'}\n` +
-                                `- **Banned at:** ${bannedDate}`;
-                        } else {
-                            errorMessage = `**Verification Error:** ${verifyError.message}`;
-                        }
-                        await this.addMessage('assistant', errorMessage, { isLocalOnly: true });
-                        return; // Block inference if verification fails
-                    }
-                }
             }
 
             // Set current session for network logging
@@ -3424,7 +3395,7 @@ class ChatApp {
                     }
                     await this.acquireAndSetAccess(session);
                     if (this.floatingPanel) {
-                        this.floatingPanel.showMessage(`Successfully acquired ${accessLabel}!`, 'success', 2000);
+                        this.floatingPanel.showMessage(`${accessLabel} ready`, 'success', 2000);
                     }
                 } catch (error) {
                     if (this.floatingPanel) {
@@ -3432,47 +3403,6 @@ class ChatApp {
                     }
                     await this.addMessage('assistant', `**Error:** ${error.message}`, { isLocalOnly: true });
                     return; // Return early if key acquisition fails
-                }
-
-                // Verify key with verifier before proceeding
-                const verifier = inferenceService.getVerificationAdapter(session);
-                if (verifier?.supports) {
-                    try {
-                        if (this.floatingPanel) {
-                            this.floatingPanel.showMessage(`Verifying ${accessLabel}...`, 'info');
-                        }
-                        const accessInfo = inferenceService.getAccessInfo(session);
-                        await inferenceService.verifyAccess(session, accessInfo?.info);
-                        inferenceService.setCurrentAccess(session, accessInfo?.info);
-                    } catch (verifyError) {
-                        // Clear the API key since it failed verification
-                        inferenceService.clearAccessInfo(session);
-                        await chatDB.saveSession(session);
-
-                        // Update UI components
-                        if (this.rightPanel) {
-                            this.rightPanel.onSessionChange(session);
-                        }
-
-                        if (this.floatingPanel) {
-                            this.floatingPanel.showMessage(verifyError.message, 'error', 5000);
-                        }
-
-                        // Show detailed error for banned stations
-                        let errorMessage;
-                        if (verifyError.status === 'banned' && verifyError.bannedStation) {
-                            const bs = verifyError.bannedStation;
-                            const bannedDate = bs.bannedAt ? new Date(bs.bannedAt).toLocaleString() : 'Unknown';
-                            errorMessage = `**Station Banned**\n\n${verifyError.message}\n\n` +
-                                `- **Station ID:** \`${bs.stationId}\`\n` +
-                                `- **Reason:** ${bs.reason || 'Not specified'}\n` +
-                                `- **Banned at:** ${bannedDate}`;
-                        } else {
-                            errorMessage = `**Verification Error:** ${verifyError.message}`;
-                        }
-                        await this.addMessage('assistant', errorMessage, { isLocalOnly: true });
-                        return; // Block inference if verification fails
-                    }
                 }
             }
 
@@ -5558,6 +5488,29 @@ Your API key has been cleared. A new key from a different station will be obtain
         }
 
         inferenceService.setAccessInfo(session, result);
+
+        // Verify key with verifier
+        const verifier = inferenceService.getVerificationAdapter(session);
+        if (verifier?.supports) {
+            const accessInfo = inferenceService.getAccessInfo(session);
+            const verifyResult = await inferenceService.verifyAccess(session, accessInfo?.info);
+            
+            if (verifyResult?.status === 'rejected') {
+                // Verification failed - clear the API key and throw
+                inferenceService.clearAccessInfo(session);
+                await chatDB.saveSession(session);
+                
+                const errorMsg = verifyResult.error?.message || 'Verification failed';
+                if (verifyResult.bannedStation) {
+                    const bs = verifyResult.bannedStation;
+                    throw new Error(`Station ${bs.stationId} is banned: ${bs.reason || 'Unknown reason'}`);
+                }
+                throw new Error(`Key verification failed: ${errorMsg}`);
+            }
+            
+            // Set current station for verifier tracking
+            inferenceService.setCurrentAccess(session, accessInfo?.info);
+        }
 
         // Clear apiKeyShared flag - new key hasn't been shared yet
         if (session.shareInfo?.apiKeyShared) {
