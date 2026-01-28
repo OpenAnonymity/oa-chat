@@ -1663,9 +1663,9 @@ class RightPanel {
             return { label: 'Connected', textClass: 'text-green-600 dark:text-green-400', dotClass: 'bg-green-500' };
         }
 
-        // Ready to use (verification happens on first request)
+        // Ready to use (WebSocket set up, verification happens on first request)
         if (status?.ready) {
-            return { label: 'Ready', textClass: 'text-green-600 dark:text-green-400', dotClass: 'bg-green-500' };
+            return { label: 'Ready', textClass: 'text-blue-600 dark:text-blue-400', dotClass: 'bg-blue-500' };
         }
 
         return { label: 'Initializing...', textClass: 'text-muted-foreground', dotClass: 'bg-muted-foreground/60' };
