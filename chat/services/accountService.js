@@ -27,9 +27,9 @@ import { generateRecoveryCode, isValidRecoveryCode, normalizeRecoveryCode } from
 import syncService from './syncService.js';
 
 const ACCOUNT_SETTINGS_KEY = 'account-settings';
-const MASTER_CRYPTO_KEY = 'master-crypto-key';
-const MASTER_KEY_BYTES = 'master-key-bytes';  // Raw bytes for sync HKDF
-const REFRESH_TOKEN_KEY = 'account-refresh-token';  // Electron-only: refresh token persistence
+const ACCOUNT_MASTER_CRYPTO_KEY = 'account-master-crypto-key';
+const ACCOUNT_MASTER_KEY_BYTES = 'account-master-key-bytes';  // Raw bytes for sync HKDF
+const ACCOUNT_REFRESH_TOKEN_KEY = 'account-refresh-token';  // Electron-only: refresh token persistence
 const ACCOUNT_REQUEST_TIMEOUT_MS = 10000;
 
 // Platform detection for auth token handling
@@ -576,8 +576,8 @@ class AccountService {
         );
         
         // Store both in IndexedDB
-        await chatDB.saveSetting(MASTER_CRYPTO_KEY, cryptoKey);
-        await chatDB.saveSetting(MASTER_KEY_BYTES, new Uint8Array(masterKeyBytes));
+        await chatDB.saveSetting(ACCOUNT_MASTER_CRYPTO_KEY, cryptoKey);
+        await chatDB.saveSetting(ACCOUNT_MASTER_KEY_BYTES, new Uint8Array(masterKeyBytes));
         this.cryptoKey = cryptoKey;
     }
 
@@ -591,8 +591,8 @@ class AccountService {
         
         try {
             const [cryptoKey, keyBytes] = await Promise.all([
-                chatDB.getSetting(MASTER_CRYPTO_KEY),
-                chatDB.getSetting(MASTER_KEY_BYTES)
+                chatDB.getSetting(ACCOUNT_MASTER_CRYPTO_KEY),
+                chatDB.getSetting(ACCOUNT_MASTER_KEY_BYTES)
             ]);
             
             if (cryptoKey && cryptoKey instanceof CryptoKey) {
@@ -619,8 +619,8 @@ class AccountService {
         
         try {
             await Promise.all([
-                chatDB.deleteSetting(MASTER_CRYPTO_KEY),
-                chatDB.deleteSetting(MASTER_KEY_BYTES)
+                chatDB.deleteSetting(ACCOUNT_MASTER_CRYPTO_KEY),
+                chatDB.deleteSetting(ACCOUNT_MASTER_KEY_BYTES)
             ]);
         } catch (error) {
             console.warn('Failed to delete master key from IndexedDB:', error);
@@ -739,7 +739,7 @@ class AccountService {
             if (hasKey) {
                 // Electron: load refresh token from IndexedDB before attempting refresh
                 if (PLATFORM === 'electron') {
-                    this.refreshToken = await chatDB.getSetting(REFRESH_TOKEN_KEY).catch(() => null);
+                    this.refreshToken = await chatDB.getSetting(ACCOUNT_REFRESH_TOKEN_KEY).catch(() => null);
                 }
                 // Small delay to prevent rate limiting on burst page refreshes
                 await new Promise(resolve => setTimeout(resolve, 1000));
@@ -958,7 +958,7 @@ class AccountService {
         // Electron: capture and persist refresh token to IndexedDB
         if (PLATFORM === 'electron' && registerData?.refreshToken) {
             this.refreshToken = registerData.refreshToken;
-            await chatDB.saveSetting(REFRESH_TOKEN_KEY, registerData.refreshToken);
+            await chatDB.saveSetting(ACCOUNT_REFRESH_TOKEN_KEY, registerData.refreshToken);
         }
         
         // Persist master key as non-extractable CryptoKey for session restoration
@@ -1124,7 +1124,7 @@ class AccountService {
             // Electron: capture and persist refresh token to IndexedDB
             if (PLATFORM === 'electron' && registerData?.refreshToken) {
                 this.refreshToken = registerData.refreshToken;
-                await chatDB.saveSetting(REFRESH_TOKEN_KEY, registerData.refreshToken);
+                await chatDB.saveSetting(ACCOUNT_REFRESH_TOKEN_KEY, registerData.refreshToken);
             }
             
             // Persist master key as non-extractable CryptoKey for session restoration
@@ -1236,7 +1236,7 @@ class AccountService {
             // Electron: capture and persist refresh token to IndexedDB
             if (PLATFORM === 'electron' && loginData.refreshToken) {
                 this.refreshToken = loginData.refreshToken;
-                await chatDB.saveSetting(REFRESH_TOKEN_KEY, loginData.refreshToken);
+                await chatDB.saveSetting(ACCOUNT_REFRESH_TOKEN_KEY, loginData.refreshToken);
             }
             
             // Persist master key as non-extractable CryptoKey for session restoration
@@ -1374,7 +1374,7 @@ class AccountService {
             // Electron: capture and persist refresh token to IndexedDB
             if (PLATFORM === 'electron' && completeData?.refreshToken) {
                 this.refreshToken = completeData.refreshToken;
-                await chatDB.saveSetting(REFRESH_TOKEN_KEY, completeData.refreshToken);
+                await chatDB.saveSetting(ACCOUNT_REFRESH_TOKEN_KEY, completeData.refreshToken);
             }
             
             // Persist master key as non-extractable CryptoKey for session restoration
@@ -1429,7 +1429,7 @@ class AccountService {
         // Electron: clear invalid refresh token
         if (PLATFORM === 'electron') {
             this.refreshToken = null;
-            await chatDB.deleteSetting(REFRESH_TOKEN_KEY).catch(() => {});
+            await chatDB.deleteSetting(ACCOUNT_REFRESH_TOKEN_KEY).catch(() => {});
         }
         
         // Clear persisted CryptoKey from IndexedDB
@@ -1480,7 +1480,7 @@ class AccountService {
         // Electron: clear persisted refresh token
         if (PLATFORM === 'electron') {
             this.refreshToken = null;
-            await chatDB.deleteSetting(REFRESH_TOKEN_KEY).catch(() => {});
+            await chatDB.deleteSetting(ACCOUNT_REFRESH_TOKEN_KEY).catch(() => {});
         }
         
         // Clear persisted CryptoKey from IndexedDB
