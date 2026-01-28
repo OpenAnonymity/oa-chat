@@ -47,7 +47,7 @@ class ChatEventRetriever:
         random_seed: int = 13,
         summary_max_chars: int = 480,
     ):
-        self.logger = logging.getLogger("exp_with_memory")
+        self.logger = logging.getLogger(__name__)
         self.event_store_path = os.path.abspath(event_store_path)
         self.summary_max_chars = summary_max_chars
         self._base_seed = random_seed

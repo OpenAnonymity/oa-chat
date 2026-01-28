@@ -20,7 +20,13 @@ class MemoryConfig:
         self.event_top_k = 3
         self.event_summary_max_chars = 480
         self.event_random_seed = 13
-        self.logdir = os.path.join(".", "ds_results", "eval_logs")
+        # Log directory relative to config file location (memory/logs)
+        self.logdir = os.path.abspath(
+            os.path.join(
+                os.path.dirname(__file__),
+                "logs",
+            )
+        )
         # Default to OpenRouter's GPT-5.2 chat identifier; override via LLM_MODEL env if needed
         self.llm_model = os.environ.get("LLM_MODEL", "openai/gpt-5.2-chat")
         self.llm_max_tokens = 400

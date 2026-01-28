@@ -7,6 +7,7 @@ an event store with embeddings.
 """
 
 import json
+from datetime import datetime
 import logging
 import os
 import sys
@@ -22,12 +23,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from scripts.preprocess_events import EventPreprocessor
 from exp_with_memory import llm_generate_response, personalize_prompt
 from config import MemoryConfig
+from oa_agent.logging_utils import setup_logging
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
@@ -270,9 +267,14 @@ def retrieve_context():
 
 
 def main():
+    # Load config and set up logging first
+    config = MemoryConfig()
+    setup_logging(config, log_filename=f"memory_server_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+    
     port = int(os.environ.get('MEMORY_SERVER_PORT', 5555))
     logger.info(f"Starting memory processing server on http://localhost:{port}")
     logger.info(f"Event store will be saved to: {EVENT_STORE_PATH}")
+    logger.info(f"Log directory: {config.logdir}")
     app.run(host='0.0.0.0', port=port, debug=False)
 
 
