@@ -4,23 +4,29 @@ This feature allows you to process your chat history stored in IndexedDB into an
 
 ## Setup
 
-1. **Install Python dependencies:**
+1. **Install uv** (if not already installed):
    ```bash
-   cd OA_memory
-   pip install -r requirements.txt
-   pip install -r requirements-server.txt
+   curl -LsSf https://astral.sh/uv/install.sh | sh
    ```
 
-2. **Set up OpenRouter API key** (for LLM summaries):
+2. **Install Python dependencies:**
    ```bash
-   # Create .env file in OA_memory directory
+   cd memory
+   uv sync
+   ```
+   
+   This will create a virtual environment and install all dependencies from `pyproject.toml`.
+
+3. **Set up OpenRouter API key** (for LLM summaries):
+   ```bash
+   # Create .env file in memory directory
    echo "OPENROUTER_API_KEY=your_key_here" > .env
    ```
 
-3. **Start the memory processing server:**
+4. **Start the memory processing server:**
    ```bash
-   cd OA_memory/scripts
-   python server.py
+   cd scripts
+   uv run python server.py
    ```
    
    The server will start on `http://localhost:5555`
@@ -37,7 +43,7 @@ This feature allows you to process your chat history stored in IndexedDB into an
    - Send it to the local processing server
    - Generate embeddings using Qwen3-Embedding-0.6B
    - Create summaries using LLM (via OpenRouter)
-   - Save the event store to `OA_memory/event_store.json`
+   - Save the event store to `memory/event_store.json`
 
 ### From the Command Line
 
@@ -46,8 +52,8 @@ You can also process chat history manually:
 1. **Export your chat history** from the UI (Settings → Export Chats)
 2. **Run the preprocessing script:**
    ```bash
-   cd OA_memory
-   python scripts/preprocess_events.py \
+   cd memory
+   uv run python scripts/preprocess_events.py \
      --export /path/to/exported_chats.json \
      --output event_store.json \
      --use-llm-summary \
@@ -72,12 +78,12 @@ You can also process chat history manually:
 ## Troubleshooting
 
 **"Memory processing server is not running"**
-- Make sure you started the server with `python OA_memory/scripts/server.py`
+- Make sure you started the server with `uv run python server.py` from the `memory/scripts` directory
 - Check that port 5555 is not in use by another application
 
 **Server errors**
 - Check the server terminal for error logs
-- Ensure all dependencies are installed
+- Ensure all dependencies are installed with `uv sync`
 - Verify your OpenRouter API key is set in `.env`
 
 **CORS errors in browser**
