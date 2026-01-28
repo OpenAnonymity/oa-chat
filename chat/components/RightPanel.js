@@ -1715,7 +1715,7 @@ class RightPanel {
                         <span class="w-1.5 h-1.5 rounded-full shrink-0 ${statusMeta.dotClass}"></span>
                         <span class="${statusMeta.textClass} truncate" ${statusMeta.title ? `title="${this.escapeHtml(statusMeta.title)}"` : ''}>${this.escapeHtml(statusMeta.label)}</span>
                         ${isEncrypted ? `
-                            <span class="inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-medium ${hasTlsInfo ? 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400' : 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400'}" title="${hasTlsInfo ? 'TLS tunnel over WebSocket proxy' : 'Encrypted via WebSocket proxy'}">
+                            <span class="inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-medium bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400" title="TLS tunnel over WebSocket proxy">
                                 <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
                                     <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
                                     <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
