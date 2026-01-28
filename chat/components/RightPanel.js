@@ -66,6 +66,7 @@ class RightPanel {
         this.proxyActionError = null;
         this.proxyActionPending = false;
         this.proxyAnimating = false; // Flag to skip re-render during toggle animation
+        this.lastProxyToggleTime = 0; // Rate limit for rapid toggles
         this.proxyUnsubscribe = networkProxy.onChange(({ settings, status }) => {
             this.proxySettings = settings;
             this.proxyStatus = status;
@@ -1649,39 +1650,22 @@ class RightPanel {
     }
 
     getProxyStatusMeta(settings = this.proxySettings, status = this.proxyStatus) {
-        // Show recent failure even when disabled (auto-fallback case)
-        // Display for 30 seconds after failure so user knows what happened
-        const recentFailure = status?.lastError && status?.lastFailureAt &&
-            (Date.now() - status.lastFailureAt < 30000);
-
-        if (recentFailure) {
-            return { label: 'Failed (using direct)', textClass: 'text-amber-500 dark:text-amber-400', dotClass: 'bg-amber-500' };
+        if (status?.fallbackActive || status?.lastError) {
+            return { label: 'Proxy Unavailable — try again or use your own VPN', textClass: 'text-amber-500 dark:text-amber-400', dotClass: 'bg-amber-500' };
         }
 
         if (!settings || !settings.enabled) {
             return { label: 'Disabled', textClass: 'text-muted-foreground', dotClass: 'bg-muted-foreground/40' };
         }
 
-        // Show fallback first (user explicitly needs to know proxy isn't working)
-        if (status?.fallbackActive) {
-            return { label: 'Fallback (direct)', textClass: 'text-amber-500 dark:text-amber-300', dotClass: 'bg-amber-500' };
-        }
-
-        // Show error if there's a recent error (proxy still enabled but erroring)
-        if (status?.lastError) {
-            const msg = status.lastError.message || 'Proxy error';
-            const shortMsg = msg.length > 25 ? msg.substring(0, 25) + '...' : msg;
-            return { label: shortMsg, textClass: 'text-destructive', dotClass: 'bg-destructive' };
-        }
-
-        // Connected and verified
+        // Connected and verified (first request succeeded)
         if (status?.connectionVerified && status?.usingProxy) {
             return { label: 'Connected', textClass: 'text-green-600 dark:text-green-400', dotClass: 'bg-green-500' };
         }
 
-        // Ready but not yet verified
+        // Ready to use (verification happens on first request)
         if (status?.ready) {
-            return { label: 'Verifying...', textClass: 'text-blue-600 dark:text-blue-300', dotClass: 'bg-blue-500 animate-pulse' };
+            return { label: 'Ready', textClass: 'text-green-600 dark:text-green-400', dotClass: 'bg-green-500' };
         }
 
         return { label: 'Initializing...', textClass: 'text-muted-foreground', dotClass: 'bg-muted-foreground/60' };
@@ -1718,8 +1702,8 @@ class RightPanel {
                     <button
                         id="proxy-toggle-btn"
                         class="switch-toggle ${settings.enabled ? 'switch-active' : 'switch-inactive'}"
-                        ${pending ? 'disabled' : ''}
-                        title="${settings.enabled ? 'Disable relay' : 'Enable relay'}"
+                        ${pending || status.hasActiveRequests ? 'disabled' : ''}
+                        title="${status.hasActiveRequests ? 'Data streaming via proxy — wait for completion' : (settings.enabled ? 'Disable relay' : 'Enable relay')}"
                     >
                         <span class="switch-toggle-indicator"></span>
                     </button>
@@ -1729,7 +1713,7 @@ class RightPanel {
                 <div class="flex items-center justify-between text-[10px] ${!settings.enabled ? 'opacity-50' : ''}">
                     <div class="flex items-center gap-1.5 min-w-0">
                         <span class="w-1.5 h-1.5 rounded-full shrink-0 ${statusMeta.dotClass}"></span>
-                        <span class="${statusMeta.textClass} truncate">${this.escapeHtml(statusMeta.label)}</span>
+                        <span class="${statusMeta.textClass} truncate" ${statusMeta.title ? `title="${this.escapeHtml(statusMeta.title)}"` : ''}>${this.escapeHtml(statusMeta.label)}</span>
                         ${isEncrypted ? `
                             <span class="inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-medium ${hasTlsInfo ? 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400' : 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400'}" title="${hasTlsInfo ? 'TLS tunnel over WebSocket proxy' : 'Encrypted via WebSocket proxy'}">
                                 <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -1740,14 +1724,6 @@ class RightPanel {
                             </span>
                         ` : ''}
                     </div>
-                    ${hasError ? `
-                        <button id="proxy-retry-btn" class="inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-5 w-5" title="Reconnect" ${pending ? 'disabled' : ''}>
-                            <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M1 4v6h6M23 20v-6h-6" stroke-linecap="round" stroke-linejoin="round"/>
-                                <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15" stroke-linecap="round" stroke-linejoin="round"/>
-                            </svg>
-                        </button>
-                    ` : ''}
                 </div>
 
                 <!-- Security Details Button -->
@@ -1768,6 +1744,20 @@ class RightPanel {
 
     async handleProxyToggle() {
         if (this.proxyActionPending) return;
+
+        // Block toggle when there are active proxy requests (e.g., streaming response)
+        if (networkProxy.hasActiveRequests()) {
+            console.warn('[RightPanel] Cannot toggle proxy - requests in progress');
+            return;
+        }
+
+        // Rate limit: minimum 500ms between toggles to let libcurl WASM fully clean up
+        const now = Date.now();
+        if (this.lastProxyToggleTime && now - this.lastProxyToggleTime < 500) {
+            return;
+        }
+        this.lastProxyToggleTime = now;
+
         this.proxyActionError = null;
         this.proxyActionPending = true;
         this.proxyAnimating = true; // Prevent onChange callback from re-rendering during animation
@@ -1787,30 +1777,12 @@ class RightPanel {
             this.proxyActionError = error.message;
         } finally {
             this.proxyActionPending = false;
+            this.lastProxyToggleTime = Date.now(); // Update after completion too
             // Wait for CSS animation to complete (200ms) before re-rendering
             setTimeout(() => {
                 this.proxyAnimating = false;
                 this.renderTopSectionOnly();
             }, 230); // Slightly longer than 200ms CSS transition
-        }
-    }
-
-    async handleProxyReconnect() {
-        if (!this.proxySettings?.enabled || this.proxyActionPending) {
-            return;
-        }
-
-        this.proxyActionError = null;
-        this.proxyActionPending = true;
-        this.renderTopSectionOnly();
-
-        try {
-            await networkProxy.reconnect();
-        } catch (error) {
-            this.proxyActionError = error.message;
-        } finally {
-            this.proxyActionPending = false;
-            this.renderTopSectionOnly();
         }
     }
 
@@ -1962,11 +1934,6 @@ class RightPanel {
         const proxyToggleBtn = document.getElementById('proxy-toggle-btn');
         if (proxyToggleBtn) {
             proxyToggleBtn.onclick = () => this.handleProxyToggle();
-        }
-
-        const proxyRetryBtn = document.getElementById('proxy-retry-btn');
-        if (proxyRetryBtn) {
-            proxyRetryBtn.onclick = () => this.handleProxyReconnect();
         }
 
         const proxySecurityBtn = document.getElementById('proxy-security-details-btn');

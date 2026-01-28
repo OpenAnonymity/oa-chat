@@ -48,7 +48,14 @@ class NetworkProxy {
             transport: 'idle'
         };
 
+        // Guard to prevent re-entrant calls from our own saves
+        this.isSaving = false;
+        // Mutex to serialize updateSettings calls (prevents rapid toggle issues)
+        this.updateSettingsLock = null;
+
         this.prefUnsubscribe = preferencesStore.onChange((key, value) => {
+            // Ignore notifications from our own saves
+            if (this.isSaving) return;
             if (key !== PREF_KEYS.proxySettings || !value) return;
             this.updateSettings(value, { skipPersist: true }).catch((error) => {
                 console.warn('Failed to sync proxy settings from preferences:', error);
@@ -58,6 +65,9 @@ class NetworkProxy {
         this.libcurlReadyPromise = null;
         // Managed HTTPSession - closed and recreated on proxy switch
         this.httpSession = null;
+
+        // Track active requests to prevent toggle during in-flight operations
+        this.activeRequestCount = 0;
 
         // TLS inspection state
         this.tlsInfo = {
@@ -114,8 +124,13 @@ class NetworkProxy {
             lastFailureAt: this.state.lastFailureAt,
             lastSuccessAt: this.state.lastSuccessAt,
             transport: this.state.transport,
-            tlsVerified: this.tlsInfo.verified && this.tlsInfo.version !== null
+            tlsVerified: this.tlsInfo.verified && this.tlsInfo.version !== null,
+            hasActiveRequests: this.activeRequestCount > 0
         };
+    }
+
+    hasActiveRequests() {
+        return this.activeRequestCount > 0;
     }
 
     // === TLS Inspection Methods ===
@@ -372,10 +387,16 @@ class NetworkProxy {
 
     async saveSettings(settings) {
         // Only persist enabled and fallbackToDirect (URL is hardcoded)
-        await preferencesStore.savePreference(PREF_KEYS.proxySettings, {
-            enabled: settings.enabled,
-            fallbackToDirect: settings.fallbackToDirect
-        });
+        // Set flag to prevent our own onChange listener from re-triggering
+        this.isSaving = true;
+        try {
+            await preferencesStore.savePreference(PREF_KEYS.proxySettings, {
+                enabled: settings.enabled,
+                fallbackToDirect: settings.fallbackToDirect
+            });
+        } finally {
+            this.isSaving = false;
+        }
     }
 
     getActiveProxyUrl(settings = this.state.settings) {
@@ -384,41 +405,56 @@ class NetworkProxy {
     }
 
     async updateSettings(partial, options = {}) {
-        const wasEnabled = this.state.settings.enabled;
-        this.state.settings = this.normalizeSettings({ ...this.state.settings, ...partial });
-
-        if (!options.skipPersist) {
-            await this.saveSettings(this.state.settings);
+        // Serialize concurrent calls to prevent rapid toggle race conditions
+        if (this.updateSettingsLock) {
+            await this.updateSettingsLock;
         }
 
-        if (this.state.settings.enabled) {
-            // Force reconnect if proxy was just enabled
-            const force = !wasEnabled;
-            await this.ensureProxyApplied(force).catch((error) => {
-                this.state.lastError = error;
-            });
-        } else {
-            // Proxy disabled - close session and reset state
-            if (this.httpSession) {
-                this.httpSession.close();
-                this.httpSession = null;
+        let resolveLock;
+        this.updateSettingsLock = new Promise(r => resolveLock = r);
+
+        try {
+            const wasEnabled = this.state.settings.enabled;
+            this.state.settings = this.normalizeSettings({ ...this.state.settings, ...partial });
+
+            if (!options.skipPersist) {
+                await this.saveSettings(this.state.settings);
             }
-            this.state.activeProxyUrl = null;
-            this.state.usingProxy = false;
-            this.state.ready = false;
-        }
 
-        if (!options.silent) {
-            this.emitChange();
-        }
+            if (this.state.settings.enabled) {
+                // Force reconnect if proxy was just enabled
+                const force = !wasEnabled;
+                await this.ensureProxyApplied(force).catch((error) => {
+                    this.state.lastError = error;
+                });
+            } else {
+                // Proxy disabled - close session
+                if (this.httpSession) {
+                    this.httpSession.close();
+                    this.httpSession = null;
+                }
+                this.state.activeProxyUrl = null;
+                this.state.usingProxy = false;
+                this.state.connectionVerified = false;
+                this.state.ready = false;
+            }
 
-        return this.getSettings();
+            if (!options.silent) {
+                this.emitChange();
+            }
+
+            return this.getSettings();
+        } finally {
+            resolveLock();
+            this.updateSettingsLock = null;
+        }
     }
 
     async ensureProxyApplied(force = false) {
         if (!this.state.settings.enabled) {
             return;
         }
+
         const url = this.getActiveProxyUrl();
         if (!url) {
             throw new Error('Relay not configured');
@@ -479,13 +515,9 @@ class NetworkProxy {
             this.state.fallbackActive = false;
             this.state.lastError = null;
 
-            // Verify connection with lightweight test (non-blocking)
-            if (needsReconnect || !this.state.connectionVerified) {
-                // Run verification in background - don't block user actions
-                this.verifyConnection().catch(e => {
-                    console.warn('[networkProxy] Background verification failed:', e.message);
-                });
-            }
+            // Skip eager verification - rely on lazy verification during first real request
+            // This avoids WASM crashes from libcurl's internal setInterval loops when rapidly toggling
+            // The first actual API call will verify the connection automatically
 
             console.debug('[networkProxy] Proxy ready');
         } catch (error) {
@@ -501,53 +533,6 @@ class NetworkProxy {
     async reconnect() {
         this.state.connectionVerified = false;
         return this.ensureProxyApplied(true);
-    }
-
-    async verifyConnection() {
-        console.log('[networkProxy] Verifying proxy connection...');
-        // Use example.com for ultra-lightweight verification (~1KB response)
-        // TLS info is captured from actual inference requests, not this test
-        const testUrl = 'https://example.com/';
-
-        if (!this.httpSession) {
-            throw new Error('HTTPSession not initialized');
-        }
-
-        try {
-            const startTime = Date.now();
-            const response = await this.httpSession.fetch(testUrl, {
-                method: 'HEAD', // HEAD is even lighter - no body
-                signal: AbortSignal.timeout(5000)
-            });
-            const duration = Date.now() - startTime;
-
-            // Any HTTP response means proxy is working
-            console.log('[networkProxy] ✅ Proxy verified in', duration + 'ms');
-            this.state.connectionVerified = true;
-            this.state.usingProxy = true;
-            this.emitChange();
-            return true;
-        } catch (error) {
-            const msg = error.message || '';
-
-            // Error 18 (partial file) or 56 (recv failure) = proxy connected but response incomplete
-            // This still means the proxy IS working
-            if (msg.includes('error code 18') || msg.includes('error code 56')) {
-                console.log('[networkProxy] ⚠️ Proxy connected (partial response) - assuming OK');
-                this.state.connectionVerified = true;
-                this.state.usingProxy = true;
-                this.emitChange();
-                return true;
-            }
-
-            // Error 7 = couldn't connect at all
-            console.error('[networkProxy] ❌ Proxy verification failed:', msg);
-            this.state.connectionVerified = false;
-            this.state.usingProxy = false;
-            this.state.lastError = error;
-            this.emitChange();
-            throw new Error(`Proxy not reachable: ${msg}`);
-        }
     }
 
     async ensureLibcurlReady() {
@@ -582,6 +567,60 @@ class NetworkProxy {
         return libcurl || window.libcurl;
     }
 
+    /**
+     * Wrap a response to track when its body stream is fully consumed.
+     * This ensures activeRequestCount stays elevated during streaming.
+     */
+    wrapResponseForTracking(response) {
+        // If no body (e.g., HEAD request, 204), decrement immediately
+        if (!response.body) {
+            this.activeRequestCount = Math.max(0, this.activeRequestCount - 1);
+            this.emitChange();
+            return response;
+        }
+
+        const originalBody = response.body;
+        const self = this;
+        let decremented = false;
+
+        const decrementOnce = () => {
+            if (!decremented) {
+                decremented = true;
+                self.activeRequestCount = Math.max(0, self.activeRequestCount - 1);
+                self.emitChange();
+            }
+        };
+
+        // Create a TransformStream that passes data through and decrements on close/cancel
+        const trackingStream = new TransformStream({
+            transform(chunk, controller) {
+                controller.enqueue(chunk);
+            },
+            flush() {
+                // Stream completed normally
+                decrementOnce();
+            },
+            abort() {
+                // Stream errored
+                decrementOnce();
+            },
+            cancel() {
+                // Stream was cancelled (e.g., user stopped generation)
+                decrementOnce();
+            }
+        });
+
+        // Pipe the original body through our tracking stream
+        const trackedBody = originalBody.pipeThrough(trackingStream);
+
+        // Return a new Response with the tracked body
+        return new Response(trackedBody, {
+            status: response.status,
+            statusText: response.statusText,
+            headers: response.headers
+        });
+    }
+
     async fetch(resource, init = {}, config = {}) {
         const preferProxy = config.bypassProxy ? false : this.state.settings.enabled;
         const forceProxy = !!config.forceProxy;
@@ -596,6 +635,11 @@ class NetworkProxy {
             // Use credentials: 'omit' to prevent third-party cookie storage
             return fetch(resource, { ...init, credentials: 'omit' });
         }
+
+        // Track active proxy requests to prevent toggle during in-flight operations
+        // This count stays elevated until the response body is fully consumed (for streaming)
+        this.activeRequestCount++;
+        this.emitChange();
 
         try {
             await this.ensureProxyApplied();
@@ -632,9 +676,18 @@ class NetworkProxy {
             this.state.transport = 'proxy';
             this.state.lastSuccessAt = Date.now();
             this.state.lastError = null;
+
+            // Emit change to update UI to "Connected" status immediately
+            // (toggle stays disabled because activeRequestCount is still elevated)
             this.emitChange();
-            return response;
+
+            // Wrap response to track when body is fully consumed (important for streaming)
+            // This keeps activeRequestCount elevated until streaming completes
+            return this.wrapResponseForTracking(response);
         } catch (error) {
+            // On error, decrement immediately since there's no body to consume
+            this.activeRequestCount = Math.max(0, this.activeRequestCount - 1);
+
             console.error('[networkProxy.fetch] HTTPSession.fetch failed:', error);
             this.state.usingProxy = false;
             this.state.connectionVerified = false;
@@ -653,7 +706,10 @@ class NetworkProxy {
             this.state.settings.enabled = false;
             this.state.fallbackActive = true;
             await this.saveSettings(this.state.settings);
+
+            // Emit change to update UI to show failure status
             this.emitChange();
+
             // Use credentials: 'omit' to prevent third-party cookie storage
             return fetch(resource, { ...init, credentials: 'omit' });
         }
