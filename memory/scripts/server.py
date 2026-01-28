@@ -20,7 +20,8 @@ from flask_cors import CORS
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from scripts.preprocess_events import EventPreprocessor
-from exp_with_memory import run_llm_with_retrieval, ExpConfig
+from exp_with_memory import llm_generate_response, personalize_prompt
+from config import MemoryConfig
 
 # Configure logging
 logging.basicConfig(
@@ -184,8 +185,9 @@ def retrieve_memory():
         logger.info(f"Retrieving memory for query: {user_query}")
         
         # Run LLM with retrieval
-        config = ExpConfig()
-        response = run_llm_with_retrieval(config, user_query)
+        config = MemoryConfig()
+        personalized_prompt = personalize_prompt(config, user_query)
+        response = llm_generate_response(config, personalized_prompt)
         
         return jsonify({
             "success": True,
@@ -240,7 +242,7 @@ def retrieve_context():
         
         # Initialize retriever
         from oa_agent.retriever import ChatEventRetriever
-        config = ExpConfig()
+        config = MemoryConfig()
         retriever = ChatEventRetriever(
             event_store_path=config.event_store_path,
             embedding_model_path=config.embedding_model_path,

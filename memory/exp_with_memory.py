@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 
 from oa_agent.retriever import ChatEventRetriever
 from oa_agent.llm_client import LLMClient
+from config import MemoryConfig
 
 load_dotenv()
 
@@ -25,34 +26,13 @@ def setup_logging(log_dir: str) -> logging.Logger:
     return logging.getLogger("exp_with_memory")
 
 
-class ExpConfig:
-    """Configuration for chat-event retrieval over a pre-embedded event store."""
-
-    def __init__(self):
-        self.event_store_path = os.path.abspath(
-            os.path.join(
-                os.path.dirname(__file__),
-                "event_store.json",
-            )
-        )
-        self.embedding_model_path = "Qwen/Qwen3-Embedding-0.6B"
-        self.event_top_k = 3
-        self.event_summary_max_chars = 480
-        self.event_random_seed = 13
-        self.logdir = os.path.join(".", "ds_results", "eval_logs")
-        # Default to OpenRouter's GPT-5.2 chat identifier; override via LLM_MODEL env if needed
-        self.llm_model = os.environ.get("LLM_MODEL", "openai/gpt-5.2-chat")
-        self.llm_max_tokens = 400
-        self.llm_temperature = 0.6
-
-
 @dataclass
 class QueryTask:
     query: str
     name: str = ""
 
 
-def run_queries(config: ExpConfig, queries: List[QueryTask]):
+def run_queries(config: MemoryConfig, queries: List[QueryTask]):
     """Run top-k retrieval for each query and print formatted snippets."""
     logger = setup_logging(config.logdir)
     logger.info("Initializing chat-event retriever...")
@@ -79,17 +59,16 @@ def run_queries(config: ExpConfig, queries: List[QueryTask]):
 
 def build_recommendation_prompt(context_block: str, user_query: str) -> str:
     return f"""
-Past memory and context about user you should take into account:{context_block}
+{user_query}
 
-User request: {user_query}
-
+The following context may help your response:
+{context_block}
 """
 
-
-def run_llm_with_retrieval(config: ExpConfig, user_query: str) -> str:
-    """Retrieve top events and ask the LLM for tailored recommendations."""
+def personalize_prompt(config: MemoryConfig, user_query: str) -> str:
+    """Retrieve top events and build a personalized_prompt."""
     logger = setup_logging(config.logdir)
-    logger.info("Initializing retriever and LLM client for recommendation run")
+    logger.info("Initializing retriever for personalized prompt run")
 
     retriever = ChatEventRetriever(
         event_store_path=config.event_store_path,
@@ -106,6 +85,19 @@ def run_llm_with_retrieval(config: ExpConfig, user_query: str) -> str:
     print(context_block or "<no events>")
     print("\n============================\n")
 
+    final_prompt = build_recommendation_prompt(context_block, user_query)
+    # Show the full prompt sent to the model
+    print("\n===== Prompt to LLM =====\n")
+    print(final_prompt)
+    print("\n========================\n")
+    logger.info("Personalized prompt built with retrieved context | events=%s", len(retrieved))
+    return final_prompt
+
+def llm_generate_response(config: MemoryConfig, prompt: str) -> str:
+    """Retrieve top events and ask the LLM for tailored recommendations."""
+    logger = setup_logging(config.logdir)
+    logger.info("Initializing LLM client for response generation")
+
     llm_client = LLMClient(
         model_name=config.llm_model,
         temperature=config.llm_temperature,
@@ -113,12 +105,7 @@ def run_llm_with_retrieval(config: ExpConfig, user_query: str) -> str:
         server_type="openrouter",
     )
 
-    prompt = build_recommendation_prompt(context_block, user_query)
-    # Show the full prompt sent to the model
-    print("\n===== Prompt to LLM =====\n")
-    print(prompt)
-    print("\n========================\n")
-    logger.info("Calling LLM with retrieved context | events=%s", len(retrieved))
+    logger.info("Calling LLM with prompt | prompt=%s", prompt)
     return llm_client.generate(prompt)
 
 
@@ -130,7 +117,7 @@ def _default_queries() -> List[QueryTask]:
 
 
 if __name__ == "__main__":
-    cfg = ExpConfig()
+    cfg = MemoryConfig()
     # user_query = "I want recommendations for clothes that I might like."
     user_query = "Give me a personal description of who you think I am."
     response = run_llm_with_retrieval(cfg, user_query)
