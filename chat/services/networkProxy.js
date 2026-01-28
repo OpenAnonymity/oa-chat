@@ -58,6 +58,11 @@ class NetworkProxy {
             if (this.isSaving) return;
             if (key !== PREF_KEYS.proxySettings || !value) return;
             this.updateSettings(value, { skipPersist: true }).catch((error) => {
+                // Silently ignore if blocked due to active requests (will sync later)
+                if (error.message?.includes('requests are in progress')) {
+                    console.debug('[networkProxy] Preference sync deferred - requests in progress');
+                    return;
+                }
                 console.warn('Failed to sync proxy settings from preferences:', error);
             });
         });
@@ -308,6 +313,10 @@ class NetworkProxy {
 
         // Force new connection by closing session - this will trigger fresh TLS handshake
         if (this.httpSession) {
+            // GUARD: Cannot close session while requests are in-flight
+            if (this.activeRequestCount > 0) {
+                throw new Error('Cannot verify TLS while requests are in progress');
+            }
             this.httpSession.close();
             this.httpSession = null;
         }
@@ -429,6 +438,10 @@ class NetworkProxy {
                 });
             } else {
                 // Proxy disabled - close session
+                // GUARD: Cannot close session while requests are in-flight
+                if (this.activeRequestCount > 0) {
+                    throw new Error('Cannot disable proxy while requests are in progress');
+                }
                 if (this.httpSession) {
                     this.httpSession.close();
                     this.httpSession = null;
@@ -493,6 +506,10 @@ class NetworkProxy {
 
                 // Close existing session to force new connections through new proxy
                 if (this.httpSession) {
+                    // GUARD: Cannot close session while requests are in-flight
+                    if (this.activeRequestCount > 0) {
+                        throw new Error('Cannot reconnect proxy while requests are in progress');
+                    }
                     console.log('[networkProxy] Closing existing HTTPSession');
                     this.httpSession.close();
                     this.httpSession = null;

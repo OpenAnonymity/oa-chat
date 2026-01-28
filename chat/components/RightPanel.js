@@ -1702,8 +1702,8 @@ class RightPanel {
                     <button
                         id="proxy-toggle-btn"
                         class="switch-toggle ${settings.enabled ? 'switch-active' : 'switch-inactive'}"
-                        ${pending || status.hasActiveRequests ? 'disabled' : ''}
-                        title="${status.hasActiveRequests ? 'Data streaming via proxy — wait for completion' : (settings.enabled ? 'Disable relay' : 'Enable relay')}"
+                        ${pending ? 'disabled' : ''}
+                        title="${settings.enabled ? 'Disable relay' : 'Enable relay'}"
                     >
                         <span class="switch-toggle-indicator"></span>
                     </button>
@@ -1748,6 +1748,7 @@ class RightPanel {
         // Block toggle when there are active proxy requests (e.g., streaming response)
         if (networkProxy.hasActiveRequests()) {
             console.warn('[RightPanel] Cannot toggle proxy - requests in progress');
+            this.app?.showToast?.('Cannot turn proxy off while data is transmitting', 'error');
             return;
         }
 
@@ -1774,6 +1775,10 @@ class RightPanel {
         try {
             await networkProxy.updateSettings({ enabled: !this.proxySettings.enabled });
         } catch (error) {
+            // Show toast for active request errors (race condition protection)
+            if (error.message?.includes('requests are in progress')) {
+                this.app?.showToast?.('Cannot change proxy while data is streaming', 'error');
+            }
             this.proxyActionError = error.message;
         } finally {
             this.proxyActionPending = false;
