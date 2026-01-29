@@ -12,6 +12,7 @@ const srcDir = path.join(repoRoot, 'chat');
 const outDir = path.join(repoRoot, 'dist');
 const assetsDir = path.join(outDir, 'assets');
 const vectorDir = path.join(repoRoot, 'vector');
+const localInferenceDir = path.join(repoRoot, 'local_inference');
 
 const pathExists = async (target) => {
     try {
@@ -73,6 +74,17 @@ const build = async () => {
     const vectorWasmSrc = path.join(vectorDir, 'wasm');
     if (await pathExists(vectorWasmSrc)) {
         await fs.cp(vectorWasmSrc, path.join(vectorOutDir, 'wasm'), { recursive: true });
+    }
+
+    const localInferenceOutDir = path.join(outDir, 'local_inference');
+    if (await pathExists(localInferenceOutDir)) {
+        const localStat = await fs.lstat(localInferenceOutDir);
+        if (localStat.isSymbolicLink()) {
+            await fs.rm(localInferenceOutDir, { recursive: true, force: true });
+        }
+    }
+    if (await pathExists(localInferenceDir)) {
+        await fs.cp(localInferenceDir, localInferenceOutDir, { recursive: true });
     }
 
     const result = await esbuild.build({
