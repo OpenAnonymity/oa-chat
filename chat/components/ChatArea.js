@@ -461,8 +461,13 @@ export default class ChatArea {
         const session = this.app.getCurrentSession();
         const messagesContainer = this.app.elements.messagesContainer;
 
+        // Check if empty state is already rendered (by prelude.js) to avoid re-render flash
+        const hasEmptyState = messagesContainer.querySelector('.welcome-landing') !== null;
+
         if (!session) {
-            messagesContainer.innerHTML = buildEmptyState();
+            if (!hasEmptyState) {
+                messagesContainer.innerHTML = buildEmptyState();
+            }
             this.attachDownloadHandler();
             return;
         }
@@ -476,7 +481,9 @@ export default class ChatArea {
         }
 
         if (messages.length === 0) {
-            messagesContainer.innerHTML = buildEmptyState();
+            if (!hasEmptyState) {
+                messagesContainer.innerHTML = buildEmptyState();
+            }
             this.attachDownloadHandler();
             return;
         }

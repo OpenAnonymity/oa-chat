@@ -6,6 +6,26 @@
     <base href="/">
     <title>oa-fastchat</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <style>
+        /* Inline critical style - hides app until fonts are ready */
+        .fonts-loading #app { visibility: hidden; }
+    </style>
+    <script>
+        // Hide content immediately; resolve once fonts stylesheet is loaded
+        (function () {
+            document.documentElement.classList.add('fonts-loading');
+            let resolveFontsCss;
+            window.__fontsCssReady = new Promise((resolve) => {
+                resolveFontsCss = resolve;
+            });
+            window.__resolveFontsCss = () => {
+                if (resolveFontsCss) {
+                    resolveFontsCss();
+                    resolveFontsCss = null;
+                }
+            };
+        })();
+    </script>
     <script>
         (function () {
             try {
@@ -90,7 +110,41 @@
     <link rel="dns-prefetch" href="https://org.openanonymity.ai">
 
     <!-- Local Fonts -->
-    <link rel="stylesheet" href="fonts/fonts.css">
+    <link rel="stylesheet" href="fonts/fonts.css" onload="window.__resolveFontsCss && window.__resolveFontsCss()">
+    <script>
+        // Keep app hidden until fonts are loaded and ready to render.
+        (function () {
+            const waitForFonts = async () => {
+                try {
+                    if (window.__fontsCssReady) {
+                        await Promise.race([
+                            window.__fontsCssReady,
+                            new Promise(resolve => setTimeout(resolve, 1000))
+                        ]);
+                    }
+                    if (document.fonts && document.fonts.ready) {
+                        await document.fonts.ready;
+                        const families = [
+                            'SF Pro Text',
+                            'Newsreader',
+                            'Libre Caslon Text',
+                            'Fira Code'
+                        ];
+                        await Promise.all(families.map((family) =>
+                            document.fonts.load(`400 16px "${family}"`)
+                        ));
+                    }
+                } catch (error) {
+                    console.warn('Font readiness check failed:', error);
+                } finally {
+                    requestAnimationFrame(() => {
+                        document.documentElement.classList.remove('fonts-loading');
+                    });
+                }
+            };
+            window.fontsReadyPromise = waitForFonts();
+        })();
+    </script>
 
 
     <!-- SECURITY NOTE: Self-host these assets to avoid third-party script access. -->
