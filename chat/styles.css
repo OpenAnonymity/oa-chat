@@ -924,6 +924,11 @@ html.switching-theme *::after {
     will-change: scroll-position;
 }
 
+/* Override display:flex when hidden - needed because display:flex comes after .hidden in cascade */
+.citations-carousel.hidden {
+    display: none;
+}
+
 .citation-card-header {
     display: flex;
     align-items: center;
@@ -1158,6 +1163,12 @@ html.switching-theme *::after {
     flex-direction: column;
     gap: 0.375rem;
     min-height: 50px;
+}
+
+/* Override display:flex when hidden - needed because display:flex comes after .hidden in cascade */
+.link-preview-loader.hidden,
+.link-preview-content.hidden {
+    display: none;
 }
 
 .link-preview-header {

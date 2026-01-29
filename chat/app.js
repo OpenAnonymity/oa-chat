@@ -172,7 +172,9 @@ class ChatApp {
         // Link preview state
         this.linkPreviewCard = document.getElementById('link-preview-card');
         this.linkPreviewTimeout = null;
+        this.linkPreviewHideTimeout = null;
         this.currentPreviewLink = null;
+        this.isHoveringPreviewCard = false;
 
         // Edit mode state
         this.editingMessageId = null; // Track which message is being edited
@@ -940,6 +942,8 @@ class ChatApp {
         this.linkPreviewCard.classList.remove('visible');
         this.linkPreviewCard.classList.add('hidden');
         this.currentPreviewLink = null;
+        this.isHoveringPreviewCard = false;
+        this.cancelLinkPreviewHide();
     }
 
     /**
@@ -998,20 +1002,37 @@ class ChatApp {
             this.linkPreviewTimeout = null;
         }
 
-        // Hide preview after a short delay to allow moving to the preview card
-        setTimeout(() => {
-            // Check if mouse is over preview card
-            const previewRect = this.linkPreviewCard?.getBoundingClientRect();
-            if (previewRect) {
-                const mouseX = event.clientX;
-                const mouseY = event.clientY;
-                const isOverPreview = mouseX >= previewRect.left && mouseX <= previewRect.right &&
-                                     mouseY >= previewRect.top && mouseY <= previewRect.bottom;
-                if (!isOverPreview) {
-                    this.hideLinkPreview();
-                }
+        // Schedule hiding the preview - give time to move to the preview card
+        this.scheduleLinkPreviewHide();
+    }
+
+    /**
+     * Schedules hiding the link preview with a delay.
+     * Can be cancelled if mouse enters the preview card.
+     */
+    scheduleLinkPreviewHide() {
+        // Clear any existing hide timeout
+        if (this.linkPreviewHideTimeout) {
+            clearTimeout(this.linkPreviewHideTimeout);
+        }
+
+        this.linkPreviewHideTimeout = setTimeout(() => {
+            this.linkPreviewHideTimeout = null;
+            // Only hide if not hovering over the preview card
+            if (!this.isHoveringPreviewCard) {
+                this.hideLinkPreview();
             }
-        }, 100);
+        }, 150);
+    }
+
+    /**
+     * Cancels the scheduled link preview hide.
+     */
+    cancelLinkPreviewHide() {
+        if (this.linkPreviewHideTimeout) {
+            clearTimeout(this.linkPreviewHideTimeout);
+            this.linkPreviewHideTimeout = null;
+        }
     }
 
     /**
@@ -1050,9 +1071,14 @@ class ChatApp {
             }
         });
 
-        // Hide preview when mouse leaves preview card
+        // Track hover state on preview card
         if (this.linkPreviewCard) {
+            this.linkPreviewCard.addEventListener('mouseenter', () => {
+                this.isHoveringPreviewCard = true;
+                this.cancelLinkPreviewHide();
+            });
             this.linkPreviewCard.addEventListener('mouseleave', () => {
+                this.isHoveringPreviewCard = false;
                 this.hideLinkPreview();
             });
         }
@@ -1603,18 +1629,18 @@ class ChatApp {
         // Attempt verification with verifier
         console.log('🔐 Verifying shared access...');
         const verifyResult = await verifier.submitAccess(accessInfo);
-        
+
         if (verifyResult?.status === 'verified') {
             console.log('✅ Shared access verified successfully');
             return sharedAccess;
         }
-        
+
         if (verifyResult?.status === 'pending') {
             // Soft failure - verifier offline, allow import with warning
             console.warn('⚠️ Shared access verification pending (verifier offline), allowing import');
             return sharedAccess;
         }
-        
+
         if (verifyResult?.status === 'rejected') {
             console.warn('⚠️ Shared access verification failed:', verifyResult.error?.message);
 
@@ -1631,7 +1657,7 @@ class ChatApp {
 
             return choice === 'import_without_key' ? null : 'cancel';
         }
-        
+
         // Unknown status - allow import
         return sharedAccess;
     }
@@ -5494,12 +5520,12 @@ Your API key has been cleared. A new key from a different station will be obtain
         if (verifier?.supports) {
             const accessInfo = inferenceService.getAccessInfo(session);
             const verifyResult = await inferenceService.verifyAccess(session, accessInfo?.info);
-            
+
             if (verifyResult?.status === 'rejected') {
                 // Verification failed - clear the API key and throw
                 inferenceService.clearAccessInfo(session);
                 await chatDB.saveSession(session);
-                
+
                 const errorMsg = verifyResult.error?.message || 'Verification failed';
                 if (verifyResult.bannedStation) {
                     const bs = verifyResult.bannedStation;
@@ -5507,7 +5533,7 @@ Your API key has been cleared. A new key from a different station will be obtain
                 }
                 throw new Error(`Key verification failed: ${errorMsg}`);
             }
-            
+
             // Set current station for verifier tracking
             inferenceService.setCurrentAccess(session, accessInfo?.info);
         }
@@ -5535,19 +5561,26 @@ Your API key has been cleared. A new key from a different station will be obtain
         const contentEl = document.getElementById(`citations-content-${messageId}`);
         const chevronEl = document.querySelector(`#citations-toggle-${messageId} .citations-chevron`);
 
-        if (contentEl && chevronEl) {
-            const isHidden = contentEl.classList.contains('hidden');
-            if (isHidden) {
-                contentEl.classList.remove('hidden');
+        if (!contentEl) {
+            console.debug('[toggleCitations] Content element not found for message:', messageId);
+            return;
+        }
+
+        const isHidden = contentEl.classList.contains('hidden');
+        if (isHidden) {
+            contentEl.classList.remove('hidden');
+            if (chevronEl) {
                 chevronEl.style.transform = 'rotate(180deg)';
-            } else {
-                contentEl.classList.add('hidden');
+            }
+        } else {
+            contentEl.classList.add('hidden');
+            if (chevronEl) {
                 chevronEl.style.transform = 'rotate(0deg)';
             }
-
-            // Update scroll button visibility after content change
-            this.updateScrollButtonVisibility();
         }
+
+        // Update scroll button visibility after content change
+        this.updateScrollButtonVisibility();
     }
 
     /**
