@@ -72,9 +72,10 @@ class AccountModal {
     updateTabIndicator() {
         const tabBtn = document.getElementById('account-tab-btn');
         if (!tabBtn) return;
-        const hasAccount = !!this.accountState?.accountId;
-        tabBtn.dataset.status = hasAccount ? 'logged-in' : 'none';
-        tabBtn.title = hasAccount ? 'Account (logged in)' : 'Account';
+        // Only show logged-in (green) after session is verified with server
+        const isLoggedIn = this.accountState?.accountId && this.accountState?.sessionVerified;
+        tabBtn.dataset.status = isLoggedIn ? 'logged-in' : 'none';
+        tabBtn.title = isLoggedIn ? 'Account (logged in)' : 'Account';
     }
 
     open() {

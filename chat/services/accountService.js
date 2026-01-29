@@ -429,6 +429,7 @@ class AccountService {
             action: null,
             error: null,
             status: 'none',
+            sessionVerified: false,  // True only after /refresh confirms session is valid
             passkeySupported: typeof window !== 'undefined' && !!window.PublicKeyCredential,
             prfSupported: null,
             rateLimited: false,
@@ -741,30 +742,47 @@ class AccountService {
                 if (PLATFORM === 'electron') {
                     this.refreshToken = await chatDB.getSetting(ACCOUNT_REFRESH_TOKEN_KEY).catch(() => null);
                 }
-                // Small delay to prevent rate limiting on burst page refreshes
-                await new Promise(resolve => setTimeout(resolve, 1000));
-                // Try to refresh the access token
-                const tokenRefreshed = await this.refreshAccessToken().catch(() => false);
-                if (tokenRefreshed) {
-                    // Session fully restored - no passkey needed!
-                    this.state.isReady = true;
-                    this.updateStatus();
-                    this.notify();
-                    
-                    // Initialize sync for restored session
-                    this.initializeSync(false).catch(() => {});
-                    
-                    return;
-                }
-                // Token refresh failed but we have the key - might be offline
-                // Keep the cryptoKey, user can still work locally
+                
+                // Mark ready immediately - UI can render, models can load
+                // Token refresh happens in background (non-blocking)
+                this.state.isReady = true;
+                this.updateStatus();
+                this.notify();
+                
+                // Refresh token in background (non-blocking) - don't await
+                this.refreshTokenInBackground();
+                return;
             }
-            // No persisted key or token refresh failed - will need passkey
+            // No persisted key - will need passkey
         }
         
         this.state.isReady = true;
         this.updateStatus();
         this.notify();
+    }
+
+    /**
+     * Refresh the access token in the background without blocking init.
+     * Called after session restoration when we have a persisted master key.
+     * Includes a small delay to prevent rate limiting on burst page refreshes.
+     */
+    async refreshTokenInBackground() {
+        try {
+            // Small delay to prevent rate limiting on burst page refreshes
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            const tokenRefreshed = await this.refreshAccessToken().catch(() => false);
+            if (tokenRefreshed) {
+                // Session verified with server - now show logged-in state
+                this.state.sessionVerified = true;
+                this.notify();
+                // Initialize sync for restored session
+                this.initializeSync(false).catch(() => {});
+            }
+            // If refresh failed, user can still work locally; re-auth on next API call
+        } catch (error) {
+            console.warn('[AccountService] Background token refresh failed:', error);
+        }
     }
 
     async persistSettings() {
@@ -954,6 +972,7 @@ class AccountService {
         // Handle access token from response
         if (registerData?.accessToken) {
             this.accessToken = registerData.accessToken;
+            this.state.sessionVerified = true;
         }
         // Electron: capture and persist refresh token to IndexedDB
         if (PLATFORM === 'electron' && registerData?.refreshToken) {
@@ -1120,6 +1139,7 @@ class AccountService {
             // Handle access token from response
             if (registerData?.accessToken) {
                 this.accessToken = registerData.accessToken;
+                this.state.sessionVerified = true;
             }
             // Electron: capture and persist refresh token to IndexedDB
             if (PLATFORM === 'electron' && registerData?.refreshToken) {
@@ -1232,6 +1252,7 @@ class AccountService {
             // Handle access token from response
             if (loginData.accessToken) {
                 this.accessToken = loginData.accessToken;
+                this.state.sessionVerified = true;
             }
             // Electron: capture and persist refresh token to IndexedDB
             if (PLATFORM === 'electron' && loginData.refreshToken) {
@@ -1370,6 +1391,7 @@ class AccountService {
             // Handle access token from response
             if (completeData?.accessToken) {
                 this.accessToken = completeData.accessToken;
+                this.state.sessionVerified = true;
             }
             // Electron: capture and persist refresh token to IndexedDB
             if (PLATFORM === 'electron' && completeData?.refreshToken) {
@@ -1426,6 +1448,7 @@ class AccountService {
         this.masterKey = null;
         this.cryptoKey = null;
         this.accessToken = null;
+        this.state.sessionVerified = false;
         // Electron: clear invalid refresh token
         if (PLATFORM === 'electron') {
             this.refreshToken = null;
@@ -1451,6 +1474,7 @@ class AccountService {
         this.masterKey = null;
         this.cryptoKey = null;  // Clear from memory (IndexedDB copy remains for re-unlock)
         this.accessToken = null;
+        this.state.sessionVerified = false;
         this.updateStatus();
         this.notify();
     }
@@ -1477,6 +1501,7 @@ class AccountService {
         this.masterKey = null;
         this.cryptoKey = null;
         this.accessToken = null;
+        this.state.sessionVerified = false;
         // Electron: clear persisted refresh token
         if (PLATFORM === 'electron') {
             this.refreshToken = null;
