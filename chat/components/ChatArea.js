@@ -1433,8 +1433,7 @@ export default class ChatArea {
                         throwOnError: false
                     });
                 }
-                // Scroll to bottom and update navigation
-                this.scrollToBottom();
+                // Update scroll button visibility (no auto-scroll for appended messages)
                 this.app.updateScrollButtonVisibility();
                 if (this.app.messageNavigation) {
                     this.app.messageNavigation.update();
@@ -1470,8 +1469,7 @@ export default class ChatArea {
             }
         }
 
-        // Scroll to bottom
-        this.scrollToBottom();
+        // Update scroll button visibility (no auto-scroll for appended messages)
         this.app.updateScrollButtonVisibility();
 
         // Update message navigation
