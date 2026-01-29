@@ -313,7 +313,7 @@ export class OramaBackend {
             return;
         }
         if (!this.moduleUrl && typeof window !== 'undefined') {
-            this.moduleUrl = '/vendor/orama/index.js';
+            this.moduleUrl = '/vector/vendor/orama/index.js';
         }
         if (this.moduleUrl) {
             const mod = await import(/* @vite-ignore */ this.moduleUrl);
