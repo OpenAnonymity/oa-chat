@@ -706,13 +706,14 @@ class StationVerifier {
      * Returns a status object:
      * - { status: 'verified', data: {...} } - Success (or trusted station skip)
      * - { status: 'pending', ... } - Soft failure, queued for background retry
+     * - { status: 'unverified', detail?: string, data?: {...} } - Policy skip (no retry)
      * - { status: 'rejected', error: Error, bannedStation?: {...} } - Hard failure
      * 
      * For trusted stations, soft failures (network/5xx) are silently skipped.
      * For non-trusted stations, soft failures queue for background retry.
      * 
      * @param {object} keyData - Key data from org's /request_key response
-     * @returns {Promise<{status: 'verified'|'pending'|'rejected', ...}>}
+     * @returns {Promise<{status: 'verified'|'pending'|'unverified'|'rejected', ...}>}
      */
     async submitKey(keyData) {
         console.log('🔐 Submitting key to verifier for validation...');
@@ -756,7 +757,41 @@ class StationVerifier {
                 }
             );
 
+            const isOwnershipCheckError = response.status === 503 &&
+                data?.status === 'unverified' &&
+                data?.detail === 'ownership_check_error';
+            const isRateLimited = response.status === 429;
+
             if (!response.ok) {
+                if (isOwnershipCheckError) {
+                    console.warn('⚠️ Ownership verification temporarily unavailable, queuing for retry');
+                    const logEntry = networkLogger.logRequest({
+                        type: 'verification',
+                        method: 'POST',
+                        url: `${VERIFIER_URL}/submit_key`,
+                        status: 'pending',
+                        request: { station_id: keyData.stationId },
+                        response: { message: 'Verification temporarily unavailable due to verifier networking issues. The webapp will automatically retry in the background.' },
+                        detail: 'ownership_check_error'
+                    });
+                    this._queuePendingSubmission(keyData, keyHash, logEntry.id);
+                    return { status: 'pending', detail: 'ownership_check_error', keyHash };
+                }
+                if (isRateLimited) {
+                    console.warn('⚠️ Verifier rate limited, queuing for retry');
+                    const logEntry = networkLogger.logRequest({
+                        type: 'verification',
+                        method: 'POST',
+                        url: `${VERIFIER_URL}/submit_key`,
+                        status: 'pending',
+                        request: { station_id: keyData.stationId },
+                        response: { message: 'Verifier rate limited this request. The webapp will automatically retry in the background.' },
+                        detail: 'rate_limited'
+                    });
+                    this._queuePendingSubmission(keyData, keyHash, logEntry.id);
+                    return { status: 'pending', detail: 'rate_limited', keyHash };
+                }
+
                 const errorMessage = data?.error || data?.detail || data?.message || 'Verification failed';
                 const error = new Error(errorMessage);
                 
@@ -817,6 +852,21 @@ class StationVerifier {
                 });
                 console.error('❌ Key verification failed:', errorMessage);
                 return { status: 'rejected', error };
+            }
+
+            if (data?.status === 'unverified') {
+                networkLogger.logRequest({
+                    type: 'verification',
+                    method: 'POST',
+                    url: `${VERIFIER_URL}/submit_key`,
+                    status: response.status,
+                    request: { station_id: keyData.stationId },
+                    response: data,
+                    detail: data?.detail
+                });
+                this.pendingSubmissions.delete(keyHash);
+                console.warn('⚠️ Key unverified:', data?.detail || 'unverified');
+                return { status: 'unverified', detail: data?.detail || null, data };
             }
 
             // Success
@@ -954,17 +1004,31 @@ class StationVerifier {
                 );
                 
                 if (response.ok) {
-                    console.log(`✅ Verification retry ${keyHash} succeeded`);
-                    // Log success
-                    networkLogger.logRequest({
-                        type: 'verification',
-                        method: 'POST',
-                        url: `${VERIFIER_URL}/submit_key`,
-                        status: response.status,
-                        request: { station_id: pending.keyData.stationId },
-                        response: data
-                    });
-                    this.pendingSubmissions.delete(keyHash);
+                    if (data?.status === 'unverified') {
+                        console.warn(`⚠️ Verification retry ${keyHash} returned unverified:`, data?.detail || 'unverified');
+                        networkLogger.logRequest({
+                            type: 'verification',
+                            method: 'POST',
+                            url: `${VERIFIER_URL}/submit_key`,
+                            status: response.status,
+                            request: { station_id: pending.keyData.stationId },
+                            response: data,
+                            detail: data?.detail
+                        });
+                        this.pendingSubmissions.delete(keyHash);
+                    } else {
+                        console.log(`✅ Verification retry ${keyHash} succeeded`);
+                        // Log success
+                        networkLogger.logRequest({
+                            type: 'verification',
+                            method: 'POST',
+                            url: `${VERIFIER_URL}/submit_key`,
+                            status: response.status,
+                            request: { station_id: pending.keyData.stationId },
+                            response: data
+                        });
+                        this.pendingSubmissions.delete(keyHash);
+                    }
                 } else if (isHardFailure(null, response, data)) {
                     // Hard failure on retry - give up and log rejection
                     console.error(`❌ Verification retry ${keyHash} hard failure:`, data?.detail || data?.error);

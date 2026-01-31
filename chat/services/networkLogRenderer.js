@@ -47,11 +47,13 @@ export function getStatusClass(status, isAborted = false) {
     return 'text-gray-600';
 }
 
-export function getStatusDotClass(status, isAborted = false) {
+export function getStatusDotClass(status, isAborted = false, detail = '') {
     if (isAborted) {
         return 'bg-orange-500'; // Orange dot for user-interrupted
     } else if (status === 'queued' || status === 'pending') {
         return 'bg-amber-500'; // Amber dot for queued/pending
+    } else if (detail === 'key_near_expiry') {
+        return 'bg-amber-500'; // Amber dot for unverified policy case
     } else if (status >= 200 && status < 300) {
         return 'bg-green-500';
     } else if (status >= 400 || status === 0) {
@@ -258,7 +260,11 @@ export function getActivityDescription(log, detailed = false) {
 
         // Verifier endpoint - station integrity verification
         if (type === 'verification' || urlObj.host === 'verifier.openanonymity.ai' || urlObj.host.includes('localhost')) {
+            const verificationDetail = log.detail || response?.detail;
             if (!detailed) {
+                if (verificationDetail === 'key_near_expiry') {
+                    return 'Key expires too soon to verify';
+                }
                 if (status === 'queued' || status === 'pending') {
                     return 'Verifying station integrity';
                 } else if (status >= 200 && status < 300) {
@@ -268,6 +274,13 @@ export function getActivityDescription(log, detailed = false) {
                 }
                 return 'Verifying station integrity';
             } else {
+                if (verificationDetail === 'ownership_check_error') {
+                    return 'Verification temporarily unavailable due to verifier networking issues. The webapp will automatically retry in the background.';
+                } else if (verificationDetail === 'rate_limited') {
+                    return 'Verifier rate limited this request. The webapp will automatically retry in the background.';
+                } else if (verificationDetail === 'key_near_expiry') {
+                    return 'The API key expires too soon to perform ownership verification. This is expected behavior for keys near their expiry time. This should not occur unless the app delays verification or has been modified.';
+                }
                 if (status === 'queued' || status === 'pending') {
                     return 'The verifier is currently unreachable. Station integrity will be attested as soon as verifier comes <a href="https://verifier.openanonymity.ai/health" target="_blank" rel="noopener noreferrer" class="underline hover:text-amber-700 dark:hover:text-amber-300">online</a>. You can continue sending messages normally because this station was recently attested by other users.';
                 } else if (status >= 200 && status < 300) {

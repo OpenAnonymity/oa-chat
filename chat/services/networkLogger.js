@@ -32,6 +32,7 @@ class NetworkLogger {
      * @param {Error} details.error - Error if request failed
      * @param {string} details.sessionId - Optional session ID (uses current if not provided)
      * @param {string} details.message - Human-readable message for local events
+     * @param {string} details.detail - Optional detail code for UI descriptions
      * @param {string} details.action - Specific action type for local events
      */
     logRequest(details) {
@@ -47,6 +48,7 @@ class NetworkLogger {
             response: details.response || {},
             error: details.error || null,
             message: details.message || '',
+            detail: details.detail || '',
             action: details.action || '',
             isAborted: details.isAborted || false,
         };

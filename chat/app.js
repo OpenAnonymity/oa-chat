@@ -1641,6 +1641,18 @@ class ChatApp {
             return sharedAccess;
         }
 
+        if (verifyResult?.status === 'unverified') {
+            const detail = verifyResult?.detail || verifyResult?.data?.detail;
+            if (detail === 'key_near_expiry') {
+                console.warn('⚠️ Shared access key expires too soon to verify, allowing import');
+            } else if (detail === 'ownership_check_error') {
+                console.warn('⚠️ Shared access verification temporarily unavailable, allowing import');
+            } else {
+                console.warn('⚠️ Shared access verification unverified, allowing import');
+            }
+            return sharedAccess;
+        }
+
         if (verifyResult?.status === 'rejected') {
             console.warn('⚠️ Shared access verification failed:', verifyResult.error?.message);
 
@@ -5520,6 +5532,17 @@ Your API key has been cleared. A new key from a different station will be obtain
         if (verifier?.supports) {
             const accessInfo = inferenceService.getAccessInfo(session);
             const verifyResult = await inferenceService.verifyAccess(session, accessInfo?.info);
+
+            if (verifyResult?.status === 'unverified') {
+                const detail = verifyResult?.detail || verifyResult?.data?.detail;
+                if (detail === 'key_near_expiry') {
+                    console.warn('⚠️ Key expires too soon to verify, continuing without verification');
+                } else if (detail === 'ownership_check_error') {
+                    console.warn('⚠️ Ownership verification temporarily unavailable, continuing without verification');
+                } else {
+                    console.warn('⚠️ Key verification unverified, continuing without verification');
+                }
+            }
 
             if (verifyResult?.status === 'rejected') {
                 // Verification failed - clear the API key and throw

@@ -2047,7 +2047,7 @@ class RightPanel {
             const description = this.escapeHtml(descriptionRaw);
             const descriptionAttr = this.escapeHtmlAttribute(descriptionRaw);
             const icon = getActivityIcon(log);
-            const dotClass = getStatusDotClass(log.status, log.isAborted);
+            const dotClass = getStatusDotClass(log.status, log.isAborted, log.detail || log.response?.detail || '');
             const isFirst = index === 0;
             const isLast = index === logsToShow.length - 1;
             // Highlight the latest (last in reversed array) with a more visible background
