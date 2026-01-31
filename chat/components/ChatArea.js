@@ -574,7 +574,9 @@ export default class ChatArea {
         // importedFrom = share import (can still receive updates)
         // importedSource = external import (ChatGPT, etc.)
         // forkedFrom = was imported but user made changes (no longer receives updates)
-        const wasImported = session.importedFrom || session.forkedFrom || session.importedSource;
+        // Note: forkedFrom alone (without importedMessageCount) indicates a LOCAL fork, not an import
+        const wasImported = session.importedFrom || session.importedSource ||
+            (session.forkedFrom && (session.importedMessageCount || 0) > 0);
         const importedCount = session.importedMessageCount || 0;
         const hasNewMessagesAfterImport = wasImported && importedCount > 0 && messages.length > importedCount;
 
