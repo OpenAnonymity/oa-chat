@@ -104,6 +104,7 @@ class ChatApp {
             currentSessionId: null,
             models: [],
             modelsLoading: false,
+            modelsVersion: 0,
             pendingModelName: null // Model selected before session is created (display name)
         };
 
@@ -1330,6 +1331,8 @@ class ChatApp {
         this.chatInput.updateSearchToggleUI();
         this.chatInput.updateReasoningToggleUI();
         this.updateShareButtonUI();
+        // Force Safari to reset textarea layout after restoring session
+        this.resetMessageInputLayout({ resetScroll: true });
 
         // Notify right panel of current session
         const currentSession = this.getCurrentSession();
@@ -1349,9 +1352,13 @@ class ChatApp {
         // Updates model picker with icons once loaded
         this.loadModels().then(() => {
             this.renderCurrentModel(); // Re-render button with model icons
-            // Also re-render model list if modal is open
-            if (this.modelPicker && !this.elements.modelPickerModal.classList.contains('hidden')) {
-                this.modelPicker.renderModels(this.elements.modelSearch?.value || '');
+            if (this.modelPicker) {
+                // Re-render model list if modal is open, otherwise warm it in idle time.
+                if (!this.elements.modelPickerModal.classList.contains('hidden')) {
+                    this.modelPicker.renderModels(this.elements.modelSearch?.value || '');
+                } else {
+                    this.modelPicker.warmRender();
+                }
             }
         }).catch(error => {
             console.warn('Background model loading failed:', error);
@@ -2349,6 +2356,7 @@ class ChatApp {
             console.error('Failed to load models:', error);
             // Fallback models are already set in API
         }
+        this.state.modelsVersion += 1;
         this.state.modelsLoading = false;
     }
 
@@ -2597,6 +2605,7 @@ class ChatApp {
 
         // Update UI based on new session's streaming state
         this.updateInputState();
+        this.resetMessageInputLayout({ resetScroll: true });
         this.updateShareButtonUI();
 
         // Notify right panel of session change
@@ -2787,6 +2796,7 @@ class ChatApp {
         if (this.elements.messageInput) {
             this.elements.messageInput.value = '';
         }
+        this.resetMessageInputLayout({ resetScroll: true });
 
         // Update input state
         this.updateInputState();
@@ -3652,7 +3662,7 @@ class ChatApp {
             this.renderFilePreviews();
             this.updateFileCountBadge();
             this.updateInputState();
-            this.elements.messageInput.style.height = '24px';
+            this.resetMessageInputLayout({ resetScroll: true });
 
             // Auto-scroll remains paused while the response streams
 
@@ -5122,7 +5132,7 @@ class ChatApp {
             if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
                 e.preventDefault();
                 if (this.modelPicker) {
-                    this.modelPicker.open();
+                    this.modelPicker.toggle();
                 }
             }
 
@@ -5434,6 +5444,22 @@ class ChatApp {
             }
         } catch (error) {
             console.debug('Error enriching citations:', error);
+        }
+    }
+
+    resetMessageInputLayout({ resetScroll = false } = {}) {
+        const input = this.elements.messageInput;
+        if (!input) return;
+        input.style.height = '24px';
+        if (resetScroll) {
+            input.scrollTop = 0;
+            input.scrollLeft = 0;
+            // Force Safari to completely recalculate textarea layout
+            // by toggling display - this clears Safari's cached content rendering
+            const origDisplay = input.style.display;
+            input.style.display = 'none';
+            void input.offsetHeight; // Force reflow
+            input.style.display = origDisplay || '';
         }
     }
 

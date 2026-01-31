@@ -31,6 +31,11 @@ export default class ModelPicker {
 
         // Scroll position state
         this.savedScrollTop = 0;
+        this.modelsListClickBound = false;
+        this.lastRenderSignature = null;
+        this.hasRenderedOnce = false;
+        this.modelConfigVersion = 0;
+        this.searchDebounceTimer = null;
 
         // Load persisted config (overrides defaults if user has customizations in DB)
         this._loadConfig();
@@ -49,6 +54,7 @@ export default class ModelPicker {
     _onConfigUpdate() {
         const defaults = getDefaultModelConfig();
         this.pinnedModels = defaults.pinnedModels;
+        this.modelConfigVersion += 1;
 
         // Re-render if modal is currently visible
         if (!this.app.elements.modelPickerModal.classList.contains('hidden')) {
@@ -69,6 +75,7 @@ export default class ModelPicker {
             this.pinnedModels = config.pinnedModels;
             this.blockedModels = new Set(config.blockedModels);
             this.defaultModelName = config.defaultModelName;
+            this.modelConfigVersion += 1;
         } catch (e) {
             console.warn('ModelPicker: failed to load config', e);
         }
@@ -95,22 +102,38 @@ export default class ModelPicker {
             }
         });
 
-        // Search input
+        // Search input with debouncing to reduce re-renders during fast typing
         this.app.elements.modelSearch.addEventListener('input', (e) => {
-            this.renderModels(e.target.value);
+            const searchTerm = e.target.value;
+            clearTimeout(this.searchDebounceTimer);
+            this.searchDebounceTimer = setTimeout(() => {
+                this.renderModels(searchTerm);
+            }, 80);
         });
 
         // Keyboard navigation
         this.app.elements.modelSearch.addEventListener('keydown', (e) => {
             this.handleKeyboardNavigation(e);
         });
+
+        if (!this.modelsListClickBound && this.app.elements.modelsList) {
+            this.modelsListClickBound = true;
+            this.app.elements.modelsList.addEventListener('click', (event) => {
+                const option = event.target.closest('.model-option');
+                if (!option || !this.app.elements.modelsList.contains(option)) {
+                    return;
+                }
+                this.selectModel(option.dataset.modelName);
+            });
+        }
     }
 
     /**
      * Opens the model picker modal and focuses the search input.
      */
     open() {
-        this.app.elements.modelPickerModal.classList.remove('hidden');
+        const modal = this.app.elements.modelPickerModal;
+        modal.classList.remove('hidden');
         this.highlightedIndex = -1;
         const shouldRestoreScroll = this.savedScrollTop > 0;
         this.renderModels('', shouldRestoreScroll);
@@ -188,12 +211,52 @@ export default class ModelPicker {
         });
     }
 
+    getCurrentModelName() {
+        const session = this.app.getCurrentSession();
+        const rawModelName = (session && session.model) || this.app.state.pendingModelName || null;
+        const modelsLoaded = this.app.state.models && this.app.state.models.length > 0;
+        return rawModelName
+            ? (modelsLoaded && !this.isModelAvailable(rawModelName) ? this.defaultModelName : rawModelName)
+            : this.defaultModelName;
+    }
+
+    getRenderSignature(searchTerm) {
+        const modelsVersion = this.app.state.modelsVersion || 0;
+        const modelsLength = this.app.state.models?.length || 0;
+        const reasoningFlag = this.app.reasoningEnabled ? '1' : '0';
+        const loadingFlag = this.app.state.modelsLoading ? '1' : '0';
+        return [
+            searchTerm,
+            this.getCurrentModelName(),
+            modelsVersion,
+            modelsLength,
+            this.modelConfigVersion,
+            reasoningFlag,
+            loadingFlag
+        ].join('|');
+    }
+
     /**
      * Renders the models list grouped by category.
      * @param {string} searchTerm - Optional search term to filter
      * @param {boolean} skipAutoScroll - Skip auto-scroll when restoring scroll position
+     * @param {boolean} force - Force render even if unchanged
      */
-    renderModels(searchTerm = '', skipAutoScroll = false) {
+    renderModels(searchTerm = '', skipAutoScroll = false, force = false) {
+        const renderSignature = this.getRenderSignature(searchTerm);
+        if (!force && this.hasRenderedOnce && renderSignature === this.lastRenderSignature) {
+            this.highlightedIndex = -1;
+            const modelOptions = this.getModelOptions();
+            if (modelOptions.length > 0) {
+                this.highlightedIndex = 0;
+                this.updateHighlight(modelOptions, skipAutoScroll);
+            }
+            return;
+        }
+
+        this.lastRenderSignature = renderSignature;
+        this.hasRenderedOnce = true;
+
         // Show loading state if models are still being fetched
         if (this.app.state.modelsLoading || this.app.state.models.length === 0) {
             this.app.elements.modelsList.innerHTML = `
@@ -261,15 +324,30 @@ export default class ModelPicker {
 
         this.app.elements.modelsList.innerHTML = html;
 
-        // Wire up click handlers
-        this.attachModelClickListeners();
-
         // Auto-highlight first item so user can immediately press Enter
         const modelOptions = this.getModelOptions();
         if (modelOptions.length > 0) {
             this.highlightedIndex = 0;
             this.updateHighlight(modelOptions, skipAutoScroll);
         }
+    }
+
+    warmRender() {
+        if (this.app.state.modelsLoading || this.app.state.models.length === 0) {
+            return;
+        }
+        const renderSignature = this.getRenderSignature('');
+        if (this.hasRenderedOnce && renderSignature === this.lastRenderSignature) {
+            return;
+        }
+        const schedule = typeof requestIdleCallback === 'function'
+            ? (callback) => requestIdleCallback(callback, { timeout: 500 })
+            : (callback) => setTimeout(callback, 0);
+        schedule(() => {
+            if (this.app.elements.modelPickerModal.classList.contains('hidden')) {
+                this.renderModels('', true);
+            }
+        });
     }
 
     /**
@@ -310,17 +388,6 @@ export default class ModelPicker {
                 </div>
             </div>
         `;
-    }
-
-    /**
-     * Attaches click listeners to model options.
-     */
-    attachModelClickListeners() {
-        document.querySelectorAll('.model-option').forEach(el => {
-            el.addEventListener('click', () => {
-                this.selectModel(el.dataset.modelName);
-            });
-        });
     }
 
     /**
@@ -369,17 +436,7 @@ export default class ModelPicker {
      * Renders the current model display in the input area.
      */
     renderCurrentModel() {
-        const session = this.app.getCurrentSession();
-        // Get raw model from session, pending state, or default
-        const rawModelName = (session && session.model) || this.app.state.pendingModelName || null;
-
-        // If models aren't loaded yet, trust the stored name (prevents flash to default)
-        // Once loaded, validate against available models - fallback handles imported chats
-        // with models not available in OA (e.g., ChatGPT slugs)
-        const modelsLoaded = this.app.state.models && this.app.state.models.length > 0;
-        const currentModelName = rawModelName
-            ? (modelsLoaded && !this.isModelAvailable(rawModelName) ? this.defaultModelName : rawModelName)
-            : this.defaultModelName;
+        const currentModelName = this.getCurrentModelName();
 
         // Guard against elements not being available
         if (!this.app.elements.modelPickerBtn) {
@@ -494,7 +551,10 @@ export default class ModelPicker {
      * @returns {Array} Array of model option elements
      */
     getModelOptions() {
-        return Array.from(document.querySelectorAll('.model-option'));
+        if (!this.app.elements.modelsList) {
+            return [];
+        }
+        return Array.from(this.app.elements.modelsList.querySelectorAll('.model-option'));
     }
 
     /**

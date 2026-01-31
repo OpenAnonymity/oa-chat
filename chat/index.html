@@ -105,7 +105,7 @@
         })();
     </script>
     <!-- Preload critical resources for faster loading -->
-    
+
     <link rel="dns-prefetch" href="https://openrouter.ai">
     <link rel="dns-prefetch" href="https://org.openanonymity.ai">
 
@@ -408,11 +408,11 @@
                                 <!-- Textarea Container -->
                                 <div class="relative w-full flex flex-col">
                                     <div class="rounded-md w-full text-muted-foreground focus-within:text-foreground transition-colors bg-transparent">
-                                        <div class="flex h-max py-1.5 max-h-96 bg-transparent px-2 overflow-y-auto relative">
+                                        <div class="flex w-full min-w-0 h-max py-1.5 max-h-96 bg-transparent px-2 overflow-y-auto">
                                             <textarea
                                                 id="message-input"
                                                 rows="1"
-                                                class="w-full bg-transparent text-sm leading-6 focus:outline-none resize-none overflow-y-auto text-foreground placeholder:text-muted-foreground"
+                                                class="w-full flex-1 min-w-0 bg-transparent text-sm leading-6 focus:outline-none resize-none overflow-y-auto overflow-x-hidden text-foreground placeholder:text-muted-foreground"
                                                 placeholder="Ask anonymously"
                                                 style="height: 24px; min-height: 24px; max-height: 200px; padding-right: 64px;"
                                                 autofocus
@@ -689,7 +689,7 @@
     <div id="account-modal" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"></div>
 
     <!-- Model Picker Modal -->
-    <div id="model-picker-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div id="model-picker-modal" class="hidden fixed inset-0 w-full h-full bg-black/50 flex items-center justify-center z-50">
         <div role="dialog" aria-modal="true" tabindex="-1" data-slot="dialog-content" class="cursor-default relative w-full max-w-lg border border-border bg-background shadow-lg rounded-lg duration-0 overflow-hidden flex flex-col m-4" data-state="open">
             <!-- Search Input -->
             <div class="flex items-center border-b border-border px-3" cmdk-input-wrapper="">
