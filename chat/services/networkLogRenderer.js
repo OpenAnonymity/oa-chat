@@ -262,7 +262,9 @@ export function getActivityDescription(log, detailed = false) {
         if (type === 'verification' || urlObj.host === 'verifier.openanonymity.ai' || urlObj.host.includes('localhost')) {
             const verificationDetail = log.detail || response?.detail;
             if (!detailed) {
-                if (verificationDetail === 'key_near_expiry') {
+                if (verificationDetail === 'verifier_unreachable_uncertified') {
+                    return 'Verifier temporarily unreachable';
+                } else if (verificationDetail === 'key_near_expiry') {
                     return 'Key expires too soon to verify';
                 }
                 if (status === 'queued' || status === 'pending') {
@@ -274,7 +276,9 @@ export function getActivityDescription(log, detailed = false) {
                 }
                 return 'Verifying station integrity';
             } else {
-                if (verificationDetail === 'ownership_check_error') {
+                if (verificationDetail === 'verifier_unreachable_uncertified') {
+                    return 'The verifier could not be <a href="https://verifier.openanonymity.ai/health" target="_blank" rel="noopener noreferrer" class="underline hover:text-amber-700 dark:hover:text-amber-300">reached</a> to verify this station, the key is rejected.';
+                } else if (verificationDetail === 'ownership_check_error') {
                     return 'Verification temporarily unavailable due to verifier networking issues. The webapp will automatically retry in the background.';
                 } else if (verificationDetail === 'rate_limited') {
                     return 'Verifier rate limited this request. The webapp will automatically retry in the background.';

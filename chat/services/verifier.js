@@ -907,13 +907,15 @@ class StationVerifier {
             }
 
             // Non-recently attested or hard failure - reject
+            const isNetworkFailure = !isHardFailure(error, null, null);
             networkLogger.logRequest({
                 type: 'verification',
                 method: 'POST',
                 url: `${VERIFIER_URL}/submit_key`,
                 status: 0,
                 request: { station_id: keyData.stationId },
-                error: friendlyError.message
+                error: friendlyError.message,
+                detail: isNetworkFailure ? 'verifier_unreachable_uncertified' : ''
             });
 
             console.error('❌ Key verification failed:', friendlyError.message);
