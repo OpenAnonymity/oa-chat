@@ -63,13 +63,20 @@ class RightPanel {
         // Proxy state
         this.proxySettings = networkProxy.getSettings();
         this.proxyStatus = networkProxy.getStatus();
-        this.proxyActionError = null;
         this.proxyActionPending = false;
         this.proxyAnimating = false; // Flag to skip re-render during toggle animation
         this.lastProxyToggleTime = 0; // Rate limit for rapid toggles
         this.proxyUnsubscribe = networkProxy.onChange(({ settings, status }) => {
+            const hadError = this.proxyStatus?.lastError;
             this.proxySettings = settings;
             this.proxyStatus = status;
+            
+            // Auto-disable proxy when it fails (new error detected while enabled)
+            if (!hadError && status?.lastError && settings?.enabled && !this.proxyActionPending) {
+                networkProxy.updateSettings({ enabled: false });
+                return; // Will trigger another onChange with disabled state
+            }
+            
             // Skip re-render if animation is in progress (will re-render after animation)
             if (!this.proxyAnimating) {
                 this.renderTopSectionOnly();
@@ -1676,7 +1683,6 @@ class RightPanel {
         const status = this.proxyStatus || networkProxy.getStatus();
         const statusMeta = this.getProxyStatusMeta(settings, status);
         const pending = this.proxyActionPending;
-        const hasError = status?.lastError;
         const tlsInfo = networkProxy.getTlsInfo();
         const hasTlsInfo = tlsInfo.version !== null;
         const isEncrypted = settings.enabled && status.usingProxy;
@@ -1736,8 +1742,6 @@ class RightPanel {
                         Security Details
                     </button>
                 ` : ''}
-
-                ${this.proxyActionError ? `<p class="text-[10px] text-destructive">${this.escapeHtml(this.proxyActionError)}</p>` : ''}
             </div>
         `;
     }
