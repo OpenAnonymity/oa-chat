@@ -373,10 +373,12 @@ export default class ModelPicker {
         // Get raw model from session, pending state, or default
         const rawModelName = (session && session.model) || this.app.state.pendingModelName || null;
 
-        // If model exists in available models, use it; otherwise fall back to default
-        // This handles imported chats that may have models not available in OA (e.g., ChatGPT slugs)
-        const currentModelName = (rawModelName && this.isModelAvailable(rawModelName))
-            ? rawModelName
+        // If models aren't loaded yet, trust the stored name (prevents flash to default)
+        // Once loaded, validate against available models - fallback handles imported chats
+        // with models not available in OA (e.g., ChatGPT slugs)
+        const modelsLoaded = this.app.state.models && this.app.state.models.length > 0;
+        const currentModelName = rawModelName
+            ? (modelsLoaded && !this.isModelAvailable(rawModelName) ? this.defaultModelName : rawModelName)
             : this.defaultModelName;
 
         // Guard against elements not being available

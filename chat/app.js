@@ -22,6 +22,7 @@ import { fetchUrlMetadata } from './services/urlMetadata.js';
 import networkProxy from './services/networkProxy.js';
 import inferenceService from './services/inference/inferenceService.js';
 import ticketClient from './services/ticketClient.js';
+import scrubberService from './services/scrubberService.js';
 import shareService from './services/shareService.js';
 import shareModals from './components/ShareModals.js';
 import { getTicketCost, initModelTiers } from './services/modelTiers.js';
@@ -104,6 +105,7 @@ class ChatApp {
             chatArea: document.getElementById('chat-area'),
             messagesContainer: document.getElementById('messages-container'),
             messageInput: document.getElementById('message-input'),
+            inputCard: document.getElementById('input-card'),
             sendBtn: document.getElementById('send-btn'),
             modelPickerBtn: document.getElementById('model-picker-btn'),
             modelPickerModal: document.getElementById('model-picker-modal'),
@@ -160,6 +162,8 @@ class ChatApp {
         this.isAutoScrollPaused = false; // Track if auto-scroll is paused during streaming
         this.scrollToBottomButton = null; // Reference to the floating scroll-to-bottom button
         this.scrollButtonCheckInterval = null; // Interval for checking button visibility during streaming
+        this.scrubberService = scrubberService;
+        this.scrubberPending = null;
         this.deleteHistoryReturnFocusEl = null;
         this.isDeletingAllChats = false;
         this.appVersionSignature = null;
@@ -174,7 +178,9 @@ class ChatApp {
         // Link preview state
         this.linkPreviewCard = document.getElementById('link-preview-card');
         this.linkPreviewTimeout = null;
+        this.linkPreviewHideTimeout = null;
         this.currentPreviewLink = null;
+        this.isHoveringPreviewCard = false;
 
         // Edit mode state
         this.editingMessageId = null; // Track which message is being edited
@@ -942,6 +948,8 @@ class ChatApp {
         this.linkPreviewCard.classList.remove('visible');
         this.linkPreviewCard.classList.add('hidden');
         this.currentPreviewLink = null;
+        this.isHoveringPreviewCard = false;
+        this.cancelLinkPreviewHide();
     }
 
     /**
@@ -1000,20 +1008,37 @@ class ChatApp {
             this.linkPreviewTimeout = null;
         }
 
-        // Hide preview after a short delay to allow moving to the preview card
-        setTimeout(() => {
-            // Check if mouse is over preview card
-            const previewRect = this.linkPreviewCard?.getBoundingClientRect();
-            if (previewRect) {
-                const mouseX = event.clientX;
-                const mouseY = event.clientY;
-                const isOverPreview = mouseX >= previewRect.left && mouseX <= previewRect.right &&
-                                     mouseY >= previewRect.top && mouseY <= previewRect.bottom;
-                if (!isOverPreview) {
-                    this.hideLinkPreview();
-                }
+        // Schedule hiding the preview - give time to move to the preview card
+        this.scheduleLinkPreviewHide();
+    }
+
+    /**
+     * Schedules hiding the link preview with a delay.
+     * Can be cancelled if mouse enters the preview card.
+     */
+    scheduleLinkPreviewHide() {
+        // Clear any existing hide timeout
+        if (this.linkPreviewHideTimeout) {
+            clearTimeout(this.linkPreviewHideTimeout);
+        }
+
+        this.linkPreviewHideTimeout = setTimeout(() => {
+            this.linkPreviewHideTimeout = null;
+            // Only hide if not hovering over the preview card
+            if (!this.isHoveringPreviewCard) {
+                this.hideLinkPreview();
             }
-        }, 100);
+        }, 150);
+    }
+
+    /**
+     * Cancels the scheduled link preview hide.
+     */
+    cancelLinkPreviewHide() {
+        if (this.linkPreviewHideTimeout) {
+            clearTimeout(this.linkPreviewHideTimeout);
+            this.linkPreviewHideTimeout = null;
+        }
     }
 
     /**
@@ -1052,9 +1077,14 @@ class ChatApp {
             }
         });
 
-        // Hide preview when mouse leaves preview card
+        // Track hover state on preview card
         if (this.linkPreviewCard) {
+            this.linkPreviewCard.addEventListener('mouseenter', () => {
+                this.isHoveringPreviewCard = true;
+                this.cancelLinkPreviewHide();
+            });
             this.linkPreviewCard.addEventListener('mouseleave', () => {
+                this.isHoveringPreviewCard = false;
                 this.hideLinkPreview();
             });
         }
@@ -1190,6 +1220,9 @@ class ChatApp {
 
         await storageManager.init();
         await apiKeyStore.loadApiKey();
+        this.scrubberService.init().catch((error) => {
+            console.warn('Scrubber init failed:', error);
+        });
 
         await accountService.init();
         if (typeof requestIdleCallback === 'function') {
@@ -1603,20 +1636,41 @@ class ChatApp {
         const accessInfo = sessionAccess?.info || sharedAccess;
 
         // Attempt verification with verifier
-        try {
-            console.log('🔐 Verifying shared access...');
-            await verifier.submitAccess(accessInfo);
+        console.log('🔐 Verifying shared access...');
+        const verifyResult = await verifier.submitAccess(accessInfo);
+
+        if (verifyResult?.status === 'verified') {
             console.log('✅ Shared access verified successfully');
             return sharedAccess;
-        } catch (verifyError) {
-            console.warn('⚠️ Shared access verification failed:', verifyError.message);
+        }
+
+        if (verifyResult?.status === 'pending') {
+            // Soft failure - verifier offline, allow import with warning
+            console.warn('⚠️ Shared access verification pending (verifier offline), allowing import');
+            return sharedAccess;
+        }
+
+        if (verifyResult?.status === 'unverified') {
+            const detail = verifyResult?.detail || verifyResult?.data?.detail;
+            if (detail === 'key_near_expiry') {
+                console.warn('⚠️ Shared access key expires too soon to verify, allowing import');
+            } else if (detail === 'ownership_check_error') {
+                console.warn('⚠️ Shared access verification temporarily unavailable, allowing import');
+            } else {
+                console.warn('⚠️ Shared access verification unverified, allowing import');
+            }
+            return sharedAccess;
+        }
+
+        if (verifyResult?.status === 'rejected') {
+            console.warn('⚠️ Shared access verification failed:', verifyResult.error?.message);
 
             // Check if it's a banned station
-            const isBanned = verifyError.status === 'banned';
-            const banReason = verifyError.bannedStation?.reason;
+            const isBanned = !!verifyResult.bannedStation;
+            const banReason = verifyResult.bannedStation?.reason;
 
             const choice = await shareModals.showSharedKeyVerificationFailedPrompt({
-                error: verifyError.message,
+                error: verifyResult.error?.message || 'Verification failed',
                 stationId: sharedAccess.stationId,
                 isBanned,
                 banReason
@@ -1624,6 +1678,9 @@ class ChatApp {
 
             return choice === 'import_without_key' ? null : 'cancel';
         }
+
+        // Unknown status - allow import
+        return sharedAccess;
     }
 
     /**
@@ -1724,7 +1781,7 @@ class ChatApp {
             }
 
             console.log(`✅ Updated imported session: ${existingSession.title}`);
-            this.showToast('Updated to latest version!', 'success');
+            this.showToast('Updated to latest version', 'success');
 
         } catch (error) {
             console.error('Failed to import shared session:', error);
@@ -1771,7 +1828,7 @@ class ChatApp {
         url.searchParams.set('s', session.id);
 
         await navigator.clipboard.writeText(url.toString());
-        this.showToast('Link copied to clipboard!', 'success');
+        this.showToast('Link copied to clipboard', 'success');
     }
 
     /**
@@ -1851,7 +1908,7 @@ class ChatApp {
             }
 
             console.log(`✅ Imported shared session: ${session.title}`);
-            this.showToast('Imported shared chat!', 'success');
+            this.showToast('Imported shared chat', 'success');
 
         } catch (error) {
             console.error('Failed to import shared session:', error);
@@ -1907,7 +1964,7 @@ class ChatApp {
             await chatDB.saveSession(session);
 
             await navigator.clipboard.writeText(result.shareUrl);
-            this.showToast(isUpdate ? 'Share updated and link copied!' : 'Share link copied to clipboard!', 'success');
+            this.showToast(isUpdate ? 'Share updated and link copied' : 'Share link copied to clipboard', 'success');
 
             this.renderSessions();
             if (this.rightPanel) this.rightPanel.render();
@@ -2021,6 +2078,19 @@ class ChatApp {
         }
     }
 
+    updateToastPosition() {
+        const toast = document.getElementById('app-toast');
+        if (!toast) return;
+
+        const inputCard = document.getElementById('input-card');
+        if (inputCard) {
+            const rect = inputCard.getBoundingClientRect();
+            // Position above input card with 16px gap
+            const bottomSpace = window.innerHeight - rect.top + 16;
+            toast.style.bottom = `${bottomSpace}px`;
+        }
+    }
+
     /**
      * Show a toast notification
      * @param {string} message - Message to display
@@ -2032,9 +2102,13 @@ class ChatApp {
         const toast = document.createElement('div');
         toast.id = 'app-toast';
         const bgColor = type === 'error' ? 'bg-destructive text-destructive-foreground' : 'bg-muted text-foreground';
-        toast.className = `fixed bottom-36 left-1/2 -translate-x-1/2 z-[100] px-4 py-2 rounded-lg shadow-lg text-sm border border-border/50 ${bgColor} animate-in fade-in slide-in-from-bottom-4`;
+        // Removed fixed bottom-36, will be set by updateToastPosition
+        toast.className = `fixed left-1/2 -translate-x-1/2 z-[100] px-4 py-2 rounded-lg shadow-lg text-sm border border-border/50 ${bgColor} animate-in fade-in slide-in-from-bottom-4`;
         toast.textContent = message;
         document.body.appendChild(toast);
+        
+        this.updateToastPosition();
+
         this._toastTimeout = setTimeout(() => {
             toast.classList.add('animate-out', 'fade-out', 'slide-out-to-bottom-4');
             setTimeout(() => toast.remove(), 150);
@@ -2052,7 +2126,8 @@ class ChatApp {
 
         const toast = document.createElement('div');
         toast.id = 'app-toast';
-        toast.className = 'fixed bottom-36 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg shadow-lg text-sm bg-primary text-primary-foreground animate-in fade-in slide-in-from-bottom-4 flex items-center gap-2';
+        // Removed fixed bottom-36
+        toast.className = 'fixed left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg shadow-lg text-sm bg-primary text-primary-foreground animate-in fade-in slide-in-from-bottom-4 flex items-center gap-2';
 
         const spinner = document.createElement('span');
         spinner.className = 'link-preview-spinner';
@@ -2062,6 +2137,8 @@ class ChatApp {
         toast.appendChild(spinner);
         toast.appendChild(text);
         document.body.appendChild(toast);
+
+        this.updateToastPosition();
 
         return () => {
             toast.classList.add('animate-out', 'fade-out', 'slide-out-to-bottom-4');
@@ -2420,6 +2497,8 @@ class ChatApp {
             apiKey: null,
             apiKeyInfo: null,
             expiresAt: null,
+            scrubberKey: null,
+            scrubberKeyInfo: null,
             searchEnabled: this.searchEnabled
         };
 
@@ -2719,7 +2798,8 @@ class ChatApp {
             files: metadata.files || null,
             searchEnabled: metadata.searchEnabled || false,
             citations: metadata.citations || null,
-            isLocalOnly: Boolean(metadata.isLocalOnly)
+            isLocalOnly: Boolean(metadata.isLocalOnly),
+            scrubber: metadata.scrubber || null
         };
 
         await chatDB.saveMessage(message);
@@ -2743,6 +2823,123 @@ class ChatApp {
         }
         this.renderSessions(); // Re-render sessions to update sorting
         return message;
+    }
+
+    /**
+     * Sanitizes messages for API calls by ensuring scrubbed content is used.
+     * For assistant messages with scrubber metadata, always uses the redacted
+     * (PII-free) response to prevent leaking restored PII to the model.
+     *
+     * @param {Array} messages - Array of messages from the database
+     * @returns {Array} Messages safe for API calls
+     */
+    sanitizeMessagesForApi(messages) {
+        return messages.map(msg => {
+            // For assistant messages with scrubber data, always use redacted response
+            if (msg.role === 'assistant' && msg.scrubber?.redactedResponse) {
+                return { ...msg, content: msg.scrubber.redactedResponse };
+            }
+            // For user messages with scrubber data, always use redacted prompt
+            if (msg.role === 'user' && msg.scrubber?.redacted) {
+                return { ...msg, content: msg.scrubber.redacted };
+            }
+            return msg;
+        });
+    }
+
+    /**
+     * Check whether this session contains any scrubber data that can be restored.
+     * @param {Array} messages - Array of messages from the database
+     * @returns {boolean}
+     */
+    hasScrubberContext(messages) {
+        if (!Array.isArray(messages)) return false;
+        return messages.some(msg => (
+            msg?.scrubber?.original ||
+            msg?.scrubber?.redacted ||
+            msg?.scrubber?.originalPrompt ||
+            msg?.scrubber?.redactedPrompt
+        ));
+    }
+
+    getMessageTextContent(content) {
+        if (typeof content === 'string') return content;
+        if (Array.isArray(content)) {
+            return content
+                .map(part => {
+                    if (!part) return '';
+                    if (typeof part.text === 'string') return part.text;
+                    if (typeof part.content === 'string') return part.content;
+                    return '';
+                })
+                .filter(Boolean)
+                .join('');
+        }
+        if (content && typeof content.text === 'string') return content.text;
+        return '';
+    }
+
+    getScrubberMessageContent(message, mode) {
+        if (!message) return '';
+        if (mode === 'redacted') {
+            if (message.role === 'assistant' && message.scrubber?.redactedResponse) {
+                return message.scrubber.redactedResponse;
+            }
+            if (message.role === 'user' && message.scrubber?.redacted) {
+                return message.scrubber.redacted;
+            }
+            return message.content || '';
+        }
+
+        if (message.role === 'assistant') {
+            if (message.scrubber?.restoredResponse) {
+                return message.scrubber.restoredResponse;
+            }
+            return message.content || message.scrubber?.redactedResponse || '';
+        }
+        if (message.role === 'user' && message.scrubber?.original) {
+            return message.scrubber.original;
+        }
+        return message.content || '';
+    }
+
+    buildScrubberTranscript(messages, mode) {
+        if (!Array.isArray(messages)) return '';
+        const lines = [];
+        for (const message of messages) {
+            const roleLabel = message.role === 'assistant'
+                ? 'Assistant'
+                : message.role === 'user'
+                    ? 'User'
+                    : message.role;
+            const rawContent = this.getScrubberMessageContent(message, mode);
+            const text = this.getMessageTextContent(rawContent).trim();
+            if (!text) continue;
+            lines.push(`${roleLabel}: ${text}`);
+        }
+        return lines.join('\n\n');
+    }
+
+    buildScrubberRestoreContext(messages) {
+        return {
+            original: this.buildScrubberTranscript(messages, 'original'),
+            redacted: this.buildScrubberTranscript(messages, 'redacted')
+        };
+    }
+
+    createAssistantScrubberMetadata({ originalPrompt, redactedPrompt, hasScrubberContext }) {
+        const hasPrompt = !!(originalPrompt && redactedPrompt);
+        const mode = hasPrompt ? 'prompt' : (hasScrubberContext ? 'context' : null);
+        if (!mode) return null;
+        return {
+            mode,
+            canRestore: true,
+            originalPrompt: hasPrompt ? originalPrompt : null,
+            redactedPrompt: hasPrompt ? redactedPrompt : null,
+            redactedResponse: null,
+            restoredResponse: null,
+            restored: false
+        };
     }
 
     /**
@@ -2912,47 +3109,6 @@ class ChatApp {
                     await this.addMessage('assistant', `**Error:** ${error.message}`, { isLocalOnly: true });
                     return;
                 }
-
-                // Verify key with verifier before proceeding
-                const verifier = inferenceService.getVerificationAdapter(session);
-                if (verifier?.supports) {
-                    try {
-                        if (this.floatingPanel) {
-                            this.floatingPanel.showMessage(`Verifying ${accessLabel}...`, 'info');
-                        }
-                        const accessInfo = inferenceService.getAccessInfo(session);
-                        await inferenceService.verifyAccess(session, accessInfo?.info);
-                        inferenceService.setCurrentAccess(session, accessInfo?.info);
-                    } catch (verifyError) {
-                        // Clear the API key since it failed verification
-                        inferenceService.clearAccessInfo(session);
-                        await chatDB.saveSession(session);
-
-                        // Update UI components
-                        if (this.rightPanel) {
-                            this.rightPanel.onSessionChange(session);
-                        }
-
-                        if (this.floatingPanel) {
-                            this.floatingPanel.showMessage(verifyError.message, 'error', 5000);
-                        }
-
-                        // Show detailed error for banned stations
-                        let errorMessage;
-                        if (verifyError.status === 'banned' && verifyError.bannedStation) {
-                            const bs = verifyError.bannedStation;
-                            const bannedDate = bs.bannedAt ? new Date(bs.bannedAt).toLocaleString() : 'Unknown';
-                            errorMessage = `**Station Banned**\n\n${verifyError.message}\n\n` +
-                                `- **Station ID:** \`${bs.stationId}\`\n` +
-                                `- **Reason:** ${bs.reason || 'Not specified'}\n` +
-                                `- **Banned at:** ${bannedDate}`;
-                        } else {
-                            errorMessage = `**Verification Error:** ${verifyError.message}`;
-                        }
-                        await this.addMessage('assistant', errorMessage, { isLocalOnly: true });
-                        return; // Block inference if verification fails
-                    }
-                }
             }
 
             // Set current session for network logging
@@ -3014,9 +3170,25 @@ class ChatApp {
                 // Get AI response from inference backend with streaming
                 const messages = await chatDB.getSessionMessages(session.id);
                 const filteredMessages = messages.filter(msg => !msg.isLocalOnly);
+                const sanitizedMessages = this.sanitizeMessagesForApi(filteredMessages);
+                const hasScrubberContext = this.hasScrubberContext(filteredMessages);
+                let scrubberOriginalPrompt = null;
+                let scrubberRedactedPrompt = null;
+                for (let i = filteredMessages.length - 1; i >= 0; i--) {
+                    if (filteredMessages[i]?.role === 'user') {
+                        scrubberOriginalPrompt = filteredMessages[i].scrubber?.original || null;
+                        scrubberRedactedPrompt = filteredMessages[i].scrubber?.redacted || null;
+                        break;
+                    }
+                }
+                const scrubberMetadata = this.createAssistantScrubberMetadata({
+                    originalPrompt: scrubberOriginalPrompt,
+                    redactedPrompt: scrubberRedactedPrompt,
+                    hasScrubberContext
+                });
 
                 // Process messages to include file content from stored metadata
-                const processedMessages = this.processMessagesWithFiles(filteredMessages, modelIdForRequest);
+                const processedMessages = this.processMessagesWithFiles(sanitizedMessages, modelIdForRequest);
 
                 // Create a placeholder message for streaming
                 const streamingMessageId = this.generateId();
@@ -3033,7 +3205,8 @@ class ChatApp {
                     tokenCount: null,
                     streamingTokens: 0,
                     streamingReasoning: false,
-                    streamingPending: true // Indicates waiting for first chunk
+                    streamingPending: true, // Indicates waiting for first chunk
+                    scrubber: scrubberMetadata
                 };
 
                 // Save placeholder immediately so switching sessions back can find it
@@ -3149,6 +3322,9 @@ class ChatApp {
 
                 // Save the final message content with token data, reasoning, and citations
                 streamingMessage.content = streamedContent;
+                if (streamingMessage.scrubber) {
+                    streamingMessage.scrubber.redactedResponse = streamedContent;
+                }
                 const rawReasoning = tokenData.reasoning || streamedReasoning || null;
                 // Parse and save the cleaned reasoning
                 streamingMessage.reasoning = rawReasoning ? parseReasoningContent(rawReasoning) : null;
@@ -3280,7 +3456,8 @@ class ChatApp {
      */
     async sendMessage() {
         // Check if there's content to send
-        let content = this.elements.messageInput.value.trim();
+        const rawContent = this.elements.messageInput.value || '';
+        const content = rawContent.trim();
         const hasFiles = this.uploadedFiles.length > 0;
         if (!content && !hasFiles) return;
 
@@ -3378,6 +3555,14 @@ class ChatApp {
 
         try {
 
+            let scrubberOriginalPrompt = null;
+            let scrubberRedactedPrompt = null;
+            if (this.scrubberPending && this.scrubberPending.redacted?.trim() === content) {
+                scrubberOriginalPrompt = this.scrubberPending.original;
+                scrubberRedactedPrompt = this.scrubberPending.redacted;
+            }
+            this.scrubberPending = null;
+
             // Add user message with file metadata
             const metadata = {};
             if (hasFiles) {
@@ -3398,6 +3583,14 @@ class ChatApp {
             }
             if (searchEnabled) {
                 metadata.searchEnabled = true;
+            }
+            // Store scrubber info on user message for toggle functionality
+            if (scrubberOriginalPrompt && scrubberRedactedPrompt) {
+                metadata.scrubber = {
+                    original: scrubberOriginalPrompt,
+                    redacted: scrubberRedactedPrompt,
+                    showingOriginal: false
+                };
             }
             this.isAutoScrollPaused = true;
             const userMessage = await this.addMessage('user', displayContent || '', metadata);
@@ -3438,7 +3631,7 @@ class ChatApp {
                     }
                     await this.acquireAndSetAccess(session);
                     if (this.floatingPanel) {
-                        this.floatingPanel.showMessage(`Successfully acquired ${accessLabel}!`, 'success', 2000);
+                        this.floatingPanel.showMessage(`${accessLabel} ready`, 'success', 2000);
                     }
                 } catch (error) {
                     if (this.floatingPanel) {
@@ -3446,47 +3639,6 @@ class ChatApp {
                     }
                     await this.addMessage('assistant', `**Error:** ${error.message}`, { isLocalOnly: true });
                     return; // Return early if key acquisition fails
-                }
-
-                // Verify key with verifier before proceeding
-                const verifier = inferenceService.getVerificationAdapter(session);
-                if (verifier?.supports) {
-                    try {
-                        if (this.floatingPanel) {
-                            this.floatingPanel.showMessage(`Verifying ${accessLabel}...`, 'info');
-                        }
-                        const accessInfo = inferenceService.getAccessInfo(session);
-                        await inferenceService.verifyAccess(session, accessInfo?.info);
-                        inferenceService.setCurrentAccess(session, accessInfo?.info);
-                    } catch (verifyError) {
-                        // Clear the API key since it failed verification
-                        inferenceService.clearAccessInfo(session);
-                        await chatDB.saveSession(session);
-
-                        // Update UI components
-                        if (this.rightPanel) {
-                            this.rightPanel.onSessionChange(session);
-                        }
-
-                        if (this.floatingPanel) {
-                            this.floatingPanel.showMessage(verifyError.message, 'error', 5000);
-                        }
-
-                        // Show detailed error for banned stations
-                        let errorMessage;
-                        if (verifyError.status === 'banned' && verifyError.bannedStation) {
-                            const bs = verifyError.bannedStation;
-                            const bannedDate = bs.bannedAt ? new Date(bs.bannedAt).toLocaleString() : 'Unknown';
-                            errorMessage = `**Station Banned**\n\n${verifyError.message}\n\n` +
-                                `- **Station ID:** \`${bs.stationId}\`\n` +
-                                `- **Reason:** ${bs.reason || 'Not specified'}\n` +
-                                `- **Banned at:** ${bannedDate}`;
-                        } else {
-                            errorMessage = `**Verification Error:** ${verifyError.message}`;
-                        }
-                        await this.addMessage('assistant', errorMessage, { isLocalOnly: true });
-                        return; // Block inference if verification fails
-                    }
                 }
             }
 
@@ -3570,18 +3722,16 @@ class ChatApp {
                 // Get AI response from inference backend with streaming
                 const messages = await chatDB.getSessionMessages(session.id);
                 const filteredMessages = messages.filter(msg => !msg.isLocalOnly);
+                const sanitizedMessages = this.sanitizeMessagesForApi(filteredMessages);
+                const hasScrubberContext = this.hasScrubberContext(filteredMessages);
+                const scrubberMetadata = this.createAssistantScrubberMetadata({
+                    originalPrompt: scrubberOriginalPrompt,
+                    redactedPrompt: scrubberRedactedPrompt,
+                    hasScrubberContext
+                });
 
                 // Process messages to include file content from stored metadata
-                let processedMessages = this.processMessagesWithFiles(filteredMessages, modelIdForRequest);
-
-                // If we have stored API content (from @memory enrichment), replace the last message with it
-                if (this._lastApiContent && processedMessages.length > 0) {
-                    const lastMsg = processedMessages[processedMessages.length - 1];
-                    if (lastMsg.role === 'user') {
-                        lastMsg.content = this._lastApiContent;
-                        delete this._lastApiContent;  // Clear for next message
-                    }
-                }
+                const processedMessages = this.processMessagesWithFiles(filteredMessages, modelIdForRequest);
 
                 // Create a placeholder message for streaming
                 const streamingMessageId = this.generateId();
@@ -3600,7 +3750,8 @@ class ChatApp {
                     model: modelNameToUse,
                     tokenCount: null,
                     streamingTokens: 0,
-                    streamingReasoning: false
+                    streamingReasoning: false,
+                    scrubber: scrubberMetadata
                 };
 
                 // Track progress for periodic saves
@@ -3743,6 +3894,9 @@ class ChatApp {
 
                 // Save the final message content with token data, reasoning, and citations
                 streamingMessage.content = streamedContent;
+                if (streamingMessage.scrubber) {
+                    streamingMessage.scrubber.redactedResponse = streamedContent;
+                }
                 const rawReasoning = tokenData.reasoning || streamedReasoning || null;
                 // Parse and save the cleaned reasoning
                 streamingMessage.reasoning = rawReasoning ? parseReasoningContent(rawReasoning) : null;
@@ -5600,6 +5754,40 @@ Your API key has been cleared. A new key from a different station will be obtain
 
         inferenceService.setAccessInfo(session, result);
 
+        // Verify key with verifier
+        const verifier = inferenceService.getVerificationAdapter(session);
+        if (verifier?.supports) {
+            const accessInfo = inferenceService.getAccessInfo(session);
+            const verifyResult = await inferenceService.verifyAccess(session, accessInfo?.info);
+
+            if (verifyResult?.status === 'unverified') {
+                const detail = verifyResult?.detail || verifyResult?.data?.detail;
+                if (detail === 'key_near_expiry') {
+                    console.warn('⚠️ Key expires too soon to verify, continuing without verification');
+                } else if (detail === 'ownership_check_error') {
+                    console.warn('⚠️ Ownership verification temporarily unavailable, continuing without verification');
+                } else {
+                    console.warn('⚠️ Key verification unverified, continuing without verification');
+                }
+            }
+
+            if (verifyResult?.status === 'rejected') {
+                // Verification failed - clear the API key and throw
+                inferenceService.clearAccessInfo(session);
+                await chatDB.saveSession(session);
+
+                const errorMsg = verifyResult.error?.message || 'Verification failed';
+                if (verifyResult.bannedStation) {
+                    const bs = verifyResult.bannedStation;
+                    throw new Error(`Station ${bs.stationId} is banned: ${bs.reason || 'Unknown reason'}`);
+                }
+                throw new Error(`Key verification failed: ${errorMsg}`);
+            }
+
+            // Set current station for verifier tracking
+            inferenceService.setCurrentAccess(session, accessInfo?.info);
+        }
+
         // Clear apiKeyShared flag - new key hasn't been shared yet
         if (session.shareInfo?.apiKeyShared) {
             session.shareInfo.apiKeyShared = false;
@@ -5623,19 +5811,26 @@ Your API key has been cleared. A new key from a different station will be obtain
         const contentEl = document.getElementById(`citations-content-${messageId}`);
         const chevronEl = document.querySelector(`#citations-toggle-${messageId} .citations-chevron`);
 
-        if (contentEl && chevronEl) {
-            const isHidden = contentEl.classList.contains('hidden');
-            if (isHidden) {
-                contentEl.classList.remove('hidden');
+        if (!contentEl) {
+            console.debug('[toggleCitations] Content element not found for message:', messageId);
+            return;
+        }
+
+        const isHidden = contentEl.classList.contains('hidden');
+        if (isHidden) {
+            contentEl.classList.remove('hidden');
+            if (chevronEl) {
                 chevronEl.style.transform = 'rotate(180deg)';
-            } else {
-                contentEl.classList.add('hidden');
+            }
+        } else {
+            contentEl.classList.add('hidden');
+            if (chevronEl) {
                 chevronEl.style.transform = 'rotate(0deg)';
             }
-
-            // Update scroll button visibility after content change
-            this.updateScrollButtonVisibility();
         }
+
+        // Update scroll button visibility after content change
+        this.updateScrollButtonVisibility();
     }
 
     /**
@@ -5680,6 +5875,85 @@ Your API key has been cleared. A new key from a different station will be obtain
 
             // Also scroll the citation section into view if needed
             citationEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+    }
+
+    /**
+     * Toggle scrubber restoration for an assistant message.
+     * @param {string} messageId
+     */
+    async toggleScrubberRestore(messageId) {
+        const session = this.getCurrentSession();
+        if (!session) return;
+
+        const messages = await chatDB.getSessionMessages(session.id);
+        const messageIndex = messages.findIndex(msg => msg.id === messageId);
+        if (messageIndex === -1) return;
+        const message = messages[messageIndex];
+        const canRestore = message?.scrubber?.canRestore || message?.scrubber?.redactedPrompt;
+        if (!canRestore) return;
+
+        if (message.scrubber.restored) {
+            const redactedResponse = message.scrubber.redactedResponse || message.content || '';
+            message.content = redactedResponse;
+            message.scrubber.restored = false;
+            await chatDB.saveMessage(message);
+            if (this.chatArea && this.isViewingSession(session.id)) {
+                this.chatArea.updateMessage(message);
+            }
+            return;
+        }
+
+        const stopLoading = this.showLoadingToast('Restoring PII...');
+        try {
+            const responseText = message.content || message.scrubber.redactedResponse || '';
+            if (!message.scrubber.redactedResponse) {
+                message.scrubber.redactedResponse = responseText;
+            }
+            const useContextRestore = message.scrubber?.mode === 'context' ||
+                (!message.scrubber?.redactedPrompt && message.scrubber?.canRestore);
+            let restoreResult = null;
+            if (useContextRestore) {
+                const historyMessages = messages.slice(0, messageIndex).filter(msg => !msg.isLocalOnly);
+                const { original, redacted } = this.buildScrubberRestoreContext(historyMessages);
+                if (!original.trim() || !redacted.trim()) {
+                    this.showToast('Restore failed', 'error');
+                    return;
+                }
+                restoreResult = await this.scrubberService.restoreResponseWithContext({
+                    originalContext: original,
+                    redactedContext: redacted,
+                    responseText,
+                    session
+                });
+            } else {
+                restoreResult = await this.scrubberService.restoreResponse({
+                    originalPrompt: message.scrubber.originalPrompt || '',
+                    redactedPrompt: message.scrubber.redactedPrompt || '',
+                    responseText,
+                    session
+                });
+            }
+            if (restoreResult?.success && restoreResult.text) {
+                message.scrubber.restoredResponse = restoreResult.text;
+                message.scrubber.restored = true;
+                message.content = restoreResult.text;
+                message.tokenCount = Math.ceil(restoreResult.text.length / 4);
+                await chatDB.saveMessage(message);
+                if (this.chatArea && this.isViewingSession(session.id)) {
+                    this.chatArea.updateMessage(message);
+                }
+                this.showToast('PII restored', 'success');
+            } else {
+                this.showToast('Restore failed', 'error');
+            }
+        } catch (error) {
+            console.warn('Scrubber restore failed:', error);
+            this.showToast('Restore failed', 'error');
+        } finally {
+            if (typeof stopLoading === 'function') {
+                stopLoading();
+            }
         }
     }
 }

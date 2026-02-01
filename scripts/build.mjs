@@ -11,6 +11,17 @@ const repoRoot = path.resolve(__dirname, '..');
 const srcDir = path.join(repoRoot, 'chat');
 const outDir = path.join(repoRoot, 'dist');
 const assetsDir = path.join(outDir, 'assets');
+const vectorDir = path.join(repoRoot, 'vector');
+const localInferenceDir = path.join(repoRoot, 'local_inference');
+
+const pathExists = async (target) => {
+    try {
+        await fs.access(target);
+        return true;
+    } catch {
+        return false;
+    }
+};
 
 const entryPoints = {
     app: path.join(srcDir, 'app.js'),
@@ -46,6 +57,35 @@ const build = async () => {
     await fs.rm(outDir, { recursive: true, force: true });
     await fs.mkdir(path.join(repoRoot, 'dist'), { recursive: true });
     await fs.cp(srcDir, outDir, { recursive: true });
+    const vectorOutDir = path.join(outDir, 'vector');
+    if (await pathExists(vectorOutDir)) {
+        const vectorStat = await fs.lstat(vectorOutDir);
+        if (vectorStat.isSymbolicLink()) {
+            await fs.rm(vectorOutDir, { recursive: true, force: true });
+        }
+    }
+    await fs.mkdir(vectorOutDir, { recursive: true });
+
+    const vectorVendorSrc = path.join(vectorDir, 'vendor');
+    if (await pathExists(vectorVendorSrc)) {
+        await fs.cp(vectorVendorSrc, path.join(vectorOutDir, 'vendor'), { recursive: true });
+    }
+
+    const vectorWasmSrc = path.join(vectorDir, 'wasm');
+    if (await pathExists(vectorWasmSrc)) {
+        await fs.cp(vectorWasmSrc, path.join(vectorOutDir, 'wasm'), { recursive: true });
+    }
+
+    const localInferenceOutDir = path.join(outDir, 'local_inference');
+    if (await pathExists(localInferenceOutDir)) {
+        const localStat = await fs.lstat(localInferenceOutDir);
+        if (localStat.isSymbolicLink()) {
+            await fs.rm(localInferenceOutDir, { recursive: true, force: true });
+        }
+    }
+    if (await pathExists(localInferenceDir)) {
+        await fs.cp(localInferenceDir, localInferenceOutDir, { recursive: true });
+    }
 
     const result = await esbuild.build({
         entryPoints,

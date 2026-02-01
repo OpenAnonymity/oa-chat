@@ -11,42 +11,19 @@ import { getFileIconSvg } from '../services/fileUtils.js';
 // In-memory cache for reasoning trace expanded state (persists across session switches)
 const reasoningExpandedState = new Set();
 
-// Welcome message content configuration
-// Edit this markdown string to customize the intro message shown on new chat sessions
-// Supports full markdown: **bold**, *italic*, lists, links, etc.
-// Title and subtitle support inline markdown - use backticks for monospace: `code`
-const DEFAULT_WELCOME_CONTENT = {
-    title: '`oa-fastchat`',
-    subtitle: 'A minimal, fast, and anonymous chat client by The Open Anonymity Project', // Optional subtitle that appears centered below the title
-    content: `
-1. **Chats are end-to-end anonymous.**\\
-   Every chat requests an *ephemeral and cryptographically unlinkable* access key from a random proxy (*oa-stations*) with blind-signed tokens (*inference tickets*). Because users hit different oa-stations who issue such ephemeral keys to many users, model providers only see anonymous and mixed traffic.
-2. **Chat prompts and responses are *never* seen by OA infra.**\\
-   Because the ephemeral key itself is unlinkably issued to *you*, your browser either talks to models on the provider *directly* via encrypted HTTPS or through an enclaved inference proxy.
-   Open Anonymity simply handles the key issuance, rotation, and encrypted tunneling.
-3. **Chat history is entirely local.**\\
-   Because every chat takes a random anonymous path to the model, *only you* have your full chat history, [saved locally](#download-chats-link).
-4. **This chat client is lightweight, fast, and disposable.**\\
-    The entire client is less than 1MB. All it does is fetching ephemeral keys, sending prompts, and streaming responses on your behalf. You can (and should) [export](#download-tickets-link) your tickets to make the same API calls without this client.
+// Welcome screen configuration
+const WELCOME_SHOW_LOGO = false;  // Set to true to show the logo icon
 
-**The OA project is actively developed at Stanford and Michigan.** This client is currently in closed alpha and more details coming soon. We appreciate your [feedback](https://forms.gle/HEmvxnJpN1jQC7CfA)!
-
-[12/16/2025] Various UI/UX improvements & GPT-5.2 Instant/Thinking\\
-[11/26/2025] Added Claude Opus 4.5, Gemini 3 Pro, and GPT-5.1 Instant and Thinking\\
-[11/25/2025] Added TLS-over-WebSocket inference proxy\\
-[11/19/2025] Added prompt editing and chat branching + UI fixes
-    `.trim(),
-    // Future: Add diagram/image support
-    // diagram: null,
-};
-
+// Welcome content is managed by inferenceService.js (single source of truth)
+// This getter delegates to inferenceService with a minimal structural fallback
 function getWelcomeContent() {
     if (typeof window !== 'undefined' &&
         window.inferenceService &&
         typeof window.inferenceService.getWelcomeContent === 'function') {
         return window.inferenceService.getWelcomeContent();
     }
-    return DEFAULT_WELCOME_CONTENT;
+    // Minimal fallback structure - inferenceService should always be loaded by render time
+    return { title: '`oa-fastchat`', subtitle: '', content: '' };
 }
 
 // Shared class constants (copied verbatim from existing markup)
@@ -388,11 +365,19 @@ function buildUserMessage(message, options = {}) {
         <button class="user-message-show-more" data-message-id="${message.id}">Show more</button>
     ` : '';
 
+    // Add scrubber-togglable class for fixed height with scroll when toggling
+    const hasScrubber = message.scrubber;
+    const scrubberTogglableClass = hasScrubber ? 'scrubber-togglable' : '';
+    const heightLockedClass = hasScrubber && message.scrubber.lockedHeight ? 'height-locked' : '';
+    const lockedHeightStyle = hasScrubber && message.scrubber.lockedHeight 
+        ? `height: ${message.scrubber.lockedHeight}px;` 
+        : '';
+
     // Normal display mode with action buttons (shown on hover)
     return `
         <div class="${CLASSES.userWrapper}" data-message-id="${message.id}">
             <div class="${CLASSES.userGroup}">
-                <div class="${CLASSES.userBubble}">
+                <div class="${CLASSES.userBubble} ${scrubberTogglableClass} ${heightLockedClass}" style="${lockedHeightStyle}">
                     <div class="${CLASSES.userContent} ${collapsibleClass}">
                         ${fileAttachments}
                         <p class="mb-0">${escapeHtml(message.content)}</p>
@@ -400,6 +385,20 @@ function buildUserMessage(message, options = {}) {
                     ${showMoreBtn}
                 </div>
                 <div class="message-user-actions absolute top-full right-0 mt-1 flex items-center gap-1 z-10">
+                    ${message.scrubber ? `
+                    <button
+                        class="toggle-scrubber-btn message-action-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground ${message.scrubber.showingOriginal ? 'bg-muted/60' : ''}"
+                        data-message-id="${message.id}"
+                        data-tooltip="${message.scrubber.showingOriginal ? 'Show anonymized' : 'Show original'}"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                            ${message.scrubber.showingOriginal 
+                                ? '<path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.451 10.451 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.522 10.522 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88" />'
+                                : '<path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />'
+                            }
+                        </svg>
+                    </button>
+                    ` : ''}
                     <button
                         class="resend-prompt-btn message-action-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
                         data-message-id="${message.id}"
@@ -1113,6 +1112,17 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
 
     // Build citations section if there are citations
     const citationsBubble = buildCitationsSection(message.citations, message.id);
+    const canRestoreScrubber = message.scrubber?.canRestore || message.scrubber?.redactedPrompt;
+    const scrubberToggleButton = canRestoreScrubber ? `
+        <button
+            class="message-action-btn scrubber-restore-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+            data-message-id="${message.id}"
+            data-tooltip="${message.scrubber?.restored ? 'Show redacted' : 'Restore PII'}">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3" />
+            </svg>
+        </button>
+    ` : '';
 
     return `
         <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}">
@@ -1155,6 +1165,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M2 12h6c6 0 10-4 14-8m-4 0h4v4M8 12c6 0 10 4 14 8m-4 0h4v-4" />
                             </svg>
                         </button>
+                        ${scrubberToggleButton}
                         ${noResponseNotice}
                     </div>
                     ${buildCitationsToggleButton(message.citations, message.id)}
@@ -1215,34 +1226,62 @@ function buildEmptyState() {
             : escapeHtml(welcomeContent.subtitle))
         : '';
 
-    return `
-        <div class="${CLASSES.emptyStateWrapper}">
+    // Logo SVG - shown when WELCOME_SHOW_LOGO is true
+    const logoHtml = WELCOME_SHOW_LOGO ? `
             <svg xmlns="http://www.w3.org/2000/svg" class="${CLASSES.emptyStateIcon}" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M8.7,14.2C8,14.7,7.1,15,6.2,15H4c-0.6,0-1,0.4-1,1s0.4,1,1,1h2.2c1.3,0,2.6-0.4,3.7-1.2c0.4-0.3,0.5-1,0.2-1.4C9.7,13.9,9.1,13.8,8.7,14.2z"/>
                 <path d="M13,10.7c0.3,0,0.6-0.1,0.8-0.3C14.5,9.5,15.6,9,16.8,9h0.8l-0.3,0.3c-0.4,0.4-0.4,1,0,1.4c0.2,0.2,0.5,0.3,0.7,0.3s0.5-0.1,0.7-0.3l2-2c0.1-0.1,0.2-0.2,0.2-0.3c0.1-0.2,0.1-0.5,0-0.8c-0.1-0.1-0.1-0.2-0.2-0.3l-2-2c-0.4-0.4-1-0.4-1.4,0s-0.4,1,0,1.4L17.6,7h-0.8c-1.8,0-3.4,0.8-4.6,2.1c-0.4,0.4-0.3,1,0.1,1.4C12.5,10.7,12.8,10.7,13,10.7z"/>
                 <path d="M20.7,15.3l-2-2c-0.4-0.4-1-0.4-1.4,0s-0.4,1,0,1.4l0.3,0.3h-1.5c-1.6,0-2.9-0.9-3.6-2.3l-1.2-2.4C10.3,8.3,8.2,7,5.9,7H4C3.4,7,3,7.4,3,8s0.4,1,1,1h1.9c1.6,0,2.9,0.9,3.6,2.3l1.2,2.4c1,2.1,3.1,3.4,5.4,3.4h1.5l-0.3,0.3c-0.4,0.4-0.4,1,0,1.4c0.2,0.2,0.5,0.3,0.7,0.3s0.5-0.1,0.7-0.3l2-2C21.1,16.3,21.1,15.7,20.7,15.3z"/>
-            </svg>
-            <p class="${CLASSES.emptyStateTitle}">${titleHtml}</p>
-            ${subtitleHtml ? `<p class="${CLASSES.emptyStateSubtitle}">${subtitleHtml}</p>` : ''}
-            <div class="max-w-2xl px-20 mx-auto mt-4 prose prose-sm text-left" style="font-size: 0.75rem !important;">
-                <style>
-                    .welcome-content p,
-                    .welcome-content li,
-                    .welcome-content a,
-                    .welcome-content strong,
-                    .welcome-content em,
-                    .welcome-content ol,
-                    .welcome-content ul {
-                        font-size: 0.75rem !important;
-                    }
-                    .welcome-content a {
-                        text-decoration: underline;
-                    }
-                </style>
-                <div class="welcome-content">
-                    ${contentHtml}
-                </div>
-            </div>
+            </svg>` : '';
+
+    return `
+        <div class="${CLASSES.emptyStateWrapper} welcome-landing">
+            <style>
+                .welcome-landing {
+                    margin-top: 12vh;
+                    opacity: 0;
+                    animation: welcomeFadeIn 0.2s ease-out 0.05s forwards;
+                }
+                @keyframes welcomeFadeIn {
+                    from { opacity: 0; }
+                    to { opacity: 1; }
+                }
+                .welcome-title {
+                    font-size: 1.25rem;
+                    font-weight: 500;
+                    color: hsl(var(--color-foreground));
+                    margin-bottom: 0.375rem;
+                }
+                .welcome-subtitle {
+                    font-size: 0.875rem;
+                    color: hsl(var(--color-muted-foreground));
+                }
+                .welcome-subtitle a {
+                    color: hsl(var(--color-muted-foreground));
+                    text-decoration: none;
+                    border-bottom: 1px solid hsl(var(--color-border));
+                    transition: all 0.15s ease;
+                }
+                .welcome-subtitle a:hover {
+                    color: hsl(var(--color-foreground));
+                    border-bottom-color: hsl(var(--color-foreground) / 0.5);
+                }
+                .welcome-content {
+                    font-size: 0.75rem !important;
+                }
+                .welcome-content p,
+                .welcome-content li,
+                .welcome-content a {
+                    font-size: 0.75rem !important;
+                }
+                .welcome-content a {
+                    text-decoration: underline;
+                }
+            </style>
+            ${logoHtml}
+            <p class="welcome-title">${titleHtml}</p>
+            ${subtitleHtml ? `<p class="welcome-subtitle">${subtitleHtml}</p>` : ''}
+            ${contentHtml ? `<div class="max-w-2xl px-20 mx-auto mt-6 prose prose-sm text-left"><div class="welcome-content">${contentHtml}</div></div>` : ''}
         </div>
     `;
 }

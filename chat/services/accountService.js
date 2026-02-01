@@ -27,12 +27,14 @@ import { generateRecoveryCode, isValidRecoveryCode, normalizeRecoveryCode } from
 import syncService from './syncService.js';
 
 const ACCOUNT_SETTINGS_KEY = 'account-settings';
-const MASTER_CRYPTO_KEY = 'master-crypto-key';
-const MASTER_KEY_BYTES = 'master-key-bytes';  // Raw bytes for sync HKDF
+const ACCOUNT_MASTER_CRYPTO_KEY = 'account-master-crypto-key';
+const ACCOUNT_MASTER_KEY_BYTES = 'account-master-key-bytes';  // Raw bytes for sync HKDF
+const ACCOUNT_REFRESH_TOKEN_KEY = 'account-refresh-token';  // Electron-only: refresh token persistence
 const ACCOUNT_REQUEST_TIMEOUT_MS = 10000;
 
 // Platform detection for auth token handling
-const PLATFORM = (typeof window !== 'undefined' && window?.process?.versions?.electron) ? 'electron' : 'web';
+// Check electronAPI.isElectron (context-isolated) or process.versions.electron (non-isolated)
+const PLATFORM = (typeof window !== 'undefined' && (window.electronAPI?.isElectron || window?.process?.versions?.electron)) ? 'electron' : 'web';
 
 // Argon2id parameters for recovery code KDF.
 // These values balance security vs. UX on mobile devices.
@@ -170,12 +172,12 @@ async function decryptBytes(key, payload) {
 async function deriveRecoveryKey(code, saltBytes) {
     if (!window.argon2id) {
         if (typeof window.initHashWasm !== 'function') {
-            throw new Error('Hash library not loaded. Please refresh the page.');
+            throw new Error('Hash library not loaded, please refresh the page');
         }
         await window.initHashWasm();
     }
     if (typeof window.argon2id !== 'function') {
-        throw new Error('Argon2 not available. Please refresh the page.');
+        throw new Error('Argon2 not available, please refresh the page');
     }
     const derivedBytes = await window.argon2id({
         password: code,
@@ -198,12 +200,12 @@ async function deriveRecoveryKey(code, saltBytes) {
 async function computeRecoveryCodeHash(recoveryCode, accountId) {
     if (!window.argon2id) {
         if (typeof window.initHashWasm !== 'function') {
-            throw new Error('Hash library not loaded. Please refresh the page.');
+            throw new Error('Hash library not loaded, please refresh the page');
         }
         await window.initHashWasm();
     }
     if (typeof window.argon2id !== 'function') {
-        throw new Error('Argon2 not available. Please refresh the page.');
+        throw new Error('Argon2 not available, please refresh the page');
     }
     const saltBytes = textEncoder.encode(accountId);
     const hash = await window.argon2id({
@@ -358,7 +360,7 @@ function assertionToJSON(assertion) {
  * Callers should catch this and trigger re-authentication.
  */
 class TokenInvalidatedError extends Error {
-    constructor(message = 'Session invalidated. Please sign in again.') {
+    constructor(message = 'Session invalidated, please sign in again') {
         super(message);
         this.name = 'TokenInvalidatedError';
         this.code = 'INVALID_TOKEN';
@@ -406,11 +408,11 @@ async function fetchJson(path, body, { timeoutMs = ACCOUNT_REQUEST_TIMEOUT_MS } 
 
 function toFriendlyError(error) {
     if (!error) return 'Unexpected error';
-    if (error.name === 'AbortError') return 'Request timed out. Please try again.';
-    if (error.name === 'NotAllowedError') return 'Passkey prompt was cancelled.';
-    if (error.name === 'NotFoundError') return 'No passkey found for this account on this device.';
-    if (error.name === 'OperationError') return 'Invalid recovery code. Please check and try again.';
-    if (error.name === 'TokenInvalidatedError') return 'Session expired. Please sign in again.';
+    if (error.name === 'AbortError') return 'Request timed out, please try again';
+    if (error.name === 'NotAllowedError') return 'Passkey prompt was cancelled';
+    if (error.name === 'NotFoundError') return 'No passkey found for this account on this device';
+    if (error.name === 'OperationError') return 'Invalid recovery code, please check and try again';
+    if (error.name === 'TokenInvalidatedError') return 'Session expired, please sign in again';
     return error.message || 'Unexpected error';
 }
 
@@ -427,6 +429,7 @@ class AccountService {
             action: null,
             error: null,
             status: 'none',
+            sessionVerified: false,  // True only after /refresh confirms session is valid
             passkeySupported: typeof window !== 'undefined' && !!window.PublicKeyCredential,
             prfSupported: null,
             rateLimited: false,
@@ -446,6 +449,7 @@ class AccountService {
 
         // Session persistence: access token (memory) and CryptoKey (IndexedDB)
         this.accessToken = null;
+        this.refreshToken = null;  // Electron-only: refresh token for Bearer auth
         this.cryptoKey = null;  // Non-extractable CryptoKey for encryption
 
         // Set up global callback for token invalidation
@@ -573,8 +577,8 @@ class AccountService {
         );
         
         // Store both in IndexedDB
-        await chatDB.saveSetting(MASTER_CRYPTO_KEY, cryptoKey);
-        await chatDB.saveSetting(MASTER_KEY_BYTES, new Uint8Array(masterKeyBytes));
+        await chatDB.saveSetting(ACCOUNT_MASTER_CRYPTO_KEY, cryptoKey);
+        await chatDB.saveSetting(ACCOUNT_MASTER_KEY_BYTES, new Uint8Array(masterKeyBytes));
         this.cryptoKey = cryptoKey;
     }
 
@@ -588,8 +592,8 @@ class AccountService {
         
         try {
             const [cryptoKey, keyBytes] = await Promise.all([
-                chatDB.getSetting(MASTER_CRYPTO_KEY),
-                chatDB.getSetting(MASTER_KEY_BYTES)
+                chatDB.getSetting(ACCOUNT_MASTER_CRYPTO_KEY),
+                chatDB.getSetting(ACCOUNT_MASTER_KEY_BYTES)
             ]);
             
             if (cryptoKey && cryptoKey instanceof CryptoKey) {
@@ -616,8 +620,8 @@ class AccountService {
         
         try {
             await Promise.all([
-                chatDB.deleteSetting(MASTER_CRYPTO_KEY),
-                chatDB.deleteSetting(MASTER_KEY_BYTES)
+                chatDB.deleteSetting(ACCOUNT_MASTER_CRYPTO_KEY),
+                chatDB.deleteSetting(ACCOUNT_MASTER_KEY_BYTES)
             ]);
         } catch (error) {
             console.warn('Failed to delete master key from IndexedDB:', error);
@@ -630,19 +634,31 @@ class AccountService {
     // =========================================================================
 
     /**
-     * Refresh the access token using the refresh token (HttpOnly cookie for web).
+     * Refresh the access token using the refresh token.
+     * - Web: Uses HttpOnly cookie (sent automatically via credentials: include)
+     * - Electron: Uses Bearer token in Authorization header (no cookies)
      * Called during init() to restore session, and when access token expires.
      * @returns {Promise<boolean>} True if token was refreshed, false otherwise
      */
     async refreshAccessToken() {
         try {
+            const headers = {
+                'Content-Type': 'application/json',
+                'X-Client-Platform': PLATFORM
+            };
+            
+            // Electron: send refresh token as Bearer (no cookie available)
+            if (PLATFORM === 'electron') {
+                if (!this.refreshToken) {
+                    return false;  // No refresh token to use
+                }
+                headers['Authorization'] = `Bearer ${this.refreshToken}`;
+            }
+            
             const response = await fetch(`${ORG_API_BASE}/auth/refresh`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Client-Platform': PLATFORM
-                },
-                credentials: 'include'  // Sends HttpOnly cookie automatically
+                headers,
+                credentials: 'include'  // Still needed for web (harmless for Electron)
             });
             
             if (!response.ok) {
@@ -722,28 +738,51 @@ class AccountService {
             // Try to restore session from persisted CryptoKey
             const hasKey = await this.loadMasterKey();
             if (hasKey) {
-                // Try to refresh the access token
-                const tokenRefreshed = await this.refreshAccessToken().catch(() => false);
-                if (tokenRefreshed) {
-                    // Session fully restored - no passkey needed!
-                    this.state.isReady = true;
-                    this.updateStatus();
-                    this.notify();
-                    
-                    // Initialize sync for restored session
-                    this.initializeSync(false).catch(() => {});
-                    
-                    return;
+                // Electron: load refresh token from IndexedDB before attempting refresh
+                if (PLATFORM === 'electron') {
+                    this.refreshToken = await chatDB.getSetting(ACCOUNT_REFRESH_TOKEN_KEY).catch(() => null);
                 }
-                // Token refresh failed but we have the key - might be offline
-                // Keep the cryptoKey, user can still work locally
+                
+                // Mark ready immediately - UI can render, models can load
+                // Token refresh happens in background (non-blocking)
+                this.state.isReady = true;
+                this.updateStatus();
+                this.notify();
+                
+                // Refresh token in background (non-blocking) - don't await
+                this.refreshTokenInBackground();
+                return;
             }
-            // No persisted key or token refresh failed - will need passkey
+            // No persisted key - will need passkey
         }
         
         this.state.isReady = true;
         this.updateStatus();
         this.notify();
+    }
+
+    /**
+     * Refresh the access token in the background without blocking init.
+     * Called after session restoration when we have a persisted master key.
+     * Includes a small delay to prevent rate limiting on burst page refreshes.
+     */
+    async refreshTokenInBackground() {
+        try {
+            // Small delay to prevent rate limiting on burst page refreshes
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            const tokenRefreshed = await this.refreshAccessToken().catch(() => false);
+            if (tokenRefreshed) {
+                // Session verified with server - now show logged-in state
+                this.state.sessionVerified = true;
+                this.notify();
+                // Initialize sync for restored session
+                this.initializeSync(false).catch(() => {});
+            }
+            // If refresh failed, user can still work locally; re-auth on next API call
+        } catch (error) {
+            console.warn('[AccountService] Background token refresh failed:', error);
+        }
     }
 
     async persistSettings() {
@@ -812,7 +851,7 @@ class AccountService {
             throw new Error('No pending account. Call prepareAccount() first.');
         }
         if (!this.state.passkeySupported) {
-            throw new Error('Passkeys are not supported in this browser.');
+            throw new Error('Passkeys are not supported in this browser');
         }
 
         const { accountId, initData } = this.pendingAccount;
@@ -830,17 +869,17 @@ class AccountService {
             // User cancelled or other WebAuthn error - don't clear pending account
             // so they can retry with the same account number
             if (error.name === 'NotAllowedError') {
-                this.state.error = 'Passkey creation was cancelled.';
+                this.state.error = 'Passkey creation was cancelled';
                 this.notify();
                 return false;
             }
-            this.state.error = error.message || 'Passkey creation failed.';
+            this.state.error = error.message || 'Passkey creation failed';
             this.notify();
             return false;
         }
 
         if (!credential) {
-            this.state.error = 'Passkey creation failed.';
+            this.state.error = 'Passkey creation failed';
             this.notify();
             return false;
         }
@@ -849,7 +888,7 @@ class AccountService {
         const prfBytes = getPrfOutput(credential);
         if (!prfBytes) {
             this.state.prfSupported = false;
-            this.state.error = 'Passkey did not return PRF output. Your authenticator may not support this feature.';
+            this.state.error = 'Passkey did not return PRF output, your authenticator may not support this feature';
             this.notify();
             return false;
         }
@@ -933,6 +972,12 @@ class AccountService {
         // Handle access token from response
         if (registerData?.accessToken) {
             this.accessToken = registerData.accessToken;
+            this.state.sessionVerified = true;
+        }
+        // Electron: capture and persist refresh token to IndexedDB
+        if (PLATFORM === 'electron' && registerData?.refreshToken) {
+            this.refreshToken = registerData.refreshToken;
+            await chatDB.saveSetting(ACCOUNT_REFRESH_TOKEN_KEY, registerData.refreshToken);
         }
         
         // Persist master key as non-extractable CryptoKey for session restoration
@@ -1022,7 +1067,7 @@ class AccountService {
 
     async createAccount() {
         if (!this.state.passkeySupported) {
-            this.setError('Passkeys are not supported in this browser.');
+            this.setError('Passkeys are not supported in this browser');
             return false;
         }
         if (this.state.busy) return false;
@@ -1046,13 +1091,13 @@ class AccountService {
             const publicKey = buildCreationOptions(initData, accountId, prfInput);
             const credential = await navigator.credentials.create({ publicKey });
             if (!credential) {
-                throw new Error('Passkey creation failed.');
+                throw new Error('Passkey creation failed');
             }
 
             const prfBytes = getPrfOutput(credential);
             if (!prfBytes) {
                 this.state.prfSupported = false;
-                throw new Error('Passkey did not return PRF output.');
+                throw new Error('Passkey did not return PRF output');
             }
             this.state.prfSupported = true;
 
@@ -1094,6 +1139,12 @@ class AccountService {
             // Handle access token from response
             if (registerData?.accessToken) {
                 this.accessToken = registerData.accessToken;
+                this.state.sessionVerified = true;
+            }
+            // Electron: capture and persist refresh token to IndexedDB
+            if (PLATFORM === 'electron' && registerData?.refreshToken) {
+                this.refreshToken = registerData.refreshToken;
+                await chatDB.saveSetting(ACCOUNT_REFRESH_TOKEN_KEY, registerData.refreshToken);
             }
             
             // Persist master key as non-extractable CryptoKey for session restoration
@@ -1117,7 +1168,7 @@ class AccountService {
     async unlockWithPasskey(accountIdInput, { mediation, silent = false } = {}) {
         if (this.state.busy) return false;
         if (!this.state.passkeySupported) {
-            if (!silent) this.setError('Passkeys are not supported in this browser.');
+            if (!silent) this.setError('Passkeys are not supported in this browser');
             return false;
         }
 
@@ -1132,7 +1183,7 @@ class AccountService {
 
         const accountId = normalizeAccountId(accountIdInput || this.state.accountId);
         if (!accountId) {
-            if (!silent) this.setError('Enter your account ID to continue.');
+            if (!silent) this.setError('Enter your account ID to continue');
             return false;
         }
 
@@ -1154,7 +1205,7 @@ class AccountService {
             });
 
             if (!assertion) {
-                throw new Error('Passkey request was cancelled.');
+                throw new Error('Passkey request was cancelled');
             }
 
             const prfBytes = getPrfOutput(assertion);
@@ -1164,7 +1215,7 @@ class AccountService {
                     busy: false,
                     action: null,
                     recoveryRequired: true,
-                    error: 'This passkey does not provide PRF output. Use your recovery code.'
+                    error: 'This passkey does not provide PRF output, use your recovery code'
                 });
                 return false;
             }
@@ -1201,6 +1252,12 @@ class AccountService {
             // Handle access token from response
             if (loginData.accessToken) {
                 this.accessToken = loginData.accessToken;
+                this.state.sessionVerified = true;
+            }
+            // Electron: capture and persist refresh token to IndexedDB
+            if (PLATFORM === 'electron' && loginData.refreshToken) {
+                this.refreshToken = loginData.refreshToken;
+                await chatDB.saveSetting(ACCOUNT_REFRESH_TOKEN_KEY, loginData.refreshToken);
             }
             
             // Persist master key as non-extractable CryptoKey for session restoration
@@ -1254,18 +1311,18 @@ class AccountService {
 
         const accountId = normalizeAccountId(accountIdInput || this.state.accountId);
         if (!accountId) {
-            this.setError('Enter your account ID to continue.');
+            this.setError('Enter your account ID to continue');
             return false;
         }
         const normalizedCode = normalizeRecoveryCode(recoveryCodeInput);
         if (!isValidRecoveryCode(normalizedCode)) {
-            this.setError('Recovery code should be five words.');
+            this.setError('Recovery code should be five words');
             return false;
         }
 
         // Passkey is required for recovery (single passkey per account)
         if (!this.state.passkeySupported) {
-            this.setError('Passkeys are required for account recovery but not supported in this browser.');
+            this.setError('Passkeys are required for account recovery but not supported in this browser');
             return false;
         }
 
@@ -1297,13 +1354,13 @@ class AccountService {
             
             const credential = await navigator.credentials.create({ publicKey });
             if (!credential) {
-                throw new Error('Passkey creation was cancelled.');
+                throw new Error('Passkey creation was cancelled');
             }
 
             const prfBytes = getPrfOutput(credential);
             if (!prfBytes) {
                 this.state.prfSupported = false;
-                throw new Error('Passkey did not return PRF output. Recovery requires a passkey with PRF support.');
+                throw new Error('Passkey did not return PRF output, recovery requires a passkey with PRF support');
             }
             this.state.prfSupported = true;
 
@@ -1334,6 +1391,12 @@ class AccountService {
             // Handle access token from response
             if (completeData?.accessToken) {
                 this.accessToken = completeData.accessToken;
+                this.state.sessionVerified = true;
+            }
+            // Electron: capture and persist refresh token to IndexedDB
+            if (PLATFORM === 'electron' && completeData?.refreshToken) {
+                this.refreshToken = completeData.refreshToken;
+                await chatDB.saveSetting(ACCOUNT_REFRESH_TOKEN_KEY, completeData.refreshToken);
             }
             
             // Persist master key as non-extractable CryptoKey for session restoration
@@ -1385,6 +1448,12 @@ class AccountService {
         this.masterKey = null;
         this.cryptoKey = null;
         this.accessToken = null;
+        this.state.sessionVerified = false;
+        // Electron: clear invalid refresh token
+        if (PLATFORM === 'electron') {
+            this.refreshToken = null;
+            await chatDB.deleteSetting(ACCOUNT_REFRESH_TOKEN_KEY).catch(() => {});
+        }
         
         // Clear persisted CryptoKey from IndexedDB
         await this.clearPersistedMasterKey();
@@ -1405,6 +1474,7 @@ class AccountService {
         this.masterKey = null;
         this.cryptoKey = null;  // Clear from memory (IndexedDB copy remains for re-unlock)
         this.accessToken = null;
+        this.state.sessionVerified = false;
         this.updateStatus();
         this.notify();
     }
@@ -1431,6 +1501,12 @@ class AccountService {
         this.masterKey = null;
         this.cryptoKey = null;
         this.accessToken = null;
+        this.state.sessionVerified = false;
+        // Electron: clear persisted refresh token
+        if (PLATFORM === 'electron') {
+            this.refreshToken = null;
+            await chatDB.deleteSetting(ACCOUNT_REFRESH_TOKEN_KEY).catch(() => {});
+        }
         
         // Clear persisted CryptoKey from IndexedDB
         await this.clearPersistedMasterKey();

@@ -4,6 +4,8 @@
 /*
 !/chat
 !/chat/**
+!/local_inference
+!/local_inference/**
 !/scripts
 !/scripts/**
 !/package.json

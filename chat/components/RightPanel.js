@@ -63,12 +63,20 @@ class RightPanel {
         // Proxy state
         this.proxySettings = networkProxy.getSettings();
         this.proxyStatus = networkProxy.getStatus();
-        this.proxyActionError = null;
         this.proxyActionPending = false;
         this.proxyAnimating = false; // Flag to skip re-render during toggle animation
+        this.lastProxyToggleTime = 0; // Rate limit for rapid toggles
         this.proxyUnsubscribe = networkProxy.onChange(({ settings, status }) => {
+            const hadError = this.proxyStatus?.lastError;
             this.proxySettings = settings;
             this.proxyStatus = status;
+            
+            // Auto-disable proxy when it fails (new error detected while enabled)
+            if (!hadError && status?.lastError && settings?.enabled && !this.proxyActionPending) {
+                networkProxy.updateSettings({ enabled: false });
+                return; // Will trigger another onChange with disabled state
+            }
+            
             // Skip re-render if animation is in progress (will re-render after animation)
             if (!this.proxyAnimating) {
                 this.renderTopSectionOnly();
@@ -632,20 +640,6 @@ class RightPanel {
 
         inferenceService.ensureSessionBackend(this.currentSession);
 
-        // Calculate ticket cost based on selected model and reasoning state
-        const modelName = this.currentSession.model || this.app.state.pendingModelName || inferenceService.getDefaultModelName(this.currentSession);
-        const modelEntry = this.app.state.models.find(m => m.name === modelName);
-        const modelId = modelEntry?.id || inferenceService.getDefaultModelId(this.currentSession);
-        const reasoningEnabled = this.app.reasoningEnabled ?? true;
-        const ticketsRequired = getTicketCost(modelId, reasoningEnabled);
-
-        // Check if user has enough tickets
-        const availableTickets = ticketClient.getTicketCount();
-        if (availableTickets < ticketsRequired) {
-            alert(`Not enough tickets for this model. Need ${ticketsRequired}, but only ${availableTickets} available.`);
-            return;
-        }
-
         try {
             // Set current session for network logging
             if (this.currentSession && window.networkLogger) {
@@ -666,53 +660,13 @@ class RightPanel {
             // Wait for the transformation animation
             await new Promise(resolve => setTimeout(resolve, 1000));
 
-            // Actually request the API key
+            // Actually request the API key (uses unified flow with verification)
             this.isRequestingKey = true;
             this.renderTopSectionOnly();
 
-            const backend = inferenceService.getBackendForSession(this.currentSession);
+            await this.app.acquireAndSetAccess(this.currentSession);
 
-            // Retry loop for spent tickets (they get auto-archived on failure)
-            let result;
-            let retries = 0;
-            let toastShown = false;
-            const maxRetries = Math.min(
-                availableTickets,
-                Math.max(ticketsRequired + 5, Math.floor(availableTickets * TICKET_RETRY_RATIO))
-            );
-
-            while (retries < maxRetries) {
-                try {
-                    result = await inferenceService.requestAccess(this.currentSession, {
-                        name: backend.requestName,
-                        ticketsRequired
-                    });
-                    break;  // Success
-                } catch (error) {
-                    console.log('🔄 Request error:', error.message, 'code:', error.code, 'consumeTickets:', error.consumeTickets);
-                    if (error.code === 'TICKET_USED') {
-                        retries++;
-                        if (!toastShown) {
-                            this.app.showToast(`Ticket already used, trying next...`);
-                            toastShown = true;
-                        }
-                        continue;
-                    }
-                    throw error;  // Non-retryable error
-                }
-            }
-
-            if (!result) {
-                throw new Error('All available tickets were already spent');
-            }
-
-            // Store access in current session
-            inferenceService.setAccessInfo(this.currentSession, result);
-
-            // Save session to DB
-            await chatDB.saveSession(this.currentSession);
-
-            // Update local state
+            // Update local state from session
             const accessInfo = inferenceService.getAccessInfo(this.currentSession);
             this.apiKey = accessInfo?.token || null;
             this.apiKeyInfo = accessInfo?.info || null;
@@ -1080,6 +1034,11 @@ class RightPanel {
             return { displayMask, hoverContentHtml: null };
         }
 
+        // Disable hover tooltip for shared keys (only the sharer should see underlying key details)
+        if (this.currentSession?.apiKeyInfo?.isShared) {
+            return { displayMask, hoverContentHtml: null };
+        }
+
         const underlyingInfo = inferenceService.getUnderlyingKeyInfo(this.currentSession);
         if (!underlyingInfo) {
             return { displayMask, hoverContentHtml: null };
@@ -1165,7 +1124,7 @@ class RightPanel {
             <div class="activity-log-details mt-2 text-xs bg-muted/10 rounded-lg border border-border/50 overflow-hidden" style="animation: slideDown 0.2s ease-out;">
                     <!-- Detailed description -->
                     <div class="px-3 pt-2.5 pb-2 bg-muted/5 border-b border-border/50">
-                        <div class="text-foreground leading-relaxed">${this.escapeHtml(getActivityDescription(log, true))}</div>
+                        <div class="text-foreground leading-relaxed">${log.status === 'pending' || log.status === 'queued' ? getActivityDescription(log, true) : this.escapeHtml(getActivityDescription(log, true))}</div>
                     </div>
 
                 <!-- Technical Details -->
@@ -1698,39 +1657,22 @@ class RightPanel {
     }
 
     getProxyStatusMeta(settings = this.proxySettings, status = this.proxyStatus) {
-        // Show recent failure even when disabled (auto-fallback case)
-        // Display for 30 seconds after failure so user knows what happened
-        const recentFailure = status?.lastError && status?.lastFailureAt &&
-            (Date.now() - status.lastFailureAt < 30000);
-
-        if (recentFailure) {
-            return { label: 'Failed (using direct)', textClass: 'text-amber-500 dark:text-amber-400', dotClass: 'bg-amber-500' };
+        if (status?.fallbackActive || status?.lastError) {
+            return { label: 'Proxy Unavailable — try again or use your own VPN', textClass: 'text-amber-500 dark:text-amber-400', dotClass: 'bg-amber-500' };
         }
 
         if (!settings || !settings.enabled) {
             return { label: 'Disabled', textClass: 'text-muted-foreground', dotClass: 'bg-muted-foreground/40' };
         }
 
-        // Show fallback first (user explicitly needs to know proxy isn't working)
-        if (status?.fallbackActive) {
-            return { label: 'Fallback (direct)', textClass: 'text-amber-500 dark:text-amber-300', dotClass: 'bg-amber-500' };
-        }
-
-        // Show error if there's a recent error (proxy still enabled but erroring)
-        if (status?.lastError) {
-            const msg = status.lastError.message || 'Proxy error';
-            const shortMsg = msg.length > 25 ? msg.substring(0, 25) + '...' : msg;
-            return { label: shortMsg, textClass: 'text-destructive', dotClass: 'bg-destructive' };
-        }
-
-        // Connected and verified
+        // Connected and verified (first request succeeded)
         if (status?.connectionVerified && status?.usingProxy) {
             return { label: 'Connected', textClass: 'text-green-600 dark:text-green-400', dotClass: 'bg-green-500' };
         }
 
-        // Ready but not yet verified
+        // Ready to use (WebSocket set up, verification happens on first request)
         if (status?.ready) {
-            return { label: 'Verifying...', textClass: 'text-blue-600 dark:text-blue-300', dotClass: 'bg-blue-500 animate-pulse' };
+            return { label: 'Ready', textClass: 'text-blue-600 dark:text-blue-400', dotClass: 'bg-blue-500' };
         }
 
         return { label: 'Initializing...', textClass: 'text-muted-foreground', dotClass: 'bg-muted-foreground/60' };
@@ -1741,7 +1683,6 @@ class RightPanel {
         const status = this.proxyStatus || networkProxy.getStatus();
         const statusMeta = this.getProxyStatusMeta(settings, status);
         const pending = this.proxyActionPending;
-        const hasError = status?.lastError;
         const tlsInfo = networkProxy.getTlsInfo();
         const hasTlsInfo = tlsInfo.version !== null;
         const isEncrypted = settings.enabled && status.usingProxy;
@@ -1778,9 +1719,9 @@ class RightPanel {
                 <div class="flex items-center justify-between text-[10px] ${!settings.enabled ? 'opacity-50' : ''}">
                     <div class="flex items-center gap-1.5 min-w-0">
                         <span class="w-1.5 h-1.5 rounded-full shrink-0 ${statusMeta.dotClass}"></span>
-                        <span class="${statusMeta.textClass} truncate">${this.escapeHtml(statusMeta.label)}</span>
+                        <span class="${statusMeta.textClass} truncate" ${statusMeta.title ? `title="${this.escapeHtml(statusMeta.title)}"` : ''}>${this.escapeHtml(statusMeta.label)}</span>
                         ${isEncrypted ? `
-                            <span class="inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-medium ${hasTlsInfo ? 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400' : 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400'}" title="${hasTlsInfo ? 'TLS tunnel over WebSocket proxy' : 'Encrypted via WebSocket proxy'}">
+                            <span class="inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-medium bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400" title="TLS tunnel over WebSocket proxy">
                                 <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
                                     <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
                                     <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
@@ -1789,14 +1730,6 @@ class RightPanel {
                             </span>
                         ` : ''}
                     </div>
-                    ${hasError ? `
-                        <button id="proxy-retry-btn" class="inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-5 w-5" title="Reconnect" ${pending ? 'disabled' : ''}>
-                            <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M1 4v6h6M23 20v-6h-6" stroke-linecap="round" stroke-linejoin="round"/>
-                                <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15" stroke-linecap="round" stroke-linejoin="round"/>
-                            </svg>
-                        </button>
-                    ` : ''}
                 </div>
 
                 <!-- Security Details Button -->
@@ -1809,14 +1742,27 @@ class RightPanel {
                         Security Details
                     </button>
                 ` : ''}
-
-                ${this.proxyActionError ? `<p class="text-[10px] text-destructive">${this.escapeHtml(this.proxyActionError)}</p>` : ''}
             </div>
         `;
     }
 
     async handleProxyToggle() {
         if (this.proxyActionPending) return;
+
+        // Block toggle when there are active proxy requests (e.g., streaming response)
+        if (networkProxy.hasActiveRequests()) {
+            console.warn('[RightPanel] Cannot toggle proxy - requests in progress');
+            this.app?.showToast?.('Cannot turn proxy off while data is transmitting', 'error');
+            return;
+        }
+
+        // Rate limit: minimum 500ms between toggles to let libcurl WASM fully clean up
+        const now = Date.now();
+        if (this.lastProxyToggleTime && now - this.lastProxyToggleTime < 500) {
+            return;
+        }
+        this.lastProxyToggleTime = now;
+
         this.proxyActionError = null;
         this.proxyActionPending = true;
         this.proxyAnimating = true; // Prevent onChange callback from re-rendering during animation
@@ -1833,33 +1779,19 @@ class RightPanel {
         try {
             await networkProxy.updateSettings({ enabled: !this.proxySettings.enabled });
         } catch (error) {
+            // Show toast for active request errors (race condition protection)
+            if (error.message?.includes('requests are in progress')) {
+                this.app?.showToast?.('Cannot change proxy while data is streaming', 'error');
+            }
             this.proxyActionError = error.message;
         } finally {
             this.proxyActionPending = false;
+            this.lastProxyToggleTime = Date.now(); // Update after completion too
             // Wait for CSS animation to complete (200ms) before re-rendering
             setTimeout(() => {
                 this.proxyAnimating = false;
                 this.renderTopSectionOnly();
             }, 230); // Slightly longer than 200ms CSS transition
-        }
-    }
-
-    async handleProxyReconnect() {
-        if (!this.proxySettings?.enabled || this.proxyActionPending) {
-            return;
-        }
-
-        this.proxyActionError = null;
-        this.proxyActionPending = true;
-        this.renderTopSectionOnly();
-
-        try {
-            await networkProxy.reconnect();
-        } catch (error) {
-            this.proxyActionError = error.message;
-        } finally {
-            this.proxyActionPending = false;
-            this.renderTopSectionOnly();
         }
     }
 
@@ -2013,11 +1945,6 @@ class RightPanel {
             proxyToggleBtn.onclick = () => this.handleProxyToggle();
         }
 
-        const proxyRetryBtn = document.getElementById('proxy-retry-btn');
-        if (proxyRetryBtn) {
-            proxyRetryBtn.onclick = () => this.handleProxyReconnect();
-        }
-
         const proxySecurityBtn = document.getElementById('proxy-security-details-btn');
         if (proxySecurityBtn) {
             proxySecurityBtn.onclick = () => tlsSecurityModal.open();
@@ -2124,7 +2051,7 @@ class RightPanel {
             const description = this.escapeHtml(descriptionRaw);
             const descriptionAttr = this.escapeHtmlAttribute(descriptionRaw);
             const icon = getActivityIcon(log);
-            const dotClass = getStatusDotClass(log.status, log.isAborted);
+            const dotClass = getStatusDotClass(log.status, log.isAborted, log.detail || log.response?.detail || '');
             const isFirst = index === 0;
             const isLast = index === logsToShow.length - 1;
             // Highlight the latest (last in reversed array) with a more visible background
@@ -2245,7 +2172,7 @@ class RightPanel {
                 </div>
             </div>
 
-            <div class="flex flex-col h-full">
+            <div class="flex flex-col flex-1 min-h-0">
             <!-- Top Section: Tickets and API Key (non-scrollable) -->
             <div class="flex-shrink-0">
                 ${this.generateTopSectionHTML()}

@@ -72,9 +72,10 @@ class AccountModal {
     updateTabIndicator() {
         const tabBtn = document.getElementById('account-tab-btn');
         if (!tabBtn) return;
-        const hasAccount = !!this.accountState?.accountId;
-        tabBtn.dataset.status = hasAccount ? 'logged-in' : 'none';
-        tabBtn.title = hasAccount ? 'Account (logged in)' : 'Account';
+        // Only show logged-in (green) after session is verified with server
+        const isLoggedIn = this.accountState?.accountId && this.accountState?.sessionVerified;
+        tabBtn.dataset.status = isLoggedIn ? 'logged-in' : 'none';
+        tabBtn.title = isLoggedIn ? 'Account (logged in)' : 'Account';
     }
 
     open() {
@@ -250,10 +251,10 @@ class AccountModal {
             await navigator.clipboard.writeText(this.generatedAccountId);
             this.accountIdCopied = true;
             this.render();
-            this.app?.showToast?.('Account ID copied.', 'success');
+            this.app?.showToast?.('Account ID copied', 'success');
         } catch (error) {
             console.error('Failed to copy account ID:', error);
-            this.app?.showToast?.('Failed to copy. Please copy manually.', 'error');
+            this.app?.showToast?.('Failed to copy, please copy manually', 'error');
         }
     }
 
@@ -263,10 +264,10 @@ class AccountModal {
             await navigator.clipboard.writeText(this.generatedRecoveryCode);
             this.recoveryCodeCopied = true;
             this.render();
-            this.app?.showToast?.('Recovery code copied.', 'success');
+            this.app?.showToast?.('Recovery code copied', 'success');
         } catch (error) {
             console.error('Failed to copy recovery code:', error);
-            this.app?.showToast?.('Failed to copy. Please copy manually.', 'error');
+            this.app?.showToast?.('Failed to copy, please copy manually', 'error');
         }
     }
 
@@ -278,10 +279,10 @@ class AccountModal {
             this.accountIdCopied = true;
             this.recoveryCodeCopied = true;
             this.render();
-            this.app?.showToast?.('Both copied.', 'success');
+            this.app?.showToast?.('Both copied', 'success');
         } catch (error) {
             console.error('Failed to copy:', error);
-            this.app?.showToast?.('Failed to copy. Please copy manually.', 'error');
+            this.app?.showToast?.('Failed to copy, please copy manually', 'error');
         }
     }
 
@@ -294,7 +295,7 @@ class AccountModal {
             await accountService.completeAccountRegistration();
             this.creationStep = 'complete';
             this.render();
-            this.app?.showToast?.('Account created successfully!', 'success');
+            this.app?.showToast?.('Account created successfully', 'success');
         } catch (error) {
             this.creationStep = 'error';
             this.creationError = error.message || 'Registration failed.';
@@ -321,7 +322,7 @@ class AccountModal {
     async handleAccountPasskeyUnlock() {
         const accountId = this.accountState?.accountId || this.accountInputValue?.trim();
         const success = await accountService.unlockWithPasskey(accountId);
-        if (success) this.app?.showToast?.('Account unlocked.', 'success');
+        if (success) this.app?.showToast?.('Account unlocked', 'success');
     }
 
     async handleAccountRecoveryUnlock() {
@@ -352,7 +353,7 @@ class AccountModal {
                     this.showRecoveryInput = false;
                     this.recoveryInputValue = '';
                     this.render();
-                    this.app?.showToast?.('Account recovered successfully!', 'success');
+                    this.app?.showToast?.('Account recovered successfully', 'success');
                 }, 1500);
             } else {
                 this.recoveryStep = 'idle';
@@ -368,7 +369,7 @@ class AccountModal {
         if (!this.accountState?.accountId) return;
         try {
             await navigator.clipboard.writeText(this.accountState.accountId);
-            this.app?.showToast?.('Account ID copied.', 'success');
+            this.app?.showToast?.('Account ID copied', 'success');
         } catch (error) {
             console.error('Failed to copy account ID:', error);
         }
@@ -386,7 +387,7 @@ class AccountModal {
         this.showRecoveryInput = false;
         this.resetCreationFlow();
         this.render();
-        this.app?.showToast?.('Logged out.', 'success');
+        this.app?.showToast?.('Logged out', 'success');
     }
 
     // =========================================================================
@@ -548,7 +549,7 @@ class AccountModal {
         switch (step) {
             case 'passkey':
                 return `
-                    <button id="cancel-creation-btn" class="w-full h-9 rounded-lg text-sm border border-border bg-background text-foreground hover:bg-accent transition-colors" type="button">
+                    <button id="cancel-creation-btn" class="btn-ghost-hover w-full h-9 rounded-lg text-sm border border-border bg-background text-foreground transition-colors" type="button">
                         Cancel
                     </button>
                 `;
@@ -556,7 +557,7 @@ class AccountModal {
             case 'passkey_retry':
                 return `
                     <div class="flex gap-3">
-                        <button id="cancel-creation-btn" class="flex-1 h-9 rounded-lg text-sm border border-border bg-background text-foreground hover:bg-accent transition-colors" type="button">
+                        <button id="cancel-creation-btn" class="btn-ghost-hover flex-1 h-9 rounded-lg text-sm border border-border bg-background text-foreground transition-colors" type="button">
                             Cancel
                         </button>
                         <button id="retry-passkey-btn" class="flex-1 h-9 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors" type="button">
@@ -583,14 +584,14 @@ class AccountModal {
 
             case 'complete':
                 return `
-                    <button id="close-complete-btn" class="w-full h-9 rounded-lg text-sm border border-border bg-background text-foreground hover:bg-accent transition-colors" type="button">
+                    <button id="close-complete-btn" class="btn-ghost-hover w-full h-9 rounded-lg text-sm border border-border bg-background text-foreground transition-colors" type="button">
                         Done
                     </button>
                 `;
 
             case 'error':
                 return `
-                    <button id="start-over-btn" class="w-full h-9 rounded-lg text-sm border border-border bg-background text-foreground hover:bg-accent transition-colors" type="button">
+                    <button id="start-over-btn" class="btn-ghost-hover w-full h-9 rounded-lg text-sm border border-border bg-background text-foreground transition-colors" type="button">
                         Start Over
                     </button>
                 `;
@@ -680,10 +681,10 @@ class AccountModal {
                     <p class="text-[11px] text-muted-foreground text-center mb-3">Chat history sync coming soon</p>
                     
                     <div class="flex gap-3">
-                        <button id="account-clear-btn" class="flex-1 h-9 rounded-lg text-sm border border-border bg-background hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30 transition-colors" type="button">
+                        <button id="account-clear-btn" class="btn-ghost-hover flex-1 h-9 rounded-lg text-sm border border-border bg-background text-foreground transition-colors" type="button">
                             Log out
                         </button>
-                        <button id="account-sync-btn" class="flex-1 h-9 rounded-lg text-sm border border-border bg-background hover:bg-accent transition-colors disabled:opacity-50 flex items-center justify-center gap-2" type="button" ${isSyncing ? 'disabled' : ''}>
+                        <button id="account-sync-btn" class="btn-ghost-hover flex-1 h-9 rounded-lg text-sm border border-border bg-background transition-colors disabled:opacity-50 flex items-center justify-center gap-2" type="button" ${isSyncing ? 'disabled' : ''}>
                             <svg class="w-4 h-4 ${isSyncing ? 'animate-spin' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"></path>
                             </svg>
@@ -748,15 +749,15 @@ class AccountModal {
                         <button id="account-recovery-submit-btn" class="w-full h-9 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50" type="button" ${isBusy ? 'disabled' : ''}>
                             ${isBusy && action === 'recover' ? 'Recovering...' : 'Recover account'}
                         </button>
-                        <button id="account-recovery-toggle-btn" class="w-full text-xs text-muted-foreground hover:text-foreground transition-colors py-1" type="button">
+                        <button id="account-recovery-toggle-btn" class="w-full text-xs text-muted-foreground hover:text-foreground hover:underline transition-colors py-1" type="button">
                             Back to passkey login
                         </button>
                     ` : `
-                        <button id="account-passkey-btn" class="w-full h-9 rounded-lg text-sm border border-border bg-background text-foreground hover:bg-accent transition-colors disabled:opacity-50" type="button" ${isBusy || !passkeySupported ? 'disabled' : ''}>
+                        <button id="account-passkey-btn" class="btn-ghost-hover w-full h-9 rounded-lg text-sm border border-border bg-background text-foreground transition-colors disabled:opacity-50" type="button" ${isBusy || !passkeySupported ? 'disabled' : ''}>
                             ${isBusy && action === 'unlock' ? 'Logging in...' : 'Log in with passkey'}
                         </button>
 
-                        <button id="account-recovery-toggle-btn" class="w-full text-xs text-muted-foreground hover:text-foreground transition-colors py-1" type="button">
+                        <button id="account-recovery-toggle-btn" class="w-full text-xs text-muted-foreground hover:text-foreground hover:underline transition-colors py-1" type="button">
                             Recover your account
                         </button>
                     `}
@@ -903,12 +904,12 @@ class AccountModal {
         try {
             const result = await syncService.sync();
             if (result.success) {
-                this.app?.showToast?.('Synced successfully.', 'success');
+                this.app?.showToast?.('Synced successfully', 'success');
             } else if (result.error !== 'Sync already in progress') {
-                this.app?.showToast?.(result.error || 'Sync failed.', 'error');
+                this.app?.showToast?.(result.error || 'Sync failed', 'error');
             }
         } catch (error) {
-            this.app?.showToast?.('Sync failed.', 'error');
+            this.app?.showToast?.('Sync failed', 'error');
         }
     }
 

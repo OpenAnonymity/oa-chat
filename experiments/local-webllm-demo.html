@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Local WebLLM Quick Test</title>
+    <style>
+        :root {
+            color-scheme: light dark;
+            font-family: "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+        }
+        body {
+            margin: 0;
+            padding: 24px;
+            background: #0f1115;
+            color: #f3f4f6;
+        }
+        main {
+            max-width: 900px;
+            margin: 0 auto;
+            display: grid;
+            gap: 20px;
+        }
+        h1 {
+            margin: 0 0 4px;
+            font-size: 24px;
+        }
+        p {
+            margin: 0;
+            color: #cbd5f5;
+            line-height: 1.5;
+        }
+        .card {
+            background: #171a22;
+            border: 1px solid #2b3246;
+            border-radius: 12px;
+            padding: 16px;
+            display: grid;
+            gap: 12px;
+        }
+        label {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: #8ea0c8;
+        }
+        select, textarea, input {
+            width: 100%;
+            background: #0f1320;
+            color: #e5e7eb;
+            border: 1px solid #2b3246;
+            border-radius: 8px;
+            padding: 10px;
+            font-size: 14px;
+            box-sizing: border-box;
+        }
+        textarea {
+            min-height: 120px;
+            resize: vertical;
+        }
+        button {
+            background: #4f46e5;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            padding: 10px 14px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        button.secondary {
+            background: #1f2937;
+            border: 1px solid #374151;
+        }
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .row {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        .row > * {
+            flex: 1;
+        }
+        .status {
+            font-size: 13px;
+            color: #fbbf24;
+        }
+        .progress {
+            height: 8px;
+            background: #0b0f19;
+            border: 1px solid #2b3246;
+            border-radius: 999px;
+            overflow: hidden;
+        }
+        .progress > div {
+            height: 100%;
+            background: linear-gradient(90deg, #22c55e, #3b82f6);
+            width: 0%;
+        }
+        .output {
+            white-space: pre-wrap;
+            background: #0b0f19;
+            border-radius: 8px;
+            padding: 12px;
+            border: 1px solid #243049;
+            min-height: 120px;
+        }
+        .hint {
+            font-size: 12px;
+            color: #94a3b8;
+        }
+        a {
+            color: #93c5fd;
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <header>
+            <h1>Local WebLLM Quick Test</h1>
+            <p>This page runs <strong>local_inference</strong> directly in the browser for auxiliary tasks. Serve the repo root (not just <code>chat/</code>):</p>
+            <p class="hint"><code>python3 -m http.server 8080</code> → open <a href="/experiments/local-webllm-demo.html">/experiments/local-webllm-demo.html</a></p>
+        </header>
+
+        <section class="card">
+            <div class="row">
+                <div>
+                    <label for="model-select">Model</label>
+                    <select id="model-select"></select>
+                </div>
+                <div class="row" style="flex: 2;">
+                    <button id="load-models">Load Model List</button>
+                    <button id="prepare-model" class="secondary">Download / Prepare</button>
+                    <button id="clear-model" class="secondary">Clear Cache</button>
+                    <button id="clear-all-models" class="secondary">Clear All Cache</button>
+                </div>
+            </div>
+
+            <div>
+                <label>Status</label>
+                <div class="status" id="status">Idle.</div>
+            </div>
+            <div class="progress" aria-hidden="true">
+                <div id="progress-bar"></div>
+            </div>
+            <div class="hint" id="progress-label"></div>
+            <div class="hint">Embedding models are labeled <strong>embedding</strong> (snowflake-arctic-embed-...).</div>
+        </section>
+
+        <section class="card">
+            <label for="system-prompt">System prompt (optional)</label>
+            <textarea id="system-prompt" placeholder="(Optional) System prompt used for the request."></textarea>
+        </section>
+
+        <section class="card">
+            <label>Model controls</label>
+            <div class="row">
+                <div>
+                    <label for="temperature">Temperature</label>
+                    <input id="temperature" type="number" min="0" max="2" step="0.1" value="0.7">
+                </div>
+                <div>
+                    <label for="top-p">Top‑p</label>
+                    <input id="top-p" type="number" min="0" max="1" step="0.05" value="0.9">
+                </div>
+                <div>
+                    <label for="max-tokens">Max output tokens</label>
+                    <input id="max-tokens" type="number" min="1" step="1" placeholder="(optional)">
+                </div>
+                <div>
+                    <label for="seed">Seed</label>
+                    <input id="seed" type="number" step="1" placeholder="(optional)">
+                </div>
+            </div>
+            <div class="hint">Leave max tokens blank to use the model default. Set a seed for deterministic sampling (when supported).</div>
+        </section>
+
+        <section class="card">
+            <label for="input-text">Input</label>
+            <textarea id="input-text" placeholder="Type your prompt or text here..."></textarea>
+            <div class="row">
+                <button id="run-completion">Run Completion</button>
+                <button id="run-stream" class="secondary">Stream Completion</button>
+                <button id="run-embedding" class="secondary">Create Embedding</button>
+                <button id="stop-stream" class="secondary" disabled>Stop</button>
+            </div>
+        </section>
+
+        <section class="card">
+            <label>Output</label>
+            <div class="output" id="output"></div>
+            <div class="row" style="margin-top: 8px;">
+                <div class="hint">Elapsed: <span id="stat-elapsed">0.00s</span></div>
+                <div class="hint">Tokens: <span id="stat-tokens">0</span></div>
+                <div class="hint">Tokens/sec: <span id="stat-tps">0.0</span></div>
+            </div>
+        </section>
+    </main>
+
+    <script type="module" src="./local-webllm-demo.js"></script>
+</body>
+</html>

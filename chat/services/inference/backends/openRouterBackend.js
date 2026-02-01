@@ -130,6 +130,7 @@ const openRouterBackend = {
             expiresAt: accessInfo.expiresAt || accessInfo.expires_at || null,
             expiresAtUnix: accessInfo.expiresAtUnix || accessInfo.expires_at_unix || null,
             stationId: accessInfo.stationId || accessInfo.station_id || accessInfo.station_name || null,
+            recentlyAttested: accessInfo.recentlyAttested || accessInfo.station_recently_attested || false,
             stationSignature: accessInfo.stationSignature || accessInfo.station_signature || null,
             orgSignature: accessInfo.orgSignature || accessInfo.org_signature || null,
             usage: accessInfo.usage || null
@@ -140,6 +141,7 @@ const openRouterBackend = {
         return {
             key: sharedAccess.token,
             stationId: sharedAccess.stationId,
+            recentlyAttested: sharedAccess.recentlyAttested || false,
             expiresAt: sharedAccess.expiresAt,
             expiresAtUnix: sharedAccess.expiresAtUnix,
             stationSignature: sharedAccess.stationSignature,
@@ -155,6 +157,7 @@ const openRouterBackend = {
             expiresAt: sharedApiKey.expiresAt || null,
             expiresAtUnix: sharedApiKey.expiresAtUnix || null,
             stationId: sharedApiKey.stationId || null,
+            recentlyAttested: sharedApiKey.recentlyAttested || false,
             stationSignature: sharedApiKey.stationSignature || null,
             orgSignature: sharedApiKey.orgSignature || null,
             usage: sharedApiKey.usage || null
@@ -178,6 +181,7 @@ const openRouterBackend = {
             info: {
                 stationId: sharedAccess.stationId,
                 station_name: sharedAccess.stationId,
+                recentlyAttested: sharedAccess.recentlyAttested || false,
                 usage: sharedAccess.usage || null,
                 isShared: true,
                 key: sharedAccess.token,

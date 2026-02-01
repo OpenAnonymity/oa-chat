@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Vector Store Demo (Orama)</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: #f6f4ef;
+      color: #1d1d1f;
+    }
+    body {
+      margin: 0;
+      padding: 32px;
+    }
+    .container {
+      max-width: 960px;
+      margin: 0 auto;
+      background: #fffaf1;
+      border: 1px solid #e6dfd3;
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: 0 10px 40px rgba(20, 17, 10, 0.08);
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 26px;
+      letter-spacing: -0.02em;
+    }
+    p {
+      margin: 0 0 12px;
+      color: #4c4a44;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 16px;
+      margin: 16px 0 24px;
+    }
+    .card {
+      background: #fff;
+      border: 1px solid #ece4d7;
+      border-radius: 12px;
+      padding: 16px;
+    }
+    label {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #7a7469;
+    }
+    input, textarea, button {
+      width: 100%;
+      box-sizing: border-box;
+      margin-top: 8px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid #d7d0c4;
+      font-size: 14px;
+    }
+    button {
+      background: #1e2a2f;
+      color: #fff;
+      border: none;
+      cursor: pointer;
+      font-weight: 600;
+      transition: transform 0.1s ease, opacity 0.1s ease;
+    }
+    button:hover {
+      opacity: 0.9;
+      transform: translateY(-1px);
+    }
+    button.secondary {
+      background: #f2ede3;
+      color: #3a352b;
+      border: 1px solid #d7d0c4;
+    }
+    .row {
+      display: flex;
+      gap: 12px;
+    }
+    .row button {
+      flex: 1;
+    }
+    .results {
+      margin-top: 16px;
+      display: grid;
+      gap: 8px;
+    }
+    .result {
+      border: 1px solid #e8e0d3;
+      border-radius: 10px;
+      padding: 12px;
+      background: #fff;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .score {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      background: #f4efe6;
+      padding: 2px 6px;
+      border-radius: 6px;
+      color: #5c564c;
+      font-size: 12px;
+    }
+    .status {
+      font-size: 12px;
+      color: #6a655b;
+      margin-top: 6px;
+    }
+    .note {
+      font-size: 12px;
+      color: #7a7469;
+      margin-top: 12px;
+      border-top: 1px dashed #e6dfd3;
+      padding-top: 12px;
+    }
+    code {
+      background: #f4efe6;
+      padding: 2px 6px;
+      border-radius: 6px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Vector Store Demo (Orama)</h1>
+    <p>This demo uses Orama as the default browser backend with IndexedDB persistence.</p>
+    <p class="note">Run from repo root: <code>python3 -m http.server 8080 -d .</code> then open <code>http://localhost:8080/experiments/vector-demo.html</code>.</p>
+
+    <div class="grid">
+      <div class="card">
+        <label for="add-text">Add text</label>
+        <textarea id="add-text" rows="4" placeholder="Write a short note to embed..."></textarea>
+        <button id="add-btn">Add to store</button>
+        <div class="status" id="add-status"></div>
+      </div>
+
+      <div class="card">
+        <label for="query-text">Query</label>
+        <textarea id="query-text" rows="4" placeholder="Search by text..."></textarea>
+        <button id="search-btn">Search</button>
+        <div class="status" id="search-status"></div>
+      </div>
+
+      <div class="card">
+        <label>Controls</label>
+        <div class="row">
+          <button id="seed-btn" class="secondary">Load samples</button>
+          <button id="clear-btn" class="secondary">Clear store</button>
+        </div>
+        <div class="status" id="store-status"></div>
+      </div>
+    </div>
+
+    <div>
+      <label>Results</label>
+      <div id="results" class="results"></div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { createVectorStore, encodeVectorId } from '../vector/index.js';
+
+    const DIMENSION = 8;
+    const store = await createVectorStore({
+      name: 'demo-orama',
+      dimension: DIMENSION,
+      metric: 'cosine',
+      backend: 'orama',
+      moduleUrl: '/vector/vendor/orama/index.js'
+    });
+
+    const addTextEl = document.getElementById('add-text');
+    const queryTextEl = document.getElementById('query-text');
+    const addStatus = document.getElementById('add-status');
+    const searchStatus = document.getElementById('search-status');
+    const storeStatus = document.getElementById('store-status');
+    const resultsEl = document.getElementById('results');
+
+    function embedText(text) {
+      const vec = new Float32Array(DIMENSION);
+      for (let i = 0; i < text.length; i += 1) {
+        const code = text.charCodeAt(i);
+        vec[i % DIMENSION] += (code % 97) / 97;
+      }
+      let sum = 0;
+      for (let i = 0; i < DIMENSION; i += 1) {
+        sum += vec[i] * vec[i];
+      }
+      if (sum > 0) {
+        const scale = 1 / Math.sqrt(sum);
+        for (let i = 0; i < DIMENSION; i += 1) {
+          vec[i] *= scale;
+        }
+      }
+      return vec;
+    }
+
+    async function refreshCount() {
+      const count = await store.count();
+      storeStatus.textContent = `Stored vectors: ${count}`;
+    }
+
+    async function addText(text) {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      const id = encodeVectorId({
+        namespace: 'demo',
+        type: 'note',
+        entityId: `note-${Date.now()}`
+      });
+      await store.upsert({
+        id,
+        vector: embedText(trimmed),
+        metadata: { text: trimmed, createdAt: new Date().toISOString() }
+      });
+      await refreshCount();
+    }
+
+    async function searchText(text) {
+      const trimmed = text.trim();
+      if (!trimmed) return [];
+      const results = await store.search(embedText(trimmed), 5);
+      return results;
+    }
+
+    function renderResults(results) {
+      resultsEl.innerHTML = '';
+      if (!results.length) {
+        resultsEl.innerHTML = '<div class="status">No matches yet.</div>';
+        return;
+      }
+      for (const result of results) {
+        const row = document.createElement('div');
+        row.className = 'result';
+        const text = result.metadata?.text || '(no text)';
+        row.innerHTML = `
+          <div>${text}</div>
+          <div class="score">${result.score.toFixed(3)}</div>
+        `;
+        resultsEl.appendChild(row);
+      }
+    }
+
+    document.getElementById('add-btn').addEventListener('click', async () => {
+      addStatus.textContent = 'Adding...';
+      await addText(addTextEl.value);
+      addTextEl.value = '';
+      addStatus.textContent = 'Added.';
+    });
+
+    document.getElementById('search-btn').addEventListener('click', async () => {
+      searchStatus.textContent = 'Searching...';
+      const results = await searchText(queryTextEl.value);
+      renderResults(results);
+      searchStatus.textContent = `Found ${results.length} result(s).`;
+    });
+
+    document.getElementById('seed-btn').addEventListener('click', async () => {
+      addStatus.textContent = 'Seeding...';
+      const samples = [
+        'My favorite cafes in SF',
+        'Project roadmap for Q2',
+        'Weekend hiking checklist',
+        'Ideas for onboarding flow',
+        'Notes from therapy session'
+      ];
+      for (const sample of samples) {
+        // eslint-disable-next-line no-await-in-loop
+        await addText(sample);
+      }
+      addStatus.textContent = 'Samples added.';
+    });
+
+    document.getElementById('clear-btn').addEventListener('click', async () => {
+      await store.clear();
+      renderResults([]);
+      await refreshCount();
+    });
+
+    await refreshCount();
+  </script>
+</body>
+</html>

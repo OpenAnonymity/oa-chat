@@ -5,6 +5,27 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <base href="/">
     <title>oa-fastchat</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <style>
+        /* Inline critical style - hides app until fonts are ready */
+        .fonts-loading #app { visibility: hidden; }
+    </style>
+    <script>
+        // Hide content immediately; resolve once fonts stylesheet is loaded
+        (function () {
+            document.documentElement.classList.add('fonts-loading');
+            let resolveFontsCss;
+            window.__fontsCssReady = new Promise((resolve) => {
+                resolveFontsCss = resolve;
+            });
+            window.__resolveFontsCss = () => {
+                if (resolveFontsCss) {
+                    resolveFontsCss();
+                    resolveFontsCss = null;
+                }
+            };
+        })();
+    </script>
     <script>
         (function () {
             try {
@@ -89,7 +110,41 @@
     <link rel="dns-prefetch" href="https://org.openanonymity.ai">
 
     <!-- Local Fonts -->
-    <link rel="stylesheet" href="fonts/fonts.css">
+    <link rel="stylesheet" href="fonts/fonts.css" onload="window.__resolveFontsCss && window.__resolveFontsCss()">
+    <script>
+        // Keep app hidden until fonts are loaded and ready to render.
+        (function () {
+            const waitForFonts = async () => {
+                try {
+                    if (window.__fontsCssReady) {
+                        await Promise.race([
+                            window.__fontsCssReady,
+                            new Promise(resolve => setTimeout(resolve, 1000))
+                        ]);
+                    }
+                    if (document.fonts && document.fonts.ready) {
+                        await document.fonts.ready;
+                        const families = [
+                            'SF Pro Text',
+                            'Newsreader',
+                            'Libre Caslon Text',
+                            'Fira Code'
+                        ];
+                        await Promise.all(families.map((family) =>
+                            document.fonts.load(`400 16px "${family}"`)
+                        ));
+                    }
+                } catch (error) {
+                    console.warn('Font readiness check failed:', error);
+                } finally {
+                    requestAnimationFrame(() => {
+                        document.documentElement.classList.remove('fonts-loading');
+                    });
+                }
+            };
+            window.fontsReadyPromise = waitForFonts();
+        })();
+    </script>
 
 
     <!-- SECURITY NOTE: Self-host these assets to avoid third-party script access. -->
@@ -357,15 +412,18 @@
                                 <!-- Textarea Container -->
                                 <div class="relative w-full flex flex-col">
                                     <div class="rounded-md w-full text-muted-foreground focus-within:text-foreground transition-colors bg-transparent">
-                                        <div class="flex h-max py-1.5 max-h-96 bg-transparent px-2 overflow-y-auto">
+                                        <div class="flex h-max py-1.5 max-h-96 bg-transparent px-2 overflow-y-auto relative">
                                             <textarea
                                                 id="message-input"
                                                 rows="1"
                                                 class="w-full bg-transparent text-sm leading-6 focus:outline-none resize-none overflow-y-auto text-foreground placeholder:text-muted-foreground"
                                                 placeholder="Ask anonymously"
-                                                style="height: 24px; min-height: 24px; max-height: 200px;"
+                                                style="height: 24px; min-height: 24px; max-height: 200px; padding-right: 64px;"
                                                 autofocus
                                             ></textarea>
+                                            <div id="scrubber-shortcut-hint" class="scrubber-shortcut-hint scrubber-shortcut-inline" aria-hidden="true">
+                                                <span><span class="scrubber-shortcut-key">tab</span> <span class="scrubber-shortcut-key">tab</span> to scrub PII</span>
+                                            </div>
                                             <script>
                                                 (function() {
                                                     const input = document.getElementById('message-input');
@@ -423,7 +481,7 @@
                                                 </svg>
                                             </button>
                                             <!-- Settings Dropdown Menu (hidden by default) -->
-                                            <div id="settings-menu" class="hidden z-[100] rounded-lg border shadow-xl p-2 min-w-[220px] settings-menu-glass">
+                                            <div id="settings-menu" class="hidden z-[100] rounded-lg border shadow-xl p-2 w-[260px] overflow-hidden settings-menu-glass">
                                                 <a href="https://forms.gle/HEmvxnJpN1jQC7CfA" target="_blank" rel="noopener noreferrer" class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors flex items-center justify-between">
                                                     <span>Share Feedback</span>
                                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
@@ -472,6 +530,17 @@
                                                     <!-- Hidden file inputs -->
                                                     <input type="file" id="global-import-input" accept="application/json,.json" class="hidden" />
                                                     <input type="file" id="tickets-import-input" accept="application/json,.json" class="hidden" />
+                                                </div>
+
+                                                <!-- Scrubber Section -->
+                                                <div id="scrubber-settings-section" class="mt-2 border-t border-border pt-2">
+                                                    <p class="px-3 pb-1 text-xs font-light tracking-wide text-muted-foreground">Privacy</p>
+                                                    <div class="px-3 py-1 flex items-center gap-2">
+                                                        <span class="text-xs text-muted-foreground w-12 shrink-0">Scrubber</span>
+                                                        <select id="scrubber-model-select" class="flex-1 min-w-0 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-popover-foreground focus:outline-none focus:ring-1 focus:ring-ring truncate">
+                                                            <option value="" disabled selected>Loading…</option>
+                                                        </select>
+                                                    </div>
                                                 </div>
 
                                                 <!-- Display section with flat mode and font toggles -->

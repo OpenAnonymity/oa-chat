@@ -108,6 +108,13 @@ export default class ChatArea {
                 return;
             }
 
+            const scrubberBtn = e.target.closest('.scrubber-restore-btn');
+            if (scrubberBtn) {
+                const messageId = scrubberBtn.dataset.messageId;
+                await this.handleScrubberRestore(messageId);
+                return;
+            }
+
             const editBtn = e.target.closest('.edit-prompt-btn');
             if (editBtn) {
                 const messageId = editBtn.dataset.messageId;
@@ -119,6 +126,13 @@ export default class ChatArea {
             if (resendBtn) {
                 const messageId = resendBtn.dataset.messageId;
                 await this.handleResendMessage(messageId);
+                return;
+            }
+
+            const toggleScrubberBtn = e.target.closest('.toggle-scrubber-btn');
+            if (toggleScrubberBtn) {
+                const messageId = toggleScrubberBtn.dataset.messageId;
+                await this.handleToggleScrubber(messageId);
                 return;
             }
 
@@ -397,6 +411,14 @@ export default class ChatArea {
     }
 
     /**
+     * Handles toggling scrubber restoration on an assistant message.
+     * @param {string} messageId - The assistant message ID to restore/toggle
+     */
+    async handleScrubberRestore(messageId) {
+        await this.app.toggleScrubberRestore(messageId);
+    }
+
+    /**
      * Resends a user message - deletes any responses after it and regenerates
      * @param {string} messageId - User message ID to resend
      */
@@ -419,6 +441,46 @@ export default class ChatArea {
 
         await this.render();
         await this.app.regenerateResponse();
+    }
+
+    /**
+     * Toggles between showing original and scrubbed (anonymized) prompt
+     * @param {string} messageId - User message ID to toggle
+     */
+    async handleToggleScrubber(messageId) {
+        const session = this.app.getCurrentSession();
+        if (!session) return;
+
+        const messages = await chatDB.getSessionMessages(session.id);
+        const message = messages.find(m => m.id === messageId);
+        if (!message || message.role !== 'user' || !message.scrubber) return;
+
+        // Lock the height on first toggle (capture current height before changing content)
+        if (!message.scrubber.lockedHeight) {
+            const messageWrapper = document.querySelector(`[data-message-id="${messageId}"]`);
+            if (messageWrapper) {
+                const bubble = messageWrapper.querySelector('.message-user');
+                if (bubble) {
+                    message.scrubber.lockedHeight = bubble.offsetHeight;
+                }
+            }
+        }
+
+        // Toggle the state
+        message.scrubber.showingOriginal = !message.scrubber.showingOriginal;
+
+        // Update the displayed content
+        if (message.scrubber.showingOriginal) {
+            message.content = message.scrubber.original;
+        } else {
+            message.content = message.scrubber.redacted;
+        }
+
+        // Save to database
+        await chatDB.saveMessage(message);
+
+        // Re-render just this message
+        this.updateMessage(message);
     }
 
     /**
@@ -461,8 +523,13 @@ export default class ChatArea {
         const session = this.app.getCurrentSession();
         const messagesContainer = this.app.elements.messagesContainer;
 
+        // Check if empty state is already rendered (by prelude.js) to avoid re-render flash
+        const hasEmptyState = messagesContainer.querySelector('.welcome-landing') !== null;
+
         if (!session) {
-            messagesContainer.innerHTML = buildEmptyState();
+            if (!hasEmptyState) {
+                messagesContainer.innerHTML = buildEmptyState();
+            }
             this.attachDownloadHandler();
             return;
         }
@@ -476,7 +543,9 @@ export default class ChatArea {
         }
 
         if (messages.length === 0) {
-            messagesContainer.innerHTML = buildEmptyState();
+            if (!hasEmptyState) {
+                messagesContainer.innerHTML = buildEmptyState();
+            }
             this.attachDownloadHandler();
             return;
         }
@@ -1426,8 +1495,7 @@ export default class ChatArea {
                         throwOnError: false
                     });
                 }
-                // Scroll to bottom and update navigation
-                this.scrollToBottom();
+                // Update scroll button visibility (no auto-scroll for appended messages)
                 this.app.updateScrollButtonVisibility();
                 if (this.app.messageNavigation) {
                     this.app.messageNavigation.update();
@@ -1463,8 +1531,7 @@ export default class ChatArea {
             }
         }
 
-        // Scroll to bottom
-        this.scrollToBottom();
+        // Update scroll button visibility (no auto-scroll for appended messages)
         this.app.updateScrollButtonVisibility();
 
         // Update message navigation
