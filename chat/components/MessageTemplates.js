@@ -1112,7 +1112,8 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
 
     // Build citations section if there are citations
     const citationsBubble = buildCitationsSection(message.citations, message.id);
-    const scrubberToggleButton = message.scrubber?.redactedPrompt ? `
+    const canRestoreScrubber = message.scrubber?.canRestore || message.scrubber?.redactedPrompt;
+    const scrubberToggleButton = canRestoreScrubber ? `
         <button
             class="message-action-btn scrubber-restore-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
             data-message-id="${message.id}"

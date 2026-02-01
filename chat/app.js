@@ -2846,6 +2846,101 @@ class ChatApp {
     }
 
     /**
+     * Check whether this session contains any scrubber data that can be restored.
+     * @param {Array} messages - Array of messages from the database
+     * @returns {boolean}
+     */
+    hasScrubberContext(messages) {
+        if (!Array.isArray(messages)) return false;
+        return messages.some(msg => (
+            msg?.scrubber?.original ||
+            msg?.scrubber?.redacted ||
+            msg?.scrubber?.originalPrompt ||
+            msg?.scrubber?.redactedPrompt
+        ));
+    }
+
+    getMessageTextContent(content) {
+        if (typeof content === 'string') return content;
+        if (Array.isArray(content)) {
+            return content
+                .map(part => {
+                    if (!part) return '';
+                    if (typeof part.text === 'string') return part.text;
+                    if (typeof part.content === 'string') return part.content;
+                    return '';
+                })
+                .filter(Boolean)
+                .join('');
+        }
+        if (content && typeof content.text === 'string') return content.text;
+        return '';
+    }
+
+    getScrubberMessageContent(message, mode) {
+        if (!message) return '';
+        if (mode === 'redacted') {
+            if (message.role === 'assistant' && message.scrubber?.redactedResponse) {
+                return message.scrubber.redactedResponse;
+            }
+            if (message.role === 'user' && message.scrubber?.redacted) {
+                return message.scrubber.redacted;
+            }
+            return message.content || '';
+        }
+
+        if (message.role === 'assistant') {
+            if (message.scrubber?.restoredResponse) {
+                return message.scrubber.restoredResponse;
+            }
+            return message.content || message.scrubber?.redactedResponse || '';
+        }
+        if (message.role === 'user' && message.scrubber?.original) {
+            return message.scrubber.original;
+        }
+        return message.content || '';
+    }
+
+    buildScrubberTranscript(messages, mode) {
+        if (!Array.isArray(messages)) return '';
+        const lines = [];
+        for (const message of messages) {
+            const roleLabel = message.role === 'assistant'
+                ? 'Assistant'
+                : message.role === 'user'
+                    ? 'User'
+                    : message.role;
+            const rawContent = this.getScrubberMessageContent(message, mode);
+            const text = this.getMessageTextContent(rawContent).trim();
+            if (!text) continue;
+            lines.push(`${roleLabel}: ${text}`);
+        }
+        return lines.join('\n\n');
+    }
+
+    buildScrubberRestoreContext(messages) {
+        return {
+            original: this.buildScrubberTranscript(messages, 'original'),
+            redacted: this.buildScrubberTranscript(messages, 'redacted')
+        };
+    }
+
+    createAssistantScrubberMetadata({ originalPrompt, redactedPrompt, hasScrubberContext }) {
+        const hasPrompt = !!(originalPrompt && redactedPrompt);
+        const mode = hasPrompt ? 'prompt' : (hasScrubberContext ? 'context' : null);
+        if (!mode) return null;
+        return {
+            mode,
+            canRestore: true,
+            originalPrompt: hasPrompt ? originalPrompt : null,
+            redactedPrompt: hasPrompt ? redactedPrompt : null,
+            redactedResponse: null,
+            restoredResponse: null,
+            restored: false
+        };
+    }
+
+    /**
      * Processes messages with file metadata to convert them to multimodal content format.
      * This ensures files are included in conversation history for all API calls.
      *
@@ -3074,6 +3169,21 @@ class ChatApp {
                 const messages = await chatDB.getSessionMessages(session.id);
                 const filteredMessages = messages.filter(msg => !msg.isLocalOnly);
                 const sanitizedMessages = this.sanitizeMessagesForApi(filteredMessages);
+                const hasScrubberContext = this.hasScrubberContext(filteredMessages);
+                let scrubberOriginalPrompt = null;
+                let scrubberRedactedPrompt = null;
+                for (let i = filteredMessages.length - 1; i >= 0; i--) {
+                    if (filteredMessages[i]?.role === 'user') {
+                        scrubberOriginalPrompt = filteredMessages[i].scrubber?.original || null;
+                        scrubberRedactedPrompt = filteredMessages[i].scrubber?.redacted || null;
+                        break;
+                    }
+                }
+                const scrubberMetadata = this.createAssistantScrubberMetadata({
+                    originalPrompt: scrubberOriginalPrompt,
+                    redactedPrompt: scrubberRedactedPrompt,
+                    hasScrubberContext
+                });
 
                 // Process messages to include file content from stored metadata
                 const processedMessages = this.processMessagesWithFiles(sanitizedMessages, modelIdForRequest);
@@ -3093,7 +3203,8 @@ class ChatApp {
                     tokenCount: null,
                     streamingTokens: 0,
                     streamingReasoning: false,
-                    streamingPending: true // Indicates waiting for first chunk
+                    streamingPending: true, // Indicates waiting for first chunk
+                    scrubber: scrubberMetadata
                 };
 
                 // Save placeholder immediately so switching sessions back can find it
@@ -3209,6 +3320,9 @@ class ChatApp {
 
                 // Save the final message content with token data, reasoning, and citations
                 streamingMessage.content = streamedContent;
+                if (streamingMessage.scrubber) {
+                    streamingMessage.scrubber.redactedResponse = streamedContent;
+                }
                 const rawReasoning = tokenData.reasoning || streamedReasoning || null;
                 // Parse and save the cleaned reasoning
                 streamingMessage.reasoning = rawReasoning ? parseReasoningContent(rawReasoning) : null;
@@ -3595,6 +3709,12 @@ class ChatApp {
                 const messages = await chatDB.getSessionMessages(session.id);
                 const filteredMessages = messages.filter(msg => !msg.isLocalOnly);
                 const sanitizedMessages = this.sanitizeMessagesForApi(filteredMessages);
+                const hasScrubberContext = this.hasScrubberContext(filteredMessages);
+                const scrubberMetadata = this.createAssistantScrubberMetadata({
+                    originalPrompt: scrubberOriginalPrompt,
+                    redactedPrompt: scrubberRedactedPrompt,
+                    hasScrubberContext
+                });
 
                 // Process messages to include file content from stored metadata
                 const processedMessages = this.processMessagesWithFiles(sanitizedMessages, modelIdForRequest);
@@ -3617,13 +3737,7 @@ class ChatApp {
                     tokenCount: null,
                     streamingTokens: 0,
                     streamingReasoning: false,
-                    scrubber: scrubberRedactedPrompt ? {
-                        originalPrompt: scrubberOriginalPrompt,
-                        redactedPrompt: scrubberRedactedPrompt,
-                        redactedResponse: null,
-                        restoredResponse: null,
-                        restored: false
-                    } : null
+                    scrubber: scrubberMetadata
                 };
 
                 // Track progress for periodic saves
@@ -5741,8 +5855,11 @@ Your API key has been cleared. A new key from a different station will be obtain
         if (!session) return;
 
         const messages = await chatDB.getSessionMessages(session.id);
-        const message = messages.find(msg => msg.id === messageId);
-        if (!message?.scrubber?.redactedPrompt) return;
+        const messageIndex = messages.findIndex(msg => msg.id === messageId);
+        if (messageIndex === -1) return;
+        const message = messages[messageIndex];
+        const canRestore = message?.scrubber?.canRestore || message?.scrubber?.redactedPrompt;
+        if (!canRestore) return;
 
         if (message.scrubber.restored) {
             const redactedResponse = message.scrubber.redactedResponse || message.content || '';
@@ -5761,12 +5878,30 @@ Your API key has been cleared. A new key from a different station will be obtain
             if (!message.scrubber.redactedResponse) {
                 message.scrubber.redactedResponse = responseText;
             }
-            const restoreResult = await this.scrubberService.restoreResponse({
-                originalPrompt: message.scrubber.originalPrompt || '',
-                redactedPrompt: message.scrubber.redactedPrompt || '',
-                responseText,
-                session
-            });
+            const useContextRestore = message.scrubber?.mode === 'context' ||
+                (!message.scrubber?.redactedPrompt && message.scrubber?.canRestore);
+            let restoreResult = null;
+            if (useContextRestore) {
+                const historyMessages = messages.slice(0, messageIndex).filter(msg => !msg.isLocalOnly);
+                const { original, redacted } = this.buildScrubberRestoreContext(historyMessages);
+                if (!original.trim() || !redacted.trim()) {
+                    this.showToast('Restore failed', 'error');
+                    return;
+                }
+                restoreResult = await this.scrubberService.restoreResponseWithContext({
+                    originalContext: original,
+                    redactedContext: redacted,
+                    responseText,
+                    session
+                });
+            } else {
+                restoreResult = await this.scrubberService.restoreResponse({
+                    originalPrompt: message.scrubber.originalPrompt || '',
+                    redactedPrompt: message.scrubber.redactedPrompt || '',
+                    responseText,
+                    session
+                });
+            }
             if (restoreResult?.success && restoreResult.text) {
                 message.scrubber.restoredResponse = restoreResult.text;
                 message.scrubber.restored = true;

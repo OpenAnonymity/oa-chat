@@ -18,10 +18,26 @@ const REDACT_PROMPT = [
 
 const RESTORE_PROMPT = [
     'You are given:',
-    '(1) the original prompt,',
-    '(2) the redacted prompt,',
-    '(3) a response generated from the redacted prompt.',
+    '(1) the original prompt is:',
+    '{{ORIGINAL}}',
+    '(2) the redacted prompt is:',
+    '{{REDACTED}}',
+    '(3) a response generated from the redacted prompt is:',
+    '{{RESPONSE}}',
     'Restore as much removed PII/sensitive detail as possible into the response using ONLY the original prompt.',
+    'Do not invent new facts. Do not change meaning, tone, or intent.',
+    'Output ONLY the restored response.'
+].join('\n');
+
+const RESTORE_CONTEXT_PROMPT = [
+    'You are given:',
+    '(1) the original conversation (PII intact) is:',
+    '{{ORIGINAL}}',
+    '(2) the redacted conversation is:',
+    '{{REDACTED}}',
+    '(3) a response generated from the redacted conversation is:',
+    '{{RESPONSE}}',
+    'Restore as much removed PII/sensitive detail as possible into the response using ONLY the original conversation.',
     'Do not invent new facts. Do not change meaning, tone, or intent.',
     'Output ONLY the restored response.'
 ].join('\n');
@@ -57,22 +73,22 @@ function wrapPrompt(prefix, content) {
     ].join('\n');
 }
 
-function wrapRestorePayload(prefix, { original, redacted, response }) {
+function buildRestoreBlock(tag, content) {
     return [
-        prefix,
-        '',
-        '```<original prompt>',
-        original || '(empty)',
-        '</original prompt>```',
-        '',
-        '```<redacted prompt>',
-        redacted || '(empty)',
-        '</redacted prompt>```',
-        '',
-        '```<response>',
-        response || '',
-        '</response>```'
+        `\`\`\`${tag}`,
+        content || '(empty)',
+        '```'
     ].join('\n');
+}
+
+function wrapRestorePayload(prefix, { original, redacted, response }) {
+    const originalBlock = buildRestoreBlock('<original>', original);
+    const redactedBlock = buildRestoreBlock('<redacted>', redacted);
+    const responseBlock = buildRestoreBlock('<response>', response);
+    return prefix
+        .replace('{{ORIGINAL}}', originalBlock)
+        .replace('{{REDACTED}}', redactedBlock)
+        .replace('{{RESPONSE}}', responseBlock);
 }
 
 function extractOutputText(response) {
@@ -269,8 +285,24 @@ class ScrubberService {
     }
 
     async restoreResponse({ originalPrompt, redactedPrompt, responseText, session }) {
-        const original = typeof originalPrompt === 'string' ? originalPrompt : '';
-        const redacted = typeof redactedPrompt === 'string' ? redactedPrompt : '';
+        return this.restoreResponseWithPrompt(RESTORE_PROMPT, {
+            original: originalPrompt,
+            redacted: redactedPrompt,
+            responseText
+        }, session);
+    }
+
+    async restoreResponseWithContext({ originalContext, redactedContext, responseText, session }) {
+        return this.restoreResponseWithPrompt(RESTORE_CONTEXT_PROMPT, {
+            original: originalContext,
+            redacted: redactedContext,
+            responseText
+        }, session);
+    }
+
+    async restoreResponseWithPrompt(promptPrefix, { original, redacted, responseText }, session) {
+        const originalText = typeof original === 'string' ? original : '';
+        const redactedText = typeof redacted === 'string' ? redacted : '';
         const responseBody = typeof responseText === 'string' ? responseText : '';
         if (!responseBody.trim()) {
             return { success: false, text: '' };
@@ -281,9 +313,9 @@ class ScrubberService {
         const request = buildResponsesRequest({
             model: this.getSelectedModel(),
             instructions: '',
-            inputText: wrapRestorePayload(RESTORE_PROMPT, {
-                original,
-                redacted,
+            inputText: wrapRestorePayload(promptPrefix, {
+                original: originalText,
+                redacted: redactedText,
                 response: responseBody
             })
         });
