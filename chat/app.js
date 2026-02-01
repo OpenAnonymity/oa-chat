@@ -2824,6 +2824,28 @@ class ChatApp {
     }
 
     /**
+     * Sanitizes messages for API calls by ensuring scrubbed content is used.
+     * For assistant messages with scrubber metadata, always uses the redacted
+     * (PII-free) response to prevent leaking restored PII to the model.
+     *
+     * @param {Array} messages - Array of messages from the database
+     * @returns {Array} Messages safe for API calls
+     */
+    sanitizeMessagesForApi(messages) {
+        return messages.map(msg => {
+            // For assistant messages with scrubber data, always use redacted response
+            if (msg.role === 'assistant' && msg.scrubber?.redactedResponse) {
+                return { ...msg, content: msg.scrubber.redactedResponse };
+            }
+            // For user messages with scrubber data, always use redacted prompt
+            if (msg.role === 'user' && msg.scrubber?.redacted) {
+                return { ...msg, content: msg.scrubber.redacted };
+            }
+            return msg;
+        });
+    }
+
+    /**
      * Processes messages with file metadata to convert them to multimodal content format.
      * This ensures files are included in conversation history for all API calls.
      *
@@ -3051,9 +3073,10 @@ class ChatApp {
                 // Get AI response from inference backend with streaming
                 const messages = await chatDB.getSessionMessages(session.id);
                 const filteredMessages = messages.filter(msg => !msg.isLocalOnly);
+                const sanitizedMessages = this.sanitizeMessagesForApi(filteredMessages);
 
                 // Process messages to include file content from stored metadata
-                const processedMessages = this.processMessagesWithFiles(filteredMessages, modelIdForRequest);
+                const processedMessages = this.processMessagesWithFiles(sanitizedMessages, modelIdForRequest);
 
                 // Create a placeholder message for streaming
                 const streamingMessageId = this.generateId();
@@ -3571,9 +3594,10 @@ class ChatApp {
                 // Get AI response from inference backend with streaming
                 const messages = await chatDB.getSessionMessages(session.id);
                 const filteredMessages = messages.filter(msg => !msg.isLocalOnly);
+                const sanitizedMessages = this.sanitizeMessagesForApi(filteredMessages);
 
                 // Process messages to include file content from stored metadata
-                const processedMessages = this.processMessagesWithFiles(filteredMessages, modelIdForRequest);
+                const processedMessages = this.processMessagesWithFiles(sanitizedMessages, modelIdForRequest);
 
                 // Create a placeholder message for streaming
                 const streamingMessageId = this.generateId();
