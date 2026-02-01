@@ -199,6 +199,17 @@ export default class ChatArea {
     }
 
     /**
+     * Immediately renders the empty state without async loads.
+     * Desktop hooks can call this to avoid intermediate flashes.
+     */
+    renderEmptyStateImmediate() {
+        const messagesContainer = this.app.elements.messagesContainer;
+        if (!messagesContainer) return;
+        messagesContainer.innerHTML = buildEmptyState();
+        this.attachDownloadHandler();
+    }
+
+    /**
      * Copies text to clipboard with Safari fallback.
      * Uses execCommand for immediate synchronous copy (required for Safari user activation).
      * @param {string} text - Text to copy

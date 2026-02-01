@@ -65,6 +65,17 @@ const MODEL_NAME_ALIASES = new Map([
 function generateSessionId() {
     return generateUlid21();
 }
+
+function emitDesktopEvent(name, detail = {}) {
+    if (typeof window === 'undefined') return;
+    if (typeof window.dispatchEvent !== 'function') return;
+    if (typeof CustomEvent !== 'function') return;
+    try {
+        window.dispatchEvent(new CustomEvent(name, { detail }));
+    } catch (err) {
+        // No-op: desktop hooks should never break web behavior.
+    }
+}
 const SESSION_STORAGE_KEY = 'oa-current-session'; // Tab-scoped session persistence
 const DELETE_HISTORY_COPY = {
     title: 'Delete all chat history',
@@ -2699,10 +2710,10 @@ class ChatApp {
     /**
      * Handles new chat request with validation (prevents empty duplicate sessions).
      */
-    async handleNewChatRequest() {
+    async handleNewChatRequest(options = {}) {
         // Clear current session - no session is selected
         // The session will be created when the user sends their first message
-        await this.clearCurrentSession();
+        await this.clearCurrentSession(options);
 
         // Close sidebar on mobile after creating new chat
         if (this.isMobileView()) {
@@ -2711,12 +2722,51 @@ class ChatApp {
     }
 
     /**
+     * Desktop-only helper to send a chatbar message without DOM polling.
+     * This is a no-op for normal web usage unless invoked explicitly.
+     * payload: { text, files, model, searchEnabled }
+     */
+    async handleChatbarSend(payload = {}) {
+        const { text = '', files = [], model = null, searchEnabled } = payload || {};
+        if (!text && (!files || files.length === 0)) return;
+
+        await this.handleNewChatRequest({ awaitRender: true, immediate: true, emitDesktop: true });
+
+        if (model && this.modelPicker) {
+            await this.modelPicker.selectModel(model);
+        }
+
+        if (searchEnabled !== undefined) {
+            this.searchEnabled = searchEnabled;
+            if (this.chatInput) {
+                this.chatInput.updateSearchToggleUI();
+            }
+        }
+
+        if (files && files.length > 0) {
+            await this.handleFileUpload(files);
+        }
+
+        if (this.elements.messageInput) {
+            this.elements.messageInput.value = text || '';
+            this.elements.messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+
+        this.sendMessage();
+    }
+
+    /**
      * Clears the current session, returning to the startup state.
      * No session is selected until the user sends their first message.
      */
-    async clearCurrentSession() {
+    async clearCurrentSession(options = {}) {
+        const { awaitRender = false, immediate = false, emitDesktop = false } = options;
         this.saveCurrentSessionScrollPosition();
         this.state.currentSessionId = null;
+
+        if (immediate && this.chatArea?.renderEmptyStateImmediate) {
+            this.chatArea.renderEmptyStateImmediate();
+        }
 
         // Load the selected model from settings so UI shows correct model
         const storedModelPreference = await chatDB.getSetting('selectedModel');
@@ -2730,7 +2780,7 @@ class ChatApp {
 
         // Update UI to reflect no session selected
         this.renderSessions();
-        this.renderMessages();
+        const renderMessagesPromise = this.renderMessages();
         this.renderCurrentModel();
 
         // Clear input
@@ -2753,6 +2803,14 @@ class ChatApp {
         // Clear right panel
         if (this.rightPanel) {
             this.rightPanel.onSessionChange(null);
+        }
+
+        if (emitDesktop) {
+            emitDesktopEvent('oa-desktop:session-cleared', { sessionId: null });
+        }
+
+        if (awaitRender) {
+            await renderMessagesPromise;
         }
 
         // Focus input after UI updates complete
@@ -3580,6 +3638,12 @@ class ChatApp {
             }
             this.isAutoScrollPaused = true;
             const userMessage = await this.addMessage('user', content || '', metadata);
+            if (userMessage?.id) {
+                emitDesktopEvent('oa-desktop:user-message-added', {
+                    sessionId: session.id,
+                    messageId: userMessage.id
+                });
+            }
 
             // Clear input and files
             this.elements.messageInput.value = '';
@@ -5929,4 +5993,5 @@ Your API key has been cleared. A new key from a different station will be obtain
 // Initialize app when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
     window.app = new ChatApp();
+    window.oaDesktopReady = true;
 });
