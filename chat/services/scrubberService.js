@@ -1,4 +1,4 @@
-import { localInferenceService } from '../local_inference/index.js';
+import { localInferenceService } from '../../local_inference/index.js';
 import { chatDB } from '../db.js';
 import ticketClient from './ticketClient.js';
 
