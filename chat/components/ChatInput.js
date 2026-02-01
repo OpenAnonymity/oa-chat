@@ -9,6 +9,7 @@ import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import { exportAllData, exportChats, exportTickets } from '../services/globalExport.js';
 import { importFromFile, formatImportSummary } from '../services/globalImport.js';
 import ticketClient from '../services/ticketClient.js';
+import scrubberService from '../services/scrubberService.js';
 import { chatDB } from '../db.js';
 
 export default class ChatInput {
@@ -17,6 +18,14 @@ export default class ChatInput {
      */
     constructor(app) {
         this.app = app;
+        this.scrubberState = {
+            lastTabAt: 0,
+            timer: null,
+            isRunning: false,
+            tooltipVisible: false
+        };
+        this.scrubberModelsReady = false;
+        this.scrubberModelSelect = null;
     }
 
     /**
@@ -30,6 +39,14 @@ export default class ChatInput {
             this.app.updateInputState();
             // Clear file undo stack - text input should take undo precedence
             this.app.fileUndoStack = [];
+            this.updateScrubberHintVisibility();
+            if (this.app.scrubberPending && this.app.scrubberPending.redacted !== this.app.elements.messageInput.value) {
+                this.app.scrubberPending = null;
+                this.hideScrubberHover();
+            }
+            if (this.app.updateToastPosition) {
+                this.app.updateToastPosition();
+            }
         });
 
         // Send on Enter (not Shift+Enter and not composing with IME)
@@ -47,6 +64,15 @@ export default class ChatInput {
             }
         });
 
+        // Scrubber shortcut: Tab Tab
+        this.app.elements.messageInput.addEventListener('keydown', (e) => {
+            if (e.key !== 'Tab' || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) {
+                return;
+            }
+            e.preventDefault();
+            this.handleScrubberShortcut();
+        });
+
         // Note: Paste events (files + text) are handled globally in app.js
 
         // Send button click - handles both send and stop
@@ -56,6 +82,14 @@ export default class ChatInput {
             } else {
                 this.app.sendMessage();
             }
+        });
+
+        this.app.elements.messageInput.addEventListener('mouseenter', () => {
+            this.showScrubberHover();
+        });
+
+        this.app.elements.messageInput.addEventListener('mouseleave', () => {
+            this.hideScrubberHover();
         });
 
         // Search toggle functionality
@@ -100,6 +134,15 @@ export default class ChatInput {
                 const btnRect = btn.getBoundingClientRect();
                 menu.style.left = `${btnRect.left}px`;
                 menu.style.bottom = `${window.innerHeight - btnRect.top + 8}px`;
+
+                // Lock width to the initial rendered size to prevent resizing on async content
+                const menuRect = menu.getBoundingClientRect();
+                if (menuRect.width) {
+                    menu.style.width = `${menuRect.width}px`;
+                    menu.style.maxWidth = `${menuRect.width}px`;
+                }
+
+                this.ensureScrubberModelsLoaded();
             } else {
                 menu.classList.add('hidden');
                 btn.classList.remove('tooltip-disabled');
@@ -217,8 +260,258 @@ export default class ChatInput {
         // Setup font mode controls
         this.setupFontModeControls();
 
+        // Setup scrubber controls (model picker + shortcut)
+        this.setupScrubberControls();
+
+        // Initialize scrubber hint visibility
+        this.updateScrubberHintVisibility();
+
         // Mark input as ready for the inline script to defer handling
         window.chatInputReady = true;
+    }
+
+    async handleScrubberShortcut() {
+        const now = Date.now();
+        const withinWindow = now - this.scrubberState.lastTabAt < 420;
+        this.scrubberState.lastTabAt = now;
+        if (this.scrubberState.timer) {
+            clearTimeout(this.scrubberState.timer);
+        }
+        this.scrubberState.timer = setTimeout(() => {
+            this.scrubberState.lastTabAt = 0;
+        }, 420);
+
+        if (!withinWindow || this.scrubberState.isRunning) {
+            if (!withinWindow) {
+                this.app.showToast('Press Tab again to scrub PII', 'success');
+            }
+            return;
+        }
+
+        const text = this.app.elements.messageInput.value || '';
+        if (!text.trim()) {
+            this.app.showToast('Nothing to scrub', 'error');
+            return;
+        }
+
+        const modeLabel = scrubberService.getModeLabel ? scrubberService.getModeLabel() : 'confidential model';
+        const stopToast = this.app.showLoadingToast?.(`Scrubbing input query with ${modeLabel}`);
+        if (this.app.elements.inputCard) {
+            this.app.elements.inputCard.classList.add('scrubbing');
+        }
+        this.scrubberState.isRunning = true;
+        try {
+            let currentSession = this.app.getCurrentSession();
+            if (!currentSession && typeof this.app.createSession === 'function') {
+                await this.app.createSession();
+                currentSession = this.app.getCurrentSession();
+            }
+            if (!currentSession) {
+                throw new Error('No session available for scrubber key.');
+            }
+            const result = await scrubberService.redactPrompt(text, currentSession);
+            if (result?.success && result.text) {
+                this.app.elements.messageInput.value = result.text;
+                this.app.elements.messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+                this.app.scrubberPending = {
+                    original: text,
+                    redacted: result.text,
+                    timestamp: Date.now()
+                };
+                this.updateScrubberHintVisibility();
+                if (typeof stopToast === 'function') {
+                    stopToast();
+                }
+                if (this.app.elements.inputCard) {
+                    this.app.elements.inputCard.classList.remove('scrubbing');
+                }
+                this.app.showToast('PII removed', 'success');
+            } else {
+                if (typeof stopToast === 'function') {
+                    stopToast();
+                }
+                if (this.app.elements.inputCard) {
+                    this.app.elements.inputCard.classList.remove('scrubbing');
+                }
+                this.app.showToast('Scrubber failed', 'error');
+            }
+        } catch (error) {
+            console.error('Scrubber shortcut failed:', error);
+            if (typeof stopToast === 'function') {
+                stopToast();
+            }
+            if (this.app.elements.inputCard) {
+                this.app.elements.inputCard.classList.remove('scrubbing');
+            }
+            this.app.showToast('Scrubber failed', 'error');
+        } finally {
+            this.scrubberState.isRunning = false;
+        }
+    }
+
+    showScrubberHover() {
+        if (this.scrubberState.tooltipVisible) return;
+        const pending = this.app.scrubberPending;
+        if (!pending || pending.redacted !== this.app.elements.messageInput.value) return;
+        const original = (pending.original || '').trim();
+        if (!original) return;
+        const escaped = this.app.escapeHtml ? this.app.escapeHtml(original) : original.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const html = `
+            <div class="inline-flex items-center px-1.5 py-0.5 mb-2 rounded bg-muted/50 text-muted-foreground text-[10px] font-medium uppercase tracking-wide">
+                Original prompt
+            </div>
+            <div class="text-foreground text-xs leading-relaxed" style="white-space: pre-wrap;">${escaped}</div>
+        `;
+        this.showHoverTooltip(this.app.elements.messageInput, html);
+        this.scrubberState.tooltipVisible = true;
+    }
+
+    hideScrubberHover() {
+        if (!this.scrubberState.tooltipVisible) return;
+        this.hideHoverTooltip();
+        this.scrubberState.tooltipVisible = false;
+    }
+
+    showHoverTooltip(targetEl, htmlContent) {
+        if (!targetEl || !htmlContent) return;
+        this.hideHoverTooltip();
+
+        const tooltip = document.createElement('div');
+        tooltip.id = 'app-hover-tooltip';
+        tooltip.className = 'pointer-events-none';
+        Object.assign(tooltip.style, {
+            position: 'fixed',
+            zIndex: '99999',
+            minWidth: '200px',
+            padding: '12px 14px',
+            borderRadius: '14px',
+            background: 'hsl(var(--color-card) / 0.85)',
+            backdropFilter: 'blur(20px) saturate(150%)',
+            WebkitBackdropFilter: 'blur(20px) saturate(150%)',
+            color: 'hsl(var(--color-foreground))',
+            border: '1px solid hsl(var(--color-border) / 0.5)',
+            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.06)',
+            fontSize: '12px',
+            lineHeight: '1.5',
+            opacity: '0',
+            transform: 'translateY(4px)',
+            transition: 'opacity 180ms ease-out, transform 180ms ease-out'
+        });
+        tooltip.innerHTML = htmlContent;
+        document.body.appendChild(tooltip);
+
+        const inputCard = document.getElementById('input-card');
+        const refEl = inputCard || targetEl;
+        const rect = refEl.getBoundingClientRect();
+
+        const tooltipWidth = Math.min(rect.width, 480);
+        tooltip.style.width = `${tooltipWidth}px`;
+        tooltip.style.maxWidth = `${tooltipWidth}px`;
+
+        const tooltipRect = tooltip.getBoundingClientRect();
+
+        let top = rect.top - tooltipRect.height - 8;
+        if (top < 8) {
+            top = rect.bottom + 8;
+        }
+
+        let left = rect.left + (rect.width - tooltipRect.width) / 2;
+        if (left < 8) left = 8;
+        if (left + tooltipRect.width > window.innerWidth - 8) {
+            left = window.innerWidth - tooltipRect.width - 8;
+        }
+
+        Object.assign(tooltip.style, {
+            top: `${top}px`,
+            left: `${left}px`
+        });
+
+        requestAnimationFrame(() => {
+            tooltip.style.opacity = '1';
+            tooltip.style.transform = 'translateY(0)';
+        });
+    }
+
+    hideHoverTooltip() {
+        const tooltip = document.getElementById('app-hover-tooltip');
+        if (!tooltip) return;
+        tooltip.style.opacity = '0';
+        tooltip.style.transform = 'translateY(4px)';
+        setTimeout(() => tooltip.remove(), 200);
+    }
+
+    updateScrubberHintVisibility() {
+        const hint = document.getElementById('scrubber-shortcut-hint');
+        const input = this.app.elements.messageInput;
+        if (!hint || !input) return;
+
+        const len = (input.value || '').length;
+        // Hide hint completely after scrubbing (when tooltip can show)
+        const hasPending = this.app.scrubberPending?.redacted === input.value;
+        if (hasPending) {
+            hint.classList.add('hint-hidden');
+            hint.classList.remove('faded');
+            input.classList.remove('hint-visible');
+            return;
+        }
+        if (len === 0) {
+            // Empty input - show hint fully
+            hint.classList.remove('faded', 'hint-hidden');
+            input.classList.add('hint-visible');
+        } else if (len < 50) {
+            // Some text - fade hint
+            hint.classList.add('faded');
+            hint.classList.remove('hint-hidden');
+            input.classList.add('hint-visible');
+        } else {
+            // Long text - hide hint completely
+            hint.classList.add('hint-hidden');
+            hint.classList.remove('faded');
+            input.classList.remove('hint-visible');
+        }
+    }
+
+    async setupScrubberControls() {
+        const select = document.getElementById('scrubber-model-select');
+        if (!select) return;
+
+        select.addEventListener('click', (event) => event.stopPropagation());
+        select.addEventListener('change', async (event) => {
+            const modelId = event.target.value;
+            if (modelId) {
+                await scrubberService.setSelectedModel(modelId);
+            }
+        });
+        this.scrubberModelSelect = select;
+    }
+
+    async ensureScrubberModelsLoaded() {
+        if (this.scrubberModelsReady || !this.scrubberModelSelect) return;
+        await this.populateScrubberModels(this.scrubberModelSelect);
+        this.scrubberModelsReady = true;
+    }
+
+    async populateScrubberModels(selectEl) {
+        selectEl.innerHTML = '<option value="" disabled selected>Loading models…</option>';
+        try {
+            // Model list is public - no session/key required
+            const models = await scrubberService.fetchModels();
+            const selected = scrubberService.getSelectedModel();
+            const options = models.map(model => {
+                const value = model.id || model.name;
+                const label = model.name || model.id;
+                return `<option value="${value}">${label}</option>`;
+            }).join('');
+            let html = options || '<option value="" disabled>No models available</option>';
+            if (selected && !models.find(model => (model.id || model.name) === selected)) {
+                html = `<option value="${selected}">${selected}</option>` + html;
+            }
+            selectEl.innerHTML = html;
+            if (selected) selectEl.value = selected;
+        } catch (error) {
+            console.error('Failed to load scrubber models:', error);
+            selectEl.innerHTML = '<option value="" disabled>Failed to load models</option>';
+        }
     }
 
     /**

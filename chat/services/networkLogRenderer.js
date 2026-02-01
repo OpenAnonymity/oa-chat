@@ -154,6 +154,26 @@ export function getActivityDescription(log, detailed = false) {
             }
         }
 
+        // Confidential API key request
+        if (type === 'api-key' && path.includes('request_confidential_key')) {
+            if (!detailed) {
+                if (status >= 200 && status < 300) {
+                    return 'Confidential access key granted';
+                } else if (status === 0) {
+                    return 'Failed to obtain confidential key';
+                }
+                return 'Requesting confidential anonymous key';
+            } else {
+                if (status >= 200 && status < 300) {
+                    const duration = response?.duration_minutes || 60;
+                    return `Successfully obtained a confidential API key valid for ${duration} minutes. This key allows privacy-preserving redaction without linking requests to your identity.`;
+                } else if (status === 0) {
+                    return 'Failed to obtain confidential API access. The anonymization server may be unavailable or your ticket may have already been used.';
+                }
+                return 'Exchanging privacy ticket for confidential anonymous API access...';
+            }
+        }
+
         // API key request
         if (type === 'api-key' && path.includes('request_key')) {
             if (!detailed) {

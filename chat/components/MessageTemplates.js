@@ -365,11 +365,19 @@ function buildUserMessage(message, options = {}) {
         <button class="user-message-show-more" data-message-id="${message.id}">Show more</button>
     ` : '';
 
+    // Add scrubber-togglable class for fixed height with scroll when toggling
+    const hasScrubber = message.scrubber;
+    const scrubberTogglableClass = hasScrubber ? 'scrubber-togglable' : '';
+    const heightLockedClass = hasScrubber && message.scrubber.lockedHeight ? 'height-locked' : '';
+    const lockedHeightStyle = hasScrubber && message.scrubber.lockedHeight 
+        ? `height: ${message.scrubber.lockedHeight}px;` 
+        : '';
+
     // Normal display mode with action buttons (shown on hover)
     return `
         <div class="${CLASSES.userWrapper}" data-message-id="${message.id}">
             <div class="${CLASSES.userGroup}">
-                <div class="${CLASSES.userBubble}">
+                <div class="${CLASSES.userBubble} ${scrubberTogglableClass} ${heightLockedClass}" style="${lockedHeightStyle}">
                     <div class="${CLASSES.userContent} ${collapsibleClass}">
                         ${fileAttachments}
                         <p class="mb-0">${escapeHtml(message.content)}</p>
@@ -377,6 +385,20 @@ function buildUserMessage(message, options = {}) {
                     ${showMoreBtn}
                 </div>
                 <div class="message-user-actions absolute top-full right-0 mt-1 flex items-center gap-1 z-10">
+                    ${message.scrubber ? `
+                    <button
+                        class="toggle-scrubber-btn message-action-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground ${message.scrubber.showingOriginal ? 'bg-muted/60' : ''}"
+                        data-message-id="${message.id}"
+                        data-tooltip="${message.scrubber.showingOriginal ? 'Show anonymized' : 'Show original'}"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                            ${message.scrubber.showingOriginal 
+                                ? '<path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.451 10.451 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.522 10.522 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88" />'
+                                : '<path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />'
+                            }
+                        </svg>
+                    </button>
+                    ` : ''}
                     <button
                         class="resend-prompt-btn message-action-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
                         data-message-id="${message.id}"
@@ -1090,6 +1112,16 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
 
     // Build citations section if there are citations
     const citationsBubble = buildCitationsSection(message.citations, message.id);
+    const scrubberToggleButton = message.scrubber?.redactedPrompt ? `
+        <button
+            class="message-action-btn scrubber-restore-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+            data-message-id="${message.id}"
+            data-tooltip="${message.scrubber?.restored ? 'Show redacted' : 'Restore PII'}">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3" />
+            </svg>
+        </button>
+    ` : '';
 
     return `
         <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}">
@@ -1132,6 +1164,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M2 12h6c6 0 10-4 14-8m-4 0h4v4M8 12c6 0 10 4 14 8m-4 0h4v-4" />
                             </svg>
                         </button>
+                        ${scrubberToggleButton}
                         ${noResponseNotice}
                     </div>
                     ${buildCitationsToggleButton(message.citations, message.id)}

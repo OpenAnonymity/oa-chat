@@ -2,11 +2,13 @@ import { normalizeResponsesRequest, normalizeEmbeddingRequest } from './response
 import webllmBackend from './backends/webllmBackend.js';
 import ollamaBackend from './backends/ollamaBackend.js';
 import vllmBackend from './backends/vllmBackend.js';
+import tinfoilBackend from './backends/tinfoilBackend.js';
 
 const backends = new Map([
     [webllmBackend.id, webllmBackend],
     [ollamaBackend.id, ollamaBackend],
-    [vllmBackend.id, vllmBackend]
+    [vllmBackend.id, vllmBackend],
+    [tinfoilBackend.id, tinfoilBackend]
 ]);
 const statusTarget = new EventTarget();
 

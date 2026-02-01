@@ -423,6 +423,124 @@ class TicketClient {
         }
     }
 
+    /**
+     * Request a confidential API key by redeeming inference tickets.
+     * @param {string} name - Key name for identification
+     * @param {number} ticketCount - Number of tickets to use (default: 1)
+     * @returns {Promise<Object>} API key data
+     */
+    async requestConfidentialApiKey(name = 'OA-Scrubber-Key', ticketCount = 1) {
+        try {
+            const { tickets, result } = await this.ticketStore.consumeTickets(
+                ticketCount,
+                async ({ tickets, totalCount, remainingCount }) => {
+                    networkLogger.logRequest({
+                        type: 'local',
+                        method: 'LOCAL',
+                        status: 200,
+                        action: 'ticket-select',
+                        response: {
+                            tickets_selected: tickets.length,
+                            total_tickets: totalCount,
+                            unused_tickets: remainingCount,
+                            ticket_index: Math.max(1, totalCount - remainingCount - tickets.length + 1)
+                        }
+                    });
+
+                    const tokenValues = tickets.map(t => t.finalized_ticket).join(',');
+                    const authHeader = tickets.length === 1
+                        ? `InferenceTicket token=${tokenValues}`
+                        : `InferenceTicket tokens=${tokenValues}`;
+
+                    const requestKeyUrl = `${ORG_API_BASE}/api/request_confidential_key`;
+                    const requestHeaders = {
+                        'Content-Type': 'application/json',
+                        'Authorization': authHeader,
+                    };
+                    const requestBody = { name };
+
+                    console.log(`🔐 Requesting confidential API key (${tickets.length} ticket${tickets.length > 1 ? 's' : ''})...`);
+
+                    let response;
+                    let data;
+
+                    try {
+                        ({ response, data } = await networkProxy.fetchWithRetryJson(
+                            requestKeyUrl,
+                            {
+                                method: 'POST',
+                                headers: requestHeaders,
+                                body: JSON.stringify(requestBody)
+                            },
+                            {
+                                context: 'Org confidential API key',
+                                maxAttempts: 3,
+                                timeoutMs: 30000
+                            }
+                        ));
+                    } catch (error) {
+                        networkLogger.logRequest({
+                            type: 'api-key',
+                            method: 'POST',
+                            url: requestKeyUrl,
+                            status: 0,
+                            request: {
+                                headers: networkLogger.sanitizeHeaders(requestHeaders),
+                                body: requestBody
+                            },
+                            error: error.message
+                        });
+                        throw error;
+                    }
+
+                    networkLogger.logRequest({
+                        type: 'api-key',
+                        method: 'POST',
+                        url: requestKeyUrl,
+                        status: response.status,
+                        request: {
+                            headers: networkLogger.sanitizeHeaders(requestHeaders),
+                            body: requestBody
+                        },
+                        response: data
+                    });
+
+                    if (!response.ok) {
+                        const errorMessage = data.detail || data.error || data.message ||
+                            (typeof data === 'string' ? data : null) ||
+                            `Failed to provision confidential API key (${response.status})`;
+
+                        if (response.status === 401 || errorMessage.includes('double-spending')) {
+                            const ticketError = new Error('One or more tickets were already used. Please try again.');
+                            ticketError.code = 'TICKET_USED';
+                            ticketError.consumeTickets = true;
+                            throw ticketError;
+                        }
+
+                        throw new Error(errorMessage);
+                    }
+
+                    const missingFields = [];
+                    if (!data?.key) missingFields.push('key');
+                    if (missingFields.length > 0) {
+                        throw new Error(`Confidential key response missing: ${missingFields.join(', ')}`);
+                    }
+
+                    return data;
+                }
+            );
+
+            if (!result) {
+                throw new Error('Failed to provision confidential API key.');
+            }
+
+            return result;
+        } catch (error) {
+            console.error('Request confidential API key error:', error);
+            throw error;
+        }
+    }
+
 }
 
 // Export singleton instance

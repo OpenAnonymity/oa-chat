@@ -417,6 +417,30 @@ html.switching-theme *::after {
     white-space: pre-wrap; /* Preserve whitespace and newlines */
 }
 
+/* Scrubber-togglable messages - height locked after initial render */
+.message-user.scrubber-togglable.height-locked {
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--color-muted-foreground) / 0.3) transparent;
+}
+
+.message-user.scrubber-togglable.height-locked::-webkit-scrollbar {
+    width: 6px;
+}
+
+.message-user.scrubber-togglable.height-locked::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.message-user.scrubber-togglable.height-locked::-webkit-scrollbar-thumb {
+    background: hsl(var(--color-muted-foreground) / 0.3);
+    border-radius: 3px;
+}
+
+.message-user.scrubber-togglable.height-locked::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--color-muted-foreground) / 0.5);
+}
+
 /* Collapsible long user messages */
 .user-message-collapsible {
     position: relative;
@@ -2286,6 +2310,10 @@ html[data-right-panel-hidden="true"] #right-panel {
         display: none;
     }
 
+    #scrubber-shortcut-hint {
+        display: none;
+    }
+
     /* Progressive model name truncation:
        Hide provider name first (e.g., "OpenAI: " disappears), keep model name */
     #model-picker-btn .model-provider-name {
@@ -3377,6 +3405,97 @@ html {
     -webkit-backdrop-filter: blur(var(--glass-blur));
     border-color: hsl(var(--color-border) / 0.6);
     min-height: 5.5rem; /* Prevents layout shift while inner content loads */
+}
+
+/* Scrubber shortcut hint - minimal modern style */
+.scrubber-shortcut-hint {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px 3px 6px;
+    border-radius: 6px;
+    background: transparent;
+    color: hsl(var(--color-muted-foreground) / 0.6);
+    font-size: 11px;
+    font-weight: 450;
+    letter-spacing: 0.01em;
+    pointer-events: none;
+    opacity: 1;
+    transition: opacity 180ms ease-out;
+}
+
+.scrubber-shortcut-hint.faded {
+    opacity: 0.35;
+}
+
+.scrubber-shortcut-hint.hint-hidden {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.scrubber-shortcut-key {
+    font-family: inherit;
+    font-size: 10px;
+    font-weight: 500;
+    padding: 1px 4px;
+    border-radius: 4px;
+    background: hsl(var(--color-muted-foreground) / 0.12);
+    color: hsl(var(--color-muted-foreground));
+}
+
+.scrubber-shortcut-inline {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+/* Input padding adjustment for hint visibility */
+#message-input.hint-visible {
+    padding-right: 150px !important;
+}
+
+#message-input:not(.hint-visible) {
+    padding-right: 64px !important;
+}
+
+/* Scrubbing animation - modern light trail */
+@property --scrubber-angle {
+    syntax: '<angle>';
+    initial-value: 0deg;
+    inherits: false;
+}
+
+#input-card.scrubbing::before {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    border-radius: 13px;
+    padding: 1.5px;
+    background: conic-gradient(
+        from var(--scrubber-angle, 0deg),
+        transparent 0deg,
+        transparent 300deg,
+        rgba(59, 130, 246, 0.15) 330deg,
+        rgba(59, 130, 246, 0.85) 355deg,
+        rgba(147, 197, 253, 0.9) 360deg
+    );
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    animation: scrubber-light-trail 1.2s linear infinite;
+    pointer-events: none;
+}
+
+@keyframes scrubber-light-trail {
+    from { --scrubber-angle: 0deg; }
+    to { --scrubber-angle: 360deg; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    #input-card.scrubbing::before {
+        animation: none;
+    }
 }
 
 /* Scroll to Bottom Button - frost glass effect */

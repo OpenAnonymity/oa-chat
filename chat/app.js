@@ -22,6 +22,7 @@ import { fetchUrlMetadata } from './services/urlMetadata.js';
 import networkProxy from './services/networkProxy.js';
 import inferenceService from './services/inference/inferenceService.js';
 import ticketClient from './services/ticketClient.js';
+import scrubberService from './services/scrubberService.js';
 import shareService from './services/shareService.js';
 import shareModals from './components/ShareModals.js';
 import { getTicketCost, initModelTiers } from './services/modelTiers.js';
@@ -102,6 +103,7 @@ class ChatApp {
             chatArea: document.getElementById('chat-area'),
             messagesContainer: document.getElementById('messages-container'),
             messageInput: document.getElementById('message-input'),
+            inputCard: document.getElementById('input-card'),
             sendBtn: document.getElementById('send-btn'),
             modelPickerBtn: document.getElementById('model-picker-btn'),
             modelPickerModal: document.getElementById('model-picker-modal'),
@@ -158,6 +160,8 @@ class ChatApp {
         this.isAutoScrollPaused = false; // Track if auto-scroll is paused during streaming
         this.scrollToBottomButton = null; // Reference to the floating scroll-to-bottom button
         this.scrollButtonCheckInterval = null; // Interval for checking button visibility during streaming
+        this.scrubberService = scrubberService;
+        this.scrubberPending = null;
         this.deleteHistoryReturnFocusEl = null;
         this.isDeletingAllChats = false;
         this.appVersionSignature = null;
@@ -1214,6 +1218,9 @@ class ChatApp {
 
         await storageManager.init();
         await apiKeyStore.loadApiKey();
+        this.scrubberService.init().catch((error) => {
+            console.warn('Scrubber init failed:', error);
+        });
 
         await accountService.init();
         if (typeof requestIdleCallback === 'function') {
@@ -2069,6 +2076,19 @@ class ChatApp {
         }
     }
 
+    updateToastPosition() {
+        const toast = document.getElementById('app-toast');
+        if (!toast) return;
+
+        const inputCard = document.getElementById('input-card');
+        if (inputCard) {
+            const rect = inputCard.getBoundingClientRect();
+            // Position above input card with 16px gap
+            const bottomSpace = window.innerHeight - rect.top + 16;
+            toast.style.bottom = `${bottomSpace}px`;
+        }
+    }
+
     /**
      * Show a toast notification
      * @param {string} message - Message to display
@@ -2080,9 +2100,13 @@ class ChatApp {
         const toast = document.createElement('div');
         toast.id = 'app-toast';
         const bgColor = type === 'error' ? 'bg-destructive text-destructive-foreground' : 'bg-muted text-foreground';
-        toast.className = `fixed bottom-36 left-1/2 -translate-x-1/2 z-[100] px-4 py-2 rounded-lg shadow-lg text-sm border border-border/50 ${bgColor} animate-in fade-in slide-in-from-bottom-4`;
+        // Removed fixed bottom-36, will be set by updateToastPosition
+        toast.className = `fixed left-1/2 -translate-x-1/2 z-[100] px-4 py-2 rounded-lg shadow-lg text-sm border border-border/50 ${bgColor} animate-in fade-in slide-in-from-bottom-4`;
         toast.textContent = message;
         document.body.appendChild(toast);
+        
+        this.updateToastPosition();
+
         this._toastTimeout = setTimeout(() => {
             toast.classList.add('animate-out', 'fade-out', 'slide-out-to-bottom-4');
             setTimeout(() => toast.remove(), 150);
@@ -2100,7 +2124,8 @@ class ChatApp {
 
         const toast = document.createElement('div');
         toast.id = 'app-toast';
-        toast.className = 'fixed bottom-36 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg shadow-lg text-sm bg-primary text-primary-foreground animate-in fade-in slide-in-from-bottom-4 flex items-center gap-2';
+        // Removed fixed bottom-36
+        toast.className = 'fixed left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg shadow-lg text-sm bg-primary text-primary-foreground animate-in fade-in slide-in-from-bottom-4 flex items-center gap-2';
 
         const spinner = document.createElement('span');
         spinner.className = 'link-preview-spinner';
@@ -2110,6 +2135,8 @@ class ChatApp {
         toast.appendChild(spinner);
         toast.appendChild(text);
         document.body.appendChild(toast);
+
+        this.updateToastPosition();
 
         return () => {
             toast.classList.add('animate-out', 'fade-out', 'slide-out-to-bottom-4');
@@ -2468,6 +2495,8 @@ class ChatApp {
             apiKey: null,
             apiKeyInfo: null,
             expiresAt: null,
+            scrubberKey: null,
+            scrubberKeyInfo: null,
             searchEnabled: this.searchEnabled
         };
 
@@ -2767,7 +2796,8 @@ class ChatApp {
             files: metadata.files || null,
             searchEnabled: metadata.searchEnabled || false,
             citations: metadata.citations || null,
-            isLocalOnly: Boolean(metadata.isLocalOnly)
+            isLocalOnly: Boolean(metadata.isLocalOnly),
+            scrubber: metadata.scrubber || null
         };
 
         await chatDB.saveMessage(message);
@@ -3287,7 +3317,8 @@ class ChatApp {
      */
     async sendMessage() {
         // Check if there's content to send
-        const content = this.elements.messageInput.value.trim();
+        const rawContent = this.elements.messageInput.value || '';
+        const content = rawContent.trim();
         const hasFiles = this.uploadedFiles.length > 0;
         if (!content && !hasFiles) return;
 
@@ -3373,6 +3404,14 @@ class ChatApp {
 
         try {
 
+            let scrubberOriginalPrompt = null;
+            let scrubberRedactedPrompt = null;
+            if (this.scrubberPending && this.scrubberPending.redacted?.trim() === content) {
+                scrubberOriginalPrompt = this.scrubberPending.original;
+                scrubberRedactedPrompt = this.scrubberPending.redacted;
+            }
+            this.scrubberPending = null;
+
             // Add user message with file metadata
             const metadata = {};
             if (hasFiles) {
@@ -3393,6 +3432,14 @@ class ChatApp {
             }
             if (searchEnabled) {
                 metadata.searchEnabled = true;
+            }
+            // Store scrubber info on user message for toggle functionality
+            if (scrubberOriginalPrompt && scrubberRedactedPrompt) {
+                metadata.scrubber = {
+                    original: scrubberOriginalPrompt,
+                    redacted: scrubberRedactedPrompt,
+                    showingOriginal: false
+                };
             }
             this.isAutoScrollPaused = true;
             const userMessage = await this.addMessage('user', content || '', metadata);
@@ -3545,7 +3592,14 @@ class ChatApp {
                     model: modelNameToUse,
                     tokenCount: null,
                     streamingTokens: 0,
-                    streamingReasoning: false
+                    streamingReasoning: false,
+                    scrubber: scrubberRedactedPrompt ? {
+                        originalPrompt: scrubberOriginalPrompt,
+                        redactedPrompt: scrubberRedactedPrompt,
+                        redactedResponse: null,
+                        restoredResponse: null,
+                        restored: false
+                    } : null
                 };
 
                 // Track progress for periodic saves
@@ -3688,6 +3742,9 @@ class ChatApp {
 
                 // Save the final message content with token data, reasoning, and citations
                 streamingMessage.content = streamedContent;
+                if (streamingMessage.scrubber) {
+                    streamingMessage.scrubber.redactedResponse = streamedContent;
+                }
                 const rawReasoning = tokenData.reasoning || streamedReasoning || null;
                 // Parse and save the cleaned reasoning
                 streamingMessage.reasoning = rawReasoning ? parseReasoningContent(rawReasoning) : null;
@@ -5648,6 +5705,64 @@ Your API key has been cleared. A new key from a different station will be obtain
 
             // Also scroll the citation section into view if needed
             citationEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+    }
+
+    /**
+     * Toggle scrubber restoration for an assistant message.
+     * @param {string} messageId
+     */
+    async toggleScrubberRestore(messageId) {
+        const session = this.getCurrentSession();
+        if (!session) return;
+
+        const messages = await chatDB.getSessionMessages(session.id);
+        const message = messages.find(msg => msg.id === messageId);
+        if (!message?.scrubber?.redactedPrompt) return;
+
+        if (message.scrubber.restored) {
+            const redactedResponse = message.scrubber.redactedResponse || message.content || '';
+            message.content = redactedResponse;
+            message.scrubber.restored = false;
+            await chatDB.saveMessage(message);
+            if (this.chatArea && this.isViewingSession(session.id)) {
+                this.chatArea.updateMessage(message);
+            }
+            return;
+        }
+
+        const stopLoading = this.showLoadingToast('Restoring PII...');
+        try {
+            const responseText = message.content || message.scrubber.redactedResponse || '';
+            if (!message.scrubber.redactedResponse) {
+                message.scrubber.redactedResponse = responseText;
+            }
+            const restoreResult = await this.scrubberService.restoreResponse({
+                originalPrompt: message.scrubber.originalPrompt || '',
+                redactedPrompt: message.scrubber.redactedPrompt || '',
+                responseText,
+                session
+            });
+            if (restoreResult?.success && restoreResult.text) {
+                message.scrubber.restoredResponse = restoreResult.text;
+                message.scrubber.restored = true;
+                message.content = restoreResult.text;
+                message.tokenCount = Math.ceil(restoreResult.text.length / 4);
+                await chatDB.saveMessage(message);
+                if (this.chatArea && this.isViewingSession(session.id)) {
+                    this.chatArea.updateMessage(message);
+                }
+                this.showToast('PII restored', 'success');
+            } else {
+                this.showToast('Restore failed', 'error');
+            }
+        } catch (error) {
+            console.warn('Scrubber restore failed:', error);
+            this.showToast('Restore failed', 'error');
+        } finally {
+            if (typeof stopLoading === 'function') {
+                stopLoading();
+            }
         }
     }
 }
