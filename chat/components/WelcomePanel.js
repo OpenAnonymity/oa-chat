@@ -4,7 +4,9 @@
  */
 
 import ticketClient from '../services/ticketClient.js';
+import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 
+// localStorage key for synchronous pre-hydration check (matches preferencesStore snapshot)
 const STORAGE_KEY_DISMISSED = 'oa-welcome-dismissed';
 const MODAL_CLASSES = 'w-full max-w-md rounded-2xl border border-border bg-background shadow-2xl p-6 mx-4 flex flex-col';
 
@@ -76,7 +78,7 @@ class WelcomePanel {
 
         // Save dismissal preference if checked
         if (this.dontShowAgain) {
-            localStorage.setItem(STORAGE_KEY_DISMISSED, 'true');
+            preferencesStore.savePreference(PREF_KEYS.welcomeDismissed, true);
         }
 
         this.overlay.classList.add('hidden');
@@ -149,6 +151,14 @@ class WelcomePanel {
         setTimeout(() => this.app.elements.messageInput?.focus(), 150);
     }
 
+    handleImportData() {
+        const input = document.getElementById('global-import-input');
+        if (input) {
+            input.click();
+        }
+        this.close();
+    }
+
     handleDontShowAgainChange(checked) {
         this.dontShowAgain = checked;
     }
@@ -180,18 +190,9 @@ class WelcomePanel {
 
         return `
             <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}">
-                <!-- Header with logo -->
+                <!-- Header -->
                 <div class="flex items-center justify-between mb-2">
-                    <div class="flex items-center gap-3">
-                        <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500/10 to-purple-500/10 flex items-center justify-center">
-                            <svg class="w-5 h-5 text-blue-600 dark:text-blue-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
-                            </svg>
-                        </div>
-                        <div>
-                            <h2 class="text-lg font-semibold text-foreground">Welcome to Open Anonymity</h2>
-                        </div>
-                    </div>
+                    <h2 class="text-lg font-semibold text-foreground">Welcome to oa-fastchat</h2>
                     <button id="close-welcome-btn" class="text-muted-foreground hover:text-foreground transition-colors p-1 -mr-1 rounded-lg hover:bg-accent" aria-label="Close">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
@@ -199,7 +200,8 @@ class WelcomePanel {
                     </button>
                 </div>
 
-                <p class="text-sm text-muted-foreground mb-5">Private, anonymous AI chat with no accounts, no tracking, and end-to-end encryption.</p>
+                <p class="text-sm text-muted-foreground mb-5">A simple, extremely fast, and unlinkable chat client by <a href="https://openanonymity.ai/" target="_blank" rel="noopener noreferrer" class="hover:underline" style="color: rgba(255,255,255,0.8)">The Open Anonymity Project</a>.
+                </p>
 
                 <!-- Invitation code form - compact design with embedded button -->
                 <style>
@@ -250,18 +252,29 @@ class WelcomePanel {
                     <div class="flex-1 h-px bg-border"></div>
                 </div>
 
-                <!-- Link to homepage -->
-                <a
-                    href="https://openanonymity.ai/"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    class="btn-ghost-hover w-full h-10 rounded-lg text-sm border border-border bg-background text-foreground shadow-sm transition-colors flex items-center justify-center gap-2"
-                >
-                    <span>Get an invitation</span>
-                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"></path>
-                    </svg>
-                </a>
+                <!-- Action buttons -->
+                <div class="flex items-center justify-center gap-2">
+                    <a
+                        href="https://openanonymity.ai/"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="btn-ghost-hover h-10 px-4 rounded-lg text-sm border border-border bg-background text-foreground shadow-sm transition-colors flex items-center justify-center gap-2"
+                    >
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"></path>
+                        </svg>
+                        <span>Request beta access</span>
+                    </a>
+                    <button
+                        id="import-data-btn"
+                        class="h-10 px-4 rounded-lg text-sm bg-blue-600 text-white hover:bg-blue-700 transition-colors flex items-center justify-center gap-2"
+                    >
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                        </svg>
+                        <span>Private alpha import</span>
+                    </button>
+                </div>
 
                 <!-- Footer -->
                 <div class="mt-6 flex items-center justify-between">
@@ -350,12 +363,14 @@ class WelcomePanel {
                 </div>
 
                 <!-- Start chatting button -->
-                <button
-                    id="start-chatting-btn"
-                    class="btn-ghost-hover w-full h-10 rounded-lg text-sm border border-border bg-background text-foreground shadow-sm transition-colors"
-                >
-                    Start Chatting
-                </button>
+                <div class="flex justify-center">
+                    <button
+                        id="start-chatting-btn"
+                        class="btn-ghost-hover h-10 px-6 rounded-lg text-sm border border-border bg-background text-foreground shadow-sm transition-colors"
+                    >
+                        Start Chatting
+                    </button>
+                </div>
             </div>
         `;
     }
@@ -392,6 +407,11 @@ class WelcomePanel {
         const dontShowAgainCheckbox = document.getElementById('dont-show-again');
         if (dontShowAgainCheckbox) {
             dontShowAgainCheckbox.onchange = (e) => this.handleDontShowAgainChange(e.target.checked);
+        }
+
+        const importDataBtn = document.getElementById('import-data-btn');
+        if (importDataBtn) {
+            importDataBtn.onclick = () => this.handleImportData();
         }
 
         const createAccountBtn = document.getElementById('create-account-btn');
