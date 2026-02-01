@@ -9,6 +9,7 @@ import ChatInput from './components/ChatInput.js';
 import ModelPicker from './components/ModelPicker.js';
 import ChatHistoryImportModal from './components/ChatHistoryImportModal.js';
 import AccountModal from './components/AccountModal.js';
+import WelcomePanel from './components/WelcomePanel.js';
 import { buildTypingIndicator } from './components/MessageTemplates.js';
 import themeManager from './services/themeManager.js';
 import preferencesStore, { PREF_KEYS } from './services/preferencesStore.js';
@@ -1197,6 +1198,7 @@ class ChatApp {
         this.modelPicker = new ModelPicker(this);
         this.chatHistoryImportModal = new ChatHistoryImportModal(this);
         this.accountModal = new AccountModal(this);
+        this.welcomePanel = new WelcomePanel(this);
         this.rightPanel = new RightPanel(this);
         this.rightPanel.mount();
 
@@ -1252,6 +1254,9 @@ class ChatApp {
         // Initialize network proxy in background (don't block UI)
         await networkProxy.syncWithPreferences().catch(err => console.warn('Proxy pref sync failed:', err));
         networkProxy.initialize().catch(err => console.warn('Proxy init failed:', err));
+
+        // Show welcome panel for new users (after core services are ready)
+        await this.welcomePanel.init();
 
         // Now set up theme controls after chatInput is initialized
         this.updateThemeControls(themeManager.getPreference(), themeManager.getEffectiveTheme());
