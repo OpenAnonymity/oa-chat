@@ -2077,7 +2077,7 @@ class ChatApp {
         const shareInfo = session.shareInfo;
 
         // Remove all color classes first
-        btn.classList.remove('text-amber-600', 'text-green-600', 'text-muted-foreground');
+        btn.classList.remove('text-amber-600', 'text-status-success', 'text-muted-foreground');
 
         if (shareInfo?.shareId) {
             const isExpired = shareInfo.expiresAt && Date.now() > shareInfo.expiresAt;
@@ -2085,7 +2085,7 @@ class ChatApp {
                 btn.classList.add('text-amber-600');
                 if (btnText) btnText.textContent = 'Expired';
             } else {
-                btn.classList.add('text-green-600');
+                btn.classList.add('text-status-success');
                 if (btnText) btnText.textContent = 'Shared';
             }
         } else {

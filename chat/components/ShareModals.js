@@ -276,11 +276,11 @@ function buildStatusPanelHtml(opts) {
     // Format API key expiry as relative time
     const keyExpiry = apiKeyExpiresAt ? formatKeyExpiry(apiKeyExpiresAt) : null;
     const statusText = isExpired ? 'Expired' : 'Active';
-    const statusClass = isExpired ? 'text-amber-600 dark:text-amber-400' : 'text-green-600 dark:text-green-400';
+    const statusClass = isExpired ? 'text-amber-600 dark:text-amber-400' : 'text-status-success';
 
     const encryptionValue = isPlaintext
         ? '<span class="text-xs text-foreground">None</span>'
-        : '<span class="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">Encrypted</span>';
+        : '<span class="text-[10px] px-1.5 py-0.5 rounded badge-status-success">Encrypted</span>';
 
     const apiKeyValue = apiKeyShared
         ? (keyExpiry

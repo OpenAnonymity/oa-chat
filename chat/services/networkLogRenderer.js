@@ -38,7 +38,7 @@ export function getStatusClass(status, isAborted = false) {
     } else if (status === 'queued' || status === 'pending') {
         return 'text-amber-600'; // Amber for queued/pending
     } else if (status >= 200 && status < 300) {
-        return 'text-green-600';
+        return 'text-status-success'; // Success status color
     } else if (status === 0) {
         return 'text-red-600';
     } else if (status >= 400) {
@@ -55,7 +55,7 @@ export function getStatusDotClass(status, isAborted = false, detail = '') {
     } else if (detail === 'key_near_expiry') {
         return 'bg-amber-500'; // Amber dot for unverified policy case
     } else if (status >= 200 && status < 300) {
-        return 'bg-green-500';
+        return 'bg-status-success'; // Success status color
     } else if (status >= 400 || status === 0) {
         return 'bg-red-500'; // Red for errors (4xx, 5xx, network failures)
     }
@@ -492,7 +492,7 @@ export function renderNetworkLog(log, isExpanded = false, isMinimal = false) {
                             <span class="font-medium px-1.5 py-0.5 rounded text-[10px] ${
                                 log.isAborted ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400' :
                                 (log.status === 'queued' || log.status === 'pending') ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400' :
-                                log.status >= 200 && log.status < 300 ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' :
+                                log.status >= 200 && log.status < 300 ? 'badge-status-success' :
                                 log.status === 0 ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' :
                                 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
                             }">

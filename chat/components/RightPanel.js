@@ -70,13 +70,13 @@ class RightPanel {
             const hadError = this.proxyStatus?.lastError;
             this.proxySettings = settings;
             this.proxyStatus = status;
-            
+
             // Auto-disable proxy when it fails (new error detected while enabled)
             if (!hadError && status?.lastError && settings?.enabled && !this.proxyActionPending) {
                 networkProxy.updateSettings({ enabled: false });
                 return; // Will trigger another onChange with disabled state
             }
-            
+
             // Skip re-render if animation is in progress (will re-render after animation)
             if (!this.proxyAnimating) {
                 this.renderTopSectionOnly();
@@ -965,16 +965,16 @@ class RightPanel {
                 const content = data.choices[0].message.content;
                 const truncatedContent = content.length > 50 ? content.substring(0, 50) + '...' : content;
                 testResult.innerHTML = `
-                    <div class="flex items-center gap-2 text-sm font-semibold text-green-600 dark:text-green-400 mb-3">
+                    <div class="flex items-center gap-2 text-sm font-semibold text-status-success mb-3">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                         </svg>
                         <span>${accessLabelTitle} is Valid</span>
                     </div>
-                    <div class="bg-green-50 dark:bg-green-500/10 border border-green-200 dark:border-green-500/30 rounded-lg p-3">
+                    <div class="bg-status-success/10 border border-status-success/30 rounded-lg p-3">
                         <div class="text-xs space-y-1.5">
-                            <div class="text-foreground"><strong class="text-green-700 dark:text-green-300">Response:</strong> ${this.escapeHtml(truncatedContent)}</div>
-                            <div class="text-foreground"><strong class="text-green-700 dark:text-green-300">Tokens:</strong> ${data.usage.total_tokens}</div>
+                            <div class="text-foreground"><strong class="text-status-success">Response:</strong> ${this.escapeHtml(truncatedContent)}</div>
+                            <div class="text-foreground"><strong class="text-status-success">Tokens:</strong> ${data.usage.total_tokens}</div>
                         </div>
                     </div>
                 `;
@@ -1103,7 +1103,7 @@ class RightPanel {
         // Check passed param, or check session for shared status
         const shared = isKeyShared ?? (this.currentSession?.shareInfo?.apiKeyShared || this.currentSession?.apiKeyInfo?.isShared);
         if (shared) return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400';
-        return 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400';
+        return 'badge-status-success';
     }
 
     getExpiryWidthClass(isKeyShared = null) {
@@ -1135,7 +1135,7 @@ class RightPanel {
                             <span class="text-[10px] text-muted-foreground">Status:</span>
                             <span class="text-[10px] font-medium px-1.5 py-0.5 rounded ${
                                 log.isAborted ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400' :
-                                log.status >= 200 && log.status < 300 ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' :
+                                log.status >= 200 && log.status < 300 ? 'badge-status-success' :
                                 log.status === 0 ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' :
                                 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
                             }">
@@ -1317,7 +1317,7 @@ class RightPanel {
 
     getStatusClass(status) {
         if (status >= 200 && status < 300) {
-            return 'text-green-600';
+            return 'text-status-success';
         } else if (status === 0) {
             return 'text-red-600';
         } else if (status >= 400) {
@@ -1667,7 +1667,7 @@ class RightPanel {
 
         // Connected and verified (first request succeeded)
         if (status?.connectionVerified && status?.usingProxy) {
-            return { label: 'Connected', textClass: 'text-green-600 dark:text-green-400', dotClass: 'bg-green-500' };
+            return { label: 'Connected', textClass: 'text-status-success', dotClass: 'bg-status-success' };
         }
 
         // Ready to use (WebSocket set up, verification happens on first request)
@@ -1721,7 +1721,7 @@ class RightPanel {
                         <span class="w-1.5 h-1.5 rounded-full shrink-0 ${statusMeta.dotClass}"></span>
                         <span class="${statusMeta.textClass} truncate" ${statusMeta.title ? `title="${this.escapeHtml(statusMeta.title)}"` : ''}>${this.escapeHtml(statusMeta.label)}</span>
                         ${isEncrypted ? `
-                            <span class="inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-medium bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400" title="TLS tunnel over WebSocket proxy">
+                            <span class="inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-medium badge-status-success" title="TLS tunnel over WebSocket proxy">
                                 <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
                                     <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
                                     <path d="M7 11V7a5 5 0 0 1 10 0v4"/>

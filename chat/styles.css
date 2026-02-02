@@ -17,6 +17,14 @@
     --blue-600: 221.2 83.2% 53.3%;
     --blue-700: 224.3 76.3% 48%;
 
+    /* Status indicator color (for active/online/connected states) */
+    /* Original Tailwind green shades (kept for reference/switching):
+       Solid: --green-400: #4ade80; --green-500: #22c55e; --green-600: #16a34a; --green-700: #15803d;
+       Badge: bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400
+       Previous custom: #5DA87F
+    */
+    --color-status-success: #498966;
+
     /* Accent color (active toggles, primary highlights) */
     --color-accent-primary: var(--blue-500);
     --color-accent-primary-foreground: 0 0% 100%;
@@ -2041,6 +2049,43 @@ html.flat-mode.dark .file-attachment-icon .text-destructive {
     background-color: #22c55e;
 }
 
+/* Status indicator classes - for active/online/connected states */
+.bg-status-success {
+    background-color: var(--color-status-success);
+}
+
+.text-status-success {
+    color: var(--color-status-success);
+}
+
+.dark .text-status-success {
+    color: #6DB88E; /* Lighter shade for dark mode */
+}
+
+/* Status badge classes - for pill/badge style indicators */
+.badge-status-success {
+    background-color: rgba(73, 137, 102, 0.15);
+    color: #366B4D; /* Darker shade for text */
+}
+
+.dark .badge-status-success {
+    background-color: rgba(73, 137, 102, 0.25);
+    color: #6DB88E; /* Lighter shade for dark mode */
+}
+
+/* Status success opacity variants for backgrounds and borders */
+.bg-status-success\/10 {
+    background-color: rgba(73, 137, 102, 0.1);
+}
+
+.bg-status-success\/15 {
+    background-color: rgba(73, 137, 102, 0.15);
+}
+
+.border-status-success\/30 {
+    border-color: rgba(73, 137, 102, 0.3);
+}
+
 .bg-gray-500 {
     background-color: #6b7280;
 }
@@ -2104,8 +2149,8 @@ html.flat-mode.dark .file-attachment-icon .text-destructive {
 }
 
 .breathing-dot.status-active {
-    background-color: #22c55e;
-    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.4);
+    background-color: var(--color-status-success);
+    box-shadow: 0 0 0 0 rgba(73, 137, 102, 0.4);
 }
 
 .breathing-dot.status-inactive {
@@ -3250,12 +3295,13 @@ html {
 }
 
 .account-tab-btn[data-status="logged-in"] .account-tab-dot {
-    background-color: hsl(142 71% 45%);
+    background-color: var(--color-status-success);
 }
 
 /* Logged-in glow effect for account button */
 .account-tab-btn[data-status="logged-in"] {
-    border-color: hsl(142 71% 45% / 0.5);
+    border-color: rgba(73, 137, 102, 0.5);
+    border-width: 1.5px;
 }
 
 /* ============================================
