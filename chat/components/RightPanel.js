@@ -1699,7 +1699,7 @@ class RightPanel {
                             <circle cx="12" cy="22" r="1.5" fill="currentColor"/>
                             <path d="M4 22h6m4 0h6"/>
                         </svg>
-                        <span class="text-xs font-medium text-foreground">Inference Proxy</span>
+                        <span class="text-xs font-medium text-foreground">Network Proxy</span>
                         <span class="px-1 py-0.5 rounded text-[8px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 uppercase tracking-wide">Beta</span>
                         <button id="proxy-info-btn" class="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-border text-[8px] text-muted-foreground hover:text-foreground hover:bg-accent hover:border-foreground/20 transition-all" title="What is this?" type="button">
                             ?

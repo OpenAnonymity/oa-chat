@@ -26,7 +26,7 @@ The app runs entirely in the browser and is organized as ES modules:
   - `MessageNavigation.js`: Vertical mini-timeline of assistant messages with arrow-key navigation and previews.
   - `RightPanel.js`: Ticket + API key panel, proxy controls + TLS security, activity timeline (memory-only logs), and responsive visibility.
   - `FloatingPanel.js`: Lightweight activity bubble (feature currently disabled by default).
-  - `ProxyInfoModal.js`: Explains the inference proxy and encrypted relay flow.
+  - `ProxyInfoModal.js`: Explains the network proxy and encrypted relay flow.
   - `TLSSecurityModal.js`: Displays TLS/libcurl integrity info and live proxy connection details.
 - `services/`:
   - `inference/`: Backend abstraction for access issuance, inference calls, TLS capture hints, and sharing metadata.

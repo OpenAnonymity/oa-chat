@@ -2122,7 +2122,7 @@ class ChatApp {
         toast.className = `fixed left-1/2 -translate-x-1/2 z-[100] px-4 py-2 rounded-lg shadow-lg text-sm border border-border/50 ${bgColor} animate-in fade-in slide-in-from-bottom-4`;
         toast.textContent = message;
         document.body.appendChild(toast);
-        
+
         this.updateToastPosition();
 
         this._toastTimeout = setTimeout(() => {
