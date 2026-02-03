@@ -330,9 +330,11 @@ export default class ChatArea {
 
     /**
      * Handles toggling the collapsed state of long user messages.
+     * For scrubber messages, persists the collapsed state to ensure consistency across re-renders.
+     * Note: Height-locking (for scrubber toggle) is separate - show more/less always expands/collapses fully.
      * @param {HTMLElement} btn - The show more/less button element
      */
-    handleToggleUserMessage(btn) {
+    async handleToggleUserMessage(btn) {
         const bubble = btn.closest('.message-user');
         if (!bubble) return;
 
@@ -341,19 +343,29 @@ export default class ChatArea {
 
         const isCollapsed = content.classList.contains('collapsed');
         if (isCollapsed) {
+            // Expanding: remove collapsed class AND any height lock to show full content
             content.classList.remove('collapsed');
             btn.textContent = 'Show less';
-            if (bubble.dataset.lockedHeight) {
-                bubble.classList.add('height-locked');
-                bubble.style.height = `${bubble.dataset.lockedHeight}px`;
-            }
+            // Remove height-lock so content can expand fully (height-lock is only for scrubber toggle)
+            bubble.classList.remove('height-locked');
+            bubble.style.height = '';
         } else {
+            // Collapsing: add collapsed class (CSS handles truncation)
             content.classList.add('collapsed');
             btn.textContent = 'Show more';
-            if (bubble.classList.contains('height-locked')) {
-                bubble.dataset.lockedHeight = bubble.style.height.replace('px', '');
-                bubble.classList.remove('height-locked');
-                bubble.style.height = '';
+        }
+
+        // Persist collapsed state for scrubber messages so it survives re-renders (e.g., toggling original/redacted)
+        const messageId = btn.dataset.messageId;
+        if (messageId) {
+            const session = this.app.getCurrentSession();
+            if (session) {
+                const messages = await chatDB.getSessionMessages(session.id);
+                const message = messages.find(m => m.id === messageId);
+                if (message?.scrubber) {
+                    message.scrubber.isCollapsed = !isCollapsed; // New state after toggle
+                    await chatDB.saveMessage(message);
+                }
             }
         }
     }
@@ -475,21 +487,6 @@ export default class ChatArea {
         const message = messages.find(m => m.id === messageId);
         if (!message || message.role !== 'user' || !message.scrubber) return;
 
-        const messageWrapper = document.querySelector(`[data-message-id="${messageId}"]`);
-        const collapsible = messageWrapper?.querySelector('.user-message-collapsible');
-        const wasExpanded = collapsible ? !collapsible.classList.contains('collapsed') : false;
-
-        // Lock the height on first toggle (capture current height before changing content)
-        if (!message.scrubber.lockedHeight) {
-            const messageWrapper = document.querySelector(`[data-message-id="${messageId}"]`);
-            if (messageWrapper) {
-                const bubble = messageWrapper.querySelector('.message-user');
-                if (bubble) {
-                    message.scrubber.lockedHeight = bubble.offsetHeight;
-                }
-            }
-        }
-
         // Toggle the state
         message.scrubber.showingOriginal = !message.scrubber.showingOriginal;
 
@@ -503,18 +500,9 @@ export default class ChatArea {
         // Save to database
         await chatDB.saveMessage(message);
 
-        // Re-render just this message
+        // Re-render just this message - collapsed state is persisted in message.scrubber.isCollapsed
+        // and will be automatically applied by the template
         this.updateMessage(message);
-
-        if (wasExpanded) {
-            const newWrapper = document.querySelector(`[data-message-id="${messageId}"]`);
-            const newCollapsible = newWrapper?.querySelector('.user-message-collapsible');
-            const newBtn = newWrapper?.querySelector('.user-message-show-more');
-            if (newCollapsible) {
-                newCollapsible.classList.remove('collapsed');
-                if (newBtn) newBtn.textContent = 'Show less';
-            }
-        }
     }
 
     /**

@@ -359,19 +359,26 @@ function buildUserMessage(message, options = {}) {
     }
 
     // Check if message is long enough to collapse
-    const isLongMessage = message.content && message.content.length > USER_MESSAGE_COLLAPSE_THRESHOLD;
-    const collapsibleClass = isLongMessage ? 'user-message-collapsible collapsed' : '';
+    // For scrubber messages, use max of original and redacted lengths to ensure button visibility is consistent
+    const isLongMessage = message.scrubber
+        ? Math.max(message.scrubber.original?.length || 0, message.scrubber.redacted?.length || 0) > USER_MESSAGE_COLLAPSE_THRESHOLD
+        : message.content && message.content.length > USER_MESSAGE_COLLAPSE_THRESHOLD;
+    // Use persisted isCollapsed state for scrubber messages (defaults to collapsed)
+    const isCollapsed = message.scrubber?.isCollapsed !== false;
+    const collapsibleClass = isLongMessage ? `user-message-collapsible ${isCollapsed ? 'collapsed' : ''}` : '';
+    const showMoreBtnText = isCollapsed ? 'Show more' : 'Show less';
     const showMoreBtn = isLongMessage ? `
-        <button class="user-message-show-more" data-message-id="${message.id}">Show more</button>
+        <button class="user-message-show-more" data-message-id="${message.id}">${showMoreBtnText}</button>
     ` : '';
 
-    // Add scrubber-togglable class for fixed height with scroll when toggling
+    // Add scrubber-togglable class for messages with scrubber
     const hasScrubber = message.scrubber;
     const scrubberTogglableClass = hasScrubber ? 'scrubber-togglable' : '';
-    const heightLockedClass = hasScrubber && message.scrubber.lockedHeight ? 'height-locked' : '';
-    const lockedHeightStyle = hasScrubber && message.scrubber.lockedHeight 
-        ? `height: ${message.scrubber.lockedHeight}px;` 
-        : '';
+    // Height-lock is DISABLED when user has expanded content via "Show more" (isCollapsed === false)
+    // When collapsed, CSS truncation handles sizing. When expanded, user wants to see FULL content.
+    // Height-lock was for scrubber toggle stability, but persisted isCollapsed now handles that.
+    const heightLockedClass = '';
+    const lockedHeightStyle = '';
 
     // Normal display mode with action buttons (shown on hover)
     return `
