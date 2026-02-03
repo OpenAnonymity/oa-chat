@@ -11,7 +11,7 @@ const fontsDir = path.join(repoRoot, 'chat', 'fonts');
 const cssPath = path.join(fontsDir, 'fonts.css');
 
 const DEFAULT_GOOGLE_FONTS_URL =
-  'https://fonts.googleapis.com/css2?family=Cormorant:ital,wght@0,300..700;1,300..700&family=Fira+Code:wght@300..700&family=Libre+Caslon+Text:ital,wght@0,400;0,700;1,400&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=PT+Serif:ital,wght@0,400;0,700;1,400;1,700&display=swap';
+  'https://fonts.googleapis.com/css2?family=Cormorant:ital,wght@0,300..700;1,300..700&family=Fira+Code:wght@300..700&family=Libre+Caslon+Text:ital,wght@0,400;0,700;1,400&family=Source+Serif+4:ital,opsz,wght@0,8..60,200..900;1,8..60,200..900&family=PT+Serif:ital,wght@0,400;0,700;1,400;1,700&display=swap';
 
 const UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';

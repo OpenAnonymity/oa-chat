@@ -2161,12 +2161,14 @@ class RightPanel {
 
         panel.innerHTML = `
             <!-- Header - matches chat-toolbar height (3rem + 1px for border alignment) -->
-            <div style="min-height: calc(3rem + 1px);" class="px-3 bg-muted/10 border-b border-border flex items-center">
+            <div style="min-height: calc(3rem + 1px);" class="px-3 bg-muted/10 flex items-center">
                 <div class="flex items-center justify-between w-full">
-                    <h2 class="text-xs font-semibold text-foreground">System Panel</h2>
-                    <button id="close-right-panel" class="text-muted-foreground hover:text-foreground transition-colors p-0.5 rounded-lg hover:bg-accent">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M6 18L18 6M6 6l12 12"></path>
+                    <h2 class="text-sm font-semibold text-foreground">System Panel</h2>
+                    <button id="close-right-panel" class="inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-9 w-9 cursor-pointer select-none">
+                        <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                            <rect x="4" y="4" width="16" height="16" rx="2"/>
+                            <path d="M14 4h4a2 2 0 012 2v12a2 2 0 01-2 2h-4V4z" fill="currentColor" fill-opacity="0.15" stroke="none"/>
+                            <path d="M14 4v16"/>
                         </svg>
                     </button>
                 </div>
