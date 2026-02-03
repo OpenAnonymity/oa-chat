@@ -73,9 +73,9 @@ export default class ChatInput {
             this.app.updateInputState();
             // Clear file undo stack - text input should take undo precedence
             this.app.fileUndoStack = [];
-            
+
             const inputValue = this.app.elements.messageInput.value;
-            
+
             // Edge case: If user clears the input completely, reset scrubber state
             // This means the user is starting fresh, not editing the scrubbed prompt
             if (!inputValue.trim() && this.app.scrubberPending) {
@@ -96,11 +96,11 @@ export default class ChatInput {
                     this.clearScrubberPreview();
                 }
             }
-            
+
             // Update hint visibility and has-scrubber-pending class
             this.updateScrubberHintVisibility();
             this.updateScrubberPreviewHintVisibility();
-            
+
             if (this.app.updateToastPosition) {
                 this.app.updateToastPosition();
             }
@@ -135,7 +135,7 @@ export default class ChatInput {
         this.app.elements.messageInput.addEventListener('keydown', (e) => {
             if (!e.metaKey && !e.ctrlKey) return;
             if (e.key.toLowerCase() !== 'z') return;
-            
+
             if (e.shiftKey) {
                 // Cmd+Shift+Z: Redo scrubbing
                 if (this.scrubberUndoState) {
@@ -499,7 +499,7 @@ export default class ChatInput {
                     this.app.scrubberPending = null;
                     this.app.showToast('No PII detected', 'success');
                 }
-                
+
                 this.updateScrubberHintVisibility();
                 this.updateScrubberPreviewHintVisibility();
 
@@ -683,7 +683,7 @@ export default class ChatInput {
             this.setScrubberPreviewEditing(true);
             const updatedText = extractTextFromEditableDiff(container);
             const previousText = this.scrubberDiffState.previewLastText;
-            
+
             // If user deleted all content, exit edit mode and focus main input
             if (updatedText === '' && previousText !== '') {
                 this.app.scrubberPending = null;
@@ -696,7 +696,7 @@ export default class ChatInput {
                 });
                 return;
             }
-            
+
             // Capture current cursor state (after the edit)
             const currentCursor = getEditableDiffSelectionState(container);
             const preEditCursor = this.scrubberDiffState.previewPreEditCursor || this.scrubberDiffState.previewLastCursor;
@@ -735,7 +735,7 @@ export default class ChatInput {
                 return strip(a) === strip(b);
             };
             const shouldRediff = !differsOnlyByNewlines(previousText, updatedText);
-            
+
             if (shouldRediff) {
                 // Capture cursor state now so it's not lost during debounce
                 const cursorForRediff = this.scrubberDiffState.previewLastCursor;
@@ -769,14 +769,14 @@ export default class ChatInput {
 
         this.scrubberDiffState.previewBeforeInputHandler = (event) => {
             this.scrubberDiffState.previewPreEditCursor = getEditableDiffSelectionState(container);
-            
+
             // Always intercept Enter to insert <br> + ZWSP instead of browser creating div
             if (event.inputType === 'insertParagraph' || event.inputType === 'insertLineBreak') {
                 event.preventDefault();
                 this.insertScrubberPreviewLineBreak();
                 return;
             }
-            
+
             if (event.inputType === 'deleteContentBackward' || event.inputType === 'deleteContentForward') {
                 const handled = this.handleScrubberPreviewNewlineDelete(event.inputType);
                 if (handled) {
@@ -787,19 +787,19 @@ export default class ChatInput {
 
             const deletedSpan = this.getScrubberDeletedAncestor(container);
             if (!deletedSpan) return;
-            
+
             // For deletion: block if inside or at end of deleted span, allow only at front
             if (event.inputType === 'deleteContentBackward' || event.inputType === 'deleteContentForward') {
                 const deletedLength = deletedSpan.textContent?.length || 0;
                 const selection = window.getSelection();
                 const range = selection?.getRangeAt(0);
                 const relativeOffset = range ? this.getSelectionOffsetInNode(deletedSpan, range) : 0;
-                
+
                 // Only allow deletion if cursor is at the very front (offset 0) for backspace
                 // or at the very end for forward delete to delete outside the span
                 const isAtFront = relativeOffset === 0;
                 const isAtEnd = relativeOffset >= deletedLength;
-                
+
                 if (event.inputType === 'deleteContentBackward' && !isAtFront) {
                     event.preventDefault();
                     return;
@@ -812,7 +812,7 @@ export default class ChatInput {
                 this.moveSelectionOutsideDeletedSpan(deletedSpan);
                 return;
             }
-            
+
             this.moveSelectionOutsideDeletedSpan(deletedSpan);
             if (event.inputType === 'insertFromPaste') return;
             if (event.inputType === 'insertText') {
@@ -879,7 +879,7 @@ export default class ChatInput {
         const previousState = history.pop();
         const previousText = typeof previousState === 'string' ? previousState : previousState.text;
         const previousCursor = typeof previousState === 'string' ? null : previousState.cursor;
-        
+
         this.scrubberDiffState.previewLastText = previousText;
         this.scrubberDiffState.previewLastCursor = previousCursor;
 
@@ -908,18 +908,18 @@ export default class ChatInput {
         if (!text) return;
         const selection = window.getSelection();
         if (!selection || selection.rangeCount === 0) return;
-        
+
         const range = selection.getRangeAt(0);
         const textNode = document.createTextNode(text);
         range.deleteContents();
         range.insertNode(textNode);
-        
+
         // Move cursor after inserted text
         range.setStartAfter(textNode);
         range.collapse(true);
         selection.removeAllRanges();
         selection.addRange(range);
-        
+
         // Dispatch input event manually since we modified DOM directly
         if (this.app.elements.scrubberPreviewDiff) {
             this.app.elements.scrubberPreviewDiff.dispatchEvent(new Event('input', { bubbles: true }));
@@ -929,22 +929,22 @@ export default class ChatInput {
     insertScrubberPreviewLineBreak() {
         const selection = window.getSelection();
         if (!selection || selection.rangeCount === 0) return;
-        
+
         const range = selection.getRangeAt(0);
         range.deleteContents();
-        
+
         // Insert <br> followed by ZWSP for cursor positioning
         const br = document.createElement('br');
         const zwsp = document.createTextNode('\u200B');
         range.insertNode(zwsp);
         range.insertNode(br);
-        
+
         // Move cursor after the ZWSP (on the new line)
         range.setStartAfter(zwsp);
         range.collapse(true);
         selection.removeAllRanges();
         selection.addRange(range);
-        
+
         // Dispatch input event manually since we modified DOM directly
         if (this.app.elements.scrubberPreviewDiff) {
             this.app.elements.scrubberPreviewDiff.dispatchEvent(new Event('input', { bubbles: true }));
@@ -1191,7 +1191,7 @@ export default class ChatInput {
      */
     addGlobalEscapeHandler() {
         if (this.scrubberDiffState.globalEscapeHandler) return;
-        
+
         this.scrubberDiffState.globalEscapeHandler = (event) => {
             if (event.key !== 'Escape') return;
             // Only handle if preview is expanded/pinned
@@ -1200,7 +1200,7 @@ export default class ChatInput {
             event.stopPropagation();
             this.forceHideScrubberPreview();
         };
-        
+
         // Use capture phase to intercept before other handlers
         document.addEventListener('keydown', this.scrubberDiffState.globalEscapeHandler, true);
     }
@@ -1251,10 +1251,10 @@ export default class ChatInput {
      */
     updateScrubberPreviewHintVisibility() {
         if (!this.app.elements.inputCard) return;
-        
+
         const pending = this.app.scrubberPending;
         const inputValue = this.app.elements.messageInput?.value || '';
-        
+
         // Show "ctrl preview" hint only when:
         // 1. There's pending scrubber data
         // 2. The input has content
@@ -1265,7 +1265,7 @@ export default class ChatInput {
             pending.original?.trim() &&
             inputValue === pending.redacted &&
             pending.original.trim() !== pending.redacted.trim();
-        
+
         if (hasMeaningfulDiff) {
             this.app.elements.inputCard.classList.add('has-scrubber-pending');
         } else {
@@ -1304,7 +1304,7 @@ export default class ChatInput {
     updateScrubberPreviewHint() {
         const text = document.getElementById('scrubber-preview-hint-text');
         if (!text) return;
-        
+
         let hintHtml = '';
         if (this.scrubberState.ctrlPinned) {
             hintHtml = `<span class="scrubber-shortcut-key">esc</span> <span>exit</span>`;
@@ -1313,7 +1313,7 @@ export default class ChatInput {
         } else {
             hintHtml = `<span class="scrubber-shortcut-key">ctrl</span> <span>preview</span> <span class="opacity-40 mx-0.5">|</span> <span class="scrubber-shortcut-key">⌥</span> <span>edit</span>`;
         }
-        
+
         if (text.innerHTML !== hintHtml) {
             text.innerHTML = hintHtml;
         }
@@ -1660,9 +1660,14 @@ export default class ChatInput {
      */
     async handleExportTickets() {
         try {
-            const success = await exportTickets();
-            if (success) {
-                this.app.showToast?.('Tickets exported successfully', 'success');
+            const result = await exportTickets();
+            if (result.cancelled) {
+                // User cancelled - no toast needed
+                return;
+            }
+            if (result.success) {
+                const total = result.activeCount + result.archivedCount;
+                this.app.showToast?.(`Exported ${total} ticket${total !== 1 ? 's' : ''} and cleared storage`, 'success');
             } else {
                 this.app.showToast?.('Failed to export tickets', 'error');
             }

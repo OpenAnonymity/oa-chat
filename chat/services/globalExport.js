@@ -183,13 +183,63 @@ export async function exportChats() {
 }
 
 /**
+ * Save a blob to disk using File System Access API if available, otherwise fallback.
+ * Returns true if the file was saved (or fallback was used), false if user cancelled.
+ * @param {Blob} blob - The data to save
+ * @param {string} suggestedName - Suggested filename
+ * @returns {Promise<{ saved: boolean, usedFallback: boolean }>}
+ */
+async function saveWithConfirmation(blob, suggestedName) {
+    // Try File System Access API (Chrome, Edge, Opera)
+    if (typeof window.showSaveFilePicker === 'function') {
+        try {
+            const handle = await window.showSaveFilePicker({
+                suggestedName,
+                types: [{
+                    description: 'JSON Files',
+                    accept: { 'application/json': ['.json'] }
+                }]
+            });
+            const writable = await handle.createWritable();
+            await writable.write(blob);
+            await writable.close();
+            return { saved: true, usedFallback: false };
+        } catch (error) {
+            // User cancelled the save dialog
+            if (error.name === 'AbortError') {
+                return { saved: false, usedFallback: false };
+            }
+            // Other error - fall through to fallback
+            console.warn('File System Access API failed, using fallback:', error);
+        }
+    }
+
+    // Fallback: use anchor click (cannot detect cancel)
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = suggestedName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    return { saved: true, usedFallback: true };
+}
+
+/**
  * Export tickets as a downloadable JSON file.
- * Uses the same format as the tickets section in the full export.
- * @returns {boolean} True if export succeeded
+ * Clears tickets only after user confirms save (cash semantics).
+ * @returns {{ success: boolean, activeCount: number, archivedCount: number, cancelled: boolean }} Export result
  */
 export async function exportTickets() {
     try {
         const tickets = await collectTickets();
+        const activeCount = tickets.active.length;
+        const archivedCount = tickets.archived.length;
+
+        if (activeCount === 0 && archivedCount === 0) {
+            return { success: false, activeCount: 0, archivedCount: 0, cancelled: false };
+        }
 
         const exportData = {
             formatVersion: FORMAT_VERSION,
@@ -203,21 +253,78 @@ export async function exportTickets() {
 
         const jsonString = JSON.stringify(exportData, null, 2);
         const blob = new Blob([jsonString], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
+        const filename = `oa-fastchat-tickets-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
 
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `oa-fastchat-tickets-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        const { saved, usedFallback } = await saveWithConfirmation(blob, filename);
 
-        console.log(`✅ Exported ${tickets.active.length} active, ${tickets.archived.length} archived tickets`);
-        return true;
+        if (!saved) {
+            // User cancelled
+            return { success: false, activeCount, archivedCount, cancelled: true };
+        }
+
+        // Clear both active and archived tickets after confirmed save (cash semantics)
+        await ticketStore.clearAllTickets();
+
+        console.log(`✅ Exported and cleared ${activeCount} active, ${archivedCount} archived tickets`);
+        return { success: true, activeCount, archivedCount, cancelled: false, usedFallback };
     } catch (error) {
         console.error('Error exporting tickets:', error);
-        return false;
+        return { success: false, activeCount: 0, archivedCount: 0, cancelled: false };
+    }
+}
+
+/**
+ * Split and export a subset of tickets from the bottom of the active list.
+ * Removes exported tickets only after user confirms save (cash semantics).
+ * @param {number} count - Number of tickets to export
+ * @returns {{ success: boolean, exportedCount: number, cancelled: boolean }} Export result
+ */
+export async function splitAndExportTickets(count) {
+    try {
+        await ticketStore.init();
+        const allActive = ticketStore.getTickets();
+
+        if (count <= 0 || count > allActive.length) {
+            throw new Error(`Invalid count: ${count}. Available: ${allActive.length}`);
+        }
+
+        // Take from bottom of list
+        const startIndex = allActive.length - count;
+        const ticketsToExport = allActive.slice(startIndex);
+        const ticketsToKeep = allActive.slice(0, startIndex);
+
+        const exportData = {
+            formatVersion: FORMAT_VERSION,
+            exportedAt: new Date().toISOString(),
+            app: APP_NAME,
+            exportType: 'tickets',
+            data: {
+                tickets: {
+                    active: ticketsToExport,
+                    archived: []
+                }
+            }
+        };
+
+        const jsonString = JSON.stringify(exportData, null, 2);
+        const blob = new Blob([jsonString], { type: 'application/json' });
+        const filename = `oa-fastchat-tickets-split-${count}-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+
+        const { saved, usedFallback } = await saveWithConfirmation(blob, filename);
+
+        if (!saved) {
+            // User cancelled
+            return { success: false, exportedCount: 0, cancelled: true };
+        }
+
+        // Remove exported tickets after confirmed save
+        await ticketStore.setActiveTickets(ticketsToKeep);
+
+        console.log(`✅ Split and exported ${ticketsToExport.length} tickets, ${ticketsToKeep.length} remaining`);
+        return { success: true, exportedCount: ticketsToExport.length, cancelled: false, usedFallback };
+    } catch (error) {
+        console.error('Error splitting tickets:', error);
+        return { success: false, exportedCount: 0, cancelled: false };
     }
 }
 

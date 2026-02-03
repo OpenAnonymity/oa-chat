@@ -409,6 +409,23 @@ class TicketStore {
         });
     }
 
+    async clearAllTickets() {
+        return this.withLock(async () => {
+            await this.ensureDbReady();
+            await this.persistTickets([], []);
+        });
+    }
+
+    async setActiveTickets(newActiveTickets) {
+        return this.withLock(async () => {
+            await this.ensureDbReady();
+            const { archived } = await this.readFromDatabase();
+            const { tickets: normalized } = this.normalizeTickets(newActiveTickets);
+            await this.persistTickets(normalized, archived);
+            return normalized.length;
+        });
+    }
+
     async archiveTickets(tickets, consumedAt = null) {
         const timestamp = consumedAt || new Date().toISOString();
         const normalized = tickets

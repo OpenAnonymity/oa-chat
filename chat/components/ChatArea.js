@@ -1708,8 +1708,8 @@ export default class ChatArea {
             exportLink.dataset.downloadTicketsBound = 'true';
             exportLink.addEventListener('click', async (e) => {
                 e.preventDefault();
-                const success = await exportTickets();
-                if (!success) {
+                const result = await exportTickets();
+                if (!result.success && !result.cancelled) {
                     console.error('Failed to export inference tickets');
                 }
             });
