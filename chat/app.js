@@ -1791,6 +1791,9 @@ class ChatApp {
             sessionStorage.setItem(SESSION_STORAGE_KEY, existingSession.id);
             await chatDB.saveSetting('currentSessionId', existingSession.id);
 
+            // Record activity for session embedding (imported session has content)
+            sessionEmbedder.recordActivity(existingSession.id);
+
             this.updateUrlWithSession(normalizedShareId);
             this.renderSessions();
             await this.renderMessages();
@@ -1917,6 +1920,9 @@ class ChatApp {
             this.state.currentSessionId = session.id;
             sessionStorage.setItem(SESSION_STORAGE_KEY, session.id);
             await chatDB.saveSetting('currentSessionId', session.id);
+
+            // Record activity for session embedding (imported session has content)
+            sessionEmbedder.recordActivity(session.id);
 
             this.updateUrlWithSession(normalizedShareId);
             this.renderSessions();
