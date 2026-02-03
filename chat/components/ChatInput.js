@@ -517,7 +517,8 @@ export default class ChatInput {
                 if (this.app.elements.inputCard) {
                     this.app.elements.inputCard.classList.remove('scrubbing');
                 }
-                this.app.showToast('Scrubber failed', 'error');
+                const errorMsg = result?.error || 'Scrubber failed';
+                this.app.showToast(errorMsg, 'error');
             }
         } catch (error) {
             console.error('Scrubber shortcut failed:', error);
@@ -527,7 +528,9 @@ export default class ChatInput {
             if (this.app.elements.inputCard) {
                 this.app.elements.inputCard.classList.remove('scrubbing');
             }
-            this.app.showToast('Scrubber failed', 'error');
+            // Show specific error message if available
+            const errorMsg = error?.message || 'Scrubber failed';
+            this.app.showToast(errorMsg, 'error');
         } finally {
             this.scrubberState.isRunning = false;
         }
