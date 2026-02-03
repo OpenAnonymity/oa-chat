@@ -242,6 +242,10 @@ export class MentionService {
      */
     async invokeMemoryMention(app) {
         console.log('Invoking @memory mention');
+
+        if (!app.memoryEnabled) {
+            return;
+        }
         
         // Get the current user message (everything after @memory)
         const input = this.mentionInput;

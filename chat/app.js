@@ -3585,12 +3585,18 @@ class ChatApp {
         const hasFiles = this.uploadedFiles.length > 0;
         if (!content && !hasFiles) return;
 
+        let displayContent = content;
+        let apiContent = content;
+        let hasMemoryContext = false;
+
         // Enrich message with memory context if it contains @memory mention
-        const { memoryEnrichmentService } = await import('./services/memoryEnrichmentService.js');
-        const enrichmentResult = await memoryEnrichmentService.enrichMessage(content);
-        const displayContent = enrichmentResult.displayMessage;  // What user sees
-        let apiContent = enrichmentResult.apiMessage;  // What gets sent to API
-        const hasMemoryContext = enrichmentResult.hasMemory;
+        if (this.memoryEnabled) {
+            const { memoryEnrichmentService } = await import('./services/memoryEnrichmentService.js');
+            const enrichmentResult = await memoryEnrichmentService.enrichMessage(content);
+            displayContent = enrichmentResult.displayMessage;  // What user sees
+            apiContent = enrichmentResult.apiMessage;  // What gets sent to API
+            hasMemoryContext = enrichmentResult.hasMemory;
+        }
 
         // Create session if none exists (first message creates the session)
         if (!this.getCurrentSession()) {

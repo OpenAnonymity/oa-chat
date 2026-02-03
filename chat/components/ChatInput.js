@@ -47,11 +47,6 @@ export default class ChatInput {
             // Check for mention context
             this.handleMentionInput();
 
-            // Re-render memory chips overlay if memories are attached
-            if (this.app.pendingMemoryContext?.memories) {
-                this.renderMemoryChips(this.app.pendingMemoryContext.memories);
-            }
-
             // Clear file undo stack - text input should take undo precedence
             this.app.fileUndoStack = [];
             this.updateScrubberHintVisibility();
@@ -62,11 +57,6 @@ export default class ChatInput {
             if (this.app.updateToastPosition) {
                 this.app.updateToastPosition();
             }
-        });
-
-        // Sync overlay scroll with textarea scroll
-        this.app.elements.messageInput.addEventListener('scroll', () => {
-            this.syncOverlayScroll();
         });
 
         // Send on Enter (not Shift+Enter and not composing with IME)
@@ -154,13 +144,19 @@ export default class ChatInput {
             await chatDB.saveSetting('searchEnabled', this.app.searchEnabled);
         });
 
-        // Memory toggle functionality - now opens memory selector
+        // Memory toggle functionality - enable/disable memory interactions
         const memoryToggle = document.getElementById('memory-toggle');
         if (memoryToggle) {
             memoryToggle.addEventListener('click', async () => {
-                // Open memory selector with current input as query
-                const query = this.app.elements.messageInput.value.trim();
-                this.app.memorySelector?.open(query);
+                this.app.memoryEnabled = !this.app.memoryEnabled;
+                this.updateMemoryToggleUI();
+                await chatDB.saveSetting('memoryEnabled', this.app.memoryEnabled);
+
+                if (!this.app.memoryEnabled) {
+                    this.app.memorySelector?.close();
+                    this.app.pendingMemoryContext = null;
+                    this.renderMemoryChips([]);
+                }
             });
         }
 
@@ -976,6 +972,9 @@ export default class ChatInput {
      * Handles mention input detection - opens memory selector when @ is typed.
      */
     handleMentionInput() {
+        if (!this.app.memoryEnabled) {
+            return;
+        }
         const context = mentionService.checkMentionContext();
 
         if (!context) {
@@ -986,155 +985,71 @@ export default class ChatInput {
         const input = this.app.elements.messageInput;
         const query = input.value.replace(/@/g, '').trim(); // Remove @ symbols for cleaner query
         
-        // Don't remove the @ - it will be replaced with @memory_N markers
-        // Just open the memory selector
+        // Remove the @ from input
+        const cursorPos = input.selectionStart;
+        const textBeforeCursor = input.value.substring(0, cursorPos);
+        const textAfterCursor = input.value.substring(cursorPos);
+        const lastAtIndex = textBeforeCursor.lastIndexOf('@');
+        
+        if (lastAtIndex >= 0) {
+            const beforeAt = input.value.substring(0, lastAtIndex);
+            const afterAt = input.value.substring(lastAtIndex + 1);
+            input.value = beforeAt + afterAt;
+            input.selectionStart = input.selectionEnd = lastAtIndex;
+        }
+        
+        // Open memory selector
         this.app.memorySelector?.open(query);
     }
 
     /**
-     * Render memory chips inline with the text in the textarea
+     * Render memory chips in the input area
      * @param {Array} memories - Array of memory objects to display as chips
      */
     renderMemoryChips(memories) {
-        const overlay = document.getElementById('memory-chips-overlay');
-        const input = this.app.elements.messageInput;
-        
-        if (!overlay || !input) return;
+        const container = document.getElementById('memory-chips-container');
+        if (!container) return;
 
         if (!memories || memories.length === 0) {
-            overlay.innerHTML = '';
-            overlay.style.display = 'none';
-            document.body.classList.remove('has-memory-chips');
+            container.classList.add('hidden');
+            container.innerHTML = '';
             return;
         }
 
-        document.body.classList.add('has-memory-chips');
-        overlay.style.display = 'block';
-        
-        // Get the current text value
-        const text = input.value;
-        
-        console.log('[ChatInput] Rendering memory chips, text:', text);
-        console.log('[ChatInput] Memories:', memories);
-        
-        // Parse text and replace @memory_N with chips
-        let html = '';
-        let lastIndex = 0;
-        const memoryPattern = /@memory_(\d+)/g;
-        let match;
-        let foundAny = false;
-        
-        while ((match = memoryPattern.exec(text)) !== null) {
-            foundAny = true;
-            const memoryIndex = parseInt(match[1]) - 1; // Convert to 0-based index
-            const memory = memories[memoryIndex];
+        container.classList.remove('hidden');
+        container.innerHTML = memories.map((memory, index) => {
+            const title = memory.title || `Memory ${index + 1}`;
+            const displayContent = memory.displayContent || memory.content || memory.summary || '';
+            const timestamp = memory.timestamp ? new Date(memory.timestamp).toLocaleString() : '';
             
-            console.log('[ChatInput] Found @memory_' + (memoryIndex + 1), 'Memory:', memory);
-            
-            // Add text before the match
-            const textBefore = text.substring(lastIndex, match.index);
-            if (textBefore) {
-                html += `<span class="memory-overlay-text">${this.escapeHtml(textBefore)}</span>`;
-            }
-            
-            if (memory) {
-                // Add the memory chip
-                const title = memory.title || `Memory ${memoryIndex + 1}`;
-                const displayContent = memory.displayContent || memory.content || memory.summary || '';
-                const timestamp = memory.timestamp ? new Date(memory.timestamp).toLocaleString() : '';
-                
-                html += `<span class="memory-chip-inline" data-memory-index="${memoryIndex}" data-title="${this.escapeHtml(title)}" data-content="${this.escapeHtml(displayContent)}" data-timestamp="${timestamp}">
-                    <span class="memory-chip-inline-text">@${this.escapeHtml(title)}</span>
-                    <button class="memory-chip-inline-remove" type="button" aria-label="Remove memory" data-memory-index="${memoryIndex}">
+            // Create tooltip content
+            const tooltipContent = `
+                <div class="memory-chip-tooltip-title">${this.escapeHtml(title)}</div>
+                ${displayContent ? `<div class="memory-chip-tooltip-content">${this.escapeHtml(displayContent)}</div>` : ''}
+                ${timestamp ? `<div class="memory-chip-tooltip-timestamp">${timestamp}</div>` : ''}
+            `;
+
+            return `
+                <div class="memory-chip" data-memory-index="${index}">
+                    <span class="memory-chip-text">${this.escapeHtml(title)}</span>
+                    <button class="memory-chip-remove" type="button" aria-label="Remove memory" data-memory-index="${index}">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
                         </svg>
                     </button>
-                </span>`;
-            } else {
-                // Memory not found, show the text as-is
-                html += `<span class="memory-overlay-text">${this.escapeHtml(match[0])}</span>`;
-            }
-            
-            lastIndex = match.index + match[0].length;
-        }
-        
-        // Add remaining text
-        const remainingText = text.substring(lastIndex);
-        if (remainingText) {
-            html += `<span class="memory-overlay-text">${this.escapeHtml(remainingText)}</span>`;
-        }
-        
-        console.log('[ChatInput] Found memories:', foundAny);
-        console.log('[ChatInput] Generated HTML length:', html.length);
-        
-        overlay.innerHTML = html;
-        
-        // Add click handlers and hover tooltips for chips
-        overlay.querySelectorAll('.memory-chip-inline').forEach(chip => {
-            const removeBtn = chip.querySelector('.memory-chip-inline-remove');
-            
-            // Remove button handler
-            if (removeBtn) {
-                removeBtn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    e.preventDefault();
-                    const index = parseInt(removeBtn.dataset.memoryIndex);
-                    this.removeMemoryChip(index);
-                });
-            }
-            
-            // Hover tooltip handler
-            let tooltip = null;
-            chip.addEventListener('mouseenter', (e) => {
-                const title = chip.dataset.title;
-                const content = chip.dataset.content;
-                const timestamp = chip.dataset.timestamp;
-                
-                tooltip = document.createElement('div');
-                tooltip.className = 'memory-chip-inline-tooltip';
-                tooltip.innerHTML = `
-                    <div class="memory-chip-inline-tooltip-title">${title}</div>
-                    ${content ? `<div class="memory-chip-inline-tooltip-content">${content}</div>` : ''}
-                    ${timestamp ? `<div class="memory-chip-inline-tooltip-timestamp">${timestamp}</div>` : ''}
-                `;
-                
-                document.body.appendChild(tooltip);
-                
-                // Position tooltip above the chip
-                const chipRect = chip.getBoundingClientRect();
-                const tooltipRect = tooltip.getBoundingClientRect();
-                tooltip.style.left = `${chipRect.left + (chipRect.width / 2) - (tooltipRect.width / 2)}px`;
-                tooltip.style.top = `${chipRect.top - tooltipRect.height - 8}px`;
-                tooltip.style.opacity = '1';
-                tooltip.style.visibility = 'visible';
-            });
-            
-            chip.addEventListener('mouseleave', () => {
-                if (tooltip) {
-                    tooltip.remove();
-                    tooltip = null;
-                }
+                    <div class="memory-chip-tooltip">${tooltipContent}</div>
+                </div>
+            `;
+        }).join('');
+
+        // Add click handlers for remove buttons
+        container.querySelectorAll('.memory-chip-remove').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const index = parseInt(btn.dataset.memoryIndex);
+                this.removeMemoryChip(index);
             });
         });
-        
-        console.log('[ChatInput] Added handlers to', overlay.querySelectorAll('.memory-chip-inline').length, 'chips');
-        
-        // Sync overlay scroll with textarea
-        this.syncOverlayScroll();
-    }
-    
-    /**
-     * Sync the overlay scroll position with the textarea
-     */
-    syncOverlayScroll() {
-        const overlay = document.getElementById('memory-chips-overlay');
-        const input = this.app.elements.messageInput;
-        
-        if (overlay && input) {
-            overlay.scrollTop = input.scrollTop;
-            overlay.scrollLeft = input.scrollLeft;
-        }
     }
 
     /**
@@ -1145,17 +1060,6 @@ export default class ChatInput {
         if (!this.app.pendingMemoryContext || !this.app.pendingMemoryContext.memories) {
             return;
         }
-
-        const input = this.app.elements.messageInput;
-        if (!input) return;
-        
-        // Remove @memory_N from the text
-        const text = input.value;
-        const pattern = new RegExp(`@memory_${index + 1}\\s*`, 'g');
-        input.value = text.replace(pattern, '');
-        
-        // Trigger input event to update height
-        input.dispatchEvent(new Event('input', { bubbles: true }));
 
         // Remove from pendingMemoryContext
         this.app.pendingMemoryContext.memories.splice(index, 1);

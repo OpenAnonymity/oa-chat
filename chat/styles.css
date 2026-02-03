@@ -2789,6 +2789,52 @@ html[data-right-panel-hidden="true"] #right-panel {
     font-weight: 600;
 }
 
+/* Memory selector compact preview + floating insert button */
+.memory-preview-content {
+    font-size: 0.7rem;
+    color: hsl(var(--color-muted-foreground));
+    line-height: 1.32;
+    margin-top: 0.1rem;
+    max-height: 4.2em;
+    overflow: hidden;
+}
+
+.memory-preview-content.prose p {
+    margin: 0.2em 0;
+}
+
+.memory-preview-content.prose pre {
+    font-size: 0.7rem;
+    padding: 0.4em;
+    margin: 0.35em 0;
+    overflow-x: auto;
+}
+
+.memory-preview-content.prose code {
+    font-size: 0.7rem;
+}
+
+.memory-insert-float {
+    position: absolute;
+    right: 12px;
+    bottom: 12px;
+    z-index: 3;
+    pointer-events: none;
+}
+
+.memory-insert-btn {
+    pointer-events: auto;
+    background: hsl(var(--color-popover) / var(--glass-opacity));
+    border: 1px solid hsl(var(--color-border));
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    box-shadow: 0 10px 22px -10px rgba(0, 0, 0, 0.35);
+}
+
+.memory-insert-btn:hover:not(:disabled) {
+    background: hsl(var(--color-popover) / var(--glass-opacity-hover));
+}
+
 /* Share preview content (compact markdown in modal) */
 .share-preview-content {
     font-size: inherit;
@@ -4161,45 +4207,12 @@ html {
     border-left-color: hsl(59 130 246 / 0.8);
 }
 
-/* Memory chips in input area - inline overlay */
-#memory-chips-overlay {
-    display: none;
-    font-family: inherit;
-    z-index: 10;
-}
-
-body.has-memory-chips #memory-chips-overlay {
-    display: block;
-}
-
-/* Only make textarea transparent when memories are attached */
-body.has-memory-chips #message-input {
-    color: transparent !important;
-    caret-color: hsl(var(--color-foreground)) !important;
-    -webkit-text-fill-color: transparent !important;
-}
-
-/* Fix caret positioning - ensure it doesn't appear inside chips */
-body.has-memory-chips #message-input:focus {
-    caret-color: hsl(var(--color-foreground));
-}
-
-body.has-memory-chips #message-input::selection {
-    background-color: hsl(var(--color-accent-primary) / 0.3);
-    color: transparent;
-    -webkit-text-fill-color: transparent;
-}
-
-body.has-memory-chips #message-input::placeholder {
-    color: transparent !important;
-    -webkit-text-fill-color: transparent !important;
-}
-
-.memory-chip-inline {
+/* Memory chips in input area */
+.memory-chip {
     display: inline-flex;
     align-items: center;
-    gap: 0.25rem;
-    padding: 0.125rem 0.5rem;
+    gap: 0.375rem;
+    padding: 0.25rem 0.5rem;
     background-color: hsl(var(--blue-500) / 0.15);
     border: 1px solid hsl(var(--blue-500) / 0.3);
     border-radius: 0.375rem;
@@ -4209,42 +4222,39 @@ body.has-memory-chips #message-input::placeholder {
     cursor: default;
     transition: all 150ms ease;
     position: relative;
-    margin: 0 0.125rem;
-    white-space: nowrap;
-    pointer-events: auto;
-    vertical-align: middle;
-    line-height: 1.5rem;
-    height: 1.5rem;
+    max-width: 200px;
 }
 
-.dark .memory-chip-inline {
+.dark .memory-chip {
     background-color: hsl(var(--blue-600) / 0.2);
     border-color: hsl(var(--blue-500) / 0.4);
     color: hsl(var(--blue-500));
 }
 
-.memory-chip-inline:hover {
+.memory-chip:hover {
     background-color: hsl(var(--blue-500) / 0.25);
     border-color: hsl(var(--blue-500) / 0.5);
 }
 
-.dark .memory-chip-inline:hover {
+.dark .memory-chip:hover {
     background-color: hsl(var(--blue-600) / 0.3);
     border-color: hsl(var(--blue-500) / 0.6);
 }
 
-.memory-chip-inline-text {
+.memory-chip-text {
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 120px;
+    white-space: nowrap;
+    flex: 1;
+    min-width: 0;
 }
 
-.memory-chip-inline-remove {
+.memory-chip-remove {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 12px;
-    height: 12px;
+    width: 14px;
+    height: 14px;
     flex-shrink: 0;
     border-radius: 50%;
     background: transparent;
@@ -4253,32 +4263,34 @@ body.has-memory-chips #message-input::placeholder {
     padding: 0;
     color: hsl(var(--blue-600));
     transition: all 150ms ease;
-    pointer-events: auto;
 }
 
-.dark .memory-chip-inline-remove {
+.dark .memory-chip-remove {
     color: hsl(var(--blue-500));
 }
 
-.memory-chip-inline-remove:hover {
+.memory-chip-remove:hover {
     background-color: hsl(var(--blue-500) / 0.3);
     color: hsl(var(--blue-700));
 }
 
-.dark .memory-chip-inline-remove:hover {
+.dark .memory-chip-remove:hover {
     background-color: hsl(var(--blue-500) / 0.4);
     color: hsl(var(--blue-600));
 }
 
-.memory-chip-inline-remove svg {
-    width: 8px;
-    height: 8px;
+.memory-chip-remove svg {
+    width: 10px;
+    height: 10px;
     stroke-width: 2.5;
 }
 
-/* Memory chip inline tooltip */
-.memory-chip-inline-tooltip {
-    position: fixed;
+/* Memory chip tooltip */
+.memory-chip-tooltip {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%);
     background-color: hsl(var(--color-popover));
     border: 1px solid hsl(var(--color-border));
     border-radius: 0.5rem;
@@ -4286,24 +4298,37 @@ body.has-memory-chips #message-input::placeholder {
     font-size: 0.75rem;
     line-height: 1.4;
     color: hsl(var(--color-foreground));
-    min-width: 200px;
     max-width: 300px;
     white-space: normal;
     word-wrap: break-word;
-    box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
-    z-index: 9999;
+    box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+    z-index: 1000;
     pointer-events: none;
-    opacity: 1;
-    visibility: visible;
+    opacity: 0;
+    transition: opacity 150ms ease;
 }
 
-.memory-chip-inline-tooltip-title {
+.memory-chip:hover .memory-chip-tooltip {
+    opacity: 1;
+}
+
+.memory-chip-tooltip::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 6px solid transparent;
+    border-top-color: hsl(var(--color-border));
+}
+
+.memory-chip-tooltip-title {
     font-weight: 600;
     margin-bottom: 0.25rem;
     color: hsl(var(--color-foreground));
 }
 
-.memory-chip-inline-tooltip-content {
+.memory-chip-tooltip-content {
     color: hsl(var(--color-muted-foreground));
     display: -webkit-box;
     -webkit-line-clamp: 4;
@@ -4311,14 +4336,9 @@ body.has-memory-chips #message-input::placeholder {
     overflow: hidden;
 }
 
-.memory-chip-inline-tooltip-timestamp {
+.memory-chip-tooltip-timestamp {
     font-size: 0.625rem;
     color: hsl(var(--color-muted-foreground) / 0.7);
     margin-top: 0.375rem;
 }
 
-/* Regular text in overlay (not memory chips) */
-.memory-overlay-text {
-    color: hsl(var(--color-foreground));
-    white-space: pre-wrap;
-}

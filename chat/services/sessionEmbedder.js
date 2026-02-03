@@ -315,9 +315,9 @@ class SessionEmbedder {
 
             // Build text representation of the conversation
             let conversationText = '';
-            if (session.title && session.title !== 'New Chat') {
-                conversationText = `Topic: ${session.title}\n\n`;
-            }
+            // if (session.title && session.title !== 'New Chat') {
+            //     conversationText = `Topic: ${session.title}\n\n`;
+            // }
 
             conversationText += messages
                 .filter(m => m.content && m.content.trim())

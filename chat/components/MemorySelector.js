@@ -98,7 +98,7 @@ export default class MemorySelector {
 
                 <!-- Memory List -->
                 <div id="memory-list-scroll" class="overflow-y-auto flex-1" style="height: 350px;">
-                    <div id="memory-list" class="space-y-2 p-3">
+                    <div id="memory-list" class="space-y-1.5 p-2">
                         <div class="flex items-center justify-center h-32 text-muted-foreground">
                             <div class="flex flex-col items-center gap-2">
                                 <div class="link-preview-spinner"></div>
@@ -107,13 +107,8 @@ export default class MemorySelector {
                         </div>
                     </div>
                 </div>
-
-                <!-- Footer with Actions -->
-                <div class="border-t border-border px-4 py-3 bg-muted/20 flex justify-end gap-2">
-                    <button id="memory-cancel-btn" class="btn-ghost-hover inline-flex items-center justify-center rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-foreground shadow-sm transition-all duration-200 hover:shadow-sm">
-                        Cancel
-                    </button>
-                    <button id="memory-insert-btn" class="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-sm transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-primary disabled:opacity-50 disabled:pointer-events-none">
+                <div class="memory-insert-float">
+                    <button id="memory-insert-btn" class="memory-insert-btn inline-flex items-center justify-center rounded-full px-4 py-2 text-sm font-semibold text-foreground shadow-sm transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-primary disabled:opacity-50 disabled:pointer-events-none">
                         Insert Selected
                     </button>
                 </div>
@@ -122,12 +117,10 @@ export default class MemorySelector {
 
         // Setup event listeners
         const closeBtn = this.container.querySelector('#close-memory-modal-btn');
-        const cancelBtn = this.container.querySelector('#memory-cancel-btn');
         const insertBtn = this.container.querySelector('#memory-insert-btn');
         const searchInput = this.container.querySelector('#memory-search');
 
         closeBtn.addEventListener('click', () => this.close());
-        cancelBtn.addEventListener('click', () => this.close());
         insertBtn.addEventListener('click', () => this.insertSelectedMemories());
 
         searchInput.addEventListener('input', (e) => {
@@ -193,10 +186,8 @@ export default class MemorySelector {
                         </div>
                     </div>
                 </div>
-
-                <!-- Footer with Actions -->
-                <div class="border-t border-border px-3 py-2 bg-muted/20 flex justify-end gap-2">
-                    <button id="memory-insert-btn" class="inline-flex items-center justify-center rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-primary disabled:opacity-50 disabled:pointer-events-none">
+                <div class="memory-insert-float">
+                    <button id="memory-insert-btn" class="memory-insert-btn inline-flex items-center justify-center rounded-full px-3 py-1.5 text-xs font-semibold text-foreground shadow-sm transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-primary disabled:opacity-50 disabled:pointer-events-none">
                         Insert Selected
                     </button>
                 </div>
@@ -339,18 +330,24 @@ export default class MemorySelector {
                 ? '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-4 h-4 text-primary flex-shrink-0"><path fill-rule="evenodd" d="M19.916 4.626a.75.75 0 0 1 .208 1.04l-9 13.5a.75.75 0 0 1-1.154.114l-6-6a.75.75 0 0 1 1.06-1.06l5.353 5.353 8.493-12.74a.75.75 0 0 1 1.04-.207Z" clip-rule="evenodd" /></svg>'
                 : '<span class="w-4 h-4 flex-shrink-0"></span>';
 
+            const bookIcon = `
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
+                </svg>
+            `;
+
+            const previewSource = memory.displayContent || memory.content || memory.summary || '';
+            const previewHtml = this.getMemoryPreviewHtml(previewSource);
+
             return `
-                <div class="model-option px-2 py-1.5 rounded-sm cursor-pointer transition-colors hover:bg-accent ${isSelected ? 'bg-accent' : ''}" data-index="${originalIdx}" role="option" aria-selected="${isSelected}">
+                <div class="model-option px-2 py-1 rounded-sm cursor-pointer transition-colors hover:bg-accent ${isSelected ? 'bg-accent' : ''}" data-index="${originalIdx}" role="option" aria-selected="${isSelected}">
                     <div class="flex items-start gap-2">
-                        <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 bg-muted text-muted-foreground">
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-3.5 h-3.5">
-                                <path d="M3.75 4.5a.75.75 0 0 1 .75-.75h11.5a2.5 2.5 0 0 1 2.5 2.5v10.5a.75.75 0 0 1-1.5 0V6.25a1 1 0 0 0-1-1H4.5a.75.75 0 0 1-.75-.75Z" />
-                                <path d="M5.25 6A2.25 2.25 0 0 1 7.5 3.75h8.25A2.25 2.25 0 0 1 18 6v12A2.25 2.25 0 0 1 15.75 20.25H7.5A2.25 2.25 0 0 1 5.25 18V6Z" />
-                            </svg>
+                        <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 bg-muted text-muted-foreground">
+                            ${bookIcon}
                         </div>
                         <div class="flex-1 min-w-0">
-                            <div class="font-medium text-sm text-foreground truncate">${memory.title || 'Untitled'}</div>
-                            <div class="text-xs text-muted-foreground line-clamp-3">${memory.displayContent || memory.content || memory.summary || ''}</div>
+                            <div class="font-medium text-[12px] text-foreground truncate">${memory.title || 'Untitled'}</div>
+                            <div class="memory-preview-content message-content prose prose-sm">${previewHtml}</div>
                             ${memory.timestamp ? `<div class="text-[10px] text-muted-foreground/70 mt-1">${new Date(memory.timestamp).toLocaleString()}</div>` : ''}
                         </div>
                         ${checkmarkSlot}
@@ -372,6 +369,8 @@ export default class MemorySelector {
                 this.updateInsertButtonState();
             });
         });
+
+        this.updateInsertButtonState();
     }
 
     /**
@@ -382,6 +381,16 @@ export default class MemorySelector {
         if (insertBtn) {
             insertBtn.disabled = this.selectedIndices.size === 0;
         }
+    }
+
+    getMemoryPreviewHtml(content) {
+        if (!content) return '';
+        if (this.app && typeof this.app.processContentWithLatex === 'function') {
+            return this.app.processContentWithLatex(content);
+        }
+        const safe = document.createElement('div');
+        safe.textContent = content;
+        return safe.innerHTML;
     }
 
     /**
@@ -396,7 +405,9 @@ export default class MemorySelector {
             .map(m => m.session_id || m.sessionId)
             .filter(id => id);
 
-        // Store memory metadata for the next message
+        // Store memory metadata for the next message (invisible attachment)
+        // The memory context won't be shown in the input, but will be attached to the message
+        // User can see it by hovering over the sent message
         this.app.pendingMemoryContext = {
             sessionIds: sessionIds,
             memories: selected,
@@ -405,37 +416,7 @@ export default class MemorySelector {
 
         console.log('[MemorySelector] Set pendingMemoryContext:', this.app.pendingMemoryContext);
 
-        // Insert @memory_N markers into the textarea
-        const input = this.app.elements?.messageInput;
-        if (input) {
-            // Remove any existing @ that triggered the memory selector
-            let currentText = input.value;
-            const lastAtIndex = currentText.lastIndexOf('@');
-            if (lastAtIndex >= 0 && lastAtIndex === currentText.length - 1) {
-                // Remove trailing @
-                currentText = currentText.substring(0, lastAtIndex);
-            }
-            
-            const cursorPos = currentText.length;
-            
-            // Generate @memory_1 @memory_2 etc.
-            const memoryMarkers = selected.map((_, idx) => `@memory_${idx + 1}`).join(' ');
-            const needsSpace = currentText && !currentText.endsWith(' ');
-            const newText = currentText + (needsSpace ? ' ' : '') + memoryMarkers + ' ';
-            
-            input.value = newText;
-            
-            // Update cursor position to end
-            const newCursorPos = newText.length;
-            input.selectionStart = newCursorPos;
-            input.selectionEnd = newCursorPos;
-            
-            // Trigger input event to update height and render chips
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-            input.focus();
-        }
-
-        // Render visual memory chips as overlay
+        // Render visual memory chips in the input area
         this.app.chatInput?.renderMemoryChips(selected);
 
         this.close();
