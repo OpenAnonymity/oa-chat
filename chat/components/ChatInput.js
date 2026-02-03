@@ -1135,6 +1135,10 @@ export default class ChatInput {
         this.hideOriginalPromptPreview();
         // Trigger textarea resize to collapse back to content height
         this.app.elements.messageInput?.dispatchEvent(new Event('input', { bubbles: true }));
+        // Focus main chat input after exiting edit mode
+        requestAnimationFrame(() => {
+            this.app.elements.messageInput?.focus();
+        });
     }
 
     /**
