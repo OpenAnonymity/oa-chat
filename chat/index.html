@@ -409,7 +409,7 @@
                                 <!-- Textarea Container -->
                                 <div class="relative w-full flex flex-col">
                                     <div class="rounded-md w-full text-muted-foreground focus-within:text-foreground transition-colors bg-transparent">
-                                        <div class="scrubber-input-row flex h-max py-1.5 max-h-96 bg-transparent px-2 overflow-y-auto relative">
+                                        <div class="scrubber-input-row flex h-max py-1.5 max-h-96 bg-transparent pl-2 pr-px overflow-y-auto relative">
                                             <textarea
                                                 id="message-input"
                                                 rows="1"
@@ -418,11 +418,13 @@
                                                 style="height: 24px; min-height: 24px; max-height: 200px; padding-right: 64px;"
                                                 autofocus
                                             ></textarea>
-                                            <div id="scrubber-shortcut-hint" class="scrubber-shortcut-hint scrubber-shortcut-inline" aria-hidden="true">
-                                                <span><span class="scrubber-shortcut-key">tab</span> <span class="scrubber-shortcut-key">tab</span> to scrub</span>
+                                            <div id="scrubber-shortcut-hint" class="absolute right-1.5 flex items-center gap-1 pointer-events-none text-muted-foreground/60 text-[11px] transition-opacity duration-150" aria-hidden="true">
+                                                <span class="scrubber-shortcut-key">tab</span>
+                                                <span class="scrubber-shortcut-key">tab</span>
+                                                <span>to scrub</span>
                                             </div>
-                                            <div id="scrubber-preview-hint" class="scrubber-shortcut-hint scrubber-preview-hint" aria-hidden="true">
-                                                <span id="scrubber-preview-hint-text"><span class="scrubber-shortcut-key">ctrl</span> preview</span>
+                                            <div id="scrubber-preview-hint" class="absolute right-1.5 flex items-center gap-1 pointer-events-none text-muted-foreground/60 text-[11px] opacity-0 transition-opacity duration-150" aria-hidden="true">
+                                                <span id="scrubber-preview-hint-text" class="flex items-center gap-1"><span class="scrubber-shortcut-key">ctrl</span> <span>preview</span> <span class="opacity-40 mx-0.5">|</span> <span class="scrubber-shortcut-key">⌘</span> <span>edit</span></span>
                                             </div>
                                             <script>
                                                 (function() {

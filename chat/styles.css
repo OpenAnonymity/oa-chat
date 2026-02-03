@@ -3456,14 +3456,14 @@ html {
 /* Scrubber preview diff (hold Control) */
 .scrubber-preview-diff {
     position: absolute;
-    /* Account for parent .scrubber-input-row padding: py-1.5 (6px) and px-2 (8px) */
+    /* Account for parent .scrubber-input-row padding: py-1.5 (6px), pl-2 (8px), pr-px (1px) */
     top: 0.375rem;
     left: 0.5rem;
-    right: 0.5rem;
+    right: 1px;
     bottom: 0.375rem;
     opacity: 0;
     pointer-events: none;
-    transition: opacity 150ms ease-out;
+    transition: none;
     /* Match textarea padding (textarea has padding-right: 64px for hints) */
     padding: 0;
     padding-right: 64px;
@@ -3525,7 +3525,7 @@ html {
     overflow: hidden;
 }
 
-#input-card.scrubber-preview-active .scrubber-shortcut-hint {
+#input-card.scrubber-preview-active #scrubber-shortcut-hint {
     opacity: 0;
 }
 
@@ -3547,34 +3547,18 @@ html {
     max-height: 55vh;
 }
 
-#input-card.scrubber-preview-active.scrubber-preview-expanded .scrubber-input-row {
-    min-height: 30vh;
+/* Ensure expanded preview is above other elements like message navigation */
+/* The parent needs z-index because input-card has isolation:isolate which creates a stacking context */
+div:has(> #input-card.scrubber-preview-expanded) {
+    z-index: 50;
 }
 
-/* Ensure expanded preview is above other elements like message navigation */
 #input-card.scrubber-preview-expanded {
     z-index: 50;
 }
 
-/* Use ID selector for higher specificity over .scrubber-shortcut-hint */
+/* Preview hint - positioning via Tailwind, CSS handles opacity states */
 #scrubber-preview-hint {
-    position: absolute;
-    top: 6px;
-    right: 10px;
-    padding: 3px 8px;
-    border-radius: 6px;
-    background: transparent;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    opacity: 0;
-    transition: opacity 150ms ease-out, transform 150ms ease-out;
-    transform: translateY(-4px);
-    color: hsl(var(--color-muted-foreground) / 0.6);
-    font-size: 11px;
-    font-weight: 450;
-    letter-spacing: 0.01em;
-    pointer-events: none;
     z-index: 20;
 }
 
@@ -3613,7 +3597,6 @@ html {
 
 #input-card.has-scrubber-pending #scrubber-preview-hint {
     opacity: 1;
-    transform: translateY(0);
 }
 
 .scrubber-original-tooltip {
@@ -3645,32 +3628,16 @@ html {
     user-select: text;
 }
 
-/* Scrubber shortcut hint - minimal modern style */
-.scrubber-shortcut-hint {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 3px 8px 3px 6px;
-    border-radius: 6px;
-    background: transparent;
-    color: hsl(var(--color-muted-foreground) / 0.6);
-    font-size: 11px;
-    font-weight: 450;
-    letter-spacing: 0.01em;
-    pointer-events: none;
-    opacity: 1;
-    transition: opacity 180ms ease-out;
-}
-
-.scrubber-shortcut-hint.faded {
+/* Scrubber shortcut hint - state classes for opacity */
+#scrubber-shortcut-hint.faded {
     opacity: 0.35;
 }
 
-.scrubber-shortcut-hint.hint-hidden {
+#scrubber-shortcut-hint.hint-hidden {
     opacity: 0;
-    pointer-events: none;
 }
 
+/* Scrubber shortcut key badge styling */
 .scrubber-shortcut-key {
     font-family: inherit;
     font-size: 10px;
@@ -3681,13 +3648,6 @@ html {
     color: hsl(var(--color-muted-foreground));
 }
 
-.scrubber-shortcut-inline {
-    position: absolute;
-    right: 6px;
-    top: 50%;
-    transform: translateY(-50%);
-}
-
 /* Input padding adjustment for hint visibility */
 #message-input.hint-visible {
     padding-right: 150px !important;
@@ -3695,6 +3655,41 @@ html {
 
 #message-input:not(.hint-visible) {
     padding-right: 64px !important;
+}
+
+/* Anchor scrubber hints to initial input center */
+#scrubber-shortcut-hint,
+#scrubber-preview-hint {
+    top: var(--scrubber-hint-center, 50%);
+    transform: translateY(-50%);
+}
+
+/* Message input & diff preview scrollbar - ultra thin and flush to right edge */
+#message-input,
+.scrubber-preview-diff {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--color-muted-foreground) / 0.2) transparent;
+}
+
+#message-input::-webkit-scrollbar,
+.scrubber-preview-diff::-webkit-scrollbar {
+    width: 2px;
+}
+
+#message-input::-webkit-scrollbar-track,
+.scrubber-preview-diff::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+#message-input::-webkit-scrollbar-thumb,
+.scrubber-preview-diff::-webkit-scrollbar-thumb {
+    background: hsl(var(--color-muted-foreground) / 0.2);
+    border-radius: 1px;
+}
+
+#message-input::-webkit-scrollbar-thumb:hover,
+.scrubber-preview-diff::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--color-muted-foreground) / 0.35);
 }
 
 /* Scrubbing animation - modern light trail */

@@ -29,10 +29,8 @@ export default class ChatInput {
             lastTabAt: 0,
             timer: null,
             isRunning: false,
-            lastCtrlAt: 0,
             ctrlHeld: false,
-            ctrlPinned: false,
-            ctrlDoubleHintShown: false
+            ctrlPinned: false
         };
         this.scrubberDiffState = {
             previewCleanup: null,
@@ -131,7 +129,7 @@ export default class ChatInput {
             this.handleScrubberTabKeydown();
         });
 
-        // Control key for preview: hold to show, release to hide; double tap pins
+        // Control key for preview: hold to show, release to hide
         document.addEventListener('keydown', (e) => {
             if (e.key !== 'Control' || e.repeat) return;
             if (!this.app.scrubberPending) return;
@@ -142,6 +140,13 @@ export default class ChatInput {
             if (e.key !== 'Control') return;
             if (!this.app.scrubberPending) return;
             this.handleScrubberControlKeyup();
+        });
+
+        // Command key (⌘) for edit: pin and expand preview for editing
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Meta' || e.repeat) return;
+            if (!this.app.scrubberPending) return;
+            this.handleScrubberMetaKeydown();
         });
 
         // Note: Paste events (files + text) are handled globally in app.js
@@ -334,6 +339,10 @@ export default class ChatInput {
         // Initialize scrubber hint visibility
         this.updateScrubberHintVisibility();
         this.cacheScrubberPreviewHint();
+        this.cacheScrubberHintAnchor();
+        if (window.fontsReadyPromise && typeof window.fontsReadyPromise.then === 'function') {
+            window.fontsReadyPromise.then(() => this.cacheScrubberHintAnchor(true));
+        }
 
         // Mark input as ready for the inline script to defer handling
         window.chatInputReady = true;
@@ -362,36 +371,35 @@ export default class ChatInput {
     }
 
     handleScrubberControlKeydown() {
-        const now = Date.now();
-        const withinWindow = now - this.scrubberState.lastCtrlAt < 400;
-        this.scrubberState.lastCtrlAt = now;
         this.scrubberState.ctrlHeld = true;
 
-        if (withinWindow) {
-            // Double Control (quick double tap) - pin and auto-expand the preview
-            this.scrubberState.ctrlPinned = true;
-            // Hide the original prompt tooltip (don't show on pin)
-            this.hideOriginalPromptPreview();
-            if (!this.scrubberDiffState.previewVisible) {
-                this.showScrubberPreview({ skipTooltip: true });
-            }
-            this.enableScrubberPreviewSticky(true);
-            // Auto-expand the input box
-            if (this.app.elements.inputCard) {
-                this.app.elements.inputCard.classList.add('scrubber-preview-expanded');
-                this.app.elements.messageInput.dispatchEvent(new Event('input', { bubbles: true }));
-            }
-            // Focus the diff preview for editing
-            if (this.app.elements.scrubberPreviewDiff) {
-                this.app.elements.scrubberPreviewDiff.focus({ preventScroll: true });
-            }
-            // Add global Escape handler for expanded mode
-            this.addGlobalEscapeHandler();
-            this.app.showToast('Preview pinned', 'success');
-        } else if (!this.scrubberDiffState.previewVisible) {
-            // First Control press - show preview with tooltip
+        // Control press - show preview with tooltip
+        if (!this.scrubberDiffState.previewVisible) {
             this.showScrubberPreview({ skipTooltip: false });
         }
+        this.updateScrubberPreviewHint();
+    }
+
+    handleScrubberMetaKeydown() {
+        // Command key (⌘) - pin and auto-expand the preview for editing
+        this.scrubberState.ctrlPinned = true;
+        // Hide the original prompt tooltip (don't show on pin)
+        this.hideOriginalPromptPreview();
+        if (!this.scrubberDiffState.previewVisible) {
+            this.showScrubberPreview({ skipTooltip: true });
+        }
+        this.enableScrubberPreviewSticky(true);
+        // Auto-expand the input box
+        if (this.app.elements.inputCard) {
+            this.app.elements.inputCard.classList.add('scrubber-preview-expanded');
+            this.app.elements.messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        // Focus the diff preview for editing
+        if (this.app.elements.scrubberPreviewDiff) {
+            this.app.elements.scrubberPreviewDiff.focus({ preventScroll: true });
+        }
+        // Add global Escape handler for expanded mode
+        this.addGlobalEscapeHandler();
         this.updateScrubberPreviewHint();
     }
 
@@ -1212,6 +1220,20 @@ export default class ChatInput {
         }
     }
 
+    cacheScrubberHintAnchor(force = false) {
+        const input = this.app.elements.messageInput;
+        if (!input) return;
+        const row = input.closest('.scrubber-input-row');
+        if (!row) return;
+        if (!force && row.style.getPropertyValue('--scrubber-hint-center')) return;
+        const rowRect = row.getBoundingClientRect();
+        const inputRect = input.getBoundingClientRect();
+        if (!rowRect.height || !inputRect.height) return;
+        const center = (inputRect.top + inputRect.height / 2) - rowRect.top;
+        if (!Number.isFinite(center)) return;
+        row.style.setProperty('--scrubber-hint-center', `${center}px`);
+    }
+
     resetScrubberPreviewHint() {
         const text = document.getElementById('scrubber-preview-hint-text');
         if (!text || !this.scrubberDiffState.previewHintDefault) return;
@@ -1224,18 +1246,11 @@ export default class ChatInput {
         
         let hintHtml = '';
         if (this.scrubberState.ctrlPinned) {
-            hintHtml = `
-                <span class="scrubber-shortcut-key">esc</span>
-                exit
-            `;
+            hintHtml = `<span class="scrubber-shortcut-key">esc</span> <span>exit</span>`;
         } else if (this.scrubberState.ctrlHeld) {
-            hintHtml = `
-                <span class="scrubber-shortcut-key">ctrl</span>
-                <span class="scrubber-shortcut-key">ctrl</span>
-                expand
-            `;
+            hintHtml = `<span class="scrubber-shortcut-key">⌘</span> <span>edit</span>`;
         } else {
-            hintHtml = `<span class="scrubber-shortcut-key">ctrl</span> preview`;
+            hintHtml = `<span class="scrubber-shortcut-key">ctrl</span> <span>preview</span> <span class="opacity-40 mx-0.5">|</span> <span class="scrubber-shortcut-key">⌘</span> <span>edit</span>`;
         }
         
         if (text.innerHTML !== hintHtml) {
