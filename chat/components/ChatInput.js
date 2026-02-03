@@ -1307,7 +1307,7 @@ export default class ChatInput {
         
         let hintHtml = '';
         if (this.scrubberState.ctrlPinned) {
-            hintHtml = `<span class="scrubber-shortcut-key">esc</span> <span>exit</span>`;
+            hintHtml = `<span class="scrubber-shortcut-key">esc</span> <span>exit edit</span>`;
         } else if (this.scrubberState.ctrlHeld) {
             hintHtml = `<span class="scrubber-shortcut-key">⌥</span> <span>edit</span>`;
         } else {
