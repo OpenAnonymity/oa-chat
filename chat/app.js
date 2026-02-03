@@ -1158,9 +1158,14 @@ class ChatApp {
         // Setup global function to download inference tickets
         window.downloadInferenceTickets = async () => {
             try {
-                const success = await exportTickets();
-                if (success) {
-                    this.showToast('Tickets exported successfully', 'success');
+                const result = await exportTickets();
+                if (result.cancelled) {
+                    // User cancelled - no toast needed
+                    return;
+                }
+                if (result.success) {
+                    const total = result.activeCount + result.archivedCount;
+                    this.showToast(`Exported ${total} ticket${total !== 1 ? 's' : ''} and cleared storage`, 'success');
                 } else {
                     this.showToast('Failed to export tickets', 'error');
                 }

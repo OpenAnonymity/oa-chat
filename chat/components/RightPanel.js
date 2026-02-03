@@ -11,7 +11,7 @@ import tlsSecurityModal from './TLSSecurityModal.js';
 import proxyInfoModal from './ProxyInfoModal.js';
 import { getActivityDescription, getActivityIcon, getStatusDotClass, formatTimestamp } from '../services/networkLogRenderer.js';
 import { getTicketCost } from '../services/modelTiers.js';
-import { exportTickets } from '../services/globalExport.js';
+import { exportTickets, splitAndExportTickets } from '../services/globalExport.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import { chatDB } from '../db.js';
 import { TICKET_RETRY_RATIO } from '../config.js';
@@ -48,6 +48,10 @@ class RightPanel {
         this.isImporting = false;
         this.importStatus = null;
         this.timerInterval = null;
+
+        // Split controls state
+        this.showSplitControls = false;
+        this.splitCount = 1;
 
         // Ticket animation state
         this.currentTicket = null;
@@ -596,18 +600,40 @@ class RightPanel {
                 inputEl.value = '';
             }
             this.renderTopSectionOnly();
+
+            // Auto-clear success/info messages after a delay
+            if (this.importStatus?.type === 'success' || this.importStatus?.type === 'info') {
+                setTimeout(() => {
+                    if (this.importStatus?.type === 'success' || this.importStatus?.type === 'info') {
+                        this.importStatus = null;
+                        this.renderTopSectionOnly();
+                    }
+                }, 2500);
+            }
         }
     }
 
     async handleExportTickets() {
         try {
-            const success = await exportTickets();
-            this.importStatus = {
-                type: success ? 'success' : 'error',
-                message: success
-                    ? 'Export started. Check your downloads.'
-                    : 'Failed to export tickets.'
-            };
+            const result = await exportTickets();
+            if (result.cancelled) {
+                // User cancelled - no message needed
+                return;
+            }
+            if (result.success) {
+                const total = result.activeCount + result.archivedCount;
+                this.ticketCount = ticketClient.getTicketCount();
+                this.loadNextTicket();
+                this.importStatus = {
+                    type: 'success',
+                    message: `Exported ${total} ticket${total !== 1 ? 's' : ''} and cleared local storage.`
+                };
+            } else {
+                this.importStatus = {
+                    type: 'error',
+                    message: 'Failed to export tickets.'
+                };
+            }
         } catch (error) {
             this.importStatus = {
                 type: 'error',
@@ -625,6 +651,97 @@ class RightPanel {
                 }
             }, 2500);
         }
+    }
+
+    handleSplitToggle() {
+        this.showSplitControls = !this.showSplitControls;
+        if (this.showSplitControls) {
+            // Default to 1 or half of available tickets
+            this.splitCount = Math.min(1, this.ticketCount);
+        }
+        this.renderTopSectionOnly();
+    }
+
+    handleSplitCountChange(delta) {
+        const newCount = this.splitCount + delta;
+        if (newCount >= 1 && newCount <= this.ticketCount) {
+            this.splitCount = newCount;
+            // Update UI elements directly without full re-render
+            const input = document.getElementById('split-count-input');
+            const confirmBtn = document.getElementById('split-confirm-btn');
+            const decreaseBtn = document.getElementById('split-decrease-btn');
+            const increaseBtn = document.getElementById('split-increase-btn');
+            if (input) input.value = this.splitCount;
+            if (confirmBtn) confirmBtn.querySelector('span').textContent = `Export ${this.splitCount}`;
+            if (decreaseBtn) decreaseBtn.disabled = this.splitCount <= 1;
+            if (increaseBtn) increaseBtn.disabled = this.splitCount >= this.ticketCount;
+        }
+    }
+
+    handleSplitCountInput(value) {
+        const parsed = parseInt(value, 10);
+        if (!isNaN(parsed) && parsed >= 1 && parsed <= this.ticketCount) {
+            this.splitCount = parsed;
+            // Update confirm button text without full re-render to avoid losing focus
+            const confirmBtn = document.getElementById('split-confirm-btn');
+            if (confirmBtn) {
+                confirmBtn.querySelector('span').textContent = `Export ${this.splitCount}`;
+            }
+        } else if (!isNaN(parsed)) {
+            // Clamp to valid range
+            this.splitCount = Math.max(1, Math.min(parsed, this.ticketCount));
+            const confirmBtn = document.getElementById('split-confirm-btn');
+            if (confirmBtn) {
+                confirmBtn.querySelector('span').textContent = `Export ${this.splitCount}`;
+            }
+        }
+    }
+
+    async handleSplitConfirm() {
+        if (this.splitCount <= 0 || this.splitCount > this.ticketCount) return;
+
+        try {
+            const result = await splitAndExportTickets(this.splitCount);
+            if (result.cancelled) {
+                // User cancelled - no message needed
+                return;
+            }
+            if (result.success) {
+                this.ticketCount = ticketClient.getTicketCount();
+                this.loadNextTicket();
+                this.showSplitControls = false;
+                this.importStatus = {
+                    type: 'success',
+                    message: `Split and exported ${result.exportedCount} ticket${result.exportedCount !== 1 ? 's' : ''}.`
+                };
+            } else {
+                this.importStatus = {
+                    type: 'error',
+                    message: 'Failed to split tickets.'
+                };
+            }
+        } catch (error) {
+            this.importStatus = {
+                type: 'error',
+                message: error.message || 'Failed to split tickets.'
+            };
+        }
+
+        this.renderTopSectionOnly();
+
+        if (this.importStatus?.type === 'success') {
+            setTimeout(() => {
+                if (this.importStatus?.type === 'success') {
+                    this.importStatus = null;
+                    this.renderTopSectionOnly();
+                }
+            }, 2500);
+        }
+    }
+
+    handleSplitCancel() {
+        this.showSplitControls = false;
+        this.renderTopSectionOnly();
     }
 
     async handleRequestApiKey() {
@@ -1419,11 +1536,54 @@ class RightPanel {
                     <button
                         id="export-tickets-btn"
                         class="btn-ghost-hover inline-flex items-center justify-center gap-1 px-2 py-1 text-[10px] rounded-md border border-border bg-background transition-all duration-200 shadow-sm flex-1"
-                        title="Export active and archived tickets"
+                        title="Export all tickets (clears local storage)"
                     >
                         <span>Export</span>
                     </button>
+                    <button
+                        id="split-tickets-btn"
+                        class="btn-ghost-hover inline-flex items-center justify-center gap-1 px-2 py-1 text-[10px] rounded-md border border-border bg-background transition-all duration-200 shadow-sm flex-1"
+                        title="Export a subset of tickets"
+                        ${this.ticketCount === 0 ? 'disabled' : ''}
+                    >
+                        <span>Split</span>
+                    </button>
                 </div>
+
+                ${this.showSplitControls ? `
+                <div id="split-controls" class="mt-2 flex items-center gap-1.5">
+                    <button
+                        id="split-decrease-btn"
+                        class="btn-ghost-hover inline-flex items-center justify-center w-6 h-6 text-[10px] rounded border border-border bg-background transition-all duration-200 shadow-sm"
+                        ${this.splitCount <= 1 ? 'disabled' : ''}
+                    >−</button>
+                    <input
+                        id="split-count-input"
+                        type="text"
+                        inputmode="numeric"
+                        pattern="[0-9]*"
+                        value="${this.splitCount}"
+                        class="input-focus-clean w-12 px-1 py-1 text-[10px] text-center border border-border rounded bg-background text-foreground"
+                    />
+                    <button
+                        id="split-increase-btn"
+                        class="btn-ghost-hover inline-flex items-center justify-center w-6 h-6 text-[10px] rounded border border-border bg-background transition-all duration-200 shadow-sm"
+                        ${this.splitCount >= this.ticketCount ? 'disabled' : ''}
+                    >+</button>
+                    <button
+                        id="split-confirm-btn"
+                        class="btn-ghost-hover inline-flex items-center justify-center gap-1 px-2 py-1 text-[10px] rounded-md border border-border bg-background transition-all duration-200 shadow-sm flex-1"
+                    >
+                        <span>Export ${this.splitCount}</span>
+                    </button>
+                    <button
+                        id="split-cancel-btn"
+                        class="btn-ghost-hover inline-flex items-center justify-center px-2 py-1 text-[10px] rounded-md border border-border bg-background transition-all duration-200 shadow-sm text-muted-foreground"
+                    >
+                        <span>Cancel</span>
+                    </button>
+                </div>
+                ` : ''}
 
                 ${this.showInvitationForm ? `
                     <form id="invitation-code-form" class="space-y-2 mt-3 p-3 bg-muted/10 rounded-lg">
@@ -1872,6 +2032,53 @@ class RightPanel {
         const exportBtn = document.getElementById('export-tickets-btn');
         if (exportBtn) {
             exportBtn.onclick = () => this.handleExportTickets();
+        }
+
+        // Split tickets controls
+        const splitBtn = document.getElementById('split-tickets-btn');
+        if (splitBtn) {
+            splitBtn.onclick = () => this.handleSplitToggle();
+        }
+
+        const splitDecreaseBtn = document.getElementById('split-decrease-btn');
+        if (splitDecreaseBtn) {
+            splitDecreaseBtn.onclick = () => this.handleSplitCountChange(-1);
+        }
+
+        const splitIncreaseBtn = document.getElementById('split-increase-btn');
+        if (splitIncreaseBtn) {
+            splitIncreaseBtn.onclick = () => this.handleSplitCountChange(1);
+        }
+
+        const splitCountInput = document.getElementById('split-count-input');
+        if (splitCountInput) {
+            // Stop propagation to prevent keys from going to chat input
+            splitCountInput.onkeydown = (e) => e.stopPropagation();
+            splitCountInput.onkeyup = (e) => e.stopPropagation();
+            splitCountInput.onkeypress = (e) => e.stopPropagation();
+            splitCountInput.oninput = (e) => {
+                e.stopPropagation();
+                // Only allow digits
+                const cleaned = e.target.value.replace(/\D/g, '');
+                if (cleaned !== e.target.value) {
+                    e.target.value = cleaned;
+                }
+                this.handleSplitCountInput(cleaned);
+            };
+            splitCountInput.onchange = (e) => {
+                e.stopPropagation();
+                this.handleSplitCountInput(e.target.value);
+            };
+        }
+
+        const splitConfirmBtn = document.getElementById('split-confirm-btn');
+        if (splitConfirmBtn) {
+            splitConfirmBtn.onclick = () => this.handleSplitConfirm();
+        }
+
+        const splitCancelBtn = document.getElementById('split-cancel-btn');
+        if (splitCancelBtn) {
+            splitCancelBtn.onclick = () => this.handleSplitCancel();
         }
 
         // Ticket data click handler - toggle between truncated and full view
