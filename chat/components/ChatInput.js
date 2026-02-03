@@ -142,11 +142,11 @@ export default class ChatInput {
             this.handleScrubberControlKeyup();
         });
 
-        // Command key (⌘) for edit: pin and expand preview for editing
+        // Option key (⌥) for edit: pin and expand preview for editing
         document.addEventListener('keydown', (e) => {
-            if (e.key !== 'Meta' || e.repeat) return;
+            if (e.key !== 'Alt' || e.repeat) return;
             if (!this.app.scrubberPending) return;
-            this.handleScrubberMetaKeydown();
+            this.handleScrubberOptionKeydown();
         });
 
         // Note: Paste events (files + text) are handled globally in app.js
@@ -380,8 +380,8 @@ export default class ChatInput {
         this.updateScrubberPreviewHint();
     }
 
-    handleScrubberMetaKeydown() {
-        // Command key (⌘) - pin and auto-expand the preview for editing
+    handleScrubberOptionKeydown() {
+        // Option key (⌥) - pin and auto-expand the preview for editing
         this.scrubberState.ctrlPinned = true;
         // Hide the original prompt tooltip (don't show on pin)
         this.hideOriginalPromptPreview();
@@ -1261,9 +1261,9 @@ export default class ChatInput {
         if (this.scrubberState.ctrlPinned) {
             hintHtml = `<span class="scrubber-shortcut-key">esc</span> <span>exit</span>`;
         } else if (this.scrubberState.ctrlHeld) {
-            hintHtml = `<span class="scrubber-shortcut-key">⌘</span> <span>edit</span>`;
+            hintHtml = `<span class="scrubber-shortcut-key">⌥</span> <span>edit</span>`;
         } else {
-            hintHtml = `<span class="scrubber-shortcut-key">ctrl</span> <span>preview</span> <span class="opacity-40 mx-0.5">|</span> <span class="scrubber-shortcut-key">⌘</span> <span>edit</span>`;
+            hintHtml = `<span class="scrubber-shortcut-key">ctrl</span> <span>preview</span> <span class="opacity-40 mx-0.5">|</span> <span class="scrubber-shortcut-key">⌥</span> <span>edit</span>`;
         }
         
         if (text.innerHTML !== hintHtml) {
