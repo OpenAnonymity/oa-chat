@@ -1,37 +1,47 @@
 /**
  * Memory Retrieval Service
- * Handles interaction with the local memory server to retrieve and generate
- * responses using the event store with LLM.
+ * Retrieves relevant sessions from the vector store using sessionEmbedder.
+ * Sessions are embedded in the background as users chat, enabling semantic search.
  */
 
 class MemoryRetrievalService {
     constructor() {
-        this.serverUrl = 'http://localhost:5555';
         this.isProcessing = false;
+        this.sessionEmbedder = null;
     }
 
     /**
-     * Check if the memory server is running
+     * Lazy load sessionEmbedder
+     */
+    async getSessionEmbedder() {
+        if (!this.sessionEmbedder) {
+            const { default: sessionEmbedderModule } = await import('./sessionEmbedder.js');
+            this.sessionEmbedder = sessionEmbedderModule;
+        }
+        return this.sessionEmbedder;
+    }
+
+    /**
+     * Check if session embedder is initialized
      * @returns {Promise<boolean>}
      */
-    async isServerAvailable() {
+    async isEmbedderAvailable() {
         try {
-            const response = await fetch(`${this.serverUrl}/health`, {
-                method: 'GET',
-                signal: AbortSignal.timeout(2000)
-            });
-            return response.ok;
+            const embedder = await this.getSessionEmbedder();
+            // Initialize embedder if not already done
+            await embedder.init();
+            return embedder.initialized;
         } catch (error) {
-            console.warn('Memory server not available:', error.message);
+            console.warn('Session embedder not available:', error.message);
             return false;
         }
     }
 
     /**
-     * Retrieve memory based on user query and generate LLM response
+     * Retrieve memory based on user query using vector search
      * @param {string} userQuery - The user's query
      * @param {Function} onProgress - Progress callback
-     * @returns {Promise<Object>} - { success, response, context }
+     * @returns {Promise<Object>} - { success, memories, sessionResults }
      */
     async retrieveMemory(userQuery, onProgress = null) {
         if (this.isProcessing) {
@@ -41,76 +51,37 @@ class MemoryRetrievalService {
         this.isProcessing = true;
 
         try {
-            // Check if server is available
-            onProgress?.('Checking memory server...');
-            const available = await this.isServerAvailable();
+            // Check if embedder is available
+            onProgress?.('Initializing session search...');
+            const available = await this.isEmbedderAvailable();
             
             if (!available) {
                 throw new Error(
-                    'Memory server is not running. ' +
-                    'Please start it with: python OA_memory/scripts/server.py'
+                    'Session embedder not initialized. ' +
+                    'Sessions will be embedded in the background as you chat.'
                 );
             }
 
-            // Request memory retrieval and LLM response
-            onProgress?.('Retrieving relevant memories...');
+            // Search for relevant sessions
+            onProgress?.('Searching relevant sessions...');
             
-            console.log('[Memory Retrieval] Calling /retrieve-memory endpoint with query:', userQuery);
-            const response = await fetch(`${this.serverUrl}/retrieve-memory`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ query: userQuery }),
-                signal: AbortSignal.timeout(60000) // 60 second timeout
-            });
-
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.error || `Server returned ${response.status}`);
-            }
-
-            const result = await response.json();
-            console.log('[Memory Retrieval] Raw result:', result);
-            console.log('[Memory Retrieval] Result keys:', Object.keys(result));
+            const embedder = await this.getSessionEmbedder();
+            console.log('[Memory Retrieval] Searching sessions with query:', userQuery);
+            const sessionResults = await embedder.searchSessions(userQuery, 5);
+            console.log('[Memory Retrieval] Raw session results:', sessionResults);
             
             onProgress?.('Memory retrieval complete!');
             
-            // Backend is NOT returning the context field currently
-            // It only returns: { success, message, response }
-            // We need to update the backend to return the formatted events
-            // For now, show an informative message
-            if (!result.context) {
-                console.warn('[Memory Retrieval] Backend did not return context field. Backend needs to be updated to include retrieved events.');
-                console.warn('[Memory Retrieval] Expected: { success, response, context: "<formatted events>" }');
-                console.warn('[Memory Retrieval] Got:', result);
-                
-                // Create a synthetic context with no memories so UI doesn't break
-                result.context = {
-                    formatted: '',
-                    memories: []
-                };
-            } else {
-                // Parse the retrieved events and transform to expected format
-                // Backend should return: { success, response, context: "<formatted string>" }
-                const formattedText = typeof result.context === 'string' 
-                    ? result.context 
-                    : result.context.formatted;
-                
-                if (formattedText) {
-                    console.log('[Memory Retrieval] Parsing formatted text, length:', formattedText.length);
-                    const memories = this.parseFormattedEvents(formattedText);
-                    console.log('[Memory Retrieval] Parsed memories:', memories.length, memories);
-                    
-                    // Store memories in the expected structure
-                    result.context = {
-                        formatted: formattedText,
-                        memories: memories
-                    };
-                }
-            }
+            // Transform session results to memory format
+            const memories = this.transformSessionsToMemories(sessionResults);
+            console.log('[Memory Retrieval] Transformed to memories:', memories.length, memories);
             
-            return result;
+            return {
+                success: true,
+                memories: memories,
+                sessionResults: sessionResults,
+                retrieved_count: memories.length
+            };
         } catch (error) {
             console.error('Memory retrieval failed:', error);
             throw error;
@@ -120,47 +91,58 @@ class MemoryRetrievalService {
     }
 
     /**
-     * Parse formatted events text from backend into structured memory objects
-     * @param {string} formattedText - The formatted events text from backend
+     * Transform session search results into memory objects for display
+     * @param {Array} sessionResults - Search results from sessionEmbedder.searchSessions
      * @returns {Array} - Array of memory objects with title, content, sessionId
      */
-    parseFormattedEvents(formattedText) {
-        if (!formattedText) return [];
+    transformSessionsToMemories(sessionResults) {
+        if (!sessionResults || sessionResults.length === 0) return [];
         
-        const memories = [];
-        // Split by event markers (### Event N)
-        const eventMatches = formattedText.split(/### Event \d+ \(sim=[\d.]+\)/);
+        return sessionResults.map((result, idx) => {
+            console.log(`[Transform Memory ${idx}] Raw result:`, result);
+            console.log(`[Transform Memory ${idx}] title:`, result.title);
+            console.log(`[Transform Memory ${idx}] conversationText length:`, result.conversationText?.length);
+            console.log(`[Transform Memory ${idx}] conversationText preview:`, result.conversationText?.substring(0, 500));
+            
+            const fullText = result.conversationText || '';
+            // Truncate for UI display (300 chars)
+            const displayText = fullText.length > 300 ? fullText.substring(0, 300) + '...' : fullText;
+            
+            const memory = {
+                title: result.title || 'Untitled Session',
+                summary: this.summarizeConversation(fullText, 200),
+                content: displayText,
+                displayContent: displayText,
+                fullContent: fullText,  // Full text for API/message sending
+                sessionId: result.sessionId,
+                score: result.score,
+                messageCount: result.messageCount || 0,
+                timestamp: result.embeddedAt || Date.now()
+            };
+            
+            console.log(`[Transform Memory ${idx}] Transformed memory:`, memory);
+            return memory;
+        });
+    }
+
+    /**
+     * Create a summary from conversation text
+     * @param {string} text - The conversation text
+     * @param {number} maxLength - Maximum length of summary
+     * @returns {string} - Summary text
+     */
+    summarizeConversation(text, maxLength = 200) {
+        if (!text) return '';
         
-        for (let i = 1; i < eventMatches.length; i++) {
-            const eventText = eventMatches[i].trim();
-            if (!eventText) continue;
-            
-            // Extract title (line after "Title:")
-            const titleMatch = eventText.match(/Title:\s*(.+?)$/m);
-            const title = titleMatch ? titleMatch[1].trim() : 'Untitled';
-            
-            // Extract summary (content between "Summary:" and "Snippet:")
-            const summaryMatch = eventText.match(/Summary:\s*([\s\S]+?)(?=Snippet:|$)/);
-            const summary = summaryMatch ? summaryMatch[1].trim() : '';
-            
-            // Extract snippet for session context
-            const snippetMatch = eventText.match(/Snippet:\s*([\s\S]+)$/);
-            const snippet = snippetMatch ? snippetMatch[1].trim() : '';
-            
-            // Try to extract session ID from title or generate a placeholder
-            // In the future, backend should include explicit session_id field
-            const sessionId = `event-${i}`; // Placeholder for now
-            
-            memories.push({
-                title,
-                summary: summary.substring(0, 500), // Truncate for UI
-                content: snippet.substring(0, 300), // Truncate snippet
-                sessionId,
-                timestamp: Date.now()
-            });
+        // Take first few lines or truncate to maxLength
+        const lines = text.split('\n').slice(0, 3);
+        let summary = lines.join(' ');
+        
+        if (summary.length > maxLength) {
+            summary = summary.substring(0, maxLength) + '...';
         }
         
-        return memories;
+        return summary;
     }
 
     /**

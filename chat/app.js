@@ -3110,7 +3110,7 @@ class ChatApp {
                     });
                     
                     const memoryText = msg.memoryContext.memories.map((m, idx) => {
-                        return `\n--- Retrieved Memory ${idx + 1}: ${m.title || 'Untitled'} ---\n${m.summary || m.content || ''}`;
+                        return `\n--- Retrieved Memory ${idx + 1}: ${m.title || 'Untitled'} ---\n${m.fullContent || m.content || m.summary || ''}`;
                     }).join('\n');
                     
                     textContent = `${memoryText}\n\n--- User Query ---\n${textContent}`;

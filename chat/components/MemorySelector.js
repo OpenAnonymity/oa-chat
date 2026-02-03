@@ -149,9 +149,9 @@ export default class MemorySelector {
                 }
             });
 
-            // Extract memories from result
-            if (result.context && Array.isArray(result.context.memories)) {
-                this.memories = result.context.memories;
+            // Extract memories from result (new format returns memories directly)
+            if (Array.isArray(result.memories)) {
+                this.memories = result.memories;
             } else {
                 this.memories = [];
             }
@@ -216,7 +216,7 @@ export default class MemorySelector {
                 />
                 <div class="flex-1 min-w-0">
                     <p class="text-sm font-medium text-foreground truncate">${memory.title || 'Untitled'}</p>
-                    <p class="text-xs text-muted-foreground line-clamp-2">${memory.summary || memory.content || ''}</p>
+                    <p class="text-xs text-muted-foreground line-clamp-3">${memory.displayContent || memory.content || memory.summary || ''}</p>
                     ${memory.timestamp ? `<p class="text-xs text-muted-foreground/70 mt-1">${new Date(memory.timestamp).toLocaleString()}</p>` : ''}
                 </div>
             </div>
