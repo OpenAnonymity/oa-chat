@@ -69,7 +69,15 @@ export default class ChatInput {
             const isExpanded = this.app.elements.inputCard?.classList.contains('scrubber-preview-expanded');
             const expandedMax = Math.floor(window.innerHeight * 0.55);
             const maxHeight = isExpanded ? Math.max(384, expandedMax) : 384;
-            input.style.height = Math.min(input.scrollHeight, maxHeight) + 'px';
+            // When expanded, also consider diff preview's scroll height for proper sizing
+            let contentHeight = input.scrollHeight;
+            if (isExpanded && this.app.elements.scrubberPreviewDiff) {
+                const diffHeight = this.app.elements.scrubberPreviewDiff.scrollHeight;
+                if (diffHeight > 0) {
+                    contentHeight = Math.max(contentHeight, diffHeight);
+                }
+            }
+            input.style.height = Math.min(contentHeight, maxHeight) + 'px';
             this.app.updateInputState();
             // Clear file undo stack - text input should take undo precedence
             this.app.fileUndoStack = [];
@@ -433,7 +441,8 @@ export default class ChatInput {
         // Auto-expand the input box
         if (this.app.elements.inputCard) {
             this.app.elements.inputCard.classList.add('scrubber-preview-expanded');
-            this.app.elements.messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+            // Resize input to match diff preview content (up to max height)
+            this.resizeInputForExpandedPreview();
         }
         // Focus the diff preview for editing
         if (this.app.elements.scrubberPreviewDiff) {
@@ -442,6 +451,30 @@ export default class ChatInput {
         // Add global Escape handler for expanded mode
         this.addGlobalEscapeHandler();
         this.updateScrubberPreviewHint();
+    }
+
+    resizeInputForExpandedPreview() {
+        const input = this.app.elements.messageInput;
+        const diffPreview = this.app.elements.scrubberPreviewDiff;
+        if (!input) return;
+
+        // Calculate max height (55% of viewport, minimum 384px)
+        const expandedMax = Math.floor(window.innerHeight * 0.55);
+        const maxHeight = Math.max(384, expandedMax);
+
+        // Use the diff preview's scroll height if available, otherwise use input's
+        let contentHeight = input.scrollHeight;
+        if (diffPreview && diffPreview.scrollHeight > 0) {
+            contentHeight = Math.max(contentHeight, diffPreview.scrollHeight);
+        }
+
+        // Set input height to content height (capped at max)
+        input.style.height = Math.min(contentHeight, maxHeight) + 'px';
+
+        // Update toast position if needed
+        if (this.app.updateToastPosition) {
+            this.app.updateToastPosition();
+        }
     }
 
     handleScrubberControlKeyup() {

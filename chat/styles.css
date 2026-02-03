@@ -3534,7 +3534,7 @@ html {
 
 #input-card.scrubber-preview-expanded .scrubber-input-row {
     max-height: 55vh;
-    overflow: hidden;
+    overflow: visible;
 }
 
 #input-card.scrubber-preview-expanded #message-input {
@@ -3544,6 +3544,7 @@ html {
 
 #input-card.scrubber-preview-expanded .scrubber-preview-diff {
     max-height: 55vh;
+    overflow-y: auto;
 }
 
 /* Ensure expanded preview is above other elements like message navigation */
