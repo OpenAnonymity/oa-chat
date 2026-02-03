@@ -3025,24 +3025,27 @@ html {
 /* Memory Context Indicator */
 .memory-context-indicator {
     position: absolute;
-    top: 8px;
-    left: 8px;
+    top: -8px;
+    left: -20px;
     display: flex;
     align-items: center;
     gap: 4px;
-    padding: 2px 6px;
-    border-radius: 4px;
-    background-color: rgba(255, 255, 255, 0.2);
-    color: rgba(255, 255, 255, 0.9);
+    padding: 3px 8px;
+    border-radius: 6px;
+    background-color: rgba(99, 102, 241, 0.2);
+    backdrop-filter: blur(4px);
+    color: rgba(99, 102, 241, 1);
+    border: 1px solid rgba(99, 102, 241, 0.3);
     font-size: 0.7rem;
     font-weight: 500;
-    z-index: 1;
+    z-index: 10;
     cursor: pointer;
     transition: all 0.2s ease;
 }
 
 .memory-context-indicator:hover {
-    background-color: rgba(255, 255, 255, 0.3);
+    background-color: rgba(99, 102, 241, 0.3);
+    border-color: rgba(99, 102, 241, 0.4);
     transform: scale(1.05);
 }
 
