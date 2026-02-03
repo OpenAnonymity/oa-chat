@@ -4161,3 +4161,164 @@ html {
     border-left-color: hsl(59 130 246 / 0.8);
 }
 
+/* Memory chips in input area - inline overlay */
+#memory-chips-overlay {
+    display: none;
+    font-family: inherit;
+    z-index: 10;
+}
+
+body.has-memory-chips #memory-chips-overlay {
+    display: block;
+}
+
+/* Only make textarea transparent when memories are attached */
+body.has-memory-chips #message-input {
+    color: transparent !important;
+    caret-color: hsl(var(--color-foreground)) !important;
+    -webkit-text-fill-color: transparent !important;
+}
+
+/* Fix caret positioning - ensure it doesn't appear inside chips */
+body.has-memory-chips #message-input:focus {
+    caret-color: hsl(var(--color-foreground));
+}
+
+body.has-memory-chips #message-input::selection {
+    background-color: hsl(var(--color-accent-primary) / 0.3);
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+}
+
+body.has-memory-chips #message-input::placeholder {
+    color: transparent !important;
+    -webkit-text-fill-color: transparent !important;
+}
+
+.memory-chip-inline {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.125rem 0.5rem;
+    background-color: hsl(var(--blue-500) / 0.15);
+    border: 1px solid hsl(var(--blue-500) / 0.3);
+    border-radius: 0.375rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: hsl(var(--blue-600));
+    cursor: default;
+    transition: all 150ms ease;
+    position: relative;
+    margin: 0 0.125rem;
+    white-space: nowrap;
+    pointer-events: auto;
+    vertical-align: middle;
+    line-height: 1.5rem;
+    height: 1.5rem;
+}
+
+.dark .memory-chip-inline {
+    background-color: hsl(var(--blue-600) / 0.2);
+    border-color: hsl(var(--blue-500) / 0.4);
+    color: hsl(var(--blue-500));
+}
+
+.memory-chip-inline:hover {
+    background-color: hsl(var(--blue-500) / 0.25);
+    border-color: hsl(var(--blue-500) / 0.5);
+}
+
+.dark .memory-chip-inline:hover {
+    background-color: hsl(var(--blue-600) / 0.3);
+    border-color: hsl(var(--blue-500) / 0.6);
+}
+
+.memory-chip-inline-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 120px;
+}
+
+.memory-chip-inline-remove {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    color: hsl(var(--blue-600));
+    transition: all 150ms ease;
+    pointer-events: auto;
+}
+
+.dark .memory-chip-inline-remove {
+    color: hsl(var(--blue-500));
+}
+
+.memory-chip-inline-remove:hover {
+    background-color: hsl(var(--blue-500) / 0.3);
+    color: hsl(var(--blue-700));
+}
+
+.dark .memory-chip-inline-remove:hover {
+    background-color: hsl(var(--blue-500) / 0.4);
+    color: hsl(var(--blue-600));
+}
+
+.memory-chip-inline-remove svg {
+    width: 8px;
+    height: 8px;
+    stroke-width: 2.5;
+}
+
+/* Memory chip inline tooltip */
+.memory-chip-inline-tooltip {
+    position: fixed;
+    background-color: hsl(var(--color-popover));
+    border: 1px solid hsl(var(--color-border));
+    border-radius: 0.5rem;
+    padding: 0.75rem;
+    font-size: 0.75rem;
+    line-height: 1.4;
+    color: hsl(var(--color-foreground));
+    min-width: 200px;
+    max-width: 300px;
+    white-space: normal;
+    word-wrap: break-word;
+    box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+    z-index: 9999;
+    pointer-events: none;
+    opacity: 1;
+    visibility: visible;
+}
+
+.memory-chip-inline-tooltip-title {
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+    color: hsl(var(--color-foreground));
+}
+
+.memory-chip-inline-tooltip-content {
+    color: hsl(var(--color-muted-foreground));
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.memory-chip-inline-tooltip-timestamp {
+    font-size: 0.625rem;
+    color: hsl(var(--color-muted-foreground) / 0.7);
+    margin-top: 0.375rem;
+}
+
+/* Regular text in overlay (not memory chips) */
+.memory-overlay-text {
+    color: hsl(var(--color-foreground));
+    white-space: pre-wrap;
+}

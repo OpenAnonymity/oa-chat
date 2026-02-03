@@ -2640,6 +2640,9 @@ class ChatApp {
         this.resetMessageInputLayout({ resetScroll: true });
         this.updateShareButtonUI();
 
+        // Clear memory chips when switching sessions
+        this.chatInput?.clearMemoryChips();
+
         // Notify right panel of session change
         if (this.rightPanel && session) {
             this.rightPanel.onSessionChange(session);
@@ -2829,6 +2832,9 @@ class ChatApp {
             this.elements.messageInput.value = '';
         }
         this.resetMessageInputLayout({ resetScroll: true });
+
+        // Clear memory chips when clearing session
+        this.chatInput?.clearMemoryChips();
 
         // Update input state
         this.updateInputState();
@@ -3750,6 +3756,9 @@ class ChatApp {
             this.updateFileCountBadge();
             this.updateInputState();
             this.resetMessageInputLayout({ resetScroll: true });
+
+            // Clear memory chips from input area
+            this.chatInput?.clearMemoryChips();
 
             // Auto-scroll remains paused while the response streams
 

@@ -410,15 +410,17 @@
                                 <!-- Textarea Container -->
                                 <div class="relative w-full flex flex-col">
                                     <div class="rounded-md w-full text-muted-foreground focus-within:text-foreground transition-colors bg-transparent">
-                                        <div class="flex w-full min-w-0 h-max py-1.5 max-h-96 bg-transparent px-2 overflow-y-auto">
+                                        <div class="flex w-full min-w-0 h-max py-1.5 max-h-96 bg-transparent px-2 overflow-y-auto relative">
                                             <textarea
                                                 id="message-input"
                                                 rows="1"
-                                                class="w-full flex-1 min-w-0 bg-transparent text-sm leading-6 focus:outline-none resize-none overflow-y-auto overflow-x-hidden text-foreground placeholder:text-muted-foreground"
+                                                class="w-full flex-1 min-w-0 bg-transparent text-sm leading-6 focus:outline-none resize-none overflow-y-auto overflow-x-hidden text-foreground placeholder:text-muted-foreground relative"
                                                 placeholder="Ask anonymously"
                                                 style="height: 24px; min-height: 24px; max-height: 200px; padding-right: 64px;"
                                                 autofocus
                                             ></textarea>
+                                            <!-- Memory chips overlay container -->
+                                            <div id="memory-chips-overlay" class="absolute inset-0 px-2 py-1.5 pointer-events-none overflow-hidden" style="white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word; line-height: 1.5rem; font-size: 0.875rem; font-family: inherit;"></div>
                                             <div id="scrubber-shortcut-hint" class="scrubber-shortcut-hint scrubber-shortcut-inline" aria-hidden="true">
                                                 <span><span class="scrubber-shortcut-key">tab</span> <span class="scrubber-shortcut-key">tab</span> to scrub PII</span>
                                             </div>
