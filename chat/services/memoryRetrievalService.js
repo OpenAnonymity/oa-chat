@@ -99,11 +99,6 @@ class MemoryRetrievalService {
         if (!sessionResults || sessionResults.length === 0) return [];
         
         return sessionResults.map((result, idx) => {
-            console.log(`[Transform Memory ${idx}] Raw result:`, result);
-            console.log(`[Transform Memory ${idx}] title:`, result.title);
-            console.log(`[Transform Memory ${idx}] conversationText length:`, result.conversationText?.length);
-            console.log(`[Transform Memory ${idx}] conversationText preview:`, result.conversationText?.substring(0, 500));
-            
             const fullText = result.conversationText || '';
             // Truncate for UI display (300 chars)
             const displayText = fullText.length > 300 ? fullText.substring(0, 300) + '...' : fullText;
@@ -119,8 +114,6 @@ class MemoryRetrievalService {
                 messageCount: result.messageCount || 0,
                 timestamp: result.embeddedAt || Date.now()
             };
-            
-            console.log(`[Transform Memory ${idx}] Transformed memory:`, memory);
             return memory;
         });
     }
