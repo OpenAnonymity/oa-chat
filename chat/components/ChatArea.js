@@ -7,6 +7,7 @@
 import { buildMessageHTML, buildEmptyState, buildSharedIndicator, buildImportedIndicator, buildTypingIndicator } from './MessageTemplates.js';
 import { exportChats, exportTickets } from '../services/globalExport.js';
 import { parseStreamingReasoningContent, parseReasoningContent } from '../services/reasoningParser.js';
+import { messageMemoryContext, highlightMemoryRetrievedSessions, clearMemorySessionHighlights } from '../services/messageMemoryContext.js';
 import { chatDB } from '../db.js';
 
 export default class ChatArea {
@@ -196,6 +197,193 @@ export default class ChatArea {
                 }
             }
         });
+
+        // Memory context hover listeners (follows MessageNavigation pattern)
+        let currentHoveredMessageId = null;
+        let memoryHoverTimeout = null;
+        let memoryHideTimeout = null;
+
+        const cancelMemoryHoverTimeout = () => {
+            if (memoryHoverTimeout) {
+                clearTimeout(memoryHoverTimeout);
+                memoryHoverTimeout = null;
+            }
+        };
+
+        const cancelMemoryHideTimeout = () => {
+            if (memoryHideTimeout) {
+                clearTimeout(memoryHideTimeout);
+                memoryHideTimeout = null;
+            }
+        };
+
+        const scheduleMemoryHide = () => {
+            cancelMemoryHideTimeout();
+            memoryHideTimeout = setTimeout(() => {
+                currentHoveredMessageId = null;
+                this.hideMemoryContextTooltip();
+                clearMemorySessionHighlights();
+            }, 150);
+        };
+
+        messagesContainer.addEventListener('mouseenter', (e) => {
+            const messageEl = e.target.closest('[data-message-id]');
+            if (!messageEl) return;
+
+            const messageId = messageEl.dataset.messageId;
+            
+            // Only update if hovering a different message
+            if (messageId === currentHoveredMessageId) return;
+            
+            currentHoveredMessageId = messageId;
+            
+            // Cancel any pending hide
+            cancelMemoryHideTimeout();
+            cancelMemoryHoverTimeout();
+            
+            const context = messageMemoryContext.getMessageContext(messageId);
+            
+            if (context && context.memories.length > 0) {
+                // Show tooltip after short delay (like MessageNavigation)
+                memoryHoverTimeout = setTimeout(() => {
+                    this.showMemoryContextTooltip(messageEl, context, messageId);
+                    highlightMemoryRetrievedSessions(context.sessionIds);
+                }, 200);
+            } else {
+                // Message has no memory context, hide tooltip
+                this.hideMemoryContextTooltip();
+                clearMemorySessionHighlights();
+            }
+        }, true);
+
+        messagesContainer.addEventListener('mouseleave', (e) => {
+            const messageEl = e.target.closest('[data-message-id]');
+            if (!messageEl) return;
+            
+            // Cancel any pending show
+            cancelMemoryHoverTimeout();
+            
+            // Schedule hide with delay
+            scheduleMemoryHide();
+        }, true);
+    }
+
+    /**
+     * Show tooltip with memory context for a message
+     * @param {HTMLElement} messageEl - The message element
+     * @param {Object} context - Memory context with memories array
+     * @param {string} messageId - Message ID to track which tooltip is shown
+     */
+    showMemoryContextTooltip(messageEl, context, messageId) {
+        // Don't recreate tooltip if already showing this message (prevent glitching)
+        const existingTooltip = document.getElementById('memory-context-tooltip');
+        if (existingTooltip && existingTooltip.dataset.messageId === messageId) {
+            return; // Already showing this message's tooltip
+        }
+
+        this.hideMemoryContextTooltip();
+
+        const tooltip = document.createElement('div');
+        tooltip.id = 'memory-context-tooltip';
+        tooltip.className = 'pointer-events-auto'; // Allow hover on tooltip
+        tooltip.dataset.messageId = messageId; // Track which message is shown
+        
+        // Format memories as list
+        const memoriesHtml = context.memories.slice(0, 3).map(m => `
+            <div class="text-xs text-muted-foreground mb-1 pb-1 border-b border-border/30">
+                <p class="font-medium text-foreground truncate">${m.title || 'Untitled'}</p>
+                <p class="line-clamp-2">${m.summary || m.content || ''}</p>
+            </div>
+        `).join('');
+
+        tooltip.innerHTML = `
+            <div class="inline-flex items-start gap-2 px-3 py-2 rounded-lg bg-background border border-blue-600/30 shadow-lg">
+                <div class="flex-shrink-0 mt-0.5">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4 text-blue-600">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
+                    </svg>
+                </div>
+                <div class="flex-1 min-w-0">
+                    <p class="text-xs font-medium text-blue-600 uppercase tracking-wide mb-1">Memory Context</p>
+                    ${memoriesHtml}
+                    ${context.memories.length > 3 ? `<p class="text-xs text-muted-foreground">+${context.memories.length - 3} more</p>` : ''}
+                </div>
+                </div>
+            </div>
+        `;
+
+        Object.assign(tooltip.style, {
+            position: 'fixed',
+            zIndex: '99998',
+            maxWidth: '320px',
+            opacity: '0',
+            transform: 'translateY(4px)',
+            transition: 'opacity 150ms ease-out, transform 150ms ease-out'
+        });
+
+        // Add hover handlers to keep tooltip visible (like MessageNavigation)
+        tooltip.addEventListener('mouseenter', () => {
+            const existingTimeout = this._memoryHideTimeout;
+            if (existingTimeout) {
+                clearTimeout(existingTimeout);
+                this._memoryHideTimeout = null;
+            }
+        });
+        
+        tooltip.addEventListener('mouseleave', () => {
+            this._memoryHideTimeout = setTimeout(() => {
+                this.hideMemoryContextTooltip();
+                clearMemorySessionHighlights();
+            }, 150);
+        });
+
+        document.body.appendChild(tooltip);
+
+        const rect = messageEl.getBoundingClientRect();
+        const tooltipRect = tooltip.getBoundingClientRect();
+
+        let top = rect.top - tooltipRect.height - 12;
+        if (top < 8) {
+            top = rect.bottom + 12;
+        }
+
+        let left = rect.left + (rect.width - tooltipRect.width) / 2;
+        if (left < 8) left = 8;
+        if (left + tooltipRect.width > window.innerWidth - 8) {
+            left = window.innerWidth - tooltipRect.width - 8;
+        }
+
+        Object.assign(tooltip.style, {
+            top: `${top}px`,
+            left: `${left}px`
+        });
+
+        requestAnimationFrame(() => {
+            tooltip.style.opacity = '1';
+            tooltip.style.transform = 'translateY(0)';
+        });
+    }
+
+    /**
+     * Hide memory context tooltip
+     */
+    hideMemoryContextTooltip() {
+        const tooltip = document.getElementById('memory-context-tooltip');
+        if (tooltip) {
+            tooltip.style.opacity = '0';
+            tooltip.style.transform = 'translateY(4px)';
+            setTimeout(() => tooltip.remove(), 150);
+        }
+    }
+
+    /**
+     * Store memory context for a message (called when message is sent with memory)
+     * @param {string} messageId - Message ID
+     * @param {Array} memories - Array of memories that were used
+     * @param {Array} sessionIds - Array of session IDs retrieved
+     */
+    storeMessageMemoryContext(messageId, memories, sessionIds) {
+        messageMemoryContext.setMessageContext(messageId, memories, sessionIds);
     }
 
     /**

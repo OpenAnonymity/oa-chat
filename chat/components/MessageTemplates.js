@@ -373,11 +373,23 @@ function buildUserMessage(message, options = {}) {
         ? `height: ${message.scrubber.lockedHeight}px;` 
         : '';
 
+    // Memory context indicator
+    const hasMemory = message.memoryContext && message.memoryContext.sessionIds?.length > 0;
+    const memoryIndicator = hasMemory ? `
+        <div class="memory-context-indicator" data-message-id="${message.id}">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3 h-3">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
+            </svg>
+            <span>${message.memoryContext.sessionIds.length}</span>
+        </div>
+    ` : '';
+
     // Normal display mode with action buttons (shown on hover)
     return `
         <div class="${CLASSES.userWrapper}" data-message-id="${message.id}">
             <div class="${CLASSES.userGroup}">
                 <div class="${CLASSES.userBubble} ${scrubberTogglableClass} ${heightLockedClass}" style="${lockedHeightStyle}">
+                    ${memoryIndicator}
                     <div class="${CLASSES.userContent} ${collapsibleClass}">
                         ${fileAttachments}
                         <p class="mb-0">${escapeHtml(message.content)}</p>

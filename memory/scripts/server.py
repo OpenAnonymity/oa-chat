@@ -186,9 +186,24 @@ def retrieve_memory():
         personalized_prompt = personalize_prompt(config, user_query)
         response = llm_generate_response(config, personalized_prompt)
         
+        # Also get the context for the frontend
+        from oa_agent.retriever import ChatEventRetriever
+        retriever = ChatEventRetriever(
+            event_store_path=config.event_store_path,
+            embedding_model_path=config.embedding_model_path,
+            random_seed=config.event_random_seed,
+            summary_max_chars=config.event_summary_max_chars,
+        )
+        
+        # Retrieve top-k events
+        retrieved = retriever.retrieve_top_k(user_query, top_k=config.event_top_k)
+        context_block = retriever.format_events_for_prompt(retrieved, randomize=True)
+        
         return jsonify({
             "success": True,
             "response": response,
+            "context": context_block or "",
+            "retrieved_count": len(retrieved),
             "message": "Memory retrieval and generation complete"
         })
     

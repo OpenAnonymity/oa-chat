@@ -144,11 +144,6 @@ export class MentionService {
      */
     getAvailableMentions() {
         return [
-            {
-                name: 'memory',
-                icon: '🧠',
-                description: 'Access chat memory'
-            }
             // More mentions can be added here in the future
         ];
     }

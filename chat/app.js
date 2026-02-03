@@ -9,6 +9,7 @@ import ChatInput from './components/ChatInput.js';
 import ModelPicker from './components/ModelPicker.js';
 import ChatHistoryImportModal from './components/ChatHistoryImportModal.js';
 import AccountModal from './components/AccountModal.js';
+import MemorySelector from './components/MemorySelector.js';
 import { buildTypingIndicator } from './components/MessageTemplates.js';
 import themeManager from './services/themeManager.js';
 import preferencesStore, { PREF_KEYS } from './services/preferencesStore.js';
@@ -31,6 +32,7 @@ import accountService from './services/accountService.js';
 import apiKeyStore from './services/apiKeyStore.js';
 import { generateUlid21 } from './services/ulid.js';
 import { memoryService } from './services/memoryService.js';
+import { messageMemoryContext } from './services/messageMemoryContext.js';
 import { chatDB } from './db.js';
 
 const DEFAULT_MODEL_NAME = inferenceService.getDefaultModelName();
@@ -99,7 +101,7 @@ class ChatApp {
 
         this.elements = {
             newChatBtn: document.getElementById('new-chat-btn'),
-            processMemoryBtn: document.getElementById('process-memory-btn'),
+
             sessionsList: document.getElementById('sessions-list'),
             searchRoomsInput: document.getElementById('search-rooms'),
             chatArea: document.getElementById('chat-area'),
@@ -144,6 +146,7 @@ class ChatApp {
 
         this.searchEnabled = true;
         this.reasoningEnabled = true;
+        this.memoryEnabled = false;
         this.sessionSearchQuery = '';
         this.sessionSearchDebounce = null;
         this.sessionSearchRequestId = 0;
@@ -156,6 +159,7 @@ class ChatApp {
         this.chatArea = null;
         this.chatInput = null;
         this.modelPicker = null;
+        this.memorySelector = null;
         this.sessionStreamingStates = new Map(); // Track streaming state per session
         this.sessionScrollPositions = new Map(); // Track scrollTop per session in-memory
         this.chatScrollSaveFrame = null;
@@ -164,8 +168,10 @@ class ChatApp {
         this.scrollButtonCheckInterval = null; // Interval for checking button visibility during streaming
         this.scrubberService = scrubberService;
         this.scrubberPending = null;
+        this.pendingMemoryContext = null; // Track memory context for next message
         this.deleteHistoryReturnFocusEl = null;
         this.isDeletingAllChats = false;
+        this.lastCtrlKeyTime = 0; // Track double Ctrl/Cmd key press for memory selector
         this.appVersionSignature = null;
         this.updateAvailableSignature = null;
         this.updateToastVisible = false;
@@ -1177,6 +1183,7 @@ class ChatApp {
         this.chatArea = new ChatArea(this);
         this.chatInput = new ChatInput(this);
         this.modelPicker = new ModelPicker(this);
+        this.memorySelector = new MemorySelector(this);
         this.chatHistoryImportModal = new ChatHistoryImportModal(this);
         this.accountModal = new AccountModal(this);
         this.rightPanel = new RightPanel(this);
@@ -1271,10 +1278,11 @@ class ChatApp {
         initPinnedModels();
 
         // Load settings from IndexedDB in PARALLEL for speed
-        const [storedModelPreference, savedSearchEnabled, savedReasoningEnabled] = await Promise.all([
+        const [storedModelPreference, savedSearchEnabled, savedReasoningEnabled, savedMemoryEnabled] = await Promise.all([
             chatDB.getSetting('selectedModel'),
             chatDB.getSetting('searchEnabled'),
-            chatDB.getSetting('reasoningEnabled')
+            chatDB.getSetting('reasoningEnabled'),
+            chatDB.getSetting('memoryEnabled')
         ]);
 
         // Migrate sessions in background (don't block UI)
@@ -1314,11 +1322,15 @@ class ChatApp {
         // Restore reasoning state
         this.reasoningEnabled = savedReasoningEnabled !== undefined ? savedReasoningEnabled : true;
 
+        // Restore memory state
+        this.memoryEnabled = savedMemoryEnabled !== undefined ? savedMemoryEnabled : false;
+
         // Render local data IMMEDIATELY (sessions from DB, model from settings)
         this.renderSessions();
         this.renderMessages();
         this.renderCurrentModel();
         this.chatInput.updateSearchToggleUI();
+        this.chatInput.updateMemoryToggleUI();
         this.chatInput.updateReasoningToggleUI();
         this.updateShareButtonUI();
 
@@ -2799,8 +2811,11 @@ class ChatApp {
             searchEnabled: metadata.searchEnabled || false,
             citations: metadata.citations || null,
             isLocalOnly: Boolean(metadata.isLocalOnly),
-            scrubber: metadata.scrubber || null
+            scrubber: metadata.scrubber || null,
+            memoryContext: metadata.memoryContext || null
         };
+
+        console.log('[addMessage] Creating message with memoryContext:', message.memoryContext);
 
         await chatDB.saveMessage(message);
 
@@ -2999,6 +3014,23 @@ class ChatApp {
             if (msg.role === 'user') {
                 let textContent = msg.content || '';
                 const mediaContent = [];
+
+                // Add memory context if available
+                if (msg.memoryContext && msg.memoryContext.memories && msg.memoryContext.memories.length > 0) {
+                    console.log('[Memory Context] Adding to message:', {
+                        messageId: msg.id,
+                        memoriesCount: msg.memoryContext.memories.length,
+                        memories: msg.memoryContext.memories
+                    });
+                    
+                    const memoryText = msg.memoryContext.memories.map((m, idx) => {
+                        return `\n--- Retrieved Memory ${idx + 1}: ${m.title || 'Untitled'} ---\n${m.summary || m.content || ''}`;
+                    }).join('\n');
+                    
+                    textContent = `${memoryText}\n\n--- User Query ---\n${textContent}`;
+                    
+                    console.log('[Memory Context] Final message content:', textContent);
+                }
 
                 // Only attach image-model outputs to the LAST user message
                 if (isLastUserMessage && imagesToAttach.length > 0) {
@@ -3592,8 +3624,31 @@ class ChatApp {
                     showingOriginal: false
                 };
             }
+            // Add memory context if available
+            if (this.pendingMemoryContext) {
+                console.log('[SendMessage] Adding pendingMemoryContext to metadata:', this.pendingMemoryContext);
+                metadata.memoryContext = {
+                    sessionIds: this.pendingMemoryContext.sessionIds,
+                    memories: this.pendingMemoryContext.memories,
+                    timestamp: this.pendingMemoryContext.timestamp
+                };
+            } else {
+                console.log('[SendMessage] No pendingMemoryContext available');
+            }
             this.isAutoScrollPaused = true;
             const userMessage = await this.addMessage('user', displayContent || '', metadata);
+
+            // Store memory context in service if available (for hover display)
+            if (this.pendingMemoryContext && userMessage && userMessage.id) {
+                const { messageMemoryContext } = await import('./services/messageMemoryContext.js');
+                messageMemoryContext.setMessageContext(
+                    userMessage.id,
+                    this.pendingMemoryContext.memories,
+                    this.pendingMemoryContext.sessionIds
+                );
+                // Clear pending context after using it
+                this.pendingMemoryContext = null;
+            }
 
             // Clear input and files
             this.elements.messageInput.value = '';
@@ -4942,23 +4997,6 @@ class ChatApp {
             this.handleNewChatRequest();
         });
 
-        // Process memory button
-        this.elements.processMemoryBtn?.addEventListener('click', async () => {
-            this.elements.processMemoryBtn.disabled = true;
-            try {
-                const onProgress = (message) => {
-                    console.log('Processing progress:', message);
-                    this.showToast?.(message, 'info');
-                };
-                await memoryService.processMemory(onProgress);
-                this.showToast?.('Memory processing complete!', 'success');
-            } catch (error) {
-                console.error('Memory processing failed:', error);
-                this.showToast?.(error.message || 'Memory processing failed', 'error');
-            } finally {
-                this.elements.processMemoryBtn.disabled = false;
-            }
-        });
 
         // Status dot button handler - toggles floating panel
         const statusDotBtn = document.getElementById('status-dot-btn');
@@ -5091,6 +5129,15 @@ class ChatApp {
                 e.preventDefault();
                 if (this.modelPicker) {
                     this.modelPicker.open();
+                }
+            }
+
+            // Ctrl+M or Cmd+M for memory selector
+            if ((e.metaKey || e.ctrlKey) && e.key === 'm') {
+                e.preventDefault();
+                if (this.memorySelector) {
+                    const query = this.elements.messageInput.value.trim();
+                    this.memorySelector.open(query);
                 }
             }
 

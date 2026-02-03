@@ -2876,6 +2876,25 @@ html[data-right-panel-hidden="true"] #right-panel {
     background-color: hsl(var(--color-accent-primary) / 0.25) !important;
 }
 
+/* Memory toggle uses accent-primary */
+#memory-toggle.search-active {
+    color: hsl(var(--color-accent-primary)) !important;
+    background-color: hsl(var(--color-accent-primary) / 0.1) !important;
+}
+
+#memory-toggle.search-active:hover {
+    background-color: hsl(var(--color-accent-primary) / 0.15) !important;
+}
+
+.dark #memory-toggle.search-active {
+    color: hsl(var(--color-accent-primary) / 0.85) !important;
+    background-color: hsl(var(--color-accent-primary) / 0.2) !important;
+}
+
+.dark #memory-toggle.search-active:hover {
+    background-color: hsl(var(--color-accent-primary) / 0.25) !important;
+}
+
 /* Image modal animation */
 @keyframes fadeIn {
     from {
@@ -2956,6 +2975,105 @@ html {
 /* Elevate message actions above input area when visible for tooltip visibility */
 .message-user-actions:hover {
     z-index: 50;
+}
+
+/* Memory Context Indicator */
+.memory-context-indicator {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background-color: rgba(255, 255, 255, 0.2);
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 0.7rem;
+    font-weight: 500;
+    z-index: 1;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.memory-context-indicator:hover {
+    background-color: rgba(255, 255, 255, 0.3);
+    transform: scale(1.05);
+}
+
+.memory-context-indicator svg {
+    width: 12px;
+    height: 12px;
+}
+
+.memory-context-indicator span {
+    line-height: 1;
+}
+
+/* Memory context tooltip */
+.memory-context-tooltip {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 0;
+    max-width: 400px;
+    background-color: hsl(var(--color-popover));
+    color: hsl(var(--color-popover-foreground));
+    border: 1px solid hsl(var(--color-border));
+    border-radius: 8px;
+    padding: 12px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    z-index: 100;
+    pointer-events: none;
+    opacity: 0;
+    animation: tooltipFadeIn 0.15s ease-out forwards;
+}
+
+.memory-context-tooltip-title {
+    font-size: 0.75rem;
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: hsl(var(--color-foreground));
+}
+
+.memory-context-tooltip-content {
+    font-size: 0.7rem;
+    color: hsl(var(--color-muted-foreground));
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.memory-context-tooltip-item {
+    padding: 4px 0;
+    border-bottom: 1px solid hsl(var(--color-border) / 0.5);
+}
+
+.memory-context-tooltip-item:last-child {
+    border-bottom: none;
+}
+
+/* Session highlight for retrieved memories */
+.chat-session.memory-retrieved,
+.chat-session.memory-retrieved-session {
+    position: relative;
+}
+
+.chat-session.memory-retrieved::before,
+.chat-session.memory-retrieved-session::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: linear-gradient(to bottom, hsl(var(--blue-500)), hsl(var(--blue-600)));
+    border-radius: 0 2px 2px 0;
+    opacity: 0.8;
+}
+
+.dark .chat-session.memory-retrieved::before,
+.dark .chat-session.memory-retrieved-session::before {
+    background: linear-gradient(to bottom, hsl(var(--blue-500)), hsl(var(--blue-700)));
+    opacity: 0.9;
 }
 
 /* Inside the user container, buttons are always fully opaque (container handles fade) */
@@ -3957,5 +4075,40 @@ html {
 
 .mention-item:active {
     background-color: hsl(var(--color-accent-primary) / 0.15);
+}
+
+/* Memory system styling */
+
+/* Session highlight when memories are retrieved from it */
+.memory-retrieved-session {
+    position: relative;
+    background-color: hsl(59 130 246 / 0.08); /* blue-600 with low opacity */
+    border-left: 3px solid hsl(59 130 246 / 0.5); /* blue-600 */
+    transition: all 200ms ease-out;
+}
+
+.memory-retrieved-session::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+        90deg,
+        transparent 0%,
+        hsl(59 130 246 / 0.05) 50%,
+        transparent 100%
+    );
+    animation: memory-session-pulse 2s ease-in-out infinite;
+    pointer-events: none;
+}
+
+@keyframes memory-session-pulse {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 1; }
+}
+
+/* Session item hover state enhanced when highlighted */
+.memory-retrieved-session:hover {
+    background-color: hsl(59 130 246 / 0.15);
+    border-left-color: hsl(59 130 246 / 0.8);
 }
 

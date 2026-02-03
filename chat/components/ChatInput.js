@@ -143,6 +143,16 @@ export default class ChatInput {
             await chatDB.saveSetting('searchEnabled', this.app.searchEnabled);
         });
 
+        // Memory toggle functionality - now opens memory selector
+        const memoryToggle = document.getElementById('memory-toggle');
+        if (memoryToggle) {
+            memoryToggle.addEventListener('click', async () => {
+                // Open memory selector with current input as query
+                const query = this.app.elements.messageInput.value.trim();
+                this.app.memorySelector?.open(query);
+            });
+        }
+
         // Reasoning toggle functionality (entire row is clickable)
         const reasoningToggleRow = document.getElementById('reasoning-toggle-row');
         if (reasoningToggleRow) {
@@ -678,6 +688,16 @@ export default class ChatInput {
     }
 
     /**
+     * Updates the visual state of the memory toggle.
+     */
+    updateMemoryToggleUI() {
+        const toggle = document.getElementById('memory-toggle');
+        if (!toggle) return;
+        toggle.setAttribute('aria-pressed', this.app.memoryEnabled);
+        toggle.classList.toggle('search-active', this.app.memoryEnabled);
+    }
+
+    /**
      * Updates the visual state of the reasoning toggle.
      */
     updateReasoningToggleUI() {
@@ -942,20 +962,34 @@ export default class ChatInput {
     }
 
     /**
-     * Handles mention input detection and popup display.
-     * Detects @ symbol and shows mention suggestions.
+     * Handles mention input detection - opens memory selector when @ is typed.
      */
     handleMentionInput() {
         const context = mentionService.checkMentionContext();
 
         if (!context) {
-            // Hide popup if no @ context
-            mentionService.hideMentionPopup();
             return;
         }
 
-        // Show popup with filtered suggestions (empty query shows all)
-        mentionService.showMentionPopup(context);
+        // When @ is detected, open memory selector with current input as query
+        const input = this.app.elements.messageInput;
+        const query = input.value.replace(/@/g, '').trim(); // Remove @ symbols for cleaner query
+        
+        // Remove the @ from input
+        const cursorPos = input.selectionStart;
+        const textBeforeCursor = input.value.substring(0, cursorPos);
+        const textAfterCursor = input.value.substring(cursorPos);
+        const lastAtIndex = textBeforeCursor.lastIndexOf('@');
+        
+        if (lastAtIndex >= 0) {
+            const beforeAt = input.value.substring(0, lastAtIndex);
+            const afterAt = input.value.substring(lastAtIndex + 1);
+            input.value = beforeAt + afterAt;
+            input.selectionStart = input.selectionEnd = lastAtIndex;
+        }
+        
+        // Open memory selector
+        this.app.memorySelector?.open(query);
     }
 }
 
