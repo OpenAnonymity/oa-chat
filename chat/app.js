@@ -79,7 +79,7 @@ function emitDesktopEvent(name, detail = {}) {
 const SESSION_STORAGE_KEY = 'oa-current-session'; // Tab-scoped session persistence
 const DELETE_HISTORY_COPY = {
     title: 'Delete all chat history',
-    body: 'Past chat history is stored locally on this browser. Prompts and responses are end-to-end encrypted to and from the model providers who only see anonymous traffic and cannot identify, link, or otherwise track you.',
+    body: 'Past chat history is stored locally on this browser. Prompts and responses are end-to-end encrypted to and from the model providers who only see mixed and unlinkable traffic.',
     highlightHeading: 'Deletion is irreversible!',
     highlightBody: 'This is the only copy of your chat history. Deletion cannot be undone. You can <a href="#download-chats-link" class="text-primary underline-offset-2 hover:underline focus-visible:underline dark:text-blue-300">download a copy</a> of your chat history before proceeding.',
     cancelLabel: 'Cancel',
@@ -5502,9 +5502,9 @@ class ChatApp {
             // Set placeholder based on state
             if (this.searchEnabled) {
                 // For now, use the same placeholder as the default when search is enabled
-                this.elements.messageInput.placeholder = "Ask anonymously";
+                this.elements.messageInput.placeholder = "Ask anything";
             } else {
-                this.elements.messageInput.placeholder = "Ask anonymously";
+                this.elements.messageInput.placeholder = "Ask anything";
             }
         }
     }

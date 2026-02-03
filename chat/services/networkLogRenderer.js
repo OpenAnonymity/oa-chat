@@ -107,7 +107,7 @@ export function getActivityDescription(log, detailed = false) {
             if (action === 'ticket-select') {
                 const ticketIndex = response?.ticket_index || 0;
                 const unusedTickets = response?.unused_tickets || 0;
-                return `Selected inference ticket #${ticketIndex} from your local storage. You have ${unusedTickets} unused ticket${unusedTickets !== 1 ? 's' : ''} remaining. This ticket will be exchanged with a station for an anonymous API key.`;
+                return `Selected inference ticket #${ticketIndex} from your local storage. You have ${unusedTickets} unused ticket${unusedTickets !== 1 ? 's' : ''} remaining. This ticket will be exchanged with a station for an unlinkable API key.`;
             } else if (action === 'tickets-blind') {
                 const count = response?.ticket_count || 0;
                 return `Created ${count} blinded inference ticket${count !== 1 ? 's' : ''} locally using Privacy Pass cryptography. These blinded tokens hide your identity from the server while allowing it to sign them. The blinded tickets are now ready to be sent to the server for signing.`;
@@ -117,7 +117,7 @@ export function getActivityDescription(log, detailed = false) {
             } else if (action === 'tickets-unblind') {
                 const count = response?.tickets_finalized || 0;
                 const ready = response?.tickets_ready || 0;
-                return `Successfully unblinded and finalized ${count} inference ticket${count !== 1 ? 's' : ''}. You now have ${ready} ready-to-use ticket${ready !== 1 ? 's' : ''} stored locally. Each ticket can be exchanged for one temporary anonymous API key.`;
+                return `Successfully unblinded and finalized ${count} inference ticket${count !== 1 ? 's' : ''}. You now have ${ready} ready-to-use ticket${ready !== 1 ? 's' : ''} stored locally. Each ticket can be exchanged for one temporary unlinkable API key.`;
             } else if (action === 'prompt-edit') {
                 const deletedCount = response?.messagesDeleted || 0;
                 return `Edited a user prompt and truncated ${deletedCount} subsequent message${deletedCount !== 1 ? 's' : ''}. The conversation continues from this point with a fresh response.`;
@@ -146,7 +146,7 @@ export function getActivityDescription(log, detailed = false) {
             } else {
                 if (status >= 200 && status < 300) {
                     const ticketCount = response?.signed_responses?.length || 0;
-                    return `Successfully registered ${ticketCount} privacy-preserving inference tickets. These tickets allow you to request anonymous API keys without revealing your identity.`;
+                    return `Successfully registered ${ticketCount} privacy-preserving inference tickets. These tickets allow you to request unlinkable API keys without revealing your identity.`;
                 } else if (status === 0) {
                     return 'Failed to register privacy tickets. The registration server may be unavailable or your invitation code may be invalid.';
                 }
@@ -162,7 +162,7 @@ export function getActivityDescription(log, detailed = false) {
                 } else if (status === 0) {
                     return 'Failed to obtain confidential key';
                 }
-                return 'Requesting confidential anonymous key';
+                return 'Requesting confidential unlinkable key';
             } else {
                 if (status >= 200 && status < 300) {
                     const duration = response?.duration_minutes || 60;
@@ -170,7 +170,7 @@ export function getActivityDescription(log, detailed = false) {
                 } else if (status === 0) {
                     return 'Failed to obtain confidential API access. The anonymization server may be unavailable or your ticket may have already been used.';
                 }
-                return 'Exchanging privacy ticket for confidential anonymous API access...';
+                return 'Exchanging privacy ticket for confidential unlinkable API access...';
             }
         }
 
@@ -182,15 +182,15 @@ export function getActivityDescription(log, detailed = false) {
                 } else if (status === 0) {
                     return 'Failed to obtain ephemeral key';
                 }
-                return 'Requesting ephemeral anonymous key';
+                return 'Requesting ephemeral unlinkable key';
             } else {
                 if (status >= 200 && status < 300) {
                     const duration = response?.duration_minutes || 60;
-                    return `Successfully obtained an anonymous API key valid for ${duration} minutes. This key allows you to access AI models without linking requests to your identity.`;
+                    return `Successfully obtained an unlinkable API key valid for ${duration} minutes. This key allows you to access AI models without linking requests to your identity.`;
                 } else if (status === 0) {
                     return 'Failed to obtain API access. The anonymization server may be unavailable or your ticket may have already been used.';
                 }
-                return 'Exchanging privacy ticket for anonymous API access...';
+                return 'Exchanging privacy ticket for unlinkable API access...';
             }
         }
 

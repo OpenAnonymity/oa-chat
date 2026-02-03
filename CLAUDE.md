@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-oa-fastchat is a browser-based chat client that communicates directly with inference backends (OpenRouter by default) using ephemeral, anonymous access credentials via the Open Anonymity network. Development is HTML-first; production builds are bundled with esbuild and minified with terser.
+oa-fastchat is a browser-based chat client that communicates directly with inference backends (OpenRouter by default) using ephemeral, unlinkable access credentials via the Open Anonymity network. Development is HTML-first; production builds are bundled with esbuild and minified with terser.
 
 ## Development Commands
 
