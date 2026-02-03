@@ -3698,42 +3698,47 @@ div:has(> #input-card.scrubber-preview-expanded) {
     background: hsl(var(--color-muted-foreground) / 0.35);
 }
 
-/* Scrubbing animation - modern light trail */
-@property --scrubber-angle {
-    syntax: '<angle>';
-    initial-value: 0deg;
-    inherits: false;
-}
+/* Scrubbing animation - breathing blue border glow
+   Works in all browsers using standard CSS animations.
+   
+   Border radius calculation:
+   - input-card uses rounded-lg = 0.5rem = 8px
+   - With inset: -2px, extends outside the box
+   - border-radius = 8px + 2px = 10px
+*/
 
+/* Breathing blue border glow */
 #input-card.scrubbing::before {
     content: '';
     position: absolute;
-    inset: -1px;
-    border-radius: 13px;
-    padding: 1.5px;
-    background: conic-gradient(
-        from var(--scrubber-angle, 0deg),
-        transparent 0deg,
-        transparent 300deg,
-        rgba(59, 130, 246, 0.15) 330deg,
-        rgba(59, 130, 246, 0.85) 355deg,
-        rgba(147, 197, 253, 0.9) 360deg
+    inset: -2px; /* extend outside the box */
+    border-radius: 10px; /* 8px + 2px offset */
+    padding: 2.5px;
+    background: linear-gradient(
+        135deg,
+        rgba(59, 130, 246, 0.8) 0%,
+        rgba(96, 165, 250, 0.9) 25%,
+        rgba(59, 130, 246, 0.8) 50%,
+        rgba(96, 165, 250, 0.9) 75%,
+        rgba(59, 130, 246, 0.8) 100%
     );
     -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
     -webkit-mask-composite: xor;
     mask-composite: exclude;
-    animation: scrubber-light-trail 1.2s linear infinite;
     pointer-events: none;
+    z-index: -1; /* behind the card so it doesn't cover content */
+    animation: scrubber-breathing 1.8s ease-in-out infinite;
 }
 
-@keyframes scrubber-light-trail {
-    from { --scrubber-angle: 0deg; }
-    to { --scrubber-angle: 360deg; }
+@keyframes scrubber-breathing {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
     #input-card.scrubbing::before {
         animation: none;
+        opacity: 0.8;
     }
 }
 
