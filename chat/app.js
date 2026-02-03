@@ -3878,7 +3878,16 @@ class ChatApp {
                 });
 
                 // Process messages to include file content from stored metadata
-                const processedMessages = this.processMessagesWithFiles(filteredMessages, modelIdForRequest);
+                let processedMessages = this.processMessagesWithFiles(sanitizedMessages, modelIdForRequest);
+
+                // If we have stored API content (from @memory enrichment), replace the last message with it
+                if (this._lastApiContent && processedMessages.length > 0) {
+                    const lastMsg = processedMessages[processedMessages.length - 1];
+                    if (lastMsg.role === 'user') {
+                        lastMsg.content = this._lastApiContent;
+                        delete this._lastApiContent;  // Clear for next message
+                    }
+                }
 
                 // Create a placeholder message for streaming
                 const streamingMessageId = this.generateId();
@@ -4236,6 +4245,9 @@ class ChatApp {
             await chatDB.deleteSession(sessionId);
             await chatDB.deleteSessionMessages(sessionId);
             this.sessionScrollPositions.delete(sessionId);
+
+            // Remove embedding from vector store
+            sessionEmbedder.removeSessionEmbedding(sessionId);
 
             // Clear edit state if deleting current session
             if (this.state.currentSessionId === sessionId) {
