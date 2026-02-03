@@ -3648,6 +3648,13 @@ div:has(> #input-card.scrubber-preview-expanded) {
     color: hsl(var(--color-muted-foreground));
 }
 
+/* Ensure caret is visible on initial focus */
+#message-input {
+    /* Fallback to currentColor (inherits from text color), then use CSS variable */
+    caret-color: currentColor;
+    caret-color: hsl(var(--color-foreground));
+}
+
 /* Input padding adjustment for hint visibility */
 #message-input.hint-visible {
     padding-right: 150px !important;

@@ -640,6 +640,19 @@ export default class ChatInput {
             const updatedText = extractTextFromEditableDiff(container);
             const previousText = this.scrubberDiffState.previewLastText;
             
+            // If user deleted all content, exit edit mode and focus main input
+            if (updatedText === '' && previousText !== '') {
+                this.app.scrubberPending = null;
+                this.app.elements.messageInput.value = '';
+                this.app.elements.messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+                this.clearScrubberPreview();
+                // Focus main input after clearing
+                requestAnimationFrame(() => {
+                    this.app.elements.messageInput.focus();
+                });
+                return;
+            }
+            
             // Capture current cursor state (after the edit)
             const currentCursor = getEditableDiffSelectionState(container);
             const preEditCursor = this.scrubberDiffState.previewPreEditCursor || this.scrubberDiffState.previewLastCursor;
