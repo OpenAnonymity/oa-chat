@@ -54,6 +54,8 @@ export default class ChatInput {
         };
         this.scrubberModelsReady = false;
         this.scrubberModelSelect = null;
+        // Store undone scrubber state for redo functionality
+        this.scrubberUndoState = null;
     }
 
     /**
@@ -127,6 +129,45 @@ export default class ChatInput {
             }
             e.preventDefault();
             this.handleScrubberTabKeydown();
+        });
+
+        // Scrubber undo/redo: Cmd+Z to undo scrubbing, Cmd+Shift+Z to redo
+        this.app.elements.messageInput.addEventListener('keydown', (e) => {
+            if (!e.metaKey && !e.ctrlKey) return;
+            if (e.key.toLowerCase() !== 'z') return;
+            
+            if (e.shiftKey) {
+                // Cmd+Shift+Z: Redo scrubbing
+                if (this.scrubberUndoState) {
+                    e.preventDefault();
+                    // Restore the scrubbed state
+                    this.app.scrubberPending = this.scrubberUndoState;
+                    this.scrubberUndoState = null;
+                    this.app.elements.messageInput.value = this.app.scrubberPending.redacted;
+                    this.app.elements.messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+                    this.app.elements.messageInput.scrollTop = 0;
+                    this.app.elements.messageInput.setSelectionRange(0, 0);
+                    this.updateScrubberHintVisibility();
+                    this.updateScrubberPreviewHintVisibility();
+                }
+            } else {
+                // Cmd+Z: Undo scrubbing (only if current text matches scrubbed text and not modified)
+                const pending = this.app.scrubberPending;
+                const currentValue = this.app.elements.messageInput.value;
+                if (pending && pending.original && currentValue === pending.redacted && !pending.modified) {
+                    e.preventDefault();
+                    // Store for redo
+                    this.scrubberUndoState = { ...pending };
+                    // Restore original text
+                    this.app.elements.messageInput.value = pending.original;
+                    this.app.elements.messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+                    // Clear scrubber state (treat as never scrubbed)
+                    this.app.scrubberPending = null;
+                    this.clearScrubberPreview();
+                    this.updateScrubberHintVisibility();
+                    this.updateScrubberPreviewHintVisibility();
+                }
+            }
         });
 
         // Control key for preview: hold to show, release to hide
