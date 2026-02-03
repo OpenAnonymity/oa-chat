@@ -425,10 +425,10 @@ class SessionEmbedder {
                 sessionId: r.metadata?.sessionId,
                 title: r.metadata?.title,
                 conversationText: r.metadata?.conversationText,
-                score: r.score,
                 messageCount: r.metadata?.messageCount,
                 model: r.metadata?.model,
-                embeddedAt: r.metadata?.embeddedAt
+                embeddedAt: r.metadata?.embeddedAt,
+                updatedAt: r.metadata?.updatedAt
             }));
         } catch (error) {
             console.warn('[SessionEmbedder] Search failed:', error);
