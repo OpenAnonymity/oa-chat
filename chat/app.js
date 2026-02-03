@@ -1408,8 +1408,9 @@ class ChatApp {
             this.updateToolbarDivider();
         }, 100);
 
-        // Auto-focus input field on startup
+        // Auto-focus input field on startup and position cursor to ensure caret is visible
         this.elements.messageInput.focus();
+        this.elements.messageInput.setSelectionRange(0, 0);
 
         // Check for pending send from early interaction
         if (window.oaPendingSend) {
