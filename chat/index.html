@@ -436,9 +436,8 @@
                                                 (function() {
                                                     const input = document.getElementById('message-input');
                                                     if (input) {
-                                                        // Focus immediately and position cursor to ensure caret is visible
+                                                        // Focus immediately
                                                         input.focus();
-                                                        input.setSelectionRange(0, 0);
 
                                                         // Capture early interactions
                                                         window.oaPendingSend = false;

@@ -1408,9 +1408,8 @@ class ChatApp {
             this.updateToolbarDivider();
         }, 100);
 
-        // Auto-focus input field on startup and position cursor to ensure caret is visible
-        this.elements.messageInput.focus();
-        this.elements.messageInput.setSelectionRange(0, 0);
+        // Auto-focus input field on startup (with retries for reliability)
+        this.deferInitialInputFocus();
 
         // Check for pending send from early interaction
         if (window.oaPendingSend) {
@@ -5472,6 +5471,38 @@ class ChatApp {
             input.style.display = 'none';
             void input.offsetHeight; // Force reflow
             input.style.display = origDisplay || '';
+        }
+    }
+
+    deferInitialInputFocus() {
+        const retryFocus = () => this.focusMessageInput();
+
+        // Initial focus right away
+        this.focusMessageInput({ force: true });
+        // Re-assert focus after initial layout/render passes
+        requestAnimationFrame(retryFocus);
+        setTimeout(retryFocus, 150);
+        window.addEventListener('load', retryFocus, { once: true });
+        window.addEventListener('focus', retryFocus, { once: true });
+    }
+
+    focusMessageInput({ force = false } = {}) {
+        const input = this.elements.messageInput;
+        if (!input || input.disabled) return;
+
+        const active = document.activeElement;
+        if (!force && active && active !== document.body && active !== document.documentElement && active !== input) {
+            return;
+        }
+
+        if (input.offsetParent === null) return;
+
+        input.focus({ preventScroll: true });
+        try {
+            const len = input.value.length;
+            input.setSelectionRange(len, len);
+        } catch (error) {
+            // Some browsers may not support selection on focus; ignore.
         }
     }
 
