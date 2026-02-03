@@ -749,6 +749,18 @@ export default class ChatArea {
             return;
         }
 
+        // Restore memory context for all messages from persistent storage
+        // This repopulates the in-memory messageMemoryMap after a page refresh
+        messages.forEach(message => {
+            if (message.memoryContext && message.memoryContext.sessionIds?.length > 0) {
+                messageMemoryContext.setMessageContext(
+                    message.id,
+                    message.memoryContext.memories || [],
+                    message.memoryContext.sessionIds || []
+                );
+            }
+        });
+
         // Build HTML for all messages using shared templates
         const helpers = {
             processContentWithLatex: this.app.processContentWithLatex.bind(this.app),
