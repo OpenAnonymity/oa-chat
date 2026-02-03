@@ -3431,6 +3431,11 @@ class ChatApp {
                     }
                 }
 
+                // Pre-cache scrubber restoration in background (if applicable)
+                if (streamingMessage.scrubber?.canRestore) {
+                    this.preCacheScrubberRestore(streamingMessage);
+                }
+
             } catch (error) {
                 console.error('Error getting AI response:', error);
                 if (typingId) this.removeTypingIndicator(typingId);
@@ -3988,6 +3993,11 @@ class ChatApp {
                     if (streamingMessage.reasoning) {
                         this.chatArea.finalizeReasoningDisplay(streamingMessage.id, streamingMessage.reasoning, streamingMessage.reasoningDuration);
                     }
+                }
+
+                // Pre-cache scrubber restoration in background (if applicable)
+                if (streamingMessage.scrubber?.canRestore) {
+                    this.preCacheScrubberRestore(streamingMessage);
                 }
 
                 break retryLoop; // Success - exit retry loop
@@ -5953,6 +5963,7 @@ Your API key has been cleared. A new key from a different station will be obtain
         if (!canRestore) return;
 
         if (message.scrubber.restored) {
+            // Toggle back to redacted version
             const redactedResponse = message.scrubber.redactedResponse || message.content || '';
             message.content = redactedResponse;
             message.scrubber.restored = false;
@@ -5963,6 +5974,24 @@ Your API key has been cleared. A new key from a different station will be obtain
             return;
         }
 
+        // Check if we have a pre-cached restored response
+        if (message.scrubber.restoredResponse) {
+            // Use cached version - instant restore!
+            if (!message.scrubber.redactedResponse) {
+                message.scrubber.redactedResponse = message.content || '';
+            }
+            message.scrubber.restored = true;
+            message.content = message.scrubber.restoredResponse;
+            message.tokenCount = Math.ceil(message.scrubber.restoredResponse.length / 4);
+            await chatDB.saveMessage(message);
+            if (this.chatArea && this.isViewingSession(session.id)) {
+                this.chatArea.updateMessage(message);
+            }
+            this.showToast('PII restored', 'success');
+            return;
+        }
+
+        // No cached version - need to call API
         const stopLoading = this.showLoadingToast('Restoring PII...');
         try {
             const responseText = message.content || message.scrubber.redactedResponse || '';
@@ -6013,6 +6042,65 @@ Your API key has been cleared. A new key from a different station will be obtain
             if (typeof stopLoading === 'function') {
                 stopLoading();
             }
+        }
+    }
+
+    /**
+     * Pre-cache scrubber restoration for an assistant message in the background.
+     * Called after response completes to have the restored version ready when user clicks restore.
+     * @param {Object} message - The assistant message with scrubber metadata
+     */
+    async preCacheScrubberRestore(message) {
+        // Only pre-cache if message has scrubber data and can be restored
+        if (!message?.scrubber?.canRestore) return;
+        // Skip if already cached
+        if (message.scrubber.restoredResponse) return;
+        // Skip if no response content
+        if (!message.content) return;
+
+        try {
+            const session = this.getCurrentSession();
+            if (!session) return;
+
+            const messages = await chatDB.getSessionMessages(session.id);
+            const messageIndex = messages.findIndex(msg => msg.id === message.id);
+            if (messageIndex === -1) return;
+
+            const responseText = message.content;
+            const useContextRestore = message.scrubber?.mode === 'context' ||
+                (!message.scrubber?.redactedPrompt && message.scrubber?.canRestore);
+
+            let restoreResult = null;
+            if (useContextRestore) {
+                const historyMessages = messages.slice(0, messageIndex).filter(msg => !msg.isLocalOnly);
+                const { original, redacted } = this.buildScrubberRestoreContext(historyMessages);
+                if (!original.trim() || !redacted.trim()) return;
+                restoreResult = await this.scrubberService.restoreResponseWithContext({
+                    originalContext: original,
+                    redactedContext: redacted,
+                    responseText,
+                    session
+                });
+            } else {
+                if (!message.scrubber.originalPrompt || !message.scrubber.redactedPrompt) return;
+                restoreResult = await this.scrubberService.restoreResponse({
+                    originalPrompt: message.scrubber.originalPrompt,
+                    redactedPrompt: message.scrubber.redactedPrompt,
+                    responseText,
+                    session
+                });
+            }
+
+            if (restoreResult?.success && restoreResult.text) {
+                // Cache the restored response without showing it
+                message.scrubber.restoredResponse = restoreResult.text;
+                message.scrubber.redactedResponse = responseText;
+                await chatDB.saveMessage(message);
+                console.log('[Scrubber] Pre-cached restoration for message:', message.id);
+            }
+        } catch (error) {
+            // Silently fail - this is just a background optimization
+            console.warn('[Scrubber] Pre-cache failed:', error);
         }
     }
 }
