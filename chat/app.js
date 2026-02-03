@@ -31,6 +31,7 @@ import accountService from './services/accountService.js';
 import apiKeyStore from './services/apiKeyStore.js';
 import { generateUlid21 } from './services/ulid.js';
 import { chatDB } from './db.js';
+import sessionEmbedder from './services/sessionEmbedder.js';
 
 const DEFAULT_MODEL_NAME = inferenceService.getDefaultModelName();
 const SESSION_PAGE_SIZE = 80;
@@ -1232,6 +1233,11 @@ class ChatApp {
         await apiKeyStore.loadApiKey();
         this.scrubberService.init().catch((error) => {
             console.warn('Scrubber init failed:', error);
+        });
+
+        // Initialize session embedder for semantic search (non-blocking)
+        sessionEmbedder.init().catch((error) => {
+            console.warn('Session embedder init failed:', error);
         });
 
         await accountService.init();
@@ -2532,6 +2538,9 @@ class ChatApp {
         sessionStorage.setItem(SESSION_STORAGE_KEY, session.id);
         await chatDB.saveSetting('currentSessionId', session.id);
 
+        // Record activity for session embedding
+        sessionEmbedder.recordActivity(session.id);
+
         // Update URL to reflect new session
         this.updateUrlWithSession(session.id);
 
@@ -2578,6 +2587,9 @@ class ChatApp {
         this.state.currentSessionId = sessionId;
         sessionStorage.setItem(SESSION_STORAGE_KEY, sessionId);
         chatDB.saveSetting('currentSessionId', sessionId);
+
+        // Record activity for session embedding (tracks inactivity for semantic search)
+        sessionEmbedder.recordActivity(sessionId);
 
         // Keep current search state (global setting)
         const session = this.state.sessionsById.get(sessionId) || this.state.sessions.find(s => s.id === sessionId);
@@ -3989,6 +4001,9 @@ class ChatApp {
                     }
                 }
 
+                // Record activity for session embedding after successful message
+                sessionEmbedder.recordActivity(session.id);
+
                 break retryLoop; // Success - exit retry loop
 
             } catch (error) {
@@ -5344,6 +5359,21 @@ class ChatApp {
                 document.execCommand('insertText', false, pastedText); // eslint-disable-line
                 // Trigger input event to update UI (auto-resize, send button state)
                 input.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+        });
+
+        // Embed current session when page becomes hidden (tab switch, minimize)
+        // Uses forceEmbedSession which only embeds if there's new content since last embed
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden' && this.state.currentSessionId) {
+                sessionEmbedder.forceEmbedSession(this.state.currentSessionId);
+            }
+        });
+
+        // Embed current session when page is about to unload (close tab, navigate away)
+        window.addEventListener('pagehide', () => {
+            if (this.state.currentSessionId) {
+                sessionEmbedder.forceEmbedSession(this.state.currentSessionId);
             }
         });
     }
