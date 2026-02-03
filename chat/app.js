@@ -116,6 +116,7 @@ class ChatApp {
             messagesContainer: document.getElementById('messages-container'),
             messageInput: document.getElementById('message-input'),
             inputCard: document.getElementById('input-card'),
+            scrubberPreviewDiff: document.getElementById('scrubber-preview-diff'),
             sendBtn: document.getElementById('send-btn'),
             modelPickerBtn: document.getElementById('model-picker-btn'),
             modelPickerModal: document.getElementById('model-picker-modal'),

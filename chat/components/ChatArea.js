@@ -343,9 +343,18 @@ export default class ChatArea {
         if (isCollapsed) {
             content.classList.remove('collapsed');
             btn.textContent = 'Show less';
+            if (bubble.dataset.lockedHeight) {
+                bubble.classList.add('height-locked');
+                bubble.style.height = `${bubble.dataset.lockedHeight}px`;
+            }
         } else {
             content.classList.add('collapsed');
             btn.textContent = 'Show more';
+            if (bubble.classList.contains('height-locked')) {
+                bubble.dataset.lockedHeight = bubble.style.height.replace('px', '');
+                bubble.classList.remove('height-locked');
+                bubble.style.height = '';
+            }
         }
     }
 
@@ -466,6 +475,10 @@ export default class ChatArea {
         const message = messages.find(m => m.id === messageId);
         if (!message || message.role !== 'user' || !message.scrubber) return;
 
+        const messageWrapper = document.querySelector(`[data-message-id="${messageId}"]`);
+        const collapsible = messageWrapper?.querySelector('.user-message-collapsible');
+        const wasExpanded = collapsible ? !collapsible.classList.contains('collapsed') : false;
+
         // Lock the height on first toggle (capture current height before changing content)
         if (!message.scrubber.lockedHeight) {
             const messageWrapper = document.querySelector(`[data-message-id="${messageId}"]`);
@@ -492,6 +505,16 @@ export default class ChatArea {
 
         // Re-render just this message
         this.updateMessage(message);
+
+        if (wasExpanded) {
+            const newWrapper = document.querySelector(`[data-message-id="${messageId}"]`);
+            const newCollapsible = newWrapper?.querySelector('.user-message-collapsible');
+            const newBtn = newWrapper?.querySelector('.user-message-show-more');
+            if (newCollapsible) {
+                newCollapsible.classList.remove('collapsed');
+                if (newBtn) newBtn.textContent = 'Show less';
+            }
+        }
     }
 
     /**

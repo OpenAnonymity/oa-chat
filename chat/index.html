@@ -185,6 +185,7 @@
         })();
     </script>
 
+
     <!-- libcurl.js for encrypted proxying - loaded async, not needed for initial render -->
     <script>
         // Promise wrapper for lazy libcurl initialization
@@ -408,7 +409,7 @@
                                 <!-- Textarea Container -->
                                 <div class="relative w-full flex flex-col">
                                     <div class="rounded-md w-full text-muted-foreground focus-within:text-foreground transition-colors bg-transparent">
-                                        <div class="flex w-full min-w-0 h-max py-1.5 max-h-96 bg-transparent px-2 overflow-y-auto">
+                                        <div class="scrubber-input-row flex h-max py-1.5 max-h-96 bg-transparent px-2 overflow-y-auto relative">
                                             <textarea
                                                 id="message-input"
                                                 rows="1"
@@ -418,7 +419,10 @@
                                                 autofocus
                                             ></textarea>
                                             <div id="scrubber-shortcut-hint" class="scrubber-shortcut-hint scrubber-shortcut-inline" aria-hidden="true">
-                                                <span><span class="scrubber-shortcut-key">tab</span> <span class="scrubber-shortcut-key">tab</span> to scrub PII</span>
+                                                <span><span class="scrubber-shortcut-key">tab</span> <span class="scrubber-shortcut-key">tab</span> to scrub</span>
+                                            </div>
+                                            <div id="scrubber-preview-hint" class="scrubber-shortcut-hint scrubber-preview-hint" aria-hidden="true">
+                                                <span id="scrubber-preview-hint-text"><span class="scrubber-shortcut-key">ctrl</span> preview</span>
                                             </div>
                                             <script>
                                                 (function() {
@@ -440,6 +444,7 @@
                                                     }
                                                 })();
                                             </script>
+                                            <div id="scrubber-preview-diff" class="scrubber-preview-diff" aria-hidden="true"></div>
                                         </div>
                                     </div>
                                 </div>
