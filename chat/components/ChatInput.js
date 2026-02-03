@@ -1402,7 +1402,11 @@ export default class ChatInput {
             const selected = scrubberService.getSelectedModel();
             const options = models.map(model => {
                 const value = model.id || model.name;
-                const label = model.name || model.id;
+                let label = model.name || model.id;
+                // Add "slow" label for slow models
+                if (scrubberService.isSlowModel(value)) {
+                    label += ' (slow)';
+                }
                 return `<option value="${value}">${label}</option>`;
             }).join('');
             let html = options || '<option value="" disabled>No models available</option>';
