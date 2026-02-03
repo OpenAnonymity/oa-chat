@@ -3957,3 +3957,51 @@ html {
     transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), width 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     pointer-events: none;
 }
+
+/* ============================================
+   MENTION POPUP STYLES
+   ============================================ */
+#mention-popup {
+    background-color: hsl(var(--color-background));
+    border: 1px solid hsl(var(--color-border));
+    border-radius: 0.5rem;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    padding: 0.5rem;
+    max-width: 100%;
+}
+
+#mention-popup.hidden {
+    display: none;
+}
+
+.mention-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.mention-item {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    background: transparent;
+    border: none;
+    border-radius: 0.375rem;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+    text-align: left;
+    font-size: 0.875rem;
+    color: hsl(var(--color-foreground));
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.mention-item:hover {
+    background-color: hsl(var(--color-accent-primary) / 0.1);
+}
+
+.mention-item:active {
+    background-color: hsl(var(--color-accent-primary) / 0.15);
+}
+
