@@ -4168,6 +4168,9 @@ class ChatApp {
             await chatDB.deleteSessionMessages(sessionId);
             this.sessionScrollPositions.delete(sessionId);
 
+            // Remove embedding from vector store
+            sessionEmbedder.removeSessionEmbedding(sessionId);
+
             // Clear edit state if deleting current session
             if (this.state.currentSessionId === sessionId) {
                 this.editingMessageId = null;

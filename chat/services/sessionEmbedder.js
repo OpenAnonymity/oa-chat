@@ -463,6 +463,53 @@ class SessionEmbedder {
     }
 
     /**
+     * Remove a session's embedding from the vector store.
+     * Call this when a session is deleted.
+     *
+     * @param {string} sessionId - The session ID to remove
+     * @returns {Promise<boolean>} True if removed, false if not found or error
+     */
+    async removeSessionEmbedding(sessionId) {
+        if (!sessionId) return false;
+
+        if (!this.initialized || !this.store) {
+            console.debug('[SessionEmbedder] Not initialized, cannot remove embedding');
+            return false;
+        }
+
+        try {
+            // Generate the same vector ID used when upserting
+            const vectorId = encodeVectorId({
+                namespace: 'chat',
+                type: 'session',
+                entityId: sessionId
+            });
+
+            const removed = await this.store.remove(vectorId);
+
+            // Also remove from active sessions tracking
+            this.activeSessionIds.delete(sessionId);
+
+            // Remove from backfill queue if present
+            const queueIndex = this.backfillQueue.indexOf(sessionId);
+            if (queueIndex !== -1) {
+                this.backfillQueue.splice(queueIndex, 1);
+            }
+
+            if (removed > 0) {
+                console.log(`[SessionEmbedder] Removed embedding for session ${sessionId}`);
+                return true;
+            } else {
+                console.debug(`[SessionEmbedder] No embedding found for session ${sessionId}`);
+                return false;
+            }
+        } catch (error) {
+            console.warn(`[SessionEmbedder] Failed to remove embedding for session ${sessionId}:`, error);
+            return false;
+        }
+    }
+
+    /**
      * Clear all embedded sessions from the vector store.
      */
     async clear() {
