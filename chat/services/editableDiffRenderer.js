@@ -570,8 +570,14 @@ export const extractTextFromEditableDiff = (container) => {
         }
     });
 
-    const text = output.join('').replace(/\u00a0/g, ' ').replace(/\u200B/g, '');
-    return text.replace(/\r\n/g, '\n');
+    let text = output.join('').replace(/\u00a0/g, ' ').replace(/\u200B/g, '');
+    text = text.replace(/\r\n/g, '\n');
+    // When content is deleted, browsers leave behind <br> elements that become trailing newlines.
+    // If the result is only whitespace/newlines, return empty string.
+    if (text.trim() === '') {
+        return '';
+    }
+    return text;
 };
 
 const insertTextAtCursor = (text) => {
