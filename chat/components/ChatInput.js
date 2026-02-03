@@ -38,9 +38,10 @@ export default class ChatInput {
         mentionService.initialize(mentionPopup, this.app.elements.messageInput);
 
         // Auto-resize textarea and clear file undo stack on text input
-        this.app.elements.messageInput.addEventListener('input', (e) => {
-            this.app.elements.messageInput.style.height = '24px';
-            this.app.elements.messageInput.style.height = Math.min(this.app.elements.messageInput.scrollHeight, 384) + 'px';
+        this.app.elements.messageInput.addEventListener('input', () => {
+            const input = this.app.elements.messageInput;
+            this.app.resetMessageInputLayout();
+            input.style.height = Math.min(input.scrollHeight, 384) + 'px';
             this.app.updateInputState();
             
             // Check for mention context

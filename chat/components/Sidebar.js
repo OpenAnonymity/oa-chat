@@ -98,8 +98,10 @@ export default class Sidebar {
         const isActive = session.id === this.app.state.currentSessionId;
         const titleClass = session.title === 'New Chat' ? 'italic text-muted-foreground' : '';
         const isShared = !!session.shareInfo?.shareId;
-        // Show imported indicator for both pure imports and forked imports
-        const isImported = !!(session.importedFrom || session.forkedFrom || session.importedSource);
+        // Show imported indicator for pure imports and forked imports (not local forks)
+        // forkedFrom alone (without importedMessageCount) indicates a LOCAL fork, not an import
+        const isImported = !!(session.importedFrom || session.importedSource ||
+            (session.forkedFrom && (session.importedMessageCount || 0) > 0));
         const shareLabel = isShared ? 'Update Share' : 'Share';
 
         // Build indicator icons

@@ -34,6 +34,7 @@ import { generateUlid21 } from './services/ulid.js';
 import { memoryService } from './services/memoryService.js';
 import { messageMemoryContext } from './services/messageMemoryContext.js';
 import { chatDB } from './db.js';
+import sessionEmbedder from './services/sessionEmbedder.js';
 
 const DEFAULT_MODEL_NAME = inferenceService.getDefaultModelName();
 const SESSION_PAGE_SIZE = 80;
@@ -68,6 +69,17 @@ const MODEL_NAME_ALIASES = new Map([
 function generateSessionId() {
     return generateUlid21();
 }
+
+function emitDesktopEvent(name, detail = {}) {
+    if (typeof window === 'undefined') return;
+    if (typeof window.dispatchEvent !== 'function') return;
+    if (typeof CustomEvent !== 'function') return;
+    try {
+        window.dispatchEvent(new CustomEvent(name, { detail }));
+    } catch (err) {
+        // No-op: desktop hooks should never break web behavior.
+    }
+}
 const SESSION_STORAGE_KEY = 'oa-current-session'; // Tab-scoped session persistence
 const DELETE_HISTORY_COPY = {
     title: 'Delete all chat history',
@@ -96,6 +108,7 @@ class ChatApp {
             currentSessionId: null,
             models: [],
             modelsLoading: false,
+            modelsVersion: 0,
             pendingModelName: null // Model selected before session is created (display name)
         };
 
@@ -1231,6 +1244,11 @@ class ChatApp {
             console.warn('Scrubber init failed:', error);
         });
 
+        // Initialize session embedder for semantic search (non-blocking)
+        sessionEmbedder.init().catch((error) => {
+            console.warn('Session embedder init failed:', error);
+        });
+
         await accountService.init();
         if (typeof requestIdleCallback === 'function') {
             requestIdleCallback(() => accountService.maybeAutoUnlock());
@@ -1333,6 +1351,8 @@ class ChatApp {
         this.chatInput.updateMemoryToggleUI();
         this.chatInput.updateReasoningToggleUI();
         this.updateShareButtonUI();
+        // Force Safari to reset textarea layout after restoring session
+        this.resetMessageInputLayout({ resetScroll: true });
 
         // Notify right panel of current session
         const currentSession = this.getCurrentSession();
@@ -1352,9 +1372,13 @@ class ChatApp {
         // Updates model picker with icons once loaded
         this.loadModels().then(() => {
             this.renderCurrentModel(); // Re-render button with model icons
-            // Also re-render model list if modal is open
-            if (this.modelPicker && !this.elements.modelPickerModal.classList.contains('hidden')) {
-                this.modelPicker.renderModels(this.elements.modelSearch?.value || '');
+            if (this.modelPicker) {
+                // Re-render model list if modal is open, otherwise warm it in idle time.
+                if (!this.elements.modelPickerModal.classList.contains('hidden')) {
+                    this.modelPicker.renderModels(this.elements.modelSearch?.value || '');
+                } else {
+                    this.modelPicker.warmRender();
+                }
             }
         }).catch(error => {
             console.warn('Background model loading failed:', error);
@@ -1781,6 +1805,9 @@ class ChatApp {
             sessionStorage.setItem(SESSION_STORAGE_KEY, existingSession.id);
             await chatDB.saveSetting('currentSessionId', existingSession.id);
 
+            // Record activity for session embedding (imported session has content)
+            sessionEmbedder.recordActivity(existingSession.id);
+
             this.updateUrlWithSession(normalizedShareId);
             this.renderSessions();
             await this.renderMessages();
@@ -1907,6 +1934,9 @@ class ChatApp {
             this.state.currentSessionId = session.id;
             sessionStorage.setItem(SESSION_STORAGE_KEY, session.id);
             await chatDB.saveSetting('currentSessionId', session.id);
+
+            // Record activity for session embedding (imported session has content)
+            sessionEmbedder.recordActivity(session.id);
 
             this.updateUrlWithSession(normalizedShareId);
             this.renderSessions();
@@ -2073,7 +2103,7 @@ class ChatApp {
         const shareInfo = session.shareInfo;
 
         // Remove all color classes first
-        btn.classList.remove('text-amber-600', 'text-green-600', 'text-muted-foreground');
+        btn.classList.remove('text-amber-600', 'text-status-success', 'text-muted-foreground');
 
         if (shareInfo?.shareId) {
             const isExpired = shareInfo.expiresAt && Date.now() > shareInfo.expiresAt;
@@ -2081,7 +2111,7 @@ class ChatApp {
                 btn.classList.add('text-amber-600');
                 if (btnText) btnText.textContent = 'Expired';
             } else {
-                btn.classList.add('text-green-600');
+                btn.classList.add('text-status-success');
                 if (btnText) btnText.textContent = 'Shared';
             }
         } else {
@@ -2352,6 +2382,7 @@ class ChatApp {
             console.error('Failed to load models:', error);
             // Fallback models are already set in API
         }
+        this.state.modelsVersion += 1;
         this.state.modelsLoading = false;
     }
 
@@ -2527,6 +2558,9 @@ class ChatApp {
         sessionStorage.setItem(SESSION_STORAGE_KEY, session.id);
         await chatDB.saveSetting('currentSessionId', session.id);
 
+        // Record activity for session embedding
+        sessionEmbedder.recordActivity(session.id);
+
         // Update URL to reflect new session
         this.updateUrlWithSession(session.id);
 
@@ -2574,6 +2608,9 @@ class ChatApp {
         sessionStorage.setItem(SESSION_STORAGE_KEY, sessionId);
         chatDB.saveSetting('currentSessionId', sessionId);
 
+        // Record activity for session embedding (tracks inactivity for semantic search)
+        sessionEmbedder.recordActivity(sessionId);
+
         // Keep current search state (global setting)
         const session = this.state.sessionsById.get(sessionId) || this.state.sessions.find(s => s.id === sessionId);
         if (session) {
@@ -2600,6 +2637,7 @@ class ChatApp {
 
         // Update UI based on new session's streaming state
         this.updateInputState();
+        this.resetMessageInputLayout({ resetScroll: true });
         this.updateShareButtonUI();
 
         // Notify right panel of session change
@@ -2713,10 +2751,10 @@ class ChatApp {
     /**
      * Handles new chat request with validation (prevents empty duplicate sessions).
      */
-    async handleNewChatRequest() {
+    async handleNewChatRequest(options = {}) {
         // Clear current session - no session is selected
         // The session will be created when the user sends their first message
-        await this.clearCurrentSession();
+        await this.clearCurrentSession(options);
 
         // Close sidebar on mobile after creating new chat
         if (this.isMobileView()) {
@@ -2725,12 +2763,51 @@ class ChatApp {
     }
 
     /**
+     * Desktop-only helper to send a chatbar message without DOM polling.
+     * This is a no-op for normal web usage unless invoked explicitly.
+     * payload: { text, files, model, searchEnabled }
+     */
+    async handleChatbarSend(payload = {}) {
+        const { text = '', files = [], model = null, searchEnabled } = payload || {};
+        if (!text && (!files || files.length === 0)) return;
+
+        await this.handleNewChatRequest({ awaitRender: true, immediate: true, emitDesktop: true });
+
+        if (model && this.modelPicker) {
+            await this.modelPicker.selectModel(model);
+        }
+
+        if (searchEnabled !== undefined) {
+            this.searchEnabled = searchEnabled;
+            if (this.chatInput) {
+                this.chatInput.updateSearchToggleUI();
+            }
+        }
+
+        if (files && files.length > 0) {
+            await this.handleFileUpload(files);
+        }
+
+        if (this.elements.messageInput) {
+            this.elements.messageInput.value = text || '';
+            this.elements.messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+
+        this.sendMessage();
+    }
+
+    /**
      * Clears the current session, returning to the startup state.
      * No session is selected until the user sends their first message.
      */
-    async clearCurrentSession() {
+    async clearCurrentSession(options = {}) {
+        const { awaitRender = false, immediate = false, emitDesktop = false } = options;
         this.saveCurrentSessionScrollPosition();
         this.state.currentSessionId = null;
+
+        if (immediate && this.chatArea?.renderEmptyStateImmediate) {
+            this.chatArea.renderEmptyStateImmediate();
+        }
 
         // Load the selected model from settings so UI shows correct model
         const storedModelPreference = await chatDB.getSetting('selectedModel');
@@ -2744,13 +2821,14 @@ class ChatApp {
 
         // Update UI to reflect no session selected
         this.renderSessions();
-        this.renderMessages();
+        const renderMessagesPromise = this.renderMessages();
         this.renderCurrentModel();
 
         // Clear input
         if (this.elements.messageInput) {
             this.elements.messageInput.value = '';
         }
+        this.resetMessageInputLayout({ resetScroll: true });
 
         // Update input state
         this.updateInputState();
@@ -2767,6 +2845,14 @@ class ChatApp {
         // Clear right panel
         if (this.rightPanel) {
             this.rightPanel.onSessionChange(null);
+        }
+
+        if (emitDesktop) {
+            emitDesktopEvent('oa-desktop:session-cleared', { sessionId: null });
+        }
+
+        if (awaitRender) {
+            await renderMessagesPromise;
         }
 
         // Focus input after UI updates complete
@@ -3649,6 +3735,12 @@ class ChatApp {
                 // Clear pending context after using it
                 this.pendingMemoryContext = null;
             }
+            if (userMessage?.id) {
+                emitDesktopEvent('oa-desktop:user-message-added', {
+                    sessionId: session.id,
+                    messageId: userMessage.id
+                });
+            }
 
             // Clear input and files
             this.elements.messageInput.value = '';
@@ -3657,7 +3749,7 @@ class ChatApp {
             this.renderFilePreviews();
             this.updateFileCountBadge();
             this.updateInputState();
-            this.elements.messageInput.style.height = '24px';
+            this.resetMessageInputLayout({ resetScroll: true });
 
             // Auto-scroll remains paused while the response streams
 
@@ -3983,6 +4075,9 @@ class ChatApp {
                         this.chatArea.finalizeReasoningDisplay(streamingMessage.id, streamingMessage.reasoning, streamingMessage.reasoningDuration);
                     }
                 }
+
+                // Record activity for session embedding after successful message
+                sessionEmbedder.recordActivity(session.id);
 
                 break retryLoop; // Success - exit retry loop
 
@@ -5128,7 +5223,16 @@ class ChatApp {
             if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
                 e.preventDefault();
                 if (this.modelPicker) {
-                    this.modelPicker.open();
+                    this.modelPicker.toggle();
+                }
+            }
+
+            // Ctrl+M or Cmd+M for memory selector
+            if ((e.metaKey || e.ctrlKey) && e.key === 'm') {
+                e.preventDefault();
+                if (this.memorySelector) {
+                    const query = this.elements.messageInput.value.trim();
+                    this.memorySelector.open(query);
                 }
             }
 
@@ -5351,6 +5455,21 @@ class ChatApp {
                 input.dispatchEvent(new Event('input', { bubbles: true }));
             }
         });
+
+        // Embed current session when page becomes hidden (tab switch, minimize)
+        // Uses forceEmbedSession which only embeds if there's new content since last embed
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden' && this.state.currentSessionId) {
+                sessionEmbedder.forceEmbedSession(this.state.currentSessionId);
+            }
+        });
+
+        // Embed current session when page is about to unload (close tab, navigate away)
+        window.addEventListener('pagehide', () => {
+            if (this.state.currentSessionId) {
+                sessionEmbedder.forceEmbedSession(this.state.currentSessionId);
+            }
+        });
     }
 
     /**
@@ -5449,6 +5568,22 @@ class ChatApp {
             }
         } catch (error) {
             console.debug('Error enriching citations:', error);
+        }
+    }
+
+    resetMessageInputLayout({ resetScroll = false } = {}) {
+        const input = this.elements.messageInput;
+        if (!input) return;
+        input.style.height = '24px';
+        if (resetScroll) {
+            input.scrollTop = 0;
+            input.scrollLeft = 0;
+            // Force Safari to completely recalculate textarea layout
+            // by toggling display - this clears Safari's cached content rendering
+            const origDisplay = input.style.display;
+            input.style.display = 'none';
+            void input.offsetHeight; // Force reflow
+            input.style.display = origDisplay || '';
         }
     }
 
@@ -6008,4 +6143,5 @@ Your API key has been cleared. A new key from a different station will be obtain
 // Initialize app when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
     window.app = new ChatApp();
+    window.oaDesktopReady = true;
 });

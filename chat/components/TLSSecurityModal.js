@@ -104,8 +104,8 @@ class TLSSecurityModal {
                 <!-- Header -->
                 <div class="p-4 border-b border-border flex items-center justify-between">
                     <div class="flex items-center gap-2.5">
-                        <div class="flex h-8 w-8 items-center justify-center rounded-lg ${isEncrypted ? 'bg-green-100 dark:bg-green-500/20' : 'bg-muted'}">
-                            <svg class="w-4 h-4 ${isEncrypted ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <div class="flex h-8 w-8 items-center justify-center rounded-lg ${isEncrypted ? 'bg-status-success/15' : 'bg-muted'}">
+                            <svg class="w-4 h-4 ${isEncrypted ? 'text-status-success' : 'text-muted-foreground'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 ${isEncrypted
                                     ? '<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>'
                                     : '<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>'
@@ -214,21 +214,21 @@ class TLSSecurityModal {
                         </h3>
                         <div class="p-3 rounded-lg border border-border bg-card text-xs space-y-2">
                             <div class="flex items-start gap-2">
-                                <span class="text-green-500">✓</span>
+                                <span class="text-status-success">✓</span>
                                 <div>
                                     <strong class="text-foreground">mbedTLS crypto</strong>
                                     <span class="text-muted-foreground"> — widely audited, used by millions of devices</span>
                                 </div>
                             </div>
                             <div class="flex items-start gap-2">
-                                <span class="text-green-500">✓</span>
+                                <span class="text-status-success">✓</span>
                                 <div>
                                     <strong class="text-foreground">libcurl.js WASM</strong>
                                     <span class="text-muted-foreground"> — open source, you can audit/rebuild</span>
                                 </div>
                             </div>
                             <div class="flex items-start gap-2">
-                                <span class="text-green-500">✓</span>
+                                <span class="text-status-success">✓</span>
                                 <div>
                                     <strong class="text-foreground">Local static assets</strong>
                                     <span class="text-muted-foreground"> — bundled locally for consistent integrity</span>

@@ -387,6 +387,17 @@ export default class ChatArea {
     }
 
     /**
+     * Immediately renders the empty state without async loads.
+     * Desktop hooks can call this to avoid intermediate flashes.
+     */
+    renderEmptyStateImmediate() {
+        const messagesContainer = this.app.elements.messagesContainer;
+        if (!messagesContainer) return;
+        messagesContainer.innerHTML = buildEmptyState();
+        this.attachDownloadHandler();
+    }
+
+    /**
      * Copies text to clipboard with Safari fallback.
      * Uses execCommand for immediate synchronous copy (required for Safari user activation).
      * @param {string} text - Text to copy
@@ -492,13 +503,13 @@ export default class ChatArea {
         // Replace with checkmark icon
         svg.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />';
         btn.title = 'Copied!';
-        btn.classList.add('text-green-600');
+        btn.classList.add('text-status-success');
 
         setTimeout(() => {
             // Restore original icon
             svg.innerHTML = originalSvgContent;
             btn.title = originalTitle;
-            btn.classList.remove('text-green-600');
+            btn.classList.remove('text-status-success');
 
             // Blur the button to ensure it hides if relying on focus state
             btn.blur();
@@ -751,7 +762,9 @@ export default class ChatArea {
         // importedFrom = share import (can still receive updates)
         // importedSource = external import (ChatGPT, etc.)
         // forkedFrom = was imported but user made changes (no longer receives updates)
-        const wasImported = session.importedFrom || session.forkedFrom || session.importedSource;
+        // Note: forkedFrom alone (without importedMessageCount) indicates a LOCAL fork, not an import
+        const wasImported = session.importedFrom || session.importedSource ||
+            (session.forkedFrom && (session.importedMessageCount || 0) > 0);
         const importedCount = session.importedMessageCount || 0;
         const hasNewMessagesAfterImport = wasImported && importedCount > 0 && messages.length > importedCount;
 
