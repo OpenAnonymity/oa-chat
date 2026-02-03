@@ -442,6 +442,9 @@ export default class ChatInput {
 
                 this.app.elements.messageInput.value = result.text;
                 this.app.elements.messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+                // Scroll to top and place cursor at the beginning
+                this.app.elements.messageInput.scrollTop = 0;
+                this.app.elements.messageInput.setSelectionRange(0, 0);
 
                 if (hasChanges) {
                     const existingOriginal = this.app.scrubberPending?.original;
