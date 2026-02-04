@@ -186,7 +186,6 @@ class ChatApp {
         this.pendingStorageRefresh = false;
         this.storageReloadTimer = null;
         this.pendingReferral = null;
-        this.accountGlowTimeout = null;
 
         // Link preview state
         this.linkPreviewCard = document.getElementById('link-preview-card');
@@ -2201,9 +2200,8 @@ class ChatApp {
      * Show a toast notification
      * @param {string} message - Message to display
      * @param {string} type - 'success' or 'error'
-     * @param {number} durationMs - Time to display toast
      */
-    showToast(message, type = 'success', durationMs = 3000) {
+    showToast(message, type = 'success') {
         this.clearToast();
 
         const toast = document.createElement('div');
@@ -2219,7 +2217,7 @@ class ChatApp {
         this._toastTimeout = setTimeout(() => {
             toast.classList.add('animate-out', 'fade-out', 'slide-out-to-bottom-4');
             setTimeout(() => toast.remove(), 150);
-        }, durationMs);
+        }, 3000);
     }
 
     clearToast() {
@@ -2228,7 +2226,15 @@ class ChatApp {
         this._toastTimeout = null;
     }
 
-    highlightAccountButton(durationMs = 5000) {
+    clearAccountHighlight() {
+        const btn = document.getElementById('account-tab-btn');
+        const showBtn = document.getElementById('show-sidebar-btn');
+        if (btn) btn.classList.remove('account-glow');
+        if (showBtn) showBtn.classList.remove('account-glow');
+    }
+
+    highlightAccountButton() {
+        this.clearAccountHighlight();
         const sidebar = this.elements?.sidebar;
         const sidebarWidth = sidebar ? sidebar.getBoundingClientRect().width : 0;
         const sidebarHidden = sidebarWidth < 40;
@@ -2240,14 +2246,6 @@ class ChatApp {
         if (sidebarHidden && showBtn) {
             showBtn.classList.add('account-glow');
         }
-        if (this.accountGlowTimeout) {
-            clearTimeout(this.accountGlowTimeout);
-        }
-        this.accountGlowTimeout = setTimeout(() => {
-            if (btn) btn.classList.remove('account-glow');
-            if (showBtn) showBtn.classList.remove('account-glow');
-            this.accountGlowTimeout = null;
-        }, durationMs);
     }
 
     showLoadingToast(message) {
@@ -2323,6 +2321,46 @@ class ChatApp {
         toast.appendChild(dismissBtn);
         document.body.appendChild(toast);
         this.updateToastVisible = true;
+    }
+
+    showReferralToast(message) {
+        const existingToast = document.getElementById('app-referral-toast');
+        if (existingToast) {
+            existingToast.remove();
+        }
+
+        const toast = document.createElement('div');
+        toast.id = 'app-referral-toast';
+        toast.className = 'update-toast';
+        toast.setAttribute('role', 'status');
+        toast.setAttribute('aria-live', 'polite');
+
+        const label = document.createElement('span');
+        label.className = 'update-toast__label';
+        label.textContent = message;
+
+        const dismissBtn = document.createElement('button');
+        dismissBtn.type = 'button';
+        dismissBtn.className = 'update-toast__dismiss';
+        dismissBtn.setAttribute('aria-label', 'Dismiss message');
+        dismissBtn.innerHTML = `
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+                <path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+            </svg>
+        `;
+        dismissBtn.addEventListener('click', () => {
+            this.clearReferralToast();
+        });
+
+        toast.appendChild(label);
+        toast.appendChild(dismissBtn);
+        document.body.appendChild(toast);
+        this.highlightAccountButton();
+    }
+
+    clearReferralToast() {
+        document.getElementById('app-referral-toast')?.remove();
+        this.clearAccountHighlight();
     }
 
     clearUpdateToast() {
