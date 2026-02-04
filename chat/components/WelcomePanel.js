@@ -200,8 +200,48 @@ class WelcomePanel {
                     </button>
                 </div>
 
-                <p class="text-sm text-muted-foreground mb-5">A simple, extremely fast, and unlinkable chat client by <a href="https://openanonymity.ai/" target="_blank" rel="noopener noreferrer" class="hover:underline" style="color: rgba(255,255,255,0.8)">The Open Anonymity Project</a>.
+                <p class="text-sm text-muted-foreground mb-4">A simple, extremely fast, and unlinkable chat client by <a href="https://openanonymity.ai/" target="_blank" rel="noopener noreferrer" class="hover:underline" style="color: rgba(255,255,255,0.8)">The Open Anonymity Project</a>.
                 </p>
+
+                <!-- Guarantees overview -->
+                <div class="space-y-3 mb-5">
+                    <div class="flex items-start gap-3">
+                        <div class="mt-0.5 w-7 h-7 rounded-md border border-border bg-muted/40 text-muted-foreground flex items-center justify-center flex-shrink-0">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.75c3.314 0 6-1.007 6-2.25S15.314 2.25 12 2.25 6 3.257 6 4.5s2.686 2.25 6 2.25z" />
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M6 4.5v3.75c0 1.243 2.686 2.25 6 2.25s6-1.007 6-2.25V4.5" />
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M6 8.25V12c0 1.243 2.686 2.25 6 2.25s6-1.007 6-2.25V8.25" />
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M6 12v3.75c0 1.243 2.686 2.25 6 2.25s6-1.007 6-2.25V12" />
+                            </svg>
+                        </div>
+                        <div>
+                            <p class="welcome-guarantee-title font-medium text-foreground">Local-first history</p>
+                            <p class="welcome-guarantee-body text-muted-foreground">Chat history is stored in your browser and can be exported anytime.</p>
+                        </div>
+                    </div>
+                    <div class="flex items-start gap-3">
+                        <div class="mt-0.5 w-7 h-7 rounded-md border border-border bg-muted/40 text-muted-foreground flex items-center justify-center flex-shrink-0">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z" />
+                            </svg>
+                        </div>
+                        <div>
+                            <p class="welcome-guarantee-title font-medium text-foreground">Unlinkable access</p>
+                            <p class="welcome-guarantee-body text-muted-foreground">Inference tickets mint short-lived anonymous API keys detached from your identity.</p>
+                        </div>
+                    </div>
+                    <div class="flex items-start gap-3">
+                        <div class="mt-0.5 w-7 h-7 rounded-md border border-border bg-muted/40 text-muted-foreground flex items-center justify-center flex-shrink-0">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+                            </svg>
+                        </div>
+                        <div>
+                            <p class="welcome-guarantee-title font-medium text-foreground">Encrypted sync (optional)</p>
+                            <p class="welcome-guarantee-body text-muted-foreground">Back up tickets and preferences with encrypted sync—no email required.</p>
+                        </div>
+                    </div>
+                </div>
 
                 <!-- Invitation code form - compact design with embedded button -->
                 <style>
@@ -216,6 +256,14 @@ class WelcomePanel {
                     }
                     .invite-input-wrapper.input-error:focus-within {
                         border-color: #ef4444;
+                    }
+                    .welcome-guarantee-title {
+                        font-size: 12px;
+                        line-height: 1.2;
+                    }
+                    .welcome-guarantee-body {
+                        font-size: 11px;
+                        line-height: 1.35;
                     }
                 </style>
                 <form id="invite-form" class="w-full">
@@ -272,7 +320,7 @@ class WelcomePanel {
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                         </svg>
-                        <span>Private alpha import</span>
+                        <span>Alpha user import</span>
                     </button>
                 </div>
 
