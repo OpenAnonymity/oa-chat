@@ -4,7 +4,7 @@
  * scroll behaviors, and LaTeX rendering.
  */
 
-import { buildMessageHTML, buildEmptyState, buildSharedIndicator, buildImportedIndicator, buildTypingIndicator } from './MessageTemplates.js';
+import { buildMessageHTML, buildEmptyState, buildSharedIndicator, buildImportedIndicator, buildTypingIndicator, RAW_CLIPBOARD_ATTRIBUTE_ENABLED } from './MessageTemplates.js';
 import { exportChats, exportTickets } from '../services/globalExport.js';
 import { parseStreamingReasoningContent, parseReasoningContent } from '../services/reasoningParser.js';
 import { chatDB } from '../db.js';
@@ -251,15 +251,50 @@ export default class ChatArea {
     }
 
     /**
+     * Gets raw message content from a data attribute (sync, Safari-safe).
+     * @param {string} messageId - The message ID
+     * @returns {string|null} The raw content or null
+     */
+    getMessageRawFromDOM(messageId) {
+        if (!RAW_CLIPBOARD_ATTRIBUTE_ENABLED) return null;
+        const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
+        if (!messageEl) return null;
+
+        const rawContent = messageEl.dataset.rawContent;
+        if (rawContent && rawContent.trim()) {
+            return rawContent;
+        }
+        return null;
+    }
+
+    /**
      * Handles copying the content of a message.
-     * Prioritizes raw markdown from database; falls back to DOM for streaming.
+     * Prioritizes Safari-safe raw DOM data when enabled, else DB-first.
      * @param {string} messageId - The message ID to copy
      */
     async handleCopyMessage(messageId) {
         const session = this.app.getCurrentSession();
         if (!session) return;
 
-        // Try database first to get raw markdown/LaTeX
+        if (RAW_CLIPBOARD_ATTRIBUTE_ENABLED) {
+            // Try raw content from DOM data attributes (sync, preserves Safari user activation).
+            const rawContent = this.getMessageRawFromDOM(messageId);
+            if (rawContent) {
+                this.copyToClipboard(rawContent);
+                this.showCopySuccess(messageId);
+                return;
+            }
+
+            // Fallback to visible DOM content if raw data is missing.
+            const domContent = this.getMessageTextFromDOM(messageId);
+            if (domContent && domContent.trim()) {
+                this.copyToClipboard(domContent);
+                this.showCopySuccess(messageId);
+                return;
+            }
+        }
+
+        // Default path (non-Safari): DB-first to preserve raw markdown/LaTeX.
         const messages = await chatDB.getSessionMessages(session.id);
         const message = messages.find(m => m.id === messageId);
 
@@ -269,7 +304,7 @@ export default class ChatArea {
             return;
         }
 
-        // Fallback to DOM for streaming messages not yet saved
+        // Final fallback to visible DOM content.
         const domContent = this.getMessageTextFromDOM(messageId);
         if (domContent && domContent.trim()) {
             this.copyToClipboard(domContent);
@@ -920,6 +955,10 @@ export default class ChatArea {
     updateStreamingMessage(messageId, content) {
         const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
         if (!messageEl) return;
+
+        if (RAW_CLIPBOARD_ATTRIBUTE_ENABLED) {
+            messageEl.dataset.rawContent = content || '';
+        }
 
         let contentEl = messageEl.querySelector('.message-content');
 

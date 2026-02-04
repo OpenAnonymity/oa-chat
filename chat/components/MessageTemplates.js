@@ -80,6 +80,18 @@ function escapeHtmlAttribute(text) {
         .replace(/\n/g, '&#10;');
 }
 
+export const RAW_CLIPBOARD_ATTRIBUTE_ENABLED = (() => {
+    if (typeof navigator === 'undefined') return false;
+    const ua = navigator.userAgent || '';
+    const isSafari = /Safari/i.test(ua) && !/Chrome|Chromium|Edg|OPR|CriOS|FxiOS|SamsungBrowser/i.test(ua);
+    return isSafari;
+})();
+
+function getRawContentAttribute(content) {
+    if (!RAW_CLIPBOARD_ATTRIBUTE_ENABLED) return '';
+    return ` data-raw-content="${escapeHtmlAttribute(content || '')}"`;
+}
+
 /**
  * Allowlist URL sanitizer for link/image attributes.
  */
@@ -311,7 +323,7 @@ function buildUserMessage(message, options = {}) {
     // If in edit mode, show the edit form instead of the static message
     if (isEditing) {
         return `
-            <div class="${CLASSES.userWrapper}" data-message-id="${message.id}">
+            <div class="${CLASSES.userWrapper}" data-message-id="${message.id}"${getRawContentAttribute(message.content)}>
                 <div class="${CLASSES.userGroup}">
                     <div class="edit-prompt-form w-full">
                         <textarea
@@ -382,7 +394,7 @@ function buildUserMessage(message, options = {}) {
 
     // Normal display mode with action buttons (shown on hover)
     return `
-        <div class="${CLASSES.userWrapper}" data-message-id="${message.id}">
+        <div class="${CLASSES.userWrapper}" data-message-id="${message.id}"${getRawContentAttribute(message.content)}>
             <div class="${CLASSES.userGroup}">
                 <div class="${CLASSES.userBubble} ${scrubberTogglableClass} ${heightLockedClass}" style="${lockedHeightStyle}">
                     <div class="${CLASSES.userContent} ${collapsibleClass}">
@@ -1036,7 +1048,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     // If message is pending (waiting for first chunk), show header with typing indicator
     if (message.streamingPending) {
         return `
-            <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}">
+            <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}"${getRawContentAttribute(message.content)}>
                 <div class="${CLASSES.assistantGroup}">
                     <div class="${CLASSES.assistantHeader}">
                         <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow ${bgClass}">
@@ -1132,7 +1144,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     ` : '';
 
     return `
-        <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}">
+        <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}"${getRawContentAttribute(message.content)}>
             <div class="${CLASSES.assistantGroup}">
                 <div class="${CLASSES.assistantHeader}">
                     <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow ${bgClass}">
