@@ -185,6 +185,8 @@ class ChatApp {
         this.updateCheckInFlight = false;
         this.pendingStorageRefresh = false;
         this.storageReloadTimer = null;
+        this.pendingReferral = null;
+        this.accountGlowTimeout = null;
 
         // Link preview state
         this.linkPreviewCard = document.getElementById('link-preview-card');
@@ -1425,14 +1427,96 @@ class ChatApp {
             }, 0);
         }
 
+        // Capture referral codes from URL before session handling (cleans URL if needed)
+        this.captureReferralFromUrl();
+
         // Check for session in URL (?s=sessionId)
-        this.checkForUrlSession();
+        const sessionCheck = this.checkForUrlSession();
+        if (sessionCheck && typeof sessionCheck.then === 'function') {
+            sessionCheck.finally(() => this.handlePendingReferral());
+        } else {
+            this.handlePendingReferral();
+        }
 
         // Start update checks for new app versions
         this.initUpdateWatcher();
 
         // Periodic check for share expiry status (every 30 seconds)
         setInterval(() => this.updateShareButtonUI(), 30000);
+    }
+
+    normalizeReferralCode(rawCode) {
+        if (!rawCode) return '';
+        return rawCode.trim().replace(/[\s-]+/g, '');
+    }
+
+    /**
+     * Capture referral code from URL and clean the path/query.
+     * Supports /refer/<code> and ?ref=<code>.
+     */
+    captureReferralFromUrl() {
+        if (this.pendingReferral) return;
+
+        const url = new URL(window.location.href);
+        let code = null;
+        let source = null;
+
+        const pathMatch = url.pathname.match(/^\/refer\/([^\/?#]+)/i);
+        if (pathMatch && pathMatch[1]) {
+            code = pathMatch[1];
+            source = 'path';
+        } else {
+            const refParam = url.searchParams.get('ref');
+            if (refParam) {
+                code = refParam;
+                source = 'query';
+            }
+        }
+
+        if (!code) return;
+
+        const normalizedCode = this.normalizeReferralCode(code);
+        const isValidLength = normalizedCode.length === 24;
+
+        this.pendingReferral = {
+            code: normalizedCode,
+            autoRedeem: true,
+            source,
+            isValid: isValidLength
+        };
+
+        // Clean URL: remove /refer path and ref param, keep other params (e.g., s)
+        let needsClean = false;
+        if (source === 'path') {
+            url.pathname = '/';
+            needsClean = true;
+        }
+        if (url.searchParams.has('ref')) {
+            url.searchParams.delete('ref');
+            needsClean = true;
+        }
+
+        if (needsClean) {
+            const nextUrl = url.toString();
+            if (nextUrl !== window.location.href) {
+                window.history.replaceState({}, '', nextUrl);
+            }
+        }
+    }
+
+    /**
+     * Apply any pending referral code after UI is ready.
+     */
+    handlePendingReferral() {
+        if (!this.pendingReferral || !this.rightPanel) return;
+
+        const { code, autoRedeem, source } = this.pendingReferral;
+        this.pendingReferral = null;
+
+        if (!code) return;
+
+        this.rightPanel.show();
+        this.rightPanel.applyInvitationCodeFromLink(code, { autoRedeem: !!autoRedeem, source });
     }
 
     /**
@@ -2117,8 +2201,9 @@ class ChatApp {
      * Show a toast notification
      * @param {string} message - Message to display
      * @param {string} type - 'success' or 'error'
+     * @param {number} durationMs - Time to display toast
      */
-    showToast(message, type = 'success') {
+    showToast(message, type = 'success', durationMs = 3000) {
         this.clearToast();
 
         const toast = document.createElement('div');
@@ -2134,13 +2219,35 @@ class ChatApp {
         this._toastTimeout = setTimeout(() => {
             toast.classList.add('animate-out', 'fade-out', 'slide-out-to-bottom-4');
             setTimeout(() => toast.remove(), 150);
-        }, 3000);
+        }, durationMs);
     }
 
     clearToast() {
         document.getElementById('app-toast')?.remove();
         clearTimeout(this._toastTimeout);
         this._toastTimeout = null;
+    }
+
+    highlightAccountButton(durationMs = 5000) {
+        const sidebar = this.elements?.sidebar;
+        const sidebarWidth = sidebar ? sidebar.getBoundingClientRect().width : 0;
+        const sidebarHidden = sidebarWidth < 40;
+        const btn = document.getElementById('account-tab-btn');
+        const showBtn = document.getElementById('show-sidebar-btn');
+        if (btn) {
+            btn.classList.add('account-glow');
+        }
+        if (sidebarHidden && showBtn) {
+            showBtn.classList.add('account-glow');
+        }
+        if (this.accountGlowTimeout) {
+            clearTimeout(this.accountGlowTimeout);
+        }
+        this.accountGlowTimeout = setTimeout(() => {
+            if (btn) btn.classList.remove('account-glow');
+            if (showBtn) showBtn.classList.remove('account-glow');
+            this.accountGlowTimeout = null;
+        }, durationMs);
     }
 
     showLoadingToast(message) {

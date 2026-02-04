@@ -48,6 +48,9 @@ class RightPanel {
         this.isImporting = false;
         this.importStatus = null;
         this.timerInterval = null;
+        this.pendingInvitationCode = null;
+        this.pendingInvitationTickets = null;
+        this.pendingInvitationSource = null;
 
         // Split controls state
         this.showSplitControls = false;
@@ -233,6 +236,20 @@ class RightPanel {
             return truncated;
         }
         return data;
+    }
+
+    normalizeInvitationCode(code) {
+        if (!code) return '';
+        return code.trim().replace(/[\s-]+/g, '');
+    }
+
+    getInvitationTicketCount(code) {
+        const normalized = this.normalizeInvitationCode(code);
+        if (normalized.length !== 24) return null;
+        const suffix = normalized.slice(20, 24);
+        const count = parseInt(suffix, 16);
+        if (!Number.isFinite(count) || count <= 0) return null;
+        return count;
     }
 
     escapeHtml(text) {
@@ -538,6 +555,16 @@ class RightPanel {
 
             this.ticketCount = ticketClient.getTicketCount();
 
+            if (this.pendingInvitationSource) {
+                const ticketCount = this.getInvitationTicketCount(invitationCode) ?? this.pendingInvitationTickets;
+                const countLabel = Number.isFinite(ticketCount)
+                    ? `${ticketCount} ticket${ticketCount === 1 ? '' : 's'}`
+                    : 'tickets';
+                this.app?.showReferralToast?.(
+                    `Access code redeemed for ${countLabel}. You can create an account to sync tickets.`
+                );
+            }
+
             // Clear form
             const input = document.getElementById('invitation-code-input');
             if (input) input.value = '';
@@ -550,6 +577,9 @@ class RightPanel {
                 preferencesStore.savePreference(PREF_KEYS.invitationFormVisible, false);
                 this.showTicketInfo = false;
                 preferencesStore.savePreference(PREF_KEYS.ticketInfoVisible, false);
+                this.pendingInvitationCode = null;
+                this.pendingInvitationTickets = null;
+                this.pendingInvitationSource = null;
                 this.renderTopSectionOnly();
                 this.updateTicketInfoVisibility();
                 this.updateTicketInfoToggleButton();
@@ -560,6 +590,29 @@ class RightPanel {
             this.isRegistering = false;
             this.renderTopSectionOnly();
         }
+    }
+
+    applyInvitationCodeFromLink(code, { autoRedeem = false, source = null } = {}) {
+        const normalizedCode = this.normalizeInvitationCode(code);
+        if (!normalizedCode) return;
+
+        this.pendingInvitationCode = normalizedCode;
+        this.pendingInvitationTickets = this.getInvitationTicketCount(normalizedCode);
+        this.pendingInvitationSource = source;
+
+        // Force form open without persisting preference
+        this.showInvitationForm = true;
+        this.renderTopSectionOnly();
+
+        requestAnimationFrame(() => {
+            const input = document.getElementById('invitation-code-input');
+            if (input) {
+                input.value = normalizedCode;
+            }
+            if (autoRedeem && !this.isRegistering) {
+                requestAnimationFrame(() => this.handleRegister(normalizedCode));
+            }
+        });
     }
 
     async handleImportTickets(file, inputEl = null) {
@@ -1488,6 +1541,10 @@ class RightPanel {
         const blindedRequest = this.currentTicket?.blinded_request || fallbackTicketValue;
         const signedResponse = this.currentTicket?.signed_response || fallbackTicketValue;
         const finalizedTicket = this.currentTicket?.finalized_ticket || fallbackTicketValue;
+        const pendingTickets = Number.isFinite(this.pendingInvitationTickets) ? this.pendingInvitationTickets : null;
+        const pendingTicketsLabel = pendingTickets
+            ? `${pendingTickets} ticket${pendingTickets === 1 ? '' : 's'}`
+            : 'tickets';
 
         return `
                 <!-- Invitation Code Section -->
@@ -1518,6 +1575,12 @@ class RightPanel {
                         </svg>
                     </button>
                 </div>
+
+                ${this.pendingInvitationCode ? `
+                    <div class="mt-2 text-[10px] text-muted-foreground">
+                        Referral code detected • redeeming ${pendingTicketsLabel}...
+                    </div>
+                ` : ''}
 
                 <div class="mt-2 flex items-center gap-1.5">
                     <input
@@ -1593,6 +1656,7 @@ class RightPanel {
                             placeholder="Enter 24-char invitation code"
                             maxlength="24"
                             class="input-focus-clean w-full px-3 py-2 text-xs border border-border rounded-md bg-background text-foreground placeholder:text-muted-foreground transition-all"
+                            value="${this.pendingInvitationCode ? this.escapeHtml(this.pendingInvitationCode) : ''}"
                             ${this.isRegistering ? 'disabled' : ''}
                         />
                         <button
@@ -2011,8 +2075,21 @@ class RightPanel {
                 e.preventDefault();
                 const input = document.getElementById('invitation-code-input');
                 if (input) {
-                    this.handleRegister(input.value.trim());
+                    const rawValue = input.value.trim();
+                    const normalized = this.normalizeInvitationCode(rawValue);
+                    if (this.pendingInvitationCode !== null) {
+                        this.pendingInvitationCode = normalized;
+                        this.pendingInvitationTickets = this.getInvitationTicketCount(normalized);
+                    }
+                    this.handleRegister(this.pendingInvitationCode !== null ? normalized : rawValue);
                 }
+            };
+        }
+        const invitationInput = document.getElementById('invitation-code-input');
+        if (invitationInput && this.pendingInvitationCode !== null) {
+            invitationInput.oninput = () => {
+                this.pendingInvitationCode = invitationInput.value;
+                this.pendingInvitationTickets = this.getInvitationTicketCount(invitationInput.value);
             };
         }
 

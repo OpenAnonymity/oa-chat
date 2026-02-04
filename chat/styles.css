@@ -3303,6 +3303,39 @@ html {
     border-width: 1.5px;
 }
 
+@keyframes accountGlowPulse {
+    0% {
+        box-shadow: 0 6px 16px hsl(var(--color-foreground) / 0.08),
+            0 0 0 2px hsl(var(--color-primary) / 0.25),
+            0 0 12px 2px hsl(var(--color-primary) / 0.2);
+    }
+    50% {
+        box-shadow: 0 6px 16px hsl(var(--color-foreground) / 0.08),
+            0 0 0 2px hsl(var(--color-primary) / 0.45),
+            0 0 24px 8px hsl(var(--color-primary) / 0.4);
+    }
+    100% {
+        box-shadow: 0 6px 16px hsl(var(--color-foreground) / 0.08),
+            0 0 0 2px hsl(var(--color-primary) / 0.25),
+            0 0 12px 2px hsl(var(--color-primary) / 0.2);
+    }
+}
+
+.account-tab-btn.account-glow {
+    border-color: hsl(var(--color-primary) / 0.65);
+    box-shadow: 0 6px 16px hsl(var(--color-foreground) / 0.08),
+        0 0 0 2px hsl(var(--color-primary) / 0.25),
+        0 0 12px 2px hsl(var(--color-primary) / 0.2);
+    animation: accountGlowPulse 1.4s ease-in-out infinite;
+}
+
+#show-sidebar-btn.account-glow {
+    border-color: hsl(var(--color-primary) / 0.65);
+    box-shadow: 0 0 0 2px hsl(var(--color-primary) / 0.25),
+        0 0 18px 6px hsl(var(--color-primary) / 0.35);
+    animation: accountGlowPulse 1.4s ease-in-out infinite;
+}
+
 /* ============================================
    ACCOUNT CREATION ANIMATIONS
    ============================================ */
@@ -3323,6 +3356,19 @@ html {
     .success-checkmark {
         animation: none;
         stroke-dashoffset: 0;
+    }
+
+    .account-tab-btn.account-glow {
+        animation: none;
+        box-shadow: 0 6px 16px hsl(var(--color-foreground) / 0.08),
+            0 0 0 2px hsl(var(--color-primary) / 0.35),
+            0 0 18px 6px hsl(var(--color-primary) / 0.35);
+    }
+
+    #show-sidebar-btn.account-glow {
+        animation: none;
+        box-shadow: 0 0 0 2px hsl(var(--color-primary) / 0.35),
+            0 0 18px 6px hsl(var(--color-primary) / 0.35);
     }
 }
 
