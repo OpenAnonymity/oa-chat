@@ -3321,6 +3321,31 @@ html {
     }
 }
 
+/* Light mode glory animation - uses explicit blue colors for proper visibility on white */
+@keyframes accountGlowPulseLight {
+    0% {
+        box-shadow:
+            0 4px 14px rgba(30, 64, 175, 0.12),
+            0 0 0 2px rgba(37, 99, 235, 0.4),
+            0 0 16px 4px rgba(37, 99, 235, 0.28),
+            0 0 32px 8px rgba(59, 130, 246, 0.15);
+    }
+    50% {
+        box-shadow:
+            0 6px 20px rgba(30, 64, 175, 0.15),
+            0 0 0 3px rgba(37, 99, 235, 0.55),
+            0 0 24px 8px rgba(37, 99, 235, 0.38),
+            0 0 44px 14px rgba(59, 130, 246, 0.22);
+    }
+    100% {
+        box-shadow:
+            0 4px 14px rgba(30, 64, 175, 0.12),
+            0 0 0 2px rgba(37, 99, 235, 0.4),
+            0 0 16px 4px rgba(37, 99, 235, 0.28),
+            0 0 32px 8px rgba(59, 130, 246, 0.15);
+    }
+}
+
 .account-tab-btn.account-glow {
     border-color: hsl(var(--color-primary) / 0.65);
     box-shadow: 0 6px 16px hsl(var(--color-foreground) / 0.08),
@@ -3334,6 +3359,28 @@ html {
     box-shadow: 0 0 0 2px hsl(var(--color-primary) / 0.25),
         0 0 18px 6px hsl(var(--color-primary) / 0.35);
     animation: accountGlowPulse 1.4s ease-in-out infinite;
+}
+
+/* Enhanced light mode glory - multi-layered blue glow with dedicated animation */
+.theme-light .account-tab-btn.account-glow,
+:root:not(.dark) .account-tab-btn.account-glow {
+    border-color: rgba(37, 99, 235, 0.6);
+    box-shadow:
+        0 4px 14px rgba(30, 64, 175, 0.12),
+        0 0 0 2px rgba(37, 99, 235, 0.4),
+        0 0 16px 4px rgba(37, 99, 235, 0.28),
+        0 0 32px 8px rgba(59, 130, 246, 0.15);
+    animation: accountGlowPulseLight 1.4s ease-in-out infinite;
+}
+
+.theme-light #show-sidebar-btn.account-glow,
+:root:not(.dark) #show-sidebar-btn.account-glow {
+    border-color: rgba(37, 99, 235, 0.6);
+    box-shadow:
+        0 0 0 2px rgba(37, 99, 235, 0.4),
+        0 0 20px 6px rgba(37, 99, 235, 0.35),
+        0 0 40px 12px rgba(59, 130, 246, 0.2);
+    animation: accountGlowPulseLight 1.4s ease-in-out infinite;
 }
 
 /* ============================================
