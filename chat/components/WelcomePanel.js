@@ -8,7 +8,7 @@ import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 
 // localStorage key for synchronous pre-hydration check (matches preferencesStore snapshot)
 const STORAGE_KEY_DISMISSED = 'oa-welcome-dismissed';
-const MODAL_CLASSES = 'w-full max-w-md rounded-2xl border border-border bg-background shadow-2xl p-6 mx-4 flex flex-col';
+const MODAL_CLASSES = 'w-full max-w-md rounded-2xl border border-border shadow-lg mx-4 flex flex-col welcome-modal-enter welcome-modal-glass';
 
 class WelcomePanel {
     constructor(app) {
@@ -70,6 +70,8 @@ class WelcomePanel {
     handleCloseAttempt() {
         // Don't allow closing during active redemption
         if (this.isRedeeming) return;
+        // Don't allow closing without tickets
+        if (ticketClient.getTicketCount() === 0) return;
         this.close();
     }
 
@@ -206,62 +208,75 @@ class WelcomePanel {
         const hasError = !!this.redeemError;
 
         return `
-            <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}">
-                <!-- Header -->
-                <div class="flex items-center justify-between mb-2">
-                    <h2 class="text-lg font-semibold text-foreground">Welcome to oa-fastchat</h2>
-                    <button id="close-welcome-btn" class="text-muted-foreground hover:text-foreground transition-colors p-1 -mr-1 rounded-lg hover:bg-accent" aria-label="Close">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
-                        </svg>
-                    </button>
-                </div>
-
-                <p class="text-sm text-muted-foreground mb-4">A simple, extremely fast, and unlinkable chat client by <a href="https://openanonymity.ai/" target="_blank" rel="noopener noreferrer" class="hover:underline" style="color: rgba(255,255,255,0.8)">The Open Anonymity Project</a>.
-                </p>
-
-                <!-- Guarantees overview -->
-                <div class="space-y-3 mb-5">
-                    <div class="flex items-start gap-3">
-                        <div class="mt-0.5 w-7 h-7 rounded-md border border-border bg-muted/40 text-muted-foreground flex items-center justify-center flex-shrink-0">
-                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.75c3.314 0 6-1.007 6-2.25S15.314 2.25 12 2.25 6 3.257 6 4.5s2.686 2.25 6 2.25z" />
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M6 4.5v3.75c0 1.243 2.686 2.25 6 2.25s6-1.007 6-2.25V4.5" />
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M6 8.25V12c0 1.243 2.686 2.25 6 2.25s6-1.007 6-2.25V8.25" />
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M6 12v3.75c0 1.243 2.686 2.25 6 2.25s6-1.007 6-2.25V12" />
-                            </svg>
-                        </div>
-                        <div>
-                            <p class="welcome-guarantee-title font-medium text-foreground">Local-first history</p>
-                            <p class="welcome-guarantee-body text-muted-foreground">Chat history is stored in your browser and can be exported anytime.</p>
-                        </div>
-                    </div>
-                    <div class="flex items-start gap-3">
-                        <div class="mt-0.5 w-7 h-7 rounded-md border border-border bg-muted/40 text-muted-foreground flex items-center justify-center flex-shrink-0">
-                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z" />
-                            </svg>
-                        </div>
-                        <div>
-                            <p class="welcome-guarantee-title font-medium text-foreground">Unlinkable access</p>
-                            <p class="welcome-guarantee-body text-muted-foreground">Inference tickets mint short-lived anonymous API keys detached from your identity.</p>
-                        </div>
-                    </div>
-                    <div class="flex items-start gap-3">
-                        <div class="mt-0.5 w-7 h-7 rounded-md border border-border bg-muted/40 text-muted-foreground flex items-center justify-center flex-shrink-0">
-                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
-                            </svg>
-                        </div>
-                        <div>
-                            <p class="welcome-guarantee-title font-medium text-foreground">Encrypted sync (optional)</p>
-                            <p class="welcome-guarantee-body text-muted-foreground">Back up tickets and preferences with encrypted sync—no email required.</p>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Invitation code form - compact design with embedded button -->
+            <!-- DEBUG: temp theme toggle, remove later -->
+            <button id="debug-theme-toggle" style="position:fixed;top:12px;right:12px;z-index:9999;padding:6px 12px;border-radius:8px;font-size:11px;font-weight:500;cursor:pointer;background:rgba(0,0,0,0.5);color:#fff;border:1px solid rgba(255,255,255,0.2);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)">Toggle theme</button>
+            <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}" style="padding:28px 28px 20px">
                 <style>
+                    /* Entrance animation matching app's subtle motion language */
+                    @keyframes welcomeModalIn {
+                        from { opacity: 0; transform: scale(0.97) translateY(6px); }
+                        to { opacity: 1; transform: scale(1) translateY(0); }
+                    }
+                    .welcome-modal-enter {
+                        animation: welcomeModalIn 0.2s ease-out;
+                    }
+                    .welcome-modal-glass {
+                        background: hsl(var(--color-background) / 0.72);
+                        backdrop-filter: blur(20px) saturate(1.2);
+                        -webkit-backdrop-filter: blur(20px) saturate(1.2);
+                    }
+                    #welcome-panel {
+                        background: rgba(0,0,0,0.35) !important;
+                        backdrop-filter: blur(4px) !important;
+                        -webkit-backdrop-filter: blur(4px) !important;
+                    }
+                    /* Noise texture for frosted glass tactility */
+                    .invite-input-glass,
+                    .welcome-btn-glass,
+                    .welcome-btn-blue-glass {
+                        position: relative;
+                        overflow: hidden;
+                    }
+                    .invite-input-glass::after,
+                    .welcome-btn-glass::after,
+                    .welcome-btn-blue-glass::after {
+                        content: "";
+                        position: absolute;
+                        inset: 0;
+                        border-radius: inherit;
+                        opacity: 0.035;
+                        pointer-events: none;
+                        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+                    }
+                    .invite-input-glass {
+                        background: hsl(var(--color-background) / 0.45);
+                        border: 1px solid rgba(255,255,255,0.2) !important;
+                    }
+                    .welcome-btn-glass {
+                        background: hsl(var(--color-background) / 0.45) !important;
+                        border: 1px solid rgba(255,255,255,0.2) !important;
+                    }
+                    .welcome-btn-glass:hover {
+                        background: hsl(var(--color-background) / 0.6) !important;
+                    }
+                    .welcome-btn-blue-glass {
+                        background: hsl(var(--blue-600));
+                        border: 1px solid rgba(255,255,255,0.12);
+                    }
+                    .welcome-btn-blue-glass:hover {
+                        background: hsl(var(--blue-700));
+                    }
+                    .dark .invite-input-glass {
+                        background: rgba(255,255,255,0.07);
+                        border-color: rgba(255,255,255,0.08) !important;
+                    }
+                    .dark .welcome-btn-glass {
+                        background: rgba(255,255,255,0.07) !important;
+                        border-color: rgba(255,255,255,0.08) !important;
+                    }
+                    .dark .welcome-btn-glass:hover {
+                        background: rgba(255,255,255,0.12) !important;
+                    }
                     .invite-input-wrapper {
                         border-color: hsl(var(--color-border));
                     }
@@ -274,6 +289,28 @@ class WelcomePanel {
                     .invite-input-wrapper.input-error:focus-within {
                         border-color: #ef4444;
                     }
+                    .welcome-guarantees {
+                        display: grid;
+                        grid-template-columns: 28px 1fr;
+                        column-gap: 10px;
+                        row-gap: 14px;
+                        grid-auto-rows: 1fr;
+                    }
+                    .welcome-icon-box {
+                        width: 28px;
+                        height: 28px;
+                        border-radius: 6px;
+                        border: 1px solid hsl(var(--color-border));
+                        background: hsl(var(--color-muted) / 0.4);
+                        color: hsl(var(--color-muted-foreground));
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                    }
+                    :root:not(.dark) .welcome-icon-box {
+                        color: hsl(215 16% 36%);
+                        border-color: hsl(214 20% 84%);
+                    }
                     .welcome-guarantee-title {
                         font-size: 12px;
                         line-height: 1.2;
@@ -282,9 +319,77 @@ class WelcomePanel {
                         font-size: 11px;
                         line-height: 1.35;
                     }
+                    :root:not(.dark) .welcome-guarantee-body {
+                        color: hsl(215 16% 38%) !important;
+                    }
+                    :root:not(.dark) .welcome-modal-glass .text-muted-foreground {
+                        color: hsl(215 16% 38%) !important;
+                    }
                 </style>
+
+                <!-- Header -->
+                <div class="flex items-center justify-between mb-1">
+                    <h2 class="text-lg font-semibold text-foreground">Welcome to oa-fastchat</h2>
+                    ${ticketClient.getTicketCount() > 0 ? `
+                    <button id="close-welcome-btn" class="text-muted-foreground hover:text-foreground transition-colors p-1 -mr-1 rounded-lg hover:bg-accent" aria-label="Close">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>` : ''}
+                </div>
+
+                <p class="text-sm text-muted-foreground mb-4">A fast and unlinkable chat client, entrance of user-controlled personal intelligence by <a href="https://openanonymity.ai/" target="_blank" rel="noopener noreferrer" class="text-foreground hover:underline hover:underline-offset-2 hover:decoration-foreground/50 transition-colors">The Open Anonymity Project</a></p>
+
+                <!-- Guarantees -->
+                <div class="welcome-guarantees" style="margin-top:6px;margin-bottom:22px">
+                        <div class="welcome-icon-box">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.75c3.314 0 6-1.007 6-2.25S15.314 2.25 12 2.25 6 3.257 6 4.5s2.686 2.25 6 2.25z" />
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M6 4.5v3.75c0 1.243 2.686 2.25 6 2.25s6-1.007 6-2.25V4.5" />
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M6 8.25V12c0 1.243 2.686 2.25 6 2.25s6-1.007 6-2.25V8.25" />
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M6 12v3.75c0 1.243 2.686 2.25 6 2.25s6-1.007 6-2.25V12" />
+                            </svg>
+                        </div>
+                        <div>
+                            <p class="welcome-guarantee-title font-medium text-foreground">Local-first history</p>
+                            <p class="welcome-guarantee-body text-muted-foreground">Stored in your browser, exportable anytime.</p>
+                        </div>
+
+                        <div class="welcome-icon-box">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z" />
+                            </svg>
+                        </div>
+                        <div>
+                            <p class="welcome-guarantee-title font-medium text-foreground">Unlinkable access</p>
+                            <p class="welcome-guarantee-body text-muted-foreground">Anonymous API keys, detached from your identity.</p>
+                        </div>
+
+                        <div class="welcome-icon-box">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364L9.879 9.879m0 0L5.636 5.636m4.243 4.243L5.636 13.12m4.243-3.243l3.243-3.243" />
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5" />
+                            </svg>
+                        </div>
+                        <div>
+                            <p class="welcome-guarantee-title font-medium text-foreground">Sensitive information removal</p>
+                            <p class="welcome-guarantee-body text-muted-foreground">Strip PII locally before prompts reach the model.</p>
+                        </div>
+
+                        <div class="welcome-icon-box">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+                            </svg>
+                        </div>
+                        <div>
+                            <p class="welcome-guarantee-title font-medium text-foreground">Encrypted sync</p>
+                            <p class="welcome-guarantee-body text-muted-foreground">Sync tickets across devices—no email required.</p>
+                        </div>
+                </div>
+
+                <!-- Invitation code form -->
                 <form id="invite-form" class="w-full">
-                    <div class="invite-input-wrapper flex items-center w-full h-10 border rounded-lg bg-background transition-all ${hasError ? 'input-error' : ''}">
+                    <div class="invite-input-wrapper invite-input-glass flex items-center w-full h-10 border rounded-lg transition-all ${hasError ? 'input-error' : ''}">
                         <input
                             id="invite-code-input"
                             type="text"
@@ -311,19 +416,19 @@ class WelcomePanel {
                 </form>
 
                 <!-- Divider -->
-                <div class="flex items-center gap-3 my-4">
+                <div class="flex items-center gap-3" style="margin-top:10px;margin-bottom:10px">
                     <div class="flex-1 h-px bg-border"></div>
                     <span class="text-xs text-muted-foreground">or</span>
                     <div class="flex-1 h-px bg-border"></div>
                 </div>
 
                 <!-- Action buttons -->
-                <div class="flex items-center justify-center gap-2">
+                <div class="flex items-stretch gap-2">
                     <a
                         href="https://openanonymity.ai/"
                         target="_blank"
                         rel="noopener noreferrer"
-                        class="btn-ghost-hover h-10 px-4 rounded-lg text-sm border border-border bg-background text-foreground shadow-sm transition-colors flex items-center justify-center gap-2"
+                        class="welcome-btn-glass btn-ghost-hover flex-1 h-10 px-4 rounded-lg text-sm border border-border text-foreground shadow-sm transition-colors flex items-center justify-center gap-2"
                     >
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"></path>
@@ -332,7 +437,7 @@ class WelcomePanel {
                     </a>
                     <button
                         id="import-data-btn"
-                        class="h-10 px-4 rounded-lg text-sm bg-blue-600 text-white hover:bg-blue-700 transition-colors flex items-center justify-center gap-2"
+                        class="welcome-btn-blue-glass flex-1 h-10 px-4 rounded-lg text-sm text-white transition-colors flex items-center justify-center gap-2"
                     >
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
@@ -342,7 +447,8 @@ class WelcomePanel {
                 </div>
 
                 <!-- Footer -->
-                <div class="mt-6 flex items-center justify-between">
+                ${ticketClient.getTicketCount() > 0 ? `
+                <div class="flex items-center justify-center" style="margin-top:10px">
                     <label class="flex items-center gap-2 cursor-pointer select-none">
                         <input
                             type="checkbox"
@@ -352,6 +458,16 @@ class WelcomePanel {
                         />
                         <span class="text-xs text-muted-foreground">Don't show this again</span>
                     </label>
+                </div>` : ''}
+                <div class="flex items-center justify-between" style="margin-top:${ticketClient.getTicketCount() > 0 ? '6' : '22'}px">
+                    <a
+                        href="https://openanonymity.ai/terms"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="text-xs text-muted-foreground hover:text-foreground hover:underline transition-colors"
+                    >
+                        Terms of Service
+                    </a>
                     <a
                         href="https://openanonymity.ai/privacy"
                         target="_blank"
@@ -369,7 +485,7 @@ class WelcomePanel {
         const progress = this.redeemProgress || { message: 'Processing...', percent: 0 };
 
         return `
-            <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}">
+            <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}" style="padding:28px">
                 <div class="flex flex-col items-center justify-center py-8">
                     <!-- Spinner -->
                     <div class="w-12 h-12 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div>
@@ -392,7 +508,7 @@ class WelcomePanel {
 
     renderSuccessStep() {
         return `
-            <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}">
+            <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}" style="padding:28px">
                 <!-- Success header -->
                 <div class="flex flex-col items-center justify-center pt-4 pb-6">
                     <div class="w-14 h-14 bg-emerald-100 dark:bg-emerald-500/20 rounded-full flex items-center justify-center mb-4">
@@ -445,6 +561,10 @@ class WelcomePanel {
     // =========================================================================
 
     attachEventListeners() {
+        // DEBUG: temp theme toggle, remove later
+        const debugToggle = document.getElementById('debug-theme-toggle');
+        if (debugToggle) debugToggle.onclick = () => document.documentElement.classList.toggle('dark');
+
         const closeBtn = document.getElementById('close-welcome-btn');
         if (closeBtn) closeBtn.onclick = () => this.handleCloseAttempt();
 
