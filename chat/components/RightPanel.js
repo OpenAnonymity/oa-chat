@@ -560,9 +560,10 @@ class RightPanel {
                 const countLabel = Number.isFinite(ticketCount)
                     ? `${ticketCount} ticket${ticketCount === 1 ? '' : 's'}`
                     : 'tickets';
-                this.app?.showTicketToast?.(
+                this.app?.showToast?.(
                     `Ticket code redeemed for ${countLabel}`,
-                    { highlightAccount: false }
+                    'success',
+                    5000
                 );
             }
 

@@ -2137,7 +2137,7 @@ class ChatApp {
                 this.updateShareButtonUI();
                 await this.renderMessages();
             },
-            showToast: (msg, type) => this.showToast(msg, type)
+            showToast: (msg, type, durationMs) => this.showToast(msg, type, durationMs)
             });
     }
 
@@ -2200,8 +2200,9 @@ class ChatApp {
      * Show a toast notification
      * @param {string} message - Message to display
      * @param {string} type - 'success' or 'error'
+     * @param {number} durationMs - Time to auto-dismiss in milliseconds
      */
-    showToast(message, type = 'success') {
+    showToast(message, type = 'success', durationMs = 3000) {
         this.clearToast();
 
         const toast = document.createElement('div');
@@ -2217,7 +2218,7 @@ class ChatApp {
         this._toastTimeout = setTimeout(() => {
             toast.classList.add('animate-out', 'fade-out', 'slide-out-to-bottom-4');
             setTimeout(() => toast.remove(), 150);
-        }, 3000);
+        }, durationMs);
     }
 
     clearToast() {
@@ -2323,48 +2324,81 @@ class ChatApp {
         this.updateToastVisible = true;
     }
 
-    showTicketToast(message, { highlightAccount = true } = {}) {
-        const existingToast = document.getElementById('app-ticket-toast');
+    showSplitCodeToast({ code, ticketsConsumed = 0 } = {}) {
+        if (!code) return;
+
+        const existingToast = document.getElementById('app-split-code-toast');
         if (existingToast) {
             existingToast.remove();
         }
 
         const toast = document.createElement('div');
-        toast.id = 'app-ticket-toast';
-        toast.className = 'update-toast';
+        toast.id = 'app-split-code-toast';
+        toast.className = 'split-code-toast';
         toast.setAttribute('role', 'status');
         toast.setAttribute('aria-live', 'polite');
 
-        const label = document.createElement('span');
-        label.className = 'update-toast__label';
-        label.textContent = message;
+        const count = Number.isFinite(ticketsConsumed) ? ticketsConsumed : 0;
+        const countLabel = count > 0
+            ? `${count} ticket${count === 1 ? '' : 's'}`
+            : 'tickets';
 
-        const dismissBtn = document.createElement('button');
-        dismissBtn.type = 'button';
-        dismissBtn.className = 'update-toast__dismiss';
-        dismissBtn.setAttribute('aria-label', 'Dismiss message');
-        dismissBtn.innerHTML = `
-            <svg viewBox="0 0 20 20" aria-hidden="true">
-                <path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
-            </svg>
+        toast.innerHTML = `
+            <div class="split-code-toast__content">
+                <div class="split-code-toast__icon">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/>
+                    </svg>
+                </div>
+                <div class="split-code-toast__info">
+                    <span class="split-code-toast__label">Split ${countLabel}</span>
+                    <code class="split-code-toast__code">${code}</code>
+                </div>
+                <div class="split-code-toast__actions">
+                    <button type="button" class="split-code-toast__copy" aria-label="Copy code">
+                        <svg class="split-code-toast__copy-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
+                            <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
+                        </svg>
+                        <span class="split-code-toast__copy-text">Copy</span>
+                    </button>
+                    <button type="button" class="split-code-toast__dismiss" aria-label="Dismiss">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M18 6L6 18M6 6l12 12"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
         `;
-        dismissBtn.addEventListener('click', () => {
-            this.clearTicketToast();
+
+        const copyBtn = toast.querySelector('.split-code-toast__copy');
+        const copyText = toast.querySelector('.split-code-toast__copy-text');
+        const copyIcon = toast.querySelector('.split-code-toast__copy-icon');
+
+        copyBtn.addEventListener('click', async () => {
+            try {
+                await navigator.clipboard.writeText(code);
+                copyText.textContent = 'Copied!';
+                copyIcon.innerHTML = '<path d="M20 6L9 17l-5-5"/>';
+                setTimeout(() => {
+                    copyText.textContent = 'Copy';
+                    copyIcon.innerHTML = '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>';
+                }, 2000);
+            } catch (error) {
+                console.error('Failed to copy ticket code:', error);
+            }
         });
 
-        toast.appendChild(label);
-        toast.appendChild(dismissBtn);
+        const dismissBtn = toast.querySelector('.split-code-toast__dismiss');
+        dismissBtn.addEventListener('click', () => {
+            this.openSplitCodeDismissWarning(() => this.clearSplitCodeToast());
+        });
+
         document.body.appendChild(toast);
-        if (highlightAccount) {
-            this.highlightAccountButton();
-        } else {
-            this.clearAccountHighlight();
-        }
     }
 
-    clearTicketToast() {
-        document.getElementById('app-ticket-toast')?.remove();
-        this.clearAccountHighlight();
+    clearSplitCodeToast() {
+        document.getElementById('app-split-code-toast')?.remove();
     }
 
     clearUpdateToast() {
