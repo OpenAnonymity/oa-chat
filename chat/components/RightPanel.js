@@ -560,8 +560,9 @@ class RightPanel {
                 const countLabel = Number.isFinite(ticketCount)
                     ? `${ticketCount} ticket${ticketCount === 1 ? '' : 's'}`
                     : 'tickets';
-                this.app?.showReferralToast?.(
-                    `Access code redeemed for ${countLabel}. You can create an account to sync tickets.`
+                this.app?.showTicketToast?.(
+                    `Ticket code redeemed for ${countLabel}`,
+                    { highlightAccount: false }
                 );
             }
 
@@ -1578,7 +1579,7 @@ class RightPanel {
 
                 ${this.pendingInvitationCode ? `
                     <div class="mt-2 text-[10px] text-muted-foreground">
-                        Referral code detected • redeeming ${pendingTicketsLabel}...
+                        Ticket code detected • redeeming ${pendingTicketsLabel}...
                     </div>
                 ` : ''}
 

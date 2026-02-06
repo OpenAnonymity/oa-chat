@@ -185,7 +185,7 @@ class ChatApp {
         this.updateCheckInFlight = false;
         this.pendingStorageRefresh = false;
         this.storageReloadTimer = null;
-        this.pendingReferral = null;
+        this.pendingTicketCode = null;
 
         // Link preview state
         this.linkPreviewCard = document.getElementById('link-preview-card');
@@ -1426,15 +1426,15 @@ class ChatApp {
             }, 0);
         }
 
-        // Capture referral codes from URL before session handling (cleans URL if needed)
-        this.captureReferralFromUrl();
+        // Capture ticket codes from URL before session handling (cleans URL if needed)
+        this.captureTicketCodeFromUrl();
 
         // Check for session in URL (?s=sessionId)
         const sessionCheck = this.checkForUrlSession();
         if (sessionCheck && typeof sessionCheck.then === 'function') {
-            sessionCheck.finally(() => this.handlePendingReferral());
+            sessionCheck.finally(() => this.handlePendingTicketCode());
         } else {
-            this.handlePendingReferral();
+            this.handlePendingTicketCode();
         }
 
         // Start update checks for new app versions
@@ -1444,54 +1444,54 @@ class ChatApp {
         setInterval(() => this.updateShareButtonUI(), 30000);
     }
 
-    normalizeReferralCode(rawCode) {
+    normalizeTicketCode(rawCode) {
         if (!rawCode) return '';
         return rawCode.trim().replace(/[\s-]+/g, '');
     }
 
     /**
-     * Capture referral code from URL and clean the path/query.
-     * Supports /refer/<code> and ?ref=<code>.
+     * Capture ticket code from URL and clean the path/query.
+     * Supports /tickets/<code> and ?tickets=<code>.
      */
-    captureReferralFromUrl() {
-        if (this.pendingReferral) return;
+    captureTicketCodeFromUrl() {
+        if (this.pendingTicketCode) return;
 
         const url = new URL(window.location.href);
         let code = null;
         let source = null;
 
-        const pathMatch = url.pathname.match(/^\/refer\/([^\/?#]+)/i);
+        const pathMatch = url.pathname.match(/^\/tickets\/([^\/?#]+)/i);
         if (pathMatch && pathMatch[1]) {
             code = pathMatch[1];
             source = 'path';
         } else {
-            const refParam = url.searchParams.get('ref');
-            if (refParam) {
-                code = refParam;
+            const ticketParam = url.searchParams.get('tickets');
+            if (ticketParam) {
+                code = ticketParam;
                 source = 'query';
             }
         }
 
         if (!code) return;
 
-        const normalizedCode = this.normalizeReferralCode(code);
+        const normalizedCode = this.normalizeTicketCode(code);
         const isValidLength = normalizedCode.length === 24;
 
-        this.pendingReferral = {
+        this.pendingTicketCode = {
             code: normalizedCode,
             autoRedeem: true,
             source,
             isValid: isValidLength
         };
 
-        // Clean URL: remove /refer path and ref param, keep other params (e.g., s)
+        // Clean URL: remove /tickets path and tickets param, keep other params (e.g., s)
         let needsClean = false;
         if (source === 'path') {
             url.pathname = '/';
             needsClean = true;
         }
-        if (url.searchParams.has('ref')) {
-            url.searchParams.delete('ref');
+        if (url.searchParams.has('tickets')) {
+            url.searchParams.delete('tickets');
             needsClean = true;
         }
 
@@ -1504,13 +1504,13 @@ class ChatApp {
     }
 
     /**
-     * Apply any pending referral code after UI is ready.
+     * Apply any pending ticket code after UI is ready.
      */
-    handlePendingReferral() {
-        if (!this.pendingReferral || !this.rightPanel) return;
+    handlePendingTicketCode() {
+        if (!this.pendingTicketCode || !this.rightPanel) return;
 
-        const { code, autoRedeem, source } = this.pendingReferral;
-        this.pendingReferral = null;
+        const { code, autoRedeem, source } = this.pendingTicketCode;
+        this.pendingTicketCode = null;
 
         if (!code) return;
 
@@ -2323,14 +2323,14 @@ class ChatApp {
         this.updateToastVisible = true;
     }
 
-    showReferralToast(message) {
-        const existingToast = document.getElementById('app-referral-toast');
+    showTicketToast(message, { highlightAccount = true } = {}) {
+        const existingToast = document.getElementById('app-ticket-toast');
         if (existingToast) {
             existingToast.remove();
         }
 
         const toast = document.createElement('div');
-        toast.id = 'app-referral-toast';
+        toast.id = 'app-ticket-toast';
         toast.className = 'update-toast';
         toast.setAttribute('role', 'status');
         toast.setAttribute('aria-live', 'polite');
@@ -2349,17 +2349,21 @@ class ChatApp {
             </svg>
         `;
         dismissBtn.addEventListener('click', () => {
-            this.clearReferralToast();
+            this.clearTicketToast();
         });
 
         toast.appendChild(label);
         toast.appendChild(dismissBtn);
         document.body.appendChild(toast);
-        this.highlightAccountButton();
+        if (highlightAccount) {
+            this.highlightAccountButton();
+        } else {
+            this.clearAccountHighlight();
+        }
     }
 
-    clearReferralToast() {
-        document.getElementById('app-referral-toast')?.remove();
+    clearTicketToast() {
+        document.getElementById('app-ticket-toast')?.remove();
         this.clearAccountHighlight();
     }
 
