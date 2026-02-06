@@ -28,6 +28,7 @@ class WelcomePanel {
         // UI state
         this.returnFocusEl = null;
         this.escapeHandler = null;
+        this.importCloseHandler = null;
     }
 
     async init() {
@@ -87,6 +88,11 @@ class WelcomePanel {
         if (this.escapeHandler) {
             document.removeEventListener('keydown', this.escapeHandler);
             this.escapeHandler = null;
+        }
+        if (this.importCloseHandler) {
+            const input = document.getElementById('global-import-input');
+            if (input) input.removeEventListener('change', this.importCloseHandler, true);
+            this.importCloseHandler = null;
         }
         if (this.returnFocusEl?.focus) this.returnFocusEl.focus();
         this.returnFocusEl = null;
@@ -153,10 +159,21 @@ class WelcomePanel {
 
     handleImportData() {
         const input = document.getElementById('global-import-input');
-        if (input) {
-            input.click();
+        if (!input) return;
+
+        if (this.importCloseHandler) {
+            input.removeEventListener('change', this.importCloseHandler, true);
+            this.importCloseHandler = null;
         }
-        this.close();
+
+        this.importCloseHandler = (e) => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+            this.close();
+        };
+
+        input.addEventListener('change', this.importCloseHandler, true);
+        input.click();
     }
 
     handleDontShowAgainChange(checked) {

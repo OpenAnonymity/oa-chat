@@ -145,19 +145,19 @@ export function getActivityDescription(log, detailed = false) {
         if (type === 'ticket' && path.includes('alpha-register')) {
             if (!detailed) {
                 if (status >= 200 && status < 300) {
-                    return 'Privacy tickets registered successfully';
+                    return 'Inference tickets registered successfully';
                 } else if (status === 0) {
-                    return 'Failed to register privacy tickets';
+                    return 'Failed to register inference tickets';
                 }
-                return 'Registering privacy tickets';
+                return 'Registering inference tickets';
             } else {
                 if (status >= 200 && status < 300) {
                     const ticketCount = response?.signed_responses?.length || 0;
-                    return `Successfully registered ${ticketCount} privacy-preserving inference tickets. These tickets allow you to request unlinkable API keys without revealing your identity.`;
+                    return `Successfully registered ${ticketCount} inference tickets. These tickets allow you to request unlinkable ephemeral access keys.`;
                 } else if (status === 0) {
-                    return 'Failed to register privacy tickets. The registration server may be unavailable or your invitation code may be invalid.';
+                    return 'Failed to register inference tickets. The OA platform may be unavailable or your invitation code may be invalid.';
                 }
-                return 'Attempting to register privacy tickets with the anonymization server...';
+                return 'Attempting to register inference tickets with OA platform...';
             }
         }
 
@@ -209,15 +209,15 @@ export function getActivityDescription(log, detailed = false) {
                 } else if (status === 0) {
                     return 'Failed to obtain ephemeral key';
                 }
-                return 'Requesting ephemeral unlinkable key';
+                return 'Requesting ephemeral access key';
             } else {
                 if (status >= 200 && status < 300) {
                     const duration = response?.duration_minutes || 60;
-                    return `Successfully obtained an unlinkable API key valid for ${duration} minutes. This key allows you to access AI models without linking requests to your identity.`;
+                    return `Successfully obtained an ephemeral key valid for ${duration} minutes.`;
                 } else if (status === 0) {
-                    return 'Failed to obtain API access. The anonymization server may be unavailable or your ticket may have already been used.';
+                    return 'Failed to obtain ephemeral key. The OA platform may be unavailable or your ticket may have already been used.';
                 }
-                return 'Exchanging privacy ticket for unlinkable API access...';
+                return 'Exchanging privacy ticket for ephemeral access key...';
             }
         }
 
