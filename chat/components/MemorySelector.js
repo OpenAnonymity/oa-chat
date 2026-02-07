@@ -85,7 +85,7 @@ export default class MemorySelector {
                     <input
                         id="memory-search"
                         type="text"
-                        placeholder="Search memories..."
+                        placeholder="Search context..."
                         class="flex-1 bg-transparent outline-none text-sm py-2 text-foreground placeholder:text-muted-foreground"
                         value=""
                     />
@@ -161,7 +161,7 @@ export default class MemorySelector {
                     <input
                         id="memory-search"
                         type="text"
-                        placeholder="Search memories..."
+                        placeholder="Search context..."
                         class="flex-1 bg-transparent outline-none text-sm py-1 text-foreground placeholder:text-muted-foreground"
                         value=""
                     />
@@ -181,7 +181,7 @@ export default class MemorySelector {
                         <div class="flex items-center justify-center h-24 text-muted-foreground">
                             <div class="flex flex-col items-center gap-2">
                                 <div class="link-preview-spinner"></div>
-                                <span class="text-sm">Retrieving memories...</span>
+                                <span class="text-sm">Retrieving context...</span>
                             </div>
                         </div>
                     </div>
@@ -300,7 +300,7 @@ export default class MemorySelector {
         if (this.memories.length === 0) {
             list.innerHTML = `
                 <div class="p-4 text-center text-muted-foreground">
-                    <p class="text-sm">No memories found</p>
+                    <p class="text-sm">No context found</p>
                 </div>
             `;
             return;
@@ -318,7 +318,7 @@ export default class MemorySelector {
         if (filtered.length === 0) {
             list.innerHTML = `
                 <div class="p-4 text-center text-muted-foreground">
-                    <p class="text-sm">No memories match your search</p>
+                    <p class="text-sm">No context matches your search</p>
                 </div>
             `;
             return;
@@ -506,6 +506,6 @@ export default class MemorySelector {
         this.app.chatInput?.renderMemoryChips(selected);
 
         this.close();
-        this.app.showToast?.(`Attached ${this.selectedIndices.size} memor${this.selectedIndices.size === 1 ? 'y' : 'ies'}`, 'success');
+        this.app.showToast?.(`Added ${this.selectedIndices.size} context item${this.selectedIndices.size === 1 ? '' : 's'}`, 'success');
     }
 }

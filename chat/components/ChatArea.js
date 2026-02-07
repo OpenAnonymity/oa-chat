@@ -169,6 +169,16 @@ export default class ChatArea {
                 }
                 return;
             }
+
+            // Memory context indicator - show full prompt preview
+            const memoryIndicator = e.target.closest('.memory-context-indicator');
+            if (memoryIndicator) {
+                e.preventDefault();
+                e.stopPropagation();
+                const messageId = memoryIndicator.dataset.messageId;
+                await this.showFullPromptPreview(messageId);
+                return;
+            }
         });
 
         // Auto-grow edit textarea on input (debounced via requestAnimationFrame)
@@ -1978,5 +1988,176 @@ export default class ChatArea {
         }
         // Sync the model picker button
         this.updateEditModelPickerButton();
+    }
+
+    /**
+     * Show full prompt preview modal with complete prompt including memory context
+     * @param {string} messageId - The message ID to show full prompt for
+     */
+    async showFullPromptPreview(messageId) {
+        const messages = this.app.state.messages;
+        const message = messages.find(m => m.id === messageId);
+        
+        if (!message || message.role !== 'user') {
+            return;
+        }
+
+        const context = messageMemoryContext.getMessageContext(messageId);
+        const hasMemory = context && context.memories && context.memories.length > 0;
+
+        // Build the full prompt as it was sent to the API
+        let fullPrompt = '';
+        
+        if (hasMemory) {
+            // Add memory context first
+            const memoryContent = context.memories.map((m, idx) => {
+                const content = m.fullContent || m.displayContent || m.content || m.summary || '';
+                return `--- Retrieved Context ${idx + 1}: ${m.title || 'Untitled'} ---\n${content}`;
+            }).join('\n\n');
+            
+            fullPrompt = `${memoryContent}\n\n--- User Query ---\n${message.content}`;
+        } else {
+            fullPrompt = message.content;
+        }
+
+        // Create modal
+        const modal = document.createElement('div');
+        modal.className = 'full-prompt-preview-modal';
+        modal.innerHTML = `
+            <div class="full-prompt-preview-content">
+                <div class="full-prompt-preview-header">
+                    <div class="full-prompt-preview-title">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+                        </svg>
+                        Full Prompt with Context
+                    </div>
+                    <button class="full-prompt-preview-close" id="close-prompt-preview">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+                <div class="full-prompt-preview-body">
+                    ${hasMemory ? `
+                        <div class="full-prompt-section">
+                            <div class="full-prompt-section-title">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
+                                </svg>
+                                Retrieved Context (${context.memories.length} item${context.memories.length === 1 ? '' : 's'})
+                            </div>
+                            <div>
+                                ${context.memories.map((m, idx) => {
+                                    const content = m.fullContent || m.displayContent || m.content || m.summary || '';
+                                    return `
+                                        <div class="full-prompt-memory-item">
+                                            <div class="full-prompt-memory-title">${idx + 1}. ${this.escapeHtml(m.title || 'Untitled')}</div>
+                                            <div class="full-prompt-memory-content">${this.escapeHtml(content)}</div>
+                                        </div>
+                                    `;
+                                }).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+                    <div class="full-prompt-section">
+                        <div class="full-prompt-section-title">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
+                            </svg>
+                            ${hasMemory ? 'User Query' : 'User Message'}
+                        </div>
+                        <div class="full-prompt-section-content">${this.escapeHtml(message.content)}</div>
+                    </div>
+                    ${hasMemory ? `
+                        <div class="full-prompt-section">
+                            <div class="full-prompt-section-title">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z" />
+                                </svg>
+                                Complete Prompt Sent to API
+                            </div>
+                            <div class="full-prompt-section-content">${this.escapeHtml(fullPrompt)}</div>
+                        </div>
+                    ` : ''}
+                </div>
+                <div class="full-prompt-preview-footer">
+                    <div class="full-prompt-hint">
+                        <kbd class="inline-flex items-center justify-center rounded border border-border bg-muted px-2 py-1 text-xs font-mono">Esc</kbd>
+                        <span>to close</span>
+                    </div>
+                    <button class="full-prompt-copy-btn" id="copy-full-prompt">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
+                        </svg>
+                        Copy Full Prompt
+                    </button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        // Event listeners
+        const closeBtn = modal.querySelector('#close-prompt-preview');
+        const copyBtn = modal.querySelector('#copy-full-prompt');
+
+        const closeModal = () => {
+            modal.remove();
+        };
+
+        closeBtn.addEventListener('click', closeModal);
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                closeModal();
+            }
+        });
+
+        copyBtn.addEventListener('click', async () => {
+            try {
+                await navigator.clipboard.writeText(fullPrompt);
+                copyBtn.innerHTML = `
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                    </svg>
+                    Copied!
+                `;
+                setTimeout(() => {
+                    copyBtn.innerHTML = `
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
+                        </svg>
+                        Copy Full Prompt
+                    `;
+                }, 2000);
+            } catch (err) {
+                console.error('Failed to copy:', err);
+            }
+        });
+
+        // Keyboard handler
+        const handleKeydown = (e) => {
+            if (e.key === 'Escape') {
+                closeModal();
+                document.removeEventListener('keydown', handleKeydown);
+            }
+        };
+        document.addEventListener('keydown', handleKeydown);
+
+        // Clean up on close
+        modal.addEventListener('remove', () => {
+            document.removeEventListener('keydown', handleKeydown);
+        });
+    }
+
+    /**
+     * Escape HTML to prevent XSS
+     * @param {string} text - Text to escape
+     * @returns {string} - Escaped HTML
+     */
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text || '';
+        return div.innerHTML;
     }
 }

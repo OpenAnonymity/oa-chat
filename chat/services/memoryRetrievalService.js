@@ -147,7 +147,7 @@ class MemoryRetrievalService {
         console.log('Memory mention triggered with query:', userQuery);
         
         // Show processing toast
-        const dismissToast = app.showLoadingToast?.('Retrieving memories...');
+        const dismissToast = app.showLoadingToast?.('Retrieving context...');
         
         try {
             const result = await this.retrieveMemory(userQuery, (progress) => {
@@ -175,7 +175,7 @@ class MemoryRetrievalService {
                 );
             } else {
                 app.showToast?.(
-                    result.message || 'No memories found',
+                    result.message || 'No context found',
                     'info'
                 );
             }
