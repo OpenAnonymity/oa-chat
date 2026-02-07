@@ -93,7 +93,7 @@ class MemoryRetrievalService {
     /**
      * Transform session search results into memory objects for display
      * @param {Array} sessionResults - Search results from sessionEmbedder.searchSessions
-     * @returns {Array} - Array of memory objects with title, content, sessionId
+     * @returns {Array} - Array of memory objects with title, content, sessionId, keywords
      */
     transformSessionsToMemories(sessionResults) {
         if (!sessionResults || sessionResults.length === 0) return [];
@@ -104,12 +104,13 @@ class MemoryRetrievalService {
             const displayText = fullText.length > 300 ? fullText.substring(0, 300) + '...' : fullText;
             
             const memory = {
-                title: result.title || 'Untitled Session',
+                title: result.summary || result.title || 'Untitled Session',
                 summary: this.summarizeConversation(fullText, 200),
                 content: displayText,
                 displayContent: displayText,
                 fullContent: fullText,  // Full text for API/message sending
                 sessionId: result.sessionId,
+                keywords: result.keywords || [],  // Include keywords for grouping
                 score: result.score,
                 messageCount: result.messageCount || 0,
                 timestamp: result.embeddedAt || Date.now()

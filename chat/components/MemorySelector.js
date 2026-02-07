@@ -291,7 +291,7 @@ export default class MemorySelector {
     }
 
     /**
-     * Render memories in the list
+     * Render memories in the list, grouped by keywords
      */
     renderMemories() {
         const list = this.container?.querySelector('#memory-list');
@@ -324,37 +324,30 @@ export default class MemorySelector {
             return;
         }
 
-        list.innerHTML = filtered.map(({ memory, originalIdx }) => {
-            const isSelected = this.selectedIndices.has(originalIdx);
-            const checkmarkSlot = isSelected
-                ? '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-4 h-4 text-primary flex-shrink-0"><path fill-rule="evenodd" d="M19.916 4.626a.75.75 0 0 1 .208 1.04l-9 13.5a.75.75 0 0 1-1.154.114l-6-6a.75.75 0 0 1 1.06-1.06l5.353 5.353 8.493-12.74a.75.75 0 0 1 1.04-.207Z" clip-rule="evenodd" /></svg>'
-                : '<span class="w-4 h-4 flex-shrink-0"></span>';
+        // Group memories by keywords
+        const keywordGroups = this.groupMemoriesByKeywords(filtered);
 
-            const bookIcon = `
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
-                                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
-                </svg>
-            `;
+        // Build HTML with keyword groups
+        let html = '';
+        for (const [keyword, items] of Object.entries(keywordGroups)) {
+            if (items.length === 0) continue;
 
-            const previewSource = memory.displayContent || memory.content || memory.summary || '';
-            const previewHtml = this.getMemoryPreviewHtml(previewSource);
-
-            return `
-                <div class="model-option px-2 py-1 rounded-sm cursor-pointer transition-colors hover:bg-accent ${isSelected ? 'bg-accent' : ''}" data-index="${originalIdx}" role="option" aria-selected="${isSelected}">
-                    <div class="flex items-start gap-2">
-                        <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 bg-muted text-muted-foreground">
-                            ${bookIcon}
-                        </div>
-                        <div class="flex-1 min-w-0">
-                            <div class="font-medium text-[12px] text-foreground truncate">${memory.title || 'Untitled'}</div>
-                            <div class="memory-preview-content message-content prose prose-sm">${previewHtml}</div>
-                            ${memory.timestamp ? `<div class="text-[10px] text-muted-foreground/70 mt-1">${new Date(memory.timestamp).toLocaleString()}</div>` : ''}
-                        </div>
-                        ${checkmarkSlot}
+            // Only show keyword header if there are memories with this keyword
+            if (keyword !== '_no_keywords_') {
+                html += `
+                    <div class="px-2 py-1 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                        ${this.escapeHtml(keyword)}
                     </div>
-                </div>
-            `;
-        }).join('');
+                `;
+            }
+
+            // Render memories in this group
+            html += items.map(({ memory, originalIdx }) => {
+                return this.buildMemoryItemHtml(memory, originalIdx);
+            }).join('');
+        }
+
+        list.innerHTML = html;
 
         list.querySelectorAll('.model-option').forEach(option => {
             option.addEventListener('click', (e) => {
@@ -371,6 +364,99 @@ export default class MemorySelector {
         });
 
         this.updateInsertButtonState();
+    }
+
+    /**
+     * Group memories by their keywords
+     * Each memory appears only once under its primary (first) keyword
+     * @param {Array} filtered - Filtered memories with originalIdx
+     * @returns {Object} - Map of keyword to memories
+     */
+    groupMemoriesByKeywords(filtered) {
+        const groups = {};
+
+        for (const item of filtered) {
+            const keywords = item.memory.keywords || [];
+            
+            if (keywords.length === 0) {
+                // No keywords - add to ungrouped
+                if (!groups['_no_keywords_']) {
+                    groups['_no_keywords_'] = [];
+                }
+                groups['_no_keywords_'].push(item);
+            } else {
+                // Add to FIRST keyword group only (primary keyword)
+                const primaryKeyword = keywords[0].toLowerCase();
+                if (!groups[primaryKeyword]) {
+                    groups[primaryKeyword] = [];
+                }
+                groups[primaryKeyword].push(item);
+            }
+        }
+
+        // Sort groups: keywords with most memories first, then alphabetically
+        const sorted = Object.entries(groups)
+            .sort(([keyA, itemsA], [keyB, itemsB]) => {
+                // Put _no_keywords_ last
+                if (keyA === '_no_keywords_') return 1;
+                if (keyB === '_no_keywords_') return -1;
+                // Sort by count descending, then alphabetically
+                if (itemsA.length !== itemsB.length) {
+                    return itemsB.length - itemsA.length;
+                }
+                return keyA.localeCompare(keyB);
+            });
+
+        return Object.fromEntries(sorted);
+    }
+
+    /**
+     * Build HTML for a single memory item
+     * @param {Object} memory - Memory object
+     * @param {number} originalIdx - Original index in memories array
+     * @returns {string} - HTML string
+     */
+    buildMemoryItemHtml(memory, originalIdx) {
+        const isSelected = this.selectedIndices.has(originalIdx);
+        const checkmarkSlot = isSelected
+            ? '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-4 h-4 text-primary flex-shrink-0"><path fill-rule="evenodd" d="M19.916 4.626a.75.75 0 0 1 .208 1.04l-9 13.5a.75.75 0 0 1-1.154.114l-6-6a.75.75 0 0 1 1.06-1.06l5.353 5.353 8.493-12.74a.75.75 0 0 1 1.04-.207Z" clip-rule="evenodd" /></svg>'
+            : '<span class="w-4 h-4 flex-shrink-0"></span>';
+
+        const bookIcon = `
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
+            </svg>
+        `;
+
+        const previewSource = memory.displayContent || memory.content || memory.summary || '';
+        const previewHtml = this.getMemoryPreviewHtml(previewSource);
+
+        return `
+            <div class="model-option px-2 py-1 rounded-sm cursor-pointer transition-colors hover:bg-accent ${isSelected ? 'bg-accent' : ''}" data-index="${originalIdx}" role="option" aria-selected="${isSelected}">
+                <div class="flex items-start gap-2">
+                    <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 bg-muted text-muted-foreground">
+                        ${bookIcon}
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <div class="font-medium text-[12px] text-foreground truncate">${this.escapeHtml(memory.title || 'Untitled')}</div>
+                        <div class="memory-preview-content message-content prose prose-sm">${previewHtml}</div>
+                        ${memory.timestamp ? `<div class="text-[10px] text-muted-foreground/70 mt-1">${new Date(memory.timestamp).toLocaleString()}</div>` : ''}
+                    </div>
+                    ${checkmarkSlot}
+                </div>
+            </div>
+        `;
+    }
+
+    /**
+     * Escape HTML special characters
+     * @param {string} text - Text to escape
+     * @returns {string} - Escaped text
+     */
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
     }
 
     /**

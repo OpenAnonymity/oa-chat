@@ -355,6 +355,8 @@ class SessionEmbedder {
                 metadata: {
                     sessionId,
                     title: session.title || 'Untitled',
+                    summary: session.summary || null,
+                    keywords: session.keywords || [],
                     conversationText: conversationText,
                     messageCount: messages.length,
                     model: session.model || null,
@@ -424,11 +426,14 @@ class SessionEmbedder {
             return results.map(r => ({
                 sessionId: r.metadata?.sessionId,
                 title: r.metadata?.title,
+                summary: r.metadata?.summary,
+                keywords: r.metadata?.keywords || [],
                 conversationText: r.metadata?.conversationText,
                 messageCount: r.metadata?.messageCount,
                 model: r.metadata?.model,
                 embeddedAt: r.metadata?.embeddedAt,
-                updatedAt: r.metadata?.updatedAt
+                updatedAt: r.metadata?.updatedAt,
+                score: r.score
             }));
         } catch (error) {
             console.warn('[SessionEmbedder] Search failed:', error);

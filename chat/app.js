@@ -35,6 +35,7 @@ import { memoryService } from './services/memoryService.js';
 import { messageMemoryContext } from './services/messageMemoryContext.js';
 import { chatDB } from './db.js';
 import sessionEmbedder from './services/sessionEmbedder.js';
+import keywordsGenerator from './services/keywordsGenerator.js';
 
 const DEFAULT_MODEL_NAME = inferenceService.getDefaultModelName();
 const SESSION_PAGE_SIZE = 80;
@@ -4103,6 +4104,11 @@ class ChatApp {
                 // Record activity for session embedding after successful message
                 sessionEmbedder.recordActivity(session.id);
 
+                // Trigger keywords generation after successful message (non-blocking)
+                keywordsGenerator.triggerGeneration(session.id, this).catch(err => {
+                    console.warn('[App] Keywords generation failed:', err);
+                });
+
                 break retryLoop; // Success - exit retry loop
 
             } catch (error) {
@@ -4879,7 +4885,12 @@ class ChatApp {
 
         const results = await chatDB.searchSessions(session => {
             const title = (session.title || '').toLowerCase();
-            return this.fuzzyMatch(query, title);
+            const summary = (session.summary || '').toLowerCase();
+            const keywords = Array.isArray(session.keywords) 
+                ? session.keywords.join(' ').toLowerCase() 
+                : '';
+            const searchText = `${title} ${summary} ${keywords}`;
+            return this.fuzzyMatch(query, searchText);
         }, SESSION_SEARCH_LIMIT);
 
         if (requestId !== this.sessionSearchRequestId) {
@@ -4905,7 +4916,12 @@ class ChatApp {
         const query = this.sessionSearchQuery.toLowerCase();
         const inMemory = this.state.sessions.filter(session => {
             const title = (session.title || '').toLowerCase();
-            return this.fuzzyMatch(query, title);
+            const summary = (session.summary || '').toLowerCase();
+            const keywords = Array.isArray(session.keywords) 
+                ? session.keywords.join(' ').toLowerCase() 
+                : '';
+            const searchText = `${title} ${summary} ${keywords}`;
+            return this.fuzzyMatch(query, searchText);
         });
 
         if (this.state.sessionSearchResults && this.state.sessionSearchResultsQuery === query) {
