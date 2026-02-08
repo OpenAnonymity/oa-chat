@@ -246,6 +246,10 @@ class NetworkLogger {
                 return content.substring(0, 100) + (content.length > 100 ? '...' : '');
             }
 
+            if (data.code || data.invitation_code || data.credential) {
+                return 'Ticket code received';
+            }
+
             if (data.key) {
                 return 'API key received';
             }

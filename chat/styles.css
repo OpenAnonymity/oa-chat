@@ -3514,6 +3514,27 @@ html {
     box-shadow: 0 0 0 2px hsl(var(--color-ring) / 0.5);
 }
 
+.update-toast--stacked {
+    flex-wrap: wrap;
+    max-width: min(92vw, 520px);
+    padding: 0.5rem 0.6rem 0.5rem 0.8rem;
+    row-gap: 0.35rem;
+}
+
+.update-toast__label--stacked {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    min-width: 0;
+}
+
+.update-toast__code {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    letter-spacing: 0.01em;
+    word-break: break-all;
+}
+
 @keyframes updateToastIn {
     from {
         opacity: 0;
@@ -3530,6 +3551,8 @@ html {
         animation: none;
     }
 }
+
+
 
 /* Input Area Wrapper - ensure it's above message content */
 .absolute.bottom-0.left-0.right-0 {

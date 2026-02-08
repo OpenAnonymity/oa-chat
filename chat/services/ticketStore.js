@@ -441,7 +441,7 @@ class TicketStore {
         return merged.length;
     }
 
-    async consumeTickets(count, handler) {
+    async consumeTickets(count, handler, options = {}) {
         if (typeof handler !== 'function') {
             throw new Error('Ticket handler must be a function.');
         }
@@ -471,8 +471,13 @@ class TicketStore {
                 throw error;
             }
 
-            const selected = active.slice(0, count);
-            const remaining = active.slice(count);
+            const order = options.order === 'tail' ? 'tail' : 'head';
+            const selected = order === 'tail'
+                ? active.slice(active.length - count)
+                : active.slice(0, count);
+            const remaining = order === 'tail'
+                ? active.slice(0, active.length - count)
+                : active.slice(count);
 
             try {
                 const result = await handler({
@@ -493,11 +498,33 @@ class TicketStore {
                 };
             } catch (error) {
                 if (error && error.consumeTickets) {
-                    const updatedArchive = this.mergeTickets(archived, selected.map(ticket => ({
-                        ...ticket,
-                        consumed_at: ticket.consumed_at || new Date().toISOString()
-                    })));
-                    await this.persistTickets(remaining, updatedArchive);
+                    const usedTokens = Array.isArray(error.usedTokens)
+                        ? error.usedTokens
+                        : Array.isArray(error.usedTickets)
+                            ? error.usedTickets.map(ticket => ticket?.finalized_ticket).filter(Boolean)
+                            : Array.isArray(error.usedIndices)
+                                ? error.usedIndices.map(idx => selected[idx]?.finalized_ticket).filter(Boolean)
+                                : [];
+
+                    const usedTokenSet = new Set(usedTokens.filter(Boolean));
+                    const usedSelected = usedTokenSet.size > 0
+                        ? selected.filter(ticket => usedTokenSet.has(ticket.finalized_ticket))
+                        : [];
+
+                    if (usedSelected.length > 0) {
+                        const updatedArchive = this.mergeTickets(archived, usedSelected.map(ticket => ({
+                            ...ticket,
+                            consumed_at: ticket.consumed_at || new Date().toISOString()
+                        })));
+                        const updatedActive = active.filter(ticket => !usedTokenSet.has(ticket.finalized_ticket));
+                        await this.persistTickets(updatedActive, updatedArchive);
+                    } else {
+                        const updatedArchive = this.mergeTickets(archived, selected.map(ticket => ({
+                            ...ticket,
+                            consumed_at: ticket.consumed_at || new Date().toISOString()
+                        })));
+                        await this.persistTickets(remaining, updatedArchive);
+                    }
                 }
                 throw error;
             }

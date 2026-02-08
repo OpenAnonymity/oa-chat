@@ -90,6 +90,8 @@ export function getActivityDescription(log, detailed = false) {
             // Simple descriptions for local events
             if (action === 'ticket-select') {
                 return 'Redeeming unblinded ticket';
+            } else if (action === 'ticket-select-split') {
+                return 'Selecting tickets for split';
             } else if (action === 'tickets-blind') {
                 return `Blinded ${response?.ticket_count || 0} tickets locally`;
             } else if (action === 'tickets-signed') {
@@ -108,6 +110,11 @@ export function getActivityDescription(log, detailed = false) {
                 const ticketIndex = response?.ticket_index || 0;
                 const unusedTickets = response?.unused_tickets || 0;
                 return `Selected inference ticket #${ticketIndex} from your local storage. You have ${unusedTickets} unused ticket${unusedTickets !== 1 ? 's' : ''} remaining. This ticket will be exchanged with a station for an unlinkable API key.`;
+            } else if (action === 'ticket-select-split') {
+                const ticketIndex = response?.ticket_index || 0;
+                const selectedCount = response?.tickets_selected || 0;
+                const unusedTickets = response?.unused_tickets || 0;
+                return `Selected ${selectedCount} inference ticket${selectedCount !== 1 ? 's' : ''} starting at #${ticketIndex} from your local storage for split. You have ${unusedTickets} unused ticket${unusedTickets !== 1 ? 's' : ''} remaining.`;
             } else if (action === 'tickets-blind') {
                 const count = response?.ticket_count || 0;
                 return `Created ${count} blinded inference ticket${count !== 1 ? 's' : ''} locally using Privacy Pass cryptography. These blinded tokens hide your identity from the server while allowing it to sign them. The blinded tickets are now ready to be sent to the server for signing.`;
@@ -151,6 +158,26 @@ export function getActivityDescription(log, detailed = false) {
                     return 'Failed to register privacy tickets. The registration server may be unavailable or your invitation code may be invalid.';
                 }
                 return 'Attempting to register privacy tickets with the anonymization server...';
+            }
+        }
+
+        // Ticket split (ticket code)
+        if (type === 'ticket' && path.includes('/api/split_tickets')) {
+            const count = response?.tickets_consumed || request?.body?.count || 0;
+            if (!detailed) {
+                if (status >= 200 && status < 300) {
+                    return 'Ticket code created';
+                } else if (status === 0) {
+                    return 'Failed to split tickets';
+                }
+                return 'Splitting tickets into ticket code';
+            } else {
+                if (status >= 200 && status < 300) {
+                    return `Successfully split ${count || 'your'} inference ticket${count === 1 ? '' : 's'} into a ticket code.`;
+                } else if (status === 0) {
+                    return 'Failed to split tickets. The server may be unavailable or your tickets may have already been used.';
+                }
+                return 'Splitting inference tickets into a ticket code...';
             }
         }
 

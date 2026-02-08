@@ -11,7 +11,7 @@ import tlsSecurityModal from './TLSSecurityModal.js';
 import proxyInfoModal from './ProxyInfoModal.js';
 import { getActivityDescription, getActivityIcon, getStatusDotClass, formatTimestamp } from '../services/networkLogRenderer.js';
 import { getTicketCost } from '../services/modelTiers.js';
-import { exportTickets, splitAndExportTickets } from '../services/globalExport.js';
+import { exportTickets } from '../services/globalExport.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import { chatDB } from '../db.js';
 import { TICKET_RETRY_RATIO } from '../config.js';
@@ -47,6 +47,7 @@ class RightPanel {
         this.registrationError = null;
         this.isImporting = false;
         this.importStatus = null;
+        this.isSplitting = false;
         this.timerInterval = null;
         this.pendingInvitationCode = null;
         this.pendingInvitationTickets = null;
@@ -55,6 +56,7 @@ class RightPanel {
         // Split controls state
         this.showSplitControls = false;
         this.splitCount = 1;
+        this.splitResult = null; // { code, ticketsConsumed }
 
         // Ticket animation state
         this.currentTicket = null;
@@ -250,6 +252,10 @@ class RightPanel {
         const count = parseInt(suffix, 16);
         if (!Number.isFinite(count) || count <= 0) return null;
         return count;
+    }
+
+    getMaxSplitCount() {
+        return Math.min(50, this.ticketCount);
     }
 
     escapeHtml(text) {
@@ -532,7 +538,7 @@ class RightPanel {
 
     async handleRegister(invitationCode) {
         if (!invitationCode || invitationCode.length !== 24) {
-            this.registrationError = 'Invalid invitation code (must be 24 characters)';
+            this.registrationError = 'Invalid ticket code (must be 24 characters)';
             this.renderTopSectionOnly();
             return;
         }
@@ -709,17 +715,24 @@ class RightPanel {
     }
 
     handleSplitToggle() {
+        // Don't allow opening split controls if there's already a result
+        if (this.splitResult) {
+            this.app?.showToast?.('Please dismiss the current code first', 'error');
+            return;
+        }
+
         this.showSplitControls = !this.showSplitControls;
         if (this.showSplitControls) {
-            // Default to 1 or half of available tickets
-            this.splitCount = Math.min(1, this.ticketCount);
+            // Default to 1 ticket, max 50
+            this.splitCount = Math.min(1, this.getMaxSplitCount());
         }
         this.renderTopSectionOnly();
     }
 
     handleSplitCountChange(delta) {
+        const maxSplitCount = this.getMaxSplitCount();
         const newCount = this.splitCount + delta;
-        if (newCount >= 1 && newCount <= this.ticketCount) {
+        if (newCount >= 1 && newCount <= maxSplitCount) {
             this.splitCount = newCount;
             // Update UI elements directly without full re-render
             const input = document.getElementById('split-count-input');
@@ -727,76 +740,95 @@ class RightPanel {
             const decreaseBtn = document.getElementById('split-decrease-btn');
             const increaseBtn = document.getElementById('split-increase-btn');
             if (input) input.value = this.splitCount;
-            if (confirmBtn) confirmBtn.querySelector('span').textContent = `Export ${this.splitCount}`;
+            if (confirmBtn) confirmBtn.querySelector('span').textContent = `Split ${this.splitCount}`;
             if (decreaseBtn) decreaseBtn.disabled = this.splitCount <= 1;
-            if (increaseBtn) increaseBtn.disabled = this.splitCount >= this.ticketCount;
+            if (increaseBtn) increaseBtn.disabled = this.splitCount >= maxSplitCount;
         }
     }
 
     handleSplitCountInput(value) {
         const parsed = parseInt(value, 10);
-        if (!isNaN(parsed) && parsed >= 1 && parsed <= this.ticketCount) {
+        const maxSplitCount = this.getMaxSplitCount();
+        if (!isNaN(parsed) && parsed >= 1 && parsed <= maxSplitCount) {
             this.splitCount = parsed;
             // Update confirm button text without full re-render to avoid losing focus
             const confirmBtn = document.getElementById('split-confirm-btn');
             if (confirmBtn) {
-                confirmBtn.querySelector('span').textContent = `Export ${this.splitCount}`;
+                confirmBtn.querySelector('span').textContent = `Split ${this.splitCount}`;
             }
         } else if (!isNaN(parsed)) {
             // Clamp to valid range
-            this.splitCount = Math.max(1, Math.min(parsed, this.ticketCount));
+            this.splitCount = Math.max(1, Math.min(parsed, maxSplitCount));
             const confirmBtn = document.getElementById('split-confirm-btn');
             if (confirmBtn) {
-                confirmBtn.querySelector('span').textContent = `Export ${this.splitCount}`;
+                confirmBtn.querySelector('span').textContent = `Split ${this.splitCount}`;
             }
         }
     }
 
     async handleSplitConfirm() {
-        if (this.splitCount <= 0 || this.splitCount > this.ticketCount) return;
+        if (this.isSplitting) return;
+        const maxSplitCount = this.getMaxSplitCount();
+        if (this.splitCount <= 0 || this.splitCount > maxSplitCount) {
+            this.app?.showToast?.(`You can split at most ${maxSplitCount} tickets at a time.`, 'error');
+            return;
+        }
+
+        this.isSplitting = true;
+        this.renderTopSectionOnly();
 
         try {
-            const result = await splitAndExportTickets(this.splitCount);
-            if (result.cancelled) {
-                // User cancelled - no message needed
-                return;
-            }
-            if (result.success) {
-                this.ticketCount = ticketClient.getTicketCount();
-                this.loadNextTicket();
-                this.showSplitControls = false;
-                this.importStatus = {
-                    type: 'success',
-                    message: `Split and exported ${result.exportedCount} ticket${result.exportedCount !== 1 ? 's' : ''}.`
-                };
-            } else {
-                this.importStatus = {
-                    type: 'error',
-                    message: 'Failed to split tickets.'
-                };
+            const result = await ticketClient.splitTickets(this.splitCount);
+            this.ticketCount = ticketClient.getTicketCount();
+            this.loadNextTicket();
+            this.showSplitControls = false;
+            this.splitResult = {
+                code: result.code,
+                ticketsConsumed: result.ticketsConsumed || this.splitCount
+            };
+
+            // Auto-copy the code to clipboard
+            try {
+                await navigator.clipboard.writeText(result.code);
+                this.app?.showToast?.('Code copied to clipboard!', 'success');
+            } catch (copyError) {
+                console.error('Failed to auto-copy code:', copyError);
+                // Don't show error toast, user can still manually copy
             }
         } catch (error) {
-            this.importStatus = {
-                type: 'error',
-                message: error.message || 'Failed to split tickets.'
-            };
+            this.app?.showToast?.(error.message || 'Failed to split tickets.', 'error');
+        } finally {
+            this.isSplitting = false;
         }
 
         this.renderTopSectionOnly();
-
-        if (this.importStatus?.type === 'success') {
-            setTimeout(() => {
-                if (this.importStatus?.type === 'success') {
-                    this.importStatus = null;
-                    this.renderTopSectionOnly();
-                }
-            }, 2500);
-        }
     }
 
     handleSplitCancel() {
         this.showSplitControls = false;
+        this.splitResult = null;
         this.renderTopSectionOnly();
+    }
+
+    handleSplitResultDismiss() {
+        if (!this.splitResult) return;
+
+        this.app?.openSplitCodeDismissWarning?.(() => {
+            this.splitResult = null;
+            this.renderTopSectionOnly();
+        }, this.splitResult.code);
+    }
+
+    async handleSplitResultCopy() {
+        if (!this.splitResult?.code) return;
+
+        try {
+            await navigator.clipboard.writeText(this.splitResult.code);
+            this.app?.showToast?.('Code copied!', 'success');
+        } catch (error) {
+            console.error('Failed to copy ticket code:', error);
+            this.app?.showToast?.('Failed to copy code', 'error');
+        }
     }
 
     async handleRequestApiKey() {
@@ -1547,6 +1579,7 @@ class RightPanel {
         const pendingTicketsLabel = pendingTickets
             ? `${pendingTickets} ticket${pendingTickets === 1 ? '' : 's'}`
             : 'tickets';
+        const maxSplitCount = this.getMaxSplitCount();
 
         return `
                 <!-- Invitation Code Section -->
@@ -1608,8 +1641,8 @@ class RightPanel {
                     <button
                         id="split-tickets-btn"
                         class="btn-ghost-hover inline-flex items-center justify-center gap-1 px-2 py-1 text-[10px] rounded-md border border-border bg-background transition-all duration-200 shadow-sm flex-1"
-                        title="Export a subset of tickets"
-                        ${this.ticketCount === 0 ? 'disabled' : ''}
+                        title="${this.splitResult ? 'Dismiss current code first' : 'Split tickets into a ticket code (max 50)'}"
+                        ${this.ticketCount === 0 || this.splitResult ? 'disabled' : ''}
                     >
                         <span>Split</span>
                     </button>
@@ -1620,7 +1653,7 @@ class RightPanel {
                     <button
                         id="split-decrease-btn"
                         class="btn-ghost-hover inline-flex items-center justify-center w-6 h-6 text-[10px] rounded border border-border bg-background transition-all duration-200 shadow-sm"
-                        ${this.splitCount <= 1 ? 'disabled' : ''}
+                        ${this.splitCount <= 1 || this.isSplitting ? 'disabled' : ''}
                     >−</button>
                     <input
                         id="split-count-input"
@@ -1629,24 +1662,55 @@ class RightPanel {
                         pattern="[0-9]*"
                         value="${this.splitCount}"
                         class="input-focus-clean w-12 px-1 py-1 text-[10px] text-center border border-border rounded bg-background text-foreground"
+                        ${this.isSplitting ? 'disabled' : ''}
                     />
                     <button
                         id="split-increase-btn"
                         class="btn-ghost-hover inline-flex items-center justify-center w-6 h-6 text-[10px] rounded border border-border bg-background transition-all duration-200 shadow-sm"
-                        ${this.splitCount >= this.ticketCount ? 'disabled' : ''}
+                        ${this.splitCount >= maxSplitCount || this.isSplitting ? 'disabled' : ''}
                     >+</button>
                     <button
                         id="split-confirm-btn"
                         class="btn-ghost-hover inline-flex items-center justify-center gap-1 px-2 py-1 text-[10px] rounded-md border border-border bg-background transition-all duration-200 shadow-sm flex-1"
+                        ${this.isSplitting ? 'disabled' : ''}
                     >
-                        <span>Export ${this.splitCount}</span>
+                        <span>${this.isSplitting ? 'Splitting...' : `Split ${this.splitCount}`}</span>
                     </button>
                     <button
                         id="split-cancel-btn"
                         class="btn-ghost-hover inline-flex items-center justify-center px-2 py-1 text-[10px] rounded-md border border-border bg-background transition-all duration-200 shadow-sm text-muted-foreground"
+                        ${this.isSplitting ? 'disabled' : ''}
                     >
                         <span>Cancel</span>
                     </button>
+                </div>
+                ` : ''}
+
+                ${this.splitResult ? `
+                <div id="split-result" class="mt-2 p-2 bg-background border border-border rounded-md">
+                    <div class="flex items-center gap-1.5">
+                        <span class="text-[10px] text-muted-foreground">code:</span>
+                        <code class="flex-1 font-mono text-[10px] text-foreground break-all">${this.splitResult.code}</code>
+                        <button
+                            id="split-result-copy"
+                            class="btn-ghost-hover inline-flex items-center justify-center px-1 py-0.5 rounded text-muted-foreground hover:text-foreground transition-all"
+                            title="Copy"
+                        >
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect width="14" height="14" x="8" y="8" rx="2"/>
+                                <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
+                            </svg>
+                        </button>
+                        <button
+                            id="split-result-dismiss"
+                            class="btn-ghost-hover inline-flex items-center justify-center px-1 py-0.5 rounded text-muted-foreground hover:text-foreground transition-all"
+                            title="Dismiss"
+                        >
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M18 6L6 18M6 6l12 12"/>
+                            </svg>
+                        </button>
+                    </div>
                 </div>
                 ` : ''}
 
@@ -1655,7 +1719,7 @@ class RightPanel {
                         <input
                             id="invitation-code-input"
                             type="text"
-                            placeholder="Enter 24-char invitation code"
+                            placeholder="Enter 24-char ticket code"
                             maxlength="24"
                             class="input-focus-clean w-full px-3 py-2 text-xs border border-border rounded-md bg-background text-foreground placeholder:text-muted-foreground transition-all"
                             value="${this.pendingInvitationCode ? this.escapeHtml(this.pendingInvitationCode) : ''}"
@@ -1666,7 +1730,7 @@ class RightPanel {
                             class="btn-ghost-hover w-full inline-flex items-center justify-center rounded-md text-xs font-medium transition-all duration-200 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 bg-background text-foreground h-8 px-3 shadow-sm border border-border"
                             ${this.isRegistering ? 'disabled' : ''}
                         >
-                            ${this.isRegistering ? 'Registering...' : 'Register Code'}
+                            ${this.isRegistering ? 'Redeeming...' : 'Redeem Code'}
                         </button>
                     </form>
 
@@ -2132,7 +2196,14 @@ class RightPanel {
         const splitCountInput = document.getElementById('split-count-input');
         if (splitCountInput) {
             // Stop propagation to prevent keys from going to chat input
-            splitCountInput.onkeydown = (e) => e.stopPropagation();
+            splitCountInput.onkeydown = (e) => {
+                e.stopPropagation();
+                // Handle Enter key to submit
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    this.handleSplitConfirm();
+                }
+            };
             splitCountInput.onkeyup = (e) => e.stopPropagation();
             splitCountInput.onkeypress = (e) => e.stopPropagation();
             splitCountInput.oninput = (e) => {
@@ -2158,6 +2229,17 @@ class RightPanel {
         const splitCancelBtn = document.getElementById('split-cancel-btn');
         if (splitCancelBtn) {
             splitCancelBtn.onclick = () => this.handleSplitCancel();
+        }
+
+        // Split result handlers
+        const splitResultCopy = document.getElementById('split-result-copy');
+        if (splitResultCopy) {
+            splitResultCopy.onclick = () => this.handleSplitResultCopy();
+        }
+
+        const splitResultDismiss = document.getElementById('split-result-dismiss');
+        if (splitResultDismiss) {
+            splitResultDismiss.onclick = () => this.handleSplitResultDismiss();
         }
 
         // Ticket data click handler - toggle between truncated and full view

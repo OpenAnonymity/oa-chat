@@ -56,17 +56,17 @@ class TicketClient {
         console.log('=== Starting alphaRegister ===');
 
         try {
-            if (progressCallback) progressCallback('Validating invitation code...', 5);
+            if (progressCallback) progressCallback('Validating ticket code...', 5);
 
             if (!invitationCode || invitationCode.length !== 24) {
-                throw new Error('Invalid invitation code format (must be 24 characters)');
+                throw new Error('Invalid ticket code format (must be 24 characters)');
             }
 
             const suffix = invitationCode.slice(20, 24);
             const ticketCount = parseInt(suffix, 16);
 
             if (isNaN(ticketCount) || ticketCount === 0) {
-                throw new Error('Invalid invitation code: unable to determine ticket count');
+                throw new Error('Invalid ticket code: unable to determine ticket count');
             }
 
             if (progressCallback) progressCallback('Initializing Privacy Pass...', 10);
@@ -258,7 +258,7 @@ class TicketClient {
 
             await this.ticketStore.addTickets(tickets);
 
-            if (progressCallback) progressCallback('Registration complete!', 100);
+            if (progressCallback) progressCallback('Code redeemed!', 100);
 
             return {
                 success: true,
@@ -269,6 +269,148 @@ class TicketClient {
 
         } catch (error) {
             console.error('Alpha register error:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Split inference tickets into a ticket code.
+     * @param {number} ticketCount - Number of tickets to split (default: 1)
+     * @returns {Promise<{code: string, ticketsConsumed: number, expiresAt: string|number|null}>}
+     */
+    async splitTickets(ticketCount = 1) {
+        try {
+            const parsedCount = Number.parseInt(ticketCount, 10);
+            if (!Number.isFinite(parsedCount) || parsedCount <= 0) {
+                throw new Error('Ticket count must be greater than zero.');
+            }
+            if (parsedCount > 50) {
+                throw new Error('You can split at most 50 tickets at a time.');
+            }
+
+            const { tickets, result } = await this.ticketStore.consumeTickets(
+                parsedCount,
+                async ({ tickets, totalCount, remainingCount }) => {
+                    const startIndex = Math.max(1, totalCount - tickets.length + 1);
+                    networkLogger.logRequest({
+                        type: 'local',
+                        method: 'LOCAL',
+                        status: 200,
+                        action: 'ticket-select-split',
+                        response: {
+                            tickets_selected: tickets.length,
+                            total_tickets: totalCount,
+                            unused_tickets: remainingCount,
+                            ticket_index: startIndex,
+                            selection_order: 'tail'
+                        }
+                    });
+
+                    const tokenValues = tickets.map(t => t.finalized_ticket).join(',');
+                    const authHeader = tickets.length === 1
+                        ? `InferenceTicket token=${tokenValues}`
+                        : `InferenceTicket tokens=${tokenValues}`;
+
+                    const splitUrl = `${ORG_API_BASE}/api/split_tickets`;
+                    const requestHeaders = {
+                        'Content-Type': 'application/json',
+                        'Authorization': authHeader,
+                    };
+                    const requestBody = { count: tickets.length };
+
+                    let response;
+                    let data;
+                    let text;
+                    try {
+                        ({ response, data, text } = await networkProxy.fetchWithRetryJson(
+                            splitUrl,
+                            {
+                                method: 'POST',
+                                headers: requestHeaders,
+                                body: JSON.stringify(requestBody)
+                            },
+                            {
+                                context: 'Ticket split',
+                                maxAttempts: 3,
+                                timeoutMs: 30000
+                            }
+                        ));
+                    } catch (error) {
+                        networkLogger.logRequest({
+                            type: 'ticket',
+                            method: 'POST',
+                            url: splitUrl,
+                            status: 0,
+                            request: {
+                                headers: networkLogger.sanitizeHeaders(requestHeaders),
+                                body: requestBody
+                            },
+                            error: error.message
+                        });
+                        throw error;
+                    }
+
+                    networkLogger.logRequest({
+                        type: 'ticket',
+                        method: 'POST',
+                        url: splitUrl,
+                        status: response.status,
+                        request: {
+                            headers: networkLogger.sanitizeHeaders(requestHeaders),
+                            body: requestBody
+                        },
+                        response: data
+                    });
+
+                    if (!response.ok) {
+                        const errorMessage = data?.detail || data?.error || data?.message ||
+                            (typeof data === 'string' ? data : null) ||
+                            text ||
+                            `Failed to split tickets (${response.status})`;
+                        const errorMessageLower = String(errorMessage || '').toLowerCase();
+
+                        if (response.status === 401 ||
+                            errorMessageLower.includes('double') ||
+                            errorMessageLower.includes('spent') ||
+                            errorMessageLower.includes('used')) {
+                            const ticketError = new Error('One or more tickets were already used. Please try again.');
+                            ticketError.code = 'TICKET_USED';
+                            ticketError.consumeTickets = true;
+                            throw ticketError;
+                        }
+
+                        throw new Error(errorMessage);
+                    }
+
+                    const code = data?.code || data?.invitation_code || data?.credential;
+                    const normalizedCode = typeof code === 'string' ? code.trim() : '';
+                    if (!normalizedCode || normalizedCode.length !== 24) {
+                        const codeError = new Error('Invalid ticket code returned by server.');
+                        throw codeError;
+                    }
+
+                    return { response, data, code: normalizedCode };
+                },
+                { order: 'tail' }
+            );
+
+            const { data, code } = result;
+
+            const ticketsConsumed = Number.isFinite(data?.tickets_consumed)
+                ? data.tickets_consumed
+                : tickets.length;
+            if (!Number.isFinite(ticketsConsumed) || ticketsConsumed <= 0) {
+                throw new Error('Ticket code was not issued because no valid tickets were found.');
+            }
+
+            return {
+                code,
+                ticketsConsumed,
+                ticketsInvalid: data?.tickets_invalid ?? 0,
+                expiresAt: data?.expires_at || data?.expires_at_unix || null
+            };
+        } catch (error) {
+            console.error('Ticket split error:', error);
             throw error;
         }
     }
