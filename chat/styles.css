@@ -2223,9 +2223,21 @@ body {
 }
 
 /* --- Sidebar Base & Hidden State --- */
+#sidebar {
+    --sidebar-open-duration: 280ms;
+    --sidebar-close-duration: 220ms;
+    --sidebar-open-ease: cubic-bezier(0.22, 1, 0.36, 1);
+    --sidebar-close-ease: cubic-bezier(0.4, 0, 1, 1);
+    transition-property: width, border-right-width;
+    transition-duration: var(--sidebar-open-duration), var(--sidebar-open-duration);
+    transition-timing-function: var(--sidebar-open-ease), var(--sidebar-open-ease);
+}
+
 #sidebar.sidebar-hidden {
     width: 0 !important;
     border-right-width: 0 !important;
+    transition-duration: var(--sidebar-close-duration), var(--sidebar-close-duration);
+    transition-timing-function: var(--sidebar-close-ease), var(--sidebar-close-ease);
 }
 
 #sidebar.sidebar-hidden ~ * #show-sidebar-btn {
@@ -2296,10 +2308,10 @@ body {
     visibility: hidden;
     pointer-events: none;
     overflow: hidden;
-    transition: width 0.34s cubic-bezier(0.22, 0.61, 0.36, 1),
-        max-width 0.34s cubic-bezier(0.22, 0.61, 0.36, 1),
+    transition: width 0.26s cubic-bezier(0.4, 0, 0.2, 1),
+        max-width 0.26s cubic-bezier(0.4, 0, 0.2, 1),
         opacity 0.2s ease,
-        visibility 0s linear 0.34s;
+        visibility 0s linear 0.26s;
 }
 
 #show-right-panel-btn.system-panel-toggle-visible,
@@ -2341,8 +2353,10 @@ html[data-right-panel-hidden="true"] #show-right-panel-btn {
 /* --- Right Panel Base --- */
 :root {
     --system-panel-width: 18rem;
-    --system-panel-transition-duration: 420ms;
-    --system-panel-transition-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+    --system-panel-open-duration: 280ms;
+    --system-panel-close-duration: 220ms;
+    --system-panel-open-ease: cubic-bezier(0.22, 1, 0.36, 1);
+    --system-panel-close-ease: cubic-bezier(0.4, 0, 1, 1);
 }
 
 #right-panel {
@@ -2352,9 +2366,9 @@ html[data-right-panel-hidden="true"] #show-right-panel-btn {
     flex-shrink: 0;
     overflow: hidden;
     will-change: width, transform;
-    transition: width var(--system-panel-transition-duration) var(--system-panel-transition-ease),
-        border-left-width var(--system-panel-transition-duration) var(--system-panel-transition-ease),
-        transform var(--system-panel-transition-duration) var(--system-panel-transition-ease);
+    transition-property: width, border-left-width, transform;
+    transition-duration: var(--system-panel-open-duration), var(--system-panel-open-duration), var(--system-panel-open-duration);
+    transition-timing-function: var(--system-panel-open-ease), var(--system-panel-open-ease), var(--system-panel-open-ease);
 }
 
 #right-panel-content {
@@ -2362,8 +2376,20 @@ html[data-right-panel-hidden="true"] #show-right-panel-btn {
     min-width: var(--system-panel-width);
     max-width: var(--system-panel-width);
     transform: translateX(0);
-    transition: transform var(--system-panel-transition-duration) var(--system-panel-transition-ease);
+    transition-property: transform;
+    transition-duration: var(--system-panel-open-duration);
+    transition-timing-function: var(--system-panel-open-ease);
     will-change: transform;
+}
+
+html[data-right-panel-hidden="true"] #right-panel {
+    transition-duration: var(--system-panel-close-duration), var(--system-panel-close-duration), var(--system-panel-close-duration);
+    transition-timing-function: var(--system-panel-close-ease), var(--system-panel-close-ease), var(--system-panel-close-ease);
+}
+
+html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
+    transition-duration: var(--system-panel-close-duration);
+    transition-timing-function: var(--system-panel-close-ease);
 }
 
 @media (max-width: 1023px) {
@@ -3574,15 +3600,19 @@ html {
     text-decoration: underline;
 }
 
-/* System panel content fade-in (opacity only; no layout-affecting motion) */
-.system-panel-fade-in {
-    animation: systemPanelFadeIn 0.18s ease-out;
-    will-change: opacity;
+/* System panel content entrance: explicit start/end states for reliable startup animation */
+.system-panel-fade-prepare {
+    opacity: 0;
+    transform: translateY(8px);
+    filter: blur(2px);
 }
 
-@keyframes systemPanelFadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
+.system-panel-fade-in {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+    transition: opacity 0.28s ease-out, transform 0.28s ease-out, filter 0.28s ease-out;
+    will-change: opacity, transform, filter;
 }
 
 /* Update toast */
@@ -3685,8 +3715,11 @@ html {
 }
 
 @media (prefers-reduced-motion: reduce) {
+    .system-panel-fade-prepare,
     .system-panel-fade-in {
-        animation: none !important;
+        transition: none !important;
+        transform: none !important;
+        filter: none !important;
     }
 
     .update-toast {
