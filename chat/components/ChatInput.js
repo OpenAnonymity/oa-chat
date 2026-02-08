@@ -19,6 +19,8 @@ import {
 } from '../services/editableDiffRenderer.js';
 import { chatDB } from '../db.js';
 
+const MESSAGE_INPUT_MAX_HEIGHT_PX = 300;
+
 export default class ChatInput {
     /**
      * @param {Object} app - Reference to the main ChatApp instance
@@ -65,10 +67,10 @@ export default class ChatInput {
         // Auto-resize textarea and clear file undo stack on text input
         this.app.elements.messageInput.addEventListener('input', () => {
             const input = this.app.elements.messageInput;
-            this.app.resetMessageInputLayout(); // Base reset + Safari layout fixes
+            this.app.resetMessageInputLayout();
             const isExpanded = this.app.elements.inputCard?.classList.contains('scrubber-preview-expanded');
             const expandedMax = Math.floor(window.innerHeight * 0.55);
-            const maxHeight = isExpanded ? Math.max(384, expandedMax) : 384;
+            const maxHeight = isExpanded ? Math.max(MESSAGE_INPUT_MAX_HEIGHT_PX, expandedMax) : MESSAGE_INPUT_MAX_HEIGHT_PX;
             // When expanded, also consider diff preview's scroll height for proper sizing
             let contentHeight = input.scrollHeight;
             if (isExpanded && this.app.elements.scrubberPreviewDiff) {
@@ -77,6 +79,7 @@ export default class ChatInput {
                     contentHeight = Math.max(contentHeight, diffHeight);
                 }
             }
+            input.style.maxHeight = `${maxHeight}px`;
             input.style.height = Math.min(contentHeight, maxHeight) + 'px';
             this.app.updateInputState();
             // Clear file undo stack - text input should take undo precedence
