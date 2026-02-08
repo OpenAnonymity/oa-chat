@@ -18,7 +18,7 @@ import { chatDB } from '../db.js';
 import { SHARE_BASE_URL } from '../config.js';
 
 // Layout constant for toolbar overlay prediction
-const RIGHT_PANEL_WIDTH = 320; // 20rem = 320px (w-80)
+const RIGHT_PANEL_WIDTH = 288; // 18rem = 288px
 
 // Feature flag for showing underlying implementation on hover
 const SHOW_UNDERLYING_KEY_DETAILS = true;
@@ -101,6 +101,8 @@ class RightPanel {
         // Ticket info panel state - check localStorage snapshot first to avoid flash
         const savedTicketInfoVisible = localStorage.getItem('oa-ticket-info-visible');
         this.showTicketInfo = savedTicketInfoVisible === 'false' ? false : true;
+        this.lastAppliedVisibility = null;
+        this.panelFadeCleanupTimer = null;
 
         this.initializeState();
         this.setupEventListeners();
@@ -510,17 +512,15 @@ class RightPanel {
      * Updates right panel visibility based on isDesktop and isVisible state.
      *
      * Behavior:
-     * - Desktop (>= 1024px): Inline mode - panel shrinks chat area via width
-     * - Mobile/Tablet (< 1024px): Overlay mode - panel slides over chat via transform
-     *
-     * IMPORTANT: Order of style changes matters to prevent flash during mode transitions.
-     * When hiding, set the hiding property FIRST before clearing the other mode's property.
+     * - Desktop (>= 1024px): panel reserves layout width and content slides out while width collapses
+     * - Mobile/Tablet (< 1024px): panel behaves as an overlay and slides in/out
      */
     updatePanelVisibility() {
         const panel = document.getElementById('right-panel');
         const showBtn = document.getElementById('show-right-panel-btn');
         const appContainer = document.getElementById('app');
         if (!panel) return;
+        const becameVisible = this.isVisible && this.lastAppliedVisibility !== true;
 
         // Data attribute for CSS initial load protection
         if (this.isVisible) {
@@ -529,42 +529,48 @@ class RightPanel {
             document.documentElement.setAttribute('data-right-panel-hidden', 'true');
         }
 
-        if (this.isDesktop) {
-            // Desktop: inline mode - use width for show/hide
-            if (this.isVisible) {
-                panel.style.visibility = ''; // Clear visibility first to show
-                panel.style.overflow = '';
-                panel.style.width = '18rem';
-                panel.style.borderLeftWidth = '1px';
-                panel.style.transform = '';
-                if (showBtn) showBtn.classList.add('hidden');
-                if (appContainer) appContainer.classList.add('right-panel-open');
-            } else {
-                panel.style.width = '0';
-                panel.style.borderLeftWidth = '0';
-                panel.style.transform = '';
-                // Note: visibility/overflow controlled by CSS via data-right-panel-hidden
-                if (showBtn) showBtn.classList.remove('hidden');
-                if (appContainer) appContainer.classList.remove('right-panel-open');
-            }
-        } else {
-            // Mobile/Tablet: overlay mode - slide in/out via transform
-            if (this.isVisible) {
-                panel.style.visibility = ''; // Clear visibility first to show
-                panel.style.overflow = '';
-                panel.style.transform = 'translateX(0)';
-                panel.style.width = '';
-                panel.style.borderLeftWidth = '';
-                if (showBtn) showBtn.classList.add('hidden');
-            } else {
-                panel.style.transform = 'translateX(100%)';
-                panel.style.width = '';
-                panel.style.borderLeftWidth = '';
-                // Note: visibility/overflow controlled by CSS via data-right-panel-hidden
-                if (showBtn) showBtn.classList.remove('hidden');
-            }
-            if (appContainer) appContainer.classList.remove('right-panel-open');
+        // Clear legacy inline styles. Visibility/layout is now entirely CSS-driven.
+        panel.style.visibility = '';
+        panel.style.overflow = '';
+        panel.style.width = '';
+        panel.style.borderLeftWidth = '';
+        panel.style.transform = '';
+
+        if (showBtn) {
+            showBtn.classList.toggle('system-panel-toggle-visible', !this.isVisible);
         }
+
+        if (appContainer) {
+            if (this.isDesktop && this.isVisible) {
+                appContainer.classList.add('right-panel-open');
+            } else {
+                appContainer.classList.remove('right-panel-open');
+            }
+        }
+
+        if (becameVisible) {
+            this.playContentFadeIn();
+        }
+        this.lastAppliedVisibility = this.isVisible;
+    }
+
+    playContentFadeIn() {
+        const content = document.getElementById('right-panel-content');
+        if (!content) return;
+
+        content.classList.remove('system-panel-fade-in');
+        // Restart animation deterministically when reopening panel.
+        // eslint-disable-next-line no-unused-expressions
+        content.offsetHeight;
+        content.classList.add('system-panel-fade-in');
+
+        if (this.panelFadeCleanupTimer) {
+            clearTimeout(this.panelFadeCleanupTimer);
+        }
+        this.panelFadeCleanupTimer = setTimeout(() => {
+            content.classList.remove('system-panel-fade-in');
+            this.panelFadeCleanupTimer = null;
+        }, 220);
     }
 
     async handleRegister(invitationCode) {
@@ -2737,6 +2743,10 @@ class RightPanel {
     destroy() {
         if (this.timerInterval) {
             clearInterval(this.timerInterval);
+        }
+        if (this.panelFadeCleanupTimer) {
+            clearTimeout(this.panelFadeCleanupTimer);
+            this.panelFadeCleanupTimer = null;
         }
         if (this.proxyUnsubscribe) {
             this.proxyUnsubscribe();

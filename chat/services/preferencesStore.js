@@ -75,6 +75,16 @@ const PREF_SNAPSHOT_MAP = new Map([
     [PREF_KEYS.welcomeDismissed, LOCAL_STORAGE_KEYS.welcomeDismissed]
 ]);
 
+const SYNCABLE_PREF_KEYS = new Set([
+    PREF_KEYS.theme,
+    PREF_KEYS.wideMode,
+    PREF_KEYS.flatMode,
+    PREF_KEYS.fontMode,
+    PREF_KEYS.proxySettings
+]);
+
+const SYNC_PREF_UPDATED_AT_PREFIX = 'sync-pref-updated-at:';
+
 class PreferencesStore {
     constructor() {
         this.cache = new Map();
@@ -105,9 +115,9 @@ class PreferencesStore {
             // Reload preferences when sync completes (sync writes directly to settings)
             if (!this.syncUnsubscribe) {
                 this.syncUnsubscribe = syncService.subscribe((payload) => {
-                    if (payload.event === 'blob_received' && payload.data?.type === 'preferences') {
-                        // Reload the specific preference that was synced
-                        this.preloadKnownPreferences();
+                    if (payload.event === 'blob_received' && payload.data?.type === 'preference' && payload.data?.logicalId) {
+                        // Reload and notify only the specific preference that was synced.
+                        this.reloadPreferenceFromDatabase(payload.data.logicalId);
                     }
                 });
             }
@@ -215,9 +225,22 @@ class PreferencesStore {
                 const rawValue = localStorage.getItem(migration.storageKey);
                 if (rawValue === null) continue;
 
+                if (typeof chatDB !== 'undefined' && chatDB.db) {
+                    const existingValue = await chatDB.getSetting(migration.key);
+                    if (existingValue !== undefined) {
+                        this.cache.set(migration.key, existingValue);
+                        this.updateSnapshot(migration.key, existingValue);
+                        continue;
+                    }
+                }
+
                 const parsedValue = migration.parse(rawValue);
                 if (parsedValue !== null && parsedValue !== undefined) {
-                    const persisted = await this.savePreference(migration.key, parsedValue, { broadcast: false, skipInit: true });
+                    const persisted = await this.savePreference(migration.key, parsedValue, {
+                        broadcast: false,
+                        skipInit: true,
+                        skipSync: true
+                    });
                     if (persisted && !PREF_SNAPSHOT_KEYS.has(migration.key)) {
                         localStorage.removeItem(migration.storageKey);
                     }
@@ -237,6 +260,7 @@ class PreferencesStore {
                 const value = await chatDB.getSetting(key);
                 if (value !== undefined) {
                     this.cache.set(key, value);
+                    this.updateSnapshot(key, value);
                 }
             } catch (error) {
                 console.warn('Failed to preload preference:', key, error);
@@ -271,6 +295,7 @@ class PreferencesStore {
             const value = await chatDB.getSetting(key);
             if (value !== undefined) {
                 this.cache.set(key, value);
+                this.updateSnapshot(key, value);
                 return value;
             }
         } catch (error) {
@@ -285,10 +310,30 @@ class PreferencesStore {
             await this.init();
         }
 
+        const shouldPersistSyncTimestamp = this.isSyncablePreference(key);
+        const updatedAt = shouldPersistSyncTimestamp
+            ? this.normalizeTimestamp(options.updatedAt) || Date.now()
+            : null;
+
         let persisted = false;
         try {
             if (typeof chatDB !== 'undefined' && chatDB.db) {
-                await chatDB.saveSetting(key, value);
+                const entries = [{ key, value }];
+                if (updatedAt !== null) {
+                    entries.push({
+                        key: this.getSyncTimestampKey(key),
+                        value: updatedAt
+                    });
+                }
+
+                if (typeof chatDB.saveSettings === 'function') {
+                    await chatDB.saveSettings(entries);
+                } else {
+                    await chatDB.saveSetting(key, value);
+                    if (updatedAt !== null) {
+                        await chatDB.saveSetting(this.getSyncTimestampKey(key), updatedAt);
+                    }
+                }
                 persisted = true;
             }
         } catch (error) {
@@ -309,6 +354,55 @@ class PreferencesStore {
         }
 
         return persisted;
+    }
+
+    async reloadPreferenceFromDatabase(key) {
+        if (!key) return;
+        if (typeof chatDB === 'undefined' || !chatDB.db) return;
+
+        try {
+            const value = await chatDB.getSetting(key);
+            if (value === undefined) return;
+
+            const previous = this.cache.get(key);
+            const changed = !this.valuesEqual(previous, value);
+
+            this.cache.set(key, value);
+            this.updateSnapshot(key, value);
+
+            if (changed) {
+                this.notify(key, value);
+            }
+        } catch (error) {
+            console.warn('Failed to reload synced preference:', key, error);
+        }
+    }
+
+    valuesEqual(a, b) {
+        if (Object.is(a, b)) return true;
+        if (!a || !b) return false;
+        if (typeof a !== 'object' || typeof b !== 'object') return false;
+        try {
+            return JSON.stringify(a) === JSON.stringify(b);
+        } catch (error) {
+            return false;
+        }
+    }
+
+    isSyncablePreference(key) {
+        return SYNCABLE_PREF_KEYS.has(key);
+    }
+
+    getSyncTimestampKey(key) {
+        return `${SYNC_PREF_UPDATED_AT_PREFIX}${key}`;
+    }
+
+    normalizeTimestamp(value) {
+        const timestamp = Number(value);
+        if (!Number.isFinite(timestamp) || timestamp <= 0) {
+            return null;
+        }
+        return Math.floor(timestamp);
     }
 
     onChange(listener) {

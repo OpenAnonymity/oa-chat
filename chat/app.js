@@ -43,7 +43,7 @@ const UPDATE_CHECK_INITIAL_DELAY_MS = 45 * 1000;
 
 // Layout constants for toolbar overlay prediction
 const SIDEBAR_WIDTH = 256;      // 16rem = 256px
-const RIGHT_PANEL_WIDTH = 320;  // 20rem = 320px (w-80)
+const RIGHT_PANEL_WIDTH = 288;  // 18rem = 288px
 const TOOLBAR_PREDICTION_GRACE_MS = 350; // Grace period to respect predicted state during animations
 
 // Used to upgrade users who were implicitly on the prior default.
@@ -493,7 +493,7 @@ class ChatApp {
         return html;
     }
 
-    initScrollAwareScrollbars(element) {
+    initScrollAwareScrollbars(element, hideDelayMs = 1500) {
         let scrollTimer = null;
         element.addEventListener('scroll', () => {
             element.classList.add('scrolling');
@@ -502,7 +502,7 @@ class ChatApp {
             }
             scrollTimer = setTimeout(() => {
                 element.classList.remove('scrolling');
-            }, 1500);
+            }, hideDelayMs);
         });
     }
 
@@ -1377,7 +1377,8 @@ class ChatApp {
             console.warn('Background model loading failed:', error);
         });
 
-        this.initScrollAwareScrollbars(this.elements.chatArea);
+        // Chat area scrollbar hide delay: ~1s after scrolling ends (common overlay-scrollbar behavior).
+        this.initScrollAwareScrollbars(this.elements.chatArea, 1000);
         this.initScrollAwareScrollbars(this.elements.sessionsScrollArea);
         this.initScrollAwareScrollbars(this.elements.modelListScrollArea);
 
