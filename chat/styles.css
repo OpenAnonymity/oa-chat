@@ -3832,12 +3832,7 @@ div:has(> #input-card.scrubber-preview-expanded) {
 /* Preview hint - positioning via Tailwind, CSS handles opacity states */
 #scrubber-preview-hint {
     z-index: 20;
-    padding: 2px 7px;
-    border-radius: 9999px;
-    background: hsl(var(--color-background) / 0.62);
-    border: 1px solid hsl(var(--color-border) / 0.4);
-    backdrop-filter: blur(8px) saturate(125%);
-    -webkit-backdrop-filter: blur(8px) saturate(125%);
+    background: hsl(var(--color-background) / 0.8);
 }
 
 #input-card.scrubber-preview-editing #scrubber-preview-hint {
