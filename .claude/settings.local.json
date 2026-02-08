@@ -3,7 +3,8 @@
     "allow": [
       "Bash(grep:*)",
       "Bash(npm run build:*)",
-      "WebFetch(domain:openanonymity.ai)"
+      "WebFetch(domain:openanonymity.ai)",
+      "Bash(git ls-tree:*)"
     ]
   }
 }

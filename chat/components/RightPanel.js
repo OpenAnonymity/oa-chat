@@ -332,6 +332,10 @@ class RightPanel {
             if (this.ticketCount === 0 && previousTicketCount > 0 && this.invitationFormPreference === null) {
                 this.showInvitationForm = true;
             }
+            // Auto-collapse form when tickets are added (e.g. via WelcomePanel redemption)
+            if (this.ticketCount > 0 && previousTicketCount === 0 && this.invitationFormPreference === null) {
+                this.showInvitationForm = false;
+            }
             this.loadNextTicket();
             this.renderTopSectionOnly(); // Only update top section, not logs
             this.updateStatusIndicator();
