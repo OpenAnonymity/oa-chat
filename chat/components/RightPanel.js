@@ -9,12 +9,12 @@ import networkProxy from '../services/networkProxy.js';
 import inferenceService from '../services/inference/inferenceService.js';
 import tlsSecurityModal from './TLSSecurityModal.js';
 import proxyInfoModal from './ProxyInfoModal.js';
+import verifierAttestationModal from './VerifierAttestationModal.js';
 import { getActivityDescription, getActivityIcon, getStatusDotClass, formatTimestamp } from '../services/networkLogRenderer.js';
 import { getTicketCost } from '../services/modelTiers.js';
 import { exportTickets } from '../services/globalExport.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import { chatDB } from '../db.js';
-import { TICKET_RETRY_RATIO } from '../config.js';
 
 // Layout constant for toolbar overlay prediction
 const RIGHT_PANEL_WIDTH = 320; // 20rem = 320px (w-80)
@@ -362,12 +362,15 @@ class RightPanel {
 
         const hasActiveKey = this.apiKey && !this.isExpired;
 
+        // Remove all status classes first
+        dot.classList.remove('status-active', 'status-inactive');
+
         if (hasActiveKey) {
             dot.classList.add('status-active');
-            dot.classList.remove('status-inactive');
+            dot.title = 'Key active';
         } else {
             dot.classList.add('status-inactive');
-            dot.classList.remove('status-active');
+            dot.title = 'No active key';
         }
 
         // Notify floating panel about status change
@@ -1759,6 +1762,7 @@ class RightPanel {
                         ${this.escapeHtml(this.importStatus.message)}
                     </div>
                 ` : ''}
+
             </div>
 
             <!-- Ticket Visualization Section -->
@@ -1846,6 +1850,12 @@ class RightPanel {
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
                             </svg>
                             <span class="text-xs font-medium">Ephemeral Access Key</span>
+                            <button
+                                id="verifier-attestation-btn"
+                                class="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-border text-[8px] text-muted-foreground hover:text-foreground hover:bg-accent hover:border-foreground/20 transition-all"
+                                title="Show verifier attestation"
+                                type="button"
+                            >?</button>
                         </div>
                         <div class="flex items-center justify-between text-[10px] font-mono bg-muted/20 p-2 rounded-md border border-border break-all text-foreground">
                             ${(() => {
@@ -1901,6 +1911,12 @@ class RightPanel {
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
                             </svg>
                             <span class="text-xs font-medium">Ephemeral Access Key</span>
+                            <button
+                                id="verifier-attestation-btn"
+                                class="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-border text-[8px] text-muted-foreground hover:text-foreground hover:bg-accent hover:border-foreground/20 transition-all"
+                                title="Show verifier attestation"
+                                type="button"
+                            >?</button>
                         </div>
                         <div class="flex items-center justify-between text-[10px] bg-muted/10 p-2 rounded-md border border-dashed border-border text-muted-foreground">
                             <span class="flex-1 min-w-0">Requested on message send</span>
@@ -2321,6 +2337,15 @@ class RightPanel {
         const proxyInfoBtn = document.getElementById('proxy-info-btn');
         if (proxyInfoBtn) {
             proxyInfoBtn.onclick = () => proxyInfoModal.open();
+        }
+
+        const verifierAttestationBtn = document.getElementById('verifier-attestation-btn');
+        if (verifierAttestationBtn) {
+            verifierAttestationBtn.onclick = () => verifierAttestationModal.open({
+                session: this.currentSession || null,
+                accessInfo: this.apiKeyInfo || null,
+                stationId: this.apiKeyInfo?.stationId || this.apiKeyInfo?.station_name || null
+            });
         }
     }
 

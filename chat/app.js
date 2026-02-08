@@ -5969,6 +5969,38 @@ Your API key has been cleared. A new key from a different station will be obtain
         this.updateInputState();
     }
 
+    /**
+     * Build a persistable snapshot of the latest submit_key verification result.
+     * Stored on session.apiKeyInfo so it survives page refreshes.
+     */
+    buildVerifierSubmitKeyProof(verifyResult, accessInfo = null) {
+        const detail = verifyResult?.detail || verifyResult?.data?.detail || null;
+        const verifierResponse = verifyResult?.data || null;
+        const stationId = accessInfo?.stationId || accessInfo?.station_id || accessInfo?.station_name || null;
+        const keyHashFromOrg = accessInfo?.keyHash || accessInfo?.key_hash || null;
+        const keyHashFromVerifier = verifierResponse?.key_hash || null;
+
+        return {
+            recordedAt: new Date().toISOString(),
+            status: verifyResult?.status || 'unknown',
+            detail,
+            stationId,
+            keyHashFromOrg,
+            keyHashFromVerifier,
+            verifierResponse,
+            retryable: typeof verifierResponse?.retryable === 'boolean' ? verifierResponse.retryable : null,
+            error: verifyResult?.error?.message || null,
+            bannedStation: verifyResult?.bannedStation || null
+        };
+    }
+
+    /**
+     * Persist verifier submit_key proof into the active session access record.
+     */
+    persistVerifierSubmitKeyProof(session, verifyResult) {
+        if (!session?.apiKeyInfo || !verifyResult) return;
+        session.apiKeyInfo.verifierSubmitKeyProof = this.buildVerifierSubmitKeyProof(verifyResult, session.apiKeyInfo);
+    }
 
     async acquireAndSetAccess(session) {
         if (!session) throw new Error("No active session found.");
@@ -6031,6 +6063,7 @@ Your API key has been cleared. A new key from a different station will be obtain
         if (verifier?.supports) {
             const accessInfo = inferenceService.getAccessInfo(session);
             const verifyResult = await inferenceService.verifyAccess(session, accessInfo?.info);
+            this.persistVerifierSubmitKeyProof(session, verifyResult);
 
             if (verifyResult?.status === 'unverified') {
                 const detail = verifyResult?.detail || verifyResult?.data?.detail;

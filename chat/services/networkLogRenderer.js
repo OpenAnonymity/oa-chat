@@ -308,7 +308,18 @@ export function getActivityDescription(log, detailed = false) {
         // Verifier endpoint - station integrity verification
         if (type === 'verification' || urlObj.host === 'verifier.openanonymity.ai' || urlObj.host.includes('localhost')) {
             const verificationDetail = log.detail || response?.detail;
+            const isAttestationRequest = path.includes('/attestation');
             if (!detailed) {
+                if (isAttestationRequest) {
+                    if (status === 'queued' || status === 'pending') {
+                        return 'Attesting verifier';
+                    } else if (status >= 200 && status < 300) {
+                        return 'Verifier attested';
+                    } else if (status >= 400 || status === 0) {
+                        return 'Verifier attestation failed';
+                    }
+                    return 'Attesting verifier';
+                }
                 if (verificationDetail === 'verifier_unreachable_uncertified') {
                     return 'Verifier temporarily unreachable';
                 } else if (verificationDetail === 'key_near_expiry') {
@@ -323,6 +334,16 @@ export function getActivityDescription(log, detailed = false) {
                 }
                 return 'Verifying station integrity';
             } else {
+                if (isAttestationRequest) {
+                    if (status === 'queued' || status === 'pending') {
+                        return 'Requesting fresh hardware attestation proof from the verifier.';
+                    } else if (status >= 200 && status < 300) {
+                        return 'Successfully attested the verifier.';
+                    } else if (status >= 400 || status === 0) {
+                        return 'Verifier attestation failed. The verifier may be unavailable or returned an invalid attestation response.';
+                    }
+                    return 'Attesting verifier hardware and policy integrity.';
+                }
                 if (verificationDetail === 'verifier_unreachable_uncertified') {
                     return 'The verifier could not be <a href="https://verifier.openanonymity.ai/health" target="_blank" rel="noopener noreferrer" class="underline hover:text-amber-700 dark:hover:text-amber-300">reached</a> to verify this station, the key is rejected.';
                 } else if (verificationDetail === 'ownership_check_error') {
