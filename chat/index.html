@@ -93,6 +93,26 @@
         })();
     </script>
     <script>
+        // Apply welcome panel state immediately to prevent flash
+        (function () {
+            try {
+                const dismissed = localStorage.getItem('oa-welcome-dismissed') === 'true';
+                const hasTickets = (() => {
+                    try {
+                        const tickets = localStorage.getItem('inference_tickets');
+                        return tickets && JSON.parse(tickets).length > 0;
+                    } catch { return false; }
+                })();
+
+                if (dismissed || hasTickets) {
+                    document.documentElement.setAttribute('data-welcome-hidden', 'true');
+                }
+            } catch (error) {
+                console.warn('Unable to apply welcome panel state:', error);
+            }
+        })();
+    </script>
+    <script>
         // Apply wide mode state immediately to prevent flash
         (function () {
             try {
@@ -700,6 +720,9 @@
 
     <!-- Account Modal -->
     <div id="account-modal" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"></div>
+
+    <!-- Welcome Panel Modal -->
+    <div id="welcome-panel" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"></div>
 
     <!-- Model Picker Modal -->
     <div id="model-picker-modal" class="hidden fixed inset-0 w-full h-full bg-black/50 flex items-center justify-center z-50">
