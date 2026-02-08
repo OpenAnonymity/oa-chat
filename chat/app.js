@@ -493,7 +493,7 @@ class ChatApp {
         return html;
     }
 
-    initScrollAwareScrollbars(element) {
+    initScrollAwareScrollbars(element, hideDelayMs = 1500) {
         let scrollTimer = null;
         element.addEventListener('scroll', () => {
             element.classList.add('scrolling');
@@ -502,7 +502,7 @@ class ChatApp {
             }
             scrollTimer = setTimeout(() => {
                 element.classList.remove('scrolling');
-            }, 1500);
+            }, hideDelayMs);
         });
     }
 
@@ -1377,7 +1377,8 @@ class ChatApp {
             console.warn('Background model loading failed:', error);
         });
 
-        this.initScrollAwareScrollbars(this.elements.chatArea);
+        // Chat area scrollbar hide delay: ~1s after scrolling ends (common overlay-scrollbar behavior).
+        this.initScrollAwareScrollbars(this.elements.chatArea, 1000);
         this.initScrollAwareScrollbars(this.elements.sessionsScrollArea);
         this.initScrollAwareScrollbars(this.elements.modelListScrollArea);
 

@@ -3003,6 +3003,9 @@ html {
 
 #chat-area {
     scroll-behavior: smooth;
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
 }
 
 /* Hide chat area scrollbar by default, show on hover/scroll */
@@ -3015,14 +3018,17 @@ html {
 }
 
 #chat-area::-webkit-scrollbar-thumb {
-    background: transparent;
+    background-color: transparent;
     border-radius: 4px;
-    transition: background-color 0.2s ease;
+    transition: background-color 0.18s ease;
 }
 
-#chat-area:hover::-webkit-scrollbar-thumb,
+#chat-area.scrolling {
+    scrollbar-color: var(--slate-6) transparent;
+}
+
 #chat-area.scrolling::-webkit-scrollbar-thumb {
-    background: var(--slate-6);
+    background-color: var(--slate-6);
 }
 
 
