@@ -4429,3 +4429,47 @@ div:has(> #input-card.scrubber-preview-expanded) {
     transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), width 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     pointer-events: none;
 }
+
+/* Verifier attestation modal: slightly larger readable typography */
+.verifier-modal-content {
+    height: 50vh !important;
+    max-height: 50vh !important;
+    max-width: 43rem !important; /* slightly wider so panel-level padding doesn't reduce content area */
+    padding: 0.35rem; /* same-color outer padding around inner content */
+    box-sizing: border-box;
+}
+
+.verifier-modal-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: scroll;
+    scrollbar-gutter: stable both-edges;
+}
+
+.verifier-command {
+    display: block;
+    overflow-x: auto;
+    white-space: normal !important;
+    word-break: normal !important;
+    overflow-wrap: normal !important;
+    -webkit-overflow-scrolling: touch;
+}
+
+.verifier-command-line {
+    display: block;
+    white-space: nowrap;
+}
+
+.verifier-modal-content .text-xs {
+    font-size: 0.8125rem !important; /* 13px */
+    line-height: 1.2rem !important;
+}
+
+.verifier-modal-content [class*="text-[10px]"] {
+    font-size: 0.6875rem !important; /* 11px */
+    line-height: 1rem !important;
+}
+
+.verifier-modal-content .text-sm {
+    font-size: 0.9375rem !important; /* 15px */
+}
