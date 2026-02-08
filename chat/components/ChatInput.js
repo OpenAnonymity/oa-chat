@@ -132,11 +132,18 @@ export default class ChatInput {
 
         // Scrubber shortcut: Tab Tab to scrub
         this.app.elements.messageInput.addEventListener('keydown', (e) => {
+            if (!this.isMessageInputFocused()) {
+                this.resetScrubberTabShortcutState();
+                return;
+            }
             if (e.key !== 'Tab' || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) {
                 return;
             }
             e.preventDefault();
             this.handleScrubberTabKeydown();
+        });
+        this.app.elements.messageInput.addEventListener('blur', () => {
+            this.resetScrubberTabShortcutState();
         });
 
         // Scrubber undo/redo: Cmd+Z to undo scrubbing, Cmd+Shift+Z to redo
@@ -398,6 +405,10 @@ export default class ChatInput {
     }
 
     handleScrubberTabKeydown() {
+        if (!this.isMessageInputFocused()) {
+            this.resetScrubberTabShortcutState();
+            return;
+        }
         const now = Date.now();
         const withinWindow = now - this.scrubberState.lastTabAt < 420;
         this.scrubberState.lastTabAt = now;
@@ -417,6 +428,18 @@ export default class ChatInput {
 
         if (this.scrubberState.isRunning) return;
         this.runScrubberShortcut();
+    }
+
+    isMessageInputFocused() {
+        return document.activeElement === this.app.elements.messageInput;
+    }
+
+    resetScrubberTabShortcutState() {
+        this.scrubberState.lastTabAt = 0;
+        if (this.scrubberState.timer) {
+            clearTimeout(this.scrubberState.timer);
+            this.scrubberState.timer = null;
+        }
     }
 
     handleScrubberControlKeydown() {
