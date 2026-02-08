@@ -294,7 +294,7 @@ class WelcomePanel {
                         grid-template-columns: 28px 1fr;
                         column-gap: 10px;
                         row-gap: 14px;
-                        grid-auto-rows: 1fr;
+                        grid-auto-rows: auto;
                     }
                     .welcome-icon-box {
                         width: 28px;
@@ -329,7 +329,7 @@ class WelcomePanel {
 
                 <!-- Header -->
                 <div class="flex items-center justify-between mb-1">
-                    <h2 class="text-lg font-semibold text-foreground">Welcome to oa-fastchat</h2>
+                    <h2 class="text-lg font-semibold text-foreground">Welcome to oa-fastchat!</h2>
                     ${ticketClient.getTicketCount() > 0 ? `
                     <button id="close-welcome-btn" class="text-muted-foreground hover:text-foreground transition-colors p-1 -mr-1 rounded-lg hover:bg-accent" aria-label="Close">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
@@ -338,10 +338,32 @@ class WelcomePanel {
                     </button>` : ''}
                 </div>
 
-                <p class="text-sm text-muted-foreground mb-4">A fast and unlinkable chat client, entrance of user-controlled personal intelligence by <a href="https://openanonymity.ai/" target="_blank" rel="noopener noreferrer" class="text-foreground hover:underline hover:underline-offset-2 hover:decoration-foreground/50 transition-colors">The Open Anonymity Project</a></p>
+                <p class="text-sm text-muted-foreground mb-4">A simple, very fast, <a href="https://github.com/openanonymity/oa-fastchat" target="_blank" rel="noopener noreferrer" class="text-foreground hover:underline hover:underline-offset-2 hover:decoration-foreground/50 transition-colors">open-source</a>, and <a href="https://openanonymity.ai/blog/unlinkable-inference/" target="_blank" rel="noopener noreferrer" class="text-foreground hover:underline hover:underline-offset-2 hover:decoration-foreground/50 transition-colors">provably unlinkable</a> chat client by <a href="https://openanonymity.ai/" target="_blank" rel="noopener noreferrer" class="text-foreground hover:underline hover:underline-offset-2 hover:decoration-foreground/50 transition-colors">The Open Anonymity Project</a>.</p>
 
                 <!-- Guarantees -->
                 <div class="welcome-guarantees" style="margin-top:6px;margin-bottom:22px">
+                        <!-- --------------------Unlinkable Inference via Blind Signatures-------------------- -->
+                        <div class="welcome-icon-box">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z" />
+                            </svg>
+                        </div>
+                        <div>
+                            <p class="welcome-guarantee-title font-medium text-foreground">Provably Unlinkable Chats with Remote Models</p>
+                            <p class="welcome-guarantee-body text-muted-foreground">Every chat requests a proxied, ephemeral key via <a href="https://en.wikipedia.org/wiki/Blind_signature" target="_blank" rel="noopener noreferrer" class="text-foreground hover:underline hover:underline-offset-2 hover:decoration-foreground/50 transition-colors">blind signatures</a></p>
+                        </div>
+                        <!-- --------------------Query sanitization-------------------- -->
+                        <div class="welcome-icon-box">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364L9.879 9.879m0 0L5.636 5.636m4.243 4.243L5.636 13.12m4.243-3.243l3.243-3.243" />
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5" />
+                            </svg>
+                        </div>
+                        <div>
+                            <p class="welcome-guarantee-title font-medium text-foreground">Query Sanitization via Confidential Models</p>
+                            <p class="welcome-guarantee-body text-muted-foreground">Built-in PII removal and privacy-preserving prompt rewriting by gpt-oss-120b hosted on an <a href="https://www.nvidia.com/en-us/data-center/solutions/confidential-computing/" target="_blank" rel="noopener noreferrer" class="text-foreground hover:underline hover:underline-offset-2 hover:decoration-foreground/50 transition-colors">GPU enclave</a>.</p>
+                        </div>
+                        <!-- --------------------Local data storage-------------------- -->
                         <div class="welcome-icon-box">
                             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.75c3.314 0 6-1.007 6-2.25S15.314 2.25 12 2.25 6 3.257 6 4.5s2.686 2.25 6 2.25z" />
@@ -351,39 +373,18 @@ class WelcomePanel {
                             </svg>
                         </div>
                         <div>
-                            <p class="welcome-guarantee-title font-medium text-foreground">Local-first history</p>
-                            <p class="welcome-guarantee-body text-muted-foreground">Stored in your browser, exportable anytime.</p>
+                            <p class="welcome-guarantee-title font-medium text-foreground">Local Storage</p>
+                            <p class="welcome-guarantee-body text-muted-foreground">All data is stored locally in your browser and exportable in JSON. This also makes the chat client self-contained and extremely fast.</p>
                         </div>
-
-                        <div class="welcome-icon-box">
-                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z" />
-                            </svg>
-                        </div>
-                        <div>
-                            <p class="welcome-guarantee-title font-medium text-foreground">Unlinkable access</p>
-                            <p class="welcome-guarantee-body text-muted-foreground">Anonymous API keys, detached from your identity.</p>
-                        </div>
-
-                        <div class="welcome-icon-box">
-                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364L9.879 9.879m0 0L5.636 5.636m4.243 4.243L5.636 13.12m4.243-3.243l3.243-3.243" />
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5" />
-                            </svg>
-                        </div>
-                        <div>
-                            <p class="welcome-guarantee-title font-medium text-foreground">Sensitive information removal</p>
-                            <p class="welcome-guarantee-body text-muted-foreground">Strip PII locally before prompts reach the model.</p>
-                        </div>
-
+                        <!-- --------------------Encrypted sync-------------------- -->
                         <div class="welcome-icon-box">
                             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
                             </svg>
                         </div>
                         <div>
-                            <p class="welcome-guarantee-title font-medium text-foreground">Encrypted sync</p>
-                            <p class="welcome-guarantee-body text-muted-foreground">Sync tickets across devices—no email required.</p>
+                            <p class="welcome-guarantee-title font-medium text-foreground">Encrypted Sync with Passkeys</p>
+                            <p class="welcome-guarantee-body text-muted-foreground">You can optionally encrypt all of your data locally with Passkeys (e.g., using Apple touch ID), and sync across devices.</p>
                         </div>
                 </div>
 
