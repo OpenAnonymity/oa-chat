@@ -18,7 +18,7 @@ import { chatDB } from '../db.js';
 import { SHARE_BASE_URL } from '../config.js';
 
 // Layout constant for toolbar overlay prediction
-const RIGHT_PANEL_WIDTH = 320; // 20rem = 320px (w-80)
+const RIGHT_PANEL_WIDTH = 288; // 18rem = 288px
 
 // Feature flag for showing underlying implementation on hover
 const SHOW_UNDERLYING_KEY_DETAILS = true;
@@ -101,6 +101,8 @@ class RightPanel {
         // Ticket info panel state - check localStorage snapshot first to avoid flash
         const savedTicketInfoVisible = localStorage.getItem('oa-ticket-info-visible');
         this.showTicketInfo = savedTicketInfoVisible === 'false' ? false : true;
+        this.lastAppliedVisibility = null;
+        this.panelFadeCleanupTimer = null;
 
         this.initializeState();
         this.setupEventListeners();
@@ -521,6 +523,7 @@ class RightPanel {
         const showBtn = document.getElementById('show-right-panel-btn');
         const appContainer = document.getElementById('app');
         if (!panel) return;
+        const becameVisible = this.isVisible && this.lastAppliedVisibility !== true;
 
         // Data attribute for CSS initial load protection
         if (this.isVisible) {
@@ -565,6 +568,30 @@ class RightPanel {
             }
             if (appContainer) appContainer.classList.remove('right-panel-open');
         }
+
+        if (becameVisible) {
+            this.playContentFadeIn();
+        }
+        this.lastAppliedVisibility = this.isVisible;
+    }
+
+    playContentFadeIn() {
+        const content = document.getElementById('right-panel-content');
+        if (!content) return;
+
+        content.classList.remove('system-panel-fade-in');
+        // Restart animation deterministically when reopening panel.
+        // eslint-disable-next-line no-unused-expressions
+        content.offsetHeight;
+        content.classList.add('system-panel-fade-in');
+
+        if (this.panelFadeCleanupTimer) {
+            clearTimeout(this.panelFadeCleanupTimer);
+        }
+        this.panelFadeCleanupTimer = setTimeout(() => {
+            content.classList.remove('system-panel-fade-in');
+            this.panelFadeCleanupTimer = null;
+        }, 220);
     }
 
     async handleRegister(invitationCode) {
@@ -2737,6 +2764,10 @@ class RightPanel {
     destroy() {
         if (this.timerInterval) {
             clearInterval(this.timerInterval);
+        }
+        if (this.panelFadeCleanupTimer) {
+            clearTimeout(this.panelFadeCleanupTimer);
+            this.panelFadeCleanupTimer = null;
         }
         if (this.proxyUnsubscribe) {
             this.proxyUnsubscribe();

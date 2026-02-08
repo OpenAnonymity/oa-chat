@@ -43,7 +43,7 @@ const UPDATE_CHECK_INITIAL_DELAY_MS = 45 * 1000;
 
 // Layout constants for toolbar overlay prediction
 const SIDEBAR_WIDTH = 256;      // 16rem = 256px
-const RIGHT_PANEL_WIDTH = 320;  // 20rem = 320px (w-80)
+const RIGHT_PANEL_WIDTH = 288;  // 18rem = 288px
 const TOOLBAR_PREDICTION_GRACE_MS = 350; // Grace period to respect predicted state during animations
 
 // Used to upgrade users who were implicitly on the prior default.

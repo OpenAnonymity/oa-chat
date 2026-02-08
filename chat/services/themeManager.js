@@ -5,11 +5,36 @@ const VALID_PREFERENCES = new Set(['light', 'dark', PREFERENCE_SYSTEM]);
 
 class ThemeManager {
     constructor() {
-        this.preference = PREFERENCE_SYSTEM;
+        this.preference = this.getInitialPreference();
         this.mediaQuery = null;
         this.mediaListener = null;
         this.listeners = new Set();
         this.initialized = false;
+    }
+
+    getInitialPreference() {
+        try {
+            const root = typeof document !== 'undefined' ? document.documentElement : null;
+            const domPreference = root?.getAttribute('data-theme-preference');
+            if (domPreference && VALID_PREFERENCES.has(domPreference)) {
+                return domPreference;
+            }
+        } catch (error) {
+            // Ignore and fall back.
+        }
+
+        try {
+            const stored = typeof localStorage !== 'undefined'
+                ? localStorage.getItem('oa-theme-preference')
+                : null;
+            if (stored && VALID_PREFERENCES.has(stored)) {
+                return stored;
+            }
+        } catch (error) {
+            // Ignore and fall back.
+        }
+
+        return PREFERENCE_SYSTEM;
     }
 
     init() {
@@ -33,7 +58,7 @@ class ThemeManager {
         }
 
         preferencesStore.getPreference(PREF_KEYS.theme).then((storedPreference) => {
-            if (storedPreference && VALID_PREFERENCES.has(storedPreference)) {
+            if (storedPreference && VALID_PREFERENCES.has(storedPreference) && storedPreference !== this.preference) {
                 this.preference = storedPreference;
                 this.applyTheme();
                 this.notify();
@@ -60,6 +85,21 @@ class ThemeManager {
         if (!root) return;
 
         const effectiveTheme = this.getEffectiveTheme();
+        const currentTheme = root.getAttribute('data-theme');
+        const currentPreference = root.getAttribute('data-theme-preference');
+        const hasMatchingDarkClass = (effectiveTheme === 'dark') === root.classList.contains('dark');
+        const hasMatchingThemeClass = effectiveTheme === 'dark'
+            ? root.classList.contains('theme-dark') && !root.classList.contains('theme-light')
+            : root.classList.contains('theme-light') && !root.classList.contains('theme-dark');
+
+        if (
+            currentTheme === effectiveTheme &&
+            currentPreference === this.preference &&
+            hasMatchingDarkClass &&
+            hasMatchingThemeClass
+        ) {
+            return;
+        }
 
         // Disable transitions during theme switch for instant color change
         root.classList.add('switching-theme');

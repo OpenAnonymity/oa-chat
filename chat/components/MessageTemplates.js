@@ -22,8 +22,12 @@ function getWelcomeContent() {
         typeof window.inferenceService.getWelcomeContent === 'function') {
         return window.inferenceService.getWelcomeContent();
     }
-    // Minimal fallback structure - inferenceService should always be loaded by render time
-    return { title: '`oa-fastchat`', subtitle: '', content: '' };
+    // Fallback used by prelude before app.js initializes inferenceService.
+    return {
+        title: 'oa-fastchat',
+        subtitle: 'by [The Open Anonymity Project](https://openanonymity.ai/)',
+        content: ''
+    };
 }
 
 // Shared class constants (copied verbatim from existing markup)
@@ -1255,48 +1259,6 @@ function buildEmptyState() {
 
     return `
         <div class="${CLASSES.emptyStateWrapper} welcome-landing">
-            <style>
-                .welcome-landing {
-                    margin-top: 12vh;
-                    opacity: 0;
-                    animation: welcomeFadeIn 0.2s ease-out 0.05s forwards;
-                }
-                @keyframes welcomeFadeIn {
-                    from { opacity: 0; }
-                    to { opacity: 1; }
-                }
-                .welcome-title {
-                    font-size: 1.25rem;
-                    font-weight: 500;
-                    color: hsl(var(--color-foreground));
-                    margin-bottom: 0.375rem;
-                }
-                .welcome-subtitle {
-                    font-size: 0.875rem;
-                    color: hsl(var(--color-muted-foreground));
-                }
-                .welcome-subtitle a {
-                    color: hsl(var(--color-muted-foreground));
-                    text-decoration: none;
-                    border-bottom: 1px solid hsl(var(--color-border));
-                    transition: all 0.15s ease;
-                }
-                .welcome-subtitle a:hover {
-                    color: hsl(var(--color-foreground));
-                    border-bottom-color: hsl(var(--color-foreground) / 0.5);
-                }
-                .welcome-content {
-                    font-size: 0.75rem !important;
-                }
-                .welcome-content p,
-                .welcome-content li,
-                .welcome-content a {
-                    font-size: 0.75rem !important;
-                }
-                .welcome-content a {
-                    text-decoration: underline;
-                }
-            </style>
             ${logoHtml}
             <p class="welcome-title">${titleHtml}</p>
             ${subtitleHtml ? `<p class="welcome-subtitle">${subtitleHtml}</p>` : ''}

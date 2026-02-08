@@ -6,26 +6,6 @@
     <base href="/">
     <title>oa-fastchat</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <style>
-        /* Inline critical style - hides app until fonts are ready */
-        .fonts-loading #app { visibility: hidden; }
-    </style>
-    <script>
-        // Hide content immediately; resolve once fonts stylesheet is loaded
-        (function () {
-            document.documentElement.classList.add('fonts-loading');
-            let resolveFontsCss;
-            window.__fontsCssReady = new Promise((resolve) => {
-                resolveFontsCss = resolve;
-            });
-            window.__resolveFontsCss = () => {
-                if (resolveFontsCss) {
-                    resolveFontsCss();
-                    resolveFontsCss = null;
-                }
-            };
-        })();
-    </script>
     <script>
         (function () {
             try {
@@ -130,20 +110,17 @@
     <link rel="dns-prefetch" href="https://org.openanonymity.ai">
 
     <!-- Local Fonts -->
-    <link rel="stylesheet" href="fonts/fonts.css" onload="window.__resolveFontsCss && window.__resolveFontsCss()">
+    <link rel="stylesheet" href="fonts/fonts.css">
     <script>
-        // Keep app hidden until fonts are loaded and ready to render.
+        // Warm font caches in the background without blocking first paint.
         (function () {
             const waitForFonts = async () => {
                 try {
-                    if (window.__fontsCssReady) {
+                    if (document.fonts && document.fonts.ready) {
                         await Promise.race([
-                            window.__fontsCssReady,
+                            document.fonts.ready,
                             new Promise(resolve => setTimeout(resolve, 1000))
                         ]);
-                    }
-                    if (document.fonts && document.fonts.ready) {
-                        await document.fonts.ready;
                         const families = [
                             'SF Pro Text',
                             'Newsreader',
@@ -156,10 +133,6 @@
                     }
                 } catch (error) {
                     console.warn('Font readiness check failed:', error);
-                } finally {
-                    requestAnimationFrame(() => {
-                        document.documentElement.classList.remove('fonts-loading');
-                    });
                 }
             };
             window.fontsReadyPromise = waitForFonts();
@@ -661,7 +634,7 @@
             </main>
 
             <!-- Right Panel: Ticket System -->
-            <aside id="right-panel" class="right-panel-desktop fixed lg:relative right-0 top-0 h-full w-80 bg-background border-l border-border shadow-lg z-40 transition-[transform,width,border-width] duration-300 ease-in-out lg:flex-shrink-0 flex flex-col">
+            <aside id="right-panel" class="right-panel-desktop fixed lg:relative right-0 top-0 h-full w-80 bg-background border-l border-border shadow-lg z-40 lg:flex-shrink-0 flex flex-col" style="width: 18rem;">
                 <div id="right-panel-content" class="h-full flex flex-col">
                     <!-- Content will be rendered by RightPanel.js -->
                 </div>
