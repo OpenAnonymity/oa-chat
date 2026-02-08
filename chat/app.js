@@ -2977,6 +2977,7 @@ class ChatApp {
         const { awaitRender = false, immediate = false, emitDesktop = false } = options;
         this.saveCurrentSessionScrollPosition();
         this.state.currentSessionId = null;
+        this.updateUrlWithSession(null);
 
         if (immediate && this.chatArea?.renderEmptyStateImmediate) {
             this.chatArea.renderEmptyStateImmediate();
