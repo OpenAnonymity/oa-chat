@@ -2284,6 +2284,35 @@ body {
     pointer-events: auto; /* But buttons remain clickable */
 }
 
+/* Keep toolbar button geometry stable even when right-panel toggle is hidden */
+#show-right-panel-btn {
+    display: inline-flex;
+    width: 0;
+    min-width: 0;
+    max-width: 0;
+    padding-left: 0;
+    padding-right: 0;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    overflow: hidden;
+    transition: width 0.34s cubic-bezier(0.22, 0.61, 0.36, 1),
+        max-width 0.34s cubic-bezier(0.22, 0.61, 0.36, 1),
+        opacity 0.2s ease,
+        visibility 0s linear 0.34s;
+}
+
+#show-right-panel-btn.system-panel-toggle-visible,
+html[data-right-panel-hidden="true"] #show-right-panel-btn {
+    width: 2.25rem;
+    min-width: 2.25rem;
+    max-width: 2.25rem;
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transition-delay: 0s;
+}
+
 /* Hide right panel button on mobile - panel doesn't make sense on narrow screens */
 @media (max-width: 767px) {
     #show-right-panel-btn {
@@ -2310,20 +2339,67 @@ body {
 }
 
 /* --- Right Panel Base --- */
-/*
- * Right panel visibility is controlled by JS inline styles.
- * CSS handles positioning mode (fixed vs relative) via media queries.
- * The data-right-panel-hidden attribute ensures panel stays hidden during transitions.
- *
- * CRITICAL: This rule must use BOTH hiding mechanisms (transform AND width/overflow)
- * to prevent flash when crossing the 1024px breakpoint.
- */
-html[data-right-panel-hidden="true"] #right-panel {
-    transform: translateX(100%) !important;
-    width: 0 !important;
-    border-left-width: 0 !important;
-    overflow: hidden !important;
-    visibility: hidden !important;
+:root {
+    --system-panel-width: 18rem;
+    --system-panel-transition-duration: 420ms;
+    --system-panel-transition-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+#right-panel {
+    width: var(--system-panel-width);
+    min-width: 0;
+    max-width: var(--system-panel-width);
+    flex-shrink: 0;
+    overflow: hidden;
+    will-change: width, transform;
+    transition: width var(--system-panel-transition-duration) var(--system-panel-transition-ease),
+        border-left-width var(--system-panel-transition-duration) var(--system-panel-transition-ease),
+        transform var(--system-panel-transition-duration) var(--system-panel-transition-ease);
+}
+
+#right-panel-content {
+    width: var(--system-panel-width);
+    min-width: var(--system-panel-width);
+    max-width: var(--system-panel-width);
+    transform: translateX(0);
+    transition: transform var(--system-panel-transition-duration) var(--system-panel-transition-ease);
+    will-change: transform;
+}
+
+@media (max-width: 1023px) {
+    #right-panel {
+        position: fixed !important;
+        right: 0;
+        top: 0;
+        transform: translateX(0);
+    }
+
+    html[data-right-panel-hidden="true"] #right-panel {
+        transform: translateX(100%);
+        border-left-width: 0;
+        pointer-events: none;
+    }
+
+    html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
+        transform: translateX(0);
+    }
+}
+
+@media (min-width: 1024px) {
+    #right-panel {
+        position: relative !important;
+        transform: translateX(0);
+    }
+
+    html[data-right-panel-hidden="true"] #right-panel {
+        width: 0;
+        border-left-width: 0;
+        pointer-events: none;
+    }
+
+    html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
+        transform: translateX(100%);
+    }
 }
 
 /* --- Mobile: < 640px --- */
@@ -2497,14 +2573,6 @@ html[data-right-panel-hidden="true"] #right-panel {
         display: flex !important;
     }
 
-    /* Right panel: overlay mode */
-    #right-panel {
-        position: fixed !important;
-        right: 0;
-        top: 0;
-        width: 18rem !important;
-    }
-
     /* Hide keyboard shortcuts */
     #model-picker-btn .flex.items-center.gap-0\.5 {
         display: none;
@@ -2583,14 +2651,6 @@ html[data-right-panel-hidden="true"] #right-panel {
         border-right-width: 1px;
     }
 
-    /* Right panel: overlay mode */
-    #right-panel {
-        position: fixed !important;
-        right: 0;
-        top: 0;
-        width: 18rem !important;
-    }
-
     /* Hide mobile backdrop */
     .mobile-sidebar-backdrop {
         display: none !important;
@@ -2613,11 +2673,7 @@ html[data-right-panel-hidden="true"] #right-panel {
         display: none !important;
     }
 
-    /* Right panel: inline shrink mode (not fixed overlay) */
-    /* JS controls visibility via inline width/transform - CSS only sets position */
-    #right-panel {
-        position: relative !important;
-    }
+    /* Right panel desktop positioning and transitions are handled in base rules */
 }
 
 /* Message Navigation Styles */
