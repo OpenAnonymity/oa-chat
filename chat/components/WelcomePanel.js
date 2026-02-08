@@ -578,7 +578,7 @@ class WelcomePanel {
                 </p>
 
                 <!-- Action buttons -->
-                <div class="flex items-stretch gap-2">
+                <div class="flex items-stretch gap-3">
                     <button
                         id="create-account-btn"
                         class="btn-ghost-hover flex-1 h-9 rounded-lg text-sm border border-border bg-background text-foreground shadow-sm transition-colors flex items-center justify-center gap-1.5"
