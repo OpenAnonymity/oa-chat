@@ -2240,7 +2240,16 @@ body {
     transition-timing-function: var(--sidebar-close-ease), var(--sidebar-close-ease);
 }
 
+html[data-left-sidebar-hidden="true"] #sidebar {
+    width: 0 !important;
+    border-right-width: 0 !important;
+}
+
 #sidebar.sidebar-hidden ~ * #show-sidebar-btn {
+    display: flex !important;
+}
+
+html[data-left-sidebar-hidden="true"] #show-sidebar-btn {
     display: flex !important;
 }
 

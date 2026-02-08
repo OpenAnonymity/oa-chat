@@ -32,6 +32,22 @@
         })();
     </script>
     <script>
+        // Apply left sidebar state immediately to prevent flash
+        (function () {
+            try {
+                const isDesktop = window.innerWidth > 768;
+                if (!isDesktop) return;
+
+                const savedState = localStorage.getItem('oa-left-sidebar-visible');
+                if (savedState === 'false') {
+                    document.documentElement.setAttribute('data-left-sidebar-hidden', 'true');
+                }
+            } catch (error) {
+                console.warn('Unable to apply left sidebar state:', error);
+            }
+        })();
+    </script>
+    <script>
         // Apply right panel state immediately to prevent flash
         (function () {
             try {

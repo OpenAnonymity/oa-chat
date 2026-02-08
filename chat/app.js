@@ -1187,6 +1187,7 @@ class ChatApp {
 
         // Initialize wide mode state from persistent storage (async).
         void this.initWideMode();
+        void this.initSidebarVisibility();
 
         // Start DB init in background - components can show skeleton state
         const dbReady = chatDB.init();
@@ -1267,6 +1268,18 @@ class ChatApp {
         this.preferencesUnsubscribe = preferencesStore.onChange((key, value) => {
             if (key === PREF_KEYS.wideMode) {
                 this.applyWideMode(!!value);
+            }
+            if (key === PREF_KEYS.leftSidebarVisible && typeof value === 'boolean' && !this.isMobileView()) {
+                const isHidden = this.elements.sidebar?.classList.contains('sidebar-hidden');
+                if (value) {
+                    if (isHidden) {
+                        this.showSidebar({ persist: false, predictToolbar: false });
+                    }
+                } else {
+                    if (!isHidden) {
+                        this.hideSidebar({ persist: false, predictToolbar: false });
+                    }
+                }
             }
         });
 
@@ -1408,11 +1421,6 @@ class ChatApp {
 
         // Initialize verifier and start broadcast checks
         this.initVerifier();
-
-        // Handle mobile view on initial load
-        if (this.isMobileView()) {
-            this.hideSidebar();
-        }
 
         // Scroll to bottom after initial load (for refresh)
         setTimeout(() => {
@@ -5114,6 +5122,27 @@ class ChatApp {
         this.applyWideMode(!!isWide);
     }
 
+    /**
+     * Initializes left sidebar visibility from persistent preferences.
+     * Desktop restores the last explicit toggle state; mobile defaults to hidden.
+     */
+    async initSidebarVisibility() {
+        if (this.isMobileView()) {
+            this.hideSidebar({ persist: false, predictToolbar: false });
+            return;
+        }
+
+        const isVisible = await preferencesStore.getPreference(PREF_KEYS.leftSidebarVisible, {
+            isMobile: false
+        });
+
+        if (isVisible === false) {
+            this.hideSidebar({ persist: false, predictToolbar: false });
+        } else {
+            this.showSidebar({ persist: false, predictToolbar: false });
+        }
+    }
+
     applyWideMode(isWide) {
         document.documentElement.classList.toggle('wide-mode', isWide);
         this.elements.wideModeBtn?.classList.toggle('wide-active', isWide);
@@ -5145,7 +5174,17 @@ class ChatApp {
         }
     }
 
-    hideSidebar() {
+    setSidebarHiddenAttribute(isHidden) {
+        if (isHidden) {
+            document.documentElement.setAttribute('data-left-sidebar-hidden', 'true');
+        } else {
+            document.documentElement.removeAttribute('data-left-sidebar-hidden');
+        }
+    }
+
+    hideSidebar(options = {}) {
+        const shouldPersist = options.persist ?? !this.isMobileView();
+        const shouldPredictToolbar = options.predictToolbar !== false;
         const sidebar = this.elements.sidebar;
         const showBtn = this.elements.showSidebarBtn;
         const backdrop = this.elements.mobileSidebarBackdrop;
@@ -5155,6 +5194,7 @@ class ChatApp {
             sidebar.classList.add('sidebar-hidden');
             sidebar.classList.remove('mobile-visible');
         }
+        this.setSidebarHiddenAttribute(true);
         if (showBtn) {
             showBtn.classList.remove('hidden');
             showBtn.classList.add('flex');
@@ -5162,14 +5202,23 @@ class ChatApp {
         if (backdrop) {
             backdrop.classList.remove('visible');
         }
+        if (shouldPersist) {
+            preferencesStore.savePreference(PREF_KEYS.leftSidebarVisible, false);
+        }
         this.updateWideModeButtonVisibility();
-        // Predict final width: sidebar is closing, main area will be WIDER
-        // Only affects width on desktop, on mobile sidebar overlays
-        // Grace period in updateToolbarDivider blocks intermediate updates during animation
-        this.updateToolbarDivider(this.isMobileView() ? 0 : SIDEBAR_WIDTH);
+        if (shouldPredictToolbar) {
+            // Predict final width: sidebar is closing, main area will be WIDER
+            // Only affects width on desktop, on mobile sidebar overlays
+            // Grace period in updateToolbarDivider blocks intermediate updates during animation
+            this.updateToolbarDivider(this.isMobileView() ? 0 : SIDEBAR_WIDTH);
+        } else {
+            this.updateToolbarDivider();
+        }
     }
 
-    showSidebar() {
+    showSidebar(options = {}) {
+        const shouldPersist = options.persist ?? !this.isMobileView();
+        const shouldPredictToolbar = options.predictToolbar !== false;
         const sidebar = this.elements.sidebar;
         const showBtn = this.elements.showSidebarBtn;
         const backdrop = this.elements.mobileSidebarBackdrop;
@@ -5179,8 +5228,11 @@ class ChatApp {
             sidebar.classList.remove('sidebar-hidden');
             if (this.isMobileView()) {
                 sidebar.classList.add('mobile-visible');
+            } else {
+                sidebar.classList.remove('mobile-visible');
             }
         }
+        this.setSidebarHiddenAttribute(false);
         if (showBtn) {
             showBtn.classList.add('hidden');
             showBtn.classList.remove('flex');
@@ -5189,10 +5241,17 @@ class ChatApp {
         if (backdrop && this.isMobileView()) {
             backdrop.classList.add('visible');
         }
+        if (shouldPersist) {
+            preferencesStore.savePreference(PREF_KEYS.leftSidebarVisible, true);
+        }
         this.updateWideModeButtonVisibility();
-        // Predict final width: sidebar is opening, main area will be NARROWER
-        // Only affects width on desktop, on mobile sidebar overlays
-        this.updateToolbarDivider(this.isMobileView() ? 0 : -SIDEBAR_WIDTH);
+        if (shouldPredictToolbar) {
+            // Predict final width: sidebar is opening, main area will be NARROWER
+            // Only affects width on desktop, on mobile sidebar overlays
+            this.updateToolbarDivider(this.isMobileView() ? 0 : -SIDEBAR_WIDTH);
+        } else {
+            this.updateToolbarDivider();
+        }
     }
 
     isMobileView() {
