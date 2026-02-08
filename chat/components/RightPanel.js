@@ -15,6 +15,7 @@ import { getTicketCost } from '../services/modelTiers.js';
 import { exportTickets } from '../services/globalExport.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import { chatDB } from '../db.js';
+import { SHARE_BASE_URL } from '../config.js';
 
 // Layout constant for toolbar overlay prediction
 const RIGHT_PANEL_WIDTH = 320; // 20rem = 320px (w-80)
@@ -256,6 +257,29 @@ class RightPanel {
 
     getMaxSplitCount() {
         return Math.min(50, this.ticketCount);
+    }
+
+    getTicketShareBaseUrl() {
+        const configuredBase = String(SHARE_BASE_URL || '').trim();
+        const fallbackBase = String(window.location.origin || '').trim();
+        const candidate = configuredBase || fallbackBase;
+        if (!candidate) return '';
+
+        const baseWithProtocol = /^https?:\/\//i.test(candidate) ? candidate : `https://${candidate}`;
+        try {
+            const parsed = new URL(baseWithProtocol);
+            return `${parsed.protocol}//${parsed.host}`;
+        } catch {
+            return '';
+        }
+    }
+
+    getTicketCodeShareUrl(code) {
+        const normalizedCode = this.normalizeInvitationCode(code);
+        if (normalizedCode.length !== 24) return '';
+        const baseUrl = this.getTicketShareBaseUrl();
+        if (!baseUrl) return '';
+        return `${baseUrl}/tickets/${encodeURIComponent(normalizedCode)}`;
     }
 
     escapeHtml(text) {
@@ -815,11 +839,16 @@ class RightPanel {
 
     handleSplitResultDismiss() {
         if (!this.splitResult) return;
+        const splitShareUrl = this.getTicketCodeShareUrl(this.splitResult.code);
 
         this.app?.openSplitCodeDismissWarning?.(() => {
             this.splitResult = null;
             this.renderTopSectionOnly();
-        }, this.splitResult.code);
+        }, {
+            code: this.splitResult.code,
+            ticketsConsumed: this.splitResult.ticketsConsumed || 1,
+            shareUrl: splitShareUrl || ''
+        });
     }
 
     async handleSplitResultCopy() {
@@ -831,6 +860,19 @@ class RightPanel {
         } catch (error) {
             console.error('Failed to copy ticket code:', error);
             this.app?.showToast?.('Failed to copy code', 'error');
+        }
+    }
+
+    async handleSplitResultCopyLink() {
+        const splitShareUrl = this.getTicketCodeShareUrl(this.splitResult?.code);
+        if (!splitShareUrl) return;
+
+        try {
+            await navigator.clipboard.writeText(splitShareUrl);
+            this.app?.showToast?.('Ticket share link copied!', 'success');
+        } catch (error) {
+            console.error('Failed to copy ticket share link:', error);
+            this.app?.showToast?.('Failed to copy ticket share link', 'error');
         }
     }
 
@@ -1583,6 +1625,9 @@ class RightPanel {
             ? `${pendingTickets} ticket${pendingTickets === 1 ? '' : 's'}`
             : 'tickets';
         const maxSplitCount = this.getMaxSplitCount();
+        const splitShareUrl = this.getTicketCodeShareUrl(this.splitResult?.code);
+        const splitShareUrlEscaped = splitShareUrl ? this.escapeHtml(splitShareUrl) : '';
+        const splitShareUrlAttribute = splitShareUrl ? this.escapeHtmlAttribute(splitShareUrl) : '';
 
         return `
                 <!-- Invitation Code Section -->
@@ -1690,14 +1735,16 @@ class RightPanel {
                 ` : ''}
 
                 ${this.splitResult ? `
-                <div id="split-result" class="mt-2 p-2 bg-background border border-border rounded-md">
-                    <div class="flex items-center gap-1.5">
-                        <span class="text-[10px] text-muted-foreground">code:</span>
-                        <code class="flex-1 font-mono text-[10px] text-foreground break-all">${this.splitResult.code}</code>
+                <div id="split-result" class="split-result-card">
+                    <div class="split-result-header">
+                        <span class="split-result-title">Ticket code created for ${this.splitResult.ticketsConsumed || 1} valid ticket${(this.splitResult.ticketsConsumed || 1) === 1 ? '' : 's'}</span>
+                    </div>
+                    <div class="split-result-code-row">
+                        <code class="split-result-code">${this.escapeHtml(this.splitResult.code)}</code>
                         <button
                             id="split-result-copy"
-                            class="btn-ghost-hover inline-flex items-center justify-center px-1 py-0.5 rounded text-muted-foreground hover:text-foreground transition-all"
-                            title="Copy"
+                            class="split-result-icon-btn"
+                            title="Copy ticket code"
                         >
                             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <rect width="14" height="14" x="8" y="8" rx="2"/>
@@ -1706,7 +1753,7 @@ class RightPanel {
                         </button>
                         <button
                             id="split-result-dismiss"
-                            class="btn-ghost-hover inline-flex items-center justify-center px-1 py-0.5 rounded text-muted-foreground hover:text-foreground transition-all"
+                            class="split-result-icon-btn"
                             title="Dismiss"
                         >
                             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1714,6 +1761,31 @@ class RightPanel {
                             </svg>
                         </button>
                     </div>
+                    ${splitShareUrl ? `
+                    <div class="split-result-share">
+                        <div class="split-result-share-label">
+                            You can share the tickets with this link:
+                        </div>
+                        <div class="split-result-share-row">
+                            <a
+                                id="split-result-share-link"
+                                class="split-result-share-link"
+                                href="${splitShareUrlAttribute}"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                title="${splitShareUrlAttribute}"
+                            >${splitShareUrlEscaped}</a>
+                            <button
+                                id="split-result-copy-link"
+                                class="split-result-share-copy-btn"
+                                type="button"
+                                title="Copy ticket share link"
+                            >
+                                Copy Link
+                            </button>
+                        </div>
+                    </div>
+                    ` : ''}
                 </div>
                 ` : ''}
 
@@ -2256,6 +2328,11 @@ class RightPanel {
         const splitResultDismiss = document.getElementById('split-result-dismiss');
         if (splitResultDismiss) {
             splitResultDismiss.onclick = () => this.handleSplitResultDismiss();
+        }
+
+        const splitResultCopyLink = document.getElementById('split-result-copy-link');
+        if (splitResultCopyLink) {
+            splitResultCopyLink.onclick = () => this.handleSplitResultCopyLink();
         }
 
         // Ticket data click handler - toggle between truncated and full view

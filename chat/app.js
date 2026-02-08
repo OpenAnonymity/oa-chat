@@ -2326,8 +2326,22 @@ class ChatApp {
     }
 
 
-    openSplitCodeDismissWarning(onConfirm, code) {
+    openSplitCodeDismissWarning(onConfirm, splitDetails = {}) {
         if (this.splitCodeWarningOverlay) return;
+
+        const details = typeof splitDetails === 'string'
+            ? { code: splitDetails }
+            : (splitDetails || {});
+        const code = typeof details.code === 'string' ? details.code : '';
+        const ticketsConsumed = Number.isFinite(details.ticketsConsumed) && details.ticketsConsumed > 0
+            ? Math.floor(details.ticketsConsumed)
+            : null;
+        const shareUrl = typeof details.shareUrl === 'string' ? details.shareUrl : '';
+        const safeCode = this.escapeHtml(code);
+        const safeShareUrl = this.escapeHtml(shareUrl);
+        const ticketCountNote = ticketsConsumed
+            ? `Ticket code created for ${ticketsConsumed} valid ticket${ticketsConsumed === 1 ? '' : 's'}.`
+            : '';
 
         const overlay = document.createElement('div');
         overlay.className = 'fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4';
@@ -2336,12 +2350,25 @@ class ChatApp {
             <div class="dialog-content max-w-[320px] rounded-xl border border-border bg-background shadow-xl p-6">
                 <h3 class="text-sm font-medium text-foreground mb-4">Dismiss code?</h3>
 
+                ${ticketCountNote ? `
+                <p class="text-xs text-muted-foreground mb-3">
+                    ${ticketCountNote}
+                </p>
+                ` : ''}
+
                 <div class="mb-4 p-3 bg-muted/20 rounded-md border border-border">
-                    <code class="block font-mono text-xs text-foreground break-all text-center">${code || ''}</code>
+                    <code class="block font-mono text-xs text-foreground break-all text-center">${safeCode}</code>
                 </div>
 
+                ${shareUrl ? `
+                <div class="mb-4 p-3 bg-muted/20 rounded-md border border-border">
+                    <div class="text-[10px] text-muted-foreground mb-1">Ticket share link</div>
+                    <code class="block font-mono text-[10px] text-foreground break-all">${safeShareUrl}</code>
+                </div>
+                ` : ''}
+
                 <p class="text-xs text-muted-foreground mb-4">
-                    Make sure you've copied this code.
+                    Make sure you've copied this code${shareUrl ? ' and link' : ''}.
                 </p>
 
                 <div class="flex gap-2">
