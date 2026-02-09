@@ -1,5 +1,7 @@
 {
-  "outputDirectory": "dist",
+  "installCommand": "true",
+  "buildCommand": "true",
+  "outputDirectory": "chat",
   "rewrites": [
     {
       "source": "/chat",
