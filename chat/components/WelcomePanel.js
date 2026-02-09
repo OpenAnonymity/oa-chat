@@ -408,7 +408,7 @@ class WelcomePanel {
                         </div>
                         <div>
                             <p class="welcome-guarantee-title font-medium text-foreground">The Entire App is Local</p>
-                            <p class="welcome-guarantee-body text-muted-foreground">All data is stored locally in your browser and exportable in JSON. Local app means it's self-contained and extremely fast.</p>
+                            <p class="welcome-guarantee-body text-muted-foreground">All data is stored locally in your browser and exportable in JSON. The only backend is ephemeral key issuance so it's fast.</p>
                         </div>
                         <!-- --------------------Encrypted sync-------------------- -->
                         <div class="welcome-icon-box">
@@ -460,7 +460,7 @@ class WelcomePanel {
                 <!-- Action buttons -->
                 <div class="flex items-stretch gap-2">
                     <a
-                        href="https://openanonymity.ai/"
+                        href="https://openanonymity.ai/beta"
                         target="_blank"
                         rel="noopener noreferrer"
                         class="welcome-btn-glass btn-ghost-hover flex-1 h-10 px-3 rounded-lg text-sm border border-border text-foreground shadow-sm transition-colors flex items-center justify-center gap-1.5"

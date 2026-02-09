@@ -1187,6 +1187,7 @@ class ChatApp {
 
         // Initialize wide mode state from persistent storage (async).
         void this.initWideMode();
+        void this.initSidebarVisibility();
 
         // Start DB init in background - components can show skeleton state
         const dbReady = chatDB.init();
@@ -1201,6 +1202,12 @@ class ChatApp {
         this.welcomePanel = new WelcomePanel(this);
         this.rightPanel = new RightPanel(this);
         this.rightPanel.mount();
+
+        // Render core shell immediately so non-sidebar UI is never blank on startup.
+        this.chatArea.renderEmptyStateImmediate();
+        this.renderCurrentModel();
+        this.chatInput.updateSearchToggleUI();
+        this.chatInput.updateReasoningToggleUI();
 
         // Wait for DB before loading data
         try {
@@ -1227,37 +1234,6 @@ class ChatApp {
             this.showToast('Chat storage is running in compatibility mode. Close other tabs and reload to finish the upgrade.', 'error');
         });
 
-        // Load sessions ASAP so the sidebar doesn't stay in a loading state.
-        try {
-            await this.loadInitialSessions();
-        } catch (error) {
-            console.warn('Failed to load initial sessions:', error);
-            this.state.sessions = [];
-            this.state.sessionsById = new Map();
-            this.state.hasMoreSessions = false;
-        }
-        this.renderSessions();
-
-        await storageManager.init();
-        await apiKeyStore.loadApiKey();
-        this.scrubberService.init().catch((error) => {
-            console.warn('Scrubber init failed:', error);
-        });
-
-        await accountService.init();
-        if (typeof requestIdleCallback === 'function') {
-            requestIdleCallback(() => accountService.maybeAutoUnlock());
-        } else {
-            setTimeout(() => accountService.maybeAutoUnlock(), 800);
-        }
-
-        // Initialize network proxy in background (don't block UI)
-        await networkProxy.syncWithPreferences().catch(err => console.warn('Proxy pref sync failed:', err));
-        networkProxy.initialize().catch(err => console.warn('Proxy init failed:', err));
-
-        // Show welcome panel for new users (after core services are ready)
-        await this.welcomePanel.init();
-
         // Now set up theme controls after chatInput is initialized
         this.updateThemeControls(themeManager.getPreference(), themeManager.getEffectiveTheme());
         this.themeUnsubscribe = themeManager.onChange((preference, effectiveTheme) => {
@@ -1267,6 +1243,18 @@ class ChatApp {
         this.preferencesUnsubscribe = preferencesStore.onChange((key, value) => {
             if (key === PREF_KEYS.wideMode) {
                 this.applyWideMode(!!value);
+            }
+            if (key === PREF_KEYS.leftSidebarVisible && typeof value === 'boolean' && !this.isMobileView()) {
+                const isHidden = this.elements.sidebar?.classList.contains('sidebar-hidden');
+                if (value) {
+                    if (isHidden) {
+                        this.showSidebar({ persist: false, predictToolbar: false });
+                    }
+                } else {
+                    if (!isHidden) {
+                        this.hideSidebar({ persist: false, predictToolbar: false });
+                    }
+                }
             }
         });
 
@@ -1293,24 +1281,51 @@ class ChatApp {
         initModelTiers();
         initPinnedModels();
 
-        // Load settings from IndexedDB in PARALLEL for speed
-        const [storedModelPreference, savedSearchEnabled, savedReasoningEnabled] = await Promise.all([
+        // Keep slower service startup off the critical render path.
+        void (async () => {
+            try {
+                await storageManager.init();
+            } catch (error) {
+                console.warn('Storage manager init failed:', error);
+            }
+
+            try {
+                await apiKeyStore.loadApiKey();
+            } catch (error) {
+                console.warn('API key load failed:', error);
+            }
+
+            this.scrubberService.init().catch((error) => {
+                console.warn('Scrubber init failed:', error);
+            });
+
+            try {
+                await accountService.init();
+                if (typeof requestIdleCallback === 'function') {
+                    requestIdleCallback(() => accountService.maybeAutoUnlock());
+                } else {
+                    setTimeout(() => accountService.maybeAutoUnlock(), 800);
+                }
+            } catch (error) {
+                console.warn('Account init failed:', error);
+            }
+
+            await networkProxy.syncWithPreferences().catch(err => console.warn('Proxy pref sync failed:', err));
+            networkProxy.initialize().catch(err => console.warn('Proxy init failed:', err));
+
+            await this.welcomePanel.init().catch((error) => {
+                console.warn('Welcome panel init failed:', error);
+            });
+        })();
+
+        // Load settings from IndexedDB in parallel; this is independent of sidebar history load.
+        const settingsPromise = Promise.all([
             chatDB.getSetting('selectedModel'),
             chatDB.getSetting('searchEnabled'),
             chatDB.getSetting('reasoningEnabled')
         ]);
 
-        // Migrate sessions in background (don't block UI)
-        this.migrateSessionsInBackground(this.state.sessions);
-        const scheduleBackfill = () => chatDB.backfillMissingUpdatedAt()
-            .catch(err => console.warn('UpdatedAt backfill failed:', err));
-        if (typeof requestIdleCallback === 'function') {
-            requestIdleCallback(scheduleBackfill);
-        } else {
-            setTimeout(scheduleBackfill, 1200);
-        }
-
-        // Restore session from sessionStorage (persists across refreshes, not across tabs)
+        // Restore session from sessionStorage as early as possible for chat area hydration.
         const savedSessionId = sessionStorage.getItem(SESSION_STORAGE_KEY);
         if (savedSessionId) {
             await this.ensureSessionLoaded(savedSessionId);
@@ -1318,6 +1333,8 @@ class ChatApp {
                 this.state.currentSessionId = savedSessionId;
             }
         }
+
+        const [storedModelPreference, savedSearchEnabled, savedReasoningEnabled] = await settingsPromise;
 
         // Process model preference
         const normalizedModelName = this.upgradeDefaultModelPreference(
@@ -1337,8 +1354,7 @@ class ChatApp {
         // Restore reasoning state
         this.reasoningEnabled = savedReasoningEnabled !== undefined ? savedReasoningEnabled : true;
 
-        // Render local data IMMEDIATELY (sessions from DB, model from settings)
-        this.renderSessions();
+        // Render local data immediately (session from sessionStorage + model/settings from DB).
         this.renderMessages();
         this.renderCurrentModel();
         this.chatInput.updateSearchToggleUI();
@@ -1354,6 +1370,30 @@ class ChatApp {
         }
         if (this.floatingPanel && currentSession) {
             this.floatingPanel.render();
+        }
+
+        // Load sessions for the sidebar after core UI is already visible.
+        try {
+            await this.loadInitialSessions();
+        } catch (error) {
+            console.warn('Failed to load initial sessions:', error);
+            this.state.sessions = [];
+            this.state.sessionsById = new Map();
+            this.state.hasMoreSessions = false;
+        }
+        if (this.state.currentSessionId) {
+            await this.ensureSessionLoaded(this.state.currentSessionId);
+        }
+        this.renderSessions();
+
+        // Migrate sessions in background (don't block UI)
+        this.migrateSessionsInBackground(this.state.sessions);
+        const scheduleBackfill = () => chatDB.backfillMissingUpdatedAt()
+            .catch(err => console.warn('UpdatedAt backfill failed:', err));
+        if (typeof requestIdleCallback === 'function') {
+            requestIdleCallback(scheduleBackfill);
+        } else {
+            setTimeout(scheduleBackfill, 1200);
         }
 
         this.renderDeleteHistoryModalContent();
@@ -1408,11 +1448,6 @@ class ChatApp {
 
         // Initialize verifier and start broadcast checks
         this.initVerifier();
-
-        // Handle mobile view on initial load
-        if (this.isMobileView()) {
-            this.hideSidebar();
-        }
 
         // Scroll to bottom after initial load (for refresh)
         setTimeout(() => {
@@ -2977,6 +3012,7 @@ class ChatApp {
         const { awaitRender = false, immediate = false, emitDesktop = false } = options;
         this.saveCurrentSessionScrollPosition();
         this.state.currentSessionId = null;
+        this.updateUrlWithSession(null);
 
         if (immediate && this.chatArea?.renderEmptyStateImmediate) {
             this.chatArea.renderEmptyStateImmediate();
@@ -5113,6 +5149,27 @@ class ChatApp {
         this.applyWideMode(!!isWide);
     }
 
+    /**
+     * Initializes left sidebar visibility from persistent preferences.
+     * Desktop restores the last explicit toggle state; mobile defaults to hidden.
+     */
+    async initSidebarVisibility() {
+        if (this.isMobileView()) {
+            this.hideSidebar({ persist: false, predictToolbar: false });
+            return;
+        }
+
+        const isVisible = await preferencesStore.getPreference(PREF_KEYS.leftSidebarVisible, {
+            isMobile: false
+        });
+
+        if (isVisible === false) {
+            this.hideSidebar({ persist: false, predictToolbar: false });
+        } else {
+            this.showSidebar({ persist: false, predictToolbar: false });
+        }
+    }
+
     applyWideMode(isWide) {
         document.documentElement.classList.toggle('wide-mode', isWide);
         this.elements.wideModeBtn?.classList.toggle('wide-active', isWide);
@@ -5144,7 +5201,17 @@ class ChatApp {
         }
     }
 
-    hideSidebar() {
+    setSidebarHiddenAttribute(isHidden) {
+        if (isHidden) {
+            document.documentElement.setAttribute('data-left-sidebar-hidden', 'true');
+        } else {
+            document.documentElement.removeAttribute('data-left-sidebar-hidden');
+        }
+    }
+
+    hideSidebar(options = {}) {
+        const shouldPersist = options.persist ?? !this.isMobileView();
+        const shouldPredictToolbar = options.predictToolbar !== false;
         const sidebar = this.elements.sidebar;
         const showBtn = this.elements.showSidebarBtn;
         const backdrop = this.elements.mobileSidebarBackdrop;
@@ -5154,6 +5221,7 @@ class ChatApp {
             sidebar.classList.add('sidebar-hidden');
             sidebar.classList.remove('mobile-visible');
         }
+        this.setSidebarHiddenAttribute(true);
         if (showBtn) {
             showBtn.classList.remove('hidden');
             showBtn.classList.add('flex');
@@ -5161,14 +5229,23 @@ class ChatApp {
         if (backdrop) {
             backdrop.classList.remove('visible');
         }
+        if (shouldPersist) {
+            preferencesStore.savePreference(PREF_KEYS.leftSidebarVisible, false);
+        }
         this.updateWideModeButtonVisibility();
-        // Predict final width: sidebar is closing, main area will be WIDER
-        // Only affects width on desktop, on mobile sidebar overlays
-        // Grace period in updateToolbarDivider blocks intermediate updates during animation
-        this.updateToolbarDivider(this.isMobileView() ? 0 : SIDEBAR_WIDTH);
+        if (shouldPredictToolbar) {
+            // Predict final width: sidebar is closing, main area will be WIDER
+            // Only affects width on desktop, on mobile sidebar overlays
+            // Grace period in updateToolbarDivider blocks intermediate updates during animation
+            this.updateToolbarDivider(this.isMobileView() ? 0 : SIDEBAR_WIDTH);
+        } else {
+            this.updateToolbarDivider();
+        }
     }
 
-    showSidebar() {
+    showSidebar(options = {}) {
+        const shouldPersist = options.persist ?? !this.isMobileView();
+        const shouldPredictToolbar = options.predictToolbar !== false;
         const sidebar = this.elements.sidebar;
         const showBtn = this.elements.showSidebarBtn;
         const backdrop = this.elements.mobileSidebarBackdrop;
@@ -5178,8 +5255,11 @@ class ChatApp {
             sidebar.classList.remove('sidebar-hidden');
             if (this.isMobileView()) {
                 sidebar.classList.add('mobile-visible');
+            } else {
+                sidebar.classList.remove('mobile-visible');
             }
         }
+        this.setSidebarHiddenAttribute(false);
         if (showBtn) {
             showBtn.classList.add('hidden');
             showBtn.classList.remove('flex');
@@ -5188,10 +5268,17 @@ class ChatApp {
         if (backdrop && this.isMobileView()) {
             backdrop.classList.add('visible');
         }
+        if (shouldPersist) {
+            preferencesStore.savePreference(PREF_KEYS.leftSidebarVisible, true);
+        }
         this.updateWideModeButtonVisibility();
-        // Predict final width: sidebar is opening, main area will be NARROWER
-        // Only affects width on desktop, on mobile sidebar overlays
-        this.updateToolbarDivider(this.isMobileView() ? 0 : -SIDEBAR_WIDTH);
+        if (shouldPredictToolbar) {
+            // Predict final width: sidebar is opening, main area will be NARROWER
+            // Only affects width on desktop, on mobile sidebar overlays
+            this.updateToolbarDivider(this.isMobileView() ? 0 : -SIDEBAR_WIDTH);
+        } else {
+            this.updateToolbarDivider();
+        }
     }
 
     isMobileView() {

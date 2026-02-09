@@ -103,6 +103,8 @@ class RightPanel {
         this.showTicketInfo = savedTicketInfoVisible === 'false' ? false : true;
         this.lastAppliedVisibility = null;
         this.panelFadeCleanupTimer = null;
+        this.panelFadeAnimation = null;
+        this.hasMounted = false;
 
         this.initializeState();
         this.setupEventListeners();
@@ -520,7 +522,6 @@ class RightPanel {
         const showBtn = document.getElementById('show-right-panel-btn');
         const appContainer = document.getElementById('app');
         if (!panel) return;
-        const becameVisible = this.isVisible && this.lastAppliedVisibility !== true;
 
         // Data attribute for CSS initial load protection
         if (this.isVisible) {
@@ -548,9 +549,6 @@ class RightPanel {
             }
         }
 
-        if (becameVisible) {
-            this.playContentFadeIn();
-        }
         this.lastAppliedVisibility = this.isVisible;
     }
 
@@ -558,19 +556,38 @@ class RightPanel {
         const content = document.getElementById('right-panel-content');
         if (!content) return;
 
+        if (this.panelFadeAnimation) {
+            this.panelFadeAnimation.cancel();
+            this.panelFadeAnimation = null;
+        }
+
+        content.classList.remove('system-panel-fade-prepare');
         content.classList.remove('system-panel-fade-in');
-        // Restart animation deterministically when reopening panel.
-        // eslint-disable-next-line no-unused-expressions
-        content.offsetHeight;
-        content.classList.add('system-panel-fade-in');
+        content.style.willChange = 'opacity, transform, filter';
+
+        this.panelFadeAnimation = content.animate(
+            [
+                { opacity: 0, transform: 'translateY(8px)', filter: 'blur(2px)' },
+                { opacity: 1, transform: 'translateY(0)', filter: 'blur(0)' }
+            ],
+            {
+                duration: 440,
+                easing: 'cubic-bezier(0.22, 0.61, 0.36, 1)',
+                fill: 'none'
+            }
+        );
 
         if (this.panelFadeCleanupTimer) {
             clearTimeout(this.panelFadeCleanupTimer);
         }
         this.panelFadeCleanupTimer = setTimeout(() => {
-            content.classList.remove('system-panel-fade-in');
+            if (this.panelFadeAnimation) {
+                this.panelFadeAnimation.cancel();
+                this.panelFadeAnimation = null;
+            }
+            content.style.willChange = '';
             this.panelFadeCleanupTimer = null;
-        }, 220);
+        }, 500);
     }
 
     async handleRegister(invitationCode) {
@@ -2725,6 +2742,13 @@ class RightPanel {
             appContainer.classList.add('right-panel-open');
         }
 
+        this.hasMounted = true;
+
+        // On first page load, if panel starts open, animate content after first paint.
+        if (this.isVisible) {
+            this.playContentFadeIn();
+        }
+
         // Hide legacy toggle button
         const oldToggleBtn = document.getElementById('toggle-right-panel-btn');
         if (oldToggleBtn) {
@@ -2741,12 +2765,17 @@ class RightPanel {
     }
 
     destroy() {
+        this.hasMounted = false;
         if (this.timerInterval) {
             clearInterval(this.timerInterval);
         }
         if (this.panelFadeCleanupTimer) {
             clearTimeout(this.panelFadeCleanupTimer);
             this.panelFadeCleanupTimer = null;
+        }
+        if (this.panelFadeAnimation) {
+            this.panelFadeAnimation.cancel();
+            this.panelFadeAnimation = null;
         }
         if (this.proxyUnsubscribe) {
             this.proxyUnsubscribe();
