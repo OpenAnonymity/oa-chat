@@ -491,21 +491,54 @@ export default class MemorySelector {
             .map(m => m.session_id || m.sessionId)
             .filter(id => id);
 
-        // Store memory metadata for the next message (invisible attachment)
-        // The memory context won't be shown in the input, but will be attached to the message
-        // User can see it by hovering over the sent message
-        this.app.pendingMemoryContext = {
-            sessionIds: sessionIds,
-            memories: selected,
-            timestamp: Date.now()
-        };
+        // Check if there's existing memory context to merge with
+        if (this.app.pendingMemoryContext && this.app.pendingMemoryContext.memories) {
+            // Merge with existing memories, avoiding duplicates
+            const existingIds = new Set(
+                this.app.pendingMemoryContext.memories.map(m => m.id || m.session_id || m.sessionId)
+            );
+            
+            const newMemories = selected.filter(m => {
+                const id = m.id || m.session_id || m.sessionId;
+                return !existingIds.has(id);
+            });
+            
+            const newSessionIds = newMemories
+                .map(m => m.session_id || m.sessionId)
+                .filter(id => id);
 
-        console.log('[MemorySelector] Set pendingMemoryContext:', this.app.pendingMemoryContext);
+            // Append new memories to existing ones
+            this.app.pendingMemoryContext.memories.push(...newMemories);
+            this.app.pendingMemoryContext.sessionIds.push(...newSessionIds);
+            this.app.pendingMemoryContext.timestamp = Date.now();
 
-        // Render visual memory chips in the input area
-        this.app.chatInput?.renderMemoryChips(selected);
+            console.log('[MemorySelector] Merged with existing pendingMemoryContext:', this.app.pendingMemoryContext);
+            
+            // Render updated memory chips
+            this.app.chatInput?.renderMemoryChips(this.app.pendingMemoryContext.memories);
+            
+            const addedCount = newMemories.length;
+            if (addedCount > 0) {
+                this.app.showToast?.(`Added ${addedCount} context item${addedCount === 1 ? '' : 's'}`, 'success');
+            } else {
+                this.app.showToast?.('All selected items already added', 'info');
+            }
+        } else {
+            // Create new memory context
+            this.app.pendingMemoryContext = {
+                sessionIds: sessionIds,
+                memories: selected,
+                timestamp: Date.now()
+            };
+
+            console.log('[MemorySelector] Set pendingMemoryContext:', this.app.pendingMemoryContext);
+
+            // Render visual memory chips in the input area
+            this.app.chatInput?.renderMemoryChips(selected);
+
+            this.app.showToast?.(`Added ${this.selectedIndices.size} context item${this.selectedIndices.size === 1 ? '' : 's'}`, 'success');
+        }
 
         this.close();
-        this.app.showToast?.(`Added ${this.selectedIndices.size} context item${this.selectedIndices.size === 1 ? '' : 's'}`, 'success');
     }
 }
