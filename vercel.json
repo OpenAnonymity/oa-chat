@@ -1,7 +1,7 @@
 {
   "installCommand": "true",
-  "buildCommand": "true",
-  "outputDirectory": "chat",
+  "buildCommand": "mkdir -p dist && cp -R chat dist/",
+  "outputDirectory": "dist",
   "rewrites": [
     {
       "source": "/chat",
