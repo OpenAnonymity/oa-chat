@@ -1203,6 +1203,12 @@ class ChatApp {
         this.rightPanel = new RightPanel(this);
         this.rightPanel.mount();
 
+        // Render core shell immediately so non-sidebar UI is never blank on startup.
+        this.chatArea.renderEmptyStateImmediate();
+        this.renderCurrentModel();
+        this.chatInput.updateSearchToggleUI();
+        this.chatInput.updateReasoningToggleUI();
+
         // Wait for DB before loading data
         try {
             await dbReady;
@@ -1227,37 +1233,6 @@ class ChatApp {
         window.addEventListener('oa-db-compat-mode', () => {
             this.showToast('Chat storage is running in compatibility mode. Close other tabs and reload to finish the upgrade.', 'error');
         });
-
-        // Load sessions ASAP so the sidebar doesn't stay in a loading state.
-        try {
-            await this.loadInitialSessions();
-        } catch (error) {
-            console.warn('Failed to load initial sessions:', error);
-            this.state.sessions = [];
-            this.state.sessionsById = new Map();
-            this.state.hasMoreSessions = false;
-        }
-        this.renderSessions();
-
-        await storageManager.init();
-        await apiKeyStore.loadApiKey();
-        this.scrubberService.init().catch((error) => {
-            console.warn('Scrubber init failed:', error);
-        });
-
-        await accountService.init();
-        if (typeof requestIdleCallback === 'function') {
-            requestIdleCallback(() => accountService.maybeAutoUnlock());
-        } else {
-            setTimeout(() => accountService.maybeAutoUnlock(), 800);
-        }
-
-        // Initialize network proxy in background (don't block UI)
-        await networkProxy.syncWithPreferences().catch(err => console.warn('Proxy pref sync failed:', err));
-        networkProxy.initialize().catch(err => console.warn('Proxy init failed:', err));
-
-        // Show welcome panel for new users (after core services are ready)
-        await this.welcomePanel.init();
 
         // Now set up theme controls after chatInput is initialized
         this.updateThemeControls(themeManager.getPreference(), themeManager.getEffectiveTheme());
@@ -1306,24 +1281,51 @@ class ChatApp {
         initModelTiers();
         initPinnedModels();
 
-        // Load settings from IndexedDB in PARALLEL for speed
-        const [storedModelPreference, savedSearchEnabled, savedReasoningEnabled] = await Promise.all([
+        // Keep slower service startup off the critical render path.
+        void (async () => {
+            try {
+                await storageManager.init();
+            } catch (error) {
+                console.warn('Storage manager init failed:', error);
+            }
+
+            try {
+                await apiKeyStore.loadApiKey();
+            } catch (error) {
+                console.warn('API key load failed:', error);
+            }
+
+            this.scrubberService.init().catch((error) => {
+                console.warn('Scrubber init failed:', error);
+            });
+
+            try {
+                await accountService.init();
+                if (typeof requestIdleCallback === 'function') {
+                    requestIdleCallback(() => accountService.maybeAutoUnlock());
+                } else {
+                    setTimeout(() => accountService.maybeAutoUnlock(), 800);
+                }
+            } catch (error) {
+                console.warn('Account init failed:', error);
+            }
+
+            await networkProxy.syncWithPreferences().catch(err => console.warn('Proxy pref sync failed:', err));
+            networkProxy.initialize().catch(err => console.warn('Proxy init failed:', err));
+
+            await this.welcomePanel.init().catch((error) => {
+                console.warn('Welcome panel init failed:', error);
+            });
+        })();
+
+        // Load settings from IndexedDB in parallel; this is independent of sidebar history load.
+        const settingsPromise = Promise.all([
             chatDB.getSetting('selectedModel'),
             chatDB.getSetting('searchEnabled'),
             chatDB.getSetting('reasoningEnabled')
         ]);
 
-        // Migrate sessions in background (don't block UI)
-        this.migrateSessionsInBackground(this.state.sessions);
-        const scheduleBackfill = () => chatDB.backfillMissingUpdatedAt()
-            .catch(err => console.warn('UpdatedAt backfill failed:', err));
-        if (typeof requestIdleCallback === 'function') {
-            requestIdleCallback(scheduleBackfill);
-        } else {
-            setTimeout(scheduleBackfill, 1200);
-        }
-
-        // Restore session from sessionStorage (persists across refreshes, not across tabs)
+        // Restore session from sessionStorage as early as possible for chat area hydration.
         const savedSessionId = sessionStorage.getItem(SESSION_STORAGE_KEY);
         if (savedSessionId) {
             await this.ensureSessionLoaded(savedSessionId);
@@ -1331,6 +1333,8 @@ class ChatApp {
                 this.state.currentSessionId = savedSessionId;
             }
         }
+
+        const [storedModelPreference, savedSearchEnabled, savedReasoningEnabled] = await settingsPromise;
 
         // Process model preference
         const normalizedModelName = this.upgradeDefaultModelPreference(
@@ -1350,8 +1354,7 @@ class ChatApp {
         // Restore reasoning state
         this.reasoningEnabled = savedReasoningEnabled !== undefined ? savedReasoningEnabled : true;
 
-        // Render local data IMMEDIATELY (sessions from DB, model from settings)
-        this.renderSessions();
+        // Render local data immediately (session from sessionStorage + model/settings from DB).
         this.renderMessages();
         this.renderCurrentModel();
         this.chatInput.updateSearchToggleUI();
@@ -1367,6 +1370,30 @@ class ChatApp {
         }
         if (this.floatingPanel && currentSession) {
             this.floatingPanel.render();
+        }
+
+        // Load sessions for the sidebar after core UI is already visible.
+        try {
+            await this.loadInitialSessions();
+        } catch (error) {
+            console.warn('Failed to load initial sessions:', error);
+            this.state.sessions = [];
+            this.state.sessionsById = new Map();
+            this.state.hasMoreSessions = false;
+        }
+        if (this.state.currentSessionId) {
+            await this.ensureSessionLoaded(this.state.currentSessionId);
+        }
+        this.renderSessions();
+
+        // Migrate sessions in background (don't block UI)
+        this.migrateSessionsInBackground(this.state.sessions);
+        const scheduleBackfill = () => chatDB.backfillMissingUpdatedAt()
+            .catch(err => console.warn('UpdatedAt backfill failed:', err));
+        if (typeof requestIdleCallback === 'function') {
+            requestIdleCallback(scheduleBackfill);
+        } else {
+            setTimeout(scheduleBackfill, 1200);
         }
 
         this.renderDeleteHistoryModalContent();
