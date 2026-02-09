@@ -90,6 +90,8 @@ export function getActivityDescription(log, detailed = false) {
             // Simple descriptions for local events
             if (action === 'ticket-select') {
                 return 'Redeeming unblinded ticket';
+            } else if (action === 'ticket-select-split') {
+                return 'Selecting tickets for split';
             } else if (action === 'tickets-blind') {
                 return `Blinded ${response?.ticket_count || 0} tickets locally`;
             } else if (action === 'tickets-signed') {
@@ -107,7 +109,12 @@ export function getActivityDescription(log, detailed = false) {
             if (action === 'ticket-select') {
                 const ticketIndex = response?.ticket_index || 0;
                 const unusedTickets = response?.unused_tickets || 0;
-                return `Selected inference ticket #${ticketIndex} from your local storage. You have ${unusedTickets} unused ticket${unusedTickets !== 1 ? 's' : ''} remaining. This ticket will be exchanged with a station for an anonymous API key.`;
+                return `Selected inference ticket #${ticketIndex} from your local storage. You have ${unusedTickets} unused ticket${unusedTickets !== 1 ? 's' : ''} remaining. This ticket will be exchanged with a station for an unlinkable API key.`;
+            } else if (action === 'ticket-select-split') {
+                const ticketIndex = response?.ticket_index || 0;
+                const selectedCount = response?.tickets_selected || 0;
+                const unusedTickets = response?.unused_tickets || 0;
+                return `Selected ${selectedCount} inference ticket${selectedCount !== 1 ? 's' : ''} starting at #${ticketIndex} from your local storage for split. You have ${unusedTickets} unused ticket${unusedTickets !== 1 ? 's' : ''} remaining.`;
             } else if (action === 'tickets-blind') {
                 const count = response?.ticket_count || 0;
                 return `Created ${count} blinded inference ticket${count !== 1 ? 's' : ''} locally using Privacy Pass cryptography. These blinded tokens hide your identity from the server while allowing it to sign them. The blinded tickets are now ready to be sent to the server for signing.`;
@@ -117,7 +124,7 @@ export function getActivityDescription(log, detailed = false) {
             } else if (action === 'tickets-unblind') {
                 const count = response?.tickets_finalized || 0;
                 const ready = response?.tickets_ready || 0;
-                return `Successfully unblinded and finalized ${count} inference ticket${count !== 1 ? 's' : ''}. You now have ${ready} ready-to-use ticket${ready !== 1 ? 's' : ''} stored locally. Each ticket can be exchanged for one temporary anonymous API key.`;
+                return `Successfully unblinded and finalized ${count} inference ticket${count !== 1 ? 's' : ''}. You now have ${ready} ready-to-use ticket${ready !== 1 ? 's' : ''} stored locally. Each ticket can be exchanged for one temporary unlinkable API key.`;
             } else if (action === 'prompt-edit') {
                 const deletedCount = response?.messagesDeleted || 0;
                 return `Edited a user prompt and truncated ${deletedCount} subsequent message${deletedCount !== 1 ? 's' : ''}. The conversation continues from this point with a fresh response.`;
@@ -138,19 +145,39 @@ export function getActivityDescription(log, detailed = false) {
         if (type === 'ticket' && path.includes('alpha-register')) {
             if (!detailed) {
                 if (status >= 200 && status < 300) {
-                    return 'Privacy tickets registered successfully';
+                    return 'Inference tickets registered successfully';
                 } else if (status === 0) {
-                    return 'Failed to register privacy tickets';
+                    return 'Failed to register inference tickets';
                 }
-                return 'Registering privacy tickets';
+                return 'Registering inference tickets';
             } else {
                 if (status >= 200 && status < 300) {
                     const ticketCount = response?.signed_responses?.length || 0;
-                    return `Successfully registered ${ticketCount} privacy-preserving inference tickets. These tickets allow you to request anonymous API keys without revealing your identity.`;
+                    return `Successfully registered ${ticketCount} inference tickets. These tickets allow you to request unlinkable ephemeral access keys.`;
                 } else if (status === 0) {
-                    return 'Failed to register privacy tickets. The registration server may be unavailable or your invitation code may be invalid.';
+                    return 'Failed to register inference tickets. The OA platform may be unavailable or your invitation code may be invalid.';
                 }
-                return 'Attempting to register privacy tickets with the anonymization server...';
+                return 'Attempting to register inference tickets with OA platform...';
+            }
+        }
+
+        // Ticket split (ticket code)
+        if (type === 'ticket' && path.includes('/api/split_tickets')) {
+            const count = response?.tickets_consumed || request?.body?.count || 0;
+            if (!detailed) {
+                if (status >= 200 && status < 300) {
+                    return 'Ticket code created';
+                } else if (status === 0) {
+                    return 'Failed to split tickets';
+                }
+                return 'Splitting tickets into ticket code';
+            } else {
+                if (status >= 200 && status < 300) {
+                    return `Successfully split ${count || 'your'} inference ticket${count === 1 ? '' : 's'} into a ticket code.`;
+                } else if (status === 0) {
+                    return 'Failed to split tickets. The server may be unavailable or your tickets may have already been used.';
+                }
+                return 'Splitting inference tickets into a ticket code...';
             }
         }
 
@@ -162,7 +189,7 @@ export function getActivityDescription(log, detailed = false) {
                 } else if (status === 0) {
                     return 'Failed to obtain confidential key';
                 }
-                return 'Requesting confidential anonymous key';
+                return 'Requesting confidential unlinkable key';
             } else {
                 if (status >= 200 && status < 300) {
                     const duration = response?.duration_minutes || 60;
@@ -170,7 +197,7 @@ export function getActivityDescription(log, detailed = false) {
                 } else if (status === 0) {
                     return 'Failed to obtain confidential API access. The anonymization server may be unavailable or your ticket may have already been used.';
                 }
-                return 'Exchanging privacy ticket for confidential anonymous API access...';
+                return 'Exchanging privacy ticket for confidential unlinkable API access...';
             }
         }
 
@@ -182,15 +209,15 @@ export function getActivityDescription(log, detailed = false) {
                 } else if (status === 0) {
                     return 'Failed to obtain ephemeral key';
                 }
-                return 'Requesting ephemeral anonymous key';
+                return 'Requesting ephemeral access key';
             } else {
                 if (status >= 200 && status < 300) {
                     const duration = response?.duration_minutes || 60;
-                    return `Successfully obtained an anonymous API key valid for ${duration} minutes. This key allows you to access AI models without linking requests to your identity.`;
+                    return `Successfully obtained an ephemeral key valid for ${duration} minutes.`;
                 } else if (status === 0) {
-                    return 'Failed to obtain API access. The anonymization server may be unavailable or your ticket may have already been used.';
+                    return 'Failed to obtain ephemeral key. The OA platform may be unavailable or your ticket may have already been used.';
                 }
-                return 'Exchanging privacy ticket for anonymous API access...';
+                return 'Exchanging privacy ticket for ephemeral access key...';
             }
         }
 
@@ -281,7 +308,18 @@ export function getActivityDescription(log, detailed = false) {
         // Verifier endpoint - station integrity verification
         if (type === 'verification' || urlObj.host === 'verifier.openanonymity.ai' || urlObj.host.includes('localhost')) {
             const verificationDetail = log.detail || response?.detail;
+            const isAttestationRequest = path.includes('/attestation');
             if (!detailed) {
+                if (isAttestationRequest) {
+                    if (status === 'queued' || status === 'pending') {
+                        return 'Attesting verifier';
+                    } else if (status >= 200 && status < 300) {
+                        return 'Verifier attested';
+                    } else if (status >= 400 || status === 0) {
+                        return 'Verifier attestation failed';
+                    }
+                    return 'Attesting verifier';
+                }
                 if (verificationDetail === 'verifier_unreachable_uncertified') {
                     return 'Verifier temporarily unreachable';
                 } else if (verificationDetail === 'key_near_expiry') {
@@ -296,6 +334,16 @@ export function getActivityDescription(log, detailed = false) {
                 }
                 return 'Verifying station integrity';
             } else {
+                if (isAttestationRequest) {
+                    if (status === 'queued' || status === 'pending') {
+                        return 'Requesting fresh hardware attestation proof from the verifier.';
+                    } else if (status >= 200 && status < 300) {
+                        return 'Successfully attested the verifier.';
+                    } else if (status >= 400 || status === 0) {
+                        return 'Verifier attestation failed. The verifier may be unavailable or returned an invalid attestation response.';
+                    }
+                    return 'Attesting verifier hardware and policy integrity.';
+                }
                 if (verificationDetail === 'verifier_unreachable_uncertified') {
                     return 'The verifier could not be <a href="https://verifier.openanonymity.ai/health" target="_blank" rel="noopener noreferrer" class="underline hover:text-amber-700 dark:hover:text-amber-300">reached</a> to verify this station, the key is rejected.';
                 } else if (verificationDetail === 'ownership_check_error') {

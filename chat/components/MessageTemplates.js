@@ -22,8 +22,12 @@ function getWelcomeContent() {
         typeof window.inferenceService.getWelcomeContent === 'function') {
         return window.inferenceService.getWelcomeContent();
     }
-    // Minimal fallback structure - inferenceService should always be loaded by render time
-    return { title: '`oa-fastchat`', subtitle: '', content: '' };
+    // Fallback used by prelude before app.js initializes inferenceService.
+    return {
+        title: 'oa-fastchat',
+        subtitle: 'by [The Open Anonymity Project](https://openanonymity.ai/)',
+        content: ''
+    };
 }
 
 // Shared class constants (copied verbatim from existing markup)
@@ -78,6 +82,18 @@ function escapeHtmlAttribute(text) {
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/\n/g, '&#10;');
+}
+
+export const RAW_CLIPBOARD_ATTRIBUTE_ENABLED = (() => {
+    if (typeof navigator === 'undefined') return false;
+    const ua = navigator.userAgent || '';
+    const isSafari = /Safari/i.test(ua) && !/Chrome|Chromium|Edg|OPR|CriOS|FxiOS|SamsungBrowser/i.test(ua);
+    return isSafari;
+})();
+
+function getRawContentAttribute(content) {
+    if (!RAW_CLIPBOARD_ATTRIBUTE_ENABLED) return '';
+    return ` data-raw-content="${escapeHtmlAttribute(content || '')}"`;
 }
 
 /**
@@ -311,7 +327,7 @@ function buildUserMessage(message, options = {}) {
     // If in edit mode, show the edit form instead of the static message
     if (isEditing) {
         return `
-            <div class="${CLASSES.userWrapper}" data-message-id="${message.id}">
+            <div class="${CLASSES.userWrapper}" data-message-id="${message.id}"${getRawContentAttribute(message.content)}>
                 <div class="${CLASSES.userGroup}">
                     <div class="edit-prompt-form w-full">
                         <textarea
@@ -359,19 +375,26 @@ function buildUserMessage(message, options = {}) {
     }
 
     // Check if message is long enough to collapse
-    const isLongMessage = message.content && message.content.length > USER_MESSAGE_COLLAPSE_THRESHOLD;
-    const collapsibleClass = isLongMessage ? 'user-message-collapsible collapsed' : '';
+    // For scrubber messages, use max of original and redacted lengths to ensure button visibility is consistent
+    const isLongMessage = message.scrubber
+        ? Math.max(message.scrubber.original?.length || 0, message.scrubber.redacted?.length || 0) > USER_MESSAGE_COLLAPSE_THRESHOLD
+        : message.content && message.content.length > USER_MESSAGE_COLLAPSE_THRESHOLD;
+    // Use persisted isCollapsed state for scrubber messages (defaults to collapsed)
+    const isCollapsed = message.scrubber?.isCollapsed !== false;
+    const collapsibleClass = isLongMessage ? `user-message-collapsible ${isCollapsed ? 'collapsed' : ''}` : '';
+    const showMoreBtnText = isCollapsed ? 'Show more' : 'Show less';
     const showMoreBtn = isLongMessage ? `
-        <button class="user-message-show-more" data-message-id="${message.id}">Show more</button>
+        <button class="user-message-show-more" data-message-id="${message.id}">${showMoreBtnText}</button>
     ` : '';
 
-    // Add scrubber-togglable class for fixed height with scroll when toggling
+    // Add scrubber-togglable class for messages with scrubber
     const hasScrubber = message.scrubber;
     const scrubberTogglableClass = hasScrubber ? 'scrubber-togglable' : '';
-    const heightLockedClass = hasScrubber && message.scrubber.lockedHeight ? 'height-locked' : '';
-    const lockedHeightStyle = hasScrubber && message.scrubber.lockedHeight 
-        ? `height: ${message.scrubber.lockedHeight}px;` 
-        : '';
+    // Height-lock is DISABLED when user has expanded content via "Show more" (isCollapsed === false)
+    // When collapsed, CSS truncation handles sizing. When expanded, user wants to see FULL content.
+    // Height-lock was for scrubber toggle stability, but persisted isCollapsed now handles that.
+    const heightLockedClass = '';
+    const lockedHeightStyle = '';
 
     // Memory context indicator
     const hasMemory = message.memoryContext && message.memoryContext.sessionIds?.length > 0;
@@ -386,7 +409,7 @@ function buildUserMessage(message, options = {}) {
 
     // Normal display mode with action buttons (shown on hover)
     return `
-        <div class="${CLASSES.userWrapper}" data-message-id="${message.id}">
+        <div class="${CLASSES.userWrapper}" data-message-id="${message.id}"${getRawContentAttribute(message.content)}>
             <div class="${CLASSES.userGroup}">
                 <div class="${CLASSES.userBubble} ${scrubberTogglableClass} ${heightLockedClass}" style="${lockedHeightStyle}">
                     ${memoryIndicator}
@@ -1041,7 +1064,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     // If message is pending (waiting for first chunk), show header with typing indicator
     if (message.streamingPending) {
         return `
-            <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}">
+            <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}"${getRawContentAttribute(message.content)}>
                 <div class="${CLASSES.assistantGroup}">
                     <div class="${CLASSES.assistantHeader}">
                         <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow ${bgClass}">
@@ -1137,7 +1160,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     ` : '';
 
     return `
-        <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}">
+        <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}"${getRawContentAttribute(message.content)}>
             <div class="${CLASSES.assistantGroup}">
                 <div class="${CLASSES.assistantHeader}">
                     <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow ${bgClass}">
@@ -1248,48 +1271,6 @@ function buildEmptyState() {
 
     return `
         <div class="${CLASSES.emptyStateWrapper} welcome-landing">
-            <style>
-                .welcome-landing {
-                    margin-top: 12vh;
-                    opacity: 0;
-                    animation: welcomeFadeIn 0.2s ease-out 0.05s forwards;
-                }
-                @keyframes welcomeFadeIn {
-                    from { opacity: 0; }
-                    to { opacity: 1; }
-                }
-                .welcome-title {
-                    font-size: 1.25rem;
-                    font-weight: 500;
-                    color: hsl(var(--color-foreground));
-                    margin-bottom: 0.375rem;
-                }
-                .welcome-subtitle {
-                    font-size: 0.875rem;
-                    color: hsl(var(--color-muted-foreground));
-                }
-                .welcome-subtitle a {
-                    color: hsl(var(--color-muted-foreground));
-                    text-decoration: none;
-                    border-bottom: 1px solid hsl(var(--color-border));
-                    transition: all 0.15s ease;
-                }
-                .welcome-subtitle a:hover {
-                    color: hsl(var(--color-foreground));
-                    border-bottom-color: hsl(var(--color-foreground) / 0.5);
-                }
-                .welcome-content {
-                    font-size: 0.75rem !important;
-                }
-                .welcome-content p,
-                .welcome-content li,
-                .welcome-content a {
-                    font-size: 0.75rem !important;
-                }
-                .welcome-content a {
-                    text-decoration: underline;
-                }
-            </style>
             ${logoHtml}
             <p class="welcome-title">${titleHtml}</p>
             ${subtitleHtml ? `<p class="welcome-subtitle">${subtitleHtml}</p>` : ''}

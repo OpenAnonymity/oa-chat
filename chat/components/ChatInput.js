@@ -10,8 +10,17 @@ import { exportAllData, exportChats, exportTickets } from '../services/globalExp
 import { importFromFile, formatImportSummary } from '../services/globalImport.js';
 import ticketClient from '../services/ticketClient.js';
 import scrubberService from '../services/scrubberService.js';
+import {
+    renderEditableDiff,
+    extractTextFromEditableDiff,
+    handleEditableDiffPaste,
+    updateEditableDiff,
+    getEditableDiffSelectionState
+} from '../services/editableDiffRenderer.js';
 import { chatDB } from '../db.js';
 import { mentionService } from '../services/mentionService.js';
+
+const MESSAGE_INPUT_MAX_HEIGHT_PX = 300;
 
 export default class ChatInput {
     /**
@@ -23,10 +32,33 @@ export default class ChatInput {
             lastTabAt: 0,
             timer: null,
             isRunning: false,
-            tooltipVisible: false
+            ctrlHeld: false,
+            ctrlPinned: false
+        };
+        this.scrubberDiffState = {
+            previewCleanup: null,
+            previewRendered: false,
+            previewVisible: false,
+            originalTooltipVisible: false,
+            tooltipInteracted: false,
+            tooltipClickOutsideHandler: null,
+            globalEscapeHandler: null,
+            previewEditing: false,
+            previewInputHandler: null,
+            previewPasteHandler: null,
+            previewKeydownHandler: null,
+            previewBeforeInputHandler: null,
+            previewInitialRedacted: '',
+            previewOriginalText: '',
+            previewHintDefault: '',
+            previewHistory: [],
+            previewLastText: '',
+            previewPreEditCursor: null
         };
         this.scrubberModelsReady = false;
         this.scrubberModelSelect = null;
+        // Store undone scrubber state for redo functionality
+        this.scrubberUndoState = null;
     }
 
     /**
@@ -41,7 +73,19 @@ export default class ChatInput {
         this.app.elements.messageInput.addEventListener('input', () => {
             const input = this.app.elements.messageInput;
             this.app.resetMessageInputLayout();
-            input.style.height = Math.min(input.scrollHeight, 384) + 'px';
+            const isExpanded = this.app.elements.inputCard?.classList.contains('scrubber-preview-expanded');
+            const expandedMax = Math.floor(window.innerHeight * 0.55);
+            const maxHeight = isExpanded ? Math.max(MESSAGE_INPUT_MAX_HEIGHT_PX, expandedMax) : MESSAGE_INPUT_MAX_HEIGHT_PX;
+            // When expanded, also consider diff preview's scroll height for proper sizing
+            let contentHeight = input.scrollHeight;
+            if (isExpanded && this.app.elements.scrubberPreviewDiff) {
+                const diffHeight = this.app.elements.scrubberPreviewDiff.scrollHeight;
+                if (diffHeight > 0) {
+                    contentHeight = Math.max(contentHeight, diffHeight);
+                }
+            }
+            input.style.maxHeight = `${maxHeight}px`;
+            input.style.height = Math.min(contentHeight, maxHeight) + 'px';
             this.app.updateInputState();
             
             // Check for mention context
@@ -49,11 +93,34 @@ export default class ChatInput {
 
             // Clear file undo stack - text input should take undo precedence
             this.app.fileUndoStack = [];
-            this.updateScrubberHintVisibility();
-            if (this.app.scrubberPending && this.app.scrubberPending.redacted !== this.app.elements.messageInput.value) {
+
+            const inputValue = this.app.elements.messageInput.value;
+
+            // Edge case: If user clears the input completely, reset scrubber state
+            // This means the user is starting fresh, not editing the scrubbed prompt
+            if (!inputValue.trim() && this.app.scrubberPending) {
                 this.app.scrubberPending = null;
-                this.hideScrubberHover();
+                this.clearScrubberPreview();
+            } else if (this.app.scrubberPending && this.app.scrubberPending.redacted !== inputValue) {
+                // User is editing the scrubbed prompt
+                this.app.scrubberPending = {
+                    ...this.app.scrubberPending,
+                    redacted: inputValue,
+                    modified: true,
+                    timestamp: Date.now()
+                };
+                if (this.scrubberDiffState.previewEditing) {
+                    this.scrubberDiffState.previewRendered = true;
+                } else {
+                    this.scrubberDiffState.previewRendered = false;
+                    this.clearScrubberPreview();
+                }
             }
+
+            // Update hint visibility and has-scrubber-pending class
+            this.updateScrubberHintVisibility();
+            this.updateScrubberPreviewHintVisibility();
+
             if (this.app.updateToastPosition) {
                 this.app.updateToastPosition();
             }
@@ -77,19 +144,86 @@ export default class ChatInput {
                     if (this.app.isCurrentSessionStreaming()) {
                         this.app.stopCurrentSessionStreaming();
                     } else {
+                        this.clearScrubberPreview();
                         this.app.sendMessage();
                     }
                 }
             }
         });
 
-        // Scrubber shortcut: Tab Tab
+        // Scrubber shortcut: Tab Tab to scrub
         this.app.elements.messageInput.addEventListener('keydown', (e) => {
+            if (!this.isMessageInputFocused()) {
+                this.resetScrubberTabShortcutState();
+                return;
+            }
             if (e.key !== 'Tab' || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) {
                 return;
             }
             e.preventDefault();
-            this.handleScrubberShortcut();
+            this.handleScrubberTabKeydown();
+        });
+        this.app.elements.messageInput.addEventListener('blur', () => {
+            this.resetScrubberTabShortcutState();
+        });
+
+        // Scrubber undo/redo: Cmd+Z to undo scrubbing, Cmd+Shift+Z to redo
+        this.app.elements.messageInput.addEventListener('keydown', (e) => {
+            if (!e.metaKey && !e.ctrlKey) return;
+            if (e.key.toLowerCase() !== 'z') return;
+
+            if (e.shiftKey) {
+                // Cmd+Shift+Z: Redo scrubbing
+                if (this.scrubberUndoState) {
+                    e.preventDefault();
+                    // Restore the scrubbed state
+                    this.app.scrubberPending = this.scrubberUndoState;
+                    this.scrubberUndoState = null;
+                    this.app.elements.messageInput.value = this.app.scrubberPending.redacted;
+                    this.app.elements.messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+                    this.app.elements.messageInput.scrollTop = 0;
+                    this.app.elements.messageInput.setSelectionRange(0, 0);
+                    this.updateScrubberHintVisibility();
+                    this.updateScrubberPreviewHintVisibility();
+                }
+            } else {
+                // Cmd+Z: Undo scrubbing (only if current text matches scrubbed text and not modified)
+                const pending = this.app.scrubberPending;
+                const currentValue = this.app.elements.messageInput.value;
+                if (pending && pending.original && currentValue === pending.redacted && !pending.modified) {
+                    e.preventDefault();
+                    // Store for redo
+                    this.scrubberUndoState = { ...pending };
+                    // Restore original text
+                    this.app.elements.messageInput.value = pending.original;
+                    this.app.elements.messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+                    // Clear scrubber state (treat as never scrubbed)
+                    this.app.scrubberPending = null;
+                    this.clearScrubberPreview();
+                    this.updateScrubberHintVisibility();
+                    this.updateScrubberPreviewHintVisibility();
+                }
+            }
+        });
+
+        // Control key for preview: hold to show, release to hide
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Control' || e.repeat) return;
+            if (!this.app.scrubberPending) return;
+            this.handleScrubberControlKeydown();
+        });
+
+        document.addEventListener('keyup', (e) => {
+            if (e.key !== 'Control') return;
+            if (!this.app.scrubberPending) return;
+            this.handleScrubberControlKeyup();
+        });
+
+        // Option key (⌥) for edit: pin and expand preview for editing
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Alt' || e.repeat) return;
+            if (!this.app.scrubberPending) return;
+            this.handleScrubberOptionKeydown();
         });
 
         // Note: Paste events (files + text) are handled globally in app.js
@@ -123,16 +257,13 @@ export default class ChatInput {
             if (this.app.isCurrentSessionStreaming()) {
                 this.app.stopCurrentSessionStreaming();
             } else {
+                this.clearScrubberPreview();
                 this.app.sendMessage();
             }
         });
 
-        this.app.elements.messageInput.addEventListener('mouseenter', () => {
-            this.showScrubberHover();
-        });
-
-        this.app.elements.messageInput.addEventListener('mouseleave', () => {
-            this.hideScrubberHover();
+        window.addEventListener('blur', () => {
+            this.hideScrubberPreview();
         });
 
         // Search toggle functionality
@@ -324,12 +455,21 @@ export default class ChatInput {
 
         // Initialize scrubber hint visibility
         this.updateScrubberHintVisibility();
+        this.cacheScrubberPreviewHint();
+        this.cacheScrubberHintAnchor();
+        if (window.fontsReadyPromise && typeof window.fontsReadyPromise.then === 'function') {
+            window.fontsReadyPromise.then(() => this.cacheScrubberHintAnchor(true));
+        }
 
         // Mark input as ready for the inline script to defer handling
         window.chatInputReady = true;
     }
 
-    async handleScrubberShortcut() {
+    handleScrubberTabKeydown() {
+        if (!this.isMessageInputFocused()) {
+            this.resetScrubberTabShortcutState();
+            return;
+        }
         const now = Date.now();
         const withinWindow = now - this.scrubberState.lastTabAt < 420;
         this.scrubberState.lastTabAt = now;
@@ -340,13 +480,99 @@ export default class ChatInput {
             this.scrubberState.lastTabAt = 0;
         }, 420);
 
-        if (!withinWindow || this.scrubberState.isRunning) {
-            if (!withinWindow) {
-                this.app.showToast('Press Tab again to scrub PII', 'success');
+        if (!withinWindow) {
+            if (!this.scrubberState.isRunning) {
+                this.app.showToast('Press Tab again to scrub', 'success');
             }
             return;
         }
 
+        if (this.scrubberState.isRunning) return;
+        this.runScrubberShortcut();
+    }
+
+    isMessageInputFocused() {
+        return document.activeElement === this.app.elements.messageInput;
+    }
+
+    resetScrubberTabShortcutState() {
+        this.scrubberState.lastTabAt = 0;
+        if (this.scrubberState.timer) {
+            clearTimeout(this.scrubberState.timer);
+            this.scrubberState.timer = null;
+        }
+    }
+
+    handleScrubberControlKeydown() {
+        this.scrubberState.ctrlHeld = true;
+
+        // Control press - show preview with tooltip
+        if (!this.scrubberDiffState.previewVisible) {
+            this.showScrubberPreview({ skipTooltip: false });
+        }
+        this.updateScrubberPreviewHint();
+    }
+
+    handleScrubberOptionKeydown() {
+        // Option key (⌥) - pin and auto-expand the preview for editing
+        this.scrubberState.ctrlPinned = true;
+        // Hide the original prompt tooltip (don't show on pin)
+        this.hideOriginalPromptPreview();
+        if (!this.scrubberDiffState.previewVisible) {
+            this.showScrubberPreview({ skipTooltip: true });
+        }
+        this.enableScrubberPreviewSticky(true);
+        // Auto-expand the input box
+        if (this.app.elements.inputCard) {
+            this.app.elements.inputCard.classList.add('scrubber-preview-expanded');
+            // Resize input to match diff preview content (up to max height)
+            this.resizeInputForExpandedPreview();
+        }
+        // Focus the diff preview for editing
+        if (this.app.elements.scrubberPreviewDiff) {
+            this.app.elements.scrubberPreviewDiff.focus({ preventScroll: true });
+        }
+        // Add global Escape handler for expanded mode
+        this.addGlobalEscapeHandler();
+        this.updateScrubberPreviewHint();
+    }
+
+    resizeInputForExpandedPreview() {
+        const input = this.app.elements.messageInput;
+        const diffPreview = this.app.elements.scrubberPreviewDiff;
+        if (!input) return;
+
+        // Calculate max height (55% of viewport, minimum 384px)
+        const expandedMax = Math.floor(window.innerHeight * 0.55);
+        const maxHeight = Math.max(384, expandedMax);
+
+        // Use the diff preview's scroll height if available, otherwise use input's
+        let contentHeight = input.scrollHeight;
+        if (diffPreview && diffPreview.scrollHeight > 0) {
+            contentHeight = Math.max(contentHeight, diffPreview.scrollHeight);
+        }
+
+        // Set input height to content height (capped at max)
+        input.style.height = Math.min(contentHeight, maxHeight) + 'px';
+
+        // Update toast position if needed
+        if (this.app.updateToastPosition) {
+            this.app.updateToastPosition();
+        }
+    }
+
+    handleScrubberControlKeyup() {
+        this.scrubberState.ctrlHeld = false;
+        // Always hide the original prompt tooltip when ctrl is released
+        this.hideOriginalPromptPreview();
+        // If preview is not pinned, hide the diff preview too
+        if (!this.scrubberState.ctrlPinned && this.scrubberDiffState.previewVisible) {
+            this.forceHideScrubberPreview();
+        }
+        this.updateScrubberPreviewHint();
+    }
+
+    async runScrubberShortcut() {
         const text = this.app.elements.messageInput.value || '';
         if (!text.trim()) {
             this.app.showToast('Nothing to scrub', 'error');
@@ -370,21 +596,37 @@ export default class ChatInput {
             }
             const result = await scrubberService.redactPrompt(text, currentSession);
             if (result?.success && result.text) {
+                const hasChanges = text.trim() !== result.text.trim();
+
                 this.app.elements.messageInput.value = result.text;
                 this.app.elements.messageInput.dispatchEvent(new Event('input', { bubbles: true }));
-                this.app.scrubberPending = {
-                    original: text,
-                    redacted: result.text,
-                    timestamp: Date.now()
-                };
+                // Scroll to top and place cursor at the beginning
+                this.app.elements.messageInput.scrollTop = 0;
+                this.app.elements.messageInput.setSelectionRange(0, 0);
+
+                if (hasChanges) {
+                    const existingOriginal = this.app.scrubberPending?.original;
+                    this.app.scrubberPending = {
+                        original: existingOriginal || text,
+                        redacted: result.text,
+                        timestamp: Date.now()
+                    };
+                    this.app.showToast('PII removed', 'success');
+                } else {
+                    this.app.scrubberPending = null;
+                    this.app.showToast('No PII detected', 'success');
+                }
+
                 this.updateScrubberHintVisibility();
+                this.updateScrubberPreviewHintVisibility();
+
                 if (typeof stopToast === 'function') {
                     stopToast();
                 }
                 if (this.app.elements.inputCard) {
                     this.app.elements.inputCard.classList.remove('scrubbing');
                 }
-                this.app.showToast('PII removed', 'success');
+                this.scrubberDiffState.previewRendered = false;
             } else {
                 if (typeof stopToast === 'function') {
                     stopToast();
@@ -392,7 +634,8 @@ export default class ChatInput {
                 if (this.app.elements.inputCard) {
                     this.app.elements.inputCard.classList.remove('scrubbing');
                 }
-                this.app.showToast('Scrubber failed', 'error');
+                const errorMsg = result?.error || 'Scrubber failed';
+                this.app.showToast(errorMsg, 'error');
             }
         } catch (error) {
             console.error('Scrubber shortcut failed:', error);
@@ -402,78 +645,336 @@ export default class ChatInput {
             if (this.app.elements.inputCard) {
                 this.app.elements.inputCard.classList.remove('scrubbing');
             }
-            this.app.showToast('Scrubber failed', 'error');
+            // Show specific error message if available
+            const errorMsg = error?.message || 'Scrubber failed';
+            this.app.showToast(errorMsg, 'error');
         } finally {
             this.scrubberState.isRunning = false;
         }
     }
-
-    showScrubberHover() {
-        if (this.scrubberState.tooltipVisible) return;
+    showScrubberPreview(options = {}) {
+        const { skipTooltip = false } = options;
         const pending = this.app.scrubberPending;
         if (!pending || pending.redacted !== this.app.elements.messageInput.value) return;
-        const original = (pending.original || '').trim();
-        if (!original) return;
-        const escaped = this.app.escapeHtml ? this.app.escapeHtml(original) : original.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        const html = `
-            <div class="inline-flex items-center px-1.5 py-0.5 mb-2 rounded bg-muted/50 text-muted-foreground text-[10px] font-medium uppercase tracking-wide">
-                Original prompt
-            </div>
-            <div class="text-foreground text-xs leading-relaxed" style="white-space: pre-wrap;">${escaped}</div>
-        `;
-        this.showHoverTooltip(this.app.elements.messageInput, html);
-        this.scrubberState.tooltipVisible = true;
+        const originalText = pending.original || '';
+        const redactedText = pending.redacted || '';
+        const originalTrimmed = originalText.trim();
+        const redactedTrimmed = redactedText.trim();
+        // Only show preview if scrubbing actually changed the text
+        if (!originalTrimmed || originalTrimmed === redactedTrimmed) return;
+        if (!this.app.elements.inputCard || !this.app.elements.scrubberPreviewDiff) return;
+        if (this.scrubberDiffState.previewVisible) return;
+
+        console.log('[Scrubber] Control key toggling preview');
+        this.scrubberDiffState.previewVisible = true;
+        this.app.elements.inputCard.classList.add('scrubber-preview-active');
+
+        if (this.app.elements.scrubberPreviewDiff) {
+            this.app.elements.scrubberPreviewDiff.removeAttribute('aria-hidden');
+        }
+
+        if (!this.scrubberDiffState.previewRendered) {
+            this.renderScrubberPreview(originalText, redactedText);
+        } else if (this.app.elements.scrubberPreviewDiff) {
+            this.app.elements.scrubberPreviewDiff.setAttribute('contenteditable', 'true');
+            this.setScrubberPreviewEditing(false);
+        }
+        // Only show original tooltip while holding ctrl (not when pinned)
+        if (!skipTooltip) {
+            this.showOriginalPromptPreview(originalText);
+        }
     }
 
-    hideScrubberHover() {
-        if (!this.scrubberState.tooltipVisible) return;
-        this.hideHoverTooltip();
-        this.scrubberState.tooltipVisible = false;
+    hideScrubberPreview() {
+        if (!this.scrubberDiffState.previewVisible) return;
+        // If user interacted with tooltip (e.g., selecting text), keep it visible
+        if (this.scrubberDiffState.tooltipInteracted) return;
+        this.scrubberDiffState.previewVisible = false;
+        if (this.app.elements.inputCard) {
+            this.app.elements.inputCard.classList.remove('scrubber-preview-active');
+        }
+        if (this.app.elements.scrubberPreviewDiff) {
+            this.app.elements.scrubberPreviewDiff.setAttribute('contenteditable', 'false');
+            this.blurScrubberPreviewIfFocused();
+            this.app.elements.scrubberPreviewDiff.setAttribute('aria-hidden', 'true');
+        }
+        this.setScrubberPreviewEditing(false);
+        this.resetScrubberPreviewHint();
+        console.log('[Scrubber] Preview hidden');
+        this.hideOriginalPromptPreview();
     }
 
-    showHoverTooltip(targetEl, htmlContent) {
-        if (!targetEl || !htmlContent) return;
-        this.hideHoverTooltip();
+    clearScrubberPreview() {
+        // Reset interaction state first so hideScrubberPreview() works
+        this.scrubberDiffState.tooltipInteracted = false;
+        this.scrubberState.ctrlPinned = false;
+        this.setScrubberPreviewEditing(false);
+        this.scrubberDiffState.previewInitialRedacted = '';
+        this.scrubberDiffState.previewOriginalText = '';
+        this.resetScrubberPreviewHint();
+        // Reset expanded state
+        if (this.app.elements.inputCard) {
+            this.app.elements.inputCard.classList.remove('scrubber-preview-expanded');
+        }
+        if (this.scrubberDiffState.tooltipClickOutsideHandler) {
+            document.removeEventListener('mousedown', this.scrubberDiffState.tooltipClickOutsideHandler, true);
+            this.scrubberDiffState.tooltipClickOutsideHandler = null;
+        }
+        if (this.app.elements.scrubberPreviewDiff) {
+            if (this.scrubberDiffState.previewInputHandler) {
+                this.app.elements.scrubberPreviewDiff.removeEventListener('input', this.scrubberDiffState.previewInputHandler);
+                this.scrubberDiffState.previewInputHandler = null;
+            }
+            if (this.scrubberDiffState.previewPasteHandler) {
+                this.app.elements.scrubberPreviewDiff.removeEventListener('paste', this.scrubberDiffState.previewPasteHandler);
+                this.scrubberDiffState.previewPasteHandler = null;
+            }
+            if (this.scrubberDiffState.previewKeydownHandler) {
+                this.app.elements.scrubberPreviewDiff.removeEventListener('keydown', this.scrubberDiffState.previewKeydownHandler);
+                this.scrubberDiffState.previewKeydownHandler = null;
+            }
+            if (this.scrubberDiffState.previewBeforeInputHandler) {
+                this.app.elements.scrubberPreviewDiff.removeEventListener('beforeinput', this.scrubberDiffState.previewBeforeInputHandler);
+                this.scrubberDiffState.previewBeforeInputHandler = null;
+            }
+            this.app.elements.scrubberPreviewDiff.setAttribute('contenteditable', 'false');
+            this.blurScrubberPreviewIfFocused();
+            this.app.elements.scrubberPreviewDiff.setAttribute('aria-hidden', 'true');
+        }
+        this.hideScrubberPreview();
+        this.scrubberDiffState.previewRendered = false;
+        if (this.scrubberDiffState.previewCleanup) {
+            this.scrubberDiffState.previewCleanup();
+            this.scrubberDiffState.previewCleanup = null;
+        }
+        // Update hint visibility (will remove has-scrubber-pending if no valid diff)
+        this.updateScrubberPreviewHintVisibility();
+    }
 
-        const tooltip = document.createElement('div');
-        tooltip.id = 'app-hover-tooltip';
-        tooltip.className = 'pointer-events-none';
-        Object.assign(tooltip.style, {
-            position: 'fixed',
-            zIndex: '99999',
-            minWidth: '200px',
-            padding: '12px 14px',
-            borderRadius: '14px',
-            background: 'hsl(var(--color-card) / 0.85)',
-            backdropFilter: 'blur(20px) saturate(150%)',
-            WebkitBackdropFilter: 'blur(20px) saturate(150%)',
-            color: 'hsl(var(--color-foreground))',
-            border: '1px solid hsl(var(--color-border) / 0.5)',
-            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.06)',
-            fontSize: '12px',
-            lineHeight: '1.5',
-            opacity: '0',
-            transform: 'translateY(4px)',
-            transition: 'opacity 180ms ease-out, transform 180ms ease-out'
+    async renderScrubberPreview(originalText, redactedText) {
+        const container = this.app.elements.scrubberPreviewDiff;
+        if (!container) return;
+        if (this.scrubberDiffState.previewEditing) return;
+
+        const inputEl = this.app.elements.messageInput;
+        const inputStyle = inputEl ? window.getComputedStyle(inputEl) : null;
+        const fontFamily = inputStyle?.fontFamily || '';
+        const fontSize = inputStyle?.fontSize || '14px';
+        const lineHeight = inputStyle?.lineHeight && inputStyle.lineHeight !== 'normal'
+            ? inputStyle.lineHeight
+            : '1.5';
+
+        if (fontFamily) {
+            container.style.fontFamily = fontFamily;
+        }
+        container.style.fontSize = fontSize;
+        container.style.lineHeight = lineHeight;
+
+        const html = renderEditableDiff(originalText, redactedText);
+        container.innerHTML = html;
+        container.setAttribute('contenteditable', 'true');
+        container.setAttribute('role', 'textbox');
+        container.setAttribute('aria-multiline', 'true');
+        container.tabIndex = 0;
+
+        this.setScrubberPreviewEditing(false);
+        this.scrubberDiffState.previewInitialRedacted = redactedText;
+        this.scrubberDiffState.previewOriginalText = originalText;
+        this.scrubberDiffState.previewRendered = true;
+        this.scrubberDiffState.previewHistory = [];
+        this.scrubberDiffState.previewLastText = redactedText;
+        this.scrubberDiffState.previewLastCursor = null;
+
+        if (this.scrubberDiffState.previewInputHandler) {
+            container.removeEventListener('input', this.scrubberDiffState.previewInputHandler);
+        }
+        if (this.scrubberDiffState.previewPasteHandler) {
+            container.removeEventListener('paste', this.scrubberDiffState.previewPasteHandler);
+        }
+        if (this.scrubberDiffState.previewKeydownHandler) {
+            container.removeEventListener('keydown', this.scrubberDiffState.previewKeydownHandler);
+        }
+        if (this.scrubberDiffState.previewBeforeInputHandler) {
+            container.removeEventListener('beforeinput', this.scrubberDiffState.previewBeforeInputHandler);
+        }
+
+        let rediffTimeout = null;
+        this.scrubberDiffState.previewInputHandler = () => {
+            this.setScrubberPreviewEditing(true);
+            const updatedText = extractTextFromEditableDiff(container);
+            const previousText = this.scrubberDiffState.previewLastText;
+
+            // If user deleted all content, exit edit mode and focus main input
+            if (updatedText === '' && previousText !== '') {
+                this.app.scrubberPending = null;
+                this.app.elements.messageInput.value = '';
+                this.app.elements.messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+                this.clearScrubberPreview();
+                // Focus main input after clearing
+                requestAnimationFrame(() => {
+                    this.app.elements.messageInput.focus();
+                });
+                return;
+            }
+
+            // Capture current cursor state (after the edit)
+            const currentCursor = getEditableDiffSelectionState(container);
+            const preEditCursor = this.scrubberDiffState.previewPreEditCursor || this.scrubberDiffState.previewLastCursor;
+
+            if (updatedText !== previousText) {
+                // Push the previous state (text + cursor at that time)
+                // If previewLastCursor is null (first edit), we assume start or we can't restore perfectly.
+                // But we should store the cursor state *before* this edit.
+                // Since we can't get it now, we rely on previewLastCursor being set in the previous tick.
+                // For the very first edit, previewLastCursor is null.
+                this.scrubberDiffState.previewHistory.push({
+                    text: previousText,
+                    cursor: preEditCursor
+                });
+                this.scrubberDiffState.previewLastText = updatedText;
+            }
+            // Always update last cursor to current state for next undo
+            this.scrubberDiffState.previewLastCursor = currentCursor;
+            this.scrubberDiffState.previewPreEditCursor = null;
+
+            if (!this.app.scrubberPending) return;
+            this.app.scrubberPending = {
+                ...this.app.scrubberPending,
+                redacted: updatedText,
+                modified: true,
+                timestamp: Date.now()
+            };
+            this.app.elements.messageInput.value = updatedText;
+            this.app.elements.messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+            this.setScrubberPreviewHintEdited();
+
+            // Debounced re-diff to show updated changes vs original
+            // Skip re-diff if the only change is newline addition/deletion
+            const differsOnlyByNewlines = (a, b) => {
+                const strip = (s) => s.replace(/\n/g, '').replace(/\u200B/g, '');
+                return strip(a) === strip(b);
+            };
+            const shouldRediff = !differsOnlyByNewlines(previousText, updatedText);
+
+            if (shouldRediff) {
+                // Capture cursor state now so it's not lost during debounce
+                const cursorForRediff = this.scrubberDiffState.previewLastCursor;
+                if (rediffTimeout) clearTimeout(rediffTimeout);
+                rediffTimeout = setTimeout(() => {
+                    const original = this.scrubberDiffState.previewOriginalText;
+                    if (original) {
+                        updateEditableDiff(container, original, updatedText, cursorForRediff, { restoreFocus: true });
+                    }
+                }, 300);
+            } else if (rediffTimeout) {
+                clearTimeout(rediffTimeout);
+                rediffTimeout = null;
+            }
+        };
+
+        this.scrubberDiffState.previewPasteHandler = (event) => {
+            handleEditableDiffPaste(event);
+        };
+
+        this.scrubberDiffState.previewKeydownHandler = (event) => {
+            if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z' && !event.shiftKey) {
+                event.preventDefault();
+                this.undoScrubberPreviewEdit();
+                return;
+            }
+            if (event.key !== 'Escape') return;
+            event.preventDefault();
+            this.forceHideScrubberPreview();
+        };
+
+        this.scrubberDiffState.previewBeforeInputHandler = (event) => {
+            this.scrubberDiffState.previewPreEditCursor = getEditableDiffSelectionState(container);
+
+            // Always intercept Enter to insert <br> + ZWSP instead of browser creating div
+            if (event.inputType === 'insertParagraph' || event.inputType === 'insertLineBreak') {
+                event.preventDefault();
+                this.insertScrubberPreviewLineBreak();
+                return;
+            }
+
+            if (event.inputType === 'deleteContentBackward' || event.inputType === 'deleteContentForward') {
+                const handled = this.handleScrubberPreviewNewlineDelete(event.inputType);
+                if (handled) {
+                    event.preventDefault();
+                    return;
+                }
+            }
+
+            const deletedSpan = this.getScrubberDeletedAncestor(container);
+            if (!deletedSpan) return;
+
+            // For deletion: block if inside or at end of deleted span, allow only at front
+            if (event.inputType === 'deleteContentBackward' || event.inputType === 'deleteContentForward') {
+                const deletedLength = deletedSpan.textContent?.length || 0;
+                const selection = window.getSelection();
+                const range = selection?.getRangeAt(0);
+                const relativeOffset = range ? this.getSelectionOffsetInNode(deletedSpan, range) : 0;
+
+                // Only allow deletion if cursor is at the very front (offset 0) for backspace
+                // or at the very end for forward delete to delete outside the span
+                const isAtFront = relativeOffset === 0;
+                const isAtEnd = relativeOffset >= deletedLength;
+
+                if (event.inputType === 'deleteContentBackward' && !isAtFront) {
+                    event.preventDefault();
+                    return;
+                }
+                if (event.inputType === 'deleteContentForward' && !isAtEnd) {
+                    event.preventDefault();
+                    return;
+                }
+                // At front/end, move cursor outside and let browser handle deletion
+                this.moveSelectionOutsideDeletedSpan(deletedSpan);
+                return;
+            }
+
+            this.moveSelectionOutsideDeletedSpan(deletedSpan);
+            if (event.inputType === 'insertFromPaste') return;
+            if (event.inputType === 'insertText') {
+                event.preventDefault();
+                this.insertScrubberPreviewText(event.data || '');
+                return;
+            }
+        };
+
+        container.addEventListener('mousedown', () => {
+            container.focus({ preventScroll: true });
+            this.enableScrubberPreviewSticky(true);
         });
-        tooltip.innerHTML = htmlContent;
-        document.body.appendChild(tooltip);
 
-        const inputCard = document.getElementById('input-card');
-        const refEl = inputCard || targetEl;
-        const rect = refEl.getBoundingClientRect();
+        container.addEventListener('keydown', (event) => {
+            if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+                event.stopPropagation();
+                event.stopImmediatePropagation();
+            }
+        });
 
-        const tooltipWidth = Math.min(rect.width, 480);
+        container.addEventListener('input', this.scrubberDiffState.previewInputHandler);
+        container.addEventListener('paste', this.scrubberDiffState.previewPasteHandler);
+        container.addEventListener('keydown', this.scrubberDiffState.previewKeydownHandler);
+        container.addEventListener('beforeinput', this.scrubberDiffState.previewBeforeInputHandler);
+    }
+
+    repositionOriginalTooltip() {
+        const tooltip = document.getElementById('scrubber-original-tooltip');
+        const inputCard = this.app.elements.inputCard;
+        if (!tooltip || !inputCard) return;
+
+        const rect = inputCard.getBoundingClientRect();
+        const tooltipWidth = Math.min(rect.width, 420);
         tooltip.style.width = `${tooltipWidth}px`;
         tooltip.style.maxWidth = `${tooltipWidth}px`;
 
         const tooltipRect = tooltip.getBoundingClientRect();
-
         let top = rect.top - tooltipRect.height - 8;
         if (top < 8) {
             top = rect.bottom + 8;
         }
-
         let left = rect.left + (rect.width - tooltipRect.width) / 2;
         if (left < 8) left = 8;
         if (left + tooltipRect.width > window.innerWidth - 8) {
@@ -484,19 +985,353 @@ export default class ChatInput {
             top: `${top}px`,
             left: `${left}px`
         });
+    }
+
+    blurScrubberPreviewIfFocused() {
+        if (this.app.elements.scrubberPreviewDiff === document.activeElement) {
+            this.app.elements.scrubberPreviewDiff.blur();
+        }
+    }
+
+    undoScrubberPreviewEdit() {
+        const history = this.scrubberDiffState.previewHistory;
+        if (!history || history.length === 0) return;
+        const previousState = history.pop();
+        const previousText = typeof previousState === 'string' ? previousState : previousState.text;
+        const previousCursor = typeof previousState === 'string' ? null : previousState.cursor;
+
+        this.scrubberDiffState.previewLastText = previousText;
+        this.scrubberDiffState.previewLastCursor = previousCursor;
+
+        if (!this.app.scrubberPending) return;
+        const container = this.app.elements.scrubberPreviewDiff;
+        this.app.scrubberPending = {
+            ...this.app.scrubberPending,
+            redacted: previousText,
+            modified: true,
+            timestamp: Date.now()
+        };
+        this.app.elements.messageInput.value = previousText;
+        this.app.elements.messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+        if (container) {
+            updateEditableDiff(
+                container,
+                this.scrubberDiffState.previewOriginalText,
+                previousText,
+                previousCursor,
+                { restoreFocus: true }
+            );
+        }
+    }
+
+    insertScrubberPreviewText(text) {
+        if (!text) return;
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0) return;
+
+        const range = selection.getRangeAt(0);
+        const textNode = document.createTextNode(text);
+        range.deleteContents();
+        range.insertNode(textNode);
+
+        // Move cursor after inserted text
+        range.setStartAfter(textNode);
+        range.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(range);
+
+        // Dispatch input event manually since we modified DOM directly
+        if (this.app.elements.scrubberPreviewDiff) {
+            this.app.elements.scrubberPreviewDiff.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+    }
+
+    insertScrubberPreviewLineBreak() {
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0) return;
+
+        const range = selection.getRangeAt(0);
+        range.deleteContents();
+
+        // Insert <br> followed by ZWSP for cursor positioning
+        const br = document.createElement('br');
+        const zwsp = document.createTextNode('\u200B');
+        range.insertNode(zwsp);
+        range.insertNode(br);
+
+        // Move cursor after the ZWSP (on the new line)
+        range.setStartAfter(zwsp);
+        range.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(range);
+
+        // Dispatch input event manually since we modified DOM directly
+        if (this.app.elements.scrubberPreviewDiff) {
+            this.app.elements.scrubberPreviewDiff.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+    }
+
+    handleScrubberPreviewNewlineDelete(inputType) {
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0) return false;
+
+        const range = selection.getRangeAt(0);
+        if (!this.app.elements.scrubberPreviewDiff?.contains(range.startContainer)) return false;
+
+        // Only handle collapsed cursor deletes
+        if (!range.collapsed) return false;
+
+        const isBackward = inputType === 'deleteContentBackward';
+        const container = this.app.elements.scrubberPreviewDiff;
+        const node = range.startContainer;
+        const offset = range.startOffset;
+
+        const getSibling = (baseNode, direction) => {
+            if (!baseNode) return null;
+            if (direction === 'prev') return baseNode.previousSibling;
+            return baseNode.nextSibling;
+        };
+
+        const removeNewlineAt = (brNode) => {
+            if (!brNode || brNode.nodeName !== 'BR') return false;
+            const next = brNode.nextSibling;
+            const prev = brNode.previousSibling;
+            brNode.remove();
+            // ZWSP is after BR, remove it too
+            if (next?.nodeType === Node.TEXT_NODE && next.nodeValue === '\u200B') {
+                next.remove();
+            } else if (prev?.nodeType === Node.TEXT_NODE && prev.nodeValue === '\u200B') {
+                prev.remove();
+            }
+            if (container) {
+                container.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+            return true;
+        };
+
+        if (node.nodeType === Node.TEXT_NODE) {
+            const text = node.nodeValue || '';
+            if (isBackward && offset === 0) {
+                const prev = getSibling(node, 'prev');
+                if (prev?.nodeName === 'BR') return removeNewlineAt(prev);
+            }
+            if (!isBackward && offset === text.length) {
+                const next = getSibling(node, 'next');
+                if (next?.nodeName === 'BR') return removeNewlineAt(next);
+            }
+        }
+
+        if (node.nodeType === Node.ELEMENT_NODE) {
+            const children = Array.from(node.childNodes);
+            const index = Math.min(offset, children.length - 1);
+            if (isBackward && offset > 0) {
+                const candidate = children[offset - 1];
+                if (candidate?.nodeName === 'BR') return removeNewlineAt(candidate);
+            }
+            if (!isBackward && children[index]?.nodeName === 'BR') {
+                return removeNewlineAt(children[index]);
+            }
+        }
+
+        // If caret is directly on container, check adjacent nodes
+        if (node === container) {
+            const childIndex = Math.min(offset, container.childNodes.length - 1);
+            if (isBackward && offset > 0) {
+                const prev = container.childNodes[offset - 1];
+                if (prev?.nodeName === 'BR') return removeNewlineAt(prev);
+            }
+            if (!isBackward && container.childNodes[childIndex]?.nodeName === 'BR') {
+                return removeNewlineAt(container.childNodes[childIndex]);
+            }
+        }
+
+        return false;
+    }
+
+    getScrubberDeletedAncestor(container) {
+        if (!container) return null;
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0) return null;
+        const range = selection.getRangeAt(0);
+        if (!container.contains(range.startContainer)) return null;
+        if (range.startContainer.nodeType === Node.ELEMENT_NODE) {
+            return range.startContainer.closest('.scrubber-deleted');
+        }
+        return range.startContainer.parentElement?.closest('.scrubber-deleted') || null;
+    }
+
+    getSelectionOffsetInNode(container, range) {
+        if (!container || !range || !container.contains(range.startContainer)) return 0;
+        const probe = document.createRange();
+        probe.setStart(container, 0);
+        try {
+            probe.setEnd(range.startContainer, range.startOffset);
+        } catch (error) {
+            return 0;
+        }
+        return probe.toString().length;
+    }
+
+    moveSelectionOutsideDeletedSpan(deletedSpan) {
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0) return;
+        const nextRange = document.createRange();
+        const range = selection.getRangeAt(0);
+        const deletedLength = deletedSpan.textContent?.length || 0;
+        const relativeOffset = this.getSelectionOffsetInNode(deletedSpan, range);
+        const placeAfter = relativeOffset >= deletedLength;
+
+        if (placeAfter) {
+            let nextSibling = deletedSpan.nextSibling;
+            if (nextSibling?.nodeType === Node.TEXT_NODE) {
+                nextRange.setStart(nextSibling, 0);
+            } else {
+                const textNode = document.createTextNode('');
+                deletedSpan.parentNode.insertBefore(textNode, nextSibling);
+                nextRange.setStart(textNode, 0);
+            }
+        } else {
+            let prevSibling = deletedSpan.previousSibling;
+            if (prevSibling?.nodeType === Node.TEXT_NODE) {
+                nextRange.setStart(prevSibling, prevSibling.nodeValue?.length || 0);
+            } else {
+                const textNode = document.createTextNode('');
+                deletedSpan.parentNode.insertBefore(textNode, deletedSpan);
+                nextRange.setStart(textNode, textNode.nodeValue?.length || 0);
+            }
+        }
+        nextRange.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(nextRange);
+    }
+
+    showOriginalPromptPreview(originalText) {
+        if (this.scrubberDiffState.originalTooltipVisible) return;
+        if (!originalText) return;
+        const inputCard = this.app.elements.inputCard;
+        if (!inputCard) return;
+
+        const escaped = this.app.escapeHtml
+            ? this.app.escapeHtml(originalText)
+            : originalText.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+        const tooltip = document.createElement('div');
+        tooltip.id = 'scrubber-original-tooltip';
+        tooltip.className = 'scrubber-original-tooltip';
+        tooltip.innerHTML = `
+            <div class="inline-flex items-center px-1.5 py-0.5 mb-2 rounded bg-muted/50 text-muted-foreground text-[10px] font-medium uppercase tracking-wide">
+                Original prompt
+            </div>
+            <div class="text-foreground text-xs leading-relaxed" style="white-space: pre-wrap; user-select: text;">${escaped}</div>
+        `;
+        document.body.appendChild(tooltip);
+
+        // Track interaction (e.g., text selection) to keep tooltip visible
+        tooltip.addEventListener('mousedown', () => {
+            this.enableScrubberPreviewSticky(false);
+        });
+
+        this.repositionOriginalTooltip();
 
         requestAnimationFrame(() => {
-            tooltip.style.opacity = '1';
-            tooltip.style.transform = 'translateY(0)';
+            tooltip.classList.add('visible');
+        });
+
+        this.scrubberDiffState.originalTooltipVisible = true;
+    }
+
+    hideOriginalPromptPreview() {
+        const tooltip = document.getElementById('scrubber-original-tooltip');
+        if (!tooltip) return;
+        tooltip.classList.remove('visible');
+        setTimeout(() => tooltip.remove(), 180);
+        this.scrubberDiffState.originalTooltipVisible = false;
+    }
+
+    enableScrubberPreviewSticky(shouldMarkEditing = false) {
+        this.scrubberDiffState.tooltipInteracted = true;
+        if (shouldMarkEditing) {
+            this.setScrubberPreviewEditing(true);
+        }
+        this.updateScrubberPreviewHint();
+        if (!this.scrubberDiffState.tooltipClickOutsideHandler) {
+            this.scrubberDiffState.tooltipClickOutsideHandler = (e) => {
+                const tooltip = document.getElementById('scrubber-original-tooltip');
+                const preview = this.app.elements.scrubberPreviewDiff;
+                const hint = document.getElementById('scrubber-preview-hint');
+                const clickedInsideTooltip = tooltip && tooltip.contains(e.target);
+                const clickedInsidePreview = preview && preview.contains(e.target);
+                const clickedInsideHint = hint && hint.contains(e.target);
+                if (!clickedInsideTooltip && !clickedInsidePreview && !clickedInsideHint) {
+                    this.forceHideScrubberPreview();
+                }
+            };
+            setTimeout(() => {
+                document.addEventListener('mousedown', this.scrubberDiffState.tooltipClickOutsideHandler, true);
+            }, 0);
+        }
+    }
+
+    forceHideScrubberPreview() {
+        // Force hide regardless of interaction state (for click-outside)
+        this.scrubberDiffState.tooltipInteracted = false;
+        this.scrubberState.ctrlPinned = false;
+        this.updateScrubberPreviewHint();
+        if (this.scrubberDiffState.tooltipClickOutsideHandler) {
+            document.removeEventListener('mousedown', this.scrubberDiffState.tooltipClickOutsideHandler, true);
+            this.scrubberDiffState.tooltipClickOutsideHandler = null;
+        }
+        // Remove global Escape handler
+        this.removeGlobalEscapeHandler();
+        this.scrubberDiffState.previewVisible = false;
+        if (this.app.elements.inputCard) {
+            this.app.elements.inputCard.classList.remove('scrubber-preview-active');
+            // Collapse expanded state when hiding (e.g., on Escape)
+            this.app.elements.inputCard.classList.remove('scrubber-preview-expanded');
+        }
+        if (this.app.elements.scrubberPreviewDiff) {
+            this.app.elements.scrubberPreviewDiff.setAttribute('contenteditable', 'false');
+            this.blurScrubberPreviewIfFocused();
+            this.app.elements.scrubberPreviewDiff.setAttribute('aria-hidden', 'true');
+        }
+        this.setScrubberPreviewEditing(false);
+        this.resetScrubberPreviewHint();
+        this.hideOriginalPromptPreview();
+        // Trigger textarea resize to collapse back to content height
+        this.app.elements.messageInput?.dispatchEvent(new Event('input', { bubbles: true }));
+        // Focus main chat input after exiting edit mode
+        requestAnimationFrame(() => {
+            this.app.elements.messageInput?.focus();
         });
     }
 
-    hideHoverTooltip() {
-        const tooltip = document.getElementById('app-hover-tooltip');
-        if (!tooltip) return;
-        tooltip.style.opacity = '0';
-        tooltip.style.transform = 'translateY(4px)';
-        setTimeout(() => tooltip.remove(), 200);
+    /**
+     * Add global Escape key handler for expanded preview mode.
+     * This allows Escape to work even when cursor is outside the diff preview.
+     */
+    addGlobalEscapeHandler() {
+        if (this.scrubberDiffState.globalEscapeHandler) return;
+
+        this.scrubberDiffState.globalEscapeHandler = (event) => {
+            if (event.key !== 'Escape') return;
+            // Only handle if preview is expanded/pinned
+            if (!this.scrubberState.ctrlPinned && !this.scrubberDiffState.previewVisible) return;
+            event.preventDefault();
+            event.stopPropagation();
+            this.forceHideScrubberPreview();
+        };
+
+        // Use capture phase to intercept before other handlers
+        document.addEventListener('keydown', this.scrubberDiffState.globalEscapeHandler, true);
+    }
+
+    /**
+     * Remove global Escape key handler.
+     */
+    removeGlobalEscapeHandler() {
+        if (!this.scrubberDiffState.globalEscapeHandler) return;
+        document.removeEventListener('keydown', this.scrubberDiffState.globalEscapeHandler, true);
+        this.scrubberDiffState.globalEscapeHandler = null;
     }
 
     updateScrubberHintVisibility() {
@@ -530,6 +1365,99 @@ export default class ChatInput {
         }
     }
 
+    /**
+     * Updates the visibility of the "ctrl preview" hint based on scrubber state.
+     * The hint should only show when there's a valid diff to preview.
+     */
+    updateScrubberPreviewHintVisibility() {
+        if (!this.app.elements.inputCard) return;
+
+        const pending = this.app.scrubberPending;
+        const inputValue = this.app.elements.messageInput?.value || '';
+
+        // Show "ctrl preview" hint only when:
+        // 1. There's pending scrubber data
+        // 2. The input has content
+        // 3. The input matches the redacted text (user hasn't typed something completely different)
+        // 4. The original and redacted are actually different
+        const hasMeaningfulDiff = pending &&
+            inputValue.trim() &&
+            pending.original?.trim() &&
+            inputValue === pending.redacted &&
+            pending.original.trim() !== pending.redacted.trim();
+
+        if (hasMeaningfulDiff) {
+            this.app.elements.inputCard.classList.add('has-scrubber-pending');
+        } else {
+            this.app.elements.inputCard.classList.remove('has-scrubber-pending');
+        }
+    }
+
+    cacheScrubberPreviewHint() {
+        const text = document.getElementById('scrubber-preview-hint-text');
+        if (!text) return;
+        if (!this.scrubberDiffState.previewHintDefault) {
+            this.scrubberDiffState.previewHintDefault = text.innerHTML;
+        }
+    }
+
+    cacheScrubberHintAnchor(force = false) {
+        const input = this.app.elements.messageInput;
+        if (!input) return;
+        const row = input.closest('.scrubber-input-row');
+        if (!row) return;
+        if (!force && row.style.getPropertyValue('--scrubber-hint-center')) return;
+        const rowRect = row.getBoundingClientRect();
+        const inputRect = input.getBoundingClientRect();
+        if (!rowRect.height || !inputRect.height) return;
+        const center = (inputRect.top + inputRect.height / 2) - rowRect.top;
+        if (!Number.isFinite(center)) return;
+        row.style.setProperty('--scrubber-hint-center', `${center}px`);
+    }
+
+    resetScrubberPreviewHint() {
+        const text = document.getElementById('scrubber-preview-hint-text');
+        if (!text || !this.scrubberDiffState.previewHintDefault) return;
+        text.innerHTML = this.scrubberDiffState.previewHintDefault;
+    }
+
+    updateScrubberPreviewHint() {
+        const text = document.getElementById('scrubber-preview-hint-text');
+        if (!text) return;
+
+        let hintHtml = '';
+        if (this.scrubberState.ctrlPinned) {
+            hintHtml = `<span class="scrubber-shortcut-key">esc</span> <span>exit edit</span>`;
+        } else if (this.scrubberState.ctrlHeld) {
+            hintHtml = `<span class="scrubber-shortcut-key">⌥</span> <span>edit</span>`;
+        } else {
+            hintHtml = `<span class="scrubber-shortcut-key">ctrl</span> <span>preview</span> <span class="opacity-40 mx-0.5">|</span> <span class="scrubber-shortcut-key">⌥</span> <span>edit</span>`;
+        }
+
+        if (text.innerHTML !== hintHtml) {
+            text.innerHTML = hintHtml;
+        }
+    }
+
+    setScrubberPreviewHintEdited() {
+        // When edited, we can show a different hint or just keep the dynamic one.
+        // The user didn't specify special hint for edited state in the latest request,
+        // but previously we showed "ctrl ctrl pin | esc exit".
+        // Let's stick to the dynamic hint based on control key state.
+        this.updateScrubberPreviewHint();
+    }
+
+    setScrubberPreviewEditing(isEditing) {
+        this.scrubberDiffState.previewEditing = Boolean(isEditing);
+        const inputCard = this.app.elements.inputCard;
+        if (!inputCard) return;
+        if (this.scrubberDiffState.previewEditing) {
+            inputCard.classList.add('scrubber-preview-editing');
+        } else {
+            inputCard.classList.remove('scrubber-preview-editing');
+        }
+    }
+
     async setupScrubberControls() {
         const select = document.getElementById('scrubber-model-select');
         if (!select) return;
@@ -558,7 +1486,11 @@ export default class ChatInput {
             const selected = scrubberService.getSelectedModel();
             const options = models.map(model => {
                 const value = model.id || model.name;
-                const label = model.name || model.id;
+                let label = model.name || model.id;
+                // Add "slow" label for slow models
+                if (scrubberService.isSlowModel(value)) {
+                    label += ' (slow)';
+                }
                 return `<option value="${value}">${label}</option>`;
             }).join('');
             let html = options || '<option value="" disabled>No models available</option>';
@@ -862,9 +1794,14 @@ export default class ChatInput {
      */
     async handleExportTickets() {
         try {
-            const success = await exportTickets();
-            if (success) {
-                this.app.showToast?.('Tickets exported successfully', 'success');
+            const result = await exportTickets();
+            if (result.cancelled) {
+                // User cancelled - no toast needed
+                return;
+            }
+            if (result.success) {
+                const total = result.activeCount + result.archivedCount;
+                this.app.showToast?.(`Exported ${total} ticket${total !== 1 ? 's' : ''} and cleared storage`, 'success');
             } else {
                 this.app.showToast?.('Failed to export tickets', 'error');
             }

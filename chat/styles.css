@@ -3,13 +3,12 @@
    ============================================ */
 :root {
     /* Fonts */
-    --font-newsreader: "Newsreader", ui-serif, 'New York', Georgia, serif;
+    --font-sourceserif: "Source Serif 4", ui-serif, 'New York', Georgia, serif;
     --font-librecaslon: "Libre Caslon Text", 'New York', Georgia, serif;
     --font-ptserif: 'PT Serif', 'New York', Georgia, serif;
 
     --font-sans: 'SF Pro Text', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-    /* --font-serif: var(--font-newsreader); */
-    --font-serif: var(--font-newsreader);
+    --font-serif: var(--font-sourceserif);
     --font-mono: 'SF Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
 
     /* Blue palette */
@@ -1184,6 +1183,12 @@ html.switching-theme *::after {
     animation: spin 0.6s linear infinite;
 }
 
+/* Match loading toast spinner to scrubbing blue border glow palette */
+#app-toast .link-preview-spinner {
+    border-color: rgba(59, 130, 246, 0.35);
+    border-top-color: rgba(96, 165, 250, 0.95);
+}
+
 @keyframes spin {
     to {
         transform: rotate(360deg);
@@ -1728,7 +1733,7 @@ html.serif-mode #font-mode-toggle .display-toggle-indicator {
 /* Serif mode: apply serif font to model outputs only */
 html.serif-mode .message-content {
     font-family: var(--font-serif);
-    font-size: 15px;
+    font-size: 14px;
 }
 
 /* Bold for serif mode (PT Serif uses 400/700) */
@@ -2218,12 +2223,33 @@ body {
 }
 
 /* --- Sidebar Base & Hidden State --- */
+#sidebar {
+    --sidebar-open-duration: 280ms;
+    --sidebar-close-duration: 220ms;
+    --sidebar-open-ease: cubic-bezier(0.22, 1, 0.36, 1);
+    --sidebar-close-ease: cubic-bezier(0.4, 0, 1, 1);
+    transition-property: width, border-right-width;
+    transition-duration: var(--sidebar-open-duration), var(--sidebar-open-duration);
+    transition-timing-function: var(--sidebar-open-ease), var(--sidebar-open-ease);
+}
+
 #sidebar.sidebar-hidden {
+    width: 0 !important;
+    border-right-width: 0 !important;
+    transition-duration: var(--sidebar-close-duration), var(--sidebar-close-duration);
+    transition-timing-function: var(--sidebar-close-ease), var(--sidebar-close-ease);
+}
+
+html[data-left-sidebar-hidden="true"] #sidebar {
     width: 0 !important;
     border-right-width: 0 !important;
 }
 
 #sidebar.sidebar-hidden ~ * #show-sidebar-btn {
+    display: flex !important;
+}
+
+html[data-left-sidebar-hidden="true"] #show-sidebar-btn {
     display: flex !important;
 }
 
@@ -2279,6 +2305,35 @@ body {
     pointer-events: auto; /* But buttons remain clickable */
 }
 
+/* Keep toolbar button geometry stable even when right-panel toggle is hidden */
+#show-right-panel-btn {
+    display: inline-flex;
+    width: 0;
+    min-width: 0;
+    max-width: 0;
+    padding-left: 0;
+    padding-right: 0;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    overflow: hidden;
+    transition: width 0.26s cubic-bezier(0.4, 0, 0.2, 1),
+        max-width 0.26s cubic-bezier(0.4, 0, 0.2, 1),
+        opacity 0.2s ease,
+        visibility 0s linear 0.26s;
+}
+
+#show-right-panel-btn.system-panel-toggle-visible,
+html[data-right-panel-hidden="true"] #show-right-panel-btn {
+    width: 2.25rem;
+    min-width: 2.25rem;
+    max-width: 2.25rem;
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transition-delay: 0s;
+}
+
 /* Hide right panel button on mobile - panel doesn't make sense on narrow screens */
 @media (max-width: 767px) {
     #show-right-panel-btn {
@@ -2305,20 +2360,81 @@ body {
 }
 
 /* --- Right Panel Base --- */
-/*
- * Right panel visibility is controlled by JS inline styles.
- * CSS handles positioning mode (fixed vs relative) via media queries.
- * The data-right-panel-hidden attribute ensures panel stays hidden during transitions.
- *
- * CRITICAL: This rule must use BOTH hiding mechanisms (transform AND width/overflow)
- * to prevent flash when crossing the 1024px breakpoint.
- */
+:root {
+    --system-panel-width: 18rem;
+    --system-panel-open-duration: 280ms;
+    --system-panel-close-duration: 220ms;
+    --system-panel-open-ease: cubic-bezier(0.22, 1, 0.36, 1);
+    --system-panel-close-ease: cubic-bezier(0.4, 0, 1, 1);
+}
+
+#right-panel {
+    width: var(--system-panel-width);
+    min-width: 0;
+    max-width: var(--system-panel-width);
+    flex-shrink: 0;
+    overflow: hidden;
+    will-change: width, transform;
+    transition-property: width, border-left-width, transform;
+    transition-duration: var(--system-panel-open-duration), var(--system-panel-open-duration), var(--system-panel-open-duration);
+    transition-timing-function: var(--system-panel-open-ease), var(--system-panel-open-ease), var(--system-panel-open-ease);
+}
+
+#right-panel-content {
+    width: var(--system-panel-width);
+    min-width: var(--system-panel-width);
+    max-width: var(--system-panel-width);
+    transform: translateX(0);
+    transition-property: transform;
+    transition-duration: var(--system-panel-open-duration);
+    transition-timing-function: var(--system-panel-open-ease);
+    will-change: transform;
+}
+
 html[data-right-panel-hidden="true"] #right-panel {
-    transform: translateX(100%) !important;
-    width: 0 !important;
-    border-left-width: 0 !important;
-    overflow: hidden !important;
-    visibility: hidden !important;
+    transition-duration: var(--system-panel-close-duration), var(--system-panel-close-duration), var(--system-panel-close-duration);
+    transition-timing-function: var(--system-panel-close-ease), var(--system-panel-close-ease), var(--system-panel-close-ease);
+}
+
+html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
+    transition-duration: var(--system-panel-close-duration);
+    transition-timing-function: var(--system-panel-close-ease);
+}
+
+@media (max-width: 1023px) {
+    #right-panel {
+        position: fixed !important;
+        right: 0;
+        top: 0;
+        transform: translateX(0);
+    }
+
+    html[data-right-panel-hidden="true"] #right-panel {
+        transform: translateX(100%);
+        border-left-width: 0;
+        pointer-events: none;
+    }
+
+    html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
+        transform: translateX(0);
+    }
+}
+
+@media (min-width: 1024px) {
+    #right-panel {
+        position: relative !important;
+        transform: translateX(0);
+    }
+
+    html[data-right-panel-hidden="true"] #right-panel {
+        width: 0;
+        border-left-width: 0;
+        pointer-events: none;
+    }
+
+    html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
+        transform: translateX(100%);
+    }
 }
 
 /* --- Mobile: < 640px --- */
@@ -2492,14 +2608,6 @@ html[data-right-panel-hidden="true"] #right-panel {
         display: flex !important;
     }
 
-    /* Right panel: overlay mode */
-    #right-panel {
-        position: fixed !important;
-        right: 0;
-        top: 0;
-        width: 18rem !important;
-    }
-
     /* Hide keyboard shortcuts */
     #model-picker-btn .flex.items-center.gap-0\.5 {
         display: none;
@@ -2578,14 +2686,6 @@ html[data-right-panel-hidden="true"] #right-panel {
         border-right-width: 1px;
     }
 
-    /* Right panel: overlay mode */
-    #right-panel {
-        position: fixed !important;
-        right: 0;
-        top: 0;
-        width: 18rem !important;
-    }
-
     /* Hide mobile backdrop */
     .mobile-sidebar-backdrop {
         display: none !important;
@@ -2608,11 +2708,7 @@ html[data-right-panel-hidden="true"] #right-panel {
         display: none !important;
     }
 
-    /* Right panel: inline shrink mode (not fixed overlay) */
-    /* JS controls visibility via inline width/transform - CSS only sets position */
-    #right-panel {
-        position: relative !important;
-    }
+    /* Right panel desktop positioning and transitions are handled in base rules */
 }
 
 /* Message Navigation Styles */
@@ -3007,6 +3103,9 @@ html {
 
 #chat-area {
     scroll-behavior: smooth;
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
 }
 
 /* Hide chat area scrollbar by default, show on hover/scroll */
@@ -3019,14 +3118,17 @@ html {
 }
 
 #chat-area::-webkit-scrollbar-thumb {
-    background: transparent;
+    background-color: transparent;
     border-radius: 4px;
-    transition: background-color 0.2s ease;
+    transition: background-color 0.18s ease;
 }
 
-#chat-area:hover::-webkit-scrollbar-thumb,
+#chat-area.scrolling {
+    scrollbar-color: var(--slate-6) transparent;
+}
+
 #chat-area.scrolling::-webkit-scrollbar-thumb {
-    background: var(--slate-6);
+    background-color: var(--slate-6);
 }
 
 
@@ -3754,6 +3856,86 @@ html {
     border-width: 1.5px;
 }
 
+@keyframes accountGlowPulse {
+    0% {
+        box-shadow: 0 6px 16px hsl(var(--color-foreground) / 0.08),
+            0 0 0 2px hsl(var(--color-primary) / 0.25),
+            0 0 12px 2px hsl(var(--color-primary) / 0.2);
+    }
+    50% {
+        box-shadow: 0 6px 16px hsl(var(--color-foreground) / 0.08),
+            0 0 0 2px hsl(var(--color-primary) / 0.45),
+            0 0 24px 8px hsl(var(--color-primary) / 0.4);
+    }
+    100% {
+        box-shadow: 0 6px 16px hsl(var(--color-foreground) / 0.08),
+            0 0 0 2px hsl(var(--color-primary) / 0.25),
+            0 0 12px 2px hsl(var(--color-primary) / 0.2);
+    }
+}
+
+/* Light mode glory animation - uses explicit blue colors for proper visibility on white */
+@keyframes accountGlowPulseLight {
+    0% {
+        box-shadow:
+            0 4px 14px rgba(30, 64, 175, 0.12),
+            0 0 0 2px rgba(37, 99, 235, 0.4),
+            0 0 16px 4px rgba(37, 99, 235, 0.28),
+            0 0 32px 8px rgba(59, 130, 246, 0.15);
+    }
+    50% {
+        box-shadow:
+            0 6px 20px rgba(30, 64, 175, 0.15),
+            0 0 0 3px rgba(37, 99, 235, 0.55),
+            0 0 24px 8px rgba(37, 99, 235, 0.38),
+            0 0 44px 14px rgba(59, 130, 246, 0.22);
+    }
+    100% {
+        box-shadow:
+            0 4px 14px rgba(30, 64, 175, 0.12),
+            0 0 0 2px rgba(37, 99, 235, 0.4),
+            0 0 16px 4px rgba(37, 99, 235, 0.28),
+            0 0 32px 8px rgba(59, 130, 246, 0.15);
+    }
+}
+
+.account-tab-btn.account-glow {
+    border-color: hsl(var(--color-primary) / 0.65);
+    box-shadow: 0 6px 16px hsl(var(--color-foreground) / 0.08),
+        0 0 0 2px hsl(var(--color-primary) / 0.25),
+        0 0 12px 2px hsl(var(--color-primary) / 0.2);
+    animation: accountGlowPulse 1.4s ease-in-out infinite;
+}
+
+#show-sidebar-btn.account-glow {
+    border-color: hsl(var(--color-primary) / 0.65);
+    box-shadow: 0 0 0 2px hsl(var(--color-primary) / 0.25),
+        0 0 18px 6px hsl(var(--color-primary) / 0.35);
+    animation: accountGlowPulse 1.4s ease-in-out infinite;
+}
+
+/* Enhanced light mode glory - multi-layered blue glow with dedicated animation */
+.theme-light .account-tab-btn.account-glow,
+:root:not(.dark) .account-tab-btn.account-glow {
+    border-color: rgba(37, 99, 235, 0.6);
+    box-shadow:
+        0 4px 14px rgba(30, 64, 175, 0.12),
+        0 0 0 2px rgba(37, 99, 235, 0.4),
+        0 0 16px 4px rgba(37, 99, 235, 0.28),
+        0 0 32px 8px rgba(59, 130, 246, 0.15);
+    animation: accountGlowPulseLight 1.4s ease-in-out infinite;
+}
+
+.theme-light #show-sidebar-btn.account-glow,
+:root:not(.dark) #show-sidebar-btn.account-glow {
+    border-color: rgba(37, 99, 235, 0.6);
+    box-shadow:
+        0 0 0 2px rgba(37, 99, 235, 0.4),
+        0 0 20px 6px rgba(37, 99, 235, 0.35),
+        0 0 40px 12px rgba(59, 130, 246, 0.2);
+    animation: accountGlowPulseLight 1.4s ease-in-out infinite;
+}
+
 /* ============================================
    ACCOUNT CREATION ANIMATIONS
    ============================================ */
@@ -3774,6 +3956,19 @@ html {
     .success-checkmark {
         animation: none;
         stroke-dashoffset: 0;
+    }
+
+    .account-tab-btn.account-glow {
+        animation: none;
+        box-shadow: 0 6px 16px hsl(var(--color-foreground) / 0.08),
+            0 0 0 2px hsl(var(--color-primary) / 0.35),
+            0 0 18px 6px hsl(var(--color-primary) / 0.35);
+    }
+
+    #show-sidebar-btn.account-glow {
+        animation: none;
+        box-shadow: 0 0 0 2px hsl(var(--color-primary) / 0.35),
+            0 0 18px 6px hsl(var(--color-primary) / 0.35);
     }
 }
 
@@ -3803,6 +3998,80 @@ html {
 .btn-primary-bright:hover {
     background-color: hsl(217 91% 50%) !important;
     box-shadow: 0 2px 8px hsl(217 91% 60% / 0.4);
+}
+
+/* Welcome landing (kept in static CSS to avoid runtime <style> injection jank) */
+.welcome-landing {
+    margin-top: 12vh;
+    opacity: 0;
+    transform: translateY(10px);
+    animation: welcomeRiseFadeIn 0.24s ease-out 0.03s forwards;
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+}
+
+@keyframes welcomeRiseFadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.welcome-title {
+    font-size: 1.25rem;
+    font-weight: 500;
+    color: hsl(var(--color-foreground));
+    margin-bottom: 0.375rem;
+}
+
+.welcome-subtitle {
+    font-size: 0.875rem;
+    color: hsl(var(--color-muted-foreground));
+}
+
+.welcome-subtitle a {
+    color: hsl(var(--color-muted-foreground));
+    text-decoration: none;
+    border-bottom: 1px solid hsl(var(--color-border));
+    transition: color 0.15s ease, border-bottom-color 0.15s ease;
+}
+
+.welcome-subtitle a:hover {
+    color: hsl(var(--color-foreground));
+    border-bottom-color: hsl(var(--color-foreground) / 0.5);
+}
+
+.welcome-content {
+    font-size: 0.75rem !important;
+}
+
+.welcome-content p,
+.welcome-content li,
+.welcome-content a {
+    font-size: 0.75rem !important;
+}
+
+.welcome-content a {
+    text-decoration: underline;
+}
+
+/* System panel content entrance: explicit start/end states for reliable startup animation */
+.system-panel-fade-prepare {
+    opacity: 0;
+    transform: translateY(8px);
+    filter: blur(2px);
+}
+
+.system-panel-fade-in {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+    transition: opacity 0.28s ease-out, transform 0.28s ease-out, filter 0.28s ease-out;
+    will-change: opacity, transform, filter;
 }
 
 /* Update toast */
@@ -3872,6 +4141,27 @@ html {
     box-shadow: 0 0 0 2px hsl(var(--color-ring) / 0.5);
 }
 
+.update-toast--stacked {
+    flex-wrap: wrap;
+    max-width: min(92vw, 520px);
+    padding: 0.5rem 0.6rem 0.5rem 0.8rem;
+    row-gap: 0.35rem;
+}
+
+.update-toast__label--stacked {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    min-width: 0;
+}
+
+.update-toast__code {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    letter-spacing: 0.01em;
+    word-break: break-all;
+}
+
 @keyframes updateToastIn {
     from {
         opacity: 0;
@@ -3884,10 +4174,169 @@ html {
 }
 
 @media (prefers-reduced-motion: reduce) {
+    .system-panel-fade-prepare,
+    .system-panel-fade-in {
+        transition: none !important;
+        transform: none !important;
+        filter: none !important;
+    }
+
     .update-toast {
         animation: none;
     }
 }
+
+.split-result-card {
+    margin-top: 0.55rem;
+    padding: 0.58rem;
+    border-radius: 0.7rem;
+    border: 1px solid hsl(var(--color-border) / 0.82);
+    background: linear-gradient(180deg,
+        hsl(var(--color-card) / 0.98) 0%,
+        hsl(var(--color-muted) / 0.24) 100%);
+}
+
+.split-result-header {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    margin-bottom: 0.45rem;
+}
+
+.split-result-title {
+    font-size: 0.66rem;
+    line-height: 1rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    color: hsl(var(--color-foreground));
+}
+
+.split-result-code-row {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+}
+
+.split-result-code {
+    flex: 1;
+    min-width: 0;
+    padding: 0.38rem 0.45rem;
+    border: 1px solid hsl(var(--color-border) / 0.9);
+    border-radius: 0.5rem;
+    background: hsl(var(--color-background));
+    color: hsl(var(--color-foreground));
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    line-height: 0.95rem;
+    word-break: break-all;
+}
+
+.split-result-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.55rem;
+    height: 1.55rem;
+    border-radius: 0.45rem;
+    border: 1px solid hsl(var(--color-border));
+    background: hsl(var(--color-background));
+    color: hsl(var(--color-muted-foreground));
+    transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.split-result-icon-btn:hover {
+    color: hsl(var(--color-foreground));
+    border-color: hsl(var(--color-foreground) / 0.25);
+    background: hsl(var(--color-hover));
+}
+
+.split-result-icon-btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px hsl(var(--color-ring) / 0.45);
+}
+
+.split-result-share {
+    margin-top: 0.55rem;
+    padding-top: 0.5rem;
+    border-top: 1px dashed hsl(var(--color-border) / 0.95);
+}
+
+.split-result-share-label {
+    font-size: 0.64rem;
+    line-height: 0.95rem;
+    color: hsl(var(--color-muted-foreground));
+}
+
+.split-result-share-row {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    margin-top: 0.35rem;
+}
+
+.split-result-share-link {
+    display: block;
+    flex: 1;
+    min-width: 0;
+    padding: 0.38rem 0.45rem;
+    border-radius: 0.5rem;
+    border: 1px solid hsl(var(--color-border));
+    background: hsl(var(--color-accent) / 0.55);
+    color: hsl(var(--color-primary));
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+    line-height: 1rem;
+    text-decoration: none;
+    white-space: nowrap;
+    overflow-x: auto;
+    scrollbar-width: thin;
+}
+
+.split-result-share-link:hover {
+    border-color: hsl(var(--color-primary) / 0.45);
+    background: hsl(var(--color-accent) / 0.8);
+}
+
+.split-result-share-link:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px hsl(var(--color-ring) / 0.45);
+}
+
+.split-result-share-copy-btn {
+    flex-shrink: 0;
+    border-radius: 0.5rem;
+    border: 1px solid hsl(var(--color-border));
+    background: hsl(var(--color-background));
+    color: hsl(var(--color-foreground));
+    font-size: 0.65rem;
+    font-weight: 600;
+    line-height: 1rem;
+    padding: 0.34rem 0.5rem;
+    transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.split-result-share-copy-btn:hover {
+    border-color: hsl(var(--color-primary) / 0.45);
+    background: hsl(var(--color-primary) / 0.12);
+}
+
+.split-result-share-copy-btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px hsl(var(--color-ring) / 0.45);
+}
+
+@media (max-width: 400px) {
+    .split-result-share-row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .split-result-share-copy-btn {
+        width: 100%;
+    }
+}
+
+
 
 /* Input Area Wrapper - ensure it's above message content */
 .absolute.bottom-0.left-0.right-0 {
@@ -3903,32 +4352,193 @@ html {
     min-height: 5.5rem; /* Prevents layout shift while inner content loads */
 }
 
-/* Scrubber shortcut hint - minimal modern style */
-.scrubber-shortcut-hint {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 3px 8px 3px 6px;
-    border-radius: 6px;
-    background: transparent;
-    color: hsl(var(--color-muted-foreground) / 0.6);
-    font-size: 11px;
-    font-weight: 450;
-    letter-spacing: 0.01em;
+/* Scrubber preview diff (hold Control) */
+.scrubber-preview-diff {
+    position: absolute;
+    /* Account for parent .scrubber-input-row padding: py-1.5 (6px), pl-2 (8px), pr-px (1px) */
+    top: 0.375rem;
+    left: 0.5rem;
+    right: 1px;
+    bottom: 0.375rem;
+    opacity: 0;
     pointer-events: none;
-    opacity: 1;
-    transition: opacity 180ms ease-out;
+    transition: none;
+    /* Match textarea padding (textarea has padding-right: 64px for hints) */
+    padding: 0;
+    padding-right: 64px;
+    font-family: inherit;
+    font-size: inherit;
+    line-height: inherit;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: hsl(var(--color-foreground));
+    /* Match textarea default max-height constraint */
+    max-height: 200px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior: contain;
 }
 
-.scrubber-shortcut-hint.faded {
+.scrubber-preview-diff[contenteditable="true"] {
+    cursor: text;
+    outline: none;
+}
+
+.scrubber-deleted {
+    text-decoration: line-through;
+    opacity: 0.85;
+    background: rgb(254 226 226); /* bg-red-100 */
+    color: rgb(185 28 28); /* text-red-700 */
+    text-decoration-color: rgb(185 28 28);
+    border-radius: 2px;
+    padding: 0 2px;
+    user-select: none;
+    pointer-events: none;
+}
+
+:root.dark .scrubber-deleted {
+    background: rgb(127 29 29 / 0.3); /* dark:bg-red-900/30 */
+    color: rgb(248 113 113); /* dark:text-red-400 */
+    text-decoration-color: rgb(248 113 113);
+}
+
+.scrubber-added {
+    background: rgb(220 252 231); /* bg-green-100 */
+    border-radius: 2px;
+    padding: 0 2px;
+    color: rgb(21 128 61); /* text-green-700 */
+}
+
+:root.dark .scrubber-added {
+    background: rgb(20 83 45 / 0.3); /* dark:bg-green-900/30 */
+    color: rgb(74 222 128); /* dark:text-green-400 */
+}
+
+#input-card.scrubber-preview-active .scrubber-preview-diff {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+#input-card.scrubber-preview-active #message-input {
+    opacity: 0;
+    overflow: hidden;
+}
+
+#input-card.scrubber-preview-active #scrubber-shortcut-hint {
+    opacity: 0;
+}
+
+#input-card.scrubber-preview-active .scrubber-input-row {
+    overflow: hidden;
+}
+
+#input-card.scrubber-preview-expanded .scrubber-input-row {
+    max-height: 55vh;
+    overflow: visible;
+}
+
+#input-card.scrubber-preview-expanded #message-input {
+    max-height: 55vh !important;
+    overflow-y: auto;
+}
+
+#input-card.scrubber-preview-expanded .scrubber-preview-diff {
+    max-height: 55vh;
+    overflow-y: auto;
+}
+
+/* Ensure expanded preview is above other elements like message navigation */
+/* The parent needs z-index because input-card has isolation:isolate which creates a stacking context */
+div:has(> #input-card.scrubber-preview-expanded) {
+    z-index: 50;
+}
+
+#input-card.scrubber-preview-expanded {
+    z-index: 50;
+}
+
+/* Preview hint - positioning via Tailwind, CSS handles opacity states */
+#scrubber-preview-hint {
+    z-index: 20;
+    background: hsl(var(--color-background) / 0.8);
+}
+
+#input-card.scrubber-preview-editing #scrubber-preview-hint {
+    pointer-events: auto;
+}
+
+.scrubber-preview-expand {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 6px;
+    color: hsl(var(--color-muted-foreground) / 0.7);
+    background: transparent;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    pointer-events: auto;
+}
+
+#input-card.scrubber-preview-editing .scrubber-preview-expand {
+    display: inline-flex;
+}
+
+.scrubber-preview-expand:hover {
+    color: hsl(var(--color-foreground));
+    background: hsl(var(--color-muted) / 0.6);
+}
+
+.scrubber-preview-expand.is-active {
+    color: hsl(var(--color-foreground));
+    background: hsl(var(--color-muted) / 0.85);
+}
+
+#input-card.has-scrubber-pending #scrubber-preview-hint {
+    opacity: 1;
+}
+
+.scrubber-original-tooltip {
+    position: fixed;
+    z-index: 99999;
+    min-width: 200px;
+    max-height: 50vh;
+    overflow-y: auto;
+    padding: 12px 14px;
+    border-radius: 14px;
+    background: hsl(var(--color-card) / 0.85);
+    backdrop-filter: blur(20px) saturate(150%);
+    -webkit-backdrop-filter: blur(20px) saturate(150%);
+    color: hsl(var(--color-foreground));
+    border: 1px solid hsl(var(--color-border) / 0.5);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.06);
+    font-size: 12px;
+    line-height: 1.5;
+    opacity: 0;
+    transform: translateY(4px);
+    transition: opacity 180ms ease-out, transform 180ms ease-out;
+    pointer-events: none;
+}
+
+.scrubber-original-tooltip.visible {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+    user-select: text;
+}
+
+/* Scrubber shortcut hint - state classes for opacity */
+#scrubber-shortcut-hint.faded {
     opacity: 0.35;
 }
 
-.scrubber-shortcut-hint.hint-hidden {
+#scrubber-shortcut-hint.hint-hidden {
     opacity: 0;
-    pointer-events: none;
 }
 
+/* Scrubber shortcut key badge styling */
 .scrubber-shortcut-key {
     font-family: inherit;
     font-size: 10px;
@@ -3939,11 +4549,11 @@ html {
     color: hsl(var(--color-muted-foreground));
 }
 
-.scrubber-shortcut-inline {
-    position: absolute;
-    right: 6px;
-    top: 50%;
-    transform: translateY(-50%);
+/* Ensure caret is visible on initial focus */
+#message-input {
+    /* Fallback to currentColor (inherits from text color), then use CSS variable */
+    caret-color: currentColor;
+    caret-color: hsl(var(--color-foreground));
 }
 
 /* Input padding adjustment for hint visibility */
@@ -3955,42 +4565,82 @@ html {
     padding-right: 64px !important;
 }
 
-/* Scrubbing animation - modern light trail */
-@property --scrubber-angle {
-    syntax: '<angle>';
-    initial-value: 0deg;
-    inherits: false;
+/* Anchor scrubber hints to initial input center */
+#scrubber-shortcut-hint,
+#scrubber-preview-hint {
+    top: var(--scrubber-hint-center, 50%);
+    transform: translateY(-50%);
 }
 
+/* Message input & diff preview scrollbar - ultra thin and flush to right edge */
+#message-input,
+.scrubber-preview-diff {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--color-muted-foreground) / 0.2) transparent;
+}
+
+#message-input::-webkit-scrollbar,
+.scrubber-preview-diff::-webkit-scrollbar {
+    width: 2px;
+}
+
+#message-input::-webkit-scrollbar-track,
+.scrubber-preview-diff::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+#message-input::-webkit-scrollbar-thumb,
+.scrubber-preview-diff::-webkit-scrollbar-thumb {
+    background: hsl(var(--color-muted-foreground) / 0.2);
+    border-radius: 1px;
+}
+
+#message-input::-webkit-scrollbar-thumb:hover,
+.scrubber-preview-diff::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--color-muted-foreground) / 0.35);
+}
+
+/* Scrubbing animation - breathing blue border glow
+   Works in all browsers using standard CSS animations.
+   
+   Border radius calculation:
+   - input-card uses rounded-lg = 0.5rem = 8px
+   - With inset: -2px, extends outside the box
+   - border-radius = 8px + 2px = 10px
+*/
+
+/* Breathing blue border glow */
 #input-card.scrubbing::before {
     content: '';
     position: absolute;
-    inset: -1px;
-    border-radius: 13px;
-    padding: 1.5px;
-    background: conic-gradient(
-        from var(--scrubber-angle, 0deg),
-        transparent 0deg,
-        transparent 300deg,
-        rgba(59, 130, 246, 0.15) 330deg,
-        rgba(59, 130, 246, 0.85) 355deg,
-        rgba(147, 197, 253, 0.9) 360deg
+    inset: -2px; /* extend outside the box */
+    border-radius: 10px; /* 8px + 2px offset */
+    padding: 2.5px;
+    background: linear-gradient(
+        135deg,
+        rgba(59, 130, 246, 0.8) 0%,
+        rgba(96, 165, 250, 0.9) 25%,
+        rgba(59, 130, 246, 0.8) 50%,
+        rgba(96, 165, 250, 0.9) 75%,
+        rgba(59, 130, 246, 0.8) 100%
     );
     -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
     -webkit-mask-composite: xor;
     mask-composite: exclude;
-    animation: scrubber-light-trail 1.2s linear infinite;
     pointer-events: none;
+    z-index: -1; /* behind the card so it doesn't cover content */
+    animation: scrubber-breathing 1.8s ease-in-out infinite;
 }
 
-@keyframes scrubber-light-trail {
-    from { --scrubber-angle: 0deg; }
-    to { --scrubber-angle: 360deg; }
+@keyframes scrubber-breathing {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
     #input-card.scrubbing::before {
         animation: none;
+        opacity: 0.8;
     }
 }
 

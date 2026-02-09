@@ -1,6 +1,6 @@
 /**
  * Proxy Info Modal Component
- * Explains what the inference proxy is and how it works
+ * Explains what the network proxy is and how it works
  */
 
 class ProxyInfoModal {
@@ -44,7 +44,7 @@ class ProxyInfoModal {
                             <circle cx="12" cy="22" r="1.5" fill="currentColor"/>
                             <path d="M4 22h6m4 0h6"/>
                         </svg>
-                        <h2 class="text-base font-semibold text-foreground">Inference Proxy</h2>
+                        <h2 class="text-base font-semibold text-foreground">Network Proxy</h2>
                         <span class="px-1.5 py-0.5 rounded text-[9px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 uppercase tracking-wide">Beta</span>
                     </div>
                     <button class="proxy-info-close text-muted-foreground hover:text-foreground transition-colors p-1 rounded-lg hover:bg-muted">

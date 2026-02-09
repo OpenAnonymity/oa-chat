@@ -26,7 +26,7 @@ The app runs entirely in the browser and is organized as ES modules:
   - `MessageNavigation.js`: Vertical mini-timeline of assistant messages with arrow-key navigation and previews.
   - `RightPanel.js`: Ticket + API key panel, proxy controls + TLS security, activity timeline (memory-only logs), and responsive visibility.
   - `FloatingPanel.js`: Lightweight activity bubble (feature currently disabled by default).
-  - `ProxyInfoModal.js`: Explains the inference proxy and encrypted relay flow.
+  - `ProxyInfoModal.js`: Explains the network proxy and encrypted relay flow.
   - `TLSSecurityModal.js`: Displays TLS/libcurl integrity info and live proxy connection details.
 - `services/`:
   - `inference/`: Backend abstraction for access issuance, inference calls, TLS capture hints, and sharing metadata.
@@ -109,7 +109,7 @@ There is no automated test harness yet. Manually verify:
 Existing commits use short, present-tense descriptions (e.g. “changes in UI, activity, latex fix”). Follow that tone, keep the first line under ~70 characters, and group related changes together. Pull requests should include: a concise summary of the user-facing impact, screenshots or gifs for UI updates, notes on manual testing performed, and references to any related issues or discussions.
 
 ## API Keys & Security
-- Keys/tokens are ephemeral and acquired anonymously via ticket redemption (`services/ticketClient.js` + Privacy Pass). Do not hard-code keys.
+- Keys/tokens are ephemeral and acquired unlinkably via ticket redemption (`services/ticketClient.js` + Privacy Pass). Do not hard-code keys.
 - Active access data lives in session state; legacy access data may exist in LocalStorage (`oa_access_key_data`). Inference tickets are stored in LocalStorage (`inference_tickets`) and can be exported via `services/fileUtils.js`.
 - Network proxy traffic uses libcurl.js/mbedTLS to tunnel TLS over WebSocket; fallback to direct requests requires explicit user confirmation.
 - Do not log secrets. When instrumenting requests, route through `services/networkLogger.js` and rely on `sanitizeHeaders` (Authorization masking).

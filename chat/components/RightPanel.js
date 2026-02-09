@@ -9,15 +9,16 @@ import networkProxy from '../services/networkProxy.js';
 import inferenceService from '../services/inference/inferenceService.js';
 import tlsSecurityModal from './TLSSecurityModal.js';
 import proxyInfoModal from './ProxyInfoModal.js';
+import verifierAttestationModal from './VerifierAttestationModal.js';
 import { getActivityDescription, getActivityIcon, getStatusDotClass, formatTimestamp } from '../services/networkLogRenderer.js';
 import { getTicketCost } from '../services/modelTiers.js';
 import { exportTickets } from '../services/globalExport.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import { chatDB } from '../db.js';
-import { TICKET_RETRY_RATIO } from '../config.js';
+import { SHARE_BASE_URL } from '../config.js';
 
 // Layout constant for toolbar overlay prediction
-const RIGHT_PANEL_WIDTH = 320; // 20rem = 320px (w-80)
+const RIGHT_PANEL_WIDTH = 288; // 18rem = 288px
 
 // Feature flag for showing underlying implementation on hover
 const SHOW_UNDERLYING_KEY_DETAILS = true;
@@ -47,7 +48,16 @@ class RightPanel {
         this.registrationError = null;
         this.isImporting = false;
         this.importStatus = null;
+        this.isSplitting = false;
         this.timerInterval = null;
+        this.pendingInvitationCode = null;
+        this.pendingInvitationTickets = null;
+        this.pendingInvitationSource = null;
+
+        // Split controls state
+        this.showSplitControls = false;
+        this.splitCount = 1;
+        this.splitResult = null; // { code, ticketsConsumed }
 
         // Ticket animation state
         this.currentTicket = null;
@@ -91,6 +101,10 @@ class RightPanel {
         // Ticket info panel state - check localStorage snapshot first to avoid flash
         const savedTicketInfoVisible = localStorage.getItem('oa-ticket-info-visible');
         this.showTicketInfo = savedTicketInfoVisible === 'false' ? false : true;
+        this.lastAppliedVisibility = null;
+        this.panelFadeCleanupTimer = null;
+        this.panelFadeAnimation = null;
+        this.hasMounted = false;
 
         this.initializeState();
         this.setupEventListeners();
@@ -231,6 +245,47 @@ class RightPanel {
         return data;
     }
 
+    normalizeInvitationCode(code) {
+        if (!code) return '';
+        return code.trim().replace(/[\s-]+/g, '');
+    }
+
+    getInvitationTicketCount(code) {
+        const normalized = this.normalizeInvitationCode(code);
+        if (normalized.length !== 24) return null;
+        const suffix = normalized.slice(20, 24);
+        const count = parseInt(suffix, 16);
+        if (!Number.isFinite(count) || count <= 0) return null;
+        return count;
+    }
+
+    getMaxSplitCount() {
+        return Math.min(50, this.ticketCount);
+    }
+
+    getTicketShareBaseUrl() {
+        const configuredBase = String(SHARE_BASE_URL || '').trim();
+        const fallbackBase = String(window.location.origin || '').trim();
+        const candidate = configuredBase || fallbackBase;
+        if (!candidate) return '';
+
+        const baseWithProtocol = /^https?:\/\//i.test(candidate) ? candidate : `https://${candidate}`;
+        try {
+            const parsed = new URL(baseWithProtocol);
+            return `${parsed.protocol}//${parsed.host}`;
+        } catch {
+            return '';
+        }
+    }
+
+    getTicketCodeShareUrl(code) {
+        const normalizedCode = this.normalizeInvitationCode(code);
+        if (normalizedCode.length !== 24) return '';
+        const baseUrl = this.getTicketShareBaseUrl();
+        if (!baseUrl) return '';
+        return `${baseUrl}/tickets/${encodeURIComponent(normalizedCode)}`;
+    }
+
     escapeHtml(text) {
         const div = document.createElement('div');
         div.textContent = text;
@@ -280,6 +335,10 @@ class RightPanel {
             // Only auto-show form when tickets run out if user hasn't explicitly set a preference
             if (this.ticketCount === 0 && previousTicketCount > 0 && this.invitationFormPreference === null) {
                 this.showInvitationForm = true;
+            }
+            // Auto-collapse form when tickets are added (e.g. via WelcomePanel redemption)
+            if (this.ticketCount > 0 && previousTicketCount === 0 && this.invitationFormPreference === null) {
+                this.showInvitationForm = false;
             }
             this.loadNextTicket();
             this.renderTopSectionOnly(); // Only update top section, not logs
@@ -335,12 +394,15 @@ class RightPanel {
 
         const hasActiveKey = this.apiKey && !this.isExpired;
 
+        // Remove all status classes first
+        dot.classList.remove('status-active', 'status-inactive');
+
         if (hasActiveKey) {
             dot.classList.add('status-active');
-            dot.classList.remove('status-inactive');
+            dot.title = 'Key active';
         } else {
             dot.classList.add('status-inactive');
-            dot.classList.remove('status-active');
+            dot.title = 'No active key';
         }
 
         // Notify floating panel about status change
@@ -452,11 +514,8 @@ class RightPanel {
      * Updates right panel visibility based on isDesktop and isVisible state.
      *
      * Behavior:
-     * - Desktop (>= 1024px): Inline mode - panel shrinks chat area via width
-     * - Mobile/Tablet (< 1024px): Overlay mode - panel slides over chat via transform
-     *
-     * IMPORTANT: Order of style changes matters to prevent flash during mode transitions.
-     * When hiding, set the hiding property FIRST before clearing the other mode's property.
+     * - Desktop (>= 1024px): panel reserves layout width and content slides out while width collapses
+     * - Mobile/Tablet (< 1024px): panel behaves as an overlay and slides in/out
      */
     updatePanelVisibility() {
         const panel = document.getElementById('right-panel');
@@ -471,47 +530,69 @@ class RightPanel {
             document.documentElement.setAttribute('data-right-panel-hidden', 'true');
         }
 
-        if (this.isDesktop) {
-            // Desktop: inline mode - use width for show/hide
-            if (this.isVisible) {
-                panel.style.visibility = ''; // Clear visibility first to show
-                panel.style.overflow = '';
-                panel.style.width = '18rem';
-                panel.style.borderLeftWidth = '1px';
-                panel.style.transform = '';
-                if (showBtn) showBtn.classList.add('hidden');
-                if (appContainer) appContainer.classList.add('right-panel-open');
-            } else {
-                panel.style.width = '0';
-                panel.style.borderLeftWidth = '0';
-                panel.style.transform = '';
-                // Note: visibility/overflow controlled by CSS via data-right-panel-hidden
-                if (showBtn) showBtn.classList.remove('hidden');
-                if (appContainer) appContainer.classList.remove('right-panel-open');
-            }
-        } else {
-            // Mobile/Tablet: overlay mode - slide in/out via transform
-            if (this.isVisible) {
-                panel.style.visibility = ''; // Clear visibility first to show
-                panel.style.overflow = '';
-                panel.style.transform = 'translateX(0)';
-                panel.style.width = '';
-                panel.style.borderLeftWidth = '';
-                if (showBtn) showBtn.classList.add('hidden');
-            } else {
-                panel.style.transform = 'translateX(100%)';
-                panel.style.width = '';
-                panel.style.borderLeftWidth = '';
-                // Note: visibility/overflow controlled by CSS via data-right-panel-hidden
-                if (showBtn) showBtn.classList.remove('hidden');
-            }
-            if (appContainer) appContainer.classList.remove('right-panel-open');
+        // Clear legacy inline styles. Visibility/layout is now entirely CSS-driven.
+        panel.style.visibility = '';
+        panel.style.overflow = '';
+        panel.style.width = '';
+        panel.style.borderLeftWidth = '';
+        panel.style.transform = '';
+
+        if (showBtn) {
+            showBtn.classList.toggle('system-panel-toggle-visible', !this.isVisible);
         }
+
+        if (appContainer) {
+            if (this.isDesktop && this.isVisible) {
+                appContainer.classList.add('right-panel-open');
+            } else {
+                appContainer.classList.remove('right-panel-open');
+            }
+        }
+
+        this.lastAppliedVisibility = this.isVisible;
+    }
+
+    playContentFadeIn() {
+        const content = document.getElementById('right-panel-content');
+        if (!content) return;
+
+        if (this.panelFadeAnimation) {
+            this.panelFadeAnimation.cancel();
+            this.panelFadeAnimation = null;
+        }
+
+        content.classList.remove('system-panel-fade-prepare');
+        content.classList.remove('system-panel-fade-in');
+        content.style.willChange = 'opacity, transform, filter';
+
+        this.panelFadeAnimation = content.animate(
+            [
+                { opacity: 0, transform: 'translateY(8px)', filter: 'blur(2px)' },
+                { opacity: 1, transform: 'translateY(0)', filter: 'blur(0)' }
+            ],
+            {
+                duration: 440,
+                easing: 'cubic-bezier(0.22, 0.61, 0.36, 1)',
+                fill: 'none'
+            }
+        );
+
+        if (this.panelFadeCleanupTimer) {
+            clearTimeout(this.panelFadeCleanupTimer);
+        }
+        this.panelFadeCleanupTimer = setTimeout(() => {
+            if (this.panelFadeAnimation) {
+                this.panelFadeAnimation.cancel();
+                this.panelFadeAnimation = null;
+            }
+            content.style.willChange = '';
+            this.panelFadeCleanupTimer = null;
+        }, 500);
     }
 
     async handleRegister(invitationCode) {
         if (!invitationCode || invitationCode.length !== 24) {
-            this.registrationError = 'Invalid invitation code (must be 24 characters)';
+            this.registrationError = 'Invalid ticket code (must be 24 characters)';
             this.renderTopSectionOnly();
             return;
         }
@@ -534,6 +615,18 @@ class RightPanel {
 
             this.ticketCount = ticketClient.getTicketCount();
 
+            if (this.pendingInvitationSource) {
+                const ticketCount = this.getInvitationTicketCount(invitationCode) ?? this.pendingInvitationTickets;
+                const countLabel = Number.isFinite(ticketCount)
+                    ? `${ticketCount} ticket${ticketCount === 1 ? '' : 's'}`
+                    : 'tickets';
+                this.app?.showToast?.(
+                    `Ticket code redeemed for ${countLabel}`,
+                    'success',
+                    5000
+                );
+            }
+
             // Clear form
             const input = document.getElementById('invitation-code-input');
             if (input) input.value = '';
@@ -546,6 +639,9 @@ class RightPanel {
                 preferencesStore.savePreference(PREF_KEYS.invitationFormVisible, false);
                 this.showTicketInfo = false;
                 preferencesStore.savePreference(PREF_KEYS.ticketInfoVisible, false);
+                this.pendingInvitationCode = null;
+                this.pendingInvitationTickets = null;
+                this.pendingInvitationSource = null;
                 this.renderTopSectionOnly();
                 this.updateTicketInfoVisibility();
                 this.updateTicketInfoToggleButton();
@@ -556,6 +652,29 @@ class RightPanel {
             this.isRegistering = false;
             this.renderTopSectionOnly();
         }
+    }
+
+    applyInvitationCodeFromLink(code, { autoRedeem = false, source = null } = {}) {
+        const normalizedCode = this.normalizeInvitationCode(code);
+        if (!normalizedCode) return;
+
+        this.pendingInvitationCode = normalizedCode;
+        this.pendingInvitationTickets = this.getInvitationTicketCount(normalizedCode);
+        this.pendingInvitationSource = source;
+
+        // Force form open without persisting preference
+        this.showInvitationForm = true;
+        this.renderTopSectionOnly();
+
+        requestAnimationFrame(() => {
+            const input = document.getElementById('invitation-code-input');
+            if (input) {
+                input.value = normalizedCode;
+            }
+            if (autoRedeem && !this.isRegistering) {
+                requestAnimationFrame(() => this.handleRegister(normalizedCode));
+            }
+        });
     }
 
     async handleImportTickets(file, inputEl = null) {
@@ -596,18 +715,40 @@ class RightPanel {
                 inputEl.value = '';
             }
             this.renderTopSectionOnly();
+
+            // Auto-clear success/info messages after a delay
+            if (this.importStatus?.type === 'success' || this.importStatus?.type === 'info') {
+                setTimeout(() => {
+                    if (this.importStatus?.type === 'success' || this.importStatus?.type === 'info') {
+                        this.importStatus = null;
+                        this.renderTopSectionOnly();
+                    }
+                }, 2500);
+            }
         }
     }
 
     async handleExportTickets() {
         try {
-            const success = await exportTickets();
-            this.importStatus = {
-                type: success ? 'success' : 'error',
-                message: success
-                    ? 'Export started. Check your downloads.'
-                    : 'Failed to export tickets.'
-            };
+            const result = await exportTickets();
+            if (result.cancelled) {
+                // User cancelled - no message needed
+                return;
+            }
+            if (result.success) {
+                const total = result.activeCount + result.archivedCount;
+                this.ticketCount = ticketClient.getTicketCount();
+                this.loadNextTicket();
+                this.importStatus = {
+                    type: 'success',
+                    message: `Exported ${total} ticket${total !== 1 ? 's' : ''} and cleared local storage.`
+                };
+            } else {
+                this.importStatus = {
+                    type: 'error',
+                    message: 'Failed to export tickets.'
+                };
+            }
         } catch (error) {
             this.importStatus = {
                 type: 'error',
@@ -624,6 +765,141 @@ class RightPanel {
                     this.renderTopSectionOnly();
                 }
             }, 2500);
+        }
+    }
+
+    handleSplitToggle() {
+        // Don't allow opening split controls if there's already a result
+        if (this.splitResult) {
+            this.app?.showToast?.('Please dismiss the current code first', 'error');
+            return;
+        }
+
+        this.showSplitControls = !this.showSplitControls;
+        if (this.showSplitControls) {
+            // Default to 1 ticket, max 50
+            this.splitCount = Math.min(1, this.getMaxSplitCount());
+        }
+        this.renderTopSectionOnly();
+    }
+
+    handleSplitCountChange(delta) {
+        const maxSplitCount = this.getMaxSplitCount();
+        const newCount = this.splitCount + delta;
+        if (newCount >= 1 && newCount <= maxSplitCount) {
+            this.splitCount = newCount;
+            // Update UI elements directly without full re-render
+            const input = document.getElementById('split-count-input');
+            const confirmBtn = document.getElementById('split-confirm-btn');
+            const decreaseBtn = document.getElementById('split-decrease-btn');
+            const increaseBtn = document.getElementById('split-increase-btn');
+            if (input) input.value = this.splitCount;
+            if (confirmBtn) confirmBtn.querySelector('span').textContent = `Split ${this.splitCount}`;
+            if (decreaseBtn) decreaseBtn.disabled = this.splitCount <= 1;
+            if (increaseBtn) increaseBtn.disabled = this.splitCount >= maxSplitCount;
+        }
+    }
+
+    handleSplitCountInput(value) {
+        const parsed = parseInt(value, 10);
+        const maxSplitCount = this.getMaxSplitCount();
+        if (!isNaN(parsed) && parsed >= 1 && parsed <= maxSplitCount) {
+            this.splitCount = parsed;
+            // Update confirm button text without full re-render to avoid losing focus
+            const confirmBtn = document.getElementById('split-confirm-btn');
+            if (confirmBtn) {
+                confirmBtn.querySelector('span').textContent = `Split ${this.splitCount}`;
+            }
+        } else if (!isNaN(parsed)) {
+            // Clamp to valid range
+            this.splitCount = Math.max(1, Math.min(parsed, maxSplitCount));
+            const confirmBtn = document.getElementById('split-confirm-btn');
+            if (confirmBtn) {
+                confirmBtn.querySelector('span').textContent = `Split ${this.splitCount}`;
+            }
+        }
+    }
+
+    async handleSplitConfirm() {
+        if (this.isSplitting) return;
+        const maxSplitCount = this.getMaxSplitCount();
+        if (this.splitCount <= 0 || this.splitCount > maxSplitCount) {
+            this.app?.showToast?.(`You can split at most ${maxSplitCount} tickets at a time.`, 'error');
+            return;
+        }
+
+        this.isSplitting = true;
+        this.renderTopSectionOnly();
+
+        try {
+            const result = await ticketClient.splitTickets(this.splitCount);
+            this.ticketCount = ticketClient.getTicketCount();
+            this.loadNextTicket();
+            this.showSplitControls = false;
+            this.splitResult = {
+                code: result.code,
+                ticketsConsumed: result.ticketsConsumed || this.splitCount
+            };
+
+            // Auto-copy the code to clipboard
+            try {
+                await navigator.clipboard.writeText(result.code);
+                this.app?.showToast?.('Code copied to clipboard!', 'success');
+            } catch (copyError) {
+                console.error('Failed to auto-copy code:', copyError);
+                // Don't show error toast, user can still manually copy
+            }
+        } catch (error) {
+            this.app?.showToast?.(error.message || 'Failed to split tickets.', 'error');
+        } finally {
+            this.isSplitting = false;
+        }
+
+        this.renderTopSectionOnly();
+    }
+
+    handleSplitCancel() {
+        this.showSplitControls = false;
+        this.splitResult = null;
+        this.renderTopSectionOnly();
+    }
+
+    handleSplitResultDismiss() {
+        if (!this.splitResult) return;
+        const splitShareUrl = this.getTicketCodeShareUrl(this.splitResult.code);
+
+        this.app?.openSplitCodeDismissWarning?.(() => {
+            this.splitResult = null;
+            this.renderTopSectionOnly();
+        }, {
+            code: this.splitResult.code,
+            ticketsConsumed: this.splitResult.ticketsConsumed || 1,
+            shareUrl: splitShareUrl || ''
+        });
+    }
+
+    async handleSplitResultCopy() {
+        if (!this.splitResult?.code) return;
+
+        try {
+            await navigator.clipboard.writeText(this.splitResult.code);
+            this.app?.showToast?.('Code copied!', 'success');
+        } catch (error) {
+            console.error('Failed to copy ticket code:', error);
+            this.app?.showToast?.('Failed to copy code', 'error');
+        }
+    }
+
+    async handleSplitResultCopyLink() {
+        const splitShareUrl = this.getTicketCodeShareUrl(this.splitResult?.code);
+        if (!splitShareUrl) return;
+
+        try {
+            await navigator.clipboard.writeText(splitShareUrl);
+            this.app?.showToast?.('Ticket share link copied!', 'success');
+        } catch (error) {
+            console.error('Failed to copy ticket share link:', error);
+            this.app?.showToast?.('Failed to copy ticket share link', 'error');
         }
     }
 
@@ -1371,6 +1647,14 @@ class RightPanel {
         const blindedRequest = this.currentTicket?.blinded_request || fallbackTicketValue;
         const signedResponse = this.currentTicket?.signed_response || fallbackTicketValue;
         const finalizedTicket = this.currentTicket?.finalized_ticket || fallbackTicketValue;
+        const pendingTickets = Number.isFinite(this.pendingInvitationTickets) ? this.pendingInvitationTickets : null;
+        const pendingTicketsLabel = pendingTickets
+            ? `${pendingTickets} ticket${pendingTickets === 1 ? '' : 's'}`
+            : 'tickets';
+        const maxSplitCount = this.getMaxSplitCount();
+        const splitShareUrl = this.getTicketCodeShareUrl(this.splitResult?.code);
+        const splitShareUrlEscaped = splitShareUrl ? this.escapeHtml(splitShareUrl) : '';
+        const splitShareUrlAttribute = splitShareUrl ? this.escapeHtmlAttribute(splitShareUrl) : '';
 
         return `
                 <!-- Invitation Code Section -->
@@ -1402,6 +1686,12 @@ class RightPanel {
                     </button>
                 </div>
 
+                ${this.pendingInvitationCode ? `
+                    <div class="mt-2 text-[10px] text-muted-foreground">
+                        Ticket code detected • redeeming ${pendingTicketsLabel}...
+                    </div>
+                ` : ''}
+
                 <div class="mt-2 flex items-center gap-1.5">
                     <input
                         id="import-tickets-input"
@@ -1419,20 +1709,122 @@ class RightPanel {
                     <button
                         id="export-tickets-btn"
                         class="btn-ghost-hover inline-flex items-center justify-center gap-1 px-2 py-1 text-[10px] rounded-md border border-border bg-background transition-all duration-200 shadow-sm flex-1"
-                        title="Export active and archived tickets"
+                        title="Export all tickets (clears local storage)"
                     >
                         <span>Export</span>
                     </button>
+                    <button
+                        id="split-tickets-btn"
+                        class="btn-ghost-hover inline-flex items-center justify-center gap-1 px-2 py-1 text-[10px] rounded-md border border-border bg-background transition-all duration-200 shadow-sm flex-1"
+                        title="${this.splitResult ? 'Dismiss current code first' : 'Split tickets into a ticket code (max 50)'}"
+                        ${this.ticketCount === 0 || this.splitResult ? 'disabled' : ''}
+                    >
+                        <span>Split</span>
+                    </button>
                 </div>
+
+                ${this.showSplitControls ? `
+                <div id="split-controls" class="mt-2 flex items-center gap-1.5">
+                    <button
+                        id="split-decrease-btn"
+                        class="btn-ghost-hover inline-flex items-center justify-center w-6 h-6 text-[10px] rounded border border-border bg-background transition-all duration-200 shadow-sm"
+                        ${this.splitCount <= 1 || this.isSplitting ? 'disabled' : ''}
+                    >−</button>
+                    <input
+                        id="split-count-input"
+                        type="text"
+                        inputmode="numeric"
+                        pattern="[0-9]*"
+                        value="${this.splitCount}"
+                        class="input-focus-clean w-12 px-1 py-1 text-[10px] text-center border border-border rounded bg-background text-foreground"
+                        ${this.isSplitting ? 'disabled' : ''}
+                    />
+                    <button
+                        id="split-increase-btn"
+                        class="btn-ghost-hover inline-flex items-center justify-center w-6 h-6 text-[10px] rounded border border-border bg-background transition-all duration-200 shadow-sm"
+                        ${this.splitCount >= maxSplitCount || this.isSplitting ? 'disabled' : ''}
+                    >+</button>
+                    <button
+                        id="split-confirm-btn"
+                        class="btn-ghost-hover inline-flex items-center justify-center gap-1 px-2 py-1 text-[10px] rounded-md border border-border bg-background transition-all duration-200 shadow-sm flex-1"
+                        ${this.isSplitting ? 'disabled' : ''}
+                    >
+                        <span>${this.isSplitting ? 'Splitting...' : `Split ${this.splitCount}`}</span>
+                    </button>
+                    <button
+                        id="split-cancel-btn"
+                        class="btn-ghost-hover inline-flex items-center justify-center px-2 py-1 text-[10px] rounded-md border border-border bg-background transition-all duration-200 shadow-sm text-muted-foreground"
+                        ${this.isSplitting ? 'disabled' : ''}
+                    >
+                        <span>Cancel</span>
+                    </button>
+                </div>
+                ` : ''}
+
+                ${this.splitResult ? `
+                <div id="split-result" class="split-result-card">
+                    <div class="split-result-header">
+                        <span class="split-result-title">Ticket code created for ${this.splitResult.ticketsConsumed || 1} valid ticket${(this.splitResult.ticketsConsumed || 1) === 1 ? '' : 's'}</span>
+                    </div>
+                    <div class="split-result-code-row">
+                        <code class="split-result-code">${this.escapeHtml(this.splitResult.code)}</code>
+                        <button
+                            id="split-result-copy"
+                            class="split-result-icon-btn"
+                            title="Copy ticket code"
+                        >
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect width="14" height="14" x="8" y="8" rx="2"/>
+                                <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
+                            </svg>
+                        </button>
+                        <button
+                            id="split-result-dismiss"
+                            class="split-result-icon-btn"
+                            title="Dismiss"
+                        >
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M18 6L6 18M6 6l12 12"/>
+                            </svg>
+                        </button>
+                    </div>
+                    ${splitShareUrl ? `
+                    <div class="split-result-share">
+                        <div class="split-result-share-label">
+                            You can share the tickets with this link:
+                        </div>
+                        <div class="split-result-share-row">
+                            <a
+                                id="split-result-share-link"
+                                class="split-result-share-link"
+                                href="${splitShareUrlAttribute}"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                title="${splitShareUrlAttribute}"
+                            >${splitShareUrlEscaped}</a>
+                            <button
+                                id="split-result-copy-link"
+                                class="split-result-share-copy-btn"
+                                type="button"
+                                title="Copy ticket share link"
+                            >
+                                Copy Link
+                            </button>
+                        </div>
+                    </div>
+                    ` : ''}
+                </div>
+                ` : ''}
 
                 ${this.showInvitationForm ? `
                     <form id="invitation-code-form" class="space-y-2 mt-3 p-3 bg-muted/10 rounded-lg">
                         <input
                             id="invitation-code-input"
                             type="text"
-                            placeholder="Enter 24-char invitation code"
+                            placeholder="Enter 24-char ticket code"
                             maxlength="24"
                             class="input-focus-clean w-full px-3 py-2 text-xs border border-border rounded-md bg-background text-foreground placeholder:text-muted-foreground transition-all"
+                            value="${this.pendingInvitationCode ? this.escapeHtml(this.pendingInvitationCode) : ''}"
                             ${this.isRegistering ? 'disabled' : ''}
                         />
                         <button
@@ -1440,7 +1832,7 @@ class RightPanel {
                             class="btn-ghost-hover w-full inline-flex items-center justify-center rounded-md text-xs font-medium transition-all duration-200 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 bg-background text-foreground h-8 px-3 shadow-sm border border-border"
                             ${this.isRegistering ? 'disabled' : ''}
                         >
-                            ${this.isRegistering ? 'Registering...' : 'Register Code'}
+                            ${this.isRegistering ? 'Redeeming...' : 'Redeem Code'}
                         </button>
                     </form>
 
@@ -1469,6 +1861,7 @@ class RightPanel {
                         ${this.escapeHtml(this.importStatus.message)}
                     </div>
                 ` : ''}
+
             </div>
 
             <!-- Ticket Visualization Section -->
@@ -1556,6 +1949,12 @@ class RightPanel {
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
                             </svg>
                             <span class="text-xs font-medium">Ephemeral Access Key</span>
+                            <button
+                                id="verifier-attestation-btn"
+                                class="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-border text-[8px] text-muted-foreground hover:text-foreground hover:bg-accent hover:border-foreground/20 transition-all"
+                                title="Show verifier attestation"
+                                type="button"
+                            >?</button>
                         </div>
                         <div class="flex items-center justify-between text-[10px] font-mono bg-muted/20 p-2 rounded-md border border-border break-all text-foreground">
                             ${(() => {
@@ -1611,6 +2010,12 @@ class RightPanel {
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
                             </svg>
                             <span class="text-xs font-medium">Ephemeral Access Key</span>
+                            <button
+                                id="verifier-attestation-btn"
+                                class="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-border text-[8px] text-muted-foreground hover:text-foreground hover:bg-accent hover:border-foreground/20 transition-all"
+                                title="Show verifier attestation"
+                                type="button"
+                            >?</button>
                         </div>
                         <div class="flex items-center justify-between text-[10px] bg-muted/10 p-2 rounded-md border border-dashed border-border text-muted-foreground">
                             <span class="flex-1 min-w-0">Requested on message send</span>
@@ -1699,7 +2104,7 @@ class RightPanel {
                             <circle cx="12" cy="22" r="1.5" fill="currentColor"/>
                             <path d="M4 22h6m4 0h6"/>
                         </svg>
-                        <span class="text-xs font-medium text-foreground">Inference Proxy</span>
+                        <span class="text-xs font-medium text-foreground">Network Proxy</span>
                         <span class="px-1 py-0.5 rounded text-[8px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 uppercase tracking-wide">Beta</span>
                         <button id="proxy-info-btn" class="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-border text-[8px] text-muted-foreground hover:text-foreground hover:bg-accent hover:border-foreground/20 transition-all" title="What is this?" type="button">
                             ?
@@ -1851,8 +2256,21 @@ class RightPanel {
                 e.preventDefault();
                 const input = document.getElementById('invitation-code-input');
                 if (input) {
-                    this.handleRegister(input.value.trim());
+                    const rawValue = input.value.trim();
+                    const normalized = this.normalizeInvitationCode(rawValue);
+                    if (this.pendingInvitationCode !== null) {
+                        this.pendingInvitationCode = normalized;
+                        this.pendingInvitationTickets = this.getInvitationTicketCount(normalized);
+                    }
+                    this.handleRegister(this.pendingInvitationCode !== null ? normalized : rawValue);
                 }
+            };
+        }
+        const invitationInput = document.getElementById('invitation-code-input');
+        if (invitationInput && this.pendingInvitationCode !== null) {
+            invitationInput.oninput = () => {
+                this.pendingInvitationCode = invitationInput.value;
+                this.pendingInvitationTickets = this.getInvitationTicketCount(invitationInput.value);
             };
         }
 
@@ -1872,6 +2290,76 @@ class RightPanel {
         const exportBtn = document.getElementById('export-tickets-btn');
         if (exportBtn) {
             exportBtn.onclick = () => this.handleExportTickets();
+        }
+
+        // Split tickets controls
+        const splitBtn = document.getElementById('split-tickets-btn');
+        if (splitBtn) {
+            splitBtn.onclick = () => this.handleSplitToggle();
+        }
+
+        const splitDecreaseBtn = document.getElementById('split-decrease-btn');
+        if (splitDecreaseBtn) {
+            splitDecreaseBtn.onclick = () => this.handleSplitCountChange(-1);
+        }
+
+        const splitIncreaseBtn = document.getElementById('split-increase-btn');
+        if (splitIncreaseBtn) {
+            splitIncreaseBtn.onclick = () => this.handleSplitCountChange(1);
+        }
+
+        const splitCountInput = document.getElementById('split-count-input');
+        if (splitCountInput) {
+            // Stop propagation to prevent keys from going to chat input
+            splitCountInput.onkeydown = (e) => {
+                e.stopPropagation();
+                // Handle Enter key to submit
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    this.handleSplitConfirm();
+                }
+            };
+            splitCountInput.onkeyup = (e) => e.stopPropagation();
+            splitCountInput.onkeypress = (e) => e.stopPropagation();
+            splitCountInput.oninput = (e) => {
+                e.stopPropagation();
+                // Only allow digits
+                const cleaned = e.target.value.replace(/\D/g, '');
+                if (cleaned !== e.target.value) {
+                    e.target.value = cleaned;
+                }
+                this.handleSplitCountInput(cleaned);
+            };
+            splitCountInput.onchange = (e) => {
+                e.stopPropagation();
+                this.handleSplitCountInput(e.target.value);
+            };
+        }
+
+        const splitConfirmBtn = document.getElementById('split-confirm-btn');
+        if (splitConfirmBtn) {
+            splitConfirmBtn.onclick = () => this.handleSplitConfirm();
+        }
+
+        const splitCancelBtn = document.getElementById('split-cancel-btn');
+        if (splitCancelBtn) {
+            splitCancelBtn.onclick = () => this.handleSplitCancel();
+        }
+
+        // Split result handlers
+        const splitResultCopy = document.getElementById('split-result-copy');
+        if (splitResultCopy) {
+            splitResultCopy.onclick = () => this.handleSplitResultCopy();
+        }
+
+        const splitResultDismiss = document.getElementById('split-result-dismiss');
+        if (splitResultDismiss) {
+            splitResultDismiss.onclick = () => this.handleSplitResultDismiss();
+        }
+
+        const splitResultCopyLink = document.getElementById('split-result-copy-link');
+        if (splitResultCopyLink) {
+            splitResultCopyLink.onclick = () => this.handleSplitResultCopyLink();
         }
 
         // Ticket data click handler - toggle between truncated and full view
@@ -1953,6 +2441,15 @@ class RightPanel {
         const proxyInfoBtn = document.getElementById('proxy-info-btn');
         if (proxyInfoBtn) {
             proxyInfoBtn.onclick = () => proxyInfoModal.open();
+        }
+
+        const verifierAttestationBtn = document.getElementById('verifier-attestation-btn');
+        if (verifierAttestationBtn) {
+            verifierAttestationBtn.onclick = () => verifierAttestationModal.open({
+                session: this.currentSession || null,
+                accessInfo: this.apiKeyInfo || null,
+                stationId: this.apiKeyInfo?.stationId || this.apiKeyInfo?.station_name || null
+            });
         }
     }
 
@@ -2161,12 +2658,14 @@ class RightPanel {
 
         panel.innerHTML = `
             <!-- Header - matches chat-toolbar height (3rem + 1px for border alignment) -->
-            <div style="min-height: calc(3rem + 1px);" class="px-3 bg-muted/10 border-b border-border flex items-center">
+            <div style="min-height: calc(3rem + 1px);" class="px-3 bg-muted/10 flex items-center">
                 <div class="flex items-center justify-between w-full">
-                    <h2 class="text-xs font-semibold text-foreground">System Panel</h2>
-                    <button id="close-right-panel" class="text-muted-foreground hover:text-foreground transition-colors p-0.5 rounded-lg hover:bg-accent">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M6 18L18 6M6 6l12 12"></path>
+                    <h2 class="text-sm font-semibold text-foreground">System Panel</h2>
+                    <button id="close-right-panel" class="inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-9 w-9 cursor-pointer select-none">
+                        <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                            <rect x="4" y="4" width="16" height="16" rx="2"/>
+                            <path d="M14 4h4a2 2 0 012 2v12a2 2 0 01-2 2h-4V4z" fill="currentColor" fill-opacity="0.15" stroke="none"/>
+                            <path d="M14 4v16"/>
                         </svg>
                     </button>
                 </div>
@@ -2243,6 +2742,13 @@ class RightPanel {
             appContainer.classList.add('right-panel-open');
         }
 
+        this.hasMounted = true;
+
+        // On first page load, if panel starts open, animate content after first paint.
+        if (this.isVisible) {
+            this.playContentFadeIn();
+        }
+
         // Hide legacy toggle button
         const oldToggleBtn = document.getElementById('toggle-right-panel-btn');
         if (oldToggleBtn) {
@@ -2259,8 +2765,17 @@ class RightPanel {
     }
 
     destroy() {
+        this.hasMounted = false;
         if (this.timerInterval) {
             clearInterval(this.timerInterval);
+        }
+        if (this.panelFadeCleanupTimer) {
+            clearTimeout(this.panelFadeCleanupTimer);
+            this.panelFadeCleanupTimer = null;
+        }
+        if (this.panelFadeAnimation) {
+            this.panelFadeAnimation.cancel();
+            this.panelFadeAnimation = null;
         }
         if (this.proxyUnsubscribe) {
             this.proxyUnsubscribe();

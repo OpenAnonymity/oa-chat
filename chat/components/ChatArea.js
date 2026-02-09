@@ -4,7 +4,7 @@
  * scroll behaviors, and LaTeX rendering.
  */
 
-import { buildMessageHTML, buildEmptyState, buildSharedIndicator, buildImportedIndicator, buildTypingIndicator } from './MessageTemplates.js';
+import { buildMessageHTML, buildEmptyState, buildSharedIndicator, buildImportedIndicator, buildTypingIndicator, RAW_CLIPBOARD_ATTRIBUTE_ENABLED } from './MessageTemplates.js';
 import { exportChats, exportTickets } from '../services/globalExport.js';
 import { parseStreamingReasoningContent, parseReasoningContent } from '../services/reasoningParser.js';
 import { messageMemoryContext, highlightMemoryRetrievedSessions, clearMemorySessionHighlights } from '../services/messageMemoryContext.js';
@@ -449,15 +449,50 @@ export default class ChatArea {
     }
 
     /**
+     * Gets raw message content from a data attribute (sync, Safari-safe).
+     * @param {string} messageId - The message ID
+     * @returns {string|null} The raw content or null
+     */
+    getMessageRawFromDOM(messageId) {
+        if (!RAW_CLIPBOARD_ATTRIBUTE_ENABLED) return null;
+        const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
+        if (!messageEl) return null;
+
+        const rawContent = messageEl.dataset.rawContent;
+        if (rawContent && rawContent.trim()) {
+            return rawContent;
+        }
+        return null;
+    }
+
+    /**
      * Handles copying the content of a message.
-     * Prioritizes raw markdown from database; falls back to DOM for streaming.
+     * Prioritizes Safari-safe raw DOM data when enabled, else DB-first.
      * @param {string} messageId - The message ID to copy
      */
     async handleCopyMessage(messageId) {
         const session = this.app.getCurrentSession();
         if (!session) return;
 
-        // Try database first to get raw markdown/LaTeX
+        if (RAW_CLIPBOARD_ATTRIBUTE_ENABLED) {
+            // Try raw content from DOM data attributes (sync, preserves Safari user activation).
+            const rawContent = this.getMessageRawFromDOM(messageId);
+            if (rawContent) {
+                this.copyToClipboard(rawContent);
+                this.showCopySuccess(messageId);
+                return;
+            }
+
+            // Fallback to visible DOM content if raw data is missing.
+            const domContent = this.getMessageTextFromDOM(messageId);
+            if (domContent && domContent.trim()) {
+                this.copyToClipboard(domContent);
+                this.showCopySuccess(messageId);
+                return;
+            }
+        }
+
+        // Default path (non-Safari): DB-first to preserve raw markdown/LaTeX.
         const messages = await chatDB.getSessionMessages(session.id);
         const message = messages.find(m => m.id === messageId);
 
@@ -467,7 +502,7 @@ export default class ChatArea {
             return;
         }
 
-        // Fallback to DOM for streaming messages not yet saved
+        // Final fallback to visible DOM content.
         const domContent = this.getMessageTextFromDOM(messageId);
         if (domContent && domContent.trim()) {
             this.copyToClipboard(domContent);
@@ -528,9 +563,11 @@ export default class ChatArea {
 
     /**
      * Handles toggling the collapsed state of long user messages.
+     * For scrubber messages, persists the collapsed state to ensure consistency across re-renders.
+     * Note: Height-locking (for scrubber toggle) is separate - show more/less always expands/collapses fully.
      * @param {HTMLElement} btn - The show more/less button element
      */
-    handleToggleUserMessage(btn) {
+    async handleToggleUserMessage(btn) {
         const bubble = btn.closest('.message-user');
         if (!bubble) return;
 
@@ -539,11 +576,30 @@ export default class ChatArea {
 
         const isCollapsed = content.classList.contains('collapsed');
         if (isCollapsed) {
+            // Expanding: remove collapsed class AND any height lock to show full content
             content.classList.remove('collapsed');
             btn.textContent = 'Show less';
+            // Remove height-lock so content can expand fully (height-lock is only for scrubber toggle)
+            bubble.classList.remove('height-locked');
+            bubble.style.height = '';
         } else {
+            // Collapsing: add collapsed class (CSS handles truncation)
             content.classList.add('collapsed');
             btn.textContent = 'Show more';
+        }
+
+        // Persist collapsed state for scrubber messages so it survives re-renders (e.g., toggling original/redacted)
+        const messageId = btn.dataset.messageId;
+        if (messageId) {
+            const session = this.app.getCurrentSession();
+            if (session) {
+                const messages = await chatDB.getSessionMessages(session.id);
+                const message = messages.find(m => m.id === messageId);
+                if (message?.scrubber) {
+                    message.scrubber.isCollapsed = !isCollapsed; // New state after toggle
+                    await chatDB.saveMessage(message);
+                }
+            }
         }
     }
 
@@ -664,17 +720,6 @@ export default class ChatArea {
         const message = messages.find(m => m.id === messageId);
         if (!message || message.role !== 'user' || !message.scrubber) return;
 
-        // Lock the height on first toggle (capture current height before changing content)
-        if (!message.scrubber.lockedHeight) {
-            const messageWrapper = document.querySelector(`[data-message-id="${messageId}"]`);
-            if (messageWrapper) {
-                const bubble = messageWrapper.querySelector('.message-user');
-                if (bubble) {
-                    message.scrubber.lockedHeight = bubble.offsetHeight;
-                }
-            }
-        }
-
         // Toggle the state
         message.scrubber.showingOriginal = !message.scrubber.showingOriginal;
 
@@ -688,7 +733,8 @@ export default class ChatArea {
         // Save to database
         await chatDB.saveMessage(message);
 
-        // Re-render just this message
+        // Re-render just this message - collapsed state is persisted in message.scrubber.isCollapsed
+        // and will be automatically applied by the template
         this.updateMessage(message);
     }
 
@@ -1119,6 +1165,10 @@ export default class ChatArea {
     updateStreamingMessage(messageId, content) {
         const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
         if (!messageEl) return;
+
+        if (RAW_CLIPBOARD_ATTRIBUTE_ENABLED) {
+            messageEl.dataset.rawContent = content || '';
+        }
 
         let contentEl = messageEl.querySelector('.message-content');
 
@@ -1907,8 +1957,8 @@ export default class ChatArea {
             exportLink.dataset.downloadTicketsBound = 'true';
             exportLink.addEventListener('click', async (e) => {
                 e.preventDefault();
-                const success = await exportTickets();
-                if (!success) {
+                const result = await exportTickets();
+                if (!result.success && !result.cancelled) {
                     console.error('Failed to export inference tickets');
                 }
             });

@@ -10,6 +10,7 @@ import ModelPicker from './components/ModelPicker.js';
 import ChatHistoryImportModal from './components/ChatHistoryImportModal.js';
 import AccountModal from './components/AccountModal.js';
 import MemorySelector from './components/MemorySelector.js';
+import WelcomePanel from './components/WelcomePanel.js';
 import { buildTypingIndicator } from './components/MessageTemplates.js';
 import themeManager from './services/themeManager.js';
 import preferencesStore, { PREF_KEYS } from './services/preferencesStore.js';
@@ -47,7 +48,7 @@ const UPDATE_CHECK_INITIAL_DELAY_MS = 45 * 1000;
 
 // Layout constants for toolbar overlay prediction
 const SIDEBAR_WIDTH = 256;      // 16rem = 256px
-const RIGHT_PANEL_WIDTH = 320;  // 20rem = 320px (w-80)
+const RIGHT_PANEL_WIDTH = 288;  // 18rem = 288px
 const TOOLBAR_PREDICTION_GRACE_MS = 350; // Grace period to respect predicted state during animations
 
 // Used to upgrade users who were implicitly on the prior default.
@@ -84,7 +85,7 @@ function emitDesktopEvent(name, detail = {}) {
 const SESSION_STORAGE_KEY = 'oa-current-session'; // Tab-scoped session persistence
 const DELETE_HISTORY_COPY = {
     title: 'Delete all chat history',
-    body: 'Past chat history is stored locally on this browser. Prompts and responses are end-to-end encrypted to and from the model providers who only see anonymous traffic and cannot identify, link, or otherwise track you.',
+    body: 'Past chat history is stored locally on this browser. Prompts and responses are end-to-end encrypted to and from the model providers who only see mixed and unlinkable traffic.',
     highlightHeading: 'Deletion is irreversible!',
     highlightBody: 'This is the only copy of your chat history. Deletion cannot be undone. You can <a href="#download-chats-link" class="text-primary underline-offset-2 hover:underline focus-visible:underline dark:text-blue-300">download a copy</a> of your chat history before proceeding.',
     cancelLabel: 'Cancel',
@@ -122,6 +123,7 @@ class ChatApp {
             messagesContainer: document.getElementById('messages-container'),
             messageInput: document.getElementById('message-input'),
             inputCard: document.getElementById('input-card'),
+            scrubberPreviewDiff: document.getElementById('scrubber-preview-diff'),
             sendBtn: document.getElementById('send-btn'),
             modelPickerBtn: document.getElementById('model-picker-btn'),
             modelPickerModal: document.getElementById('model-picker-modal'),
@@ -194,6 +196,8 @@ class ChatApp {
         this.updateCheckInFlight = false;
         this.pendingStorageRefresh = false;
         this.storageReloadTimer = null;
+        this.pendingTicketCode = null;
+        this.splitCodeWarningOverlay = null;
 
         // Link preview state
         this.linkPreviewCard = document.getElementById('link-preview-card');
@@ -499,7 +503,7 @@ class ChatApp {
         return html;
     }
 
-    initScrollAwareScrollbars(element) {
+    initScrollAwareScrollbars(element, hideDelayMs = 1500) {
         let scrollTimer = null;
         element.addEventListener('scroll', () => {
             element.classList.add('scrolling');
@@ -508,7 +512,7 @@ class ChatApp {
             }
             scrollTimer = setTimeout(() => {
                 element.classList.remove('scrolling');
-            }, 1500);
+            }, hideDelayMs);
         });
     }
 
@@ -1167,9 +1171,14 @@ class ChatApp {
         // Setup global function to download inference tickets
         window.downloadInferenceTickets = async () => {
             try {
-                const success = await exportTickets();
-                if (success) {
-                    this.showToast('Tickets exported successfully', 'success');
+                const result = await exportTickets();
+                if (result.cancelled) {
+                    // User cancelled - no toast needed
+                    return;
+                }
+                if (result.success) {
+                    const total = result.activeCount + result.archivedCount;
+                    this.showToast(`Exported ${total} ticket${total !== 1 ? 's' : ''} and cleared storage`, 'success');
                 } else {
                     this.showToast('Failed to export tickets', 'error');
                 }
@@ -1188,6 +1197,7 @@ class ChatApp {
 
         // Initialize wide mode state from persistent storage (async).
         void this.initWideMode();
+        void this.initSidebarVisibility();
 
         // Start DB init in background - components can show skeleton state
         const dbReady = chatDB.init();
@@ -1200,8 +1210,15 @@ class ChatApp {
         this.memorySelector = new MemorySelector(this);
         this.chatHistoryImportModal = new ChatHistoryImportModal(this);
         this.accountModal = new AccountModal(this);
+        this.welcomePanel = new WelcomePanel(this);
         this.rightPanel = new RightPanel(this);
         this.rightPanel.mount();
+
+        // Render core shell immediately so non-sidebar UI is never blank on startup.
+        this.chatArea.renderEmptyStateImmediate();
+        this.renderCurrentModel();
+        this.chatInput.updateSearchToggleUI();
+        this.chatInput.updateReasoningToggleUI();
 
         // Wait for DB before loading data
         try {
@@ -1271,6 +1288,18 @@ class ChatApp {
             if (key === PREF_KEYS.wideMode) {
                 this.applyWideMode(!!value);
             }
+            if (key === PREF_KEYS.leftSidebarVisible && typeof value === 'boolean' && !this.isMobileView()) {
+                const isHidden = this.elements.sidebar?.classList.contains('sidebar-hidden');
+                if (value) {
+                    if (isHidden) {
+                        this.showSidebar({ persist: false, predictToolbar: false });
+                    }
+                } else {
+                    if (!isHidden) {
+                        this.hideSidebar({ persist: false, predictToolbar: false });
+                    }
+                }
+            }
         });
 
         this.storageEventsUnsubscribe = [
@@ -1296,25 +1325,51 @@ class ChatApp {
         initModelTiers();
         initPinnedModels();
 
-        // Load settings from IndexedDB in PARALLEL for speed
-        const [storedModelPreference, savedSearchEnabled, savedReasoningEnabled, savedMemoryEnabled] = await Promise.all([
+        // Keep slower service startup off the critical render path.
+        void (async () => {
+            try {
+                await storageManager.init();
+            } catch (error) {
+                console.warn('Storage manager init failed:', error);
+            }
+
+            try {
+                await apiKeyStore.loadApiKey();
+            } catch (error) {
+                console.warn('API key load failed:', error);
+            }
+
+            this.scrubberService.init().catch((error) => {
+                console.warn('Scrubber init failed:', error);
+            });
+
+            try {
+                await accountService.init();
+                if (typeof requestIdleCallback === 'function') {
+                    requestIdleCallback(() => accountService.maybeAutoUnlock());
+                } else {
+                    setTimeout(() => accountService.maybeAutoUnlock(), 800);
+                }
+            } catch (error) {
+                console.warn('Account init failed:', error);
+            }
+
+            await networkProxy.syncWithPreferences().catch(err => console.warn('Proxy pref sync failed:', err));
+            networkProxy.initialize().catch(err => console.warn('Proxy init failed:', err));
+
+            await this.welcomePanel.init().catch((error) => {
+                console.warn('Welcome panel init failed:', error);
+            });
+        })();
+
+        // Load settings from IndexedDB in parallel; this is independent of sidebar history load.
+        const settingsPromise = Promise.all([
             chatDB.getSetting('selectedModel'),
             chatDB.getSetting('searchEnabled'),
-            chatDB.getSetting('reasoningEnabled'),
-            chatDB.getSetting('memoryEnabled')
+            chatDB.getSetting('reasoningEnabled')
         ]);
 
-        // Migrate sessions in background (don't block UI)
-        this.migrateSessionsInBackground(this.state.sessions);
-        const scheduleBackfill = () => chatDB.backfillMissingUpdatedAt()
-            .catch(err => console.warn('UpdatedAt backfill failed:', err));
-        if (typeof requestIdleCallback === 'function') {
-            requestIdleCallback(scheduleBackfill);
-        } else {
-            setTimeout(scheduleBackfill, 1200);
-        }
-
-        // Restore session from sessionStorage (persists across refreshes, not across tabs)
+        // Restore session from sessionStorage as early as possible for chat area hydration.
         const savedSessionId = sessionStorage.getItem(SESSION_STORAGE_KEY);
         if (savedSessionId) {
             await this.ensureSessionLoaded(savedSessionId);
@@ -1322,6 +1377,8 @@ class ChatApp {
                 this.state.currentSessionId = savedSessionId;
             }
         }
+
+        const [storedModelPreference, savedSearchEnabled, savedReasoningEnabled] = await settingsPromise;
 
         // Process model preference
         const normalizedModelName = this.upgradeDefaultModelPreference(
@@ -1344,8 +1401,7 @@ class ChatApp {
         // Restore memory state
         this.memoryEnabled = savedMemoryEnabled !== undefined ? savedMemoryEnabled : false;
 
-        // Render local data IMMEDIATELY (sessions from DB, model from settings)
-        this.renderSessions();
+        // Render local data immediately (session from sessionStorage + model/settings from DB).
         this.renderMessages();
         this.renderCurrentModel();
         this.chatInput.updateSearchToggleUI();
@@ -1362,6 +1418,30 @@ class ChatApp {
         }
         if (this.floatingPanel && currentSession) {
             this.floatingPanel.render();
+        }
+
+        // Load sessions for the sidebar after core UI is already visible.
+        try {
+            await this.loadInitialSessions();
+        } catch (error) {
+            console.warn('Failed to load initial sessions:', error);
+            this.state.sessions = [];
+            this.state.sessionsById = new Map();
+            this.state.hasMoreSessions = false;
+        }
+        if (this.state.currentSessionId) {
+            await this.ensureSessionLoaded(this.state.currentSessionId);
+        }
+        this.renderSessions();
+
+        // Migrate sessions in background (don't block UI)
+        this.migrateSessionsInBackground(this.state.sessions);
+        const scheduleBackfill = () => chatDB.backfillMissingUpdatedAt()
+            .catch(err => console.warn('UpdatedAt backfill failed:', err));
+        if (typeof requestIdleCallback === 'function') {
+            requestIdleCallback(scheduleBackfill);
+        } else {
+            setTimeout(scheduleBackfill, 1200);
         }
 
         this.renderDeleteHistoryModalContent();
@@ -1385,7 +1465,8 @@ class ChatApp {
             console.warn('Background model loading failed:', error);
         });
 
-        this.initScrollAwareScrollbars(this.elements.chatArea);
+        // Chat area scrollbar hide delay: ~1s after scrolling ends (common overlay-scrollbar behavior).
+        this.initScrollAwareScrollbars(this.elements.chatArea, 1000);
         this.initScrollAwareScrollbars(this.elements.sessionsScrollArea);
         this.initScrollAwareScrollbars(this.elements.modelListScrollArea);
 
@@ -1416,11 +1497,6 @@ class ChatApp {
         // Initialize verifier and start broadcast checks
         this.initVerifier();
 
-        // Handle mobile view on initial load
-        if (this.isMobileView()) {
-            this.hideSidebar();
-        }
-
         // Scroll to bottom after initial load (for refresh)
         setTimeout(() => {
             this.scrollToBottom(true);
@@ -1428,8 +1504,8 @@ class ChatApp {
             this.updateToolbarDivider();
         }, 100);
 
-        // Auto-focus input field on startup
-        this.elements.messageInput.focus();
+        // Auto-focus input field on startup (with retries for reliability)
+        this.deferInitialInputFocus();
 
         // Check for pending send from early interaction
         if (window.oaPendingSend) {
@@ -1440,14 +1516,96 @@ class ChatApp {
             }, 0);
         }
 
+        // Capture ticket codes from URL before session handling (cleans URL if needed)
+        this.captureTicketCodeFromUrl();
+
         // Check for session in URL (?s=sessionId)
-        this.checkForUrlSession();
+        const sessionCheck = this.checkForUrlSession();
+        if (sessionCheck && typeof sessionCheck.then === 'function') {
+            sessionCheck.finally(() => this.handlePendingTicketCode());
+        } else {
+            this.handlePendingTicketCode();
+        }
 
         // Start update checks for new app versions
         this.initUpdateWatcher();
 
         // Periodic check for share expiry status (every 30 seconds)
         setInterval(() => this.updateShareButtonUI(), 30000);
+    }
+
+    normalizeTicketCode(rawCode) {
+        if (!rawCode) return '';
+        return rawCode.trim().replace(/[\s-]+/g, '');
+    }
+
+    /**
+     * Capture ticket code from URL and clean the path/query.
+     * Supports /tickets/<code> and ?tickets=<code>.
+     */
+    captureTicketCodeFromUrl() {
+        if (this.pendingTicketCode) return;
+
+        const url = new URL(window.location.href);
+        let code = null;
+        let source = null;
+
+        const pathMatch = url.pathname.match(/^\/tickets\/([^\/?#]+)/i);
+        if (pathMatch && pathMatch[1]) {
+            code = pathMatch[1];
+            source = 'path';
+        } else {
+            const ticketParam = url.searchParams.get('tickets');
+            if (ticketParam) {
+                code = ticketParam;
+                source = 'query';
+            }
+        }
+
+        if (!code) return;
+
+        const normalizedCode = this.normalizeTicketCode(code);
+        const isValidLength = normalizedCode.length === 24;
+
+        this.pendingTicketCode = {
+            code: normalizedCode,
+            autoRedeem: true,
+            source,
+            isValid: isValidLength
+        };
+
+        // Clean URL: remove /tickets path and tickets param, keep other params (e.g., s)
+        let needsClean = false;
+        if (source === 'path') {
+            url.pathname = '/';
+            needsClean = true;
+        }
+        if (url.searchParams.has('tickets')) {
+            url.searchParams.delete('tickets');
+            needsClean = true;
+        }
+
+        if (needsClean) {
+            const nextUrl = url.toString();
+            if (nextUrl !== window.location.href) {
+                window.history.replaceState({}, '', nextUrl);
+            }
+        }
+    }
+
+    /**
+     * Apply any pending ticket code after UI is ready.
+     */
+    handlePendingTicketCode() {
+        if (!this.pendingTicketCode || !this.rightPanel) return;
+
+        const { code, autoRedeem, source } = this.pendingTicketCode;
+        this.pendingTicketCode = null;
+
+        if (!code) return;
+
+        this.rightPanel.show();
+        this.rightPanel.applyInvitationCodeFromLink(code, { autoRedeem: !!autoRedeem, source });
     }
 
     /**
@@ -2075,7 +2233,7 @@ class ChatApp {
                 this.updateShareButtonUI();
                 await this.renderMessages();
             },
-            showToast: (msg, type) => this.showToast(msg, type)
+            showToast: (msg, type, durationMs) => this.showToast(msg, type, durationMs)
             });
     }
 
@@ -2138,8 +2296,9 @@ class ChatApp {
      * Show a toast notification
      * @param {string} message - Message to display
      * @param {string} type - 'success' or 'error'
+     * @param {number} durationMs - Time to auto-dismiss in milliseconds
      */
-    showToast(message, type = 'success') {
+    showToast(message, type = 'success', durationMs = 3000) {
         this.clearToast();
 
         const toast = document.createElement('div');
@@ -2149,13 +2308,13 @@ class ChatApp {
         toast.className = `fixed left-1/2 -translate-x-1/2 z-[100] px-4 py-2 rounded-lg shadow-lg text-sm border border-border/50 ${bgColor} animate-in fade-in slide-in-from-bottom-4`;
         toast.textContent = message;
         document.body.appendChild(toast);
-        
+
         this.updateToastPosition();
 
         this._toastTimeout = setTimeout(() => {
             toast.classList.add('animate-out', 'fade-out', 'slide-out-to-bottom-4');
             setTimeout(() => toast.remove(), 150);
-        }, 3000);
+        }, durationMs);
     }
 
     clearToast() {
@@ -2164,13 +2323,35 @@ class ChatApp {
         this._toastTimeout = null;
     }
 
+    clearAccountHighlight() {
+        const btn = document.getElementById('account-tab-btn');
+        const showBtn = document.getElementById('show-sidebar-btn');
+        if (btn) btn.classList.remove('account-glow');
+        if (showBtn) showBtn.classList.remove('account-glow');
+    }
+
+    highlightAccountButton() {
+        this.clearAccountHighlight();
+        const sidebar = this.elements?.sidebar;
+        const sidebarWidth = sidebar ? sidebar.getBoundingClientRect().width : 0;
+        const sidebarHidden = sidebarWidth < 40;
+        const btn = document.getElementById('account-tab-btn');
+        const showBtn = document.getElementById('show-sidebar-btn');
+        if (btn) {
+            btn.classList.add('account-glow');
+        }
+        if (sidebarHidden && showBtn) {
+            showBtn.classList.add('account-glow');
+        }
+    }
+
     showLoadingToast(message) {
         this.clearToast();
 
         const toast = document.createElement('div');
         toast.id = 'app-toast';
-        // Removed fixed bottom-36
-        toast.className = 'fixed left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg shadow-lg text-sm bg-primary text-primary-foreground animate-in fade-in slide-in-from-bottom-4 flex items-center gap-2';
+        // Use same styling as showToast for consistency
+        toast.className = 'fixed left-1/2 -translate-x-1/2 z-[100] px-4 py-2 rounded-lg shadow-lg text-sm border border-border/50 bg-muted text-foreground animate-in fade-in slide-in-from-bottom-4 flex items-center gap-2';
 
         const spinner = document.createElement('span');
         spinner.className = 'link-preview-spinner';
@@ -2237,6 +2418,92 @@ class ChatApp {
         toast.appendChild(dismissBtn);
         document.body.appendChild(toast);
         this.updateToastVisible = true;
+    }
+
+
+    openSplitCodeDismissWarning(onConfirm, splitDetails = {}) {
+        if (this.splitCodeWarningOverlay) return;
+
+        const details = typeof splitDetails === 'string'
+            ? { code: splitDetails }
+            : (splitDetails || {});
+        const code = typeof details.code === 'string' ? details.code : '';
+        const ticketsConsumed = Number.isFinite(details.ticketsConsumed) && details.ticketsConsumed > 0
+            ? Math.floor(details.ticketsConsumed)
+            : null;
+        const shareUrl = typeof details.shareUrl === 'string' ? details.shareUrl : '';
+        const safeCode = this.escapeHtml(code);
+        const safeShareUrl = this.escapeHtml(shareUrl);
+        const ticketCountNote = ticketsConsumed
+            ? `Ticket code created for ${ticketsConsumed} valid ticket${ticketsConsumed === 1 ? '' : 's'}.`
+            : '';
+
+        const overlay = document.createElement('div');
+        overlay.className = 'fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4';
+
+        overlay.innerHTML = `
+            <div class="dialog-content max-w-[320px] rounded-xl border border-border bg-background shadow-xl p-6">
+                <h3 class="text-sm font-medium text-foreground mb-4">Dismiss code?</h3>
+
+                ${ticketCountNote ? `
+                <p class="text-xs text-muted-foreground mb-3">
+                    ${ticketCountNote}
+                </p>
+                ` : ''}
+
+                <div class="mb-4 p-3 bg-muted/20 rounded-md border border-border">
+                    <code class="block font-mono text-xs text-foreground break-all text-center">${safeCode}</code>
+                </div>
+
+                ${shareUrl ? `
+                <div class="mb-4 p-3 bg-muted/20 rounded-md border border-border">
+                    <div class="text-[10px] text-muted-foreground mb-1">Ticket share link</div>
+                    <code class="block font-mono text-[10px] text-foreground break-all">${safeShareUrl}</code>
+                </div>
+                ` : ''}
+
+                <p class="text-xs text-muted-foreground mb-4">
+                    Make sure you've copied this code${shareUrl ? ' and link' : ''}.
+                </p>
+
+                <div class="flex gap-2">
+                    <button id="cancel-split-code-dismiss" class="btn-ghost-hover flex-1 px-4 py-1.5 text-xs rounded-md border border-border bg-background text-foreground transition-colors" type="button">
+                        Cancel
+                    </button>
+                    <button id="confirm-split-code-dismiss" class="flex-1 px-4 py-1.5 text-xs rounded-md bg-destructive text-destructive-foreground transition-all duration-200 hover:bg-destructive/90" type="button">
+                        Dismiss
+                    </button>
+                </div>
+            </div>
+        `;
+
+        const closeWarning = () => {
+            overlay.remove();
+            this.splitCodeWarningOverlay = null;
+        };
+
+        overlay.addEventListener('click', (event) => {
+            if (event.target === overlay) {
+                closeWarning();
+            }
+        });
+
+        const cancelBtn = overlay.querySelector('#cancel-split-code-dismiss');
+        const confirmBtn = overlay.querySelector('#confirm-split-code-dismiss');
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', () => closeWarning());
+        }
+        if (confirmBtn) {
+            confirmBtn.addEventListener('click', () => {
+                closeWarning();
+                if (typeof onConfirm === 'function') {
+                    onConfirm();
+                }
+            });
+        }
+
+        document.body.appendChild(overlay);
+        this.splitCodeWarningOverlay = overlay;
     }
 
     clearUpdateToast() {
@@ -2808,6 +3075,7 @@ class ChatApp {
         const { awaitRender = false, immediate = false, emitDesktop = false } = options;
         this.saveCurrentSessionScrollPosition();
         this.state.currentSessionId = null;
+        this.updateUrlWithSession(null);
 
         if (immediate && this.chatArea?.renderEmptyStateImmediate) {
             this.chatArea.renderEmptyStateImmediate();
@@ -3489,6 +3757,11 @@ class ChatApp {
                     }
                 }
 
+                // Pre-cache scrubber restoration in background (if applicable)
+                if (streamingMessage.scrubber?.canRestore) {
+                    this.preCacheScrubberRestore(streamingMessage);
+                }
+
             } catch (error) {
                 console.error('Error getting AI response:', error);
                 if (typingId) this.removeTypingIndicator(typingId);
@@ -4108,6 +4381,11 @@ class ChatApp {
                 keywordsGenerator.triggerGeneration(session.id, this).catch(err => {
                     console.warn('[App] Keywords generation failed:', err);
                 });
+
+                // Pre-cache scrubber restoration in background (if applicable)
+                if (streamingMessage.scrubber?.canRestore) {
+                    this.preCacheScrubberRestore(streamingMessage);
+                }
 
                 break retryLoop; // Success - exit retry loop
 
@@ -5031,6 +5309,27 @@ class ChatApp {
         this.applyWideMode(!!isWide);
     }
 
+    /**
+     * Initializes left sidebar visibility from persistent preferences.
+     * Desktop restores the last explicit toggle state; mobile defaults to hidden.
+     */
+    async initSidebarVisibility() {
+        if (this.isMobileView()) {
+            this.hideSidebar({ persist: false, predictToolbar: false });
+            return;
+        }
+
+        const isVisible = await preferencesStore.getPreference(PREF_KEYS.leftSidebarVisible, {
+            isMobile: false
+        });
+
+        if (isVisible === false) {
+            this.hideSidebar({ persist: false, predictToolbar: false });
+        } else {
+            this.showSidebar({ persist: false, predictToolbar: false });
+        }
+    }
+
     applyWideMode(isWide) {
         document.documentElement.classList.toggle('wide-mode', isWide);
         this.elements.wideModeBtn?.classList.toggle('wide-active', isWide);
@@ -5062,7 +5361,17 @@ class ChatApp {
         }
     }
 
-    hideSidebar() {
+    setSidebarHiddenAttribute(isHidden) {
+        if (isHidden) {
+            document.documentElement.setAttribute('data-left-sidebar-hidden', 'true');
+        } else {
+            document.documentElement.removeAttribute('data-left-sidebar-hidden');
+        }
+    }
+
+    hideSidebar(options = {}) {
+        const shouldPersist = options.persist ?? !this.isMobileView();
+        const shouldPredictToolbar = options.predictToolbar !== false;
         const sidebar = this.elements.sidebar;
         const showBtn = this.elements.showSidebarBtn;
         const backdrop = this.elements.mobileSidebarBackdrop;
@@ -5072,6 +5381,7 @@ class ChatApp {
             sidebar.classList.add('sidebar-hidden');
             sidebar.classList.remove('mobile-visible');
         }
+        this.setSidebarHiddenAttribute(true);
         if (showBtn) {
             showBtn.classList.remove('hidden');
             showBtn.classList.add('flex');
@@ -5079,14 +5389,23 @@ class ChatApp {
         if (backdrop) {
             backdrop.classList.remove('visible');
         }
+        if (shouldPersist) {
+            preferencesStore.savePreference(PREF_KEYS.leftSidebarVisible, false);
+        }
         this.updateWideModeButtonVisibility();
-        // Predict final width: sidebar is closing, main area will be WIDER
-        // Only affects width on desktop, on mobile sidebar overlays
-        // Grace period in updateToolbarDivider blocks intermediate updates during animation
-        this.updateToolbarDivider(this.isMobileView() ? 0 : SIDEBAR_WIDTH);
+        if (shouldPredictToolbar) {
+            // Predict final width: sidebar is closing, main area will be WIDER
+            // Only affects width on desktop, on mobile sidebar overlays
+            // Grace period in updateToolbarDivider blocks intermediate updates during animation
+            this.updateToolbarDivider(this.isMobileView() ? 0 : SIDEBAR_WIDTH);
+        } else {
+            this.updateToolbarDivider();
+        }
     }
 
-    showSidebar() {
+    showSidebar(options = {}) {
+        const shouldPersist = options.persist ?? !this.isMobileView();
+        const shouldPredictToolbar = options.predictToolbar !== false;
         const sidebar = this.elements.sidebar;
         const showBtn = this.elements.showSidebarBtn;
         const backdrop = this.elements.mobileSidebarBackdrop;
@@ -5096,8 +5415,11 @@ class ChatApp {
             sidebar.classList.remove('sidebar-hidden');
             if (this.isMobileView()) {
                 sidebar.classList.add('mobile-visible');
+            } else {
+                sidebar.classList.remove('mobile-visible');
             }
         }
+        this.setSidebarHiddenAttribute(false);
         if (showBtn) {
             showBtn.classList.add('hidden');
             showBtn.classList.remove('flex');
@@ -5106,10 +5428,17 @@ class ChatApp {
         if (backdrop && this.isMobileView()) {
             backdrop.classList.add('visible');
         }
+        if (shouldPersist) {
+            preferencesStore.savePreference(PREF_KEYS.leftSidebarVisible, true);
+        }
         this.updateWideModeButtonVisibility();
-        // Predict final width: sidebar is opening, main area will be NARROWER
-        // Only affects width on desktop, on mobile sidebar overlays
-        this.updateToolbarDivider(this.isMobileView() ? 0 : -SIDEBAR_WIDTH);
+        if (shouldPredictToolbar) {
+            // Predict final width: sidebar is opening, main area will be NARROWER
+            // Only affects width on desktop, on mobile sidebar overlays
+            this.updateToolbarDivider(this.isMobileView() ? 0 : -SIDEBAR_WIDTH);
+        } else {
+            this.updateToolbarDivider();
+        }
     }
 
     isMobileView() {
@@ -5630,6 +5959,38 @@ class ChatApp {
         }
     }
 
+    deferInitialInputFocus() {
+        const retryFocus = () => this.focusMessageInput();
+
+        // Initial focus right away
+        this.focusMessageInput({ force: true });
+        // Re-assert focus after initial layout/render passes
+        requestAnimationFrame(retryFocus);
+        setTimeout(retryFocus, 150);
+        window.addEventListener('load', retryFocus, { once: true });
+        window.addEventListener('focus', retryFocus, { once: true });
+    }
+
+    focusMessageInput({ force = false } = {}) {
+        const input = this.elements.messageInput;
+        if (!input || input.disabled) return;
+
+        const active = document.activeElement;
+        if (!force && active && active !== document.body && active !== document.documentElement && active !== input) {
+            return;
+        }
+
+        if (input.offsetParent === null) return;
+
+        input.focus({ preventScroll: true });
+        try {
+            const len = input.value.length;
+            input.setSelectionRange(len, len);
+        } catch (error) {
+            // Some browsers may not support selection on focus; ignore.
+        }
+    }
+
     updateInputState() {
         const hasContent = this.elements.messageInput.value.trim() || this.uploadedFiles.length > 0;
         const isStreaming = this.isCurrentSessionStreaming();
@@ -5668,9 +6029,9 @@ class ChatApp {
             // Set placeholder based on state
             if (this.searchEnabled) {
                 // For now, use the same placeholder as the default when search is enabled
-                this.elements.messageInput.placeholder = "Ask anonymously";
+                this.elements.messageInput.placeholder = "Ask anything";
             } else {
-                this.elements.messageInput.placeholder = "Ask anonymously";
+                this.elements.messageInput.placeholder = "Ask anything";
             }
         }
     }
@@ -5922,6 +6283,38 @@ Your API key has been cleared. A new key from a different station will be obtain
         this.updateInputState();
     }
 
+    /**
+     * Build a persistable snapshot of the latest submit_key verification result.
+     * Stored on session.apiKeyInfo so it survives page refreshes.
+     */
+    buildVerifierSubmitKeyProof(verifyResult, accessInfo = null) {
+        const detail = verifyResult?.detail || verifyResult?.data?.detail || null;
+        const verifierResponse = verifyResult?.data || null;
+        const stationId = accessInfo?.stationId || accessInfo?.station_id || accessInfo?.station_name || null;
+        const keyHashFromOrg = accessInfo?.keyHash || accessInfo?.key_hash || null;
+        const keyHashFromVerifier = verifierResponse?.key_hash || null;
+
+        return {
+            recordedAt: new Date().toISOString(),
+            status: verifyResult?.status || 'unknown',
+            detail,
+            stationId,
+            keyHashFromOrg,
+            keyHashFromVerifier,
+            verifierResponse,
+            retryable: typeof verifierResponse?.retryable === 'boolean' ? verifierResponse.retryable : null,
+            error: verifyResult?.error?.message || null,
+            bannedStation: verifyResult?.bannedStation || null
+        };
+    }
+
+    /**
+     * Persist verifier submit_key proof into the active session access record.
+     */
+    persistVerifierSubmitKeyProof(session, verifyResult) {
+        if (!session?.apiKeyInfo || !verifyResult) return;
+        session.apiKeyInfo.verifierSubmitKeyProof = this.buildVerifierSubmitKeyProof(verifyResult, session.apiKeyInfo);
+    }
 
     async acquireAndSetAccess(session) {
         if (!session) throw new Error("No active session found.");
@@ -5984,6 +6377,7 @@ Your API key has been cleared. A new key from a different station will be obtain
         if (verifier?.supports) {
             const accessInfo = inferenceService.getAccessInfo(session);
             const verifyResult = await inferenceService.verifyAccess(session, accessInfo?.info);
+            this.persistVerifierSubmitKeyProof(session, verifyResult);
 
             if (verifyResult?.status === 'unverified') {
                 const detail = verifyResult?.detail || verifyResult?.data?.detail;
@@ -6119,6 +6513,7 @@ Your API key has been cleared. A new key from a different station will be obtain
         if (!canRestore) return;
 
         if (message.scrubber.restored) {
+            // Toggle back to redacted version
             const redactedResponse = message.scrubber.redactedResponse || message.content || '';
             message.content = redactedResponse;
             message.scrubber.restored = false;
@@ -6129,6 +6524,24 @@ Your API key has been cleared. A new key from a different station will be obtain
             return;
         }
 
+        // Check if we have a pre-cached restored response
+        if (message.scrubber.restoredResponse) {
+            // Use cached version - instant restore!
+            if (!message.scrubber.redactedResponse) {
+                message.scrubber.redactedResponse = message.content || '';
+            }
+            message.scrubber.restored = true;
+            message.content = message.scrubber.restoredResponse;
+            message.tokenCount = Math.ceil(message.scrubber.restoredResponse.length / 4);
+            await chatDB.saveMessage(message);
+            if (this.chatArea && this.isViewingSession(session.id)) {
+                this.chatArea.updateMessage(message);
+            }
+            this.showToast('PII restored', 'success');
+            return;
+        }
+
+        // No cached version - need to call API
         const stopLoading = this.showLoadingToast('Restoring PII...');
         try {
             const responseText = message.content || message.scrubber.redactedResponse || '';
@@ -6179,6 +6592,65 @@ Your API key has been cleared. A new key from a different station will be obtain
             if (typeof stopLoading === 'function') {
                 stopLoading();
             }
+        }
+    }
+
+    /**
+     * Pre-cache scrubber restoration for an assistant message in the background.
+     * Called after response completes to have the restored version ready when user clicks restore.
+     * @param {Object} message - The assistant message with scrubber metadata
+     */
+    async preCacheScrubberRestore(message) {
+        // Only pre-cache if message has scrubber data and can be restored
+        if (!message?.scrubber?.canRestore) return;
+        // Skip if already cached
+        if (message.scrubber.restoredResponse) return;
+        // Skip if no response content
+        if (!message.content) return;
+
+        try {
+            const session = this.getCurrentSession();
+            if (!session) return;
+
+            const messages = await chatDB.getSessionMessages(session.id);
+            const messageIndex = messages.findIndex(msg => msg.id === message.id);
+            if (messageIndex === -1) return;
+
+            const responseText = message.content;
+            const useContextRestore = message.scrubber?.mode === 'context' ||
+                (!message.scrubber?.redactedPrompt && message.scrubber?.canRestore);
+
+            let restoreResult = null;
+            if (useContextRestore) {
+                const historyMessages = messages.slice(0, messageIndex).filter(msg => !msg.isLocalOnly);
+                const { original, redacted } = this.buildScrubberRestoreContext(historyMessages);
+                if (!original.trim() || !redacted.trim()) return;
+                restoreResult = await this.scrubberService.restoreResponseWithContext({
+                    originalContext: original,
+                    redactedContext: redacted,
+                    responseText,
+                    session
+                });
+            } else {
+                if (!message.scrubber.originalPrompt || !message.scrubber.redactedPrompt) return;
+                restoreResult = await this.scrubberService.restoreResponse({
+                    originalPrompt: message.scrubber.originalPrompt,
+                    redactedPrompt: message.scrubber.redactedPrompt,
+                    responseText,
+                    session
+                });
+            }
+
+            if (restoreResult?.success && restoreResult.text) {
+                // Cache the restored response without showing it
+                message.scrubber.restoredResponse = restoreResult.text;
+                message.scrubber.redactedResponse = responseText;
+                await chatDB.saveMessage(message);
+                console.log('[Scrubber] Pre-cached restoration for message:', message.id);
+            }
+        } catch (error) {
+            // Silently fail - this is just a background optimization
+            console.warn('[Scrubber] Pre-cache failed:', error);
         }
     }
 }

@@ -5,11 +5,13 @@ import syncService from './syncService.js';
 const PREF_KEYS = {
     theme: 'pref-theme',
     wideMode: 'pref-wide-mode',
+    leftSidebarVisible: 'pref-left-sidebar-visible',
     flatMode: 'pref-flat-mode',
     fontMode: 'pref-font-mode',
     rightPanelVisible: 'pref-right-panel-visible',
     ticketInfoVisible: 'pref-ticket-info-visible',
     invitationFormVisible: 'pref-invitation-form-visible',
+    welcomeDismissed: 'pref-welcome-dismissed',
     proxySettings: 'pref-network-proxy-settings',
     sharePasswordMode: 'pref-share-password-mode',
     shareExpiryTtl: 'pref-share-expiry-ttl',
@@ -20,11 +22,13 @@ const PREF_KEYS = {
 const LOCAL_STORAGE_KEYS = {
     theme: 'oa-theme-preference',
     wideMode: 'oa-wide-mode',
+    leftSidebarVisible: 'oa-left-sidebar-visible',
     flatMode: 'oa-flat-mode',
     fontMode: 'oa-font-mode',
     rightPanelVisible: 'oa-right-panel-visible',
     ticketInfoVisible: 'oa-ticket-info-visible',
     invitationFormVisible: 'oa-invitation-form-visible',
+    welcomeDismissed: 'oa-welcome-dismissed',
     proxySettings: 'oa-network-proxy-settings',
     sharePasswordMode: 'oa-share-password-mode',
     shareExpiryTtl: 'oa-share-expiry-ttl',
@@ -35,11 +39,13 @@ const LOCAL_STORAGE_KEYS = {
 const DEFAULT_PREFERENCES = {
     [PREF_KEYS.theme]: 'system',
     [PREF_KEYS.wideMode]: false,
+    [PREF_KEYS.leftSidebarVisible]: null,
     [PREF_KEYS.flatMode]: true,
     [PREF_KEYS.fontMode]: 'sans',
     [PREF_KEYS.rightPanelVisible]: null,
     [PREF_KEYS.ticketInfoVisible]: true,
     [PREF_KEYS.invitationFormVisible]: null,
+    [PREF_KEYS.welcomeDismissed]: false,
     [PREF_KEYS.proxySettings]: {
         enabled: false,
         fallbackToDirect: true
@@ -53,22 +59,36 @@ const DEFAULT_PREFERENCES = {
 const PREF_SNAPSHOT_KEYS = new Set([
     PREF_KEYS.theme,
     PREF_KEYS.wideMode,
+    PREF_KEYS.leftSidebarVisible,
     PREF_KEYS.flatMode,
     PREF_KEYS.fontMode,
     PREF_KEYS.rightPanelVisible,
     PREF_KEYS.ticketInfoVisible,
-    PREF_KEYS.invitationFormVisible
+    PREF_KEYS.invitationFormVisible,
+    PREF_KEYS.welcomeDismissed
 ]);
 
 const PREF_SNAPSHOT_MAP = new Map([
     [PREF_KEYS.theme, LOCAL_STORAGE_KEYS.theme],
     [PREF_KEYS.wideMode, LOCAL_STORAGE_KEYS.wideMode],
+    [PREF_KEYS.leftSidebarVisible, LOCAL_STORAGE_KEYS.leftSidebarVisible],
     [PREF_KEYS.flatMode, LOCAL_STORAGE_KEYS.flatMode],
     [PREF_KEYS.fontMode, LOCAL_STORAGE_KEYS.fontMode],
     [PREF_KEYS.rightPanelVisible, LOCAL_STORAGE_KEYS.rightPanelVisible],
     [PREF_KEYS.ticketInfoVisible, LOCAL_STORAGE_KEYS.ticketInfoVisible],
-    [PREF_KEYS.invitationFormVisible, LOCAL_STORAGE_KEYS.invitationFormVisible]
+    [PREF_KEYS.invitationFormVisible, LOCAL_STORAGE_KEYS.invitationFormVisible],
+    [PREF_KEYS.welcomeDismissed, LOCAL_STORAGE_KEYS.welcomeDismissed]
 ]);
+
+const SYNCABLE_PREF_KEYS = new Set([
+    PREF_KEYS.theme,
+    PREF_KEYS.wideMode,
+    PREF_KEYS.flatMode,
+    PREF_KEYS.fontMode,
+    PREF_KEYS.proxySettings
+]);
+
+const SYNC_PREF_UPDATED_AT_PREFIX = 'sync-pref-updated-at:';
 
 class PreferencesStore {
     constructor() {
@@ -100,9 +120,9 @@ class PreferencesStore {
             // Reload preferences when sync completes (sync writes directly to settings)
             if (!this.syncUnsubscribe) {
                 this.syncUnsubscribe = syncService.subscribe((payload) => {
-                    if (payload.event === 'blob_received' && payload.data?.type === 'preferences') {
-                        // Reload the specific preference that was synced
-                        this.preloadKnownPreferences();
+                    if (payload.event === 'blob_received' && payload.data?.type === 'preference' && payload.data?.logicalId) {
+                        // Reload and notify only the specific preference that was synced.
+                        this.reloadPreferenceFromDatabase(payload.data.logicalId);
                     }
                 });
             }
@@ -137,6 +157,11 @@ class PreferencesStore {
                 parse: (value) => value === 'true'
             },
             {
+                key: PREF_KEYS.leftSidebarVisible,
+                storageKey: LOCAL_STORAGE_KEYS.leftSidebarVisible,
+                parse: (value) => value === 'true'
+            },
+            {
                 key: PREF_KEYS.flatMode,
                 storageKey: LOCAL_STORAGE_KEYS.flatMode,
                 parse: (value) => value !== 'false'
@@ -159,6 +184,11 @@ class PreferencesStore {
             {
                 key: PREF_KEYS.invitationFormVisible,
                 storageKey: LOCAL_STORAGE_KEYS.invitationFormVisible,
+                parse: (value) => value === 'true'
+            },
+            {
+                key: PREF_KEYS.welcomeDismissed,
+                storageKey: LOCAL_STORAGE_KEYS.welcomeDismissed,
                 parse: (value) => value === 'true'
             },
             {
@@ -205,9 +235,22 @@ class PreferencesStore {
                 const rawValue = localStorage.getItem(migration.storageKey);
                 if (rawValue === null) continue;
 
+                if (typeof chatDB !== 'undefined' && chatDB.db) {
+                    const existingValue = await chatDB.getSetting(migration.key);
+                    if (existingValue !== undefined) {
+                        this.cache.set(migration.key, existingValue);
+                        this.updateSnapshot(migration.key, existingValue);
+                        continue;
+                    }
+                }
+
                 const parsedValue = migration.parse(rawValue);
                 if (parsedValue !== null && parsedValue !== undefined) {
-                    const persisted = await this.savePreference(migration.key, parsedValue, { broadcast: false, skipInit: true });
+                    const persisted = await this.savePreference(migration.key, parsedValue, {
+                        broadcast: false,
+                        skipInit: true,
+                        skipSync: true
+                    });
                     if (persisted && !PREF_SNAPSHOT_KEYS.has(migration.key)) {
                         localStorage.removeItem(migration.storageKey);
                     }
@@ -227,6 +270,7 @@ class PreferencesStore {
                 const value = await chatDB.getSetting(key);
                 if (value !== undefined) {
                     this.cache.set(key, value);
+                    this.updateSnapshot(key, value);
                 }
             } catch (error) {
                 console.warn('Failed to preload preference:', key, error);
@@ -241,6 +285,10 @@ class PreferencesStore {
 
         if (key === PREF_KEYS.rightPanelVisible && typeof options.isDesktop === 'boolean') {
             return options.isDesktop;
+        }
+
+        if (key === PREF_KEYS.leftSidebarVisible && typeof options.isMobile === 'boolean') {
+            return !options.isMobile;
         }
 
         return DEFAULT_PREFERENCES[key];
@@ -261,6 +309,7 @@ class PreferencesStore {
             const value = await chatDB.getSetting(key);
             if (value !== undefined) {
                 this.cache.set(key, value);
+                this.updateSnapshot(key, value);
                 return value;
             }
         } catch (error) {
@@ -275,10 +324,30 @@ class PreferencesStore {
             await this.init();
         }
 
+        const shouldPersistSyncTimestamp = this.isSyncablePreference(key);
+        const updatedAt = shouldPersistSyncTimestamp
+            ? this.normalizeTimestamp(options.updatedAt) || Date.now()
+            : null;
+
         let persisted = false;
         try {
             if (typeof chatDB !== 'undefined' && chatDB.db) {
-                await chatDB.saveSetting(key, value);
+                const entries = [{ key, value }];
+                if (updatedAt !== null) {
+                    entries.push({
+                        key: this.getSyncTimestampKey(key),
+                        value: updatedAt
+                    });
+                }
+
+                if (typeof chatDB.saveSettings === 'function') {
+                    await chatDB.saveSettings(entries);
+                } else {
+                    await chatDB.saveSetting(key, value);
+                    if (updatedAt !== null) {
+                        await chatDB.saveSetting(this.getSyncTimestampKey(key), updatedAt);
+                    }
+                }
                 persisted = true;
             }
         } catch (error) {
@@ -299,6 +368,55 @@ class PreferencesStore {
         }
 
         return persisted;
+    }
+
+    async reloadPreferenceFromDatabase(key) {
+        if (!key) return;
+        if (typeof chatDB === 'undefined' || !chatDB.db) return;
+
+        try {
+            const value = await chatDB.getSetting(key);
+            if (value === undefined) return;
+
+            const previous = this.cache.get(key);
+            const changed = !this.valuesEqual(previous, value);
+
+            this.cache.set(key, value);
+            this.updateSnapshot(key, value);
+
+            if (changed) {
+                this.notify(key, value);
+            }
+        } catch (error) {
+            console.warn('Failed to reload synced preference:', key, error);
+        }
+    }
+
+    valuesEqual(a, b) {
+        if (Object.is(a, b)) return true;
+        if (!a || !b) return false;
+        if (typeof a !== 'object' || typeof b !== 'object') return false;
+        try {
+            return JSON.stringify(a) === JSON.stringify(b);
+        } catch (error) {
+            return false;
+        }
+    }
+
+    isSyncablePreference(key) {
+        return SYNCABLE_PREF_KEYS.has(key);
+    }
+
+    getSyncTimestampKey(key) {
+        return `${SYNC_PREF_UPDATED_AT_PREFIX}${key}`;
+    }
+
+    normalizeTimestamp(value) {
+        const timestamp = Number(value);
+        if (!Number.isFinite(timestamp) || timestamp <= 0) {
+            return null;
+        }
+        return Math.floor(timestamp);
     }
 
     onChange(listener) {
@@ -331,7 +449,7 @@ class PreferencesStore {
                 serialized = value === 'serif' ? 'serif' : 'sans';
             } else if (key === PREF_KEYS.flatMode) {
                 serialized = value === false ? 'false' : 'true';
-            } else if (key === PREF_KEYS.rightPanelVisible || key === PREF_KEYS.ticketInfoVisible || key === PREF_KEYS.invitationFormVisible || key === PREF_KEYS.wideMode) {
+            } else if (key === PREF_KEYS.rightPanelVisible || key === PREF_KEYS.leftSidebarVisible || key === PREF_KEYS.ticketInfoVisible || key === PREF_KEYS.invitationFormVisible || key === PREF_KEYS.wideMode || key === PREF_KEYS.welcomeDismissed) {
                 if (value === null || value === undefined) {
                     serialized = null;
                 } else {

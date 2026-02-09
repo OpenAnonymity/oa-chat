@@ -8,6 +8,19 @@ const DEFAULT_SCRUBBER_MODEL = 'gpt-oss-120b';
 const SCRUBBER_MODEL_SETTING_KEY = 'scrubberModel';
 const CONFIDENTIAL_KEY_TICKETS_REQUIRED = 2;
 
+// Allowed scrubber models (whitelist)
+const ALLOWED_SCRUBBER_MODELS = new Set([
+    'kimi-k2-5',
+    'gpt-oss-120b',
+    'gpt-oss-safeguard-120b',
+    'llama3-3-70b'
+]);
+
+// Models that are slow and should show a "slow" label
+const SLOW_SCRUBBER_MODELS = new Set([
+    'kimi-k2-5'
+]);
+
 const REDACT_PROMPT = [
     'Rewrite the following prompt in a privacy preserving way.',
     'Remove all PII and sensitive data.',
@@ -233,13 +246,21 @@ class ScrubberService {
 
         this.modelsPromise = (async () => {
             // Model list endpoint is public - no API key needed
-            const models = await localInferenceService.fetchModels(SCRUBBER_BACKEND_ID);
-            this.models = Array.isArray(models) ? models : [];
+            const allModels = await localInferenceService.fetchModels(SCRUBBER_BACKEND_ID);
+            // Filter to only allowed scrubber models
+            const filtered = Array.isArray(allModels)
+                ? allModels.filter(m => ALLOWED_SCRUBBER_MODELS.has(m.id))
+                : [];
+            this.models = filtered;
             this.modelsLoaded = true;
             return this.models;
         })();
 
         return this.modelsPromise;
+    }
+
+    isSlowModel(modelId) {
+        return SLOW_SCRUBBER_MODELS.has(modelId);
     }
 
     applyRedactionToMessages(messages, redactedText) {

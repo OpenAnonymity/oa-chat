@@ -35,6 +35,7 @@ const SYNCABLE_PREF_KEYS = [
     'pref-font-mode',
     'pref-network-proxy-settings'
 ];
+const SYNC_PREF_UPDATED_AT_PREFIX = 'sync-pref-updated-at:';
 
 // Logical IDs (client-side only, never sent to server)
 const LOGICAL_IDS = {
@@ -343,6 +344,18 @@ class SyncService {
         return this.accessToken;
     }
 
+    getPreferenceTimestampKey(key) {
+        return `${SYNC_PREF_UPDATED_AT_PREFIX}${key}`;
+    }
+
+    normalizeTimestamp(value) {
+        const timestamp = Number(value);
+        if (!Number.isFinite(timestamp) || timestamp <= 0) {
+            return null;
+        }
+        return Math.floor(timestamp);
+    }
+
     async refreshAccessToken() {
         if (!this.refreshTokenCallback) return false;
         try {
@@ -492,14 +505,18 @@ class SyncService {
             );
 
             // Apply based on type (stored inside encrypted payload)
+            let applied = false;
             if (payload.type === 'tickets') {
                 await this._mergeTickets(logicalId, payload.data);
+                applied = true;
             } else if (payload.type === 'preference') {
-                await this._mergePreference(payload.key, payload.value);
+                applied = await this._mergePreference(payload.key, payload.value, payload.updatedAt);
             }
 
-            this.notify('blob_received', { type: payload.type, logicalId });
-            return true;
+            if (applied) {
+                this.notify('blob_received', { type: payload.type, logicalId });
+            }
+            return applied;
         } catch (error) {
             console.warn('[SyncService] Failed to decrypt blob:', serverBlob.id, error);
             return false;
@@ -560,10 +577,39 @@ class SyncService {
         }
     }
 
-    async _mergePreference(key, value) {
-        if (!key) return;
-        // Last-write-wins - server version wins on pull
-        await chatDB.saveSetting(key, value);
+    async _mergePreference(key, value, incomingUpdatedAt = null) {
+        if (!key) return false;
+
+        const timestampKey = this.getPreferenceTimestampKey(key);
+        const [localUpdatedAtRaw] = await Promise.all([
+            chatDB.getSetting(timestampKey)
+        ]);
+
+        const localUpdatedAt = this.normalizeTimestamp(localUpdatedAtRaw);
+        const remoteUpdatedAt = this.normalizeTimestamp(incomingUpdatedAt);
+
+        // Legacy payloads may not include timestamps.
+        // If we have local timestamped data, keep it to avoid clobbering recent local edits.
+        if (remoteUpdatedAt === null && localUpdatedAt !== null) {
+            return false;
+        }
+        if (remoteUpdatedAt !== null && localUpdatedAt !== null && remoteUpdatedAt < localUpdatedAt) {
+            return false;
+        }
+
+        const resolvedUpdatedAt = remoteUpdatedAt || Date.now();
+
+        if (typeof chatDB.saveSettings === 'function') {
+            await chatDB.saveSettings([
+                { key, value },
+                { key: timestampKey, value: resolvedUpdatedAt }
+            ]);
+        } else {
+            await chatDB.saveSetting(key, value);
+            await chatDB.saveSetting(timestampKey, resolvedUpdatedAt);
+        }
+
+        return true;
     }
 
     async _push(masterKey, accessToken) {
@@ -633,11 +679,14 @@ class SyncService {
         for (const key of SYNCABLE_PREF_KEYS) {
             const value = await chatDB.getSetting(key);
             if (value !== undefined) {
+                const updatedAt = this.normalizeTimestamp(
+                    await chatDB.getSetting(this.getPreferenceTimestampKey(key))
+                );
                 const opaqueId = await deriveOpaqueBlobId(masterKey, key);
                 const { ciphertext, iv } = await encryptBlob(
                     masterKey,
                     key,
-                    { type: 'preference', key, value }  // Type and key are INSIDE
+                    { type: 'preference', key, value, updatedAt }  // Type and key are INSIDE
                 );
                 blobs.push({ id: opaqueId, ciphertext, iv, version: 1 });
             }

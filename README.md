@@ -1,10 +1,10 @@
 ## `oa-fastchat`
 
-A minimal, fast chat client that talks directly to the selected inference backend (OpenRouter by default) using ephemeral, anonymous access credentials obtained via the Open Anonymity network. Everything runs directly in the browser with no backend; development is HTML-first, while production builds are bundled with esbuild and minified with terser.
+A minimal, fast chat client that talks directly to the selected inference backend (OpenRouter by default) using ephemeral, unlinkable access credentials obtained via the Open Anonymity network. Everything runs directly in the browser with no backend; development is HTML-first, while production builds are bundled with esbuild and minified with terser.
 
 ### Highlights
 - **Standalone**: Pure ES modules loaded in the browser; no server required.
-- **Provably anonymity**: Keys are ephemeral and acquired via Privacy Pass–backed inference tickets.
+- **Provable unlinkability**: Keys are ephemeral and acquired via Privacy Pass–backed inference tickets.
 - **Persistent locally**: Sessions, messages, settings, and everything else are all *locally* stored in IndexedDB.
 - **Streaming UX**: Incremental token updates with reliable auto‑scroll.
 - **Markdown + LaTeX**: Rendered with Marked and KaTeX (self-hosted vendor assets).
