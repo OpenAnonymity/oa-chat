@@ -1672,12 +1672,6 @@ export default class ChatInput {
         if (!toggle) return;
         toggle.setAttribute('aria-pressed', this.app.memoryEnabled);
         toggle.classList.toggle('search-active', this.app.memoryEnabled);
-        console.log('[ChatInput] Updated memory toggle UI:', {
-            memoryEnabled: this.app.memoryEnabled,
-            scrubEnabled: this.app.scrubEnabled,
-            hasSearchActiveClass: toggle.classList.contains('search-active'),
-            classList: Array.from(toggle.classList)
-        });
         
         // Remove disabled styling - the button should always be clickable
         // When scrub is enabled and memory is off, show a subtle visual hint but allow clicking
