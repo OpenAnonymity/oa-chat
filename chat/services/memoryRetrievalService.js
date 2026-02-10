@@ -66,9 +66,7 @@ class MemoryRetrievalService {
             onProgress?.('Searching relevant sessions...');
             
             const embedder = await this.getSessionEmbedder();
-            console.log('[Memory Retrieval] Searching sessions with query:', userQuery);
             const sessionResults = await embedder.searchSessions(userQuery, 5);
-            console.log('[Memory Retrieval] Raw session results:', sessionResults);
             
             onProgress?.('Memory retrieval complete!');
             

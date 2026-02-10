@@ -17,6 +17,8 @@
 import inferenceService from './inference/inferenceService.js';
 import { chatDB } from '../db.js';
 
+const KEY_EXPIRY_THRESHOLD_MS = 2 * 60 * 1000; // Regenerate if key expires in less than 2 minutes
+
 const KEYWORDS_GENERATION_PROMPT = `Analyze this conversation and generate:
 1. A concise title about the main topic (max 50 chars, descriptive and specific - NOT meta descriptions like "Chat about X" or "Discussion on Y")
 2. Exactly 3 broad, generic keywords for retrieval (high-level topics, not specific technical terms)
@@ -52,16 +54,12 @@ class KeywordsGenerator {
     /**
      * Check if a session needs keywords generation.
      * @param {Object} session - Session object
+     * @param {number} currentMessageCount - Current number of messages in session
      * @returns {boolean} True if needs generation
      */
-    needsGeneration(session) {
+    needsGeneration(session, currentMessageCount = 0) {
         if (!session) return false;
         
-        // Skip if already has both summary and keywords
-        if (session.summary && session.keywords && session.keywords.length > 0) {
-            return false;
-        }
-
         // Skip if generation is already in progress
         if (this.generationInProgress.has(session.id)) {
             return false;
@@ -70,7 +68,29 @@ class KeywordsGenerator {
         // Skip if session has no messages (empty chat)
         // This will be checked when actually generating
 
-        return true;
+        // Generate if session has never had keywords generated
+        if (!session.summary || !session.keywords || session.keywords.length === 0) {
+            return true;
+        }
+
+        // Check if API key is expiring soon (within 2 minutes)
+        if (session.expiresAt) {
+            const timeUntilExpiry = new Date(session.expiresAt) - Date.now();
+            if (timeUntilExpiry > 0 && timeUntilExpiry <= KEY_EXPIRY_THRESHOLD_MS) {
+                console.log(`[KeywordsGenerator] Regenerating keywords - key expires in ${Math.floor(timeUntilExpiry / 1000)}s`);
+                return true;
+            }
+        }
+
+        // Regenerate if conversation has grown significantly (10+ new messages)
+        const messageCountAtGeneration = session.messageCountAtGeneration || 0;
+        const newMessagesSinceGeneration = currentMessageCount - messageCountAtGeneration;
+        if (newMessagesSinceGeneration >= 10) {
+            console.log(`[KeywordsGenerator] Regenerating keywords - ${newMessagesSinceGeneration} new messages since last generation`);
+            return true;
+        }
+
+        return false;
     }
 
     /**
@@ -93,9 +113,23 @@ class KeywordsGenerator {
             return null;
         }
 
-        // Check if generation is needed
-        if (!this.needsGeneration(session)) {
-            console.log('[KeywordsGenerator] Session already has keywords:', sessionId);
+        // Get messages to check count and validity
+        const messages = await chatDB.getSessionMessages(sessionId);
+        if (!messages || messages.length === 0) {
+            console.log('[KeywordsGenerator] No messages in session:', sessionId);
+            return null;
+        }
+
+        // Check if session API key is still valid
+        if (inferenceService.isAccessExpired(session)) {
+            console.log('[KeywordsGenerator] Session API key expired, skipping generation:', sessionId);
+            return null;
+        }
+
+        // Check if generation is needed (pass message count for regeneration logic)
+        const filteredMessages = messages.filter(msg => !msg.isLocalOnly);
+        if (!this.needsGeneration(session, filteredMessages.length)) {
+            console.log('[KeywordsGenerator] Session already has up-to-date keywords:', sessionId);
             return { summary: session.summary, keywords: session.keywords };
         }
 
@@ -103,15 +137,7 @@ class KeywordsGenerator {
         this.generationInProgress.add(sessionId);
 
         try {
-            // Get messages for the session
-            const messages = await chatDB.getSessionMessages(sessionId);
-            if (!messages || messages.length === 0) {
-                console.log('[KeywordsGenerator] No messages in session:', sessionId);
-                return null;
-            }
-
-            // Filter out local-only messages
-            const filteredMessages = messages.filter(msg => !msg.isLocalOnly);
+            // filteredMessages already computed above
             if (filteredMessages.length === 0) {
                 console.log('[KeywordsGenerator] No non-local messages in session:', sessionId);
                 return null;
@@ -221,6 +247,7 @@ class KeywordsGenerator {
             session.summary = summary;
             session.keywords = keywords;
             session.keywordsGeneratedAt = Date.now();
+            session.messageCountAtGeneration = filteredMessages.length; // Track message count for regeneration
             await chatDB.saveSession(session);
 
             // Update in-memory session in app state if app reference provided
@@ -230,6 +257,7 @@ class KeywordsGenerator {
                     inMemorySession.summary = summary;
                     inMemorySession.keywords = keywords;
                     inMemorySession.keywordsGeneratedAt = Date.now();
+                    inMemorySession.messageCountAtGeneration = filteredMessages.length;
                 }
             }
 

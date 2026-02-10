@@ -287,7 +287,17 @@ export default class ChatInput {
                     this.app.memorySelector?.close();
                     this.app.pendingMemoryContext = null;
                     this.renderMemoryChips([]);
+                    // When memory is disabled, enable scrubbing
+                    this.app.scrubEnabled = true;
+                    await chatDB.saveSetting('scrubEnabled', true);
+                } else {
+                    // When memory is enabled, disable scrubbing
+                    this.app.scrubEnabled = false;
+                    await chatDB.saveSetting('scrubEnabled', false);
                 }
+                
+                // Update scrubber hint visibility to reflect the change
+                this.updateScrubberHintVisibility();
             });
         }
 
@@ -470,6 +480,13 @@ export default class ChatInput {
             this.resetScrubberTabShortcutState();
             return;
         }
+        
+        // Don't allow scrubbing when memory is enabled
+        if (this.app.memoryEnabled) {
+            this.resetScrubberTabShortcutState();
+            return;
+        }
+        
         const now = Date.now();
         const withinWindow = now - this.scrubberState.lastTabAt < 420;
         this.scrubberState.lastTabAt = now;
@@ -578,6 +595,19 @@ export default class ChatInput {
             this.app.showToast('Nothing to scrub', 'error');
             return;
         }
+
+        // When scrubbing is triggered, disable memory
+        if (this.app.memoryEnabled) {
+            this.app.memoryEnabled = false;
+            this.updateMemoryToggleUI();
+            await chatDB.saveSetting('memoryEnabled', false);
+            this.app.memorySelector?.close();
+            this.app.pendingMemoryContext = null;
+            this.renderMemoryChips([]);
+        }
+        // Enable scrubbing
+        this.app.scrubEnabled = true;
+        await chatDB.saveSetting('scrubEnabled', true);
 
         const modeLabel = scrubberService.getModeLabel ? scrubberService.getModeLabel() : 'confidential model';
         const stopToast = this.app.showLoadingToast?.(`Scrubbing input query with ${modeLabel}`);
@@ -1339,6 +1369,14 @@ export default class ChatInput {
         const input = this.app.elements.messageInput;
         if (!hint || !input) return;
 
+        // Hide hint when memory is enabled (scrubbing is disabled)
+        if (this.app.memoryEnabled) {
+            hint.classList.add('hint-hidden');
+            hint.classList.remove('faded');
+            input.classList.remove('hint-visible');
+            return;
+        }
+
         const len = (input.value || '').length;
         // Hide hint completely after scrubbing (when tooltip can show)
         const hasPending = this.app.scrubberPending?.redacted === input.value;
@@ -1634,6 +1672,13 @@ export default class ChatInput {
         if (!toggle) return;
         toggle.setAttribute('aria-pressed', this.app.memoryEnabled);
         toggle.classList.toggle('search-active', this.app.memoryEnabled);
+        
+        // Disable memory toggle when scrubbing is active
+        if (this.app.scrubEnabled && !this.app.memoryEnabled) {
+            toggle.classList.add('opacity-40', 'pointer-events-none');
+        } else {
+            toggle.classList.remove('opacity-40', 'pointer-events-none');
+        }
     }
 
     /**
@@ -2092,7 +2137,7 @@ export default class ChatInput {
                             ${memories.map((m, idx) => {
                                 const content = m.fullContent || m.displayContent || m.content || m.summary || '';
                                 return `
-                                    <div class="full-prompt-memory-item collapsible" data-memory-index="${idx}">
+                                    <div class="full-prompt-memory-item collapsible collapsed" data-memory-index="${idx}">
                                         <div class="full-prompt-memory-title collapsible-header">
                                             <svg class="collapsible-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
                                                 <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />

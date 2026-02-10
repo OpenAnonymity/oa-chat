@@ -163,6 +163,7 @@ class ChatApp {
         this.searchEnabled = true;
         this.reasoningEnabled = true;
         this.memoryEnabled = false;
+        this.scrubEnabled = true;
         this.sessionSearchQuery = '';
         this.sessionSearchDebounce = null;
         this.sessionSearchRequestId = 0;
@@ -1366,7 +1367,9 @@ class ChatApp {
         const settingsPromise = Promise.all([
             chatDB.getSetting('selectedModel'),
             chatDB.getSetting('searchEnabled'),
-            chatDB.getSetting('reasoningEnabled')
+            chatDB.getSetting('reasoningEnabled'),
+            chatDB.getSetting('memoryEnabled'),
+            chatDB.getSetting('scrubEnabled')
         ]);
 
         // Restore session from sessionStorage as early as possible for chat area hydration.
@@ -1378,7 +1381,7 @@ class ChatApp {
             }
         }
 
-        const [storedModelPreference, savedSearchEnabled, savedReasoningEnabled] = await settingsPromise;
+        const [storedModelPreference, savedSearchEnabled, savedReasoningEnabled, savedMemoryEnabled, savedScrubEnabled] = await settingsPromise;
 
         // Process model preference
         const normalizedModelName = this.upgradeDefaultModelPreference(
@@ -1400,6 +1403,16 @@ class ChatApp {
 
         // Restore memory state
         this.memoryEnabled = savedMemoryEnabled !== undefined ? savedMemoryEnabled : false;
+
+        // Restore scrubbing state
+        this.scrubEnabled = savedScrubEnabled !== undefined ? savedScrubEnabled : true;
+
+        // Enforce mutual exclusivity: memory and scrubbing cannot both be enabled
+        if (this.memoryEnabled && this.scrubEnabled) {
+            // If both are somehow enabled, prioritize memory and disable scrubbing
+            this.scrubEnabled = false;
+            await chatDB.saveSetting('scrubEnabled', false);
+        }
 
         // Render local data immediately (session from sessionStorage + model/settings from DB).
         this.renderMessages();
