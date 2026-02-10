@@ -3357,6 +3357,12 @@ html {
     border-color: hsl(var(--color-foreground) / 0.3) !important;
 }
 
+/* Right panel invitation code: highlight the full input+button shell */
+.invitation-code-input-shell:focus-within {
+    border-color: hsl(var(--color-ring) / 0.6);
+    box-shadow: 0 0 0 1px hsl(var(--color-ring) / 0.4);
+}
+
 /* Shared subtle hover effect for secondary buttons */
 .btn-ghost-hover:hover {
     background-color: hsl(var(--color-hover)) !important;

@@ -1823,22 +1823,35 @@ class RightPanel {
 
                 ${this.showInvitationForm ? `
                     <form id="invitation-code-form" class="space-y-2 mt-3 p-3 bg-muted/10 rounded-lg">
-                        <input
-                            id="invitation-code-input"
-                            type="text"
-                            placeholder="Enter 24-char ticket code"
-                            maxlength="24"
-                            class="input-focus-clean w-full px-3 py-2 text-xs border border-border rounded-md bg-background text-foreground placeholder:text-muted-foreground transition-all"
-                            value="${this.pendingInvitationCode ? this.escapeHtml(this.pendingInvitationCode) : ''}"
-                            ${this.isRegistering ? 'disabled' : ''}
-                        />
-                        <button
-                            type="submit"
-                            class="btn-ghost-hover w-full inline-flex items-center justify-center rounded-md text-xs font-medium transition-all duration-200 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 bg-background text-foreground h-8 px-3 shadow-sm border border-border"
-                            ${this.isRegistering ? 'disabled' : ''}
+                        <div class="invitation-code-input-shell flex items-center w-full h-8 border border-border rounded-md bg-background transition-all">
+                            <input
+                                id="invitation-code-input"
+                                type="text"
+                                placeholder="Enter 24-char ticket code"
+                                maxlength="24"
+                                class="flex-1 h-full px-3 text-xs bg-transparent text-foreground placeholder:text-muted-foreground/70 focus:outline-none"
+                                value="${this.pendingInvitationCode ? this.escapeHtml(this.pendingInvitationCode) : ''}"
+                                ${this.isRegistering ? 'disabled' : ''}
+                            />
+                            <button
+                                type="submit"
+                                class="flex-shrink-0 w-6 h-6 m-1 rounded-md border border-border bg-background text-muted-foreground hover:text-foreground hover:bg-accent transition-colors flex items-center justify-center disabled:opacity-50 disabled:pointer-events-none"
+                                aria-label="${this.isRegistering ? 'Redeeming ticket code' : 'Redeem ticket code'}"
+                                ${this.isRegistering ? 'disabled' : ''}
+                            >
+                                <svg class="w-3 h-3" width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
+                                </svg>
+                            </button>
+                        </div>
+                        <a
+                            href="https://openanonymity.ai/beta"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            class="btn-ghost-hover w-full inline-flex items-center justify-center rounded-md text-xs font-medium transition-all duration-200 focus-visible:outline-none bg-background text-foreground h-8 px-3 shadow-sm border border-border"
                         >
-                            ${this.isRegistering ? 'Redeeming...' : 'Redeem Code'}
-                        </button>
+                            Request beta access
+                        </a>
                     </form>
 
                     ${this.registrationProgress ? `
