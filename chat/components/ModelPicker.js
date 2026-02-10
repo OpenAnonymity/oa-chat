@@ -372,7 +372,14 @@ export default class ModelPicker {
             : '<span class="w-4 h-4 flex-shrink-0"></span>';
 
         // Build ticket badge - always show for all models
-        const ticketBadge = `<span class="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-medium flex-shrink-0 min-w-[26px] text-center" title="${ticketCost} ticket${ticketCost > 1 ? 's' : ''}">${ticketCost}×</span>`;
+        const ticketBadge = `
+            <span class="text-xs px-2 py-1 rounded bg-muted text-muted-foreground font-medium flex-shrink-0 min-w-[34px] inline-flex items-center justify-center gap-1.5" title="${ticketCost} ticket${ticketCost > 1 ? 's' : ''}">
+                <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z"></path>
+                </svg>
+                <span>${ticketCost}</span>
+            </span>
+        `;
 
         return `
             <div class="model-option px-2 py-1.5 rounded-sm cursor-pointer transition-colors hover:bg-accent ${isSelected ? 'bg-accent' : ''}" data-model-name="${model.name}">
