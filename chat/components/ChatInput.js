@@ -1672,6 +1672,11 @@ export default class ChatInput {
         if (!toggle) return;
         toggle.setAttribute('aria-pressed', this.app.memoryEnabled);
         toggle.classList.toggle('search-active', this.app.memoryEnabled);
+        console.log('[ChatInput] Updated memory toggle UI:', {
+            memoryEnabled: this.app.memoryEnabled,
+            hasSearchActiveClass: toggle.classList.contains('search-active'),
+            classList: Array.from(toggle.classList)
+        });
         
         // Disable memory toggle when scrubbing is active
         if (this.app.scrubEnabled && !this.app.memoryEnabled) {
