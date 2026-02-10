@@ -1674,16 +1674,14 @@ export default class ChatInput {
         toggle.classList.toggle('search-active', this.app.memoryEnabled);
         console.log('[ChatInput] Updated memory toggle UI:', {
             memoryEnabled: this.app.memoryEnabled,
+            scrubEnabled: this.app.scrubEnabled,
             hasSearchActiveClass: toggle.classList.contains('search-active'),
             classList: Array.from(toggle.classList)
         });
         
-        // Disable memory toggle when scrubbing is active
-        if (this.app.scrubEnabled && !this.app.memoryEnabled) {
-            toggle.classList.add('opacity-40', 'pointer-events-none');
-        } else {
-            toggle.classList.remove('opacity-40', 'pointer-events-none');
-        }
+        // Remove disabled styling - the button should always be clickable
+        // When scrub is enabled and memory is off, show a subtle visual hint but allow clicking
+        toggle.classList.remove('opacity-40', 'pointer-events-none');
     }
 
     /**
