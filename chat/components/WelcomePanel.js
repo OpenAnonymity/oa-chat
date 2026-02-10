@@ -504,7 +504,7 @@ class WelcomePanel {
                         Technical Details
                     </a>
                     <a
-                        href="https://openanonymity.ai/beta"
+                        href="https://openanonymity.ai/beta#desktop"
                         target="_blank"
                         rel="noopener noreferrer"
                         class="text-xs text-muted-foreground hover:text-foreground hover:underline transition-colors"
