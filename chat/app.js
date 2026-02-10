@@ -1691,6 +1691,20 @@ class ChatApp {
             return;
         }
 
+        // If local changes exist, never overwrite this session in place.
+        // Offer "fresh copy" flow and keep local edits in the existing session.
+        const hasLocalChanges = await this.hasLocalChangesSinceImport(existingSession);
+        if (hasLocalChanges) {
+            const wantsFresh = await this.showForkedSessionPrompt(existingSession);
+            if (wantsFresh) {
+                await this.markImportedSessionAsForked(existingSession);
+                await this.importSharedSession(shareId);
+            } else {
+                await this.switchSession(existingSession.id);
+            }
+            return;
+        }
+
         const wantsFresh = await this.showImportUpdatePrompt(existingSession);
         if (wantsFresh) {
             await this.importSharedSessionWithData(shareId, shareData);
@@ -1706,6 +1720,42 @@ class ChatApp {
      */
     showImportUpdatePrompt(existingSession) {
         return shareModals.showUpdatePrompt(existingSession);
+    }
+
+    /**
+     * Detect whether an imported session has local changes since the last import.
+     * Uses timestamp baseline when available and falls back to message-count drift.
+     * @param {Object} session - Imported session
+     * @returns {Promise<boolean>} True if local changes are detected
+     */
+    async hasLocalChangesSinceImport(session) {
+        if (!session?.importedFrom) return false;
+
+        const baselineTs = Number(session.lastImportedAt);
+        if (Number.isFinite(baselineTs) && Number(session.updatedAt) > baselineTs) {
+            return true;
+        }
+
+        const importedCount = Number(session.importedMessageCount);
+        if (!Number.isFinite(importedCount) || importedCount < 0) {
+            return false;
+        }
+
+        const currentMessages = await chatDB.getSessionMessages(session.id);
+        return currentMessages.length !== importedCount;
+    }
+
+    /**
+     * Convert an imported session into a local fork so it no longer auto-updates from upstream share.
+     * @param {Object} session - Current session
+     */
+    async markImportedSessionAsForked(session) {
+        if (!session?.importedFrom) return;
+
+        session.forkedFrom = session.importedFrom;
+        session.importedFrom = null;
+        session.importedCiphertext = null;
+        await chatDB.saveSession(session);
     }
 
     /**
@@ -1897,6 +1947,7 @@ class ChatApp {
             existingSession.searchEnabled = payload.session.searchEnabled ?? true;
             existingSession.inferenceBackend = payload.session.inferenceBackend || existingSession.inferenceBackend || inferenceService.getDefaultBackendId();
             existingSession.updatedAt = Date.now();
+            existingSession.lastImportedAt = existingSession.updatedAt;
             existingSession.importedMessageCount = payload.messages.length;
             existingSession.importedCiphertext = encryptedData.ciphertext;
 
@@ -3379,6 +3430,12 @@ class ChatApp {
         let session = this.getCurrentSession();
         if (!session) return;
 
+        // Any local regeneration on an imported session forks it from upstream updates.
+        if (session.importedFrom) {
+            await this.markImportedSessionAsForked(session);
+            this.updateUrlWithSession(session.id);
+        }
+
         // Check if current session is already streaming
         const streamingState = this.getSessionStreamingState(session.id);
         if (streamingState.isStreaming) return;
@@ -3793,20 +3850,10 @@ class ChatApp {
         let session = this.getCurrentSession();
         if (!session) return; // Safety check
 
-        // If this is an imported session and URL still shows the original share ID,
-        // "fork" it - update URL to local session ID and mark as forked
+        // Any local user message on an imported session forks it from upstream updates.
         if (session.importedFrom) {
-            const params = new URLSearchParams(window.location.search);
-            const urlShareId = shareService.normalizeShareId(params.get('s'));
-            if (urlShareId === session.importedFrom) {
-                // Move importedFrom to forkedFrom (for UI display only)
-                // Clear importedFrom so this session won't receive updates from share
-                session.forkedFrom = session.importedFrom;
-                session.importedFrom = null;
-                session.importedCiphertext = null;  // No longer tracking updates
-                await chatDB.saveSession(session);  // Persist the fork
-                this.updateUrlWithSession(session.id);
-            }
+            await this.markImportedSessionAsForked(session);
+            this.updateUrlWithSession(session.id);
         }
 
         // TODO: Re-enable verifier offline check later
@@ -4494,6 +4541,11 @@ class ChatApp {
     async confirmEditPrompt(messageId) {
         const session = this.getCurrentSession();
         if (!session) return;
+
+        if (session.importedFrom) {
+            await this.markImportedSessionAsForked(session);
+            this.updateUrlWithSession(session.id);
+        }
 
         const textarea = document.querySelector(`.edit-prompt-textarea[data-message-id="${messageId}"]`);
         if (!textarea) return;

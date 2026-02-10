@@ -45,7 +45,7 @@ export function normalizeShareId(id) {
  * POST /chat/share
  * @param {string} shareId - Client-generated share ID
  * @param {Object} encryptedData - {salt, iv, ciphertext}
- * @param {number} [expiresInSeconds=604800] - TTL in seconds (default: 7 days)
+ * @param {number} [expiresInSeconds=604800] - TTL in seconds (default: 7 days, 0 = no expiry)
  * @returns {Promise<{id: string, token: string, created_at: number, expires_at: number}>}
  */
 async function createShareApi(shareId, encryptedData, expiresInSeconds = 604800) {
@@ -58,9 +58,13 @@ async function createShareApi(shareId, encryptedData, expiresInSeconds = 604800)
         ciphertext: encryptedData.ciphertext
     };
 
-    // Only include expires_in if it's a positive value (0 = indefinite, omit to let server decide)
+    // Explicit expiry semantics:
+    // - > 0: finite TTL in seconds
+    // - 0: no expiry (null)
     if (expiresInSeconds > 0) {
         requestBody.expires_in = expiresInSeconds;
+    } else if (expiresInSeconds === 0) {
+        requestBody.expires_in = null;
     }
 
     // POST with client-generated ID - use 2 retries (409 Conflict means ID exists)
@@ -98,7 +102,7 @@ async function createShareApi(shareId, encryptedData, expiresInSeconds = 604800)
  * @param {string} shareId - Share ID to update
  * @param {string} token - Token for ownership proof
  * @param {Object} encryptedData - {salt, iv, ciphertext}
- * @param {number} [expiresInSeconds=604800] - TTL in seconds
+ * @param {number} [expiresInSeconds=604800] - TTL in seconds (0 = no expiry)
  * @returns {Promise<{id: string, created_at: number, expires_at: number}>}
  */
 async function updateShareApi(shareId, token, encryptedData, expiresInSeconds = 604800) {
@@ -110,9 +114,13 @@ async function updateShareApi(shareId, token, encryptedData, expiresInSeconds = 
         ciphertext: encryptedData.ciphertext
     };
 
-    // Only include expires_in if it's a positive value (0 = indefinite, omit to let server decide)
+    // Explicit expiry semantics:
+    // - > 0: finite TTL in seconds
+    // - 0: no expiry (null)
     if (expiresInSeconds > 0) {
         requestBody.expires_in = expiresInSeconds;
+    } else if (expiresInSeconds === 0) {
+        requestBody.expires_in = null;
     }
 
     // PATCH is idempotent with token - safe to retry
@@ -373,6 +381,7 @@ export function createSessionFromPayload(payload, shareId, ciphertext, generateI
         title: payload.session.title || 'Imported Chat',
         createdAt: Date.now(),
         updatedAt: Date.now(),
+        lastImportedAt: Date.now(),
         model: payload.session.model,
         inferenceBackend: backendId,
         apiKey: sessionAccess?.token || null,
@@ -428,8 +437,10 @@ export function createMessagesFromPayload(payloadMessages, sessionId, generateId
  * @returns {Object} shareInfo object
  */
 export function buildShareInfo(result, shareId, messageCount, isPlaintext, apiKeyShared, ttlSeconds) {
-    // Convert expires_at to milliseconds if it's in seconds (Unix epoch)
-    const expiresAtMs = result.expires_at < 1e12 ? result.expires_at * 1000 : result.expires_at;
+    // Convert expires_at to milliseconds if it's in seconds (Unix epoch).
+    // Preserve null for non-expiring shares.
+    const rawExpiresAt = result.expires_at;
+    const expiresAtMs = rawExpiresAt == null ? null : (rawExpiresAt < 1e12 ? rawExpiresAt * 1000 : rawExpiresAt);
 
     return {
         shareId: normalizeShareId(shareId),
