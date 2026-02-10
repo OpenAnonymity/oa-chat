@@ -35,6 +35,8 @@ class SessionEmbedder {
         this.activeSessionIds = new Set(); // Sessions that have had activity this browser session
         this.backfillQueue = []; // Queue of session IDs to backfill
         this.isBackfilling = false; // Whether backfill is in progress
+        this._searchTimings = []; // Profiling data for searchSessions
+        this._embedTimings = []; // Profiling data for embedSession
     }
 
     /**
@@ -340,7 +342,9 @@ class SessionEmbedder {
 
             // Generate embedding
             console.debug(`[SessionEmbedder] Generating embedding for session ${sessionId}...`);
+            const te0 = performance.now();
             const embedding = await this.embedder.embedText(conversationText);
+            const te1 = performance.now();
 
             // Store in vector store
             const vectorId = encodeVectorId({
@@ -365,12 +369,18 @@ class SessionEmbedder {
                     updatedAt: session.updatedAt || null
                 }
             }]);
+            const te2 = performance.now();
 
             // Update session with lastEmbeddedAt timestamp (persisted to IndexedDB)
             session.lastEmbeddedAt = Date.now();
             await chatDB.saveSession(session);
+            const te3 = performance.now();
 
-            console.log(`[SessionEmbedder] Embedded session "${session.title || sessionId}" (${messages.length} messages)`);
+            const embedMs = te1 - te0;
+            const upsertMs = te2 - te1;
+            const saveMs = te3 - te2;
+            this._embedTimings.push({ embedMs, upsertMs, saveMs, contentLength: conversationText.length, messageCount: messages.length, ts: Date.now() });
+            console.log(`[SessionEmbedder] Embedded session "${session.title || sessionId}" (${messages.length} messages) — embed: ${embedMs.toFixed(2)}ms, upsert: ${upsertMs.toFixed(2)}ms, save: ${saveMs.toFixed(2)}ms`);
 
         } catch (error) {
             console.warn(`[SessionEmbedder] Failed to embed session ${sessionId}:`, error);
@@ -418,10 +428,18 @@ class SessionEmbedder {
 
         try {
             // Generate embedding for query
+            const t0 = performance.now();
             const queryEmbedding = await this.embedder.embedText(query);
+            const t1 = performance.now();
 
             // Search vector store
             const results = await this.store.search(queryEmbedding, k, options);
+            const t2 = performance.now();
+
+            const embedMs = t1 - t0;
+            const retrievalMs = t2 - t1;
+            this._searchTimings.push({ embedMs, retrievalMs, ts: Date.now() });
+            console.log(`[SessionEmbedder] searchSessions timing — embed query: ${embedMs.toFixed(2)}ms, retrieval: ${retrievalMs.toFixed(2)}ms, total: ${(embedMs + retrievalMs).toFixed(2)}ms`);
 
             return results.map(r => ({
                 sessionId: r.metadata?.sessionId,
@@ -439,6 +457,87 @@ class SessionEmbedder {
             console.warn('[SessionEmbedder] Search failed:', error);
             return [];
         }
+    }
+
+    /**
+     * Get aggregate profiling stats for searchSessions calls.
+     * Call from console: sessionEmbedder.getSearchProfile()
+     */
+    getSearchProfile() {
+        const t = this._searchTimings;
+        if (t.length === 0) return { calls: 0, message: 'No search calls recorded yet.' };
+
+        const percentile = (arr, p) => {
+            const sorted = [...arr].sort((a, b) => a - b);
+            const i = Math.ceil((p / 100) * sorted.length) - 1;
+            return sorted[Math.max(0, i)];
+        };
+
+        const summarize = (values) => ({
+            min: Math.min(...values).toFixed(2),
+            max: Math.max(...values).toFixed(2),
+            avg: (values.reduce((a, b) => a + b, 0) / values.length).toFixed(2),
+            p50: percentile(values, 50).toFixed(2),
+            p95: percentile(values, 95).toFixed(2),
+        });
+
+        const embeds = t.map(e => e.embedMs);
+        const retrievals = t.map(e => e.retrievalMs);
+        const totals = t.map(e => e.embedMs + e.retrievalMs);
+
+        const profile = {
+            calls: t.length,
+            embedQuery: summarize(embeds),
+            retrieval: summarize(retrievals),
+            total: summarize(totals),
+        };
+
+        console.table({ embedQuery: profile.embedQuery, retrieval: profile.retrieval, total: profile.total });
+        return profile;
+    }
+
+    /**
+     * Get aggregate profiling stats for embedSession calls.
+     * Call from console: sessionEmbedder.getEmbedProfile()
+     */
+    getEmbedProfile() {
+        const t = this._embedTimings;
+        if (t.length === 0) return { calls: 0, message: 'No embed calls recorded yet.' };
+
+        const percentile = (arr, p) => {
+            const sorted = [...arr].sort((a, b) => a - b);
+            const i = Math.ceil((p / 100) * sorted.length) - 1;
+            return sorted[Math.max(0, i)];
+        };
+
+        const summarize = (values) => ({
+            min: Math.min(...values).toFixed(2),
+            max: Math.max(...values).toFixed(2),
+            avg: (values.reduce((a, b) => a + b, 0) / values.length).toFixed(2),
+            p50: percentile(values, 50).toFixed(2),
+            p95: percentile(values, 95).toFixed(2),
+        });
+
+        const embeds = t.map(e => e.embedMs);
+        const upserts = t.map(e => e.upsertMs);
+        const saves = t.map(e => e.saveMs);
+        const totals = t.map(e => e.embedMs + e.upsertMs + e.saveMs);
+        const contentLengths = t.map(e => e.contentLength);
+        const messageCounts = t.map(e => e.messageCount);
+
+        const profile = {
+            calls: t.length,
+            embed: summarize(embeds),
+            upsert: summarize(upserts),
+            dbSave: summarize(saves),
+            total: summarize(totals),
+            contentLength: summarize(contentLengths),
+            messageCount: summarize(messageCounts),
+        };
+
+        console.table({ embed: profile.embed, upsert: profile.upsert, dbSave: profile.dbSave, total: profile.total });
+        console.table({ contentLength: profile.contentLength, messageCount: profile.messageCount });
+        return profile;
     }
 
     /**
