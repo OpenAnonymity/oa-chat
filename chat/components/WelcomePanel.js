@@ -10,6 +10,8 @@ import themeManager from '../services/themeManager.js';
 // localStorage key for synchronous pre-hydration check (matches preferencesStore snapshot)
 const STORAGE_KEY_DISMISSED = 'oa-welcome-dismissed';
 const MODAL_CLASSES = 'w-full max-w-md rounded-2xl border border-border shadow-lg mx-4 flex flex-col welcome-modal-enter welcome-modal-glass';
+const FREE_ACCESS_EMAIL_HINT = `Each email can only be used once for free trial. We encourage you to sign up for full beta access; it's a short form but properly registers your interest on the waitlist`;
+const FREE_ACCESS_UNAVAILABLE_HINT = 'Free access is unavailable right now. Please use an invitation code.\nWe encourage you to sign up for full beta access';
 
 class WelcomePanel {
     constructor(app) {
@@ -25,16 +27,24 @@ class WelcomePanel {
         this.redeemError = null;
         this.ticketsRedeemed = 0;
         this.dontShowAgain = false;
+        this.freeAccessRequested = false;
+        this.freeAccessAvailable = false;
+        this.freeAccessAvailability = null;
+        this.canUseEmailForFreeAccess = false;
 
         // UI state
         this.returnFocusEl = null;
         this.escapeHandler = null;
         this.importCloseHandler = null;
         this.themeUnsubscribe = null;
+        this.ticketsUpdatedHandler = null;
+        this.welcomeAnchorTop = null;
     }
 
     async init() {
         if (!this.overlay) return;
+        this.ensureTicketsUpdatedListener();
+        await this.refreshFreeAccessEligibility({ renderIfOpen: false });
         if (!this.shouldShow()) return;
         this.open();
     }
@@ -59,9 +69,11 @@ class WelcomePanel {
         this.redeemProgress = null;
         this.redeemError = null;
         this.ticketsRedeemed = 0;
+        this.welcomeAnchorTop = null;
 
         this.render();
         this.overlay.classList.remove('hidden');
+        document.documentElement.removeAttribute('data-welcome-hidden');
 
         // Attach close handlers
         this.overlay.onclick = (e) => { if (e.target === this.overlay) this.handleCloseAttempt(); };
@@ -72,8 +84,6 @@ class WelcomePanel {
     handleCloseAttempt() {
         // Don't allow closing during active redemption
         if (this.isRedeeming) return;
-        // Don't allow closing without tickets
-        if (ticketClient.getTicketCount() === 0) return;
         this.close();
     }
 
@@ -88,6 +98,10 @@ class WelcomePanel {
 
         this.overlay.classList.add('hidden');
         this.overlay.innerHTML = '';
+        document.documentElement.setAttribute('data-welcome-hidden', 'true');
+        this.overlay.style.alignItems = '';
+        this.overlay.style.paddingTop = '';
+        this.welcomeAnchorTop = null;
 
         this.themeUnsubscribe?.();
         this.themeUnsubscribe = null;
@@ -111,6 +125,124 @@ class WelcomePanel {
         return div.innerHTML;
     }
 
+    isEmailInput(value) {
+        const trimmed = (value || '').trim();
+        if (!trimmed || trimmed.length > 254) return false;
+        return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
+    }
+
+    ensureTicketsUpdatedListener() {
+        if (this.ticketsUpdatedHandler) return;
+
+        this.ticketsUpdatedHandler = () => {
+            if (this.isOpen && this.step === 'welcome') {
+                this.render();
+            }
+        };
+
+        window.addEventListener('tickets-updated', this.ticketsUpdatedHandler);
+    }
+
+    async refreshFreeAccessEligibility(options = {}) {
+        const renderIfOpen = options.renderIfOpen !== false;
+
+        try {
+            this.freeAccessRequested = !!await preferencesStore.getPreference(PREF_KEYS.freeAccessRequested);
+        } catch (error) {
+            this.freeAccessRequested = false;
+        }
+
+        if (this.freeAccessRequested) {
+            const hasAnyTicketHistory =
+                ticketClient.getTicketCount() > 0 ||
+                ticketClient.getArchivedTicketCount() > 0;
+
+            if (!hasAnyTicketHistory) {
+                try {
+                    await preferencesStore.savePreference(PREF_KEYS.freeAccessRequested, false);
+                } catch (error) {
+                    console.warn('Failed to clear stale free access requested state:', error);
+                }
+                this.freeAccessRequested = false;
+            }
+        }
+
+        if (this.freeAccessRequested) {
+            this.freeAccessAvailable = false;
+            this.freeAccessAvailability = {
+                available: false,
+                reasonCode: 'FREE_ACCESS_ALREADY_REQUESTED',
+                retryAfterSeconds: null,
+                issuanceEnabled: null
+            };
+            this.canUseEmailForFreeAccess = false;
+            if (renderIfOpen && this.isOpen && this.step === 'welcome') {
+                this.render();
+            }
+            return this.canUseEmailForFreeAccess;
+        }
+
+        const availability = await ticketClient.isFreeAccessAvailable();
+        this.freeAccessAvailability = availability;
+        this.freeAccessAvailable = availability?.available === true;
+        const reasonCode = typeof availability?.reasonCode === 'string'
+            ? availability.reasonCode.toUpperCase()
+            : '';
+        const explicitlyUnavailable =
+            reasonCode === 'FREE_ACCESS_DISABLED' ||
+            reasonCode === 'FREE_ACCESS_LIMITED';
+        this.canUseEmailForFreeAccess = !explicitlyUnavailable;
+
+        if (renderIfOpen && this.isOpen && this.step === 'welcome') {
+            this.render();
+        }
+
+        return this.canUseEmailForFreeAccess;
+    }
+
+    updateInlineInviteFeedback() {
+        if (this.step !== 'welcome') return;
+
+        const feedbackEl = document.getElementById('invite-feedback-text');
+        if (!feedbackEl) return;
+
+        const showHint = this.invitationCode.includes('@') && !this.redeemError;
+        if (showHint) {
+            this.anchorWelcomeDialogFromCurrentPosition();
+            feedbackEl.textContent = FREE_ACCESS_EMAIL_HINT;
+            feedbackEl.classList.remove('hidden', 'text-red-500');
+            feedbackEl.classList.add('text-muted-foreground');
+            return;
+        }
+
+        feedbackEl.textContent = '';
+        feedbackEl.classList.remove('text-red-500', 'text-muted-foreground');
+        feedbackEl.classList.add('hidden');
+        this.resetWelcomeDialogAnchor();
+    }
+
+    anchorWelcomeDialogFromCurrentPosition() {
+        if (!this.overlay) return;
+
+        const dialog = this.overlay.querySelector('[role="dialog"]');
+        if (!dialog) return;
+
+        if (this.welcomeAnchorTop === null) {
+            const rect = dialog.getBoundingClientRect();
+            this.welcomeAnchorTop = Math.max(16, Math.round(rect.top));
+        }
+
+        this.overlay.style.alignItems = 'flex-start';
+        this.overlay.style.paddingTop = `${this.welcomeAnchorTop}px`;
+    }
+
+    resetWelcomeDialogAnchor() {
+        if (!this.overlay) return;
+        this.overlay.style.alignItems = '';
+        this.overlay.style.paddingTop = '';
+        this.welcomeAnchorTop = null;
+    }
+
     // =========================================================================
     // Flow Handlers
     // =========================================================================
@@ -118,9 +250,36 @@ class WelcomePanel {
     async handleInviteSubmit(e) {
         if (e) e.preventDefault();
 
-        const code = this.invitationCode.trim();
-        if (!code || code.length !== 24) {
-            this.redeemError = 'Please enter a valid 24-character invitation code';
+        const value = this.invitationCode.trim();
+        if (!value) {
+            this.redeemError = this.canUseEmailForFreeAccess
+                ? 'Please enter an invitation code or email'
+                : 'Please enter a valid 24-character invitation code';
+            this.render();
+            return;
+        }
+
+        const hasAtSymbol = value.includes('@');
+        const isValidEmail = this.isEmailInput(value);
+        const isEmailSubmission = this.canUseEmailForFreeAccess && isValidEmail;
+        const invitationCode = value.replace(/[\s-]+/g, '');
+
+        if (hasAtSymbol && !this.canUseEmailForFreeAccess) {
+            this.redeemError = FREE_ACCESS_UNAVAILABLE_HINT;
+            this.render();
+            return;
+        }
+
+        if (hasAtSymbol && this.canUseEmailForFreeAccess && !isValidEmail) {
+            this.redeemError = 'Please enter a valid email format (xxx@xxx.xxx).';
+            this.render();
+            return;
+        }
+
+        if (!isEmailSubmission && invitationCode.length !== 24) {
+            this.redeemError = this.canUseEmailForFreeAccess
+                ? 'Please enter a valid invitation code or email'
+                : 'Please enter a valid 24-character invitation code';
             this.render();
             return;
         }
@@ -128,11 +287,54 @@ class WelcomePanel {
         this.step = 'redeeming';
         this.isRedeeming = true;
         this.redeemError = null;
-        this.redeemProgress = { message: 'Starting...', percent: 0 };
+        this.redeemProgress = isEmailSubmission
+            ? { message: 'Requesting free access...', percent: 20 }
+            : { message: 'Starting...', percent: 0 };
         this.render();
 
         try {
-            const result = await ticketClient.alphaRegister(code, (message, percent) => {
+            if (isEmailSubmission) {
+                const freeAccessResult = await ticketClient.requestFreeAccess(value);
+
+                const accessCode = typeof freeAccessResult.accessCode === 'string'
+                    ? freeAccessResult.accessCode.trim()
+                    : '';
+
+                if (accessCode) {
+                    await preferencesStore.savePreference(PREF_KEYS.freeAccessRequested, true);
+                    this.freeAccessRequested = true;
+                    await this.refreshFreeAccessEligibility({ renderIfOpen: false });
+
+                    const ingested = this.app?.ingestTicketCode?.(accessCode, {
+                        autoRedeem: true,
+                        source: 'free_access'
+                    });
+
+                    this.isRedeeming = false;
+                    if (!ingested) {
+                        this.step = 'welcome';
+                        this.redeemError = 'Free access code issued, but automatic redemption failed. Please redeem it in the ticket panel.';
+                        this.render();
+                        return;
+                    }
+
+                    this.app?.showToast?.('Free access granted. Redeeming tickets automatically...', 'success');
+                    this.close();
+                    return;
+                }
+
+                await preferencesStore.savePreference(PREF_KEYS.freeAccessRequested, false);
+                this.freeAccessRequested = false;
+                await this.refreshFreeAccessEligibility({ renderIfOpen: false });
+
+                this.step = 'welcome';
+                this.isRedeeming = false;
+                this.redeemError = freeAccessResult.message || 'You are on the waitlist. Free access tickets are currently unavailable.';
+                this.render();
+                return;
+            }
+
+            const result = await ticketClient.alphaRegister(invitationCode, (message, percent) => {
                 this.redeemProgress = { message, percent };
                 this.render();
             });
@@ -147,6 +349,15 @@ class WelcomePanel {
 
         } catch (error) {
             console.error('Welcome panel invite error:', error);
+            if (isEmailSubmission) {
+                try {
+                    await preferencesStore.savePreference(PREF_KEYS.freeAccessRequested, false);
+                    this.freeAccessRequested = false;
+                    await this.refreshFreeAccessEligibility({ renderIfOpen: false });
+                } catch (saveError) {
+                    console.warn('Failed to persist free access requested state:', saveError);
+                }
+            }
             this.step = 'welcome';
             this.isRedeeming = false;
             this.redeemError = error.message || 'Failed to redeem invitation code';
@@ -206,11 +417,20 @@ class WelcomePanel {
                 break;
         }
 
+        if (this.step !== 'welcome') {
+            this.resetWelcomeDialogAnchor();
+        }
         this.attachEventListeners();
     }
 
     renderWelcomeStep() {
         const hasError = !!this.redeemError;
+        const allowEmail = this.canUseEmailForFreeAccess === true;
+        const invitePlaceholder = 'invitation code or email';
+        const inviteMaxLength = allowEmail ? 254 : 24;
+        const showEmailHint = this.invitationCode.includes('@') && !hasError;
+        const feedbackText = hasError ? this.redeemError : (showEmailHint ? FREE_ACCESS_EMAIL_HINT : '');
+        const feedbackClass = hasError ? 'text-red-500' : 'text-muted-foreground';
 
         return `
             <div id="welcome-theme-toggle" class="theme-toggle-container" role="radiogroup" aria-label="Theme selection" data-theme="${themeManager.getPreference()}" style="position:fixed;top:12px;right:12px;z-index:9999">
@@ -361,12 +581,11 @@ class WelcomePanel {
                 <!-- Header -->
                 <div class="flex items-center justify-between mb-1">
                     <h2 class="text-lg font-semibold text-foreground">Welcome to oa-fastchat!</h2>
-                    ${ticketClient.getTicketCount() > 0 ? `
                     <button id="close-welcome-btn" class="text-muted-foreground hover:text-foreground transition-colors p-1 -mr-1 rounded-lg hover:bg-accent" aria-label="Close">
                         <svg class="w-4 h-4" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
                         </svg>
-                    </button>` : ''}
+                    </button>
                 </div>
 
                 <p class="text-sm text-muted-foreground mb-4">A simple, fast, <a href="https://github.com/openanonymity/oa-fastchat" target="_blank" rel="noopener noreferrer" class="text-foreground welcome-link">open-source</a>, and <a href="https://openanonymity.ai/blog/unlinkable-inference/" target="_blank" rel="noopener noreferrer" class="text-foreground welcome-link">provably unlinkable</a> chat client by <a href="https://openanonymity.ai/" target="_blank" rel="noopener noreferrer" class="text-foreground welcome-link">The Open Anonymity Project</a>.</p>
@@ -428,8 +647,8 @@ class WelcomePanel {
                         <input
                             id="invite-code-input"
                             type="text"
-                            maxlength="24"
-                            placeholder="Invitation code"
+                            maxlength="${inviteMaxLength}"
+                            placeholder="${invitePlaceholder}"
                             class="flex-1 h-full px-3 text-sm bg-transparent text-foreground placeholder:text-muted-foreground/50 focus:outline-none"
                             value="${this.escapeHtml(this.invitationCode)}"
                             autocomplete="off"
@@ -447,7 +666,7 @@ class WelcomePanel {
                             </svg>
                         </button>
                     </div>
-                    ${hasError ? `<p class="text-xs text-red-500 mt-1.5">${this.escapeHtml(this.redeemError)}</p>` : ''}
+                    <p id="invite-feedback-text" class="text-xs leading-4 whitespace-pre-line mt-1.5 ${feedbackClass} ${feedbackText ? '' : 'hidden'}">${this.escapeHtml(feedbackText)}</p>
                 </form>
 
                 <!-- Divider -->
@@ -603,7 +822,7 @@ class WelcomePanel {
                         </svg>
                     </button>
                 </div>
-                <p class="text-muted-foreground" style="margin-top:10px;font-size:11px;line-height:1.3">
+                <p class="text-muted-foreground" style="margin-top:16px;font-size:11px;line-height:1.3">
                     Account is optional and enables encrypted-sync of your data (tickets, preferences, and soon chat sessions) with Passkeys.
                 </p>
             </div>
@@ -650,8 +869,13 @@ class WelcomePanel {
                 // Clear error when user starts typing
                 if (this.redeemError) {
                     this.redeemError = null;
-                    this.render();
+                    const wrapper = inviteInput.closest('.invite-input-wrapper');
+                    if (wrapper) wrapper.classList.remove('input-error');
+                    this.updateInlineInviteFeedback();
+                    return;
                 }
+
+                this.updateInlineInviteFeedback();
             };
             // Focus the input when on welcome step
             if (this.step === 'welcome') {
@@ -694,6 +918,10 @@ class WelcomePanel {
     destroy() {
         this.themeUnsubscribe?.();
         this.themeUnsubscribe = null;
+        if (this.ticketsUpdatedHandler) {
+            window.removeEventListener('tickets-updated', this.ticketsUpdatedHandler);
+            this.ticketsUpdatedHandler = null;
+        }
         if (this.escapeHandler) {
             document.removeEventListener('keydown', this.escapeHandler);
             this.escapeHandler = null;

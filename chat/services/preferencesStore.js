@@ -12,6 +12,7 @@ const PREF_KEYS = {
     ticketInfoVisible: 'pref-ticket-info-visible',
     invitationFormVisible: 'pref-invitation-form-visible',
     welcomeDismissed: 'pref-welcome-dismissed',
+    freeAccessRequested: 'pref-free-access-requested',
     proxySettings: 'pref-network-proxy-settings',
     sharePasswordMode: 'pref-share-password-mode',
     shareExpiryTtl: 'pref-share-expiry-ttl',
@@ -46,6 +47,7 @@ const DEFAULT_PREFERENCES = {
     [PREF_KEYS.ticketInfoVisible]: true,
     [PREF_KEYS.invitationFormVisible]: null,
     [PREF_KEYS.welcomeDismissed]: false,
+    [PREF_KEYS.freeAccessRequested]: false,
     [PREF_KEYS.proxySettings]: {
         enabled: false,
         fallbackToDirect: true

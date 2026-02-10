@@ -1491,6 +1491,20 @@ class ChatApp {
         return rawCode.trim().replace(/[\s-]+/g, '');
     }
 
+    ingestTicketCode(code, options = {}) {
+        if (!this.rightPanel) return false;
+
+        const normalizedCode = this.normalizeTicketCode(code);
+        if (!normalizedCode) return false;
+
+        const autoRedeem = options.autoRedeem !== false;
+        const source = options.source || null;
+
+        this.rightPanel.show();
+        this.rightPanel.applyInvitationCodeFromLink(normalizedCode, { autoRedeem, source });
+        return true;
+    }
+
     /**
      * Capture ticket code from URL and clean the path/query.
      * Supports /tickets/<code> and ?tickets=<code>.
@@ -1555,9 +1569,7 @@ class ChatApp {
         this.pendingTicketCode = null;
 
         if (!code) return;
-
-        this.rightPanel.show();
-        this.rightPanel.applyInvitationCodeFromLink(code, { autoRedeem: !!autoRedeem, source });
+        this.ingestTicketCode(code, { autoRedeem: !!autoRedeem, source });
     }
 
     /**

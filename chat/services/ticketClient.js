@@ -52,6 +52,217 @@ class TicketClient {
         return this.ticketStore.importTickets(payload);
     }
 
+    getRetryAfterSeconds(response, data) {
+        const bodySeconds = Number.parseInt(data?.retry_after_seconds, 10);
+        if (Number.isFinite(bodySeconds) && bodySeconds > 0) {
+            return bodySeconds;
+        }
+
+        const retryAfterHeader = response?.headers?.get?.('Retry-After');
+        if (!retryAfterHeader) return null;
+
+        const retryAfterSeconds = Number.parseInt(retryAfterHeader, 10);
+        if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+            return retryAfterSeconds;
+        }
+
+        const retryAfterDate = Date.parse(retryAfterHeader);
+        if (Number.isFinite(retryAfterDate)) {
+            const ms = retryAfterDate - Date.now();
+            if (ms > 0) {
+                return Math.ceil(ms / 1000);
+            }
+        }
+
+        return null;
+    }
+
+    createFreeAccessError(message, options = {}) {
+        const error = new Error(message);
+        if (options.code) error.code = options.code;
+        if (Number.isFinite(options.status)) error.status = options.status;
+        if (Number.isFinite(options.retryAfterSeconds) && options.retryAfterSeconds > 0) {
+            error.retryAfterSeconds = options.retryAfterSeconds;
+        }
+        return error;
+    }
+
+    async isFreeAccessAvailable() {
+        const availabilityUrl = `${ORG_API_BASE}/chat/free_access/availability`;
+        const requestHeaders = { 'Accept': 'application/json' };
+
+        try {
+            const { response, data } = await networkProxy.fetchWithRetryJson(
+                availabilityUrl,
+                {
+                    method: 'GET',
+                    headers: requestHeaders
+                },
+                {
+                    context: 'Free access availability',
+                    maxAttempts: 1,
+                    timeoutMs: 10000
+                }
+            );
+
+            networkLogger.logRequest({
+                type: 'ticket',
+                method: 'GET',
+                url: availabilityUrl,
+                status: response.status,
+                request: {
+                    headers: networkLogger.sanitizeHeaders(requestHeaders)
+                },
+                response: data
+            });
+
+            if (!response.ok) {
+                return {
+                    available: false,
+                    reasonCode: data?.reason_code || data?.code || `HTTP_${response.status}`,
+                    retryAfterSeconds: this.getRetryAfterSeconds(response, data),
+                    issuanceEnabled: typeof data?.issuance_enabled === 'boolean' ? data.issuance_enabled : null
+                };
+            }
+
+            return {
+                available: data?.available === true,
+                reasonCode: data?.reason_code || (data?.available === true ? 'OK' : 'UNAVAILABLE'),
+                retryAfterSeconds: this.getRetryAfterSeconds(response, data),
+                issuanceEnabled: typeof data?.issuance_enabled === 'boolean' ? data.issuance_enabled : null
+            };
+        } catch (error) {
+            networkLogger.logRequest({
+                type: 'ticket',
+                method: 'GET',
+                url: availabilityUrl,
+                status: 0,
+                request: {
+                    headers: networkLogger.sanitizeHeaders(requestHeaders)
+                },
+                error: error.message
+            });
+
+            console.warn('Free access availability check failed:', error);
+            return {
+                available: false,
+                reasonCode: 'UNAVAILABLE',
+                retryAfterSeconds: null,
+                issuanceEnabled: null
+            };
+        }
+    }
+
+    async requestFreeAccess(email) {
+        const freeAccessUrl = `${ORG_API_BASE}/chat/free_access`;
+        const requestHeaders = { 'Content-Type': 'application/json' };
+        const requestBody = { email };
+
+        let response;
+        let data;
+        let text;
+
+        try {
+            ({ response, data, text } = await networkProxy.fetchWithRetryJson(
+                freeAccessUrl,
+                {
+                    method: 'POST',
+                    headers: requestHeaders,
+                    body: JSON.stringify(requestBody)
+                },
+                {
+                    context: 'Free access request',
+                    maxAttempts: 1,
+                    timeoutMs: 15000
+                }
+            ));
+        } catch (error) {
+            networkLogger.logRequest({
+                type: 'ticket',
+                method: 'POST',
+                url: freeAccessUrl,
+                status: 0,
+                request: {
+                    headers: networkLogger.sanitizeHeaders(requestHeaders),
+                    body: { email: '***' }
+                },
+                error: error.message
+            });
+            throw this.createFreeAccessError('Failed to request free access. Please try again.', {
+                code: 'FREE_ACCESS_REQUEST_FAILED'
+            });
+        }
+
+        networkLogger.logRequest({
+            type: 'ticket',
+            method: 'POST',
+            url: freeAccessUrl,
+            status: response.status,
+            request: {
+                headers: networkLogger.sanitizeHeaders(requestHeaders),
+                body: { email: '***' }
+            },
+            response: data
+        });
+
+        if (response.status === 200) {
+            const accessCode = typeof data?.access_code === 'string'
+                ? data.access_code.trim()
+                : null;
+            return {
+                accessCode: accessCode || null,
+                ticketsGranted: Number.isFinite(data?.tickets_granted) ? data.tickets_granted : 0,
+                waitlistEntryId: data?.waitlist_entry_id || null,
+                waitlistStatus: data?.waitlist_status || null,
+                waitlistOnly: data?.waitlist_only === true,
+                message: data?.message || null
+            };
+        }
+
+        if (response.status === 409) {
+            throw this.createFreeAccessError(
+                data?.error || 'Email is already used.',
+                {
+                    code: data?.code || 'FREE_ACCESS_EMAIL_USED',
+                    status: response.status
+                }
+            );
+        }
+
+        if (response.status === 429) {
+            const retryAfterSeconds = this.getRetryAfterSeconds(response, data);
+            const retryLabel = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+                ? ` Please retry in about ${retryAfterSeconds} seconds.`
+                : '';
+            throw this.createFreeAccessError(
+                `${data?.error || 'Free access is limited right now.'}${retryLabel}`,
+                {
+                    code: data?.code || 'FREE_ACCESS_LIMITED',
+                    status: response.status,
+                    retryAfterSeconds
+                }
+            );
+        }
+
+        if (response.status === 422) {
+            throw this.createFreeAccessError(
+                'Please enter a valid email address.',
+                {
+                    code: 'FREE_ACCESS_INVALID_PAYLOAD',
+                    status: response.status
+                }
+            );
+        }
+
+        throw this.createFreeAccessError(
+            data?.detail || data?.error || data?.message || text || `Free access request failed (${response.status})`,
+            {
+                code: data?.code || 'FREE_ACCESS_REQUEST_FAILED',
+                status: response.status
+            }
+        );
+    }
+
     async alphaRegister(invitationCode, progressCallback) {
         console.log('=== Starting alphaRegister ===');
 
