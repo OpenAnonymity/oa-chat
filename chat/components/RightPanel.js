@@ -1765,26 +1765,28 @@ class RightPanel {
                 <div id="split-result" class="split-result-card">
                     <div class="split-result-header">
                         <span class="split-result-title">Ticket code created for ${this.splitResult.ticketsConsumed || 1} valid ticket${(this.splitResult.ticketsConsumed || 1) === 1 ? '' : 's'}</span>
+                        <button
+                            id="split-result-dismiss"
+                            class="split-result-icon-btn split-result-dismiss-btn"
+                            title="Dismiss"
+                            type="button"
+                        >
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M18 6L6 18M6 6l12 12"/>
+                            </svg>
+                        </button>
                     </div>
-                    <div class="split-result-code-row">
-                        <code class="split-result-code">${this.escapeHtml(this.splitResult.code)}</code>
+                    <div class="split-result-field-row">
+                        <code class="split-result-field-value">${this.escapeHtml(this.splitResult.code)}</code>
                         <button
                             id="split-result-copy"
                             class="split-result-icon-btn"
+                            type="button"
                             title="Copy ticket code"
                         >
                             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <rect width="14" height="14" x="8" y="8" rx="2"/>
                                 <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
-                            </svg>
-                        </button>
-                        <button
-                            id="split-result-dismiss"
-                            class="split-result-icon-btn"
-                            title="Dismiss"
-                        >
-                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M18 6L6 18M6 6l12 12"/>
                             </svg>
                         </button>
                     </div>
@@ -1793,10 +1795,10 @@ class RightPanel {
                         <div class="split-result-share-label">
                             You can share the tickets with this link:
                         </div>
-                        <div class="split-result-share-row">
+                        <div class="split-result-field-row">
                             <a
                                 id="split-result-share-link"
-                                class="split-result-share-link"
+                                class="split-result-field-value split-result-share-link"
                                 href="${splitShareUrlAttribute}"
                                 target="_blank"
                                 rel="noopener noreferrer"
@@ -1804,11 +1806,14 @@ class RightPanel {
                             >${splitShareUrlEscaped}</a>
                             <button
                                 id="split-result-copy-link"
-                                class="split-result-share-copy-btn"
+                                class="split-result-icon-btn"
                                 type="button"
                                 title="Copy ticket share link"
                             >
-                                Copy Link
+                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect width="14" height="14" x="8" y="8" rx="2"/>
+                                    <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
+                                </svg>
                             </button>
                         </div>
                     </div>
