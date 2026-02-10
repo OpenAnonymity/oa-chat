@@ -870,30 +870,30 @@ class VerifierAttestationModal {
         const hasPartialVerification = v?.jwtVerified || v?.policyVerified;
 
         this.overlay.innerHTML = `
-            <div class="verifier-modal-content bg-background border border-border rounded-xl shadow-2xl max-w-2xl w-full mx-4 animate-in zoom-in-95 overflow-hidden">
-                <div class="p-4 border-b border-border flex items-center justify-between">
-                    <div class="flex items-center gap-2.5">
-                        <div class="flex h-8 w-8 items-center justify-center rounded-lg ${isFullyVerified ? 'bg-green-100 dark:bg-green-500/20' : hasPartialVerification ? 'bg-amber-100 dark:bg-amber-500/20' : 'bg-muted'}">
-                            <svg class="w-4 h-4 ${isFullyVerified ? 'text-green-600 dark:text-green-400' : hasPartialVerification ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <div class="verifier-modal-content bg-background rounded-xl shadow-2xl max-w-xl w-full mx-4 animate-in zoom-in-95 overflow-hidden max-h-[90vh] flex flex-col">
+                <div class="p-4 flex items-center justify-between shrink-0">
+                    <div class="flex items-center gap-2">
+                        <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-muted/50">
+                            <svg class="w-4 h-4 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
                                 ${isFullyVerified ? '<path d="M9 12l2 2 4-4"/>' : ''}
                             </svg>
                         </div>
-                        <h2 class="text-base font-semibold text-foreground">Verifier Attestation</h2>
+                        <h2 class="text-sm font-semibold text-foreground">Verifier Attestation</h2>
                     </div>
-                    <button class="verifier-modal-close text-muted-foreground hover:text-foreground transition-colors p-1 rounded-lg hover:bg-muted">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+                    <button class="verifier-modal-close text-muted-foreground hover:text-foreground transition-colors p-1.5 rounded-lg hover:bg-muted/50">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
                         </svg>
                     </button>
                 </div>
 
-                <div class="p-4 space-y-4 max-h-[70vh] overflow-y-auto">
+                <div class="verifier-modal-scroll px-5 pb-0 space-y-2.5">
                     ${this.isLoading ? this.renderLoading() : this.error ? this.renderError() : this.renderContent()}
                 </div>
 
-                <div class="p-4 border-t border-border flex justify-end">
-                    <button class="verifier-modal-done px-4 py-2 text-sm font-medium rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">
+                <div class="px-5 py-2 flex justify-end shrink-0">
+                    <button class="verifier-modal-done px-3 py-1 text-xs font-medium rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-all duration-200">
                         Done
                     </button>
                 </div>
@@ -908,7 +908,7 @@ class VerifierAttestationModal {
                     <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                     <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                 </svg>
-                <p class="text-sm text-muted-foreground">Fetching and verifying attestation...</p>
+                <p class="text-xs text-muted-foreground">Fetching and verifying attestation...</p>
             </div>
         `;
     }
@@ -920,7 +920,7 @@ class VerifierAttestationModal {
                     <circle cx="12" cy="12" r="10"/>
                     <path d="M15 9l-6 6M9 9l6 6"/>
                 </svg>
-                <p class="text-sm font-medium text-destructive">Failed to fetch attestation</p>
+                <p class="text-xs font-medium text-destructive">Failed to fetch attestation</p>
                 <p class="text-xs text-muted-foreground mt-1">${this.escapeHtml(this.error)}</p>
                 <button class="verifier-retry-btn mt-3 px-3 py-1.5 text-xs font-medium rounded-md border border-border bg-background text-foreground hover:bg-muted transition-colors">
                     Retry
@@ -937,19 +937,32 @@ class VerifierAttestationModal {
         const container = v?.containerInfo;
 
         return `
-            <!-- Why The Whole System Is Zero Trust -->
-            ${this.renderZeroTrustSection(a, v, evidence)}
+            <!-- Zero Trust Section - Collapsible -->
+            <details class="border border-border/30 rounded-md px-2 py-1.5">
+                <summary class="cursor-pointer text-xs text-muted-foreground hover:text-foreground transition-colors">
+                    Zero Trust Evidence for the whole system (click to expand)
+                </summary>
+                <div class="mt-2">
+                    ${this.renderZeroTrustSection(a, v, evidence)}
+                </div>
+            </details>
 
-            <!-- Code Auditability Section -->
-            ${container ? this.renderCodeAuditability(container, v) : ''}
+            <!-- Code Auditability Section - Collapsible -->
+            ${container ? `
+                <details class="border border-border/30 rounded-md px-2 py-1.5">
+                    <summary class="cursor-pointer text-xs text-muted-foreground hover:text-foreground transition-colors">
+                        Code Auditability (click to expand)
+                    </summary>
+                    <div class="mt-2">
+                        ${this.renderCodeAuditability(container, v)}
+                    </div>
+                </details>
+            ` : ''}
 
             <!-- Hardware Attestation -->
             <div class="space-y-2">
-                <h3 class="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-                    <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-                    Hardware Attestation
-                </h3>
-                <div class="p-3 rounded-lg border border-border bg-card space-y-2">
+                <h3 class="text-xs font-medium text-foreground">Hardware Attestation</h3>
+                <div class="p-3 rounded-lg border border-border bg-card space-y-1.5">
                     ${this.renderRow('Type', summary.attestation_type || 'Unknown', summary.attestation_type ? 'text-foreground' : 'text-muted-foreground')}
                     ${this.renderRow('Debug Disabled', summary.debug_disabled === true ? 'Yes' : summary.debug_disabled === false ? 'No' : 'Unknown', summary.debug_disabled === true ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400')}
                     ${this.renderRow('Compliance', summary.compliance_status || 'Unknown')}
@@ -959,105 +972,86 @@ class VerifierAttestationModal {
 
             <!-- JWT Signature -->
             <div class="space-y-2">
-                <h3 class="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-                    <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                    JWT Signature
-                </h3>
-                <div class="p-3 rounded-lg border ${v?.jwtVerified ? 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20' : 'border-border bg-card'} space-y-2">
+                <h3 class="text-xs font-medium text-foreground">JWT Signature</h3>
+                <div class="p-3 rounded-lg border border-border bg-card space-y-1.5">
                     ${this.renderStatusRow('Status', v?.jwtVerified, v?.jwtError, 'Verified')}
-                    ${v?.jwtKeyId ? this.renderRow('Key ID', v.jwtKeyId.substring(0, 20) + '...', 'text-foreground font-mono text-[10px]') : ''}
+                    ${v?.jwtKeyId ? this.renderRow('Key ID', v.jwtKeyId.substring(0, 20) + '...', 'text-foreground font-mono text-xs') : ''}
                     ${v?.jwtIssuer ? this.renderRow('Issuer', this.formatIssuer(v.jwtIssuer), 'text-foreground truncate', true) : ''}
-                    ${v?.azureKeysLoaded ? this.renderRow('Azure Keys', 'Loaded from attestation service', 'text-green-600 dark:text-green-400') : ''}
+                    ${v?.azureKeysLoaded ? this.renderRow('Azure Keys', 'Loaded', 'text-green-600 dark:text-green-400') : ''}
                 </div>
             </div>
 
             <!-- Policy Verification -->
             <div class="space-y-2">
-                <h3 class="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-                    <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></svg>
-                    Policy Verification
-                </h3>
-                <div class="p-3 rounded-lg border ${v?.policyVerified ? 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20' : 'border-border bg-card'} space-y-2">
+                <h3 class="text-xs font-medium text-foreground">Policy Verification</h3>
+                <div class="p-3 rounded-lg border border-border bg-card space-y-1.5">
                     ${this.renderStatusRow('Status', v?.policyVerified, v?.policyError, 'Hardware Verified')}
                     ${v?.computedHash ? `
-                        <div class="flex justify-between items-start gap-2">
-                            <span class="text-xs text-muted-foreground shrink-0">Computed Hash</span>
-                            <span class="text-[10px] font-mono text-foreground truncate" title="${v.computedHash}">${v.computedHash.substring(0, 16)}...</span>
+                        <div class="flex justify-between items-start gap-3">
+                            <span class="text-xs text-muted-foreground/70 shrink-0">Computed Hash</span>
+                            <span class="text-xs font-mono text-foreground truncate" title="${v.computedHash}">${v.computedHash.substring(0, 16)}...</span>
                         </div>
                     ` : ''}
                     ${v?.hostData ? `
-                        <div class="flex justify-between items-start gap-2">
-                            <span class="text-xs text-muted-foreground shrink-0">Hardware host_data</span>
-                            <span class="text-[10px] font-mono text-foreground truncate" title="${v.hostData}">${v.hostData.substring(0, 16)}...</span>
+                        <div class="flex justify-between items-start gap-3">
+                            <span class="text-xs text-muted-foreground/70 shrink-0">Hardware host_data</span>
+                            <span class="text-xs font-mono text-foreground truncate" title="${v.hostData}">${v.hostData.substring(0, 16)}...</span>
                         </div>
                     ` : ''}
                     ${v?.policyVerified ? `
-                        <div class="mt-2 p-2 bg-green-100 dark:bg-green-900/30 rounded text-xs text-green-800 dark:text-green-300">
-                            Policy hash matches hardware measurement - code is authentic
+                        <div class="mt-1.5 text-xs text-green-600 dark:text-green-400">
+                            ✓ Policy hash matches hardware measurement
                         </div>
                     ` : ''}
                 </div>
             </div>
 
             <!-- Verification Summary -->
-            <div class="p-3 rounded-lg border ${v?.policyVerified && v?.jwtVerified ? 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20' : 'border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20'} text-center">
+            <div class="mt-2 p-3 rounded-lg ${v?.policyVerified && v?.jwtVerified ? 'bg-green-50/50 dark:bg-green-500/10' : 'bg-amber-50/50 dark:bg-amber-500/10'} text-center">
                 ${v?.policyVerified && v?.jwtVerified ? `
-                    <div class="flex items-center justify-center gap-2 text-green-700 dark:text-green-400">
-                        <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <div class="flex items-center justify-center gap-2">
+                        <svg class="w-4 h-4 text-green-600 dark:text-green-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
                             <path d="M9 12l2 2 4-4"/>
                         </svg>
-                        <span class="font-semibold">Hardware Attestation Verified</span>
+                        <span class="font-medium text-xs text-green-700 dark:text-green-300">Hardware Verified</span>
                     </div>
-                    <p class="text-xs text-green-600 dark:text-green-400 mt-1">The verifier is running authentic code in a secure enclave</p>
+                    <p class="text-xs text-green-600 dark:text-green-400 mt-1">Secure enclave running authentic code</p>
                 ` : `
-                    <div class="flex items-center justify-center gap-2 text-amber-700 dark:text-amber-400">
-                        <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <div class="flex items-center justify-center gap-2">
+                        <svg class="w-4 h-4 text-amber-600 dark:text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
                             <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
                         </svg>
-                        <span class="font-semibold">Verification Incomplete</span>
+                        <span class="font-medium text-xs text-amber-700 dark:text-amber-300">Partial Verification</span>
                     </div>
-                    <p class="text-xs text-amber-600 dark:text-amber-400 mt-1">Some verification steps could not be completed</p>
+                    <p class="text-xs text-amber-600 dark:text-amber-400 mt-1">Some steps incomplete</p>
                 `}
             </div>
 
-            <!-- Verify Yourself -->
-            <div class="space-y-2">
-                <h3 class="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-                    <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                    Verify Yourself
-                </h3>
-                <div class="text-xs space-y-2">
-                    <details class="group border border-border rounded-lg">
-                        <summary class="p-2.5 cursor-pointer flex items-center gap-2 hover:bg-muted/50 rounded-lg">
-                            <svg class="w-3.5 h-3.5 transition-transform group-open:rotate-90 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
-                            <span class="font-medium">Run the verification script</span>
-                        </summary>
-                        <div class="px-3 pb-3 text-muted-foreground space-y-2">
-                            <p>Download and run the zero-trust verification script:</p>
-                            <code class="block p-2 bg-slate-100 dark:bg-slate-800 rounded text-[10px] font-mono overflow-x-auto">
-curl -sL https://raw.githubusercontent.com/OpenAnonymity/oa-verifier/main/verify.sh | bash -s ${VERIFIER_URL}
-                            </code>
-                            <p>This script independently verifies the attestation without trusting this UI.</p>
-                        </div>
-                    </details>
-                    <details class="group border border-border rounded-lg">
-                        <summary class="p-2.5 cursor-pointer flex items-center gap-2 hover:bg-muted/50 rounded-lg">
-                            <svg class="w-3.5 h-3.5 transition-transform group-open:rotate-90 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
-                            <span class="font-medium">What is being verified?</span>
-                        </summary>
-                        <div class="px-3 pb-3 text-muted-foreground space-y-1.5">
-                            <ul class="list-disc list-inside space-y-1">
-                                <li><strong class="text-foreground">JWT Signature:</strong> Verified against Azure Attestation Service public keys</li>
-                                <li><strong class="text-foreground">Policy Hash:</strong> SHA-256 of policy compared with hardware-measured host_data</li>
-                                <li><strong class="text-foreground">GHCR:</strong> Container digest exists in GitHub Container Registry</li>
-                                <li><strong class="text-foreground">Sigstore:</strong> Build provenance in transparency log</li>
-                            </ul>
-                        </div>
-                    </details>
+            <!-- Verify Yourself - Collapsible -->
+            <details class="border border-border/30 rounded-md px-2 py-1.5 mt-2">
+                <summary class="cursor-pointer text-xs text-muted-foreground hover:text-foreground transition-colors">
+                    Verify Yourself (click to expand)
+                </summary>
+                <div class="mt-2 text-xs space-y-2">
+                    <div class="rounded-lg border border-border bg-card p-3 text-muted-foreground space-y-2">
+                        <p class="text-xs font-medium text-foreground">Run the verification script</p>
+                        <p>Download and run the zero-trust verification script:</p>
+                        <code class="verifier-command p-2 bg-muted/70 border border-border rounded text-[11px] font-mono text-foreground"><span class="verifier-command-line">curl -sL https://raw.githubusercontent.com/OpenAnonymity/oa-verifier/main/verify.sh \\</span><span class="verifier-command-line">| bash -s ${VERIFIER_URL}</span></code>
+                        <p>This script independently verifies the attestation without trusting this UI.</p>
+                    </div>
+                    <div class="rounded-lg border border-border bg-card p-3 text-muted-foreground space-y-1.5">
+                        <p class="text-xs font-medium text-foreground">What is being verified?</p>
+                        <ul class="list-disc list-inside space-y-1">
+                            <li><strong class="text-foreground">JWT Signature:</strong> Verified against Azure Attestation Service public keys</li>
+                            <li><strong class="text-foreground">Policy Hash:</strong> SHA-256 of policy compared with hardware-measured host_data</li>
+                            <li><strong class="text-foreground">GHCR:</strong> Container digest exists in GitHub Container Registry</li>
+                            <li><strong class="text-foreground">Sigstore:</strong> Build provenance in transparency log</li>
+                        </ul>
+                    </div>
                 </div>
-            </div>
+            </details>
         `;
     }
 
@@ -1068,65 +1062,65 @@ curl -sL https://raw.githubusercontent.com/OpenAnonymity/oa-verifier/main/verify
         const isSigstorePending = v?.sigstoreVerified === null;
 
         return `
-            <div class="space-y-2">
+            <div class="space-y-1.5">
                 <h3 class="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-                    <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>
+                    <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>
                     Code is Auditable
                 </h3>
-                <div class="p-3 rounded-lg border border-border bg-card space-y-3">
-                    <p class="text-xs text-muted-foreground">
+                <div class="p-2.5 rounded-lg border border-border bg-card space-y-2.5">
+                    <p class="text-[11px] text-muted-foreground">
                         All code processing your data comes from a trusted open-source repository and is auditable.
                     </p>
 
                     <!-- Container Digest Verification -->
-                    <div class="p-2.5 rounded-md border ${isGhcrVerified ? 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20' : 'border-border bg-muted/30'} space-y-2">
+                    <div class="p-2 rounded-md border ${isGhcrVerified ? 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20' : 'border-border bg-muted/30'} space-y-1.5">
                         <div class="flex items-center justify-between">
-                            <span class="text-xs font-medium">Container Registry (GHCR)</span>
+                            <span class="text-[11px] font-medium">Container Registry (GHCR)</span>
                             ${isGhcrPending ? `
                                 <span class="text-[10px] text-muted-foreground flex items-center gap-1">
-                                    <svg class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                                    <svg class="w-2.5 h-2.5 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
                                     Verifying...
                                 </span>
                             ` : isGhcrVerified ? `
                                 <span class="text-[10px] text-green-600 dark:text-green-400 flex items-center gap-1">
-                                    <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>
+                                    <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>
                                     Verified
                                 </span>
                             ` : `
                                 <span class="text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
-                                    <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                                    <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
                                     ${v?.ghcrError || 'Not verified'}
                                 </span>
                             `}
                         </div>
-                        <div class="text-[10px] font-mono text-foreground break-all bg-slate-100 dark:bg-slate-800 p-2 rounded">
+                        <div class="text-[10px] font-mono text-foreground bg-muted/70 border border-border p-1.5 rounded overflow-x-auto whitespace-nowrap">
                             ${container.digest || 'N/A'}
                         </div>
                         ${container.ghcrUrl ? `
                             <a href="${container.ghcrUrl}" target="_blank" rel="noopener" class="inline-flex items-center gap-1 text-[10px] text-blue-500 hover:underline">
-                                <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                                <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
                                 View on GitHub Container Registry
                             </a>
                         ` : ''}
                     </div>
 
                     <!-- Sigstore Transparency Log -->
-                    <div class="p-2.5 rounded-md border ${isSigstoreVerified ? 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20' : 'border-border bg-muted/30'} space-y-2">
+                    <div class="p-2 rounded-md border ${isSigstoreVerified ? 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20' : 'border-border bg-muted/30'} space-y-1.5">
                         <div class="flex items-center justify-between">
-                            <span class="text-xs font-medium">Sigstore Transparency Log</span>
+                            <span class="text-[11px] font-medium">Sigstore Transparency Log</span>
                             ${isSigstorePending ? `
                                 <span class="text-[10px] text-muted-foreground flex items-center gap-1">
-                                    <svg class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                                    <svg class="w-2.5 h-2.5 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
                                     Checking...
                                 </span>
                             ` : isSigstoreVerified ? `
                                 <span class="text-[10px] text-green-600 dark:text-green-400 flex items-center gap-1">
-                                    <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>
+                                    <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>
                                     ${v.sigstoreEntries || 1} ${v.sigstoreEntries === 1 ? 'entry' : 'entries'} found
                                 </span>
                             ` : `
                                 <span class="text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
-                                    <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                                    <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
                                     ${v?.sigstoreError || 'Not found'}
                                 </span>
                             `}
@@ -1136,21 +1130,21 @@ curl -sL https://raw.githubusercontent.com/OpenAnonymity/oa-verifier/main/verify
                         </p>
                         ${v?.sigstoreRekorUrl ? `
                             <a href="${v.sigstoreRekorUrl}" target="_blank" rel="noopener" class="inline-flex items-center gap-1 text-[10px] text-blue-500 hover:underline">
-                                <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                                <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
                                 View on Sigstore
                             </a>
                         ` : ''}
                     </div>
 
                     <!-- Source Repository -->
-                    <div class="p-2.5 rounded-md border border-border bg-muted/30 space-y-1.5">
-                        <span class="text-xs font-medium">Configuration Repository</span>
+                    <div class="p-2 rounded-md border border-border bg-muted/30 space-y-1">
+                        <span class="text-[11px] font-medium">Configuration Repository</span>
                         <p class="text-[10px] text-muted-foreground">
                             The configuration repository specifies exactly what code is running inside the secure enclave.
                         </p>
                         ${container.repoUrl ? `
-                            <a href="${container.repoUrl}" target="_blank" rel="noopener" class="inline-flex items-center gap-1.5 text-xs text-blue-500 hover:underline font-medium">
-                                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+                            <a href="${container.repoUrl}" target="_blank" rel="noopener" class="inline-flex items-center gap-1 text-[11px] text-blue-500 hover:underline font-medium">
+                                <svg class="w-3 h-3" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
                                 ${container.owner}/${container.image}
                             </a>
                         ` : ''}
@@ -1158,11 +1152,11 @@ curl -sL https://raw.githubusercontent.com/OpenAnonymity/oa-verifier/main/verify
 
                     <!-- Container Details (collapsible) -->
                     <details class="group">
-                        <summary class="cursor-pointer flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground">
-                            <svg class="w-3 h-3 transition-transform group-open:rotate-90" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+                        <summary class="cursor-pointer flex items-center gap-2 text-[11px] text-muted-foreground hover:text-foreground">
+                            <svg class="w-2.5 h-2.5 transition-transform group-open:rotate-90" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
                             Additional container info
                         </summary>
-                        <div class="mt-2 p-2 rounded border border-border bg-muted/20 space-y-1.5 text-[10px]">
+                        <div class="mt-1.5 p-1.5 rounded border border-border bg-muted/20 space-y-1 text-[10px]">
                             ${this.renderRow('Registry', container.registry, 'text-foreground')}
                             ${this.renderRow('Owner', container.owner, 'text-foreground')}
                             ${this.renderRow('Image', container.image, 'text-foreground')}
@@ -1421,23 +1415,23 @@ curl -sL https://raw.githubusercontent.com/OpenAnonymity/oa-verifier/main/verify
         const summaryBody = 'This flow attests the verifier runtime, validates key ownership lineage, and binds issued ephemeral keys to signed station identity.';
 
         return `
-            <div class="space-y-2">
+            <div class="space-y-1.5">
                 <h3 class="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-                    <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 12l2 2 4-4"/><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                    <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 12l2 2 4-4"/><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
                     Why The Whole System Is Zero Trust
                 </h3>
-                <div class="p-3 rounded-lg border border-border bg-card space-y-3">
-                    <p class="text-xs text-muted-foreground">
+                <div class="p-2.5 rounded-lg border border-border bg-card space-y-2.5">
+                    <p class="text-[11px] text-muted-foreground">
                         Click each proof item to inspect exact evidence (attestation fields, broadcast snapshot, signed payload details, and client-side verification inputs).
                     </p>
 
-                    <div class="space-y-2">
+                    <div class="space-y-1.5">
                         ${steps.map((step) => this.renderZeroTrustStep(step)).join('')}
                     </div>
 
-                    <div class="p-2.5 rounded-md border ${summaryClasses.border} ${summaryClasses.bg}">
-                        <div class="text-xs font-semibold ${summaryClasses.text}">${this.escapeHtml(summaryTitle)}</div>
-                        <p class="text-xs mt-1 ${summaryClasses.subtleText}">
+                    <div class="p-2 rounded-md border ${summaryClasses.border} ${summaryClasses.bg}">
+                        <div class="text-[11px] font-semibold ${summaryClasses.text}">${this.escapeHtml(summaryTitle)}</div>
+                        <p class="text-[11px] mt-0.5 ${summaryClasses.subtleText}">
                             ${this.escapeHtml(summaryBody)}
                         </p>
                     </div>
@@ -1450,40 +1444,40 @@ curl -sL https://raw.githubusercontent.com/OpenAnonymity/oa-verifier/main/verify
         const classes = this.getStepToneClasses(step.tone);
         return `
             <details class="group rounded-md border ${classes.border} ${classes.bg}" data-zero-trust-step="${step.number}" ${step.open ? 'open' : ''}>
-                <summary style="list-style:none;" class="cursor-pointer p-2.5 flex items-start gap-2">
-                    <span class="inline-flex items-center justify-center h-5 w-5 rounded-md border border-border bg-background text-[10px] font-semibold text-foreground shrink-0">${step.number}</span>
+                <summary style="list-style:none;" class="cursor-pointer px-2 py-1.5 flex items-start gap-2">
+                    <span class="inline-flex items-center justify-center h-4 w-4 rounded border border-border bg-background text-[10px] font-semibold text-foreground shrink-0 mt-px">${step.number}</span>
                     <div class="min-w-0 flex-1">
-                        <p class="text-xs font-medium text-foreground">${this.escapeHtml(step.title)}</p>
+                        <p class="text-[11px] font-medium text-foreground">${this.escapeHtml(step.title)}</p>
                         <p class="text-[10px] text-muted-foreground leading-relaxed mt-0.5">${this.escapeHtml(step.description)}</p>
                     </div>
-                    <svg class="w-3.5 h-3.5 text-muted-foreground transition-transform group-open:rotate-90 shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <svg class="w-3 h-3 text-muted-foreground transition-transform group-open:rotate-90 shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M9 18l6-6-6-6"/>
                     </svg>
                 </summary>
-                <div class="px-2.5 pb-4 space-y-2">
-                    <div class="rounded-md border border-border bg-background/70 p-2">
+                <div class="px-2 pb-3 space-y-1.5">
+                    <div class="rounded-md border border-border bg-background/70 p-1.5">
                         <p class="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">What This Proves</p>
-                        <p class="text-xs text-foreground mt-1">${this.escapeHtml(step.proves)}</p>
+                        <p class="text-[11px] text-foreground mt-0.5">${this.escapeHtml(step.proves)}</p>
                     </div>
                     ${step.showLiveEvidence === false ? '' : `
-                        <div class="rounded-md border border-border bg-background p-2">
+                        <div class="rounded-md border border-border bg-background p-1.5">
                             <p class="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Live Evidence</p>
-                            <pre class="mt-1 max-h-52 overflow-auto text-[10px] leading-relaxed font-mono text-foreground whitespace-pre">${this.escapeHtml(this.formatJson(step.evidence))}</pre>
+                            <pre class="mt-0.5 max-h-44 overflow-auto text-[10px] leading-relaxed font-mono text-foreground whitespace-pre">${this.escapeHtml(this.formatJson(step.evidence))}</pre>
                         </div>
                     `}
                     ${Array.isArray(step.codeLinks) && step.codeLinks.length > 0 ? `
-                        <div class="rounded-md border border-border bg-background p-2">
+                        <div class="rounded-md border border-border bg-background p-1.5">
                             <p class="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">View Verifier Code</p>
-                            <div class="mt-1.5 flex flex-nowrap gap-1.5 overflow-x-auto pb-1">
+                            <div class="mt-1 flex flex-nowrap gap-1 overflow-x-auto pb-0.5">
                                 ${step.codeLinks.map((link) => `
                                     <a
                                         href="${this.escapeHtmlAttribute(link.url)}"
                                         target="_blank"
                                         rel="noopener noreferrer"
-                                        class="inline-flex shrink-0 whitespace-nowrap items-center gap-1 rounded-md border border-border px-2 py-1 text-[10px] text-foreground hover:bg-muted/60 transition-colors"
+                                        class="inline-flex shrink-0 whitespace-nowrap items-center gap-1 rounded border border-border px-1.5 py-0.5 text-[10px] text-foreground hover:bg-muted/60 transition-colors"
                                         title="${this.escapeHtmlAttribute(link.url)}"
                                     >
-                                        <svg class="w-3 h-3 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <svg class="w-2.5 h-2.5 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                             <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
                                             <polyline points="15 3 21 3 21 9"/>
                                             <line x1="10" y1="14" x2="21" y2="3"/>
@@ -1547,11 +1541,11 @@ curl -sL https://raw.githubusercontent.com/OpenAnonymity/oa-verifier/main/verify
     renderStatusRow(label, verified, error, successText) {
         return `
             <div class="flex justify-between items-center">
-                <span class="text-xs text-muted-foreground">${label}</span>
-                <span class="text-xs font-medium flex items-center gap-1 ${verified ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400'}">
-                    ${verified 
+                <span class="text-xs text-muted-foreground/70">${label}</span>
+                <span class="text-xs flex items-center gap-1 ${verified ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400'}">
+                    ${verified
                         ? `<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg> ${successText}`
-                        : error 
+                        : error
                             ? `<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/></svg> ${this.escapeHtml(error)}`
                             : 'Pending'}
                 </span>
@@ -1561,8 +1555,8 @@ curl -sL https://raw.githubusercontent.com/OpenAnonymity/oa-verifier/main/verify
 
     renderRow(label, value, valueClass = 'text-foreground', truncate = false) {
         return `
-            <div class="flex justify-between items-start gap-2">
-                <span class="text-xs text-muted-foreground shrink-0">${this.escapeHtml(label)}</span>
+            <div class="flex justify-between items-start gap-3">
+                <span class="text-xs text-muted-foreground/70 shrink-0">${this.escapeHtml(label)}</span>
                 <span class="text-xs ${valueClass} ${truncate ? 'truncate' : ''}" ${truncate ? `title="${this.escapeHtml(value || '')}"` : ''}>${this.escapeHtml(value || 'N/A')}</span>
             </div>
         `;

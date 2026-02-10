@@ -5220,3 +5220,23 @@ div:has(> #input-card.scrubber-preview-expanded) {
 
 
 
+/* Verifier attestation modal */
+.verifier-modal-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+.verifier-command {
+    display: block;
+    overflow-x: auto;
+    white-space: normal !important;
+    word-break: normal !important;
+    overflow-wrap: normal !important;
+    -webkit-overflow-scrolling: touch;
+}
+
+.verifier-command-line {
+    display: block;
+    white-space: nowrap;
+}
