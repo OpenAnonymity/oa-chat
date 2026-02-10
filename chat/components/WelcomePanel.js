@@ -551,8 +551,13 @@ class WelcomePanel {
 
     renderSuccessStep() {
         return `
-            <div role="dialog" aria-modal="true" class="${MODAL_CLASSES} welcome-modal-glass" style="padding:28px 28px 20px">
+            <div role="dialog" aria-modal="true" class="${MODAL_CLASSES} welcome-modal-glass welcome-success-surface" style="padding:28px 28px 20px">
                 <style>
+                    .welcome-success-surface {
+                        background: hsl(var(--color-background) / 0.72);
+                        backdrop-filter: blur(20px) saturate(1.2);
+                        -webkit-backdrop-filter: blur(20px) saturate(1.2);
+                    }
                     .success-tick {
                         width: 22px; height: 22px;
                         border-radius: 50%;
