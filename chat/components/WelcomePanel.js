@@ -383,9 +383,9 @@ class WelcomePanel {
                         </div>
                         <div>
                             <p class="welcome-guarantee-title font-medium text-foreground">Unlinkable Chats with Frontier Models</p>
-                            <p class="welcome-guarantee-body text-muted-foreground">Every chat requests a distinct ephemeral access key via <a href="https://en.wikipedia.org/wiki/Blind_signature" target="_blank" rel="noopener noreferrer" class="text-foreground welcome-link">blind signatures</a>, giving provable anonymity and context sandboxing.</p>
-                            </div>
-                            <!-- --------------------Query sanitization-------------------- -->
+                            <p class="welcome-guarantee-body text-muted-foreground">Every session uses <a href="https://en.wikipedia.org/wiki/Blind_signature" target="_blank" rel="noopener noreferrer" class="text-foreground welcome-link">blind signatures</a> to request a distinct ephemeral key, so sessions are unlinkable. <a href="https://openanonymity.ai/blog/unlinkable-inference/#2-secure-inference-proxies" target="_blank" rel="noopener noreferrer" class="text-foreground welcome-link">Secure inference proxies</a> ensure we have no access to your prompts or responses.</p>
+                        </div>
+                        <!-- --------------------Query sanitization-------------------- -->
                         <div class="welcome-icon-box">
                             <svg class="w-3.5 h-3.5" width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.9-9.9c.9-.9 2.5-.9 3.4 0l2.6 2.6c1 1 1 2.5 0 3.4L8.4 20.6c-1 1-2.5 1-3.4 0Z" />
@@ -395,7 +395,7 @@ class WelcomePanel {
                         </div>
                         <div>
                             <p class="welcome-guarantee-title font-medium text-foreground">Sanitize Prompts via Confidential Models</p>
-                            <p class="welcome-guarantee-body text-muted-foreground">Built-in PII removal and prompt re-writing by gpt-oss-120b on an <a href="https://www.nvidia.com/en-us/data-center/solutions/confidential-computing/" target="_blank" rel="noopener noreferrer" class="text-foreground welcome-link">GPU enclave</a>.</p>
+                            <p class="welcome-guarantee-body text-muted-foreground">Built-in PII removal and prompt re-writing by gpt-oss-120b on an <a href="https://www.nvidia.com/en-us/data-center/solutions/confidential-computing/" target="_blank" rel="noopener noreferrer" class="text-foreground welcome-link">GPU enclave</a>. Try it with tab-tab!</p>
                         </div>
                         <!-- --------------------Local data storage-------------------- -->
                         <div class="welcome-icon-box">
@@ -408,7 +408,7 @@ class WelcomePanel {
                         </div>
                         <div>
                             <p class="welcome-guarantee-title font-medium text-foreground">The Entire App is Local</p>
-                            <p class="welcome-guarantee-body text-muted-foreground">All data is stored locally in your browser and exportable in JSON. The only backend is ephemeral key issuance so it's fast.</p>
+                            <p class="welcome-guarantee-body text-muted-foreground">All data and features are stored (IndexedDB) and implemented (JS) locally in browser. This makes it very fast!</p>
                         </div>
                         <!-- --------------------Encrypted sync-------------------- -->
                         <div class="welcome-icon-box">
@@ -504,7 +504,7 @@ class WelcomePanel {
                         Technical Details
                     </a>
                     <a
-                        href="https://openanonymity.ai/beta"
+                        href="https://openanonymity.ai/beta#desktop"
                         target="_blank"
                         rel="noopener noreferrer"
                         class="text-xs text-muted-foreground hover:text-foreground hover:underline transition-colors"
@@ -551,8 +551,13 @@ class WelcomePanel {
 
     renderSuccessStep() {
         return `
-            <div role="dialog" aria-modal="true" class="${MODAL_CLASSES} welcome-modal-glass" style="padding:28px 28px 20px">
+            <div role="dialog" aria-modal="true" class="${MODAL_CLASSES} welcome-modal-glass welcome-success-surface" style="padding:28px 28px 20px">
                 <style>
+                    .welcome-success-surface {
+                        background: hsl(var(--color-background) / 0.72);
+                        backdrop-filter: blur(20px) saturate(1.2);
+                        -webkit-backdrop-filter: blur(20px) saturate(1.2);
+                    }
                     .success-tick {
                         width: 22px; height: 22px;
                         border-radius: 50%;

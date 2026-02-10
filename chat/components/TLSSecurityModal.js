@@ -39,6 +39,9 @@ class TLSSecurityModal {
     close() {
         if (!this.isOpen) return;
         this.isOpen = false;
+        if (this.escapeHandler) {
+            document.removeEventListener('keydown', this.escapeHandler);
+        }
         this.overlay?.remove();
         this.overlay = null;
     }
@@ -100,11 +103,11 @@ class TLSSecurityModal {
 
         const tlsTargetName = inferenceService.getTlsDisplayName();
         this.overlay.innerHTML = `
-            <div class="tls-modal-content bg-background border border-border rounded-xl shadow-2xl max-w-lg w-full mx-4 animate-in zoom-in-95 overflow-hidden">
+            <div class="tls-modal-content bg-background rounded-xl shadow-2xl max-w-xl w-full mx-4 animate-in zoom-in-95 overflow-hidden max-h-[90vh] flex flex-col">
                 <!-- Header -->
-                <div class="p-4 border-b border-border flex items-center justify-between">
-                    <div class="flex items-center gap-2.5">
-                        <div class="flex h-8 w-8 items-center justify-center rounded-lg ${isEncrypted ? 'bg-status-success/15' : 'bg-muted'}">
+                <div class="p-4 flex items-center justify-between shrink-0">
+                    <div class="flex items-center gap-2">
+                        <div class="flex h-8 w-8 items-center justify-center rounded-lg ${isEncrypted ? 'bg-status-success/15' : 'bg-muted/50'}">
                             <svg class="w-4 h-4 ${isEncrypted ? 'text-status-success' : 'text-muted-foreground'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 ${isEncrypted
                                     ? '<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>'
@@ -112,17 +115,18 @@ class TLSSecurityModal {
                                 }
                             </svg>
                         </div>
-                        <h2 class="text-base font-semibold text-foreground">Verifiable Security</h2>
+                        <h2 class="text-sm font-semibold text-foreground">Network Proxy Security Details</h2>
+                        <span class="px-1 py-0.5 rounded text-[8px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 uppercase tracking-wide">Beta</span>
                     </div>
-                    <button class="tls-modal-close text-muted-foreground hover:text-foreground transition-colors p-1 rounded-lg hover:bg-muted">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+                    <button class="tls-modal-close text-muted-foreground hover:text-foreground transition-colors p-1.5 rounded-lg hover:bg-muted/50">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
                         </svg>
                     </button>
                 </div>
 
                 <!-- Content -->
-                <div class="p-4 space-y-4 max-h-[70vh] overflow-y-auto">
+                <div class="px-5 pb-0 space-y-4 overflow-y-auto flex-1 min-h-0">
 
                     <!-- TLS Implementation -->
                     <div class="space-y-2">
@@ -130,7 +134,7 @@ class TLSSecurityModal {
                             <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
                             TLS Implementation
                         </h3>
-                        <div class="p-3 rounded-lg border border-border bg-card space-y-2">
+                        <div class="p-4 rounded-lg border border-border bg-card space-y-2">
                             <div class="flex justify-between items-start">
                                 <span class="text-xs text-muted-foreground">Library</span>
                                 <span class="text-xs font-mono text-foreground">mbedTLS (WASM)</span>
@@ -151,18 +155,17 @@ class TLSSecurityModal {
                     ${tlsInfo.version ? this.renderConnectionInfo(tlsInfo) : this.renderNoConnection(status)}
 
                     <!-- How to Verify Yourself -->
-                    <div class="space-y-2">
-                        <h3 class="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-                            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                            How to Verify Yourself
-                        </h3>
-                        <div class="space-y-2 text-xs">
-                            <details class="group border border-border rounded-lg">
-                                <summary class="p-2.5 cursor-pointer flex items-center gap-2 hover:bg-muted/50 rounded-lg">
-                                    <svg class="w-3.5 h-3.5 transition-transform group-open:rotate-90 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+                    <details class="border border-border/30 rounded-md px-2 py-1.5">
+                        <summary class="cursor-pointer text-[11px] text-muted-foreground hover:text-foreground transition-colors">
+                            How to Verify Yourself (click to expand)
+                        </summary>
+                        <div class="mt-2 space-y-2 text-[11px]">
+                            <details class="group border border-border/30 rounded-md">
+                                <summary class="px-2 py-1.5 cursor-pointer flex items-center gap-2 hover:bg-muted/50 rounded-md">
+                                    <svg class="w-3 h-3 transition-transform group-open:rotate-90 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
                                     <span class="font-medium">1. Check WebSocket frames in DevTools</span>
                                 </summary>
-                                <div class="px-3 pb-3 text-muted-foreground space-y-1.5">
+                                <div class="px-2.5 pb-1.5 text-muted-foreground space-y-1.5">
                                     <p>Open DevTools → Network → WS → Click the WebSocket connection</p>
                                     <p>Look at "Messages" tab. You should see:</p>
                                     <ul class="list-disc list-inside pl-2 space-y-0.5">
@@ -173,12 +176,12 @@ class TLSSecurityModal {
                                 </div>
                             </details>
 
-                            <details class="group border border-border rounded-lg">
-                                <summary class="p-2.5 cursor-pointer flex items-center gap-2 hover:bg-muted/50 rounded-lg">
-                                    <svg class="w-3.5 h-3.5 transition-transform group-open:rotate-90 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+                            <details class="group border border-border/30 rounded-md">
+                                <summary class="px-2 py-1.5 cursor-pointer flex items-center gap-2 hover:bg-muted/50 rounded-md">
+                                    <svg class="w-3 h-3 transition-transform group-open:rotate-90 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
                                     <span class="font-medium">2. Verify the WASM source</span>
                                 </summary>
-                                <div class="px-3 pb-3 text-muted-foreground space-y-1.5">
+                                <div class="px-2.5 pb-1.5 text-muted-foreground space-y-1.5">
                                     <p>The TLS is handled by <code class="bg-slate-200 dark:bg-slate-700 px-1 rounded">libcurl_full.js</code></p>
                                     <p>This is compiled from:</p>
                                     <ul class="list-disc list-inside pl-2">
@@ -189,12 +192,12 @@ class TLSSecurityModal {
                                 </div>
                             </details>
 
-                            <details class="group border border-border rounded-lg">
-                                <summary class="p-2.5 cursor-pointer flex items-center gap-2 hover:bg-muted/50 rounded-lg">
-                                    <svg class="w-3.5 h-3.5 transition-transform group-open:rotate-90 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+                            <details class="group border border-border/30 rounded-md">
+                                <summary class="px-2 py-1.5 cursor-pointer flex items-center gap-2 hover:bg-muted/50 rounded-md">
+                                    <svg class="w-3 h-3 transition-transform group-open:rotate-90 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
                                     <span class="font-medium">3. Use Wireshark for deep inspection</span>
                                 </summary>
-                                <div class="px-3 pb-3 text-muted-foreground space-y-1.5">
+                                <div class="px-2.5 pb-1.5 text-muted-foreground space-y-1.5">
                                     <p>Capture traffic on your network interface:</p>
                                     <ul class="list-disc list-inside pl-2">
                                         <li>WebSocket frames to proxy should contain TLS records</li>
@@ -204,7 +207,7 @@ class TLSSecurityModal {
                                 </div>
                             </details>
                         </div>
-                    </div>
+                    </details>
 
                     <!-- Trust Model -->
                     <div class="space-y-2">
@@ -212,7 +215,7 @@ class TLSSecurityModal {
                             <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>
                             What You're Trusting
                         </h3>
-                        <div class="p-3 rounded-lg border border-border bg-card text-xs space-y-2">
+                        <div class="p-4 rounded-lg border border-border bg-card text-xs space-y-2">
                             <div class="flex items-start gap-2">
                                 <span class="text-status-success">✓</span>
                                 <div>
@@ -243,8 +246,8 @@ class TLSSecurityModal {
                 </div>
 
                 <!-- Footer -->
-                <div class="p-4 border-t border-border flex justify-end">
-                    <button class="tls-modal-done px-4 py-2 text-sm font-medium rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">
+                <div class="px-5 py-2 flex justify-end shrink-0">
+                    <button class="tls-modal-done px-3 py-1 text-xs font-medium rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-all duration-200">
                         Done
                     </button>
                 </div>
@@ -310,7 +313,7 @@ class TLSSecurityModal {
                     <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
                     Current Connection
                 </h3>
-                <div class="p-3 rounded-lg border border-border bg-card text-xs">
+                <div class="p-4 rounded-lg border border-border bg-card text-xs">
                     <div class="space-y-1.5 font-mono text-muted-foreground">
                         ${proxyUrl ? `<div class="flex justify-between"><span>Relay Server</span><span class="text-foreground truncate ml-2" title="${proxyUrl}">${this.formatProxyHostname(proxyUrl)}</span></div>` : ''}
                         ${tlsInfo.version ? `<div class="flex justify-between"><span>TLS Version</span><span class="text-foreground">${tlsInfo.version}</span></div>` : ''}
@@ -327,7 +330,7 @@ class TLSSecurityModal {
     renderNoConnection(status) {
         if (!status.enabled) {
             return `
-                <div class="p-3 rounded-lg border border-border bg-card text-center text-xs text-muted-foreground">
+                <div class="p-4 rounded-lg border border-border bg-card text-center text-xs text-muted-foreground">
                     Proxy disabled — using browser's native TLS (verifiable in DevTools Security tab)
                 </div>
             `;
@@ -342,7 +345,7 @@ class TLSSecurityModal {
                     <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
                     Current Connection
                 </h3>
-                <div class="p-3 rounded-lg border border-border bg-card text-xs">
+                <div class="p-4 rounded-lg border border-border bg-card text-xs">
                     ${proxyUrl ? `
                         <div class="flex justify-between font-mono text-muted-foreground mb-2">
                             <span>Relay Server</span>
