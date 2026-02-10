@@ -52,19 +52,17 @@ class SessionEmbedder {
 
     async _doInit() {
         try {
-            // Initialize embedding source using Ollama backend
-            // Requires Ollama running locally: `ollama serve`
-            // And embedding model pulled: `ollama pull nomic-embed-text`
+            // Initialize embedding source using WebLLM backend
             this.embedder = createEmbeddingSource({
                 backend: 'local',
-                model: 'qwen3-embedding:0.6b',
-                backendId: 'ollama'
+                model: 'snowflake-arctic-embed-m-q0f32-MLC-b32',
+                backendId: 'webllm'
             });
 
             // Initialize vector store (uses Orama in browser, persists to IndexedDB)
             this.store = await createVectorStore({
                 name: 'chat-history',
-                dimension: 1024,
+                dimension: 768,
                 metric: 'cosine',
                 backend: 'auto'
             });
@@ -421,6 +419,10 @@ class SessionEmbedder {
      * @returns {Promise<Array>} Search results with session metadata
      */
     async searchSessions(query, k = 5, options = {}) {
+        if (!query || !query.trim()) {
+            return [];
+        }
+
         if (!this.initialized || !this.embedder || !this.store) {
             console.debug('[SessionEmbedder] Not initialized, cannot search');
             return [];
