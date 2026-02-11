@@ -1268,6 +1268,11 @@ class ChatApp {
             console.warn('Session embedder init failed:', error);
         });
 
+        // Initialize keywords generator queue and backfill (non-blocking)
+        keywordsGenerator.init().catch((error) => {
+            console.warn('Keywords generator init failed:', error);
+        });
+
         await accountService.init();
         if (typeof requestIdleCallback === 'function') {
             requestIdleCallback(() => accountService.maybeAutoUnlock());
@@ -1975,6 +1980,7 @@ class ChatApp {
 
             // Record activity for session embedding (shared session has content)
             sessionEmbedder.recordActivity(existingSession.id);
+            keywordsGenerator.enqueue(existingSession.id);
 
             this.state.currentSessionId = existingSession.id;
             sessionStorage.setItem(SESSION_STORAGE_KEY, existingSession.id);
@@ -2109,6 +2115,7 @@ class ChatApp {
 
             // Record activity for session embedding (shared session has content)
             sessionEmbedder.recordActivity(session.id);
+            keywordsGenerator.enqueue(session.id);
 
             this.updateUrlWithSession(normalizedShareId);
             this.renderSessions();
@@ -3152,6 +3159,7 @@ class ChatApp {
             session.updatedAt = Date.now();
             await chatDB.saveSession(session);
             sessionEmbedder.recordActivity(session.id);
+            keywordsGenerator.enqueue(session.id);
             this.renderSessions();
         }
     }
@@ -3772,6 +3780,11 @@ class ChatApp {
 
                 // Record activity for session embedding after successful regeneration
                 sessionEmbedder.recordActivity(session.id);
+
+                // Trigger keywords generation after successful regeneration (non-blocking)
+                keywordsGenerator.triggerGeneration(session.id, this).catch(err => {
+                    console.warn('[App] Keywords generation failed:', err);
+                });
 
             } catch (error) {
                 console.error('Error getting AI response:', error);
@@ -4793,6 +4806,7 @@ class ChatApp {
 
         // Record activity for session embedding (forked session has content)
         sessionEmbedder.recordActivity(newSessionId);
+        keywordsGenerator.enqueue(newSessionId);
 
         // Log the fork action
         if (window.networkLogger) {
