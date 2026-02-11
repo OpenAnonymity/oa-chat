@@ -5627,21 +5627,12 @@ class ChatApp {
                 }
             }
 
-            // Ctrl+M or Cmd+M for memory selector
+            // Ctrl+M or Cmd+M for memory selector - auto-insert all memories
             if ((e.metaKey || e.ctrlKey) && e.key === 'm') {
                 e.preventDefault();
-                if (this.memorySelector) {
+                if (this.chatInput && this.memoryEnabled) {
                     const query = this.elements.messageInput.value.trim();
-                    this.memorySelector.open(query);
-                }
-            }
-
-            // Ctrl+M or Cmd+M for memory selector
-            if ((e.metaKey || e.ctrlKey) && e.key === 'm') {
-                e.preventDefault();
-                if (this.memorySelector) {
-                    const query = this.elements.messageInput.value.trim();
-                    this.memorySelector.open(query);
+                    this.chatInput.autoInsertAllMemories(query);
                 }
             }
 

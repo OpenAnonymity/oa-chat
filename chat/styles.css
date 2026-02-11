@@ -3413,6 +3413,30 @@ html {
     background-color: hsl(var(--color-muted) / 0.3);
 }
 
+.full-prompt-delete-btn {
+    margin-left: auto;
+    padding: 0.25rem;
+    color: hsl(var(--color-muted-foreground));
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    transition: color 0.2s, background-color 0.2s;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.full-prompt-delete-btn:hover {
+    color: hsl(var(--color-destructive));
+    background-color: hsl(var(--color-destructive) / 0.1);
+}
+
+.full-prompt-delete-btn:active {
+    background-color: hsl(var(--color-destructive) / 0.2);
+}
+
 .collapsible-icon {
     width: 1rem;
     height: 1rem;

@@ -1948,7 +1948,7 @@ export default class ChatInput {
     }
 
     /**
-     * Handles mention input detection - opens memory selector when @ is typed.
+     * Handles mention input detection - automatically retrieves and adds all memories when @ is typed.
      */
     handleMentionInput() {
         if (!this.app.memoryEnabled) {
@@ -1960,7 +1960,7 @@ export default class ChatInput {
             return;
         }
 
-        // When @ is detected, open memory selector with current input as query
+        // When @ is detected, automatically retrieve and add all memories
         const input = this.app.elements.messageInput;
         const query = input.value.replace(/@/g, '').trim(); // Remove @ symbols for cleaner query
         
@@ -1977,8 +1977,82 @@ export default class ChatInput {
             input.selectionStart = input.selectionEnd = lastAtIndex;
         }
         
-        // Open memory selector
-        this.app.memorySelector?.open(query);
+        // Automatically retrieve and insert all memories
+        this.autoInsertAllMemories(query);
+    }
+
+    /**
+     * Automatically retrieve and insert all available memories for a query
+     * @param {string} query - Query to retrieve memories for
+     */
+    async autoInsertAllMemories(query) {
+        try {
+            // Show a brief indicator that we're retrieving memories
+            this.app.showToast?.('Retrieving memories...', 'info');
+            
+            // Use memory retrieval service directly
+            const { memoryRetrievalService } = await import('../services/memoryRetrievalService.js');
+            const result = await memoryRetrievalService.retrieveMemory(query);
+            
+            // Extract memories from result
+            const memories = Array.isArray(result.memories) ? result.memories : [];
+            
+            if (memories.length === 0) {
+                this.app.showToast?.('No memories found for this context', 'info');
+                return;
+            }
+            
+            // Extract session IDs
+            const sessionIds = memories
+                .map(m => m.session_id || m.sessionId)
+                .filter(id => id);
+            
+            // Create or merge with existing memory context
+            if (this.app.pendingMemoryContext && this.app.pendingMemoryContext.memories) {
+                // Merge with existing memories, avoiding duplicates
+                const existingIds = new Set(
+                    this.app.pendingMemoryContext.memories.map(m => m.id || m.session_id || m.sessionId)
+                );
+                
+                const newMemories = memories.filter(m => {
+                    const id = m.id || m.session_id || m.sessionId;
+                    return !existingIds.has(id);
+                });
+                
+                const newSessionIds = newMemories
+                    .map(m => m.session_id || m.sessionId)
+                    .filter(id => id);
+
+                // Append new memories to existing ones
+                this.app.pendingMemoryContext.memories.push(...newMemories);
+                this.app.pendingMemoryContext.sessionIds.push(...newSessionIds);
+                this.app.pendingMemoryContext.timestamp = Date.now();
+
+                // Render updated memory chips
+                this.renderMemoryChips(this.app.pendingMemoryContext.memories);
+                
+                const addedCount = newMemories.length;
+                if (addedCount > 0) {
+                    this.app.showToast?.(`Added ${addedCount} context item${addedCount === 1 ? '' : 's'}`, 'success');
+                } else {
+                    this.app.showToast?.('All items already added', 'info');
+                }
+            } else {
+                // Create new memory context
+                this.app.pendingMemoryContext = {
+                    sessionIds: sessionIds,
+                    memories: memories,
+                    timestamp: Date.now()
+                };
+
+                // Render visual memory chips in the input area
+                this.renderMemoryChips(memories);
+                this.app.showToast?.(`Added ${memories.length} context item${memories.length === 1 ? '' : 's'}`, 'success');
+            }
+        } catch (error) {
+            console.error('Failed to auto-insert memories:', error);
+            this.app.showToast?.('Failed to retrieve memories', 'error');
+        }
     }
 
     /**
@@ -2140,6 +2214,11 @@ export default class ChatInput {
                                                 <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
                                             </svg>
                                             <span>${idx + 1}. ${this.escapeHtml(m.title || 'Untitled')}</span>
+                                            <button class="full-prompt-delete-btn" data-memory-index="${idx}" type="button" title="Delete this context item">
+                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+                                                </svg>
+                                            </button>
                                         </div>
                                         <div class="full-prompt-memory-content collapsible-content">${this.escapeHtml(content)}</div>
                                     </div>
@@ -2179,11 +2258,11 @@ export default class ChatInput {
                             </svg>
                             Copy
                         </button>
-                        <button class="full-prompt-use-btn" id="use-edited-prompt-btn">
+                        <button class="full-prompt-use-btn" id="use-edited-prompt-btn" title="Apply edits and update memory context">
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
                             </svg>
-                            Use This Prompt
+                            Apply Changes
                         </button>
                     </div>
                 </div>
@@ -2198,6 +2277,32 @@ export default class ChatInput {
                 e.stopPropagation();
                 const item = header.closest('.collapsible');
                 item.classList.toggle('collapsed');
+            });
+        });
+
+        // Add delete button handlers for memory items
+        modal.querySelectorAll('.full-prompt-delete-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const memoryIndex = parseInt(btn.dataset.memoryIndex);
+                if (!Number.isNaN(memoryIndex)) {
+                    // Remove from pendingMemoryContext
+                    if (this.app.pendingMemoryContext && this.app.pendingMemoryContext.memories) {
+                        this.app.pendingMemoryContext.memories.splice(memoryIndex, 1);
+                        this.app.pendingMemoryContext.sessionIds.splice(memoryIndex, 1);
+                        
+                        // If no memories left, clear the context and close modal
+                        if (this.app.pendingMemoryContext.memories.length === 0) {
+                            this.app.pendingMemoryContext = null;
+                            this.renderMemoryChips([]);
+                            closeModal();
+                        } else {
+                            // Rebuild the modal with updated memories
+                            closeModal();
+                            this.showFullPromptPreview();
+                        }
+                    }
+                }
             });
         });
 
@@ -2244,21 +2349,50 @@ export default class ChatInput {
         useBtn.addEventListener('click', () => {
             const editedPrompt = promptTextarea.value.trim();
             if (editedPrompt) {
-                // Set the edited prompt in the message input
-                this.app.elements.messageInput.value = editedPrompt;
+                // Parse the edited prompt to extract individual memory sections
+                // Format: "--- Retrieved Context N: Title ---\nContent\n\n..."
+                const memoryRegex = /--- Retrieved Context \d+: (.+?) ---\n([\s\S]*?)(?=--- Retrieved Context|\n--- User Query|$)/g;
+                const userQueryRegex = /--- User Query ---\n([\s\S]*?)(?=--- Complete Prompt|$)/;
                 
-                // Clear memory context since we're using the edited full prompt
-                this.app.pendingMemoryContext = null;
-                this.clearMemoryChips();
+                const memories = [];
+                let match;
                 
-                // Trigger input event to update UI
-                this.app.elements.messageInput.dispatchEvent(new Event('input'));
+                // Extract memory sections from edited prompt
+                while ((match = memoryRegex.exec(editedPrompt)) !== null) {
+                    memories.push({
+                        title: match[1],
+                        content: match[2].trim(),
+                        fullContent: match[2].trim()
+                    });
+                }
+                
+                // Extract user query
+                const userQueryMatch = userQueryRegex.exec(editedPrompt);
+                const userQuery = userQueryMatch ? userQueryMatch[1].trim() : '';
+                
+                // Update pendingMemoryContext with parsed memories
+                if (memories.length > 0) {
+                    // Extract session IDs from existing context if available
+                    const sessionIds = (this.app.pendingMemoryContext?.sessionIds || []).slice(0, memories.length);
+                    
+                    this.app.pendingMemoryContext = {
+                        sessionIds: sessionIds,
+                        memories: memories,
+                        timestamp: Date.now()
+                    };
+                    
+                    // Re-render memory chips to reflect changes
+                    this.renderMemoryChips(memories);
+                    
+                    this.app.showToast?.('Memory context updated', 'success');
+                } else {
+                    // Clear if no memories found
+                    this.app.pendingMemoryContext = null;
+                    this.clearMemoryChips();
+                }
                 
                 // Close modal
                 closeModal();
-                
-                // Focus the input
-                this.app.elements.messageInput.focus();
             }
         });
 
