@@ -1973,12 +1973,12 @@ class ChatApp {
             }
             await chatDB.saveSession(existingSession);
 
+            // Record activity for session embedding (shared session has content)
+            sessionEmbedder.recordActivity(existingSession.id);
+
             this.state.currentSessionId = existingSession.id;
             sessionStorage.setItem(SESSION_STORAGE_KEY, existingSession.id);
             await chatDB.saveSetting('currentSessionId', existingSession.id);
-
-            // Record activity for session embedding (imported session has content)
-            sessionEmbedder.recordActivity(existingSession.id);
 
             this.updateUrlWithSession(normalizedShareId);
             this.renderSessions();
@@ -2107,7 +2107,7 @@ class ChatApp {
             sessionStorage.setItem(SESSION_STORAGE_KEY, session.id);
             await chatDB.saveSetting('currentSessionId', session.id);
 
-            // Record activity for session embedding (imported session has content)
+            // Record activity for session embedding (shared session has content)
             sessionEmbedder.recordActivity(session.id);
 
             this.updateUrlWithSession(normalizedShareId);
@@ -2839,9 +2839,6 @@ class ChatApp {
         sessionStorage.setItem(SESSION_STORAGE_KEY, session.id);
         await chatDB.saveSetting('currentSessionId', session.id);
 
-        // Record activity for session embedding
-        sessionEmbedder.recordActivity(session.id);
-
         // Update URL to reflect new session
         this.updateUrlWithSession(session.id);
 
@@ -2888,9 +2885,6 @@ class ChatApp {
         this.state.currentSessionId = sessionId;
         sessionStorage.setItem(SESSION_STORAGE_KEY, sessionId);
         chatDB.saveSetting('currentSessionId', sessionId);
-
-        // Record activity for session embedding (tracks inactivity for semantic search)
-        sessionEmbedder.recordActivity(sessionId);
 
         // Keep current search state (global setting)
         const session = this.state.sessionsById.get(sessionId) || this.state.sessions.find(s => s.id === sessionId);
@@ -3157,6 +3151,7 @@ class ChatApp {
             session.title = title;
             session.updatedAt = Date.now();
             await chatDB.saveSession(session);
+            sessionEmbedder.recordActivity(session.id);
             this.renderSessions();
         }
     }
@@ -3774,6 +3769,9 @@ class ChatApp {
                 if (streamingMessage.scrubber?.canRestore) {
                     this.preCacheScrubberRestore(streamingMessage);
                 }
+
+                // Record activity for session embedding after successful regeneration
+                sessionEmbedder.recordActivity(session.id);
 
             } catch (error) {
                 console.error('Error getting AI response:', error);
@@ -4792,6 +4790,9 @@ class ChatApp {
             timestamp: baseTime + messagesToCopy.length
         };
         await chatDB.saveMessage(dividerMessage);
+
+        // Record activity for session embedding (forked session has content)
+        sessionEmbedder.recordActivity(newSessionId);
 
         // Log the fork action
         if (window.networkLogger) {

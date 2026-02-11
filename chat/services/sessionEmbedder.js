@@ -1,29 +1,28 @@
 /**
- * SessionEmbedder - Tracks session inactivity and embeds chat history to vector store.
+ * SessionEmbedder - Embeds chat history to vector store using a single deduplicated queue.
  *
- * Uses a background timer to check for sessions that have been inactive for 5+ minutes
- * and have new content since their last embedding. Sessions are re-embedded as users
- * continue chatting, keeping the vector store up to date.
+ * All session IDs that need embedding flow through `this.queue`. Sources:
+ * - `recordActivity(sessionId)` — called after an LLM response completes
+ * - `startBackfill()` — scans all sessions at startup for missing/stale embeddings
+ * - `enqueueImportedSessions(ids)` — called after chat history import
  *
- * On startup, performs a backfill to embed any sessions that are missing embeddings
- * or have stale embeddings (updatedAt > lastEmbeddedAt).
+ * `processQueue()` is the unified processor. It runs at most once at a time
+ * (guarded by `this.processing`) and is triggered immediately by enqueue
+ * operations as well as by the periodic background timer.
  *
  * Timestamps (stored in session object in IndexedDB):
  * - session.updatedAt: When the session was last modified (messages added, etc.)
  * - session.lastEmbeddedAt: When we last embedded this session
  *
- * Re-embedding triggers when:
- * - (now - updatedAt) > INACTIVITY_TIMEOUT_MS  (session has been idle for 5 min)
- * - updatedAt > lastEmbeddedAt  (new content since last embedding)
+ * Re-embedding triggers when updatedAt > lastEmbeddedAt.
  */
 import { createEmbeddingSource } from '../embeddings/index.js';
 import { createVectorStore, encodeVectorId } from '../vector/index.js';
 import { chatDB } from '../db.js';
 
-const INACTIVITY_TIMEOUT_MS = 30 * 1000; // 30 seconds for testing (change to 5 * 60 * 1000 for production)
 const CHECK_INTERVAL_MS = 30 * 1000; // Check every 30 seconds
 const MAX_CONTENT_LENGTH = 8000; // Truncate very long conversations
-const BACKFILL_DELAY_MS = 500; // Delay between backfill embeddings to avoid overwhelming the system
+const BACKFILL_DELAY_MS = 500; // Delay between queue embeddings to avoid overwhelming the system
 
 class SessionEmbedder {
     constructor() {
@@ -32,9 +31,8 @@ class SessionEmbedder {
         this.initialized = false;
         this.initPromise = null;
         this.checkInterval = null;
-        this.activeSessionIds = new Set(); // Sessions that have had activity this browser session
-        this.backfillQueue = []; // Queue of session IDs to backfill
-        this.isBackfilling = false; // Whether backfill is in progress
+        this.queue = []; // Deduplicated session ID strings
+        this.processing = false; // Lock to prevent concurrent processQueue runs
         this._searchTimings = []; // Profiling data for searchSessions
         this._embedTimings = []; // Profiling data for embedSession
     }
@@ -69,7 +67,7 @@ class SessionEmbedder {
 
             this.initialized = true;
 
-            // Start background timer to check for inactive sessions
+            // Start background timer to process queue periodically
             this.startBackgroundCheck();
 
             // Start backfill of existing sessions (non-blocking)
@@ -96,11 +94,10 @@ class SessionEmbedder {
     }
 
     /**
-     * Start the backfill process to embed all sessions that need it.
-     * Scans all sessions and queues those with missing or stale embeddings.
+     * Scan all sessions and enqueue those with missing or stale embeddings.
      */
     async startBackfill() {
-        if (!this.initialized || this.isBackfilling) {
+        if (!this.initialized) {
             return;
         }
 
@@ -135,12 +132,12 @@ class SessionEmbedder {
                 return bTime - aTime;
             });
 
-            // Queue session IDs for backfill
-            this.backfillQueue = sessionsNeedingEmbedding.map(s => s.id);
-            console.log(`[SessionEmbedder] Queued ${this.backfillQueue.length} sessions for backfill`);
+            // Enqueue session IDs and start processing
+            const ids = sessionsNeedingEmbedding.map(s => s.id);
+            this.enqueue(ids);
+            console.log(`[SessionEmbedder] Queued ${ids.length} sessions for backfill`);
 
-            // Start processing the queue
-            this.processBackfillQueue();
+            this.processQueue();
 
         } catch (error) {
             console.warn('[SessionEmbedder] Backfill scan failed:', error);
@@ -148,66 +145,117 @@ class SessionEmbedder {
     }
 
     /**
-     * Process the backfill queue one session at a time.
-     * Uses requestIdleCallback to avoid blocking the UI.
+     * Add session IDs to the queue, deduplicating against existing entries.
+     *
+     * @param {string|string[]} sessionIds - One or more session IDs to enqueue
      */
-    async processBackfillQueue() {
-        if (this.backfillQueue.length === 0) {
-            this.isBackfilling = false;
-            console.log('[SessionEmbedder] Backfill complete');
-            return;
-        }
-
-        this.isBackfilling = true;
-
-        // Get the next session ID from the queue
-        const sessionId = this.backfillQueue.shift();
-
-        try {
-            // Check if session still needs embedding (might have been embedded by active session logic)
-            const session = await chatDB.getSession(sessionId);
-            if (session) {
-                const updatedAt = session.updatedAt || session.createdAt || 0;
-                const lastEmbeddedAt = session.lastEmbeddedAt || 0;
-
-                if (lastEmbeddedAt === 0 || updatedAt > lastEmbeddedAt) {
-                    await this.embedSession(sessionId);
-                }
+    enqueue(sessionIds) {
+        const ids = Array.isArray(sessionIds) ? sessionIds : [sessionIds];
+        const existing = new Set(this.queue);
+        for (const id of ids) {
+            if (id && !existing.has(id)) {
+                this.queue.push(id);
+                existing.add(id);
             }
-        } catch (error) {
-            console.warn(`[SessionEmbedder] Backfill failed for session ${sessionId}:`, error);
-        }
-
-        // Schedule next backfill item with a delay to avoid overwhelming the system
-        if (this.backfillQueue.length > 0) {
-            if (typeof requestIdleCallback === 'function') {
-                // Use requestIdleCallback with a minimum delay
-                setTimeout(() => {
-                    requestIdleCallback(() => this.processBackfillQueue(), { timeout: 10000 });
-                }, BACKFILL_DELAY_MS);
-            } else {
-                // Fallback: simple timeout
-                setTimeout(() => this.processBackfillQueue(), BACKFILL_DELAY_MS);
-            }
-        } else {
-            this.isBackfilling = false;
-            console.log('[SessionEmbedder] Backfill complete');
         }
     }
 
     /**
-     * Get the current backfill status.
-     * @returns {Object} Backfill status including queue length
+     * Unified queue processor. Replaces both checkAndEmbedInactiveSessions
+     * and processBackfillQueue.
+     *
+     * Always processes from the front of the queue. Uses indexOf to re-locate
+     * items after each await, since external callers (e.g. removeSessionEmbedding)
+     * may splice the queue during yields. On error, stops this cycle and retries
+     * on the next timer tick.
+     */
+    async processQueue() {
+        if (!this.initialized || this.processing) {
+            return;
+        }
+
+        this.processing = true;
+
+        try {
+            while (this.queue.length > 0) {
+                const sessionId = this.queue[0];
+
+                try {
+                    const session = await chatDB.getSession(sessionId);
+
+                    // Re-locate after yield — queue may have shifted
+                    const idx = this.queue.indexOf(sessionId);
+                    if (idx === -1) continue; // Removed externally
+
+                    if (!session) {
+                        // Session deleted — remove from queue
+                        this.queue.splice(idx, 1);
+                        continue;
+                    }
+
+                    const updatedAt = session.updatedAt || session.createdAt || 0;
+                    const lastEmbeddedAt = session.lastEmbeddedAt || 0;
+
+                    if (updatedAt <= lastEmbeddedAt) {
+                        // Already current — remove from queue
+                        this.queue.splice(idx, 1);
+                        continue;
+                    }
+
+                    // Ready to embed — remove from queue and embed
+                    this.queue.splice(idx, 1);
+                    await this.embedSession(sessionId);
+
+                    // Yield to browser before processing next item
+                    if (this.queue.length > 0) {
+                        await new Promise(resolve => {
+                            if (typeof requestIdleCallback === 'function') {
+                                setTimeout(() => {
+                                    requestIdleCallback(resolve, { timeout: 10000 });
+                                }, BACKFILL_DELAY_MS);
+                            } else {
+                                setTimeout(resolve, BACKFILL_DELAY_MS);
+                            }
+                        });
+                    }
+                } catch (error) {
+                    // DB error — stop this cycle, retry on next timer tick
+                    console.warn(`[SessionEmbedder] Error processing session ${sessionId}:`, error);
+                    break;
+                }
+            }
+        } finally {
+            this.processing = false;
+        }
+    }
+
+    /**
+     * Public entry point for the import flow. Enqueues imported session IDs
+     * and starts processing immediately.
+     *
+     * @param {string[]} sessionIds - Array of imported session IDs
+     */
+    enqueueImportedSessions(sessionIds) {
+        if (!sessionIds || sessionIds.length === 0) return;
+
+        this.enqueue(sessionIds);
+        console.log(`[SessionEmbedder] Enqueued ${sessionIds.length} imported sessions`);
+        this.processQueue();
+    }
+
+    /**
+     * Get the current processing status.
+     * @returns {Object} Status including queue length
      */
     getBackfillStatus() {
         return {
-            isBackfilling: this.isBackfilling,
-            queueLength: this.backfillQueue.length
+            isProcessing: this.processing,
+            queueLength: this.queue.length
         };
     }
 
     /**
-     * Start the background timer that checks for inactive sessions to embed.
+     * Start the background timer that periodically processes the queue.
      */
     startBackgroundCheck() {
         if (this.checkInterval) {
@@ -215,11 +263,11 @@ class SessionEmbedder {
         }
 
         this.checkInterval = setInterval(() => {
-            this.checkAndEmbedInactiveSessions();
+            this.processQueue();
         }, CHECK_INTERVAL_MS);
 
         // Also run immediately on start
-        this.checkAndEmbedInactiveSessions();
+        this.processQueue();
     }
 
     /**
@@ -233,55 +281,16 @@ class SessionEmbedder {
     }
 
     /**
-     * Record activity for a session. Call this when:
-     * - User sends a message
-     * - Assistant finishes responding
-     * - User switches to a session
-     *
-     * This adds the session to the active set so we track it for embedding.
+     * Record activity for a session. Call this after an LLM response completes.
+     * Enqueues the session and triggers immediate processing.
      *
      * @param {string} sessionId - The session that had activity
      */
     recordActivity(sessionId) {
         if (!sessionId) return;
 
-        // Add to active sessions set (we'll check these for embedding)
-        this.activeSessionIds.add(sessionId);
-    }
-
-    /**
-     * Check all active sessions and embed any that have been inactive
-     * for 5+ minutes and have new content.
-     */
-    async checkAndEmbedInactiveSessions() {
-        if (!this.initialized || this.activeSessionIds.size === 0) {
-            return;
-        }
-
-        const now = Date.now();
-
-        for (const sessionId of this.activeSessionIds) {
-            try {
-                const session = await chatDB.getSession(sessionId);
-                if (!session) {
-                    // Session was deleted, remove from tracking
-                    this.activeSessionIds.delete(sessionId);
-                    continue;
-                }
-
-                const updatedAt = session.updatedAt || session.createdAt || 0;
-                const lastEmbeddedAt = session.lastEmbeddedAt || 0;
-                const timeSinceUpdate = now - updatedAt;
-
-                // Check if session has been inactive for 5+ minutes
-                // AND has new content since last embedding
-                if (timeSinceUpdate >= INACTIVITY_TIMEOUT_MS && updatedAt > lastEmbeddedAt) {
-                    await this.embedSession(sessionId);
-                }
-            } catch (error) {
-                console.warn(`[SessionEmbedder] Error checking session ${sessionId}:`, error);
-            }
-        }
+        this.enqueue(sessionId);
+        this.processQueue();
     }
 
     /**
@@ -315,9 +324,6 @@ class SessionEmbedder {
 
             // Build text representation of the conversation
             let conversationText = '';
-            // if (session.title && session.title !== 'New Chat') {
-            //     conversationText = `Topic: ${session.title}\n\n`;
-            // }
 
             conversationText += messages
                 .filter(m => m.content && m.content.trim())
@@ -558,8 +564,8 @@ class SessionEmbedder {
             return {
                 initialized: true,
                 count,
-                activeSessionsTracked: this.activeSessionIds.size,
-                backfillStatus: this.getBackfillStatus(),
+                queueLength: this.queue.length,
+                isProcessing: this.processing,
                 ...stats
             };
         } catch (error) {
@@ -593,13 +599,10 @@ class SessionEmbedder {
 
             const removed = await this.store.remove(vectorId);
 
-            // Also remove from active sessions tracking
-            this.activeSessionIds.delete(sessionId);
-
-            // Remove from backfill queue if present
-            const queueIndex = this.backfillQueue.indexOf(sessionId);
+            // Remove from queue if present
+            const queueIndex = this.queue.indexOf(sessionId);
             if (queueIndex !== -1) {
-                this.backfillQueue.splice(queueIndex, 1);
+                this.queue.splice(queueIndex, 1);
             }
 
             if (removed > 0) {
@@ -625,9 +628,8 @@ class SessionEmbedder {
 
         try {
             await this.store.clear();
-            this.activeSessionIds.clear();
-            this.backfillQueue = [];
-            this.isBackfilling = false;
+            this.queue = [];
+            this.processing = false;
             console.log('[SessionEmbedder] Cleared all embeddings');
         } catch (error) {
             console.warn('[SessionEmbedder] Failed to clear:', error);
@@ -639,8 +641,8 @@ class SessionEmbedder {
      */
     async destroy() {
         this.stopBackgroundCheck();
-        this.backfillQueue = [];
-        this.isBackfilling = false;
+        this.queue = [];
+        this.processing = false;
 
         if (this.store) {
             await this.store.close();

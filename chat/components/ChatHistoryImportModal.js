@@ -5,6 +5,7 @@ import {
     getChatHistoryImportAccept
 } from '../services/chatHistoryImporters.js';
 import { chatDB } from '../db.js';
+import sessionEmbedder from '../services/sessionEmbedder.js';
 
 function formatBytes(bytes) {
     if (!Number.isFinite(bytes)) return '0 B';
@@ -435,12 +436,18 @@ class ChatHistoryImportModal {
             this.state.step = this.state.cancelRequested ? 'cancelled' : 'complete';
         }
 
+        // Enqueue imported sessions for embedding
+        if (this._importedSessionIds.length > 0) {
+            sessionEmbedder.enqueueImportedSessions(this._importedSessionIds);
+        }
+
         await this.refreshSessionsFromDb();
         this.render();
         this.setupEventListeners();
     }
 
     async importSessions() {
+        this._importedSessionIds = [];
         const importer = this.state.importer;
         const source = this.state.importerSource || importer?.source || 'imported';
         const getExternalId = typeof importer?.getExternalId === 'function'
@@ -560,6 +567,7 @@ class ChatHistoryImportModal {
                 knownIds.add(sourceKey);
             }
 
+            this._importedSessionIds.push(sessionId);
             this.state.progress.imported += 1;
             this.state.progress.processed += 1;
             this.updateProgressUI();
