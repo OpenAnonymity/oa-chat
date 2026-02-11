@@ -1474,7 +1474,11 @@ class RightPanel {
                         <div class="space-y-1">
                             <div class="text-[10px] text-muted-foreground font-medium">Response Summary</div>
                             <div class="text-[10px] text-muted-foreground bg-background p-2 rounded border border-border/50 break-words">
-                                ${this.escapeHtml(networkLogger.getResponseSummary(log.response, log.status) || 'Request completed successfully')}
+                                ${this.escapeHtml(networkLogger.getResponseSummary(log.response, log.status, {
+                                    type: log.type,
+                                    method: log.method,
+                                    url: log.url
+                                }) || 'Request completed successfully')}
                             </div>
                         </div>
                     ` : ''}
@@ -1848,9 +1852,12 @@ class RightPanel {
                             href="https://openanonymity.ai/beta"
                             target="_blank"
                             rel="noopener noreferrer"
-                            class="btn-ghost-hover w-full inline-flex items-center justify-center rounded-md text-xs font-medium transition-all duration-200 focus-visible:outline-none bg-background text-foreground h-8 px-3 shadow-sm border border-border"
+                            class="btn-ghost-hover w-full inline-flex items-center justify-center gap-1.5 rounded-md text-xs font-medium transition-all duration-200 focus-visible:outline-none bg-background text-foreground h-8 px-3 shadow-sm border border-border"
                         >
-                            Request beta access
+                            <svg class="w-3 h-3 flex-shrink-0" width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"></path>
+                            </svg>
+                            <span>Request beta access</span>
                         </a>
                     </form>
 

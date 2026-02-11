@@ -10,6 +10,7 @@ import ModelPicker from './components/ModelPicker.js';
 import ChatHistoryImportModal from './components/ChatHistoryImportModal.js';
 import AccountModal from './components/AccountModal.js';
 import WelcomePanel from './components/WelcomePanel.js';
+import ThanksPanel from './components/ThanksPanel.js';
 import { buildTypingIndicator } from './components/MessageTemplates.js';
 import themeManager from './services/themeManager.js';
 import preferencesStore, { PREF_KEYS } from './services/preferencesStore.js';
@@ -1200,6 +1201,7 @@ class ChatApp {
         this.chatHistoryImportModal = new ChatHistoryImportModal(this);
         this.accountModal = new AccountModal(this);
         this.welcomePanel = new WelcomePanel(this);
+        this.thanksPanel = new ThanksPanel(this);
         this.rightPanel = new RightPanel(this);
         this.rightPanel.mount();
 
@@ -1313,9 +1315,16 @@ class ChatApp {
             await networkProxy.syncWithPreferences().catch(err => console.warn('Proxy pref sync failed:', err));
             networkProxy.initialize().catch(err => console.warn('Proxy init failed:', err));
 
-            await this.welcomePanel.init().catch((error) => {
-                console.warn('Welcome panel init failed:', error);
-            });
+            const hadTicketsBefore = !!await preferencesStore.getPreference(PREF_KEYS.hadTicketsBefore);
+            if (hadTicketsBefore) {
+                await this.thanksPanel.init().catch((error) => {
+                    console.warn('Thanks panel init failed:', error);
+                });
+            } else {
+                await this.welcomePanel.init().catch((error) => {
+                    console.warn('Welcome panel init failed:', error);
+                });
+            }
         })();
 
         // Load settings from IndexedDB in parallel; this is independent of sidebar history load.
