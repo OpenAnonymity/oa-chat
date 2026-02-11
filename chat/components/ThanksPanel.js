@@ -22,7 +22,6 @@ class ThanksPanel {
         this.redeemProgress = null;
         this.redeemError = null;
         this.ticketsRedeemed = 0;
-        this.allowManualClose = false;
 
         this.returnFocusEl = null;
         this.escapeHandler = null;
@@ -47,7 +46,6 @@ class ThanksPanel {
         if (this.isOpen || !this.overlay) return;
         this.isOpen = true;
         this.returnFocusEl = document.activeElement;
-        this.allowManualClose = this.isCloseAllowedByLinkContext();
 
         this.step = 'thanks';
         this.inviteCode = '';
@@ -71,24 +69,7 @@ class ThanksPanel {
 
     handleCloseAttempt() {
         if (this.isRedeeming) return;
-        if (!this.allowManualClose) return;
         this.close();
-    }
-
-    isCloseAllowedByLinkContext() {
-        if (this.app?.pendingTicketCode?.code) return true;
-        if (this.app?.rightPanel?.pendingInvitationSource) return true;
-
-        try {
-            const url = new URL(window.location.href);
-            if (/^\/tickets\/[^/?#]+/i.test(url.pathname)) {
-                return true;
-            }
-            const params = url.searchParams;
-            return params.has('tickets') || params.has('sharing') || params.has('s');
-        } catch (error) {
-            return false;
-        }
     }
 
     close() {
@@ -255,15 +236,13 @@ class ThanksPanel {
                     }
                 </style>
 
-                <div class="flex items-center justify-between mb-2">
+                <div class="relative flex items-center mb-2">
                     <h2 class="text-lg font-semibold text-foreground">Welcome back</h2>
-                    ${this.allowManualClose ? `
-                    <button id="close-thanks-btn" class="-mt-1 text-muted-foreground hover:text-foreground transition-colors p-1 -mr-1 rounded-lg hover:bg-accent" aria-label="Close">
+                    <button id="close-thanks-btn" class="text-muted-foreground hover:text-foreground transition-colors p-1 rounded-lg hover:bg-accent" style="position:absolute;top:-10px;right:-8px" aria-label="Close">
                         <svg class="w-4 h-4" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
                         </svg>
                     </button>
-                    ` : ''}
                 </div>
 
                 <p class="text-sm text-muted-foreground mb-4">Thanks for trying this out! We will send an invite code via your email as soon as we have more capacity.</p>

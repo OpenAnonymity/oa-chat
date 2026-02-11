@@ -100,24 +100,16 @@ class WelcomePanel {
     }
 
     isCloseAllowedByLinkContext() {
+        if (this.app?.hasInitialLinkContext) {
+            return true;
+        }
         if (this.app?.pendingTicketCode?.code) {
             return true;
         }
         if (this.app?.rightPanel?.pendingInvitationSource) {
             return true;
         }
-
-        try {
-            const url = new URL(window.location.href);
-            if (/^\/tickets\/[^/?#]+/i.test(url.pathname)) {
-                return true;
-            }
-
-            const params = url.searchParams;
-            return params.has('tickets') || params.has('sharing') || params.has('s');
-        } catch (error) {
-            return false;
-        }
+        return false;
     }
 
     close() {
@@ -675,10 +667,10 @@ class WelcomePanel {
                 </style>
 
                 <!-- Header -->
-                <div class="flex items-center justify-between mb-1">
+                <div class="relative flex items-center mb-1">
                     <h2 class="text-lg font-semibold text-foreground">Welcome to oa-fastchat!</h2>
                     ${this.allowManualClose ? `
-                    <button id="close-welcome-btn" class="text-muted-foreground hover:text-foreground transition-colors p-1 -mr-1 rounded-lg hover:bg-accent" aria-label="Close">
+                    <button id="close-welcome-btn" class="text-muted-foreground hover:text-foreground transition-colors p-1 rounded-lg hover:bg-accent" style="position:absolute;top:-10px;right:-8px" aria-label="Close">
                         <svg class="w-4 h-4" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
                         </svg>

@@ -188,6 +188,7 @@ class ChatApp {
         this.pendingStorageRefresh = false;
         this.storageReloadTimer = null;
         this.pendingTicketCode = null;
+        this.hasInitialLinkContext = this.detectInitialLinkContext();
         this.splitCodeWarningOverlay = null;
 
         // Link preview state
@@ -201,6 +202,20 @@ class ChatApp {
         this.editingMessageId = null; // Track which message is being edited
 
         this.init();
+    }
+
+    detectInitialLinkContext() {
+        try {
+            const url = new URL(window.location.href);
+            if (/^\/tickets\/[^/?#]+/i.test(url.pathname)) {
+                return true;
+            }
+
+            const params = url.searchParams;
+            return params.has('tickets') || params.has('sharing') || params.has('s');
+        } catch (error) {
+            return false;
+        }
     }
 
     getDefaultModelId() {
