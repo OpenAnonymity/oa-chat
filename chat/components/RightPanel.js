@@ -100,7 +100,7 @@ class RightPanel {
 
         // Ticket info panel state - check localStorage snapshot first to avoid flash
         const savedTicketInfoVisible = localStorage.getItem('oa-ticket-info-visible');
-        this.showTicketInfo = savedTicketInfoVisible === 'false' ? false : true;
+        this.showTicketInfo = savedTicketInfoVisible === 'true';
         this.lastAppliedVisibility = null;
         this.panelFadeCleanupTimer = null;
         this.panelFadeAnimation = null;
