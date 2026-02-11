@@ -72,7 +72,7 @@ class WelcomePanel {
 
         // Reset state on open
         this.step = 'welcome';
-        this.accessMode = this.canUseEmailForFreeAccess ? 'preview' : 'beta';
+        this.accessMode = 'preview';
         this.previewEmail = '';
         this.inviteCode = '';
         this.isRedeeming = false;
@@ -161,12 +161,8 @@ class WelcomePanel {
     }
 
     ensureValidAccessMode() {
-        if (!this.canUseEmailForFreeAccess && this.isPreviewMode()) {
-            this.accessMode = 'beta';
-            return;
-        }
         if (!this.accessMode) {
-            this.accessMode = this.canUseEmailForFreeAccess ? 'preview' : 'beta';
+            this.accessMode = 'preview';
         }
     }
 
@@ -504,8 +500,7 @@ class WelcomePanel {
         this.ensureValidAccessMode();
         const hasError = !!this.redeemError;
         const isPreviewMode = this.isPreviewMode();
-        const isPreviewDisabled = !this.canUseEmailForFreeAccess;
-        const inputPlaceholder = isPreviewMode ? 'Email' : 'Invite Code';
+        const inputPlaceholder = isPreviewMode ? 'Email address' : 'Invite code';
         const inputMaxLength = isPreviewMode ? 254 : 24;
         const inputValue = this.getCurrentAccessValue();
         const showPreviewHint = isPreviewMode && !hasError && this.previewEmail.trim().length > 0;
@@ -660,9 +655,9 @@ class WelcomePanel {
                     .welcome-link:hover {
                         text-decoration-color: hsl(var(--color-foreground) / 0.5);
                     }
-                    .encryption-mode-btn:disabled {
-                        opacity: 0.45;
-                        cursor: not-allowed;
+                    #welcome-access-mode-toggle .encryption-mode-btn,
+                    #welcome-access-mode-toggle .encryption-mode-indicator {
+                        transition: none !important;
                     }
                 </style>
 
@@ -737,7 +732,6 @@ class WelcomePanel {
                             type="button"
                             class="encryption-mode-btn ${isPreviewMode ? 'active' : ''}"
                             data-access-mode="preview"
-                            ${isPreviewDisabled ? 'disabled' : ''}
                         >Limited Preview</button>
                         <button
                             type="button"
@@ -970,31 +964,46 @@ class WelcomePanel {
 
             const updateModeIndicator = (activeBtn) => {
                 if (!modeIndicator || !activeBtn) return;
-                const containerRect = accessModeToggle.getBoundingClientRect();
-                const btnRect = activeBtn.getBoundingClientRect();
-                modeIndicator.style.width = `${btnRect.width}px`;
-                modeIndicator.style.transform = `translateX(${btnRect.left - containerRect.left - 2}px)`;
+                modeIndicator.style.width = `${activeBtn.offsetWidth}px`;
+                modeIndicator.style.transform = `translateX(${Math.max(0, activeBtn.offsetLeft - 2)}px)`;
+            };
+
+            const syncActiveModeIndicator = () => {
+                const activeModeButton = accessModeToggle.querySelector('.encryption-mode-btn.active');
+                updateModeIndicator(activeModeButton);
             };
 
             modeButtons.forEach((btn) => {
                 btn.onclick = () => {
                     const mode = btn.dataset.accessMode;
-                    if (!mode || btn.disabled || mode === this.accessMode) return;
+                    if (!mode || mode === this.accessMode) return;
                     this.accessMode = mode;
                     this.redeemError = null;
                     this.render();
                 };
             });
 
-            const activeModeButton = accessModeToggle.querySelector('.encryption-mode-btn.active');
-            if (activeModeButton && modeIndicator) {
+            // Run multiple sync passes to avoid width drift during initial layout/font settling.
+            if (modeIndicator) {
                 requestAnimationFrame(() => {
-                    modeIndicator.style.transition = 'none';
-                    updateModeIndicator(activeModeButton);
+                    syncActiveModeIndicator();
                     requestAnimationFrame(() => {
-                        modeIndicator.style.transition = '';
+                        syncActiveModeIndicator();
                     });
                 });
+                setTimeout(() => {
+                    if (this.isOpen && this.step === 'welcome') {
+                        syncActiveModeIndicator();
+                    }
+                }, 0);
+
+                if (document.fonts?.ready) {
+                    document.fonts.ready.then(() => {
+                        if (this.isOpen && this.step === 'welcome') {
+                            syncActiveModeIndicator();
+                        }
+                    }).catch(() => {});
+                }
             }
         }
 

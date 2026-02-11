@@ -253,7 +253,7 @@ class ThanksPanel {
                             id="thanks-invite-code-input"
                             type="text"
                             maxlength="24"
-                            placeholder="Invite Code"
+                            placeholder="Invite code"
                             class="flex-1 h-full px-3 text-sm bg-transparent text-foreground placeholder:text-muted-foreground/50 focus:outline-none"
                             value="${this.escapeHtml(this.inviteCode)}"
                             autocomplete="off"
