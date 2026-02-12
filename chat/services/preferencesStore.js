@@ -45,7 +45,7 @@ const DEFAULT_PREFERENCES = {
     [PREF_KEYS.flatMode]: true,
     [PREF_KEYS.fontMode]: 'sans',
     [PREF_KEYS.rightPanelVisible]: null,
-    [PREF_KEYS.ticketInfoVisible]: false,
+    [PREF_KEYS.ticketInfoVisible]: true,
     [PREF_KEYS.invitationFormVisible]: null,
     [PREF_KEYS.welcomeDismissed]: false,
     [PREF_KEYS.hadTicketsBefore]: false,

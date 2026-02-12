@@ -30,7 +30,6 @@ class WelcomePanel {
         this.redeemProgress = null;
         this.redeemError = null;
         this.ticketsRedeemed = 0;
-        this.dontShowAgain = false;
         this.freeAccessRequested = false;
         this.freeAccessAvailable = false;
         this.freeAccessAvailability = null;
@@ -115,11 +114,6 @@ class WelcomePanel {
     close() {
         if (!this.isOpen || !this.overlay) return;
         this.isOpen = false;
-
-        // Save dismissal preference if checked
-        if (this.dontShowAgain) {
-            preferencesStore.savePreference(PREF_KEYS.welcomeDismissed, true);
-        }
 
         this.overlay.classList.add('hidden');
         this.overlay.innerHTML = '';
@@ -461,10 +455,6 @@ class WelcomePanel {
         input.click();
     }
 
-    handleDontShowAgainChange(checked) {
-        this.dontShowAgain = checked;
-    }
-
     // =========================================================================
     // Render
     // =========================================================================
@@ -655,10 +645,6 @@ class WelcomePanel {
                     .welcome-link:hover {
                         text-decoration-color: hsl(var(--color-foreground) / 0.5);
                     }
-                    #welcome-access-mode-toggle .encryption-mode-btn,
-                    #welcome-access-mode-toggle .encryption-mode-indicator {
-                        transition: none !important;
-                    }
                 </style>
 
                 <!-- Header -->
@@ -801,19 +787,7 @@ class WelcomePanel {
                 </div>
 
                 <!-- Footer -->
-                ${ticketClient.getTicketCount() > 0 ? `
-                <div class="flex items-center justify-center" style="margin-top:10px">
-                    <label class="flex items-center gap-2 cursor-pointer select-none">
-                        <input
-                            type="checkbox"
-                            id="dont-show-again"
-                            class="w-4 h-4 rounded border-border text-blue-600 focus:ring-blue-500/20"
-                            ${this.dontShowAgain ? 'checked' : ''}
-                        />
-                        <span class="text-xs text-muted-foreground">Don't show this again</span>
-                    </label>
-                </div>` : ''}
-                <div class="flex items-center justify-between" style="margin-top:${ticketClient.getTicketCount() > 0 ? '6' : '22'}px">
+                <div class="flex items-center justify-between" style="margin-top:22px">
                     <a
                         href="https://openanonymity.ai/blog/unlinkable-inference/"
                         target="_blank"
@@ -847,7 +821,19 @@ class WelcomePanel {
         const progress = this.redeemProgress || { message: 'Processing...', percent: 0 };
 
         return `
-            <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}" style="padding:28px">
+            <div role="dialog" aria-modal="true" class="${MODAL_CLASSES} welcome-redeeming-surface" style="padding:28px">
+                <style>
+                    .welcome-redeeming-surface {
+                        background: hsl(var(--color-background) / 0.72);
+                        backdrop-filter: blur(20px) saturate(1.2);
+                        -webkit-backdrop-filter: blur(20px) saturate(1.2);
+                    }
+                    #welcome-panel {
+                        background: rgba(0,0,0,0.35) !important;
+                        backdrop-filter: blur(4px) !important;
+                        -webkit-backdrop-filter: blur(4px) !important;
+                    }
+                </style>
                 <div class="flex flex-col items-center justify-center py-8">
                     <!-- Spinner -->
                     <div class="w-12 h-12 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div>
@@ -964,46 +950,57 @@ class WelcomePanel {
 
             const updateModeIndicator = (activeBtn) => {
                 if (!modeIndicator || !activeBtn) return;
-                modeIndicator.style.width = `${activeBtn.offsetWidth}px`;
-                modeIndicator.style.transform = `translateX(${Math.max(0, activeBtn.offsetLeft - 2)}px)`;
-            };
-
-            const syncActiveModeIndicator = () => {
-                const activeModeButton = accessModeToggle.querySelector('.encryption-mode-btn.active');
-                updateModeIndicator(activeModeButton);
+                const containerRect = accessModeToggle.getBoundingClientRect();
+                const btnRect = activeBtn.getBoundingClientRect();
+                modeIndicator.style.width = `${btnRect.width}px`;
+                modeIndicator.style.transform = `translateX(${btnRect.left - containerRect.left - 2}px)`;
             };
 
             modeButtons.forEach((btn) => {
                 btn.onclick = () => {
                     const mode = btn.dataset.accessMode;
                     if (!mode || mode === this.accessMode) return;
+
                     this.accessMode = mode;
                     this.redeemError = null;
-                    this.render();
+
+                    modeButtons.forEach((button) => {
+                        button.classList.toggle('active', button.dataset.accessMode === mode);
+                    });
+                    updateModeIndicator(btn);
+
+                    const inviteInput = document.getElementById('invite-code-input');
+                    if (inviteInput) {
+                        const isPreviewMode = this.isPreviewMode();
+                        inviteInput.maxLength = isPreviewMode ? 254 : 24;
+                        inviteInput.placeholder = isPreviewMode ? 'Email address' : 'Invite code';
+                        inviteInput.value = this.getCurrentAccessValue();
+                    }
+
+                    const submitBtn = document.querySelector('#invite-form button[type="submit"]');
+                    if (submitBtn) {
+                        submitBtn.setAttribute('aria-label', this.isPreviewMode() ? 'Request limited preview' : 'Redeem invite code');
+                    }
+
+                    const inputWrapper = inviteInput?.closest('.invite-input-wrapper');
+                    if (inputWrapper) {
+                        inputWrapper.classList.remove('input-error');
+                    }
+                    this.updateInlineInviteFeedback();
+
+                    inviteInput?.focus();
                 };
             });
 
-            // Run multiple sync passes to avoid width drift during initial layout/font settling.
-            if (modeIndicator) {
+            const activeModeButton = accessModeToggle.querySelector('.encryption-mode-btn.active');
+            if (activeModeButton && modeIndicator) {
                 requestAnimationFrame(() => {
-                    syncActiveModeIndicator();
+                    modeIndicator.style.transition = 'none';
+                    updateModeIndicator(activeModeButton);
                     requestAnimationFrame(() => {
-                        syncActiveModeIndicator();
+                        modeIndicator.style.transition = '';
                     });
                 });
-                setTimeout(() => {
-                    if (this.isOpen && this.step === 'welcome') {
-                        syncActiveModeIndicator();
-                    }
-                }, 0);
-
-                if (document.fonts?.ready) {
-                    document.fonts.ready.then(() => {
-                        if (this.isOpen && this.step === 'welcome') {
-                            syncActiveModeIndicator();
-                        }
-                    }).catch(() => {});
-                }
             }
         }
 
@@ -1031,11 +1028,6 @@ class WelcomePanel {
             if (this.step === 'welcome') {
                 setTimeout(() => inviteInput.focus(), 100);
             }
-        }
-
-        const dontShowAgainCheckbox = document.getElementById('dont-show-again');
-        if (dontShowAgainCheckbox) {
-            dontShowAgainCheckbox.onchange = (e) => this.handleDontShowAgainChange(e.target.checked);
         }
 
         const importDataBtn = document.getElementById('import-data-btn');

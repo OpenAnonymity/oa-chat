@@ -100,7 +100,7 @@ class RightPanel {
 
         // Ticket info panel state - check localStorage snapshot first to avoid flash
         const savedTicketInfoVisible = localStorage.getItem('oa-ticket-info-visible');
-        this.showTicketInfo = savedTicketInfoVisible === 'true';
+        this.showTicketInfo = savedTicketInfoVisible === 'false' ? false : true;
         this.lastAppliedVisibility = null;
         this.panelFadeCleanupTimer = null;
         this.panelFadeAnimation = null;
@@ -631,14 +631,12 @@ class RightPanel {
             const input = document.getElementById('invitation-code-input');
             if (input) input.value = '';
 
-            // Auto-close progress, form, and ticket info panel after success
+            // Auto-close progress and form after success
             setTimeout(() => {
                 this.registrationProgress = null;
                 this.showInvitationForm = false;
                 this.invitationFormPreference = false;
                 preferencesStore.savePreference(PREF_KEYS.invitationFormVisible, false);
-                this.showTicketInfo = false;
-                preferencesStore.savePreference(PREF_KEYS.ticketInfoVisible, false);
                 this.pendingInvitationCode = null;
                 this.pendingInvitationTickets = null;
                 this.pendingInvitationSource = null;
@@ -1652,9 +1650,6 @@ class RightPanel {
         const signedResponse = this.currentTicket?.signed_response || fallbackTicketValue;
         const finalizedTicket = this.currentTicket?.finalized_ticket || fallbackTicketValue;
         const pendingTickets = Number.isFinite(this.pendingInvitationTickets) ? this.pendingInvitationTickets : null;
-        const pendingTicketsLabel = pendingTickets
-            ? `${pendingTickets} ticket${pendingTickets === 1 ? '' : 's'}`
-            : 'tickets';
         const maxSplitCount = this.getMaxSplitCount();
         const splitShareUrl = this.getTicketCodeShareUrl(this.splitResult?.code);
         const splitShareUrlEscaped = splitShareUrl ? this.escapeHtml(splitShareUrl) : '';
@@ -1689,12 +1684,6 @@ class RightPanel {
                         </svg>
                     </button>
                 </div>
-
-                ${this.pendingInvitationCode ? `
-                    <div class="mt-2 text-[10px] text-muted-foreground">
-                        Ticket code detected • redeeming ${pendingTicketsLabel}...
-                    </div>
-                ` : ''}
 
                 <div class="mt-2 flex items-center gap-1.5">
                     <input
