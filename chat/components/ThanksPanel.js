@@ -16,7 +16,7 @@ class ThanksPanel {
         this.isOpen = false;
         this.overlay = document.getElementById('welcome-panel');
 
-        this.step = 'thanks'; // 'thanks' | 'redeeming' | 'success'
+        this.step = 'thanks'; // 'thanks' | 'redeeming'
         this.inviteCode = '';
         this.isRedeeming = false;
         this.redeemProgress = null;
@@ -140,11 +140,25 @@ class ThanksPanel {
             });
 
             this.ticketsRedeemed = result.tickets_issued;
-            this.step = 'success';
             this.isRedeeming = false;
-            this.render();
+            this.redeemProgress = null;
+            this.step = 'thanks';
 
+            // Notify ticket UI and close the panel (skip success screen in ThanksPanel).
             window.dispatchEvent(new CustomEvent('tickets-updated'));
+            const redeemedCount = Number.isFinite(this.ticketsRedeemed)
+                ? this.ticketsRedeemed
+                : ticketClient.getTicketCount();
+            if (redeemedCount > 0) {
+                this.app?.showToast?.(
+                    `${redeemedCount} ticket${redeemedCount === 1 ? '' : 's'} added.`,
+                    'success'
+                );
+            } else {
+                this.app?.showToast?.('Tickets added.', 'success');
+            }
+            this.close();
+            return;
         } catch (error) {
             console.error('Thanks panel invite error:', error);
             this.step = 'thanks';
@@ -152,16 +166,6 @@ class ThanksPanel {
             this.redeemError = error.message || 'Failed to redeem invite code';
             this.render();
         }
-    }
-
-    handleCreateAccount() {
-        this.close();
-        setTimeout(() => this.app.accountModal?.open(), 150);
-    }
-
-    handleStartChatting() {
-        this.close();
-        setTimeout(() => this.app.elements.messageInput?.focus(), 150);
     }
 
     render() {
@@ -173,9 +177,6 @@ class ThanksPanel {
                 break;
             case 'redeeming':
                 this.overlay.innerHTML = this.renderRedeemingStep();
-                break;
-            case 'success':
-                this.overlay.innerHTML = this.renderSuccessStep();
                 break;
         }
 
@@ -324,64 +325,8 @@ class ThanksPanel {
         `;
     }
 
-    renderSuccessStep() {
-        return `
-            <div role="dialog" aria-modal="true" class="${MODAL_CLASSES} welcome-modal-glass welcome-success-surface" style="padding:28px 28px 20px">
-                <style>
-                    .welcome-success-surface {
-                        background: hsl(var(--color-background) / 0.72);
-                        backdrop-filter: blur(20px) saturate(1.2);
-                        -webkit-backdrop-filter: blur(20px) saturate(1.2);
-                    }
-                    .success-tick {
-                        width: 22px; height: 22px;
-                        border-radius: 50%;
-                        background: hsl(152 60% 48%);
-                        display: inline-flex; align-items: center; justify-content: center;
-                        flex-shrink: 0;
-                    }
-                    .dark .success-tick { background: hsl(152 50% 40%); }
-                </style>
 
-                <div class="flex items-center gap-2" style="margin-bottom:10px">
-                    <div class="success-tick">
-                        <svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path>
-                        </svg>
-                    </div>
-                    <h2 class="text-lg font-semibold text-foreground">You're all set!</h2>
-                </div>
-
-                <p class="text-sm text-muted-foreground" style="margin-bottom:14px">
-                    ${this.ticketsRedeemed} ticket${this.ticketsRedeemed !== 1 ? 's' : ''} added. Tickets authenticate chat sessions, and costs vary by model tier (see model picker).
-                </p>
-
-                <div class="flex items-stretch gap-3">
-                    <button
-                        id="create-account-btn"
-                        class="btn-ghost-hover flex-1 h-9 rounded-lg text-sm border border-border bg-background text-foreground shadow-sm transition-colors flex items-center justify-center gap-1.5"
-                    >
-                        <svg class="w-3.5 h-3.5 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
-                        </svg>
-                        Create Account
-                    </button>
-                    <button
-                        id="start-chatting-btn"
-                        class="flex-1 h-9 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 shadow-sm transition-colors flex items-center justify-center gap-1.5"
-                    >
-                        Start Chatting
-                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
-                        </svg>
-                    </button>
-                </div>
-                <p class="text-muted-foreground" style="margin-top:16px;font-size:11px;line-height:1.3">
-                    Account is optional and enables encrypted-sync of your data (tickets, preferences, and soon chat sessions) with Passkeys.
-                </p>
-            </div>
-        `;
-    }
+    // Success step intentionally omitted: on redemption we close the panel.
 
     attachEventListeners() {
         const themeToggle = document.getElementById('welcome-theme-toggle');
@@ -422,16 +367,6 @@ class ThanksPanel {
             if (this.step === 'thanks') {
                 setTimeout(() => inviteInput.focus(), 100);
             }
-        }
-
-        const createAccountBtn = document.getElementById('create-account-btn');
-        if (createAccountBtn) {
-            createAccountBtn.onclick = () => this.handleCreateAccount();
-        }
-
-        const startChattingBtn = document.getElementById('start-chatting-btn');
-        if (startChattingBtn) {
-            startChattingBtn.onclick = () => this.handleStartChatting();
         }
     }
 

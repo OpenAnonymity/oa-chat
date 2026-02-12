@@ -35,6 +35,7 @@ class WelcomePanel {
         this.freeAccessAvailability = null;
         this.canUseEmailForFreeAccess = false;
         this.allowManualClose = false;
+        this.pendingEmailRedemption = null; // { expectedTickets:number|null }
 
         // UI state
         this.returnFocusEl = null;
@@ -80,6 +81,7 @@ class WelcomePanel {
         this.ticketsRedeemed = 0;
         this.welcomeAnchorTop = null;
         this.animateOnNextRender = true;
+        this.pendingEmailRedemption = null;
 
         this.render();
         this.overlay.classList.remove('hidden');
@@ -176,8 +178,29 @@ class WelcomePanel {
         if (this.ticketsUpdatedHandler) return;
 
         this.ticketsUpdatedHandler = () => {
-            if (this.isOpen && this.step === 'welcome') {
+            if (!this.isOpen) return;
+
+            if (this.step === 'welcome') {
                 this.render();
+                return;
+            }
+
+            // Preview access redemption happens through the ticket panel redemption pipeline.
+            // Once tickets arrive, show the same success step as invite-code redemption.
+            if (this.step === 'redeeming' && this.pendingEmailRedemption) {
+                const ticketCount = ticketClient.getTicketCount();
+                if (ticketCount > 0) {
+                    const expectedTickets = this.pendingEmailRedemption.expectedTickets;
+                    this.ticketsRedeemed = Number.isFinite(expectedTickets) && expectedTickets > 0
+                        ? expectedTickets
+                        : ticketCount;
+                    this.pendingEmailRedemption = null;
+                    this.step = 'success';
+                    this.isRedeeming = false;
+                    this.redeemProgress = null;
+                    this.redeemError = null;
+                    this.render();
+                }
             }
         };
 
@@ -363,23 +386,30 @@ class WelcomePanel {
                     };
                     this.canUseEmailForFreeAccess = false;
 
-                    const ingested = this.app?.ingestTicketCode?.(accessCode, {
-                        autoRedeem: true,
-                        source: 'free_access'
-                    });
+                const ingested = this.app?.ingestTicketCode?.(accessCode, {
+                    autoRedeem: true,
+                    source: 'free_access'
+                });
 
+                if (!ingested) {
                     this.isRedeeming = false;
-                    if (!ingested) {
-                        this.step = 'welcome';
-                        this.redeemError = 'Free access code issued, but automatic redemption failed. Please redeem it in the ticket panel.';
-                        this.render();
-                        return;
-                    }
-
-                    this.app?.showToast?.('Free access granted. Redeeming tickets automatically...', 'success');
-                    this.close();
+                    this.step = 'welcome';
+                    this.redeemError = 'Free access code issued, but automatic redemption failed. Please redeem it in the ticket panel.';
+                    this.render();
                     return;
                 }
+
+                this.pendingEmailRedemption = {
+                    expectedTickets: Number.isFinite(freeAccessResult.ticketsGranted) && freeAccessResult.ticketsGranted > 0
+                        ? freeAccessResult.ticketsGranted
+                        : null
+                };
+                this.redeemProgress = { message: 'Redeeming tickets...', percent: 60 };
+                this.render();
+
+                this.app?.showToast?.('Free access granted. Redeeming tickets automatically...', 'success');
+                return;
+            }
 
                 await preferencesStore.savePreference(PREF_KEYS.freeAccessRequested, false);
                 this.freeAccessRequested = false;
