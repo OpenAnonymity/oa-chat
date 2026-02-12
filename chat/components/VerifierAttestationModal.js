@@ -870,7 +870,7 @@ class VerifierAttestationModal {
         const hasPartialVerification = v?.jwtVerified || v?.policyVerified;
 
         this.overlay.innerHTML = `
-            <div class="verifier-modal-content bg-background rounded-xl shadow-2xl max-w-xl w-full mx-4 animate-in zoom-in-95 overflow-hidden max-h-[90vh] flex flex-col">
+            <div class="verifier-modal-content bg-background border border-border rounded-xl shadow-2xl max-w-xl w-full mx-4 animate-in zoom-in-95 overflow-hidden max-h-[90vh] flex flex-col">
                 <div class="p-4 flex items-center justify-between shrink-0">
                     <div class="flex items-center gap-2">
                         <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-muted/50">

@@ -35,7 +35,7 @@ class ProxyInfoModal {
 
     render() {
         this.overlay.innerHTML = `
-            <div class="bg-background rounded-xl shadow-2xl max-w-lg w-full mx-4 animate-in zoom-in-95 overflow-hidden max-h-[85vh] flex flex-col">
+            <div class="bg-background border border-border rounded-xl shadow-2xl max-w-lg w-full mx-4 animate-in zoom-in-95 overflow-hidden max-h-[85vh] flex flex-col">
                 <!-- Header -->
                 <div class="p-4 flex items-center justify-between shrink-0">
                     <div class="flex items-center gap-2">
@@ -69,30 +69,34 @@ class ProxyInfoModal {
                         <!-- How it works -->
                         <div class="space-y-2">
                             <h3 class="text-xs font-medium text-foreground">How it works</h3>
-                            <ul class="pl-3 space-y-1 text-xs">
-                                <li class="flex items-start gap-2">
-                                    <span class="text-muted-foreground/60 mt-0.5">→</span>
-                                    <span class="text-muted-foreground/70">Your browser connects to our relay server via WebSocket</span>
-                                </li>
-                                <li class="flex items-start gap-2">
-                                    <span class="text-muted-foreground/60 mt-0.5">→</span>
-                                    <span class="text-muted-foreground/70">Inside that WebSocket, your browser establishes a separate TLS connection (using mbedTLS/WASM) directly to model provider</span>
-                                </li>
-                                <li class="flex items-start gap-2">
-                                    <span class="text-muted-foreground/60 mt-0.5">→</span>
-                                    <span class="text-muted-foreground/70">Encrypted prompts and responses travel through this tunnel directly to and from the model provider</span>
-                                </li>
-                            </ul>
+                            <div class="p-3 rounded-lg border border-border bg-card">
+                                <ul class="space-y-1 text-xs">
+                                    <li class="flex items-baseline gap-2">
+                                        <span class="w-4 flex-shrink-0 text-center text-muted-foreground/60">→</span>
+                                        <span class="text-muted-foreground/70">Your browser connects to our relay server via WebSocket</span>
+                                    </li>
+                                    <li class="flex items-baseline gap-2">
+                                        <span class="w-4 flex-shrink-0 text-center text-muted-foreground/60">→</span>
+                                        <span class="text-muted-foreground/70">Inside that WebSocket, your browser establishes a separate TLS connection (using mbedTLS/WASM) directly to model provider</span>
+                                    </li>
+                                    <li class="flex items-baseline gap-2">
+                                        <span class="w-4 flex-shrink-0 text-center text-muted-foreground/60">→</span>
+                                        <span class="text-muted-foreground/70">Encrypted prompts and responses travel through this tunnel directly to and from the model provider</span>
+                                    </li>
+                                </ul>
+                            </div>
                         </div>
 
                         <!-- Security Properties -->
                         <div class="space-y-2">
                             <h3 class="text-xs font-medium text-foreground">Security Properties</h3>
-                            <ul class="pl-3 space-y-1 text-xs">
-                                <li class="text-muted-foreground/70">• Same encryption guarantees as traditional VPN</li>
-                                <li class="text-muted-foreground/70">• Relay servers only see encrypted blobs (no plaintext prompts or responses)</li>
-                                <li class="text-muted-foreground/70">• Your IP/metadata is hidden from the model provider</li>
-                            </ul>
+                            <div class="p-3 rounded-lg border border-border bg-card">
+                                <ul class="space-y-1 text-xs">
+                                    <li class="text-muted-foreground/70">• Same encryption guarantees as traditional VPN</li>
+                                    <li class="text-muted-foreground/70">• Relay servers only see encrypted blobs (no plaintext prompts or responses)</li>
+                                    <li class="text-muted-foreground/70">• Your IP/metadata is hidden from the model provider</li>
+                                </ul>
+                            </div>
                         </div>
 
                         <p class="text-xs text-muted-foreground/60 pt-1">
@@ -128,4 +132,3 @@ class ProxyInfoModal {
 
 const proxyInfoModal = new ProxyInfoModal();
 export default proxyInfoModal;
-
