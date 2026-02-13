@@ -2,19 +2,22 @@
 import networkProxy from './services/networkProxy.js';
 import { loadModelConfig, getDefaultModelConfig } from './services/modelConfig.js';
 import apiKeyStore from './services/apiKeyStore.js';
+import { loadModelCatalog, saveModelCatalog } from './services/modelCatalogCache.js';
+
+const OPENROUTER_BACKEND_ID = 'openrouter';
 
 // System prompt to prepend to all conversations
 // Modify this function to change the default AI behavior
 // Use template literals (backticks) for multi-line prompts
 // This is a function so dynamic values (like date) are evaluated per request
 const getSystemPrompt = (modelId) => `
-You are ${modelId ? `${modelId}, ` : ''}a highly capable, thoughtful, and precise assistant. Your goal is to deeply understand the user's intent, ask clarifying questions when needed, think step-by-step through complex problems, provide clear, direct, and concise answers, and proactively anticipate helpful follow-up information. Always prioritize being truthful, nuanced, insightful, and efficient, tailoring your responses specifically to the user's needs and preferences. Importantly, be privacy-aware: never request user data and, when appropriate, remind users not to share sensitive information or that their inputs may be revealing their identity.
+You are ${modelId ? `${modelId}, ` : ''}a highly capable, thoughtful, and precise assistant. Your goal is to deeply understand the user's intent, ask clarifying questions when needed, think step-by-step through complex problems, provide clear, direct, and concise answers, and proactively anticipate helpful follow-up information. Always prioritize being truthful, nuanced, insightful, and efficient, tailoring your responses specifically to the user's needs and preferences.  Also be concise: keep answers brief and to the point, but without losing important details. Importantly, be privacy-aware: never request user data and, when appropriate, remind users not to share sensitive information and that their inputs may be revealing their identity.
 
 Formatting Rules:
 - Use Markdown for lists, tables, and styling.
 - Use \`\`\`code fences\`\`\` for all code blocks.
 - Format file names, paths, and function names with \`inline code\` backticks.
-- **For all mathematical expressions, you must use \\(...\\) for inline math and \\[...\\] for block math.**
+- For all mathematical expressions, you must use \\(...\\) for inline math and \\[...\\] for block math. Use multi-line block math for complex equations.
 
 Current date: ${new Date().toLocaleDateString()}.
 `.trim();
@@ -84,9 +87,26 @@ class OpenRouterAPI {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
 
-            return this.formatModels(data.data);
+            if (!Array.isArray(data?.data)) {
+                throw new Error('Invalid model catalog response');
+            }
+
+            const formattedModels = this.formatModels(data.data);
+            if (formattedModels.length === 0) {
+                throw new Error('OpenRouter returned an empty model catalog');
+            }
+
+            saveModelCatalog(OPENROUTER_BACKEND_ID, formattedModels);
+
+            return formattedModels;
         } catch (error) {
             console.error('Error fetching models from OpenRouter:', error);
+
+            const cachedModels = loadModelCatalog(OPENROUTER_BACKEND_ID);
+            if (Array.isArray(cachedModels) && cachedModels.length > 0) {
+                console.warn('Using cached model catalog for OpenRouter.');
+                return cachedModels;
+            }
 
             // Return a fallback list of models
             return this.getFallbackModels();
@@ -101,7 +121,15 @@ class OpenRouterAPI {
 
     // Format models to our structure
     formatModels(models) {
+        if (!Array.isArray(models)) {
+            return [];
+        }
+
         const formattedModels = models.map(model => {
+            if (!model || typeof model.id !== 'string') {
+                return null;
+            }
+
             // Extract provider from model ID (e.g., "openai/gpt-4" -> "OpenAI")
             const provider = model.id.split('/')[0];
             const providerName = this.capitalizeProvider(provider);
@@ -137,7 +165,7 @@ class OpenRouterAPI {
                 context_length: model.context_length,
                 pricing: model.pricing
             };
-        });
+        }).filter(Boolean);
 
         // Sort by category priority first, then by pricing within each category
         return formattedModels.sort((a, b) => {
