@@ -301,10 +301,13 @@ html.switching-theme *::after {
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
+    width: 100%;
+    min-height: 100%;
     gap: 1rem;
     padding: 2.5rem 1rem;
     transition: opacity 0.4s ease, transform 0.4s ease;
+    box-sizing: border-box;
 }
 
 .sessions-loader.hidden {
@@ -2233,6 +2236,43 @@ body {
     transition-timing-function: var(--sidebar-open-ease), var(--sidebar-open-ease);
 }
 
+.sidebar-resize-handle {
+    position: absolute;
+    top: 0;
+    right: -4px;
+    width: 8px;
+    height: 100%;
+    cursor: col-resize;
+    z-index: 20;
+    touch-action: none;
+}
+
+.sidebar-resize-handle::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 3px;
+    width: 2px;
+    background: hsl(var(--color-border));
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+
+.sidebar-resize-handle:hover::before,
+body.sidebar-resizing .sidebar-resize-handle::before {
+    opacity: 0.75;
+}
+
+body.sidebar-resizing {
+    cursor: col-resize;
+    user-select: none;
+}
+
+body.sidebar-resizing #sidebar {
+    transition: none !important;
+}
+
 #sidebar.sidebar-hidden {
     width: 0 !important;
     border-right-width: 0 !important;
@@ -2439,6 +2479,10 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
 
 /* --- Mobile: < 640px --- */
 @media (max-width: 639px) {
+    .sidebar-resize-handle {
+        display: none;
+    }
+
     /* Sidebar: always overlay mode */
     #sidebar:not(.mobile-visible) {
         position: fixed !important;
@@ -2583,6 +2627,10 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
 
 /* --- Small Tablet: 640px to 767px (sidebar overlay, right panel overlay) --- */
 @media (min-width: 640px) and (max-width: 767px) {
+    .sidebar-resize-handle {
+        display: none;
+    }
+
     #sidebar:not(.mobile-visible) {
         position: fixed !important;
         left: 0;
@@ -2682,7 +2730,7 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
 /* --- Large Tablet: 768px to 1023px (sidebar inline, right panel overlay) --- */
 @media (min-width: 768px) and (max-width: 1023px) {
     #sidebar:not(.sidebar-hidden) {
-        width: 16rem;
+        width: var(--oa-left-sidebar-width, 220px);
         border-right-width: 1px;
     }
 
@@ -2699,7 +2747,7 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
 @media (min-width: 1024px) {
     /* Sidebar: inline mode */
     #sidebar:not(.sidebar-hidden) {
-        width: 16rem;
+        width: var(--oa-left-sidebar-width, 220px);
         border-right-width: 1px;
     }
 

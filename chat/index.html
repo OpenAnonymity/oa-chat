@@ -42,6 +42,17 @@
                 if (savedState === 'false') {
                     document.documentElement.setAttribute('data-left-sidebar-hidden', 'true');
                 }
+
+                const rawWidth = localStorage.getItem('oa-left-sidebar-width');
+                const parsedWidth = parseInt(rawWidth, 10);
+                if (Number.isFinite(parsedWidth) && parsedWidth > 0) {
+                    const minWidth = 220;
+                    const maxDragWidth = 420;
+                    const layoutMaxWidth = Math.max(minWidth, window.innerWidth - 240);
+                    const maxWidth = Math.max(minWidth, Math.min(maxDragWidth, layoutMaxWidth));
+                    const clampedWidth = Math.max(minWidth, Math.min(maxWidth, parsedWidth));
+                    document.documentElement.style.setProperty('--oa-left-sidebar-width', `${clampedWidth}px`);
+                }
             } catch (error) {
                 console.warn('Unable to apply left sidebar state:', error);
             }

@@ -6,6 +6,7 @@ const PREF_KEYS = {
     theme: 'pref-theme',
     wideMode: 'pref-wide-mode',
     leftSidebarVisible: 'pref-left-sidebar-visible',
+    leftSidebarWidth: 'pref-left-sidebar-width',
     flatMode: 'pref-flat-mode',
     fontMode: 'pref-font-mode',
     rightPanelVisible: 'pref-right-panel-visible',
@@ -25,6 +26,7 @@ const LOCAL_STORAGE_KEYS = {
     theme: 'oa-theme-preference',
     wideMode: 'oa-wide-mode',
     leftSidebarVisible: 'oa-left-sidebar-visible',
+    leftSidebarWidth: 'oa-left-sidebar-width',
     flatMode: 'oa-flat-mode',
     fontMode: 'oa-font-mode',
     rightPanelVisible: 'oa-right-panel-visible',
@@ -42,6 +44,7 @@ const DEFAULT_PREFERENCES = {
     [PREF_KEYS.theme]: 'system',
     [PREF_KEYS.wideMode]: false,
     [PREF_KEYS.leftSidebarVisible]: null,
+    [PREF_KEYS.leftSidebarWidth]: 220,
     [PREF_KEYS.flatMode]: true,
     [PREF_KEYS.fontMode]: 'sans',
     [PREF_KEYS.rightPanelVisible]: null,
@@ -64,6 +67,7 @@ const PREF_SNAPSHOT_KEYS = new Set([
     PREF_KEYS.theme,
     PREF_KEYS.wideMode,
     PREF_KEYS.leftSidebarVisible,
+    PREF_KEYS.leftSidebarWidth,
     PREF_KEYS.flatMode,
     PREF_KEYS.fontMode,
     PREF_KEYS.rightPanelVisible,
@@ -76,6 +80,7 @@ const PREF_SNAPSHOT_MAP = new Map([
     [PREF_KEYS.theme, LOCAL_STORAGE_KEYS.theme],
     [PREF_KEYS.wideMode, LOCAL_STORAGE_KEYS.wideMode],
     [PREF_KEYS.leftSidebarVisible, LOCAL_STORAGE_KEYS.leftSidebarVisible],
+    [PREF_KEYS.leftSidebarWidth, LOCAL_STORAGE_KEYS.leftSidebarWidth],
     [PREF_KEYS.flatMode, LOCAL_STORAGE_KEYS.flatMode],
     [PREF_KEYS.fontMode, LOCAL_STORAGE_KEYS.fontMode],
     [PREF_KEYS.rightPanelVisible, LOCAL_STORAGE_KEYS.rightPanelVisible],
@@ -164,6 +169,14 @@ class PreferencesStore {
                 key: PREF_KEYS.leftSidebarVisible,
                 storageKey: LOCAL_STORAGE_KEYS.leftSidebarVisible,
                 parse: (value) => value === 'true'
+            },
+            {
+                key: PREF_KEYS.leftSidebarWidth,
+                storageKey: LOCAL_STORAGE_KEYS.leftSidebarWidth,
+                parse: (value) => {
+                    const parsed = parseInt(value, 10);
+                    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+                }
             },
             {
                 key: PREF_KEYS.flatMode,
@@ -453,6 +466,9 @@ class PreferencesStore {
                 serialized = value === 'serif' ? 'serif' : 'sans';
             } else if (key === PREF_KEYS.flatMode) {
                 serialized = value === false ? 'false' : 'true';
+            } else if (key === PREF_KEYS.leftSidebarWidth) {
+                const parsed = Number(value);
+                serialized = Number.isFinite(parsed) && parsed > 0 ? String(Math.round(parsed)) : null;
             } else if (key === PREF_KEYS.rightPanelVisible || key === PREF_KEYS.leftSidebarVisible || key === PREF_KEYS.ticketInfoVisible || key === PREF_KEYS.invitationFormVisible || key === PREF_KEYS.wideMode || key === PREF_KEYS.welcomeDismissed) {
                 if (value === null || value === undefined) {
                     serialized = null;

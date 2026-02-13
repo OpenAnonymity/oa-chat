@@ -43,7 +43,7 @@ const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const UPDATE_CHECK_INITIAL_DELAY_MS = 45 * 1000;
 
 // Layout constants for toolbar overlay prediction
-const SIDEBAR_WIDTH = 256;      // 16rem = 256px
+const SIDEBAR_WIDTH = 220;      // Default sidebar width = minimum width
 const RIGHT_PANEL_WIDTH = 288;  // 18rem = 288px
 const TOOLBAR_PREDICTION_GRACE_MS = 350; // Grace period to respect predicted state during animations
 
@@ -5297,6 +5297,23 @@ class ChatApp {
         }
     }
 
+    getCurrentSidebarWidth() {
+        const sidebar = this.elements.sidebar;
+        if (!sidebar) return SIDEBAR_WIDTH;
+
+        const inlineWidth = parseFloat(sidebar.style.width);
+        if (Number.isFinite(inlineWidth) && inlineWidth > 0) {
+            return inlineWidth;
+        }
+
+        const measuredWidth = sidebar.getBoundingClientRect().width;
+        if (measuredWidth > 0) {
+            return measuredWidth;
+        }
+
+        return SIDEBAR_WIDTH;
+    }
+
     hideSidebar(options = {}) {
         const shouldPersist = options.persist ?? !this.isMobileView();
         const shouldPredictToolbar = options.predictToolbar !== false;
@@ -5322,10 +5339,11 @@ class ChatApp {
         }
         this.updateWideModeButtonVisibility();
         if (shouldPredictToolbar) {
+            const sidebarWidth = this.getCurrentSidebarWidth();
             // Predict final width: sidebar is closing, main area will be WIDER
             // Only affects width on desktop, on mobile sidebar overlays
             // Grace period in updateToolbarDivider blocks intermediate updates during animation
-            this.updateToolbarDivider(this.isMobileView() ? 0 : SIDEBAR_WIDTH);
+            this.updateToolbarDivider(this.isMobileView() ? 0 : sidebarWidth);
         } else {
             this.updateToolbarDivider();
         }
@@ -5361,9 +5379,10 @@ class ChatApp {
         }
         this.updateWideModeButtonVisibility();
         if (shouldPredictToolbar) {
+            const sidebarWidth = this.getCurrentSidebarWidth();
             // Predict final width: sidebar is opening, main area will be NARROWER
             // Only affects width on desktop, on mobile sidebar overlays
-            this.updateToolbarDivider(this.isMobileView() ? 0 : -SIDEBAR_WIDTH);
+            this.updateToolbarDivider(this.isMobileView() ? 0 : -sidebarWidth);
         } else {
             this.updateToolbarDivider();
         }
