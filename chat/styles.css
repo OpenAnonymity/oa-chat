@@ -3923,8 +3923,8 @@ html {
     white-space: pre-wrap;
     word-break: break-word;
     color: hsl(var(--color-foreground));
-    /* Match textarea default max-height constraint */
-    max-height: 200px;
+    /* Match textarea default max-height constraint (300px) */
+    max-height: 300px;
     overflow-y: auto;
     overflow-x: hidden;
     overscroll-behavior: contain;
