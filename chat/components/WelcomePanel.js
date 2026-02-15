@@ -86,6 +86,8 @@ class WelcomePanel {
         this.render();
         this.overlay.classList.remove('hidden');
         document.documentElement.removeAttribute('data-welcome-hidden');
+        this.app?.clearToast?.();
+        this.app?.clearUpdateToast?.();
 
         // Attach close handlers
         this.overlay.onclick = (e) => { if (e.target === this.overlay) this.handleCloseAttempt(); };
@@ -406,8 +408,6 @@ class WelcomePanel {
                 };
                 this.redeemProgress = { message: 'Redeeming tickets...', percent: 60 };
                 this.render();
-
-                this.app?.showToast?.('Free access granted. Redeeming tickets automatically...', 'success');
                 return;
             }
 
@@ -885,6 +885,11 @@ class WelcomePanel {
     }
 
     renderSuccessStep() {
+        const currentTicketCount = ticketClient.getTicketCount();
+        const availableTickets = Number.isFinite(currentTicketCount) && currentTicketCount >= 0
+            ? currentTicketCount
+            : this.ticketsRedeemed;
+
         return `
             <div role="dialog" aria-modal="true" class="${MODAL_CLASSES} welcome-modal-glass welcome-success-surface" style="padding:28px 28px 20px">
                 <style>
@@ -901,6 +906,22 @@ class WelcomePanel {
                         flex-shrink: 0;
                     }
                     .dark .success-tick { background: hsl(152 50% 40%); }
+                    .welcome-step-badge {
+                        width: 1.3rem;
+                        height: 1.3rem;
+                        border-radius: 9999px;
+                        display: inline-flex;
+                        align-items: center;
+                        justify-content: center;
+                        flex-shrink: 0;
+                        font-size: 11px;
+                        line-height: 1;
+                        font-weight: 600;
+                        margin-top: 1px;
+                        border: 1px solid hsl(var(--color-border));
+                        color: hsl(var(--color-muted-foreground));
+                        background: transparent;
+                    }
                 </style>
 
                 <!-- Header -->
@@ -913,9 +934,33 @@ class WelcomePanel {
                     <h2 class="text-lg font-semibold text-foreground">You're all set!</h2>
                 </div>
 
-                <p class="text-sm text-muted-foreground" style="margin-bottom:14px">
-                    ${this.ticketsRedeemed} ticket${this.ticketsRedeemed !== 1 ? 's' : ''} added. Tickets authenticate chat sessions, and costs vary by model tier (see model picker).
-                </p>
+                <div class="text-sm text-muted-foreground" style="margin-bottom:14px;line-height:1.45">
+                    <p class="text-sm font-semibold text-foreground" style="margin-bottom:8px">How It Works</p>
+                    <ol class="list-none" style="margin:4px 0 0;padding:0;display:grid;gap:8px">
+                        <li class="flex items-start gap-2">
+                            <span class="welcome-step-badge">1</span>
+                                <span>You have <span class="font-semibold text-foreground">${availableTickets} inference ticket${availableTickets === 1 ? '' : 's'}</span>. Think of these as cash coins: payment tokens that are unlinked to you.</span>
+                        </li>
+                        <li class="flex items-start gap-2">
+                            <span class="welcome-step-badge">2</span>
+                            <span>Each session costs a fixed amount of tickets (e.g. a Gemini 3 Pro session costs 3. See model picker.).</span>
+                        </li>
+                        <li class="flex items-start gap-2">
+                            <span class="welcome-step-badge">3</span>
+                            <span>You can start chatting directly - tickets are used automatically!</span>
+                        </li>
+                    </ol>
+                    <p style="margin-top:12px">
+                        <strong class="text-foreground">System Panel</strong> (right) shows how many tickets you have left and additional technical details. You can hide it any time by pressing
+                        <span aria-hidden="true" class="inline-flex items-center justify-center mx-0.5" style="vertical-align:middle">
+                            <svg class="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                                <rect x="4" y="4" width="16" height="16" rx="2"></rect>
+                                <path d="M14 4h4a2 2 0 012 2v12a2 2 0 01-2 2h-4V4z" fill="currentColor" fill-opacity="0.15" stroke="none"></path>
+                                <path d="M14 4v16"></path>
+                            </svg>
+                        </span> at the top right corner.
+                    </p>
+                </div>
 
                 <!-- Action buttons -->
                 <div class="flex items-stretch gap-3">

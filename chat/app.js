@@ -2325,6 +2325,11 @@ class ChatApp {
         }
     }
 
+    isWelcomeWorkflowActive() {
+        if (!this.welcomePanel?.isOpen) return false;
+        return ['welcome', 'redeeming', 'success'].includes(this.welcomePanel.step);
+    }
+
     /**
      * Show a toast notification
      * @param {string} message - Message to display
@@ -2332,6 +2337,10 @@ class ChatApp {
      * @param {number} durationMs - Time to auto-dismiss in milliseconds
      */
     showToast(message, type = 'success', durationMs = 3000) {
+        if (this.isWelcomeWorkflowActive()) {
+            return;
+        }
+
         this.clearToast();
 
         const toast = document.createElement('div');
@@ -2379,6 +2388,10 @@ class ChatApp {
     }
 
     showLoadingToast(message) {
+        if (this.isWelcomeWorkflowActive()) {
+            return () => {};
+        }
+
         this.clearToast();
 
         const toast = document.createElement('div');
@@ -2404,6 +2417,10 @@ class ChatApp {
     }
 
     showUpdateToast() {
+        if (this.isWelcomeWorkflowActive()) {
+            return;
+        }
+
         if (this.updateToastVisible) {
             return;
         }
