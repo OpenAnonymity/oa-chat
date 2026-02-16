@@ -323,8 +323,7 @@ class SessionEmbedder {
         }
 
         try {
-            // Wait for any in-flight keyword generation to complete before embedding,
-            // so vector metadata includes the generated keywords.
+            // Wait for any in-flight keyword generation to complete before embedding.
             // Returns immediately if no generation is in progress.
             try {
                 const { default: keywordsGenerator } = await import('./keywordsGenerator.js');
@@ -390,7 +389,6 @@ class SessionEmbedder {
                     sessionId,
                     title: session.title || 'Untitled',
                     summary: session.summary || null,
-                    keywords: session.keywords || [],
                     conversationText: conversationText,
                     messageCount: messages.length,
                     model: session.model || null,
@@ -401,9 +399,13 @@ class SessionEmbedder {
             }]);
             const te2 = performance.now();
 
-            // Update session with lastEmbeddedAt timestamp (persisted to IndexedDB)
-            session.lastEmbeddedAt = Date.now();
-            await chatDB.saveSession(session);
+            // Update only lastEmbeddedAt on the freshest session record to avoid
+            // clobbering concurrently written fields (e.g. keywords/summary).
+            const latestSession = await chatDB.getSession(sessionId);
+            if (latestSession) {
+                latestSession.lastEmbeddedAt = Date.now();
+                await chatDB.saveSession(latestSession);
+            }
             const te3 = performance.now();
 
             const embedMs = te1 - te0;
@@ -475,11 +477,13 @@ class SessionEmbedder {
             this._searchTimings.push({ embedMs, retrievalMs, ts: Date.now() });
             console.log(`[SessionEmbedder] searchSessions timing — embed query: ${embedMs.toFixed(2)}ms, retrieval: ${retrievalMs.toFixed(2)}ms, total: ${(embedMs + retrievalMs).toFixed(2)}ms`);
 
+            const sessionMap = await this._getSessionMapForResults(results);
+
             return results.map(r => ({
                 sessionId: r.metadata?.sessionId,
                 title: r.metadata?.title,
                 summary: r.metadata?.summary,
-                keywords: r.metadata?.keywords || [],
+                keywords: this._getKeywordsForResult(r, sessionMap),
                 conversationText: r.metadata?.conversationText,
                 messageCount: r.metadata?.messageCount,
                 model: r.metadata?.model,
@@ -774,15 +778,30 @@ Available tags: ${JSON.stringify(allTags)}`;
             const matchedTagSet = new Set(matchedTags);
 
             if (matchedTagSet.size > 0) {
-                // Filter vector search to sessions whose keywords overlap with matched tags
-                embeddingResults = await this.store.search(queryEmbedding, k, {
-                    ...options,
-                    filter: (metadata) => {
-                        const keywords = metadata?.keywords;
-                        if (!Array.isArray(keywords)) return false;
-                        return keywords.some(kw => matchedTagSet.has(typeof kw === 'string' ? kw.trim().toLowerCase() : ''));
+                // Filter vector search to sessions whose IndexedDB keywords overlap with matched tags
+                const matchedSessionIds = new Set();
+                if (allSessions) {
+                    for (const session of allSessions) {
+                        if (!session?.id || !Array.isArray(session.keywords)) continue;
+                        const hasMatch = session.keywords.some(kw =>
+                            matchedTagSet.has(typeof kw === 'string' ? kw.trim().toLowerCase() : '')
+                        );
+                        if (hasMatch) matchedSessionIds.add(session.id);
                     }
-                });
+                }
+
+                if (matchedSessionIds.size > 0) {
+                    embeddingResults = await this.store.search(queryEmbedding, k, {
+                        ...options,
+                        filter: (metadata) => {
+                            const sessionId = metadata?.sessionId;
+                            return typeof sessionId === 'string' && matchedSessionIds.has(sessionId);
+                        }
+                    });
+                } else {
+                    // LLM matched tags but none map to sessions; fall back to pure embedding.
+                    embeddingResults = await this.store.search(queryEmbedding, k, options);
+                }
             } else {
                 // Fallback: no tag matches — pure embedding search
                 embeddingResults = await this.store.search(queryEmbedding, k, options);
@@ -796,11 +815,13 @@ Available tags: ${JSON.stringify(allTags)}`;
             const matchType = matchedTagSet.size > 0 ? 'tag+embedding' : 'embedding';
             console.log(`[SessionEmbedder] ${matchType} search — embed: ${embedMs.toFixed(2)}ms, retrieval: ${retrievalMs.toFixed(2)}ms, matched tags: ${JSON.stringify(matchedTags)}, results: ${embeddingResults.length}`);
 
+            const sessionMap = await this._getSessionMapForResults(embeddingResults);
+
             return embeddingResults.map(r => ({
                 sessionId: r.metadata?.sessionId,
                 title: r.metadata?.title,
                 summary: r.metadata?.summary,
-                keywords: r.metadata?.keywords || [],
+                keywords: this._getKeywordsForResult(r, sessionMap),
                 conversationText: r.metadata?.conversationText,
                 messageCount: r.metadata?.messageCount,
                 model: r.metadata?.model,
@@ -917,6 +938,45 @@ Available tags: ${JSON.stringify(allTags)}`;
         }
 
         this.initialized = false;
+    }
+
+    /**
+     * Build a map of sessionId -> session object for vector search results.
+     * @param {Array} results
+     * @returns {Promise<Map<string, Object|null>>}
+     */
+    async _getSessionMapForResults(results) {
+        const ids = Array.from(new Set(
+            (results || [])
+                .map(r => r?.metadata?.sessionId)
+                .filter(id => typeof id === 'string' && id.length > 0)
+        ));
+
+        if (ids.length === 0) {
+            return new Map();
+        }
+
+        const entries = await Promise.all(ids.map(async (id) => {
+            try {
+                return [id, await chatDB.getSession(id)];
+            } catch (error) {
+                return [id, null];
+            }
+        }));
+
+        return new Map(entries);
+    }
+
+    /**
+     * Read keywords from IndexedDB session record, not vector metadata.
+     * @param {Object} result
+     * @param {Map<string, Object|null>} sessionMap
+     * @returns {Array<string>}
+     */
+    _getKeywordsForResult(result, sessionMap) {
+        const sessionId = result?.metadata?.sessionId;
+        const session = typeof sessionId === 'string' ? sessionMap.get(sessionId) : null;
+        return Array.isArray(session?.keywords) ? session.keywords : [];
     }
 }
 

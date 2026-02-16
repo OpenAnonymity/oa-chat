@@ -250,6 +250,18 @@ class KeywordsGenerator {
                     // Tinfoil fallback
                     const result = await this.generateWithTinfoil(sessionId);
                     const idx2 = this.queue.indexOf(sessionId);
+
+                    // Transient failure (for example no tickets/key yet):
+                    // keep session queued for retry instead of dropping it.
+                    if (result && result.deferred) {
+                        if (idx2 !== -1) {
+                            this.queue.splice(idx2, 1);
+                            this.queue.push(sessionId);
+                        }
+                        console.log(`[KeywordsGenerator] Deferred keyword generation for ${sessionId}; will retry later`);
+                        break;
+                    }
+
                     if (idx2 !== -1) this.queue.splice(idx2, 1);
 
                     if (result) {
@@ -539,7 +551,7 @@ class KeywordsGenerator {
         // Ensure we have a valid Tinfoil key
         const apiKey = await this._ensureTinfoilKey();
         if (!apiKey) {
-            return null;
+            return { deferred: true, reason: 'no_tinfoil_key' };
         }
 
         // Guard against concurrent generation
@@ -677,13 +689,15 @@ class KeywordsGenerator {
             return null;
         }
 
-        // Save to session in database (awaited so downstream consumers
-        // like embedSession can read the updated session immediately)
-        session.summary = summary;
-        session.keywords = keywords;
-        session.keywordsGeneratedAt = Date.now();
-        session.messageCountAtGeneration = messageCount;
-        await chatDB.saveSession(session);
+        // Save to the freshest session snapshot so concurrent writers
+        // (e.g. embedder updating lastEmbeddedAt) are preserved.
+        const latestSession = await chatDB.getSession(session.id);
+        const sessionToSave = latestSession || session;
+        sessionToSave.summary = summary;
+        sessionToSave.keywords = keywords;
+        sessionToSave.keywordsGeneratedAt = Date.now();
+        sessionToSave.messageCountAtGeneration = messageCount;
+        await chatDB.saveSession(sessionToSave);
 
         // Update in-memory session in app state if app reference provided
         if (app && app.state && app.state.sessionsById) {
