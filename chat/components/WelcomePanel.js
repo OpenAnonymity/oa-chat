@@ -943,11 +943,11 @@ class WelcomePanel {
                         </li>
                         <li class="flex items-start gap-2">
                             <span class="welcome-step-badge">2</span>
-                            <span>Each session costs a fixed amount of tickets (e.g. a Gemini 3 Pro session costs 3. See model picker.).</span>
+                            <span>Each session costs a fixed amount of tickets (e.g. Gemini 3 Pro costs 3 tickets; see model picker).</span>
                         </li>
                         <li class="flex items-start gap-2">
                             <span class="welcome-step-badge">3</span>
-                            <span>You can start chatting directly - tickets are used automatically!</span>
+                            <span>You can start a chat directly; tickets used automatically!</span>
                         </li>
                     </ol>
                     <p style="margin-top:12px">
