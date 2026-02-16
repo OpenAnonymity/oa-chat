@@ -1,21 +1,24 @@
 /**
  * Model Configuration Service
- * Centralized config for model picker - pinned models, blocked models, and defaults.
- * Pinned models are fetched from org API with localStorage caching.
- * Blocked models and other config stored in IndexedDB for persistence.
+ *
+ * Source of truth for:
+ * - Pinned model IDs (from org API with local cache)
+ * - Disabled model IDs (from org API with local cache)
+ * - Static UI defaults (default model and display-name overrides)
  */
 
 import { ORG_API_BASE } from '../config.js';
-import { chatDB } from '../db.js';
 
-// Cache key for pinned models
-const PINNED_CACHE_KEY = 'oa-pinned-models-cache';
+// Cache key for pinned/disabled model metadata
+const MODEL_AVAILABILITY_CACHE_KEY = 'oa-model-availability-cache';
 
 // Event target for notifying listeners of updates
 const eventTarget = new EventTarget();
 
-// Pinned models list (populated from API)
+// Runtime model availability state (populated from cache/API)
 let pinnedModels = [];
+let disabledModels = [];
+let updatedAt = null;
 
 // Fallback pinned models (used when API is unavailable or returns empty)
 const FALLBACK_PINNED_MODELS = [
@@ -28,14 +31,8 @@ const FALLBACK_PINNED_MODELS = [
     'google/gemini-2.5-flash-image-preview',
 ];
 
-// Default configuration
+// Static configuration defaults
 const DEFAULT_CONFIG = {
-    blockedModels: [
-        'openai/o4-mini-deep-research',
-        'openai/o3-deep-research',
-        'alibaba/tongyi-deepresearch-30b-a3b',
-        'perplexity/sonar-deep-research',
-    ],
     defaultModelId: 'openai/gpt-5.2-chat',      // API model identifier
     defaultModelName: 'OpenAI: GPT-5.2 Instant', // Display name in UI
     // Custom display name overrides (model ID -> display name)
@@ -49,62 +46,129 @@ const DEFAULT_CONFIG = {
     },
 };
 
-const CONFIG_KEY = 'modelPickerConfig';
+function normalizeModelIdList(value) {
+    if (!Array.isArray(value)) return [];
+
+    const seen = new Set();
+    const normalized = [];
+
+    for (const raw of value) {
+        if (typeof raw !== 'string') continue;
+        const id = raw.trim();
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        normalized.push(id);
+    }
+
+    return normalized;
+}
+
+function normalizeUpdatedAt(value) {
+    return Number.isFinite(value) ? value : null;
+}
 
 /**
- * Load cached pinned models from localStorage.
+ * Normalize API/cache payload and apply overlap rule:
+ * - duplicates removed (order preserved)
+ * - if a model is both pinned and disabled, disabled wins
  */
-function loadPinnedCache() {
+function normalizeAvailabilityPayload(payload, { preserveDisabledWhenMissing = false } = {}) {
+    const pinned = normalizeModelIdList(payload?.pinned_models);
+
+    const hasDisabledList = Array.isArray(payload?.disabled_models);
+    const disabled = hasDisabledList
+        ? normalizeModelIdList(payload.disabled_models)
+        : (preserveDisabledWhenMissing ? disabledModels : []);
+
+    const disabledSet = new Set(disabled);
+    const pinnedWithoutDisabled = pinned.filter(modelId => !disabledSet.has(modelId));
+
+    return {
+        pinned_models: pinnedWithoutDisabled,
+        disabled_models: disabled,
+        updated_at: normalizeUpdatedAt(payload?.updated_at)
+    };
+}
+
+function writeAvailabilityState(normalized) {
+    pinnedModels = normalized.pinned_models;
+    disabledModels = normalized.disabled_models;
+    updatedAt = normalized.updated_at;
+}
+
+/**
+ * Load cached availability data from localStorage.
+ */
+function loadAvailabilityCache() {
     try {
-        const cache = localStorage.getItem(PINNED_CACHE_KEY);
-        if (cache) {
-            const parsed = JSON.parse(cache);
-            if (parsed.pinned_models && Array.isArray(parsed.pinned_models)) {
-                pinnedModels = parsed.pinned_models;
-            }
-        }
+        const cache = localStorage.getItem(MODEL_AVAILABILITY_CACHE_KEY);
+        if (!cache) return;
+
+        const parsed = JSON.parse(cache);
+        const normalized = normalizeAvailabilityPayload(parsed, {
+            preserveDisabledWhenMissing: true
+        });
+        writeAvailabilityState(normalized);
     } catch (e) {
-        console.warn('Failed to load pinned models cache:', e);
+        console.warn('Failed to load model availability cache:', e);
     }
 }
 
 /**
- * Fetch pinned models from API.
- * @returns {Promise<Object|null>} Pinned models response or null on error
+ * Fetch pinned/disabled models from API.
+ * @returns {Promise<Object|null>} Availability payload or null on error
  */
-async function fetchPinnedModels() {
+async function fetchModelAvailability() {
     try {
         const response = await fetch(`${ORG_API_BASE}/chat/pinned-models`, { credentials: 'omit' });
         if (!response.ok) return null;
         return await response.json();
     } catch (e) {
-        console.warn('Failed to fetch pinned models:', e);
+        console.warn('Failed to fetch model availability:', e);
         return null;
     }
 }
 
+function saveAvailabilityCache(normalized) {
+    try {
+        localStorage.setItem(MODEL_AVAILABILITY_CACHE_KEY, JSON.stringify(normalized));
+    } catch (e) {
+        console.warn('Failed to save model availability cache:', e);
+    }
+}
+
+function availabilitySignature() {
+    return `${pinnedModels.join(',')}|${disabledModels.join(',')}|${updatedAt ?? ''}`;
+}
+
 /**
- * Initialize pinned models.
+ * Initialize model availability state.
  * Loads from cache immediately, then fetches fresh data in background.
- * Call this early in app init (non-blocking).
  */
 export async function initPinnedModels() {
     // Load cached data first (synchronous, fast)
-    loadPinnedCache();
+    loadAvailabilityCache();
+
+    const before = availabilitySignature();
 
     // Fetch fresh data in background
-    const data = await fetchPinnedModels();
+    const data = await fetchModelAvailability();
+    if (!data) return;
 
-    if (data && data.pinned_models) {
-        pinnedModels = data.pinned_models;
-        localStorage.setItem(PINNED_CACHE_KEY, JSON.stringify(data));
+    const normalized = normalizeAvailabilityPayload(data, {
+        preserveDisabledWhenMissing: true
+    });
+    writeAvailabilityState(normalized);
+    saveAvailabilityCache(normalized);
+
+    if (availabilitySignature() !== before) {
         eventTarget.dispatchEvent(new CustomEvent('update'));
     }
 }
 
 /**
- * Add listener for pinned models updates.
- * @param {Function} callback - Called when pinned models update
+ * Add listener for pinned/disabled model updates.
+ * @param {Function} callback - Called when availability data updates
  * @returns {Function} Cleanup function to remove listener
  */
 export function onPinnedModelsUpdate(callback) {
@@ -114,56 +178,42 @@ export function onPinnedModelsUpdate(callback) {
 
 /**
  * Get pinned models with fallback.
- * Uses API data if available, otherwise falls back to hardcoded defaults.
+ * Uses API/cache data if available, otherwise falls back to hardcoded defaults.
+ * Disabled models are always excluded.
  * @returns {string[]} Array of pinned model IDs
  */
 export function getPinnedModels() {
-    return pinnedModels.length > 0 ? pinnedModels : FALLBACK_PINNED_MODELS;
-}
-
-/**
- * Load model config from database, falling back to defaults.
- * @returns {Promise<Object>} Config object with pinnedModels, blockedModels, defaultModelName
- */
-export async function loadModelConfig() {
-    const baseConfig = { ...DEFAULT_CONFIG, pinnedModels: getPinnedModels() };
-
-    // Check if chatDB is available and initialized
-    if (typeof chatDB === 'undefined' || !chatDB.db) {
-        return baseConfig;
+    if (pinnedModels.length > 0) {
+        return pinnedModels;
     }
-    try {
-        const saved = await chatDB.getSetting(CONFIG_KEY);
-        if (saved) {
-            // Merge with defaults to ensure all keys exist
-            // Note: pinnedModels from API takes precedence
-            return { ...baseConfig, ...saved, pinnedModels: getPinnedModels() };
-        }
-    } catch (e) {
-        console.warn('Failed to load model config:', e);
+
+    if (disabledModels.length === 0) {
+        return FALLBACK_PINNED_MODELS;
     }
-    return baseConfig;
+
+    const disabledSet = new Set(disabledModels);
+    return FALLBACK_PINNED_MODELS.filter(modelId => !disabledSet.has(modelId));
 }
 
 /**
- * Save model config to database.
- * @param {Object} config - Config object (partial or full)
- * @returns {Promise<void>}
+ * Get disabled models from API/cache.
+ * @returns {string[]} Array of disabled model IDs
  */
-export async function saveModelConfig(config) {
-    const current = await loadModelConfig();
-    const merged = { ...current, ...config };
-    await chatDB.saveSetting(CONFIG_KEY, merged);
+export function getDisabledModels() {
+    return disabledModels;
 }
 
 /**
- * Get the default config (without database lookup).
- * Useful for initial render before async load completes.
+ * Get static defaults + current availability state.
  * @returns {Object}
  */
 export function getDefaultModelConfig() {
-    return { ...DEFAULT_CONFIG, pinnedModels: getPinnedModels() };
+    return {
+        ...DEFAULT_CONFIG,
+        pinnedModels: getPinnedModels(),
+        disabledModels: getDisabledModels()
+    };
 }
 
 // Load cache on module init (synchronous)
-loadPinnedCache();
+loadAvailabilityCache();

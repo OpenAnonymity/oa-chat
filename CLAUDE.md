@@ -94,7 +94,7 @@ npm run fonts:sync
 No automated test harness. Manual verification checklist:
 - Sessions: create/switch/delete, title auto-generation, ordering
 - Messages: Markdown + LaTeX rendering, streaming, token counts, reasoning traces, citations
-- Model picker: fuzzy search, pinned/blocked models
+- Model picker: fuzzy search, pinned/disabled models
 - Right panel: ticket registration, key request, expiry countdown, proxy toggle, TLS security
 - Themes: system/light/dark persistence with pre-hydration
 - WASM flows: exercise success and error paths

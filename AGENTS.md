@@ -16,12 +16,12 @@ The app runs entirely in the browser and is organized as ES modules:
   - Fetches models (with categorization + display name overrides), sends and streams chat completions (SSE), supports multimodal content, reasoning traces, and web-search citations.
   - Routes requests through `services/networkProxy.js` with fallback confirmation; logs requests via `services/networkLogger.js`. Provides offline fallbacks.
 - `db.js`: IndexedDB (`ChatDatabase`) for persistent local data.
-  - Stores `sessions`, `messages`, and `settings` (model config, search toggle, verifier broadcast cache). A `networkLogs` store exists but persistence is disabled (logs are memory-only this release). Exposes a `chatDB` singleton for module imports and legacy globals.
+  - Stores `sessions`, `messages`, and `settings` (search/reasoning toggles, verifier broadcast cache). A `networkLogs` store exists but persistence is disabled (logs are memory-only this release). Exposes a `chatDB` singleton for module imports and legacy globals.
 - `components/`:
   - `Sidebar.js`: Renders/grouped sessions, search UI, and session actions.
   - `ChatArea.js`: Renders message list, LaTeX, incremental streaming updates, reasoning traces, citations, and empty-state with export.
   - `ChatInput.js`: Textarea autosize, send/stop controls, settings menu, theme controls, search toggle persistence, and input UX.
-  - `ModelPicker.js`: Modal with fuzzy search, pinned/blocked model section, session/pending model selection.
+  - `ModelPicker.js`: Modal with fuzzy search, pinned/disabled model section, session/pending model selection.
   - `MessageTemplates.js`: Pure HTML builders for user/assistant bubbles, reasoning trace UI, citations/link previews, typing indicator, empty state, and provider icon integration.
   - `MessageNavigation.js`: Vertical mini-timeline of assistant messages with arrow-key navigation and previews.
   - `RightPanel.js`: Ticket + API key panel, proxy controls + TLS security, activity timeline (memory-only logs), and responsive visibility.
@@ -37,7 +37,7 @@ The app runs entirely in the browser and is organized as ES modules:
     - `transportHints.js`: TLS capture configuration for `networkProxy`.
   - `networkProxy.js`: Encrypted WebSocket proxy using libcurl.js/mbedTLS, TLS inspection, settings persistence, and fallback-to-direct handling.
   - `verifier.js`: Station verification broadcast polling, staleness tracking, and cached verifier data in IndexedDB.
-  - `modelConfig.js`: Pinned/blocked model config and display-name overrides persisted in IndexedDB.
+  - `modelConfig.js`: Pinned/disabled model availability from org API (with localStorage cache) plus display-name overrides.
   - `reasoningParser.js`: Normalizes reasoning traces for streaming/final rendering.
   - `urlMetadata.js`: Fetches/caches URL metadata for citations and inline link previews.
   - `pdfExport.js`: HTML-to-PDF export (lazy-loads html2pdf.js).
@@ -96,13 +96,13 @@ npm run fonts:sync       # sync Google Fonts into chat/fonts (optional URL arg)
 There is no automated test harness yet. Manually verify:
 - Sessions: create/switch/delete; titles auto-generate on first user message; `updatedAt` ordering in `Sidebar`; delete history modal.
 - Messages: Markdown + LaTeX rendering (block/inline); streaming updates; token counts finalize; reasoning trace streaming/final rendering; citations + inline link previews; reliable auto-scroll.
-- Model selection: modal open/close, fuzzy search, pinned/blocked section, selection for both pending (no session yet) and active session.
+- Model selection: modal open/close, fuzzy search, pinned/disabled section, selection for both pending (no session yet) and active session.
 - Input: send/stop behavior, autosize, file upload previews (image/pdf/audio/text), error toasts for invalid files, undo file paste, search toggle persistence.
 - PDF export: export current session to PDF and confirm styles render.
 - Right panel: ticket registration, ticket visualization, key request, expiry countdown, renew/remove, proxy toggle + TLS security modal, fallback confirmation, and activity timeline updates.
 - Network logging: entries appear with safe header masking; memory-only (fresh each tab).
 - Theme & layout: system/light/dark selection persists and applies pre-hydration; highlight.js theme sync; wide mode toggle persistence; right panel visibility persistence.
-- IndexedDB: sessions/messages/settings integrity through reloads; model config and verifier broadcast cache; ensure no uncaught console errors.
+- IndexedDB: sessions/messages/settings integrity through reloads; verifier broadcast cache and settings toggles; ensure no uncaught console errors.
 - WASM-backed flows (tickets/privacy) and proxy: exercise both success and error paths; show clear UI feedback and recover gracefully.
 
 ## Commit & Pull Request Guidelines

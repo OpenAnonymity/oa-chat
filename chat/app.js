@@ -28,7 +28,7 @@ import scrubberService from './services/scrubberService.js';
 import shareService from './services/shareService.js';
 import shareModals from './components/ShareModals.js';
 import { getTicketCost, initModelTiers } from './services/modelTiers.js';
-import { initPinnedModels } from './services/modelConfig.js';
+import { initPinnedModels, onPinnedModelsUpdate, getDisabledModels } from './services/modelConfig.js';
 import accountService from './services/accountService.js';
 import apiKeyStore from './services/apiKeyStore.js';
 import { generateUlid21 } from './services/ulid.js';
@@ -187,6 +187,7 @@ class ChatApp {
         this.updateCheckInFlight = false;
         this.pendingStorageRefresh = false;
         this.storageReloadTimer = null;
+        this.pendingModelAvailabilityRefresh = false;
         this.pendingTicketCode = null;
         this.hasInitialLinkContext = this.detectInitialLinkContext();
         this.splitCodeWarningOverlay = null;
@@ -219,11 +220,100 @@ class ChatApp {
     }
 
     getDefaultModelId() {
-        return inferenceService.getDefaultModelId(this.getCurrentSession());
+        const session = this.getCurrentSession();
+        const fallbackModel = this.getFallbackModelEntry(session);
+        return fallbackModel?.id || inferenceService.getDefaultModelId(session);
     }
 
     getDefaultModelName() {
-        return inferenceService.getDefaultModelName(this.getCurrentSession());
+        const session = this.getCurrentSession();
+        const fallbackModel = this.getFallbackModelEntry(session);
+        return fallbackModel?.name || inferenceService.getDefaultModelName(session);
+    }
+
+    getDisabledModelSet() {
+        return new Set(getDisabledModels());
+    }
+
+    filterDisabledModels(models) {
+        if (!Array.isArray(models) || models.length === 0) {
+            return [];
+        }
+
+        const disabledSet = this.getDisabledModelSet();
+        if (disabledSet.size === 0) {
+            return [...models];
+        }
+
+        return models.filter(model => model && !disabledSet.has(model.id));
+    }
+
+    getFallbackModelEntry(session) {
+        if (!Array.isArray(this.state.models) || this.state.models.length === 0) {
+            return null;
+        }
+
+        const defaultModelId = inferenceService.getDefaultModelId(session);
+        const defaultModel = this.state.models.find(m => m.id === defaultModelId);
+        if (defaultModel) {
+            return defaultModel;
+        }
+
+        return this.state.models[0] || null;
+    }
+
+    applyDisabledModelFilter() {
+        const previousModels = Array.isArray(this.state.models) ? this.state.models : [];
+        const previousIds = previousModels.map(model => model.id).join('|');
+        const filteredModels = this.filterDisabledModels(previousModels);
+        const filteredIds = filteredModels.map(model => model.id).join('|');
+
+        const changed = previousIds !== filteredIds;
+        if (!changed) {
+            return false;
+        }
+
+        this.state.models = filteredModels;
+        this.state.modelsVersion += 1;
+
+        if (this.modelPicker) {
+            if (!this.elements.modelPickerModal.classList.contains('hidden')) {
+                this.modelPicker.renderModels(this.elements.modelSearch?.value || '');
+            } else {
+                this.modelPicker.warmRender();
+            }
+        }
+
+        this.renderCurrentModel();
+        return true;
+    }
+
+    async refreshModelsForAvailabilityUpdate() {
+        if (this.state.modelsLoading) {
+            this.pendingModelAvailabilityRefresh = true;
+            return;
+        }
+
+        try {
+            await this.loadModels();
+            this.applyDisabledModelFilter();
+            this.renderCurrentModel();
+            if (this.modelPicker) {
+                if (!this.elements.modelPickerModal.classList.contains('hidden')) {
+                    this.modelPicker.renderModels(this.elements.modelSearch?.value || '');
+                } else {
+                    this.modelPicker.warmRender();
+                }
+            }
+        } catch (error) {
+            console.warn('Failed to refresh models after availability update:', error);
+            this.applyDisabledModelFilter();
+        }
+
+        if (this.pendingModelAvailabilityRefresh) {
+            this.pendingModelAvailabilityRefresh = false;
+            await this.refreshModelsForAvailabilityUpdate();
+        }
     }
 
     attachDownloadLinkHandler(rootEl) {
@@ -1294,9 +1384,12 @@ class ChatApp {
         // Initialize message navigation
         this.messageNavigation = new MessageNavigation(this);
 
-        // Initialize model tiers and pinned models (loads cache, fetches fresh data in background)
+        // Initialize model tiers and model availability (loads cache, fetches fresh data in background)
         initModelTiers();
         initPinnedModels();
+        onPinnedModelsUpdate(() => {
+            this.refreshModelsForAvailabilityUpdate();
+        });
 
         // Keep slower service startup off the critical render path.
         void (async () => {
@@ -2695,7 +2788,8 @@ class ChatApp {
         }
 
         try {
-            this.state.models = await inferenceService.fetchModels(this.getCurrentSession());
+            const fetchedModels = await inferenceService.fetchModels(this.getCurrentSession());
+            this.state.models = this.filterDisabledModels(fetchedModels);
         } catch (error) {
             console.error('Failed to load models:', error);
             // Fallback models are already set in API
@@ -3539,41 +3633,30 @@ class ChatApp {
                 await chatDB.saveSession(session);
             }
 
-            if (!modelNameToUse) {
-                const defaultModelId = inferenceService.getDefaultModelId(session);
-                const defaultModel = this.state.models.find(m => m.id === defaultModelId);
-                if (defaultModel) {
-                    modelNameToUse = this.normalizeModelName(defaultModel.name);
-                } else {
-                    const gpt4oModel = this.state.models.find(m => m.name.toLowerCase().includes('gpt-4o'));
-                    if (gpt4oModel) {
-                        modelNameToUse = this.normalizeModelName(gpt4oModel.name);
-                    } else if (this.state.models.length > 0) {
-                        modelNameToUse = this.normalizeModelName(this.state.models[0].name);
-                    }
-                }
+            let selectedModelEntry = modelNameToUse
+                ? this.state.models.find(m => m.name === modelNameToUse)
+                : null;
 
-                if (modelNameToUse) {
-                    session.model = modelNameToUse;
-                    await chatDB.saveSession(session);
-                    this.renderCurrentModel();
+            if (!selectedModelEntry) {
+                const fallbackModel = this.getFallbackModelEntry(session);
+                if (fallbackModel) {
+                    selectedModelEntry = fallbackModel;
+                    modelNameToUse = this.normalizeModelName(fallbackModel.name);
+                    if (session.model !== modelNameToUse) {
+                        session.model = modelNameToUse;
+                        await chatDB.saveSession(session);
+                        this.renderCurrentModel();
+                    }
                 }
             }
 
-            if (!modelNameToUse) {
+            if (!modelNameToUse || !selectedModelEntry) {
                 console.warn('No available models to send message.');
                 await this.addMessage('assistant', 'No models are available right now. Please add a model and try again.', { isLocalOnly: true });
                 return;
             }
 
-            const selectedModelEntry = this.state.models.find(m => m.name === modelNameToUse);
-            let modelIdForRequest;
-
-            if (selectedModelEntry) {
-                modelIdForRequest = selectedModelEntry.id;
-            } else {
-                modelIdForRequest = inferenceService.getDefaultModelId(session);
-            }
+            const modelIdForRequest = selectedModelEntry.id;
 
             // Show typing indicator (only if still viewing this session)
             const typingId = this.isViewingSession(session.id) ? this.showTypingIndicator(modelNameToUse) : null;
@@ -4059,43 +4142,30 @@ class ChatApp {
                 await chatDB.saveSession(session);
             }
 
-            // Use backend default model as fallback
-            if (!modelNameToUse) {
-                const defaultModelId = inferenceService.getDefaultModelId(session);
-                const defaultModel = this.state.models.find(m => m.id === defaultModelId);
-                if (defaultModel) {
-                    modelNameToUse = this.normalizeModelName(defaultModel.name);
-                } else {
-                    const gpt4oModel = this.state.models.find(m => m.name.toLowerCase().includes('gpt-4o'));
-                    if (gpt4oModel) {
-                        modelNameToUse = this.normalizeModelName(gpt4oModel.name);
-                    } else if (this.state.models.length > 0) {
-                        modelNameToUse = this.normalizeModelName(this.state.models[0].name);
-                    }
-                }
+            let selectedModelEntry = modelNameToUse
+                ? this.state.models.find(m => m.name === modelNameToUse)
+                : null;
 
-                if (modelNameToUse) {
-                    session.model = modelNameToUse;
-                    await chatDB.saveSession(session);
-                    this.renderCurrentModel();
+            if (!selectedModelEntry) {
+                const fallbackModel = this.getFallbackModelEntry(session);
+                if (fallbackModel) {
+                    selectedModelEntry = fallbackModel;
+                    modelNameToUse = this.normalizeModelName(fallbackModel.name);
+                    if (session.model !== modelNameToUse) {
+                        session.model = modelNameToUse;
+                        await chatDB.saveSession(session);
+                        this.renderCurrentModel();
+                    }
                 }
             }
 
-            if (!modelNameToUse) {
+            if (!modelNameToUse || !selectedModelEntry) {
                 console.warn('No available models to send message.');
                 await this.addMessage('assistant', 'No models are available right now. Please add a model and try again.', { isLocalOnly: true });
                 return; // Return early
             }
 
-            const selectedModelEntry = this.state.models.find(m => m.name === modelNameToUse);
-            let modelIdForRequest;
-
-            if (selectedModelEntry) {
-                modelIdForRequest = selectedModelEntry.id;
-            } else {
-                // Models may not be loaded yet - fall back to default
-                modelIdForRequest = inferenceService.getDefaultModelId(session);
-            }
+            const modelIdForRequest = selectedModelEntry.id;
 
             // Show typing indicator (only if still viewing this session)
             let typingId = this.isViewingSession(session.id) ? this.showTypingIndicator(modelNameToUse) : null;
@@ -6257,8 +6327,11 @@ Your API key has been cleared. A new key from a different station will be obtain
 
         // Determine model ID from session model name
         const modelName = session.model || inferenceService.getDefaultModelName(session);
-        const modelEntry = this.state.models.find(m => m.name === modelName);
-        const modelId = modelEntry?.id || inferenceService.getDefaultModelId(session);
+        const modelEntry = this.state.models.find(m => m.name === modelName) || this.getFallbackModelEntry(session);
+        if (!modelEntry) {
+            throw new Error('No enabled models are currently available. Please try again later.');
+        }
+        const modelId = modelEntry.id;
 
         // Calculate ticket cost based on model tier and reasoning state
         const ticketsRequired = getTicketCost(modelId, this.reasoningEnabled);

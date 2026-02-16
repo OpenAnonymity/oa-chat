@@ -1,6 +1,6 @@
 // OpenRouter API integration
 import networkProxy from './services/networkProxy.js';
-import { loadModelConfig, getDefaultModelConfig } from './services/modelConfig.js';
+import { getDefaultModelConfig } from './services/modelConfig.js';
 import apiKeyStore from './services/apiKeyStore.js';
 import { loadModelCatalog, saveModelCatalog } from './services/modelCatalogCache.js';
 
@@ -34,23 +34,6 @@ class OpenRouterAPI {
         // Load display name overrides from centralized config
         const defaults = getDefaultModelConfig();
         this.displayNameOverrides = { ...defaults.displayNameOverrides };
-
-        // Async load for any user customizations in DB
-        this._loadConfig();
-    }
-
-    /**
-     * Loads config from database and updates displayNameOverrides.
-     */
-    async _loadConfig() {
-        try {
-            const config = await loadModelConfig();
-            if (config.displayNameOverrides) {
-                this.displayNameOverrides = { ...config.displayNameOverrides };
-            }
-        } catch (e) {
-            console.warn('OpenRouterAPI: failed to load config', e);
-        }
     }
 
     // Get API key - only use ticket-based key
@@ -932,7 +915,7 @@ class OpenRouterAPI {
             flushReasoningBuffer();
 
             // Handle abort errors
-            if (error.name === 'AbortError') {
+            if (error.name === 'AbortError' || abortController?.signal?.aborted) {
                 error.isCancelled = true;
             }
 
