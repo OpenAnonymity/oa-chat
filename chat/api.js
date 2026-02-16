@@ -318,7 +318,7 @@ class OpenRouterAPI {
     }
 
     // Stream chat completion with support for multimodal content, web search, and reasoning traces
-    async streamCompletion(messages, modelId, apiKey, onChunk, onTokenUpdate, files = [], searchEnabled = false, abortController = null, onReasoningChunk = null, reasoningEnabled = true) {
+    async streamCompletion(messages, modelId, apiKey, onChunk, onTokenUpdate, files = [], searchEnabled = false, abortController = null, onReasoningChunk = null, reasoningEnabled = true, extraBody = {}) {
         const key = apiKey || this.getApiKey();
 
         if (!key) {
@@ -555,7 +555,8 @@ class OpenRouterAPI {
                 })),
                 stream: true,
                 // Request usage information in stream
-                stream_options: { include_usage: true }
+                stream_options: { include_usage: true },
+                ...extraBody
             };
 
             // Add model-specific max_tokens if applicable (disabled - let OpenRouter use API key credits)
