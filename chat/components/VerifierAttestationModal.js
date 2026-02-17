@@ -879,7 +879,7 @@ class VerifierAttestationModal {
                                 ${isFullyVerified ? '<path d="M9 12l2 2 4-4"/>' : ''}
                             </svg>
                         </div>
-                        <h2 class="text-sm font-semibold text-foreground">Verifier Attestation</h2>
+                        <h2 class="text-sm font-semibold text-foreground">Ephemeral Access Key & OA-Verifier Attestation</h2>
                     </div>
                     <button class="verifier-modal-close text-muted-foreground hover:text-foreground transition-colors p-1.5 rounded-lg hover:bg-muted/50">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -940,19 +940,23 @@ class VerifierAttestationModal {
             <div class="p-3 rounded-lg border border-border bg-card space-y-1.5">
                 <h3 class="text-xs font-semibold text-foreground">What is an Ephemeral Access Key?</h3>
                 <p class="text-[11px] text-muted-foreground leading-relaxed">
-                    A short-lived, credit-limited "burner" key for this chat session. After issue, your browser talks to the model provider directly over HTTPS, so the verifier does not need your prompt/response plaintext.
+                    An Ephemeral Access Key is a disposable credential for one chat session, like a prepaid SIM card. It is short-lived and credit-capped, so it cannot be reused broadly.
                 </p>
                 <p class="text-[11px] text-muted-foreground leading-relaxed">
-                    It provides compartmentalization: keys expire quickly and limit blast radius if one key leaks.
+                    Your device redeems tickets to get this key, then uses it over HTTPS for inference. OA treats both short-lived provider tokens and equivalent short-lived enclave sessions as Ephemeral Access Keys, and each session-specific key limits blast radius if one leaks.
                 </p>
             </div>
 
             <div class="p-3 rounded-lg border border-border/70 bg-muted/20 space-y-1.5">
-                <h3 class="text-xs font-semibold text-foreground">How to read this panel</h3>
+                <h3 class="text-xs font-semibold text-foreground">How the OA-Verifier Checks Your Ephemeral Access Key</h3>
+                <p class="text-[11px] text-muted-foreground leading-relaxed">
+                    After an Ephemeral Access Key is issued, the app runs these checks automatically:
+                </p>
                 <ul class="list-disc list-inside space-y-0.5 text-[11px] text-muted-foreground">
-                    <li><span class="text-foreground font-medium">Hardware Attestation:</span> proves verifier runtime identity from confidential hardware.</li>
-                    <li><span class="text-foreground font-medium">JWT Signature:</span> checks the attestation token against Azure attestation keys.</li>
-                    <li><span class="text-foreground font-medium">Policy Verification:</span> checks measured runtime hash matches expected policy hash.</li>
+                    <li><span class="text-foreground font-medium">Key Issuance Proof Chain:</span> shows signatures and expiry proving the key came from OA's ticket flow.</li>
+                    <li><span class="text-foreground font-medium">Code Auditability:</span> links the verifier image/code so you can inspect what it should run.</li>
+                    <li><span class="text-foreground font-medium">Hardware Attestation:</span> proves the verifier runtime identity from confidential hardware.</li>
+                    <li><span class="text-foreground font-medium">JWT + Policy Verification:</span> validates the attestation signature and measured runtime hash.</li>
                 </ul>
             </div>
 
