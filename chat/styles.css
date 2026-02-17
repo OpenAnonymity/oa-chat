@@ -4658,10 +4658,48 @@ div:has(> #input-card.scrubber-preview-expanded) {
 }
 
 /* Verifier attestation modal */
+.verifier-modal-content {
+    height: min(90dvh, 52rem);
+    max-height: min(90dvh, 52rem);
+}
+
+@supports not (height: 1dvh) {
+    .verifier-modal-content {
+        height: min(90vh, 52rem);
+        max-height: min(90vh, 52rem);
+    }
+}
+
 .verifier-modal-scroll {
     flex: 1 1 auto;
     min-height: 0;
     overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+}
+
+.verifier-collapsible-summary::-webkit-details-marker {
+    display: none;
+}
+
+.verifier-collapsible-summary::marker {
+    display: none;
+}
+
+@media (max-width: 640px) {
+    .verifier-modal-content {
+        height: calc(100dvh - 1rem);
+        max-height: calc(100dvh - 1rem);
+    }
+}
+
+@supports not (height: 1dvh) {
+    @media (max-width: 640px) {
+        .verifier-modal-content {
+            height: calc(100vh - 1rem);
+            max-height: calc(100vh - 1rem);
+        }
+    }
 }
 
 .verifier-command {
