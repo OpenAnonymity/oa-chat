@@ -20,7 +20,7 @@ import inferenceService from './inference/inferenceService.js';
 import { chatDB } from '../db.js';
 import { localInferenceService } from '../../local_inference/index.js';
 import ticketClient from './ticketClient.js';
-
+import { TINFOIL_API_KEY } from './config.env.js';
 const KEY_EXPIRY_THRESHOLD_MS = 2 * 60 * 1000; // Regenerate if key expires in less than 2 minutes
 const TINFOIL_BASE_URL = 'https://inference.tinfoil.sh';
 const TINFOIL_BACKEND_ID = 'tinfoil';
@@ -524,16 +524,28 @@ class KeywordsGenerator {
     }
 
     /**
-     * Ensure a valid Tinfoil confidential key is available.
-     * Acquires a new one via ticket redemption if needed.
+     * Ensure a valid Tinfoil API key is available.
+     * Checks for a static key from environment first, then falls back
+     * to acquiring one via ticket redemption.
      * @returns {Promise<string|null>} The API key, or null if unavailable
      */
     async _ensureTinfoilKey() {
+        // 1. Prefer static API key from environment
+        const envKey = TINFOIL_API_KEY;
+        if (envKey) {
+            localInferenceService.configureBackend(TINFOIL_BACKEND_ID, {
+                baseUrl: TINFOIL_BASE_URL,
+                apiKey: envKey
+            });
+            return envKey;
+        }
+
+        // 2. Use cached confidential key if still valid
         if (this._isTinfoilKeyValid()) {
             return this._tinfoilKey;
         }
 
-        // Check ticket availability
+        // 3. Fall back to ticket-based key acquisition
         const ticketCount = ticketClient.getTicketCount();
         if (ticketCount < TINFOIL_KEY_TICKETS_REQUIRED) {
             console.log(`[KeywordsGenerator] Not enough tickets for Tinfoil key (need ${TINFOIL_KEY_TICKETS_REQUIRED}, have ${ticketCount})`);

@@ -21,6 +21,7 @@ import { createVectorStore, encodeVectorId } from '../vector/index.js';
 import { chatDB } from '../db.js';
 import { localInferenceService } from '../../local_inference/index.js';
 import ticketClient from './ticketClient.js';
+import { TINFOIL_API_KEY } from './config.env.js';
 
 const CHECK_INTERVAL_MS = 30 * 1000; // Check every 30 seconds
 const MAX_CONTENT_LENGTH = 8000; // Truncate very long conversations
@@ -605,16 +606,28 @@ class SessionEmbedder {
     }
 
     /**
-     * Ensure a valid Tinfoil confidential key is available.
-     * Acquires a new one via ticket redemption if needed.
+     * Ensure a valid Tinfoil API key is available.
+     * Checks for a static key from environment first, then falls back
+     * to acquiring one via ticket redemption.
      * @returns {Promise<string|null>} The API key, or null if unavailable
      */
     async _ensureTinfoilKey() {
+        // 1. Prefer static API key from environment
+        const envKey = TINFOIL_API_KEY;
+        if (envKey) {
+            localInferenceService.configureBackend(TINFOIL_BACKEND_ID, {
+                baseUrl: TINFOIL_BASE_URL,
+                apiKey: envKey
+            });
+            return envKey;
+        }
+
+        // 2. Use cached confidential key if still valid
         if (this._isTinfoilKeyValid()) {
             return this._tinfoilKey;
         }
 
-        // Check ticket availability
+        // 3. Fall back to ticket-based key acquisition
         const ticketCount = ticketClient.getTicketCount();
         if (ticketCount < TINFOIL_KEY_TICKETS_REQUIRED) {
             console.log(`[SessionEmbedder] Not enough tickets for Tinfoil key (need ${TINFOIL_KEY_TICKETS_REQUIRED}, have ${ticketCount})`);
@@ -997,6 +1010,7 @@ Available tags: ${JSON.stringify(allTags)}`;
 
 // Export singleton instance
 const sessionEmbedder = new SessionEmbedder();
+window.sessionEmbedder = sessionEmbedder; // Expose for console profiling
 export default sessionEmbedder;
 
 // Also export class for testing
