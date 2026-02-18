@@ -3375,6 +3375,32 @@ html {
     background-color: hsl(var(--color-background));
 }
 
+.full-prompt-user-message-edit {
+    min-height: 88px;
+    max-height: 180px;
+}
+
+.full-prompt-final-preview {
+    max-height: 260px;
+}
+
+.full-prompt-raw-toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.8rem;
+    color: hsl(var(--color-muted-foreground));
+    margin-bottom: 0.6rem;
+}
+
+.full-prompt-raw-toggle-row input[type="checkbox"] {
+    accent-color: hsl(var(--color-primary));
+}
+
+.full-prompt-raw-edit {
+    min-height: 160px;
+}
+
 .full-prompt-edit-hint {
     font-size: 0.75rem;
     font-weight: 400;
@@ -3393,6 +3419,85 @@ html {
 
 .full-prompt-memory-item:last-child {
     margin-bottom: 0;
+}
+
+.full-prompt-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin: -0.2rem 0 0.8rem 0;
+}
+
+.full-prompt-tag {
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    text-transform: lowercase;
+    color: hsl(var(--color-primary));
+    background-color: hsl(var(--color-primary) / 0.1);
+    border: 1px solid hsl(var(--color-primary) / 0.25);
+    border-radius: 9999px;
+    padding: 0.18rem 0.55rem;
+    line-height: 1.2;
+}
+
+.full-prompt-tags-empty {
+    font-size: 0.75rem;
+    color: hsl(var(--color-muted-foreground));
+}
+
+.full-prompt-tag-caption {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: hsl(var(--color-muted-foreground));
+    margin-bottom: 0.4rem;
+}
+
+.full-prompt-tag-groups {
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+}
+
+.full-prompt-tag-group {
+    border: 1px solid hsl(var(--color-border) / 0.35);
+    border-radius: 8px;
+    padding: 0.65rem;
+    background-color: hsl(var(--color-muted) / 0.18);
+}
+
+.full-prompt-tag-group-title {
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: hsl(var(--color-primary));
+    margin-bottom: 0.5rem;
+}
+
+.full-prompt-memory-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    padding: 0 0.75rem 0.55rem 0.75rem;
+}
+
+.full-prompt-memory-tag {
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.66rem;
+    font-weight: 600;
+    color: hsl(var(--color-foreground));
+    background-color: hsl(var(--color-muted) / 0.65);
+    border: 1px solid hsl(var(--color-border) / 0.5);
+    border-radius: 9999px;
+    padding: 0.13rem 0.45rem;
+    line-height: 1.2;
+}
+
+.full-prompt-memory-tags-empty {
+    font-size: 0.68rem;
+    color: hsl(var(--color-muted-foreground));
 }
 
 .full-prompt-memory-title {

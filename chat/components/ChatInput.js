@@ -2137,6 +2137,9 @@ export default class ChatInput {
             return;
         }
 
+        // Context set changed, so any edited full-prompt override is now stale.
+        this.app._lastApiContent = null;
+
         // Remove from pendingMemoryContext
         this.app.pendingMemoryContext.memories.splice(index, 1);
         this.app.pendingMemoryContext.sessionIds.splice(index, 1);
@@ -2162,21 +2165,78 @@ export default class ChatInput {
     /**
      * Show full prompt preview modal with memory context
      */
-    showFullPromptPreview() {
+    showFullPromptPreview(draft = null) {
         if (!this.app.pendingMemoryContext || !this.app.pendingMemoryContext.memories) {
             return;
         }
 
-        const userQuery = this.app.elements.messageInput.value.trim();
-        const memories = this.app.pendingMemoryContext.memories;
+        const initialUserQuery = typeof draft?.userQuery === 'string'
+            ? draft.userQuery
+            : (this.app.elements.messageInput.value || '');
+        let userQueryDraft = initialUserQuery;
 
-        // Build the full prompt as it will be sent to the API
-        const memoryContent = memories.map((m, idx) => {
-            const content = m.fullContent || m.displayContent || m.content || m.summary || '';
-            return `--- Retrieved Context ${idx + 1}: ${m.title || 'Untitled'} ---\n${content}`;
-        }).join('\n\n');
-        
-        const fullPrompt = `${memoryContent}\n\n--- User Query ---\n${userQuery}`;
+        const hasExistingOverride = typeof this.app._lastApiContent === 'string'
+            && this.app._lastApiContent.trim().length > 0;
+        let rawOverrideEnabled = typeof draft?.rawOverrideEnabled === 'boolean'
+            ? draft.rawOverrideEnabled
+            : hasExistingOverride;
+        let rawOverrideDraft = typeof draft?.rawOverrideDraft === 'string'
+            ? draft.rawOverrideDraft
+            : (hasExistingOverride ? this.app._lastApiContent : '');
+
+        const memories = this.app.pendingMemoryContext.memories;
+        const memoryEntries = memories.map((memory, idx) => {
+            const tags = Array.from(new Set(
+                (Array.isArray(memory?.keywords) ? memory.keywords : [])
+                    .filter(tag => typeof tag === 'string' && tag.trim().length > 0)
+                    .map(tag => tag.trim().toLowerCase())
+            ));
+            const relevantTags = Array.from(new Set(
+                (Array.isArray(memory?.relevantTags) ? memory.relevantTags : [])
+                    .filter(tag => typeof tag === 'string' && tag.trim().length > 0)
+                    .map(tag => tag.trim().toLowerCase())
+            ));
+            const primaryTag = (typeof memory?.primaryRelevantTag === 'string' && memory.primaryRelevantTag.trim().length > 0)
+                ? memory.primaryRelevantTag.trim().toLowerCase()
+                : (relevantTags[0] || tags[0] || 'untagged');
+            return { memory, idx, tags, relevantTags, primaryTag };
+        });
+
+        const contextTags = Array.from(new Set(
+            memoryEntries.flatMap(entry => entry.relevantTags)
+        ));
+
+        const groupedContextMap = new Map();
+        memoryEntries.forEach((entry) => {
+            if (!groupedContextMap.has(entry.primaryTag)) {
+                groupedContextMap.set(entry.primaryTag, []);
+            }
+            groupedContextMap.get(entry.primaryTag).push(entry);
+        });
+        const groupedContext = Array.from(groupedContextMap.entries()).map(([tag, entries]) => ({ tag, entries }));
+
+        if (groupedContext.length === 0 && memoryEntries.length > 0) {
+            groupedContext.push({
+                tag: 'untagged',
+                entries: memoryEntries
+            });
+        }
+
+        const buildDefaultPayload = (queryText) => {
+            const memoryContent = memories.map((m, idx) => {
+                const content = m.fullContent || m.displayContent || m.content || m.summary || '';
+                return `--- Retrieved Context ${idx + 1}: ${m.title || 'Untitled'} ---\n${content}`;
+            }).join('\n\n');
+            return `${memoryContent}\n\n--- User Query ---\n${queryText.trim()}`;
+        };
+        const getEffectivePayload = () => {
+            if (rawOverrideEnabled && rawOverrideDraft.trim()) {
+                return rawOverrideDraft;
+            }
+            return buildDefaultPayload(userQueryDraft);
+        };
+
+        const fullPrompt = getEffectivePayload();
 
         // Create modal
         const modal = document.createElement('div');
@@ -2204,26 +2264,45 @@ export default class ChatInput {
                             </svg>
                             Retrieved Context (${memories.length} item${memories.length === 1 ? '' : 's'})
                         </div>
-                        <div>
-                            ${memories.map((m, idx) => {
-                                const content = m.fullContent || m.displayContent || m.content || m.summary || '';
-                                return `
-                                    <div class="full-prompt-memory-item collapsible collapsed" data-memory-index="${idx}">
-                                        <div class="full-prompt-memory-title collapsible-header">
-                                            <svg class="collapsible-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
-                                                <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
-                                            </svg>
-                                            <span>${idx + 1}. ${this.escapeHtml(m.title || 'Untitled')}</span>
-                                            <button class="full-prompt-delete-btn" data-memory-index="${idx}" type="button" title="Delete this context item">
-                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
-                                                </svg>
-                                            </button>
-                                        </div>
-                                        <div class="full-prompt-memory-content collapsible-content">${this.escapeHtml(content)}</div>
-                                    </div>
-                                `;
-                            }).join('')}
+                        <div class="full-prompt-tag-caption">Related Tags Retrieved</div>
+                        <div class="full-prompt-tags">
+                            ${contextTags.length > 0
+                                ? contextTags.map(tag => `<span class="full-prompt-tag">${this.escapeHtml(tag)}</span>`).join('')
+                                : '<span class="full-prompt-tags-empty">No context tags</span>'
+                            }
+                        </div>
+                        <div class="full-prompt-tag-groups">
+                            ${groupedContext.map((group) => `
+                                <div class="full-prompt-tag-group">
+                                    <div class="full-prompt-tag-group-title">#${this.escapeHtml(group.tag)}</div>
+                                    ${group.entries.map((entry) => {
+                                        const m = entry.memory;
+                                        const content = m.fullContent || m.displayContent || m.content || m.summary || '';
+                                        return `
+                                            <div class="full-prompt-memory-item collapsible collapsed" data-memory-index="${entry.idx}">
+                                                <div class="full-prompt-memory-title collapsible-header">
+                                                    <svg class="collapsible-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+                                                    </svg>
+                                                    <span>${entry.idx + 1}. ${this.escapeHtml(m.title || 'Untitled')}</span>
+                                                    <button class="full-prompt-delete-btn" data-memory-index="${entry.idx}" type="button" title="Delete this context item">
+                                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                                                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+                                                        </svg>
+                                                    </button>
+                                                </div>
+                                                <div class="full-prompt-memory-tags">
+                                                    ${(entry.relevantTags.length > 0 ? entry.relevantTags : entry.tags).length > 0
+                                                        ? (entry.relevantTags.length > 0 ? entry.relevantTags : entry.tags).map(tag => `<span class="full-prompt-memory-tag">${this.escapeHtml(tag)}</span>`).join('')
+                                                        : '<span class="full-prompt-memory-tags-empty">No tags</span>'
+                                                    }
+                                                </div>
+                                                <div class="full-prompt-memory-content collapsible-content">${this.escapeHtml(content)}</div>
+                                            </div>
+                                        `;
+                                    }).join('')}
+                                </div>
+                            `).join('')}
                         </div>
                     </div>
                     <div class="full-prompt-section">
@@ -2231,9 +2310,9 @@ export default class ChatInput {
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
                             </svg>
-                            Your Message
+                            Your Message (Editable)
                         </div>
-                        <div class="full-prompt-section-content">${this.escapeHtml(userQuery)}</div>
+                        <textarea class="full-prompt-section-editable full-prompt-user-message-edit" id="full-prompt-user-query">${this.escapeHtml(userQueryDraft)}</textarea>
                     </div>
                     <div class="full-prompt-section">
                         <div class="full-prompt-section-title">
@@ -2241,9 +2320,22 @@ export default class ChatInput {
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z" />
                             </svg>
                             Complete Prompt to be Sent
-                            <span class="full-prompt-edit-hint">(editable)</span>
+                            <span class="full-prompt-edit-hint">(computed preview)</span>
                         </div>
-                        <textarea class="full-prompt-section-editable" id="full-prompt-textarea">${this.escapeHtml(fullPrompt)}</textarea>
+                        <div class="full-prompt-section-content full-prompt-final-preview" id="full-prompt-final-preview">${this.escapeHtml(fullPrompt)}</div>
+                    </div>
+                    <div class="full-prompt-section">
+                        <div class="full-prompt-section-title">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 0h10.5A2.25 2.25 0 0 1 19.5 12.75v6A2.25 2.25 0 0 1 17.25 21h-10.5A2.25 2.25 0 0 1 4.5 18.75v-6A2.25 2.25 0 0 1 6.75 10.5Z" />
+                            </svg>
+                            Advanced Mode
+                        </div>
+                        <label class="full-prompt-raw-toggle-row">
+                            <input type="checkbox" id="full-prompt-raw-toggle" ${rawOverrideEnabled ? 'checked' : ''}>
+                            <span>Edit raw payload directly (can diverge from selected memories)</span>
+                        </label>
+                        <textarea class="full-prompt-section-editable full-prompt-raw-edit ${rawOverrideEnabled ? '' : 'hidden'}" id="full-prompt-raw-textarea">${this.escapeHtml(rawOverrideDraft)}</textarea>
                     </div>
                 </div>
                 <div class="full-prompt-preview-footer">
@@ -2258,11 +2350,11 @@ export default class ChatInput {
                             </svg>
                             Copy
                         </button>
-                        <button class="full-prompt-use-btn" id="use-edited-prompt-btn" title="Apply edits and update memory context">
+                        <button class="full-prompt-use-btn" id="use-edited-prompt-btn" title="Apply message and optional raw payload override">
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
                             </svg>
-                            Apply Changes
+                            Apply
                         </button>
                     </div>
                 </div>
@@ -2288,6 +2380,13 @@ export default class ChatInput {
                 if (!Number.isNaN(memoryIndex)) {
                     // Remove from pendingMemoryContext
                     if (this.app.pendingMemoryContext && this.app.pendingMemoryContext.memories) {
+                        if (rawOverrideEnabled && rawOverrideDraft.trim()) {
+                            const confirmed = window.confirm('Deleting context will discard raw payload override. Continue?');
+                            if (!confirmed) return;
+                            rawOverrideEnabled = false;
+                            rawOverrideDraft = '';
+                            this.app._lastApiContent = null;
+                        }
                         this.app.pendingMemoryContext.memories.splice(memoryIndex, 1);
                         this.app.pendingMemoryContext.sessionIds.splice(memoryIndex, 1);
                         
@@ -2297,9 +2396,19 @@ export default class ChatInput {
                             this.renderMemoryChips([]);
                             closeModal();
                         } else {
+                            // Re-render chips to reflect deletion immediately.
+                            this.renderMemoryChips(this.app.pendingMemoryContext.memories);
                             // Rebuild the modal with updated memories
+                            const userQueryTextarea = modal.querySelector('#full-prompt-user-query');
+                            const rawTextarea = modal.querySelector('#full-prompt-raw-textarea');
+                            if (userQueryTextarea) userQueryDraft = userQueryTextarea.value;
+                            if (rawTextarea) rawOverrideDraft = rawTextarea.value;
                             closeModal();
-                            this.showFullPromptPreview();
+                            this.showFullPromptPreview({
+                                userQuery: userQueryDraft,
+                                rawOverrideEnabled,
+                                rawOverrideDraft
+                            });
                         }
                     }
                 }
@@ -2310,21 +2419,47 @@ export default class ChatInput {
         const closeBtn = modal.querySelector('#close-prompt-preview-input');
         const copyBtn = modal.querySelector('#copy-full-prompt-input');
         const useBtn = modal.querySelector('#use-edited-prompt-btn');
-        const promptTextarea = modal.querySelector('#full-prompt-textarea');
+        const userQueryTextarea = modal.querySelector('#full-prompt-user-query');
+        const finalPreviewEl = modal.querySelector('#full-prompt-final-preview');
+        const rawToggle = modal.querySelector('#full-prompt-raw-toggle');
+        const rawTextarea = modal.querySelector('#full-prompt-raw-textarea');
+        let hasEditedRawDraft = !!(rawOverrideDraft && rawOverrideDraft.trim().length > 0);
+
+        const updateFinalPreview = () => {
+            if (!finalPreviewEl) return;
+            finalPreviewEl.textContent = getEffectivePayload();
+        };
+        const updateRawModeUI = () => {
+            if (!rawTextarea) return;
+            if (rawOverrideEnabled) {
+                rawTextarea.classList.remove('hidden');
+            } else {
+                rawTextarea.classList.add('hidden');
+            }
+            updateFinalPreview();
+        };
+
+        let isClosed = false;
+        const handleKeydown = (e) => {
+            if (e.key === 'Escape') {
+                closeModal();
+            }
+        };
 
         const closeModal = () => {
+            if (isClosed) return;
+            isClosed = true;
+            document.removeEventListener('keydown', handleKeydown);
             modal.remove();
         };
 
         closeBtn.addEventListener('click', closeModal);
-        modal.addEventListener('click', (e) => {
-            if (e.target === modal) {
-                closeModal();
-            }
-        });
+        // Keep backdrop clicks inert for this editable modal to avoid accidental dismiss
+        // when selecting/deleting large text blocks in the textarea.
+        modal.addEventListener('click', (e) => e.stopPropagation());
 
         copyBtn.addEventListener('click', async () => {
-            const currentPrompt = promptTextarea.value;
+            const currentPrompt = getEffectivePayload();
             try {
                 await navigator.clipboard.writeText(currentPrompt);
                 copyBtn.innerHTML = `
@@ -2346,69 +2481,44 @@ export default class ChatInput {
             }
         });
 
+        userQueryTextarea?.addEventListener('input', () => {
+            userQueryDraft = userQueryTextarea.value;
+            updateFinalPreview();
+        });
+        rawToggle?.addEventListener('change', () => {
+            rawOverrideEnabled = !!rawToggle.checked;
+            if (rawOverrideEnabled) {
+                if (!hasEditedRawDraft) {
+                    rawOverrideDraft = buildDefaultPayload(userQueryDraft);
+                    if (rawTextarea) rawTextarea.value = rawOverrideDraft;
+                }
+            }
+            updateRawModeUI();
+        });
+        rawTextarea?.addEventListener('input', () => {
+            rawOverrideDraft = rawTextarea.value;
+            hasEditedRawDraft = true;
+            updateFinalPreview();
+        });
+
         useBtn.addEventListener('click', () => {
-            const editedPrompt = promptTextarea.value.trim();
-            if (editedPrompt) {
-                // Parse the edited prompt to extract individual memory sections
-                // Format: "--- Retrieved Context N: Title ---\nContent\n\n..."
-                const memoryRegex = /--- Retrieved Context \d+: (.+?) ---\n([\s\S]*?)(?=--- Retrieved Context|\n--- User Query|$)/g;
-                const userQueryRegex = /--- User Query ---\n([\s\S]*?)(?=--- Complete Prompt|$)/;
-                
-                const memories = [];
-                let match;
-                
-                // Extract memory sections from edited prompt
-                while ((match = memoryRegex.exec(editedPrompt)) !== null) {
-                    memories.push({
-                        title: match[1],
-                        content: match[2].trim(),
-                        fullContent: match[2].trim()
-                    });
-                }
-                
-                // Extract user query
-                const userQueryMatch = userQueryRegex.exec(editedPrompt);
-                const userQuery = userQueryMatch ? userQueryMatch[1].trim() : '';
-                
-                // Update pendingMemoryContext with parsed memories
-                if (memories.length > 0) {
-                    // Extract session IDs from existing context if available
-                    const sessionIds = (this.app.pendingMemoryContext?.sessionIds || []).slice(0, memories.length);
-                    
-                    this.app.pendingMemoryContext = {
-                        sessionIds: sessionIds,
-                        memories: memories,
-                        timestamp: Date.now()
-                    };
-                    
-                    // Re-render memory chips to reflect changes
-                    this.renderMemoryChips(memories);
-                    
-                    this.app.showToast?.('Memory context updated', 'success');
-                } else {
-                    // Clear if no memories found
-                    this.app.pendingMemoryContext = null;
-                    this.clearMemoryChips();
-                }
-                
-                // Close modal
-                closeModal();
+            if (!userQueryTextarea) return;
+            userQueryDraft = userQueryTextarea.value;
+
+            this.app.elements.messageInput.value = userQueryDraft;
+            this.app.elements.messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+
+            if (rawOverrideEnabled && rawOverrideDraft.trim()) {
+                this.app._lastApiContent = rawOverrideDraft;
+            } else {
+                this.app._lastApiContent = null;
             }
+            closeModal();
         });
 
-        // Keyboard handler
-        const handleKeydown = (e) => {
-            if (e.key === 'Escape') {
-                closeModal();
-                document.removeEventListener('keydown', handleKeydown);
-            }
-        };
+        updateRawModeUI();
+        updateFinalPreview();
         document.addEventListener('keydown', handleKeydown);
-
-        // Clean up on close
-        modal.addEventListener('remove', () => {
-            document.removeEventListener('keydown', handleKeydown);
-        });
     }
 
     /**
@@ -2422,4 +2532,3 @@ export default class ChatInput {
         return div.innerHTML;
     }
 }
-

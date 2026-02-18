@@ -130,6 +130,7 @@ class SessionEmbedder {
             // - No lastEmbeddedAt (never embedded)
             // - OR updatedAt > lastEmbeddedAt (has new content)
             const sessionsNeedingEmbedding = allSessions.filter(session => {
+                if (session.disableAutoEmbeddingKeywords) return false;
                 const updatedAt = session.updatedAt || session.createdAt || 0;
                 const lastEmbeddedAt = session.lastEmbeddedAt || 0;
                 return lastEmbeddedAt === 0 || updatedAt > lastEmbeddedAt;
@@ -204,6 +205,11 @@ class SessionEmbedder {
 
                     if (!session) {
                         // Session deleted — remove from queue
+                        this.queue.splice(idx, 1);
+                        continue;
+                    }
+
+                    if (session.disableAutoEmbeddingKeywords) {
                         this.queue.splice(idx, 1);
                         continue;
                     }
@@ -315,11 +321,11 @@ class SessionEmbedder {
      * @param {string} sessionId - The session to embed
      */
     async embedSession(sessionId) {
-        if (!sessionId) return;
+        if (!sessionId) return false;
 
         if (!this.initialized || !this.embedder || !this.store) {
             console.debug('[SessionEmbedder] Not initialized, skipping embed');
-            return;
+            return false;
         }
 
         try {
@@ -337,14 +343,14 @@ class SessionEmbedder {
             const session = await chatDB.getSession(sessionId);
             if (!session) {
                 console.debug(`[SessionEmbedder] Session ${sessionId} not found`);
-                return;
+                return false;
             }
 
             // Get all messages for this session
             const messages = await chatDB.getSessionMessages(sessionId);
             if (!messages || messages.length === 0) {
                 console.debug(`[SessionEmbedder] No messages in session ${sessionId}`);
-                return;
+                return false;
             }
 
             // Build text representation of the conversation
@@ -361,7 +367,7 @@ class SessionEmbedder {
             // Skip if no meaningful content
             if (!conversationText.trim() || conversationText.length < 20) {
                 console.debug(`[SessionEmbedder] Session ${sessionId} has insufficient content`);
-                return;
+                return false;
             }
 
             // Truncate if too long
@@ -413,9 +419,11 @@ class SessionEmbedder {
             const saveMs = te3 - te2;
             this._embedTimings.push({ embedMs, upsertMs, saveMs, contentLength: conversationText.length, messageCount: messages.length, ts: Date.now() });
             console.log(`[SessionEmbedder] Embedded session "${session.title || sessionId}" (${messages.length} messages) — embed: ${embedMs.toFixed(2)}ms, upsert: ${upsertMs.toFixed(2)}ms, save: ${saveMs.toFixed(2)}ms`);
+            return true;
 
         } catch (error) {
             console.warn(`[SessionEmbedder] Failed to embed session ${sessionId}:`, error);
+            return false;
         }
     }
 
@@ -817,19 +825,26 @@ Available tags: ${JSON.stringify(allTags)}`;
 
             const sessionMap = await this._getSessionMapForResults(embeddingResults);
 
-            return embeddingResults.map(r => ({
-                sessionId: r.metadata?.sessionId,
-                title: r.metadata?.title,
-                summary: r.metadata?.summary,
-                keywords: this._getKeywordsForResult(r, sessionMap),
-                conversationText: r.metadata?.conversationText,
-                messageCount: r.metadata?.messageCount,
-                model: r.metadata?.model,
-                embeddedAt: r.metadata?.embeddedAt,
-                updatedAt: r.metadata?.updatedAt,
-                score: r.score,
-                matchType
-            }));
+            return embeddingResults.map(r => {
+                const keywords = this._getKeywordsForResult(r, sessionMap);
+                const matchedSessionTags = matchedTags.filter(tag => keywords.includes(tag));
+                return {
+                    sessionId: r.metadata?.sessionId,
+                    title: r.metadata?.title,
+                    summary: r.metadata?.summary,
+                    keywords,
+                    matchedTags: matchedTags,
+                    matchedSessionTags,
+                    primaryMatchedTag: matchedSessionTags[0] || null,
+                    conversationText: r.metadata?.conversationText,
+                    messageCount: r.metadata?.messageCount,
+                    model: r.metadata?.model,
+                    embeddedAt: r.metadata?.embeddedAt,
+                    updatedAt: r.metadata?.updatedAt,
+                    score: r.score,
+                    matchType
+                };
+            });
 
         } catch (error) {
             console.warn('[SessionEmbedder] Tag-boosted search failed, falling back to pure embedding:', error);

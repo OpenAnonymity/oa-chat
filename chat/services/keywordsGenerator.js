@@ -116,7 +116,8 @@ class KeywordsGenerator {
             if (!allSessions || allSessions.length === 0) return;
 
             const needsKeywords = allSessions.filter(s =>
-                !s.summary || !s.keywords || s.keywords.length === 0
+                (!s.summary || !s.keywords || s.keywords.length === 0)
+                && !s.disableAutoEmbeddingKeywords
             );
 
             if (needsKeywords.length === 0) {
@@ -200,6 +201,39 @@ class KeywordsGenerator {
     }
 
     /**
+     * Ensure a session has keywords/summary, preferring existing values.
+     * Falls back to Tinfoil for keyless sessions (for example imported chats).
+     *
+     * @param {string} sessionId - Session ID
+     * @returns {Promise<Object|null>} Generated/existing { summary, keywords } or null
+     */
+    async ensureSessionKeywords(sessionId, options = {}) {
+        const { force = false } = options;
+        if (!sessionId) return null;
+        if (!this.initialized) {
+            await this.init();
+        }
+
+        const session = await chatDB.getSession(sessionId);
+        if (!session) return null;
+        if (session.disableAutoEmbeddingKeywords && !force) return null;
+        if (session.summary && Array.isArray(session.keywords) && session.keywords.length > 0) {
+            return { summary: session.summary, keywords: session.keywords };
+        }
+
+        const result = await this.generateForSession(sessionId, null, { force });
+        if (result && !result.deferred) {
+            return result;
+        }
+
+        const fallback = await this.generateWithTinfoil(sessionId, { force });
+        if (fallback && fallback.deferred) {
+            return null;
+        }
+        return fallback || null;
+    }
+
+    /**
      * Unified queue processor. Tries OA-key generation first, falls back to
      * Tinfoil for keyless sessions.
      */
@@ -221,6 +255,11 @@ class KeywordsGenerator {
 
                     if (!session) {
                         // Session deleted — remove from queue
+                        this.queue.splice(idx, 1);
+                        continue;
+                    }
+
+                    if (session.disableAutoEmbeddingKeywords) {
                         this.queue.splice(idx, 1);
                         continue;
                     }
@@ -347,7 +386,8 @@ class KeywordsGenerator {
      * @param {Object} app - Optional reference to main app for in-memory state updates
      * @returns {Promise<Object|null>} Generated data { summary, keywords } or null on error
      */
-    async generateForSession(sessionId, app = null) {
+    async generateForSession(sessionId, app = null, options = {}) {
+        const { force = false } = options;
         if (!this.initialized) {
             await this.init();
         }
@@ -356,6 +396,9 @@ class KeywordsGenerator {
         const session = await chatDB.getSession(sessionId);
         if (!session) {
             console.warn('[KeywordsGenerator] Session not found:', sessionId);
+            return null;
+        }
+        if (session.disableAutoEmbeddingKeywords && !force) {
             return null;
         }
 
@@ -522,11 +565,15 @@ class KeywordsGenerator {
      * @param {string} sessionId - Session ID to generate keywords for
      * @returns {Promise<Object|null>} Generated data { summary, keywords } or null on error
      */
-    async generateWithTinfoil(sessionId) {
+    async generateWithTinfoil(sessionId, options = {}) {
+        const { force = false } = options;
         // Get session from database
         const session = await chatDB.getSession(sessionId);
         if (!session) {
             console.warn('[KeywordsGenerator] Session not found:', sessionId);
+            return null;
+        }
+        if (session.disableAutoEmbeddingKeywords && !force) {
             return null;
         }
 

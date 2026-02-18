@@ -47,6 +47,14 @@ class ChatHistoryImportModal {
                 duplicates: 0,
                 errors: 0
             },
+            embeddingProgress: {
+                total: 0,
+                processed: 0,
+                embedded: 0,
+                keyworded: 0,
+                errors: 0
+            },
+            generateEmbeddings: false,
             parseError: null,
             lastError: null,
             confirmingCancel: false,
@@ -75,6 +83,9 @@ class ChatHistoryImportModal {
             this.requestCancel();
             return;
         }
+        if (this.state.step === 'embedding') {
+            return;
+        }
         this.isOpen = false;
         this.state.plan = [];
         this.state.preview = null;
@@ -97,6 +108,8 @@ class ChatHistoryImportModal {
             importerDescription,
             preview,
             progress,
+            embeddingProgress,
+            generateEmbeddings,
             parseError,
             lastError,
             confirmingCancel,
@@ -199,6 +212,12 @@ class ChatHistoryImportModal {
                     <div class="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
                         Imports text, reasoning trace, citations, and web-search thumbnails if possible. Other media is shown as placeholders.
                     </div>
+                    <label class="flex items-start gap-2 rounded-lg border border-border bg-muted/20 p-3 cursor-pointer">
+                        <input id="chat-import-generate-embeddings" type="checkbox" class="mt-0.5" ${generateEmbeddings ? 'checked' : ''}>
+                        <span class="text-xs text-muted-foreground">
+                            Generate embeddings and keywords now (slower import). If enabled, import finishes only after embedding is complete.
+                        </span>
+                    </label>
                     <div class="flex items-center justify-between gap-2">
                         <button id="chat-import-pick-file" class="px-3 py-2 text-sm font-medium rounded-md border border-border hover-highlight transition-colors">Choose another file</button>
                         <button id="chat-import-start" class="px-3 py-2 text-sm font-medium rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">Start import</button>
@@ -244,6 +263,36 @@ class ChatHistoryImportModal {
                             </div>
                         </div>
                     ` : ''}
+                </div>
+            `;
+        } else if (step === 'embedding') {
+            const progressPercent = embeddingProgress.total
+                ? Math.round((embeddingProgress.processed / embeddingProgress.total) * 100)
+                : 0;
+            bodyHtml = `
+                <div class="space-y-4 text-sm">
+                    <div class="text-sm text-foreground font-medium">Generating embeddings</div>
+                    <div class="text-xs text-muted-foreground">Please wait until embedding and keyword generation complete.</div>
+                    <div class="w-full h-2 bg-muted rounded-full overflow-hidden">
+                        <div id="embedding-progress-fill" class="h-full bg-primary transition-all" style="width: ${progressPercent}%"></div>
+                    </div>
+                    <div id="embedding-progress-text" class="text-xs text-muted-foreground">
+                        ${embeddingProgress.processed} of ${embeddingProgress.total} sessions processed (${progressPercent}%)
+                    </div>
+                    <div class="grid grid-cols-3 gap-2 text-xs">
+                        <div class="rounded-lg border border-border p-2 text-center">
+                            <div class="text-muted-foreground">Embedded</div>
+                            <div id="embedding-count" class="text-foreground font-semibold">${embeddingProgress.embedded}</div>
+                        </div>
+                        <div class="rounded-lg border border-border p-2 text-center">
+                            <div class="text-muted-foreground">Keywords</div>
+                            <div id="keyword-count" class="text-foreground font-semibold">${embeddingProgress.keyworded}</div>
+                        </div>
+                        <div class="rounded-lg border border-border p-2 text-center">
+                            <div class="text-muted-foreground">Errors</div>
+                            <div id="embedding-error-count" class="text-foreground font-semibold">${embeddingProgress.errors}</div>
+                        </div>
+                    </div>
                 </div>
             `;
         } else if (step === 'complete' || step === 'cancelled' || step === 'error') {
@@ -308,6 +357,7 @@ class ChatHistoryImportModal {
         const keepBtn = this.overlay.querySelector('#chat-import-keep');
         const confirmCancelBtn = this.overlay.querySelector('#chat-import-confirm-cancel');
         const doneBtn = this.overlay.querySelector('#chat-import-done');
+        const generateEmbeddingsInput = this.overlay.querySelector('#chat-import-generate-embeddings');
 
         if (closeBtn) {
             closeBtn.onclick = () => this.close();
@@ -327,6 +377,9 @@ class ChatHistoryImportModal {
         });
 
         startBtn?.addEventListener('click', () => this.startImport());
+        generateEmbeddingsInput?.addEventListener('change', () => {
+            this.state.generateEmbeddings = !!generateEmbeddingsInput.checked;
+        });
         cancelBtn?.addEventListener('click', () => this.requestCancel());
         keepBtn?.addEventListener('click', () => {
             this.state.confirmingCancel = false;
@@ -417,6 +470,11 @@ class ChatHistoryImportModal {
         this.state.progress.skipped = 0;
         this.state.progress.duplicates = 0;
         this.state.progress.errors = 0;
+        this.state.embeddingProgress.total = 0;
+        this.state.embeddingProgress.processed = 0;
+        this.state.embeddingProgress.embedded = 0;
+        this.state.embeddingProgress.keyworded = 0;
+        this.state.embeddingProgress.errors = 0;
         this.state.confirmingCancel = false;
         this.state.cancelRequested = false;
         this.state.lastError = null;
@@ -437,10 +495,19 @@ class ChatHistoryImportModal {
             this.state.step = this.state.cancelRequested ? 'cancelled' : 'complete';
         }
 
-        // Enqueue imported sessions for embedding and keyword generation
-        if (this._importedSessionIds.length > 0) {
-            sessionEmbedder.enqueueImportedSessions(this._importedSessionIds);
-            keywordsGenerator.enqueueImportedSessions(this._importedSessionIds);
+        if (this.state.step !== 'error' && !this.state.cancelRequested && this.state.generateEmbeddings && this._importedSessionIds.length > 0) {
+            this.state.step = 'embedding';
+            this.state.embeddingProgress.total = this._importedSessionIds.length;
+            this.state.embeddingProgress.processed = 0;
+            this.state.embeddingProgress.embedded = 0;
+            this.state.embeddingProgress.keyworded = 0;
+            this.state.embeddingProgress.errors = 0;
+            this.render();
+            this.setupEventListeners();
+            await this.generateImportedEmbeddings();
+            if (this.state.step === 'embedding') {
+                this.state.step = 'complete';
+            }
         }
 
         await this.refreshSessionsFromDb();
@@ -538,7 +605,8 @@ class ChatHistoryImportModal {
                 importedSource: source,
                 importedExternalId: externalId,
                 importedAt: Date.now(),
-                importedMessageCount: messages.length
+                importedMessageCount: messages.length,
+                disableAutoEmbeddingKeywords: !this.state.generateEmbeddings
             };
 
             try {
@@ -584,6 +652,41 @@ class ChatHistoryImportModal {
         }
     }
 
+    async generateImportedEmbeddings() {
+        if (!sessionEmbedder.initialized) {
+            await sessionEmbedder.init();
+        }
+        if (!keywordsGenerator.initialized) {
+            await keywordsGenerator.init();
+        }
+
+        for (let index = 0; index < this._importedSessionIds.length; index += 1) {
+            const sessionId = this._importedSessionIds[index];
+
+            try {
+                const keywords = await keywordsGenerator.ensureSessionKeywords(sessionId, { force: true });
+                if (keywords) {
+                    this.state.embeddingProgress.keyworded += 1;
+                }
+
+                const embedded = await sessionEmbedder.embedSession(sessionId);
+                if (embedded) {
+                    this.state.embeddingProgress.embedded += 1;
+                }
+            } catch (error) {
+                this.state.embeddingProgress.errors += 1;
+                console.warn('[ChatHistoryImportModal] Failed embedding imported session:', sessionId, error);
+            } finally {
+                this.state.embeddingProgress.processed += 1;
+                this.updateEmbeddingProgressUI();
+            }
+
+            if (index % 4 === 0) {
+                await new Promise(requestAnimationFrame);
+            }
+        }
+    }
+
     updateProgressUI() {
         if (!this.overlay) return;
 
@@ -601,6 +704,25 @@ class ChatHistoryImportModal {
         if (importedEl) importedEl.textContent = `${imported}`;
         if (skippedEl) skippedEl.textContent = `${skipped}`;
         if (dupEl) dupEl.textContent = `${duplicates}`;
+    }
+
+    updateEmbeddingProgressUI() {
+        if (!this.overlay) return;
+
+        const { processed, total, embedded, keyworded, errors } = this.state.embeddingProgress;
+        const percent = total ? Math.round((processed / total) * 100) : 0;
+
+        const fill = this.overlay.querySelector('#embedding-progress-fill');
+        const text = this.overlay.querySelector('#embedding-progress-text');
+        const embeddedEl = this.overlay.querySelector('#embedding-count');
+        const keywordEl = this.overlay.querySelector('#keyword-count');
+        const errorEl = this.overlay.querySelector('#embedding-error-count');
+
+        if (fill) fill.style.width = `${percent}%`;
+        if (text) text.textContent = `${processed} of ${total} sessions processed (${percent}%)`;
+        if (embeddedEl) embeddedEl.textContent = `${embedded}`;
+        if (keywordEl) keywordEl.textContent = `${keyworded}`;
+        if (errorEl) errorEl.textContent = `${errors}`;
     }
 
     async refreshSessionsFromDb() {

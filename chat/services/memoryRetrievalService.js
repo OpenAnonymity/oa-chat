@@ -109,6 +109,9 @@ class MemoryRetrievalService {
                 fullContent: fullText,  // Full text for API/message sending
                 sessionId: result.sessionId,
                 keywords: result.keywords || [],  // Include keywords for grouping
+                relevantTags: result.matchedSessionTags || [],
+                retrievedTags: result.matchedTags || [],
+                primaryRelevantTag: result.primaryMatchedTag || null,
                 score: result.score,
                 messageCount: result.messageCount || 0,
                 timestamp: result.embeddedAt || Date.now()

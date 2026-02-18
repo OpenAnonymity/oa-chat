@@ -3352,6 +3352,9 @@ class ChatApp {
         const MAX_ATTACHED_IMAGES = 2; // Limit to avoid huge requests
         const filteredMessages = messages.filter(msg => !msg.isLocalOnly);
         const result = [];
+        const apiOverrideContent = (typeof this._lastApiContent === 'string' && this._lastApiContent.trim().length > 0)
+            ? this._lastApiContent
+            : null;
 
         // Helper: detect image-generating models (same pattern as modelTiers.js)
         const isImageModel = (modelId) => modelId && /image/i.test(modelId);
@@ -3391,9 +3394,10 @@ class ChatApp {
             if (msg.role === 'user') {
                 let textContent = msg.content || '';
                 const mediaContent = [];
+                const shouldOverrideLastUserText = isLastUserMessage && !!apiOverrideContent;
 
                 // Add memory context if available
-                if (msg.memoryContext && msg.memoryContext.memories && msg.memoryContext.memories.length > 0) {
+                if (!shouldOverrideLastUserText && msg.memoryContext && msg.memoryContext.memories && msg.memoryContext.memories.length > 0) {
                     console.log('[Memory Context] Adding to message:', {
                         messageId: msg.id,
                         memoriesCount: msg.memoryContext.memories.length,
@@ -3407,6 +3411,13 @@ class ChatApp {
                     textContent = `${memoryText}\n\n--- User Query ---\n${textContent}`;
                     
                     console.log('[Memory Context] Final message content:', textContent);
+                }
+
+                // One-shot override from full prompt editor or @memory enrichment:
+                // this is the exact text payload to send for the last user message.
+                if (shouldOverrideLastUserText) {
+                    textContent = apiOverrideContent;
+                    console.log('[SendMessage] Final API payload content (override):', textContent);
                 }
 
                 // Only attach image-model outputs to the LAST user message
@@ -4193,13 +4204,9 @@ class ChatApp {
                 // Process messages to include file content from stored metadata
                 let processedMessages = this.processMessagesWithFiles(sanitizedMessages, modelIdForRequest);
 
-                // If we have stored API content (from @memory enrichment), replace the last message with it
-                if (this._lastApiContent && processedMessages.length > 0) {
-                    const lastMsg = processedMessages[processedMessages.length - 1];
-                    if (lastMsg.role === 'user') {
-                        lastMsg.content = this._lastApiContent;
-                        delete this._lastApiContent;  // Clear for next message
-                    }
+                // Clear one-shot API override after materializing processed payload.
+                if (this._lastApiContent) {
+                    delete this._lastApiContent;
                 }
 
                 // Create a placeholder message for streaming
@@ -4551,6 +4558,71 @@ class ChatApp {
         const indicator = document.getElementById(id);
         if (indicator) {
             indicator.remove();
+        }
+    }
+
+    /**
+     * Generate keywords and embeddings for a specific imported session.
+     * Used when an import skipped embedding and the user triggers it manually.
+     *
+     * @param {string} sessionId - Session ID to process
+     */
+    async generateSessionEmbeddings(sessionId) {
+        if (!sessionId) return;
+
+        const session = this.state.sessionsById.get(sessionId) || await chatDB.getSession(sessionId);
+        if (!session) {
+            this.showToast('Session not found', 'error');
+            return;
+        }
+
+        const dismissLoading = this.showLoadingToast('Generating embeddings...');
+
+        try {
+            if (!sessionEmbedder.initialized) {
+                await sessionEmbedder.init();
+            }
+            if (!keywordsGenerator.initialized) {
+                await keywordsGenerator.init();
+            }
+
+            if (session.disableAutoEmbeddingKeywords) {
+                const updatedSession = { ...session, disableAutoEmbeddingKeywords: false };
+                await chatDB.saveSession(updatedSession);
+                this.state.sessionsById.set(sessionId, updatedSession);
+                const existingIndex = this.state.sessions.findIndex(item => item.id === sessionId);
+                if (existingIndex !== -1) {
+                    this.state.sessions[existingIndex] = updatedSession;
+                }
+            }
+
+            const keywordResult = await keywordsGenerator.ensureSessionKeywords(sessionId, { force: true });
+            const embedded = await sessionEmbedder.embedSession(sessionId);
+
+            const refreshed = await chatDB.getSession(sessionId);
+            if (refreshed) {
+                this.state.sessionsById.set(sessionId, refreshed);
+                const index = this.state.sessions.findIndex(item => item.id === sessionId);
+                if (index !== -1) {
+                    this.state.sessions[index] = refreshed;
+                }
+                this.renderSessions();
+            }
+
+            if (embedded && keywordResult) {
+                this.showToast('Embeddings and keywords generated', 'success');
+            } else if (embedded) {
+                this.showToast('Embedding generated', 'success');
+            } else if (keywordResult) {
+                this.showToast('Keywords generated (embedding unavailable)', 'success');
+            } else {
+                this.showToast('Could not generate embeddings for this session', 'error');
+            }
+        } catch (error) {
+            console.error('Failed to generate embeddings:', error);
+            this.showToast(error.message || 'Failed to generate embeddings', 'error');
+        } finally {
+            dismissLoading?.();
         }
     }
 
