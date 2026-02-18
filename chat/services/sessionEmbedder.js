@@ -19,10 +19,23 @@
 import { createEmbeddingSource } from '../embeddings/index.js';
 import { createVectorStore, encodeVectorId } from '../vector/index.js';
 import { chatDB } from '../db.js';
+import { localInferenceService } from '../../local_inference/index.js';
+import ticketClient from './ticketClient.js';
 
 const CHECK_INTERVAL_MS = 30 * 1000; // Check every 30 seconds
 const MAX_CONTENT_LENGTH = 8000; // Truncate very long conversations
 const BACKFILL_DELAY_MS = 500; // Delay between queue embeddings to avoid overwhelming the system
+
+const TINFOIL_BASE_URL = 'https://inference.tinfoil.sh';
+const TINFOIL_BACKEND_ID = 'tinfoil';
+const TINFOIL_MODEL = 'llama3-3-70b';
+const TINFOIL_KEY_TICKETS_REQUIRED = 2;
+
+const TAG_MATCH_PROMPT = `Given a user query and a list of existing tags from past conversations, return only the tags that are semantically relevant to the query. A tag is relevant if a conversation about that topic could plausibly contain useful context for answering the query.
+
+Return valid JSON only — an array of matching tag strings. If no tags match, return an empty array [].
+
+User query: `;
 
 class SessionEmbedder {
     constructor() {
@@ -35,6 +48,8 @@ class SessionEmbedder {
         this.processing = false; // Lock to prevent concurrent processQueue runs
         this._searchTimings = []; // Profiling data for searchSessions
         this._embedTimings = []; // Profiling data for embedSession
+        this._tinfoilKey = null; // Cached confidential key for LLM tag matching
+        this._tinfoilKeyInfo = null; // Key metadata (expiry, etc.)
     }
 
     /**
@@ -308,7 +323,17 @@ class SessionEmbedder {
         }
 
         try {
-            // Get session info
+            // Wait for any in-flight keyword generation to complete before embedding.
+            // Returns immediately if no generation is in progress.
+            try {
+                const { default: keywordsGenerator } = await import('./keywordsGenerator.js');
+                await keywordsGenerator.waitForKeywords(sessionId);
+            } catch (err) {
+                // Non-fatal — proceed with whatever keywords exist
+                console.debug(`[SessionEmbedder] waitForKeywords skipped for ${sessionId}:`, err);
+            }
+
+            // Get session info (re-read after keyword generation may have updated it)
             const session = await chatDB.getSession(sessionId);
             if (!session) {
                 console.debug(`[SessionEmbedder] Session ${sessionId} not found`);
@@ -364,7 +389,6 @@ class SessionEmbedder {
                     sessionId,
                     title: session.title || 'Untitled',
                     summary: session.summary || null,
-                    keywords: session.keywords || [],
                     conversationText: conversationText,
                     messageCount: messages.length,
                     model: session.model || null,
@@ -375,9 +399,13 @@ class SessionEmbedder {
             }]);
             const te2 = performance.now();
 
-            // Update session with lastEmbeddedAt timestamp (persisted to IndexedDB)
-            session.lastEmbeddedAt = Date.now();
-            await chatDB.saveSession(session);
+            // Update only lastEmbeddedAt on the freshest session record to avoid
+            // clobbering concurrently written fields (e.g. keywords/summary).
+            const latestSession = await chatDB.getSession(sessionId);
+            if (latestSession) {
+                latestSession.lastEmbeddedAt = Date.now();
+                await chatDB.saveSession(latestSession);
+            }
             const te3 = performance.now();
 
             const embedMs = te1 - te0;
@@ -449,11 +477,13 @@ class SessionEmbedder {
             this._searchTimings.push({ embedMs, retrievalMs, ts: Date.now() });
             console.log(`[SessionEmbedder] searchSessions timing — embed query: ${embedMs.toFixed(2)}ms, retrieval: ${retrievalMs.toFixed(2)}ms, total: ${(embedMs + retrievalMs).toFixed(2)}ms`);
 
+            const sessionMap = await this._getSessionMapForResults(results);
+
             return results.map(r => ({
                 sessionId: r.metadata?.sessionId,
                 title: r.metadata?.title,
                 summary: r.metadata?.summary,
-                keywords: r.metadata?.keywords || [],
+                keywords: this._getKeywordsForResult(r, sessionMap),
                 conversationText: r.metadata?.conversationText,
                 messageCount: r.metadata?.messageCount,
                 model: r.metadata?.model,
@@ -546,6 +576,265 @@ class SessionEmbedder {
         console.table({ embed: profile.embed, upsert: profile.upsert, dbSave: profile.dbSave, total: profile.total });
         console.table({ contentLength: profile.contentLength, messageCount: profile.messageCount });
         return profile;
+    }
+
+    // ---- Tinfoil LLM key management (same pattern as keywordsGenerator) ----
+
+    /**
+     * Check if the cached Tinfoil confidential key is still valid.
+     * @returns {boolean}
+     */
+    _isTinfoilKeyValid() {
+        if (!this._tinfoilKey || !this._tinfoilKeyInfo) return false;
+        const expiresAt = this._tinfoilKeyInfo.expiresAt
+            || this._tinfoilKeyInfo.expires_at
+            || this._tinfoilKeyInfo.expires_at_unix;
+        if (!expiresAt) return false;
+        const expiry = typeof expiresAt === 'number'
+            ? new Date(expiresAt * 1000)
+            : new Date(expiresAt);
+        return expiry > new Date(Date.now() + 60000); // 1 min buffer
+    }
+
+    /**
+     * Ensure a valid Tinfoil confidential key is available.
+     * Acquires a new one via ticket redemption if needed.
+     * @returns {Promise<string|null>} The API key, or null if unavailable
+     */
+    async _ensureTinfoilKey() {
+        if (this._isTinfoilKeyValid()) {
+            return this._tinfoilKey;
+        }
+
+        // Check ticket availability
+        const ticketCount = ticketClient.getTicketCount();
+        if (ticketCount < TINFOIL_KEY_TICKETS_REQUIRED) {
+            console.log(`[SessionEmbedder] Not enough tickets for Tinfoil key (need ${TINFOIL_KEY_TICKETS_REQUIRED}, have ${ticketCount})`);
+            return null;
+        }
+
+        try {
+            const keyData = await ticketClient.requestConfidentialApiKey('search', TINFOIL_KEY_TICKETS_REQUIRED);
+            this._tinfoilKey = keyData.key;
+            this._tinfoilKeyInfo = keyData;
+
+            localInferenceService.configureBackend(TINFOIL_BACKEND_ID, {
+                baseUrl: TINFOIL_BASE_URL,
+                apiKey: keyData.key
+            });
+
+            console.log('[SessionEmbedder] Acquired Tinfoil confidential key');
+            return keyData.key;
+        } catch (error) {
+            console.warn('[SessionEmbedder] Failed to acquire Tinfoil key:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Extract output text from a Responses API response object.
+     * @param {Object} response - localInferenceService response
+     * @returns {string} The output text, or empty string
+     */
+    _extractOutputText(response) {
+        if (!response) return '';
+        if (typeof response.output_text === 'string') return response.output_text;
+        const output = Array.isArray(response.output) ? response.output : [];
+        for (const item of output) {
+            const content = Array.isArray(item?.content) ? item.content : [];
+            for (const part of content) {
+                if (part?.type === 'output_text' && typeof part.text === 'string') {
+                    return part.text;
+                }
+            }
+        }
+        return '';
+    }
+
+    /**
+     * Use LLM to identify which existing tags are semantically relevant to the query.
+     *
+     * @param {string} query - The user's search query
+     * @param {string[]} allTags - All distinct tags across sessions
+     * @returns {Promise<string[]>} Array of matching tag strings
+     */
+    async _matchTagsWithLLM(query, allTags) {
+        if (!allTags || allTags.length === 0) return [];
+
+        const apiKey = await this._ensureTinfoilKey();
+        if (!apiKey) {
+            console.log('[SessionEmbedder] No Tinfoil key available for tag matching');
+            return [];
+        }
+
+        const prompt = `${TAG_MATCH_PROMPT}"${query}"
+Available tags: ${JSON.stringify(allTags)}`;
+
+        const response = await localInferenceService.createResponse({
+            model: TINFOIL_MODEL,
+            input: [
+                {
+                    role: 'user',
+                    content: [
+                        {
+                            type: 'input_text',
+                            text: prompt
+                        }
+                    ]
+                }
+            ],
+            max_output_tokens: 200,
+            temperature: 0,
+            stream: false
+        }, { backendId: TINFOIL_BACKEND_ID });
+
+        const responseText = this._extractOutputText(response);
+        if (!responseText) {
+            console.warn('[SessionEmbedder] Empty LLM tag-match response');
+            return [];
+        }
+
+        // Parse JSON array
+        try {
+            const jsonMatch = responseText.match(/\[[\s\S]*\]/);
+            const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(responseText);
+            if (!Array.isArray(parsed)) return [];
+
+            // Validate: only return tags that exist in allTags
+            const tagSet = new Set(allTags);
+            const matched = parsed
+                .filter(t => typeof t === 'string')
+                .map(t => t.trim().toLowerCase())
+                .filter(t => tagSet.has(t));
+
+            console.log(`[SessionEmbedder] LLM matched tags: ${JSON.stringify(matched)} (from ${allTags.length} candidates)`);
+            return matched;
+        } catch (parseError) {
+            console.warn('[SessionEmbedder] Failed to parse LLM tag-match response:', parseError, responseText);
+            return [];
+        }
+    }
+
+    /**
+     * Search sessions using LLM-based tag matching + embedding similarity.
+     *
+     * Three phases:
+     * 1. Collect all distinct tags across sessions
+     * 2. LLM tag match: call LLM to identify which tags are relevant to the query
+     * 3. Embedding search with filter: search vector store filtered to sessions
+     *    whose keywords overlap with the LLM-matched tags, ranked by similarity
+     *
+     * Falls back to pure embedding search if LLM tag matching fails or returns no matches.
+     *
+     * @param {string} query - The search query
+     * @param {number} k - Number of results to return (default: 5)
+     * @param {Object} options - Search options
+     * @returns {Promise<Array>} Search results ranked by embedding similarity
+     */
+    async searchSessionsWithTagBoost(query, k = 5, options = {}) {
+        if (!query || !query.trim()) {
+            return [];
+        }
+
+        if (!this.initialized || !this.embedder || !this.store) {
+            console.debug('[SessionEmbedder] Not initialized, cannot search');
+            return [];
+        }
+
+        try {
+            // Phase 1: Collect all distinct tags
+            const allSessions = await chatDB.getAllSessions();
+            const allTags = new Set();
+            if (allSessions) {
+                for (const session of allSessions) {
+                    if (!Array.isArray(session.keywords)) continue;
+                    for (const kw of session.keywords) {
+                        const tag = typeof kw === 'string' ? kw.trim().toLowerCase() : '';
+                        if (tag) allTags.add(tag);
+                    }
+                }
+            }
+
+            // Phase 2: LLM-based tag matching
+            let matchedTags = [];
+            if (allTags.size > 0) {
+                try {
+                    matchedTags = await this._matchTagsWithLLM(query, Array.from(allTags));
+                } catch (error) {
+                    console.warn('[SessionEmbedder] LLM tag matching failed:', error);
+                    if (error.message?.includes('401') || error.message?.includes('403')) {
+                        this._tinfoilKey = null;
+                        this._tinfoilKeyInfo = null;
+                    }
+                }
+            }
+
+            // Phase 3: Embedding search with tag filter
+            const t0 = performance.now();
+            const queryEmbedding = await this.embedder.embedText(query);
+            const t1 = performance.now();
+
+            let embeddingResults;
+            const matchedTagSet = new Set(matchedTags);
+
+            if (matchedTagSet.size > 0) {
+                // Filter vector search to sessions whose IndexedDB keywords overlap with matched tags
+                const matchedSessionIds = new Set();
+                if (allSessions) {
+                    for (const session of allSessions) {
+                        if (!session?.id || !Array.isArray(session.keywords)) continue;
+                        const hasMatch = session.keywords.some(kw =>
+                            matchedTagSet.has(typeof kw === 'string' ? kw.trim().toLowerCase() : '')
+                        );
+                        if (hasMatch) matchedSessionIds.add(session.id);
+                    }
+                }
+
+                if (matchedSessionIds.size > 0) {
+                    embeddingResults = await this.store.search(queryEmbedding, k, {
+                        ...options,
+                        filter: (metadata) => {
+                            const sessionId = metadata?.sessionId;
+                            return typeof sessionId === 'string' && matchedSessionIds.has(sessionId);
+                        }
+                    });
+                } else {
+                    // LLM matched tags but none map to sessions; fall back to pure embedding.
+                    embeddingResults = await this.store.search(queryEmbedding, k, options);
+                }
+            } else {
+                // Fallback: no tag matches — pure embedding search
+                embeddingResults = await this.store.search(queryEmbedding, k, options);
+            }
+
+            const t2 = performance.now();
+            const embedMs = t1 - t0;
+            const retrievalMs = t2 - t1;
+            this._searchTimings.push({ embedMs, retrievalMs, ts: Date.now() });
+
+            const matchType = matchedTagSet.size > 0 ? 'tag+embedding' : 'embedding';
+            console.log(`[SessionEmbedder] ${matchType} search — embed: ${embedMs.toFixed(2)}ms, retrieval: ${retrievalMs.toFixed(2)}ms, matched tags: ${JSON.stringify(matchedTags)}, results: ${embeddingResults.length}`);
+
+            const sessionMap = await this._getSessionMapForResults(embeddingResults);
+
+            return embeddingResults.map(r => ({
+                sessionId: r.metadata?.sessionId,
+                title: r.metadata?.title,
+                summary: r.metadata?.summary,
+                keywords: this._getKeywordsForResult(r, sessionMap),
+                conversationText: r.metadata?.conversationText,
+                messageCount: r.metadata?.messageCount,
+                model: r.metadata?.model,
+                embeddedAt: r.metadata?.embeddedAt,
+                updatedAt: r.metadata?.updatedAt,
+                score: r.score,
+                matchType
+            }));
+
+        } catch (error) {
+            console.warn('[SessionEmbedder] Tag-boosted search failed, falling back to pure embedding:', error);
+            return this.searchSessions(query, k, options);
+        }
     }
 
     /**
@@ -649,6 +938,45 @@ class SessionEmbedder {
         }
 
         this.initialized = false;
+    }
+
+    /**
+     * Build a map of sessionId -> session object for vector search results.
+     * @param {Array} results
+     * @returns {Promise<Map<string, Object|null>>}
+     */
+    async _getSessionMapForResults(results) {
+        const ids = Array.from(new Set(
+            (results || [])
+                .map(r => r?.metadata?.sessionId)
+                .filter(id => typeof id === 'string' && id.length > 0)
+        ));
+
+        if (ids.length === 0) {
+            return new Map();
+        }
+
+        const entries = await Promise.all(ids.map(async (id) => {
+            try {
+                return [id, await chatDB.getSession(id)];
+            } catch (error) {
+                return [id, null];
+            }
+        }));
+
+        return new Map(entries);
+    }
+
+    /**
+     * Read keywords from IndexedDB session record, not vector metadata.
+     * @param {Object} result
+     * @param {Map<string, Object|null>} sessionMap
+     * @returns {Array<string>}
+     */
+    _getKeywordsForResult(result, sessionMap) {
+        const sessionId = result?.metadata?.sessionId;
+        const session = typeof sessionId === 'string' ? sessionMap.get(sessionId) : null;
+        return Array.isArray(session?.keywords) ? session.keywords : [];
     }
 }
 

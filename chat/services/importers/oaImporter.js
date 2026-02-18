@@ -82,6 +82,10 @@ function normalizeOaExport(data) {
             createdAt,
             updatedAt,
             model: session.model || null,
+            summary: typeof session.summary === 'string' ? session.summary : null,
+            keywords: Array.isArray(session.keywords) ? session.keywords : [],
+            keywordsGeneratedAt: session.keywordsGeneratedAt || null,
+            messageCountAtGeneration: session.messageCountAtGeneration || null,
             messages: normalizedMessages
         };
     });

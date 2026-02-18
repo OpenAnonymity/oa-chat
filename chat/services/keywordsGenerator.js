@@ -28,6 +28,8 @@ const TINFOIL_MODEL = 'llama3-3-70b';
 const TINFOIL_KEY_TICKETS_REQUIRED = 2;
 const KEYWORD_CHECK_INTERVAL_MS = 30 * 1000;
 const KEYWORD_DELAY_MS = 500; // Delay between keyword generations
+const DEDUP_TAG_THRESHOLD = 30; // Only dedup when distinct tags exceed this
+const DEDUP_COOLDOWN_MS = 1 * 60 * 1000; // 1 hour cooldown between dedup runs
 
 const KEYWORDS_GENERATION_PROMPT = `Analyze this conversation and generate:
 1. A concise title about the main topic (max 50 chars, descriptive and specific - NOT meta descriptions like "Chat about X" or "Discussion on Y")
@@ -47,6 +49,21 @@ Examples of bad (too specific) keywords: "react-hooks", "tensorflow-2.0", "mongo
 
 Conversation:`;
 
+const TAG_DEDUP_PROMPT = `You are a tag deduplication assistant. Given a list of tags used across chat sessions, identify groups of tags that are genuinely synonymous (same concept, different wording).
+
+Return a JSON object mapping each redundant tag to its canonical (preferred) form. Only include tags that have synonyms — omit tags that are unique. Pick the most common or clearest tag as canonical.
+
+Example input: ["programming", "coding", "web development", "web dev", "debugging", "leisure", "lifestyle"]
+Example output: {"coding": "programming", "web dev": "web development", "leisure": "lifestyle"}
+
+Rules:
+- Only group genuinely synonymous tags (same meaning)
+- Do not group related-but-different tags (e.g. "python" and "programming" are NOT synonyms)
+- The canonical tag can be one from the list or a new clearer form
+- Return valid JSON only, no extra text
+
+Tags:`;
+
 class KeywordsGenerator {
     constructor() {
         this.initialized = false;
@@ -56,6 +73,10 @@ class KeywordsGenerator {
         this.checkInterval = null;
         this._tinfoilKey = null; // Cached confidential key
         this._tinfoilKeyInfo = null; // Key metadata (expiry, etc.)
+        this._lastDedupTimestamp = 0;
+        this._dedupInProgress = false;
+        this.dedupInterval = null;
+        this._pendingGenerations = new Map(); // sessionId -> Promise (for waitForKeywords)
     }
 
     /**
@@ -65,6 +86,13 @@ class KeywordsGenerator {
         this.initialized = true;
         this.startBackgroundCheck();
         this.scheduleBackfill();
+
+        // Start periodic dedup timer
+        if (this.dedupInterval) clearInterval(this.dedupInterval);
+        this.dedupInterval = setInterval(() => {
+            this.deduplicateTags();
+        }, DEDUP_COOLDOWN_MS);
+
         console.log('[KeywordsGenerator] Initialized');
     }
 
@@ -106,6 +134,9 @@ class KeywordsGenerator {
             const ids = needsKeywords.map(s => s.id);
             this.enqueue(ids);
             console.log(`[KeywordsGenerator] Queued ${ids.length} sessions for keyword backfill`);
+
+            // Schedule dedup to run after backfill queue drains
+            this._scheduleDedupAfterQueue();
         } catch (error) {
             console.warn('[KeywordsGenerator] Backfill scan failed:', error);
         }
@@ -131,6 +162,10 @@ class KeywordsGenerator {
         if (this.checkInterval) {
             clearInterval(this.checkInterval);
             this.checkInterval = null;
+        }
+        if (this.dedupInterval) {
+            clearInterval(this.dedupInterval);
+            this.dedupInterval = null;
         }
     }
 
@@ -215,6 +250,18 @@ class KeywordsGenerator {
                     // Tinfoil fallback
                     const result = await this.generateWithTinfoil(sessionId);
                     const idx2 = this.queue.indexOf(sessionId);
+
+                    // Transient failure (for example no tickets/key yet):
+                    // keep session queued for retry instead of dropping it.
+                    if (result && result.deferred) {
+                        if (idx2 !== -1) {
+                            this.queue.splice(idx2, 1);
+                            this.queue.push(sessionId);
+                        }
+                        console.log(`[KeywordsGenerator] Deferred keyword generation for ${sessionId}; will retry later`);
+                        break;
+                    }
+
                     if (idx2 !== -1) this.queue.splice(idx2, 1);
 
                     if (result) {
@@ -370,21 +417,24 @@ class KeywordsGenerator {
             // Get model for generation (use a fast, cheap model)
             const modelId = this.getGenerationModel(session);
 
+            // Build prompt
+            const prompt = `${KEYWORDS_GENERATION_PROMPT}\n${conversationText}`;
+
             // Build messages for generation
             const generationMessages = [
                 {
                     role: 'user',
-                    content: `${KEYWORDS_GENERATION_PROMPT}\n\n${conversationText}`
+                    content: prompt
                 }
             ];
 
-            console.log('[KeywordsGenerator] Generating keywords for session:', sessionId);
+            console.log('[KeywordsGenerator] Generating keywords for session:', sessionId, '\nPrompt:\n', prompt);
 
             // Make the LLM call using the session's inference backend
             const backend = inferenceService.getBackendForSession(session);
             let fullResponse = '';
 
-            // Use streaming to get the response
+            // Use streaming to get the response with temperature: 0 for consistency
             await backend.streamCompletion(
                 generationMessages,
                 modelId,
@@ -399,7 +449,8 @@ class KeywordsGenerator {
                 false, // searchEnabled
                 null, // abortController
                 null, // onReasoningChunk
-                false // reasoningEnabled
+                false, // reasoningEnabled
+                { temperature: 0, max_tokens: 150 } // extraBody
             );
 
             return this._parseAndSave(fullResponse, session, filteredMessages.length, app);
@@ -500,7 +551,7 @@ class KeywordsGenerator {
         // Ensure we have a valid Tinfoil key
         const apiKey = await this._ensureTinfoilKey();
         if (!apiKey) {
-            return null;
+            return { deferred: true, reason: 'no_tinfoil_key' };
         }
 
         // Guard against concurrent generation
@@ -522,7 +573,10 @@ class KeywordsGenerator {
                 })
                 .join('\n\n');
 
-            console.log('[KeywordsGenerator] Generating keywords via Tinfoil for session:', sessionId);
+            // Build prompt
+            const prompt = `${KEYWORDS_GENERATION_PROMPT}\n${conversationText}`;
+
+            console.log('[KeywordsGenerator] Generating keywords for session:', sessionId, '\nPrompt:\n', prompt);
 
             const response = await localInferenceService.createResponse({
                 model: TINFOIL_MODEL,
@@ -532,7 +586,7 @@ class KeywordsGenerator {
                         content: [
                             {
                                 type: 'input_text',
-                                text: `${KEYWORDS_GENERATION_PROMPT}\n\n${conversationText}`
+                                text: prompt
                             }
                         ]
                     }
@@ -592,9 +646,9 @@ class KeywordsGenerator {
      * @param {Object} session - Session object (will be mutated and saved)
      * @param {number} messageCount - Number of non-local messages at generation time
      * @param {Object} app - Optional app reference for in-memory state updates
-     * @returns {Object|null} { summary, keywords } or null on error
+     * @returns {Promise<Object|null>} { summary, keywords } or null on error
      */
-    _parseAndSave(fullResponse, session, messageCount, app = null) {
+    async _parseAndSave(fullResponse, session, messageCount, app = null) {
         // Parse the JSON response
         let parsedData = null;
         try {
@@ -635,12 +689,15 @@ class KeywordsGenerator {
             return null;
         }
 
-        // Save to session in database
-        session.summary = summary;
-        session.keywords = keywords;
-        session.keywordsGeneratedAt = Date.now();
-        session.messageCountAtGeneration = messageCount;
-        chatDB.saveSession(session);
+        // Save to the freshest session snapshot so concurrent writers
+        // (e.g. embedder updating lastEmbeddedAt) are preserved.
+        const latestSession = await chatDB.getSession(session.id);
+        const sessionToSave = latestSession || session;
+        sessionToSave.summary = summary;
+        sessionToSave.keywords = keywords;
+        sessionToSave.keywordsGeneratedAt = Date.now();
+        sessionToSave.messageCountAtGeneration = messageCount;
+        await chatDB.saveSession(sessionToSave);
 
         // Update in-memory session in app state if app reference provided
         if (app && app.state && app.state.sessionsById) {
@@ -726,14 +783,20 @@ class KeywordsGenerator {
 
         try {
             // Run generation in background (non-blocking)
-            this.generateForSession(sessionId, app).then(result => {
-                // If generation succeeded and app reference provided, update UI
+            // Store the promise so embedSession can await it via waitForKeywords
+            const promise = this.generateForSession(sessionId, app).then(result => {
                 if (result && app && typeof app.renderSessions === 'function') {
                     app.renderSessions();
                 }
+                return result;
             }).catch(error => {
                 console.warn('[KeywordsGenerator] Background generation failed:', error);
+                return null;
+            }).finally(() => {
+                this._pendingGenerations.delete(sessionId);
             });
+
+            this._pendingGenerations.set(sessionId, promise);
 
             // Also enqueue as safety net — if OA key fails, the queue
             // will catch it on the next cycle via WebLLM
@@ -741,6 +804,218 @@ class KeywordsGenerator {
         } catch (error) {
             console.error('[KeywordsGenerator] Error triggering generation:', error);
         }
+    }
+
+    /**
+     * Wait for any in-flight keyword generation for a session to complete.
+     * Returns immediately if no generation is in progress (no blocking).
+     * Times out after `timeout` ms to prevent indefinite blocking.
+     *
+     * @param {string} sessionId - Session ID to wait for
+     * @param {number} timeout - Max wait time in ms (default: 30s)
+     * @returns {Promise<void>}
+     */
+    async waitForKeywords(sessionId, timeout = 30000) {
+        const pending = this._pendingGenerations.get(sessionId);
+        if (!pending) return; // No generation in progress — return immediately
+
+        await Promise.race([
+            pending,
+            new Promise(resolve => setTimeout(resolve, timeout))
+        ]);
+    }
+
+    // ---- Tag deduplication ----
+
+    /**
+     * Deduplicate synonym tags across all sessions using Tinfoil LLM.
+     * Guarded by cooldown and in-progress flag.
+     */
+    async deduplicateTags() {
+        // Guard: cooldown
+        if (Date.now() - this._lastDedupTimestamp < DEDUP_COOLDOWN_MS) {
+            return;
+        }
+        // Guard: already running
+        if (this._dedupInProgress) {
+            return;
+        }
+
+        this._dedupInProgress = true;
+
+        try {
+            // Collect all distinct tags and tag → sessionIds mapping
+            const allSessions = await chatDB.getAllSessions();
+            if (!allSessions || allSessions.length === 0) return;
+
+            const tagToSessionIds = new Map(); // tag -> Set<sessionId>
+            for (const session of allSessions) {
+                if (Array.isArray(session.keywords)) {
+                    for (const kw of session.keywords) {
+                        const tag = typeof kw === 'string' ? kw.trim().toLowerCase() : '';
+                        if (!tag) continue;
+                        if (!tagToSessionIds.has(tag)) {
+                            tagToSessionIds.set(tag, new Set());
+                        }
+                        tagToSessionIds.get(tag).add(session.id);
+                    }
+                }
+            }
+
+            const distinctTags = Array.from(tagToSessionIds.keys());
+            if (distinctTags.length <= DEDUP_TAG_THRESHOLD) {
+                console.log(`[KeywordsGenerator] Dedup skipped — only ${distinctTags.length} distinct tags (threshold: ${DEDUP_TAG_THRESHOLD}): ${distinctTags.join(', ')}`);
+                return;
+            }
+
+            // Ensure Tinfoil key
+            const apiKey = await this._ensureTinfoilKey();
+            if (!apiKey) {
+                console.log('[KeywordsGenerator] Dedup skipped — no Tinfoil key available');
+                return;
+            }
+
+            console.log(`[KeywordsGenerator] Running tag deduplication on ${distinctTags.length} distinct tags: ${distinctTags.join(', ')}...`);
+
+            // Call LLM for dedup mapping
+            const response = await localInferenceService.createResponse({
+                model: TINFOIL_MODEL,
+                input: [
+                    {
+                        role: 'user',
+                        content: [
+                            {
+                                type: 'input_text',
+                                text: `${TAG_DEDUP_PROMPT}\n${JSON.stringify(distinctTags)}`
+                            }
+                        ]
+                    }
+                ],
+                max_output_tokens: 500,
+                temperature: 0,
+                stream: false
+            }, { backendId: TINFOIL_BACKEND_ID });
+
+            const responseText = this._extractOutputText(response);
+            if (!responseText) {
+                console.warn('[KeywordsGenerator] Empty dedup response');
+                return;
+            }
+
+            // Parse JSON mapping
+            let mapping;
+            try {
+                const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+                mapping = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(responseText);
+            } catch (parseError) {
+                console.warn('[KeywordsGenerator] Dedup response parse failed:', parseError);
+                return;
+            }
+
+            if (!mapping || typeof mapping !== 'object') return;
+
+            // Validate and filter mapping
+            const validMapping = {};
+            for (const [oldTag, canonical] of Object.entries(mapping)) {
+                const normalizedOld = typeof oldTag === 'string' ? oldTag.trim().toLowerCase() : '';
+                const normalizedCanonical = typeof canonical === 'string' ? canonical.trim().toLowerCase() : '';
+                if (!normalizedOld || !normalizedCanonical) continue;
+                if (normalizedOld === normalizedCanonical) continue; // Skip identity
+                if (!tagToSessionIds.has(normalizedOld)) continue; // Skip unknown old tags
+                validMapping[normalizedOld] = normalizedCanonical;
+            }
+
+            if (Object.keys(validMapping).length === 0) {
+                console.log('[KeywordsGenerator] Dedup found no synonym mappings to apply');
+                this._lastDedupTimestamp = Date.now();
+                return;
+            }
+
+            console.log('[KeywordsGenerator] Dedup mapping:', validMapping);
+
+            // Apply mapping to affected sessions
+            const affectedSessionIds = new Set();
+            const sessionMap = new Map(allSessions.map(s => [s.id, s]));
+
+            for (const [oldTag, canonical] of Object.entries(validMapping)) {
+                const sessionIds = tagToSessionIds.get(oldTag);
+                if (!sessionIds) continue;
+
+                for (const sessionId of sessionIds) {
+                    const session = sessionMap.get(sessionId);
+                    if (!session || !Array.isArray(session.keywords)) continue;
+
+                    // Remap: replace old tag with canonical
+                    session.keywords = session.keywords.map(kw => {
+                        const normalized = typeof kw === 'string' ? kw.trim().toLowerCase() : kw;
+                        return normalized === oldTag ? canonical : normalized;
+                    });
+
+                    // Deduplicate within session
+                    session.keywords = [...new Set(session.keywords)];
+
+                    affectedSessionIds.add(sessionId);
+                }
+            }
+
+            // Save affected sessions
+            let savedCount = 0;
+            for (const sessionId of affectedSessionIds) {
+                const session = sessionMap.get(sessionId);
+                if (session) {
+                    await chatDB.saveSession(session);
+                    savedCount++;
+                }
+            }
+
+            console.log(`[KeywordsGenerator] Dedup complete — updated ${savedCount} sessions`);
+
+            // Re-embed affected sessions
+            if (affectedSessionIds.size > 0) {
+                try {
+                    const { default: sessionEmbedder } = await import('./sessionEmbedder.js');
+                    sessionEmbedder.enqueue(Array.from(affectedSessionIds));
+                    sessionEmbedder.processQueue();
+                } catch (embedError) {
+                    console.warn('[KeywordsGenerator] Failed to re-embed after dedup:', embedError);
+                }
+            }
+
+            this._lastDedupTimestamp = Date.now();
+
+        } catch (error) {
+            console.error('[KeywordsGenerator] Dedup error:', error);
+            // Invalidate key on auth errors
+            if (error.message?.includes('401') || error.message?.includes('403')) {
+                this._tinfoilKey = null;
+                this._tinfoilKeyInfo = null;
+            }
+        } finally {
+            this._dedupInProgress = false;
+        }
+    }
+
+    /**
+     * Poll until the keyword generation queue is empty, then run dedup.
+     * Safety: clears poll after 30 minutes.
+     */
+    _scheduleDedupAfterQueue() {
+        const MAX_POLL_MS = 30 * 60 * 1000;
+        const POLL_INTERVAL_MS = 10 * 1000;
+        const startTime = Date.now();
+
+        const pollId = setInterval(() => {
+            // Safety timeout
+            if (Date.now() - startTime > MAX_POLL_MS) {
+                clearInterval(pollId);
+                return;
+            }
+
+            if (this.queue.length === 0 && !this.processing) {
+                clearInterval(pollId);
+                this.deduplicateTags();
+            }
+        }, POLL_INTERVAL_MS);
     }
 
     /**

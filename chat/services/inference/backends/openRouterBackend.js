@@ -31,7 +31,7 @@ const openRouterBackend = {
     fetchModels: () => openRouterAPI.fetchModels(),
     getDisplayName: (modelId, fallback) => openRouterAPI.getDisplayName(modelId, fallback),
     sendCompletion: (messages, modelId, token) => openRouterAPI.sendCompletion(messages, modelId, token),
-    streamCompletion: (messages, modelId, token, onChunk, onTokenUpdate, files, searchEnabled, abortController, onReasoningChunk, reasoningEnabled) =>
+    streamCompletion: (messages, modelId, token, onChunk, onTokenUpdate, files, searchEnabled, abortController, onReasoningChunk, reasoningEnabled, extraBody) =>
         openRouterAPI.streamCompletion(
             messages,
             modelId,
@@ -42,7 +42,8 @@ const openRouterBackend = {
             searchEnabled,
             abortController,
             onReasoningChunk,
-            reasoningEnabled
+            reasoningEnabled,
+            extraBody
         ),
     getAccessInfo(session) {
         if (!session) return null;
