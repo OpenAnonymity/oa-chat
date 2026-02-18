@@ -3,6 +3,7 @@
  * Manages the left sidebar including session list rendering and session controls.
  * Delegates all state changes to the main app.
  */
+import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 
 const SESSION_ROW_HEIGHT = 36;
 const HEADER_ROW_HEIGHT = 36;
@@ -10,6 +11,10 @@ const GROUP_SPACER_HEIGHT = 12;
 const FOOTER_ROW_HEIGHT = 32;
 const VIRTUALIZE_THRESHOLD = 400;
 const VIRTUAL_OVERSCAN = 8;
+const SIDEBAR_DEFAULT_WIDTH = 220;
+const SIDEBAR_MIN_WIDTH = 220;
+const SIDEBAR_MAX_WIDTH = 420;
+const SIDEBAR_SNAPSHOT_KEY = 'oa-left-sidebar-width';
 
 export default class Sidebar {
     /**
@@ -26,6 +31,12 @@ export default class Sidebar {
         };
         this.virtualScrollRaf = null;
         this.listenersAttached = false;
+        this.isResizing = false;
+        this.resizeStartX = 0;
+        this.resizeStartWidth = 0;
+        this.boundHandleResizeMove = this.handleResizeMove.bind(this);
+        this.boundHandleResizeEnd = this.handleResizeEnd.bind(this);
+        this.initResizableSidebar();
     }
 
     /**
@@ -335,6 +346,137 @@ export default class Sidebar {
 
         delete input.dataset.originalValue;
         input.blur();
+    }
+
+    initResizableSidebar() {
+        const sidebar = this.app.elements.sidebar;
+        if (!sidebar) return;
+
+        const snapshotWidth = this.getSnapshotSidebarWidth();
+        if (snapshotWidth !== null) {
+            this.applySidebarWidth(snapshotWidth, { persist: false });
+        }
+        void this.restoreSidebarWidthPreference();
+
+        if (!sidebar.querySelector('.sidebar-resize-handle')) {
+            const handle = document.createElement('div');
+            handle.className = 'sidebar-resize-handle';
+            handle.setAttribute('role', 'separator');
+            handle.setAttribute('aria-label', 'Resize sidebar');
+            handle.setAttribute('aria-orientation', 'vertical');
+            handle.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                this.startResize(e.clientX);
+            });
+            handle.addEventListener('touchstart', (e) => {
+                const touch = e.touches?.[0];
+                if (!touch) return;
+                e.preventDefault();
+                this.startResize(touch.clientX);
+            }, { passive: false });
+            sidebar.appendChild(handle);
+        }
+
+        window.addEventListener('resize', () => {
+            const inlineWidth = parseFloat(sidebar.style.width);
+            if (!Number.isFinite(inlineWidth) || inlineWidth <= 0) return;
+            const clampedWidth = this.clampSidebarWidth(inlineWidth);
+            if (clampedWidth !== inlineWidth) {
+                this.applySidebarWidth(clampedWidth);
+            }
+        });
+    }
+
+    getSnapshotSidebarWidth() {
+        try {
+            const raw = localStorage.getItem(SIDEBAR_SNAPSHOT_KEY);
+            const parsed = parseInt(raw, 10);
+            if (!Number.isFinite(parsed)) return null;
+            return this.clampSidebarWidth(parsed);
+        } catch (error) {
+            return null;
+        }
+    }
+
+    async restoreSidebarWidthPreference() {
+        try {
+            const storedWidth = await preferencesStore.getPreference(PREF_KEYS.leftSidebarWidth, {
+                defaultValue: SIDEBAR_DEFAULT_WIDTH
+            });
+            if (!Number.isFinite(storedWidth) || storedWidth <= 0) return;
+            this.applySidebarWidth(storedWidth, { persist: false });
+        } catch (error) {
+            // Keep current width if preferences are unavailable.
+        }
+    }
+
+    clampSidebarWidth(width) {
+        const layoutMaxWidth = Math.max(SIDEBAR_MIN_WIDTH, window.innerWidth - 240);
+        const maxWidth = Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, layoutMaxWidth));
+        return Math.max(SIDEBAR_MIN_WIDTH, Math.min(maxWidth, Math.round(width)));
+    }
+
+    applySidebarWidth(width, options = {}) {
+        const { persist = true } = options;
+        const sidebar = this.app.elements.sidebar;
+        if (!sidebar) return;
+
+        const clampedWidth = this.clampSidebarWidth(width);
+        sidebar.style.width = `${clampedWidth}px`;
+        document.documentElement.style.setProperty('--oa-left-sidebar-width', `${clampedWidth}px`);
+
+        if (persist) {
+            void preferencesStore.savePreference(PREF_KEYS.leftSidebarWidth, clampedWidth);
+        }
+    }
+
+    startResize(clientX) {
+        if (window.innerWidth < 768) return;
+        const sidebar = this.app.elements.sidebar;
+        if (!sidebar || sidebar.classList.contains('sidebar-hidden')) return;
+
+        this.isResizing = true;
+        this.resizeStartX = clientX;
+        this.resizeStartWidth = sidebar.getBoundingClientRect().width || SIDEBAR_DEFAULT_WIDTH;
+
+        document.body.classList.add('sidebar-resizing');
+        window.addEventListener('mousemove', this.boundHandleResizeMove);
+        window.addEventListener('mouseup', this.boundHandleResizeEnd);
+        window.addEventListener('touchmove', this.boundHandleResizeMove, { passive: false });
+        window.addEventListener('touchend', this.boundHandleResizeEnd);
+    }
+
+    handleResizeMove(e) {
+        if (!this.isResizing) return;
+
+        const isTouch = e.type === 'touchmove';
+        const clientX = isTouch ? e.touches?.[0]?.clientX : e.clientX;
+        if (!Number.isFinite(clientX)) return;
+        if (isTouch) {
+            e.preventDefault();
+        }
+
+        const delta = clientX - this.resizeStartX;
+        const nextWidth = this.resizeStartWidth + delta;
+        this.applySidebarWidth(nextWidth, { persist: false });
+    }
+
+    handleResizeEnd() {
+        if (!this.isResizing) return;
+        this.isResizing = false;
+
+        const sidebar = this.app.elements.sidebar;
+        if (sidebar) {
+            const finalWidth = parseFloat(sidebar.style.width) || SIDEBAR_DEFAULT_WIDTH;
+            this.applySidebarWidth(finalWidth, { persist: true });
+        }
+
+        document.body.classList.remove('sidebar-resizing');
+        window.removeEventListener('mousemove', this.boundHandleResizeMove);
+        window.removeEventListener('mouseup', this.boundHandleResizeEnd);
+        window.removeEventListener('touchmove', this.boundHandleResizeMove);
+        window.removeEventListener('touchend', this.boundHandleResizeEnd);
+        this.app.updateToolbarDivider();
     }
 
     closeAllMenus(exceptMenu = null) {

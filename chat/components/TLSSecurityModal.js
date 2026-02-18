@@ -103,7 +103,7 @@ class TLSSecurityModal {
 
         const tlsTargetName = inferenceService.getTlsDisplayName();
         this.overlay.innerHTML = `
-            <div class="tls-modal-content bg-background rounded-xl shadow-2xl max-w-xl w-full mx-4 animate-in zoom-in-95 overflow-hidden max-h-[90vh] flex flex-col">
+            <div class="tls-modal-content bg-background border border-border rounded-xl shadow-2xl max-w-xl w-full mx-4 animate-in zoom-in-95 overflow-hidden max-h-[90vh] flex flex-col">
                 <!-- Header -->
                 <div class="p-4 flex items-center justify-between shrink-0">
                     <div class="flex items-center gap-2">
@@ -155,12 +155,12 @@ class TLSSecurityModal {
                     ${tlsInfo.version ? this.renderConnectionInfo(tlsInfo) : this.renderNoConnection(status)}
 
                     <!-- How to Verify Yourself -->
-                    <details class="border border-border/30 rounded-md px-2 py-1.5">
-                        <summary class="cursor-pointer text-[11px] text-muted-foreground hover:text-foreground transition-colors">
+                    <details class="rounded-lg border border-border bg-card">
+                        <summary class="cursor-pointer text-[11px] text-muted-foreground hover:text-foreground transition-colors px-4 py-3">
                             How to Verify Yourself (click to expand)
                         </summary>
-                        <div class="mt-2 space-y-2 text-[11px]">
-                            <details class="group border border-border/30 rounded-md">
+                        <div class="px-4 pb-4 space-y-2 text-[11px]">
+                            <details class="group border border-border/60 rounded-md bg-background">
                                 <summary class="px-2 py-1.5 cursor-pointer flex items-center gap-2 hover:bg-muted/50 rounded-md">
                                     <svg class="w-3 h-3 transition-transform group-open:rotate-90 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
                                     <span class="font-medium">1. Check WebSocket frames in DevTools</span>
@@ -176,7 +176,7 @@ class TLSSecurityModal {
                                 </div>
                             </details>
 
-                            <details class="group border border-border/30 rounded-md">
+                            <details class="group border border-border/60 rounded-md bg-background">
                                 <summary class="px-2 py-1.5 cursor-pointer flex items-center gap-2 hover:bg-muted/50 rounded-md">
                                     <svg class="w-3 h-3 transition-transform group-open:rotate-90 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
                                     <span class="font-medium">2. Verify the WASM source</span>
@@ -192,7 +192,7 @@ class TLSSecurityModal {
                                 </div>
                             </details>
 
-                            <details class="group border border-border/30 rounded-md">
+                            <details class="group border border-border/60 rounded-md bg-background">
                                 <summary class="px-2 py-1.5 cursor-pointer flex items-center gap-2 hover:bg-muted/50 rounded-md">
                                     <svg class="w-3 h-3 transition-transform group-open:rotate-90 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
                                     <span class="font-medium">3. Use Wireshark for deep inspection</span>
@@ -236,9 +236,6 @@ class TLSSecurityModal {
                                     <strong class="text-foreground">Local static assets</strong>
                                     <span class="text-muted-foreground"> — bundled locally for consistent integrity</span>
                                 </div>
-                            </div>
-                            <div class="mt-2 p-2 bg-slate-100 dark:bg-slate-800/50 rounded text-slate-600 dark:text-slate-300">
-                                <strong class="text-foreground">Ultimate verification:</strong> Inspect WebSocket frames in DevTools. Binary blobs = encrypted. Readable text = not encrypted.
                             </div>
                         </div>
                     </div>
@@ -352,7 +349,7 @@ class TLSSecurityModal {
                             <span class="text-foreground truncate ml-2" title="${proxyUrl}">${this.formatProxyHostname(proxyUrl)}</span>
                         </div>
                     ` : ''}
-                    <p class="text-center text-muted-foreground">No TLS connection captured yet. Make a request through the proxy to see connection info.</p>
+                    <p class="text-center text-muted-foreground truncate" title="No TLS captured yet. Make a proxied request to see details.">No TLS captured yet. Make a proxied request to see details.</p>
                 </div>
             </div>
         `;

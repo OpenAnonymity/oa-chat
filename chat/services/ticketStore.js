@@ -6,6 +6,7 @@
 import storageEvents from './storageEvents.js';
 import { chatDB } from '../db.js';
 import syncService from './syncService.js';
+import preferencesStore, { PREF_KEYS } from './preferencesStore.js';
 
 const STORAGE_KEY = 'inference_tickets';
 const ARCHIVE_KEY = 'inference_tickets_archive';
@@ -22,6 +23,7 @@ class TicketStore {
         this.initPromise = null;
         this.storageUnsubscribe = null;
         this.syncUnsubscribe = null;
+        this.hasMarkedTicketHistory = false;
     }
 
     async init() {
@@ -71,6 +73,22 @@ class TicketStore {
             } catch (error) {
                 console.warn('Failed to initialize ticket storage:', error);
             }
+        }
+    }
+
+    async markHadTicketsBeforeIfNeeded(activeCount, archivedCount) {
+        if (this.hasMarkedTicketHistory) return;
+        const total = (Number(activeCount) || 0) + (Number(archivedCount) || 0);
+        if (total <= 0) return;
+
+        try {
+            const alreadyMarked = !!await preferencesStore.getPreference(PREF_KEYS.hadTicketsBefore);
+            if (!alreadyMarked) {
+                await preferencesStore.savePreference(PREF_KEYS.hadTicketsBefore, true);
+            }
+            this.hasMarkedTicketHistory = true;
+        } catch (error) {
+            console.warn('Failed to persist ticket history flag:', error);
         }
     }
 
@@ -270,6 +288,7 @@ class TicketStore {
 
         this.tickets = activeTickets;
         this.archive = archivedTickets;
+        await this.markHadTicketsBeforeIfNeeded(activeTickets.length, archivedTickets.length);
         if (options.emitUpdate !== false) {
             this.emitUpdate();
         }
@@ -287,6 +306,7 @@ class TicketStore {
 
     async loadFromDatabase(options = {}) {
         if (typeof chatDB === 'undefined' || !chatDB.db) {
+            await this.markHadTicketsBeforeIfNeeded(this.tickets.length, this.archive.length);
             if (options.emitUpdate !== false) {
                 this.emitUpdate();
             }
@@ -307,6 +327,7 @@ class TicketStore {
 
         this.tickets = normalizedActive;
         this.archive = normalizedArchive;
+        await this.markHadTicketsBeforeIfNeeded(normalizedActive.length, normalizedArchive.length);
         if (options.emitUpdate !== false) {
             this.emitUpdate();
         }
