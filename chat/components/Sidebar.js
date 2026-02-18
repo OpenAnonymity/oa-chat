@@ -104,9 +104,6 @@ export default class Sidebar {
         // forkedFrom alone (without importedMessageCount) indicates a LOCAL fork, not an import
         const isImported = !!(session.importedFrom || session.importedSource ||
             (session.forkedFrom && (session.importedMessageCount || 0) > 0));
-        const hasKeywords = Array.isArray(session.keywords) && session.keywords.length > 0;
-        const hasEmbedding = Number.isFinite(session.lastEmbeddedAt) && session.lastEmbeddedAt > 0;
-        const embedActionLabel = (hasKeywords && hasEmbedding) ? 'Re-embed Session' : 'Generate Embeddings';
         const shareLabel = isShared ? 'Update Share' : 'Share';
 
         // Build indicator icons
@@ -147,7 +144,6 @@ export default class Sidebar {
                         <button class="copy-link-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">Copy Link</button>
                         <button class="share-session-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">${shareLabel}</button>
                         ${isShared ? `<button class="delete-share-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">Delete Share</button>` : ''}
-                        ${isImported ? `<button class="embed-session-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">${embedActionLabel}</button>` : ''}
                         <button class="export-pdf-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">Export as PDF</button>
                         <button class="delete-session-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">Delete</button>
                     </div>
@@ -230,15 +226,6 @@ export default class Sidebar {
                     await this.app.switchSession(sessionId);
                 }
                 await this.app.exportChatToPdf();
-                return;
-            }
-
-            const embedAction = e.target.closest('.embed-session-action');
-            if (embedAction) {
-                e.stopPropagation();
-                const sessionId = embedAction.dataset.sessionId;
-                this.closeAllMenus();
-                await this.app.generateSessionEmbeddings(sessionId);
                 return;
             }
 

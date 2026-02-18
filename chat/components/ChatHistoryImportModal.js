@@ -58,7 +58,8 @@ class ChatHistoryImportModal {
             parseError: null,
             lastError: null,
             confirmingCancel: false,
-            cancelRequested: false
+            cancelRequested: false,
+            embeddingCancelRequested: false
         };
     }
 
@@ -84,7 +85,7 @@ class ChatHistoryImportModal {
             return;
         }
         if (this.state.step === 'embedding') {
-            return;
+            this.state.embeddingCancelRequested = true;
         }
         this.isOpen = false;
         this.state.plan = [];
@@ -477,6 +478,7 @@ class ChatHistoryImportModal {
         this.state.embeddingProgress.errors = 0;
         this.state.confirmingCancel = false;
         this.state.cancelRequested = false;
+        this.state.embeddingCancelRequested = false;
         this.state.lastError = null;
         this.state.step = 'importing';
         this.render();
@@ -661,6 +663,9 @@ class ChatHistoryImportModal {
         }
 
         for (let index = 0; index < this._importedSessionIds.length; index += 1) {
+            if (this.state.embeddingCancelRequested) {
+                break;
+            }
             const sessionId = this._importedSessionIds[index];
 
             try {
@@ -669,6 +674,9 @@ class ChatHistoryImportModal {
                     this.state.embeddingProgress.keyworded += 1;
                 }
 
+                if (this.state.embeddingCancelRequested) {
+                    break;
+                }
                 const embedded = await sessionEmbedder.embedSession(sessionId);
                 if (embedded) {
                     this.state.embeddingProgress.embedded += 1;

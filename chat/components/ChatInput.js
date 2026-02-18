@@ -10,6 +10,8 @@ import { exportAllData, exportChats, exportTickets } from '../services/globalExp
 import { importFromFile, formatImportSummary } from '../services/globalImport.js';
 import ticketClient from '../services/ticketClient.js';
 import scrubberService from '../services/scrubberService.js';
+import sessionEmbedder from '../services/sessionEmbedder.js';
+import keywordsGenerator from '../services/keywordsGenerator.js';
 import {
     renderEditableDiff,
     extractTextFromEditableDiff,
@@ -389,6 +391,8 @@ export default class ChatInput {
                 } else if (action === 'import-tickets') {
                     this.handleImportTickets();
                     return; // Don't close menu until file is selected
+                } else if (action === 'run-embedding-backfill') {
+                    await this.handleRunEmbeddingBackfill();
                 }
                 this.app.elements.settingsMenu.classList.add('hidden');
             }
@@ -1942,6 +1946,39 @@ export default class ChatInput {
         } catch (error) {
             console.error('Import processing failed:', error);
             this.app.showToast?.('Failed to import data', 'error');
+        } finally {
+            dismissToast?.();
+        }
+    }
+
+    /**
+     * Starts keyword and embedding backfill using the existing background services.
+     */
+    async handleRunEmbeddingBackfill() {
+        const dismissToast = this.app.showLoadingToast?.('Starting embedding backfill...');
+        try {
+            if (!sessionEmbedder.initialized) {
+                await sessionEmbedder.init();
+            }
+            if (!keywordsGenerator.initialized) {
+                await keywordsGenerator.init();
+            }
+
+            await Promise.all([
+                keywordsGenerator.startBackfill(),
+                sessionEmbedder.startBackfill()
+            ]);
+
+            const status = sessionEmbedder.getBackfillStatus?.();
+            const queued = Number.isFinite(status?.queueLength) ? status.queueLength : null;
+            if (queued && queued > 0) {
+                this.app.showToast?.(`Embedding backfill started (${queued} queued)`, 'success');
+            } else {
+                this.app.showToast?.('Embedding backfill started', 'success');
+            }
+        } catch (error) {
+            console.error('Failed to start embedding backfill:', error);
+            this.app.showToast?.(error.message || 'Failed to start embedding backfill', 'error');
         } finally {
             dismissToast?.();
         }
