@@ -238,7 +238,7 @@ class ThanksPanel {
                 </style>
 
                 <div class="relative flex items-center mb-2">
-                    <h2 class="text-lg font-semibold text-foreground">Welcome back</h2>
+                    <h2 class="text-lg font-semibold text-foreground">You have no inference tickets left :(</h2>
                     <button id="close-thanks-btn" class="text-muted-foreground hover:text-foreground transition-colors p-1 rounded-lg hover:bg-accent" style="position:absolute;top:-10px;right:-8px" aria-label="Close">
                         <svg class="w-4 h-4" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
@@ -246,7 +246,7 @@ class ThanksPanel {
                     </button>
                 </div>
 
-                <p class="text-sm text-muted-foreground mb-4">Thanks for trying this out! We will send an invite code via your email as soon as we have more capacity.</p>
+                <p class="text-sm text-muted-foreground mb-4">Thanks for trying out oa-fastchat! Consider requesting beta access below. We will send an invite code as soon as we have more capacity.</p>
 
                 <form id="thanks-invite-form" class="w-full">
                     <div class="invite-input-wrapper flex items-center w-full h-10 border rounded-lg transition-all ${hasError ? 'input-error' : ''}">

@@ -703,7 +703,7 @@ class WelcomePanel {
                         </div>
                         <div>
                             <p class="welcome-guarantee-title font-medium text-foreground">Unlinkable Chats with Frontier Models</p>
-                            <p class="welcome-guarantee-body text-muted-foreground">Every session uses <a href="https://en.wikipedia.org/wiki/Blind_signature" target="_blank" rel="noopener noreferrer" class="text-foreground welcome-link">blind signatures</a> to request a distinct ephemeral key, so sessions are unlinkable. <a href="https://openanonymity.ai/blog/unlinkable-inference/#2-secure-inference-proxies" target="_blank" rel="noopener noreferrer" class="text-foreground welcome-link">Secure inference proxies</a> ensure we have no access to your prompts or responses.</p>
+                            <p class="welcome-guarantee-body text-muted-foreground">Every session uses <a href="https://en.wikipedia.org/wiki/Blind_signature" target="_blank" rel="noopener noreferrer" class="text-foreground welcome-link">blind signatures</a> to request a fresh ephemeral key, so you are provably anonymous. <a href="https://openanonymity.ai/blog/unlinkable-inference/#2-secure-inference-proxies" target="_blank" rel="noopener noreferrer" class="text-foreground welcome-link">Secure inference proxies</a> ensure we have no access to your prompts or responses.</p>
                         </div>
                         <!-- --------------------Query sanitization-------------------- -->
                         <div class="welcome-icon-box">
@@ -715,7 +715,7 @@ class WelcomePanel {
                         </div>
                         <div>
                             <p class="welcome-guarantee-title font-medium text-foreground">Sanitize Prompts via Confidential Models</p>
-                            <p class="welcome-guarantee-body text-muted-foreground">Built-in PII removal and prompt re-writing by gpt-oss-120b on an <a href="https://www.nvidia.com/en-us/data-center/solutions/confidential-computing/" target="_blank" rel="noopener noreferrer" class="text-foreground welcome-link">GPU enclave</a>. Try it with tab-tab!</p>
+                            <p class="welcome-guarantee-body text-muted-foreground">Built-in PII removal + prompt re-writing by gpt-oss-120b on an <a href="https://www.nvidia.com/en-us/data-center/solutions/confidential-computing/" target="_blank" rel="noopener noreferrer" class="text-foreground welcome-link">GPU enclave</a>. Try it with tab-tab!</p>
                         </div>
                         <!-- --------------------Local data storage-------------------- -->
                         <div class="welcome-icon-box">
@@ -727,8 +727,8 @@ class WelcomePanel {
                             </svg>
                         </div>
                         <div>
-                            <p class="welcome-guarantee-title font-medium text-foreground">The Entire App is Local</p>
-                            <p class="welcome-guarantee-body text-muted-foreground">All data and features are stored (IndexedDB) and implemented (JS) locally in browser. This makes it very fast!</p>
+                            <p class="welcome-guarantee-title font-medium text-foreground">The Entire App is Local. It's Fast!</p>
+                            <p class="welcome-guarantee-body text-muted-foreground">All data and features are stored (IndexedDB) and implemented (JS) locally in browser. Simple, minimal, and fast.</p>
                         </div>
                         <!-- --------------------Encrypted sync-------------------- -->
                         <div class="welcome-icon-box">
@@ -741,14 +741,13 @@ class WelcomePanel {
                             <p class="welcome-guarantee-body text-muted-foreground">You can optionally create an account to encrypted-sync your local data with Passkeys (e.g., with Apple touch ID).</p>
                         </div>
                 </div>
-
                 <div class="mb-2 flex justify-start">
                     <div id="welcome-access-mode-toggle" class="encryption-mode-toggle" role="radiogroup" aria-label="Welcome access mode">
                         <button
                             type="button"
                             class="encryption-mode-btn ${isPreviewMode ? 'active' : ''}"
                             data-access-mode="preview"
-                        >Limited Preview</button>
+                        >Free Preview</button>
                         <button
                             type="button"
                             class="encryption-mode-btn ${!isPreviewMode ? 'active' : ''}"
@@ -939,27 +938,17 @@ class WelcomePanel {
                     <ol class="list-none" style="margin:4px 0 0;padding:0;display:grid;gap:8px">
                         <li class="flex items-start gap-2">
                             <span class="welcome-step-badge">1</span>
-                                <span>You have <span class="font-semibold text-foreground">${availableTickets} inference ticket${availableTickets === 1 ? '' : 's'}</span>. Think of these as cash coins: payment tokens that are unlinked to you.</span>
+                                <span>You have <span class="font-semibold text-foreground">${availableTickets} inference ticket${availableTickets === 1 ? '' : 's'}</span>. Think of these as cash: payment tokens that are unlinked to you.</span>
                         </li>
                         <li class="flex items-start gap-2">
                             <span class="welcome-step-badge">2</span>
-                            <span>Each session costs a fixed amount of tickets (e.g. Gemini 3 Pro costs 3 tickets; see model picker).</span>
+                            <span>Each session costs a fixed amount of tickets (e.g. Gemini 3 Pro costs 3 tickets).</span>
                         </li>
                         <li class="flex items-start gap-2">
                             <span class="welcome-step-badge">3</span>
-                            <span>You can start a chat directly; tickets used automatically!</span>
+                            <span>You can start a chat directly and tickets are used automatically!</span>
                         </li>
                     </ol>
-                    <p style="margin-top:12px">
-                        <strong class="text-foreground">System Panel</strong> (right) shows how many tickets you have left and additional technical details. You can hide it any time by pressing
-                        <span aria-hidden="true" class="inline-flex items-center justify-center mx-0.5" style="vertical-align:middle">
-                            <svg class="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                                <rect x="4" y="4" width="16" height="16" rx="2"></rect>
-                                <path d="M14 4h4a2 2 0 012 2v12a2 2 0 01-2 2h-4V4z" fill="currentColor" fill-opacity="0.15" stroke="none"></path>
-                                <path d="M14 4v16"></path>
-                            </svg>
-                        </span> at the top right corner.
-                    </p>
                 </div>
 
                 <!-- Action buttons -->
@@ -985,6 +974,16 @@ class WelcomePanel {
                 </div>
                 <p class="text-muted-foreground" style="margin-top:16px;font-size:11px;line-height:1.3">
                     Account is optional and enables encrypted-sync of your data (tickets, preferences, and soon chat sessions) with Passkeys.
+                </p>
+                <p class="text-muted-foreground" style="margin-top:8px;font-size:10.5px;line-height:1.35">
+                    <strong class="text-foreground">System Panel</strong> (right) shows how many tickets you have left and additional technical details. You can hide it by pressing
+                    <span aria-hidden="true" class="inline-flex items-center justify-center mx-0.5" style="vertical-align:middle">
+                        <svg class="w-3.5 h-3.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                            <rect x="4" y="4" width="16" height="16" rx="2"></rect>
+                            <path d="M14 4h4a2 2 0 012 2v12a2 2 0 01-2 2h-4V4z" fill="currentColor" fill-opacity="0.15" stroke="none"></path>
+                            <path d="M14 4v16"></path>
+                        </svg>
+                    </span> at the top right.
                 </p>
             </div>
         `;
