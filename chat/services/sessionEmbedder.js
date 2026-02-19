@@ -16,12 +16,12 @@
  *
  * Re-embedding triggers when updatedAt > lastEmbeddedAt.
  */
-import { createEmbeddingSource } from '../embeddings/index.js';
-import { createVectorStore, encodeVectorId } from '../vector/index.js';
+import { createEmbeddingSource } from '../../embeddings/index.js';
+import { createVectorStore, encodeVectorId } from '../../vector/index.js';
 import { chatDB } from '../db.js';
 import { localInferenceService } from '../../local_inference/index.js';
 import ticketClient from './ticketClient.js';
-import { TINFOIL_API_KEY } from './config.env.js';
+import { TINFOIL_API_KEY } from '../config.js';
 
 const CHECK_INTERVAL_MS = 30 * 1000; // Check every 30 seconds
 const MAX_CONTENT_LENGTH = 8000; // Truncate very long conversations

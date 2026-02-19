@@ -18,9 +18,9 @@
  */
 import inferenceService from './inference/inferenceService.js';
 import { chatDB } from '../db.js';
+import { TINFOIL_API_KEY } from '../config.js';
 import { localInferenceService } from '../../local_inference/index.js';
 import ticketClient from './ticketClient.js';
-import { TINFOIL_API_KEY } from './config.env.js';
 const KEY_EXPIRY_THRESHOLD_MS = 2 * 60 * 1000; // Regenerate if key expires in less than 2 minutes
 const TINFOIL_BASE_URL = 'https://inference.tinfoil.sh';
 const TINFOIL_BACKEND_ID = 'tinfoil';
