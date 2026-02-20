@@ -29,7 +29,7 @@ const BACKFILL_DELAY_MS = 500; // Delay between queue embeddings to avoid overwh
 
 const TINFOIL_BASE_URL = 'https://inference.tinfoil.sh';
 const TINFOIL_BACKEND_ID = 'tinfoil';
-const TINFOIL_MODEL = 'llama3-3-70b';
+const TINFOIL_MODEL = 'gpt-oss-120b';
 const TINFOIL_KEY_TICKETS_REQUIRED = 2;
 
 const TAG_MATCH_PROMPT = `Given a user query and a list of existing tags from past conversations, return only the tags that are semantically relevant to the query. A tag is relevant if a conversation about that topic could plausibly contain useful context for answering the query.
@@ -127,14 +127,25 @@ class SessionEmbedder {
                 return;
             }
 
+            // Also verify that each session still has a stored vector row.
+            // This catches cases where the vector DB was cleared independently.
+            const missingEmbeddings = await this._getMissingEmbeddingSessionIds(
+                allSessions.map(session => session?.id).filter(Boolean)
+            );
+            if (missingEmbeddings.size > 0) {
+                console.log(`[SessionEmbedder] Found ${missingEmbeddings.size} sessions missing stored embeddings`);
+            }
+
             // Filter sessions that need embedding:
             // - No lastEmbeddedAt (never embedded)
             // - OR updatedAt > lastEmbeddedAt (has new content)
+            // - OR missing from vector store (stale bookkeeping after DB clear)
             const sessionsNeedingEmbedding = allSessions.filter(session => {
-                if (session.disableAutoEmbeddingKeywords) return false;
                 const updatedAt = session.updatedAt || session.createdAt || 0;
                 const lastEmbeddedAt = session.lastEmbeddedAt || 0;
-                return lastEmbeddedAt === 0 || updatedAt > lastEmbeddedAt;
+                return lastEmbeddedAt === 0
+                    || updatedAt > lastEmbeddedAt
+                    || missingEmbeddings.has(session.id);
             });
 
             if (sessionsNeedingEmbedding.length === 0) {
@@ -210,18 +221,16 @@ class SessionEmbedder {
                         continue;
                     }
 
-                    if (session.disableAutoEmbeddingKeywords) {
-                        this.queue.splice(idx, 1);
-                        continue;
-                    }
-
                     const updatedAt = session.updatedAt || session.createdAt || 0;
                     const lastEmbeddedAt = session.lastEmbeddedAt || 0;
 
                     if (updatedAt <= lastEmbeddedAt) {
-                        // Already current — remove from queue
-                        this.queue.splice(idx, 1);
-                        continue;
+                        const hasStoredEmbedding = await this._hasStoredEmbedding(sessionId);
+                        if (hasStoredEmbedding) {
+                            // Already current and still present in vector DB — remove from queue
+                            this.queue.splice(idx, 1);
+                            continue;
+                        }
                     }
 
                     // Ready to embed — remove from queue and embed
@@ -315,6 +324,155 @@ class SessionEmbedder {
         this.processQueue();
     }
 
+    _vectorIdForSession(sessionId) {
+        return encodeVectorId({
+            namespace: 'chat',
+            type: 'session',
+            entityId: sessionId
+        });
+    }
+
+    async _hasStoredEmbedding(sessionId) {
+        if (!sessionId || !this.store) return false;
+
+        try {
+            const vectorId = this._vectorIdForSession(sessionId);
+            const rows = await this.store.get(vectorId);
+            return Array.isArray(rows) && rows.length > 0;
+        } catch (error) {
+            // Preserve previous skip behavior on lookup failures.
+            console.warn(`[SessionEmbedder] Failed to verify embedding for ${sessionId}:`, error);
+            return true;
+        }
+    }
+
+    async _getMissingEmbeddingSessionIds(sessionIds) {
+        const uniqueIds = Array.from(new Set(
+            (Array.isArray(sessionIds) ? sessionIds : [])
+                .filter(id => typeof id === 'string' && id.length > 0)
+        ));
+        const missing = new Set();
+
+        if (uniqueIds.length === 0 || !this.store) {
+            return missing;
+        }
+
+        try {
+            const vectorIds = uniqueIds.map(sessionId => this._vectorIdForSession(sessionId));
+            const rows = await this.store.get(vectorIds);
+            const foundVectorIds = new Set(
+                (Array.isArray(rows) ? rows : [])
+                    .map(row => row?.id)
+                    .filter(id => typeof id === 'string' && id.length > 0)
+            );
+
+            for (let i = 0; i < uniqueIds.length; i += 1) {
+                if (!foundVectorIds.has(vectorIds[i])) {
+                    missing.add(uniqueIds[i]);
+                }
+            }
+        } catch (error) {
+            console.warn('[SessionEmbedder] Failed to verify vector rows during backfill scan:', error);
+        }
+
+        return missing;
+    }
+
+    async _inspectEmbeddingRowsForSessions(sessionIds) {
+        const uniqueIds = Array.from(new Set(
+            (Array.isArray(sessionIds) ? sessionIds : [])
+                .filter(id => typeof id === 'string' && id.length > 0)
+        ));
+
+        const emptyResult = {
+            totalSessions: uniqueIds.length,
+            presentCount: 0,
+            missingCount: uniqueIds.length,
+            missingSessionIds: [...uniqueIds],
+            metadataSessionIdMatchCount: 0,
+            metadataSessionIdMissingCount: 0,
+            metadataSessionIdMismatchCount: 0,
+            metadataIssueSamples: []
+        };
+
+        if (uniqueIds.length === 0 || !this.store) {
+            return emptyResult;
+        }
+
+        try {
+            const vectorIds = uniqueIds.map(sessionId => this._vectorIdForSession(sessionId));
+            const rows = await this.store.get(vectorIds);
+            const rowById = new Map(
+                (Array.isArray(rows) ? rows : [])
+                    .filter(row => row && typeof row.id === 'string')
+                    .map(row => [row.id, row])
+            );
+
+            const missingSessionIds = [];
+            const metadataIssueSamples = [];
+            let presentCount = 0;
+            let metadataSessionIdMatchCount = 0;
+            let metadataSessionIdMissingCount = 0;
+            let metadataSessionIdMismatchCount = 0;
+
+            for (let i = 0; i < uniqueIds.length; i += 1) {
+                const expectedSessionId = uniqueIds[i];
+                const vectorId = vectorIds[i];
+                const row = rowById.get(vectorId);
+
+                if (!row) {
+                    missingSessionIds.push(expectedSessionId);
+                    continue;
+                }
+
+                presentCount += 1;
+
+                const metadataSessionId = row?.metadata?.sessionId;
+                if (typeof metadataSessionId !== 'string' || metadataSessionId.length === 0) {
+                    metadataSessionIdMissingCount += 1;
+                    if (metadataIssueSamples.length < 5) {
+                        metadataIssueSamples.push({
+                            expectedSessionId,
+                            vectorId,
+                            metadataSessionId: metadataSessionId ?? null
+                        });
+                    }
+                    continue;
+                }
+
+                if (metadataSessionId === expectedSessionId) {
+                    metadataSessionIdMatchCount += 1;
+                } else {
+                    metadataSessionIdMismatchCount += 1;
+                    if (metadataIssueSamples.length < 5) {
+                        metadataIssueSamples.push({
+                            expectedSessionId,
+                            vectorId,
+                            metadataSessionId
+                        });
+                    }
+                }
+            }
+
+            return {
+                totalSessions: uniqueIds.length,
+                presentCount,
+                missingCount: missingSessionIds.length,
+                missingSessionIds,
+                metadataSessionIdMatchCount,
+                metadataSessionIdMissingCount,
+                metadataSessionIdMismatchCount,
+                metadataIssueSamples
+            };
+        } catch (error) {
+            console.warn('[SessionEmbedder] Failed to inspect embedding rows:', error);
+            return {
+                ...emptyResult,
+                error: error?.message || String(error)
+            };
+        }
+    }
+
     /**
      * Embed a session's chat history and store in the vector store.
      * Updates session.lastEmbeddedAt after successful embedding.
@@ -383,11 +541,7 @@ class SessionEmbedder {
             const te1 = performance.now();
 
             // Store in vector store
-            const vectorId = encodeVectorId({
-                namespace: 'chat',
-                type: 'session',
-                entityId: sessionId
-            });
+            const vectorId = this._vectorIdForSession(sessionId);
 
             await this.store.upsert([{
                 id: vectorId,
@@ -796,6 +950,8 @@ Available tags: ${JSON.stringify(allTags)}`;
             const t1 = performance.now();
 
             let embeddingResults;
+            let usedTagFilter = false;
+            let tagFilterDiagnostics = null;
             const matchedTagSet = new Set(matchedTags);
 
             if (matchedTagSet.size > 0) {
@@ -812,12 +968,53 @@ Available tags: ${JSON.stringify(allTags)}`;
                 }
 
                 if (matchedSessionIds.size > 0) {
+                    usedTagFilter = true;
+                    const matchedSessionIdList = Array.from(matchedSessionIds);
+                    const totalVectorCount = await this.store.count();
+                    const rowDiagnostics = await this._inspectEmbeddingRowsForSessions(matchedSessionIdList);
+                    const estimatedCandidateWindow = Math.min(totalVectorCount, Math.max(k * 3, k + 10));
+                    tagFilterDiagnostics = {
+                        matchedSessionCount: matchedSessionIdList.length,
+                        totalVectorCount,
+                        estimatedCandidateWindow,
+                        rowDiagnostics
+                    };
+
+                    console.log(
+                        `[SessionEmbedder] tag filter diagnostics (pre-search) — ` +
+                        `matched tags: ${JSON.stringify(matchedTags)}, ` +
+                        `matched sessions: ${matchedSessionIdList.length}, ` +
+                        `vector rows total: ${totalVectorCount}, ` +
+                        `estimated candidate window: ${estimatedCandidateWindow}, ` +
+                        `matched-session vectors present: ${rowDiagnostics.presentCount}/${rowDiagnostics.totalSessions}, ` +
+                        `metadata.sessionId exact: ${rowDiagnostics.metadataSessionIdMatchCount}, ` +
+                        `metadata.sessionId missing: ${rowDiagnostics.metadataSessionIdMissingCount}, ` +
+                        `metadata.sessionId mismatch: ${rowDiagnostics.metadataSessionIdMismatchCount}`
+                    );
+
+                    if (rowDiagnostics.missingSessionIds.length > 0) {
+                        const missingSample = rowDiagnostics.missingSessionIds.slice(0, 10);
+                        console.log(
+                            `[SessionEmbedder] tag filter missing vector rows sample (${missingSample.length}/${rowDiagnostics.missingSessionIds.length}): ` +
+                            `${JSON.stringify(missingSample)}`
+                        );
+                    }
+
+                    if (rowDiagnostics.metadataIssueSamples.length > 0) {
+                        console.log(
+                            `[SessionEmbedder] tag filter metadata issue sample (${rowDiagnostics.metadataIssueSamples.length}): ` +
+                            `${JSON.stringify(rowDiagnostics.metadataIssueSamples)}`
+                        );
+                    }
+
                     embeddingResults = await this.store.search(queryEmbedding, k, {
                         ...options,
                         filter: (metadata) => {
                             const sessionId = metadata?.sessionId;
                             return typeof sessionId === 'string' && matchedSessionIds.has(sessionId);
-                        }
+                        },
+                        debug: true,
+                        debugLabel: 'sessionEmbedder tag+embedding'
                     });
                 } else {
                     // LLM matched tags but none map to sessions; fall back to pure embedding.
@@ -833,8 +1030,16 @@ Available tags: ${JSON.stringify(allTags)}`;
             const retrievalMs = t2 - t1;
             this._searchTimings.push({ embedMs, retrievalMs, ts: Date.now() });
 
-            const matchType = matchedTagSet.size > 0 ? 'tag+embedding' : 'embedding';
+            const matchType = matchedTagSet.size > 0 && usedTagFilter ? 'tag+embedding' : 'embedding';
             console.log(`[SessionEmbedder] ${matchType} search — embed: ${embedMs.toFixed(2)}ms, retrieval: ${retrievalMs.toFixed(2)}ms, matched tags: ${JSON.stringify(matchedTags)}, results: ${embeddingResults.length}`);
+            if (matchType === 'tag+embedding' && embeddingResults.length === 0 && tagFilterDiagnostics) {
+                const { rowDiagnostics, matchedSessionCount, estimatedCandidateWindow } = tagFilterDiagnostics;
+                console.warn(
+                    `[SessionEmbedder] tag+embedding returned 0 results despite ${matchedSessionCount} matched sessions. ` +
+                    `Stored vectors for matched sessions: ${rowDiagnostics.presentCount}/${rowDiagnostics.totalSessions}. ` +
+                    `Estimated ranked candidate window: ${estimatedCandidateWindow}.`
+                );
+            }
 
             const sessionMap = await this._getSessionMapForResults(embeddingResults);
 
@@ -908,11 +1113,7 @@ Available tags: ${JSON.stringify(allTags)}`;
 
         try {
             // Generate the same vector ID used when upserting
-            const vectorId = encodeVectorId({
-                namespace: 'chat',
-                type: 'session',
-                entityId: sessionId
-            });
+            const vectorId = this._vectorIdForSession(sessionId);
 
             const removed = await this.store.remove(vectorId);
 

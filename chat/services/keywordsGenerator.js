@@ -24,10 +24,11 @@ import ticketClient from './ticketClient.js';
 const KEY_EXPIRY_THRESHOLD_MS = 2 * 60 * 1000; // Regenerate if key expires in less than 2 minutes
 const TINFOIL_BASE_URL = 'https://inference.tinfoil.sh';
 const TINFOIL_BACKEND_ID = 'tinfoil';
-const TINFOIL_MODEL = 'llama3-3-70b';
+const TINFOIL_MODEL = 'gpt-oss-120b';
 const TINFOIL_KEY_TICKETS_REQUIRED = 2;
 const KEYWORD_CHECK_INTERVAL_MS = 30 * 1000;
 const KEYWORD_DELAY_MS = 500; // Delay between keyword generations
+const KEYWORD_BACKLOG_ENABLED = false; // Temporary kill switch for queue/backfill processing
 const DEDUP_TAG_THRESHOLD = 30; // Only dedup when distinct tags exceed this
 const DEDUP_COOLDOWN_MS = 1 * 60 * 1000; // 1 hour cooldown between dedup runs
 
@@ -84,16 +85,21 @@ class KeywordsGenerator {
      */
     async init() {
         this.initialized = true;
-        this.startBackgroundCheck();
-        this.scheduleBackfill();
+        if (KEYWORD_BACKLOG_ENABLED) {
+            this.startBackgroundCheck();
+            this.scheduleBackfill();
 
-        // Start periodic dedup timer
-        if (this.dedupInterval) clearInterval(this.dedupInterval);
-        this.dedupInterval = setInterval(() => {
-            this.deduplicateTags();
-        }, DEDUP_COOLDOWN_MS);
+            // Start periodic dedup timer
+            if (this.dedupInterval) clearInterval(this.dedupInterval);
+            this.dedupInterval = setInterval(() => {
+                this.deduplicateTags();
+            }, DEDUP_COOLDOWN_MS);
+        } else {
+            this.queue = [];
+            this.processing = false;
+        }
 
-        console.log('[KeywordsGenerator] Initialized');
+        console.log(`[KeywordsGenerator] Initialized${KEYWORD_BACKLOG_ENABLED ? '' : ' (backlog disabled)'}`);
     }
 
     /**
@@ -111,13 +117,16 @@ class KeywordsGenerator {
      * Scan all sessions and enqueue those missing keywords/summary.
      */
     async startBackfill() {
+        if (!KEYWORD_BACKLOG_ENABLED) {
+            return;
+        }
+
         try {
             const allSessions = await chatDB.getAllSessions();
             if (!allSessions || allSessions.length === 0) return;
 
             const needsKeywords = allSessions.filter(s =>
                 (!s.summary || !s.keywords || s.keywords.length === 0)
-                && !s.disableAutoEmbeddingKeywords
             );
 
             if (needsKeywords.length === 0) {
@@ -147,6 +156,10 @@ class KeywordsGenerator {
      * Start the background timer that periodically processes the queue.
      */
     startBackgroundCheck() {
+        if (!KEYWORD_BACKLOG_ENABLED) {
+            return;
+        }
+
         if (this.checkInterval) {
             clearInterval(this.checkInterval);
         }
@@ -176,6 +189,10 @@ class KeywordsGenerator {
      * @param {string|string[]} sessionIds - One or more session IDs to enqueue
      */
     enqueue(sessionIds) {
+        if (!KEYWORD_BACKLOG_ENABLED) {
+            return;
+        }
+
         const ids = Array.isArray(sessionIds) ? sessionIds : [sessionIds];
         const existing = new Set(this.queue);
         for (const id of ids) {
@@ -216,7 +233,6 @@ class KeywordsGenerator {
 
         const session = await chatDB.getSession(sessionId);
         if (!session) return null;
-        if (session.disableAutoEmbeddingKeywords && !force) return null;
         if (session.summary && Array.isArray(session.keywords) && session.keywords.length > 0) {
             return { summary: session.summary, keywords: session.keywords };
         }
@@ -238,6 +254,12 @@ class KeywordsGenerator {
      * Tinfoil for keyless sessions.
      */
     async processQueue() {
+        if (!KEYWORD_BACKLOG_ENABLED) {
+            this.queue = [];
+            this.processing = false;
+            return;
+        }
+
         if (this.processing) return;
 
         this.processing = true;
@@ -255,11 +277,6 @@ class KeywordsGenerator {
 
                     if (!session) {
                         // Session deleted — remove from queue
-                        this.queue.splice(idx, 1);
-                        continue;
-                    }
-
-                    if (session.disableAutoEmbeddingKeywords) {
                         this.queue.splice(idx, 1);
                         continue;
                     }
@@ -396,9 +413,6 @@ class KeywordsGenerator {
         const session = await chatDB.getSession(sessionId);
         if (!session) {
             console.warn('[KeywordsGenerator] Session not found:', sessionId);
-            return null;
-        }
-        if (session.disableAutoEmbeddingKeywords && !force) {
             return null;
         }
 
@@ -583,9 +597,6 @@ class KeywordsGenerator {
         const session = await chatDB.getSession(sessionId);
         if (!session) {
             console.warn('[KeywordsGenerator] Session not found:', sessionId);
-            return null;
-        }
-        if (session.disableAutoEmbeddingKeywords && !force) {
             return null;
         }
 
@@ -1059,6 +1070,10 @@ class KeywordsGenerator {
      * Safety: clears poll after 30 minutes.
      */
     _scheduleDedupAfterQueue() {
+        if (!KEYWORD_BACKLOG_ENABLED) {
+            return;
+        }
+
         const MAX_POLL_MS = 30 * 60 * 1000;
         const POLL_INTERVAL_MS = 10 * 1000;
         const startTime = Date.now();
@@ -1084,6 +1099,7 @@ class KeywordsGenerator {
     getStatus() {
         return {
             initialized: this.initialized,
+            backlogEnabled: KEYWORD_BACKLOG_ENABLED,
             inProgress: Array.from(this.generationInProgress),
             queueLength: this.queue.length,
             processing: this.processing
