@@ -88,6 +88,7 @@ const build = async () => {
     }
 
     const result = await esbuild.build({
+        absWorkingDir: repoRoot,
         entryPoints,
         bundle: true,
         splitting: true,
