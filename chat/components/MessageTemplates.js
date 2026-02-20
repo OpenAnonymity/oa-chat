@@ -1119,9 +1119,10 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
         </div>
     ` : '';
 
-    // Check if message is complete but has no output (no text, no images)
-    // This happens when provider doesn't return a response
-    const hasNoOutput = !processedContent && (!message.images || message.images.length === 0);
+    // Check if message is complete but has no user-visible output (no text, no reasoning, no images).
+    // Reasoning-only responses can happen when generation is manually interrupted.
+    const hasReasoningOutput = typeof message.reasoning === 'string' && message.reasoning.trim().length > 0;
+    const hasNoOutput = !processedContent && !hasReasoningOutput && (!message.images || message.images.length === 0);
     // Message is complete if:
     // - Not actively streaming reasoning
     // - streamingTokens is null/undefined (finalized)
