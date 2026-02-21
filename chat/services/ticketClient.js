@@ -628,11 +628,11 @@ class TicketClient {
 
     /**
      * Request an API key by redeeming inference tickets.
-     * @param {string} name - Key name for identification
+     *
      * @param {number} ticketCount - Number of tickets to use (default: 1)
      * @returns {Promise<Object>} API key data with verification signatures
      */
-    async requestApiKey(name = 'OA-WebApp-Key', ticketCount = 1) {
+    async requestApiKey(ticketCount = 1) {
         try {
             const { tickets, result } = await this.ticketStore.consumeTickets(
                 ticketCount,
@@ -657,10 +657,8 @@ class TicketClient {
 
                     const requestKeyUrl = `${ORG_API_BASE}/api/request_key`;
                     const requestHeaders = {
-                        'Content-Type': 'application/json',
                         'Authorization': authHeader,
                     };
-                    const requestBody = { name };
 
                     console.log(`🔑 Requesting API key from org (${tickets.length} ticket${tickets.length > 1 ? 's' : ''})...`);
 
@@ -673,7 +671,6 @@ class TicketClient {
                             {
                                 method: 'POST',
                                 headers: requestHeaders,
-                                body: JSON.stringify(requestBody)
                             },
                             {
                                 context: 'Org API key',
@@ -689,7 +686,6 @@ class TicketClient {
                             status: 0,
                             request: {
                                 headers: networkLogger.sanitizeHeaders(requestHeaders),
-                                body: requestBody
                             },
                             error: error.message
                         });
@@ -703,7 +699,6 @@ class TicketClient {
                         status: response.status,
                         request: {
                             headers: networkLogger.sanitizeHeaders(requestHeaders),
-                            body: requestBody
                         },
                         response: data
                     });
@@ -778,11 +773,10 @@ class TicketClient {
 
     /**
      * Request a confidential API key by redeeming inference tickets.
-     * @param {string} name - Key name for identification
      * @param {number} ticketCount - Number of tickets to use (default: 1)
      * @returns {Promise<Object>} API key data
      */
-    async requestConfidentialApiKey(name = 'OA-Scrubber-Key', ticketCount = 1) {
+    async requestConfidentialApiKey(ticketCount = 1) {
         try {
             const { tickets, result } = await this.ticketStore.consumeTickets(
                 ticketCount,
@@ -807,10 +801,8 @@ class TicketClient {
 
                     const requestKeyUrl = `${ORG_API_BASE}/api/request_confidential_key`;
                     const requestHeaders = {
-                        'Content-Type': 'application/json',
                         'Authorization': authHeader,
                     };
-                    const requestBody = { name };
 
                     console.log(`🔐 Requesting confidential API key (${tickets.length} ticket${tickets.length > 1 ? 's' : ''})...`);
 
@@ -823,7 +815,6 @@ class TicketClient {
                             {
                                 method: 'POST',
                                 headers: requestHeaders,
-                                body: JSON.stringify(requestBody)
                             },
                             {
                                 context: 'Org confidential API key',
@@ -839,7 +830,6 @@ class TicketClient {
                             status: 0,
                             request: {
                                 headers: networkLogger.sanitizeHeaders(requestHeaders),
-                                body: requestBody
                             },
                             error: error.message
                         });
@@ -853,7 +843,6 @@ class TicketClient {
                         status: response.status,
                         request: {
                             headers: networkLogger.sanitizeHeaders(requestHeaders),
-                            body: requestBody
                         },
                         response: data
                     });

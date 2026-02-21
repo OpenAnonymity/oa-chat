@@ -19,7 +19,6 @@ const openRouterBackend = {
     accessLabel: 'API key',
     accessShortLabel: 'API',
     accessType: 'api-key',
-    requestName: 'OA-WebApp-Key',
     baseUrl: OPENROUTER_BASE_URL,
     defaultModelId: 'openai/gpt-5.2-chat',
     defaultModelName: 'OpenAI: GPT-5.2 Instant',
@@ -103,8 +102,8 @@ const openRouterBackend = {
         if (!session.expiresAt) return true;
         return new Date(session.expiresAt) <= new Date();
     },
-    async requestAccess({ name, ticketsRequired }) {
-        return ticketClient.requestApiKey(name || 'OA-WebApp-Key', ticketsRequired || 1);
+    async requestAccess({ ticketsRequired }) {
+        return ticketClient.requestApiKey(ticketsRequired || 1);
     },
     verification: {
         supports: true,

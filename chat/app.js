@@ -6354,7 +6354,6 @@ Your API key has been cleared. A new key from a different station will be obtain
         while (retries < maxRetries) {
             try {
                 result = await inferenceService.requestAccess(session, {
-                    name: backend.requestName,
                     ticketsRequired
                 });
                 break;  // Success
