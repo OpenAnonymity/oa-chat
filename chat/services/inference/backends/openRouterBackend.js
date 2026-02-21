@@ -202,8 +202,6 @@ const openRouterBackend = {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${token}`,
-                'HTTP-Referer': window.location.origin,
-                'X-Title': 'OA-WebApp',
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({

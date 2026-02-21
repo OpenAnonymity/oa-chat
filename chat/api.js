@@ -47,10 +47,7 @@ class OpenRouterAPI {
     // Fetch available models from OpenRouter
     async fetchModels() {
         const url = `${this.baseUrl}/models`;
-        const headers = {
-            'HTTP-Referer': window.location.origin,
-            'X-Title': 'chat'
-        };
+        const headers = {};
 
         try {
             // Models catalog is public data - bypass proxy to avoid blocking app startup
@@ -250,8 +247,6 @@ class OpenRouterAPI {
 
         const headers = {
             'Authorization': `Bearer ${key}`,
-            'HTTP-Referer': window.location.origin,
-            'X-Title': 'chat',
             'Content-Type': 'application/json'
         };
 
@@ -382,8 +377,6 @@ class OpenRouterAPI {
 
         const headers = {
             'Authorization': `Bearer ${key}`,
-            'HTTP-Referer': window.location.origin,
-            'X-Title': 'chat',
             'Content-Type': 'application/json'
         };
 
