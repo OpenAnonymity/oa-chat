@@ -11,9 +11,9 @@ import themeManager from '../services/themeManager.js';
 const STORAGE_KEY_DISMISSED = 'oa-welcome-dismissed';
 const MODAL_CLASSES = 'w-full max-w-md rounded-2xl border border-border shadow-lg mx-4 flex flex-col welcome-modal-enter welcome-modal-glass';
 const BETA_SIGNUP_URL = 'https://openanonymity.ai/beta';
-const FREE_ACCESS_EMAIL_HINT_HTML = `You can get limited experimental access by entering an email (collected only to prevent spam). We encourage you to <a href="${BETA_SIGNUP_URL}" target="_blank" rel="noopener noreferrer" class="underline hover:text-foreground transition-colors">sign up</a> for full beta access.`;
-const FREE_ACCESS_UNAVAILABLE_HINT = 'Experimental access is unavailable right now. Please sign up for full beta access.';
-const FREE_ACCESS_UNAVAILABLE_HINT_HTML = `Experimental access is unavailable right now. Please <a href="${BETA_SIGNUP_URL}" target="_blank" rel="noopener noreferrer" class="underline hover:text-foreground transition-colors">sign up</a> for full beta access.`;
+const FREE_ACCESS_EMAIL_HINT_HTML = `Enter an email for limited free access (email collected only to prevent spam). We encourage you to <a href="${BETA_SIGNUP_URL}" target="_blank" rel="noopener noreferrer" class="underline hover:text-foreground transition-colors"><strong>sign up</strong></a> for more access!`;
+const FREE_ACCESS_UNAVAILABLE_HINT = 'Free access is unavailable right now. Please sign up for an invite code.';
+const FREE_ACCESS_UNAVAILABLE_HINT_HTML = `Experimental access is unavailable right now. Please <a href="${BETA_SIGNUP_URL}" target="_blank" rel="noopener noreferrer" class="underline hover:text-foreground transition-colors">sign up</a> for an invite code.`;
 
 class WelcomePanel {
     constructor(app) {
@@ -689,10 +689,10 @@ class WelcomePanel {
                     ` : ''}
                 </div>
 
-                <p class="text-sm text-muted-foreground mb-4">A simple, fast, <a href="https://github.com/openanonymity/oa-fastchat" target="_blank" rel="noopener noreferrer" class="text-foreground welcome-link">open-source</a>, and <a href="https://openanonymity.ai/blog/unlinkable-inference/" target="_blank" rel="noopener noreferrer" class="text-foreground welcome-link">provably unlinkable</a> chat client by <a href="https://openanonymity.ai/" target="_blank" rel="noopener noreferrer" class="text-foreground welcome-link">The Open Anonymity Project</a>.</p>
+                <p class="text-sm text-muted-foreground mb-4">A simple, fast, <a href="https://github.com/openanonymity/oa-fastchat" target="_blank" rel="noopener noreferrer" class="text-foreground welcome-link">open source</a>, and <a href="https://openanonymity.ai/blog/unlinkable-inference/" target="_blank" rel="noopener noreferrer" class="text-foreground welcome-link">provably unlinkable</a> chat client by <a href="https://openanonymity.ai/" target="_blank" rel="noopener noreferrer" class="text-foreground welcome-link">The Open Anonymity Project</a>.</p>
 
                 <!-- Guarantees -->
-                <div class="welcome-guarantees" style="margin-top:6px;margin-bottom:22px">
+                <div class="welcome-guarantees" style="margin-top:6px;margin-bottom:27px">
                         <!-- --------------------Unlinkable Inference via Blind Signatures-------------------- -->
                         <div class="welcome-icon-box">
                             <svg class="w-3.5 h-3.5" width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8">
@@ -727,8 +727,8 @@ class WelcomePanel {
                             </svg>
                         </div>
                         <div>
-                            <p class="welcome-guarantee-title font-medium text-foreground">The Entire App is Local. It's Fast!</p>
-                            <p class="welcome-guarantee-body text-muted-foreground">All data and features are stored (IndexedDB) and implemented (JS) locally in browser. Simple, minimal, and fast.</p>
+                            <p class="welcome-guarantee-title font-medium text-foreground">The App is Local and Fast</p>
+                            <p class="welcome-guarantee-body text-muted-foreground">All data and features are stored (IndexedDB) and implemented (JS) locally in the browser. Simple, minimal, and fast.</p>
                         </div>
                         <!-- --------------------Encrypted sync-------------------- -->
                         <div class="welcome-icon-box">
@@ -741,6 +741,7 @@ class WelcomePanel {
                             <p class="welcome-guarantee-body text-muted-foreground">You can optionally create an account to encrypted-sync your local data with Passkeys (e.g., with Apple touch ID).</p>
                         </div>
                 </div>
+
                 <div class="mb-2 flex justify-start">
                     <div id="welcome-access-mode-toggle" class="encryption-mode-toggle" role="radiogroup" aria-label="Welcome access mode">
                         <button
@@ -752,7 +753,7 @@ class WelcomePanel {
                             type="button"
                             class="encryption-mode-btn ${!isPreviewMode ? 'active' : ''}"
                             data-access-mode="beta"
-                        >Beta Access</button>
+                        >Invite Code</button>
                         <div class="encryption-mode-indicator"></div>
                     </div>
                 </div>
@@ -774,7 +775,7 @@ class WelcomePanel {
                         <button
                             type="submit"
                             class="flex-shrink-0 w-8 h-8 m-1 rounded-md bg-blue-600 text-white hover:bg-blue-700 transition-colors flex items-center justify-center disabled:opacity-50"
-                            aria-label="${isPreviewMode ? 'Request limited preview' : 'Redeem invite code'}"
+                            aria-label="${isPreviewMode ? 'Request free preview' : 'Redeem invite code'}"
                         >
                             <svg class="w-4 h-4" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
@@ -802,7 +803,7 @@ class WelcomePanel {
                         <svg class="w-4 h-4 flex-shrink-0" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"></path>
                         </svg>
-                        <span>Request beta access</span>
+                        <span>Request invite code</span>
                     </a>
                     <button
                         id="import-data-btn"
@@ -826,20 +827,20 @@ class WelcomePanel {
                         Technical Details
                     </a>
                     <a
+                    href="https://openanonymity.ai/beta/privacy"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="text-xs text-muted-foreground hover:text-foreground hover:underline transition-colors"
+                    >
+                    Privacy Notice
+                    </a>
+                    <a
                         href="https://openanonymity.ai/beta#desktop"
                         target="_blank"
                         rel="noopener noreferrer"
                         class="text-xs text-muted-foreground hover:text-foreground hover:underline transition-colors"
                     >
                         Download Desktop App
-                    </a>
-                    <a
-                        href="https://openanonymity.ai/beta/privacy"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        class="text-xs text-muted-foreground hover:text-foreground hover:underline transition-colors"
-                    >
-                        Privacy Notice
                     </a>
                 </div>
             </div>

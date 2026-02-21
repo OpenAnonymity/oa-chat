@@ -6322,7 +6322,7 @@ Your API key has been cleared. A new key from a different station will be obtain
         const backend = inferenceService.getBackendForSession(session);
         const availableTickets = ticketClient.getTicketCount();
         if (availableTickets === 0) {
-            throw new Error("You have no inference tickets left. Please redeem an invite code for more tickets at the System Panel (right) or request beta access at [here](https://openanonymity.ai/beta/).");
+            throw new Error("You have no inference tickets left. Please redeem an invite code for more tickets at the System Panel (right) or request invite code at [here](https://openanonymity.ai/beta/).");
         }
 
         // Determine model ID from session model name

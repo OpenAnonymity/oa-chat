@@ -246,7 +246,7 @@ class ThanksPanel {
                     </button>
                 </div>
 
-                <p class="text-sm text-muted-foreground mb-4">Thanks for trying out oa-fastchat! Consider requesting beta access below. We will send an invite code as soon as we have more capacity.</p>
+                <p class="text-sm text-muted-foreground mb-4">Thanks for trying out oa-fastchat! Consider requesting an invite code below. We will send an invite code as soon as we have more capacity.</p>
 
                 <form id="thanks-invite-form" class="w-full">
                     <div class="invite-input-wrapper flex items-center w-full h-10 border rounded-lg transition-all ${hasError ? 'input-error' : ''}">
@@ -285,7 +285,7 @@ class ThanksPanel {
                         <svg class="w-4 h-4 flex-shrink-0" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"></path>
                         </svg>
-                        <span>Request beta access</span>
+                        <span>Request invite code</span>
                     </a>
                     <a
                         href="${SHARE_FEEDBACK_URL}"
