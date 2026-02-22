@@ -679,7 +679,7 @@ class WelcomePanel {
 
                 <!-- Header -->
                 <div class="relative flex items-center mb-1">
-                    <h2 class="text-lg font-semibold text-foreground">Welcome to oa-fastchat!</h2>
+                    <h2 class="text-lg font-semibold text-foreground">Welcome to oa-chat!</h2>
                     ${this.allowManualClose ? `
                     <button id="close-welcome-btn" class="text-muted-foreground hover:text-foreground transition-colors p-1 rounded-lg hover:bg-accent" style="position:absolute;top:-10px;right:-8px" aria-label="Close">
                         <svg class="w-4 h-4" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">

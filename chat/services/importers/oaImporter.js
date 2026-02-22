@@ -10,13 +10,15 @@ import { registerChatHistoryImporter } from '../chatHistoryImportRegistry.js';
  */
 function isOaExport(file, sample) {
     const fileName = (file?.name || '').toLowerCase();
-    const nameMatch = fileName.startsWith('oa-fastchat-chats-') || fileName.startsWith('oa-fastchat-export-');
+    const nameMatch = fileName.startsWith('oa-chat-') || fileName.startsWith('oa-fastchat-');
 
     if (nameMatch) {
         return true;
     }
 
-    if (!sample.includes('"formatVersion"') || !sample.includes('"oa-fastchat"')) {
+    const hasFormatVersion = sample.includes('"formatVersion"');
+    const hasAppName = sample.includes('"oa-chat"') || sample.includes('"oa-fastchat"');
+    if (!hasFormatVersion || !hasAppName) {
         return false;
     }
 
@@ -105,7 +107,7 @@ function normalizeOaExport(data) {
     });
 
     return {
-        source: 'oa-fastchat',
+        source: 'oa-chat',
         sessions: normalizedSessions,
         stats: {
             sessionCount: normalizedSessions.length,
@@ -142,11 +144,11 @@ async function parseOaExportFile(file, options = {}) {
 
 // Register the OA importer
 registerChatHistoryImporter({
-    id: 'oa-fastchat',
-    label: 'oa-fastchat (export)',
-    source: 'oa-fastchat',
+    id: 'oa-chat',
+    label: 'oa-chat (export)',
+    source: 'oa-chat',
     description: 'Import from OA\'s own chat export format.',
-    fileHint: 'oa-fastchat-chats-*.json or oa-fastchat-export-*.json',
+    fileHint: 'oa-chat-sessions-*.json or oa-chat-export-*.json or oa-fastchat-chats-*.json or oa-fastchat-export-*.json',
     accept: '.json,application/json',
     canImport: (file, sample) => isOaExport(file, sample),
     parse: (file, options) => parseOaExportFile(file, options),

@@ -9,7 +9,7 @@ import { chatDB } from '../db.js';
 import { normalizeReasoningEffort } from './reasoningConfig.js';
 
 const FORMAT_VERSION = '1.0';
-const APP_NAME = 'oa-fastchat';
+const APP_NAME = 'oa-chat';
 
 /**
  * Collect persisted preferences.
@@ -170,7 +170,7 @@ export async function exportChats() {
 
         const a = document.createElement('a');
         a.href = url;
-        a.download = `oa-fastchat-chats-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+        a.download = `oa-chat-sessions-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -255,7 +255,7 @@ export async function exportTickets() {
 
         const jsonString = JSON.stringify(exportData, null, 2);
         const blob = new Blob([jsonString], { type: 'application/json' });
-        const filename = `oa-fastchat-tickets-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+        const filename = `oa-chat-tickets-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
 
         const { saved, usedFallback } = await saveWithConfirmation(blob, filename);
 
@@ -310,7 +310,7 @@ export async function splitAndExportTickets(count) {
 
         const jsonString = JSON.stringify(exportData, null, 2);
         const blob = new Blob([jsonString], { type: 'application/json' });
-        const filename = `oa-fastchat-tickets-split-${count}-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+        const filename = `oa-chat-tickets-split-${count}-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
 
         const { saved, usedFallback } = await saveWithConfirmation(blob, filename);
 
@@ -362,7 +362,7 @@ export async function exportAllData() {
 
         const a = document.createElement('a');
         a.href = url;
-        a.download = `oa-fastchat-export-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+        a.download = `oa-chat-export-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);

@@ -303,7 +303,7 @@ Fields:
 
 ## Environment & sharing
 
-- Browser (oa‑fastchat): `backend: 'auto'` uses Orama with IndexedDB persistence.
+- Browser (oa‑chat): `backend: 'auto'` uses Orama with IndexedDB persistence.
 - Electron renderer: can use the same IndexedDB backend and data model as the browser.
 - Electron main process: register a native backend (e.g., LanceDB/FAISS) and keep the
   API surface unchanged.

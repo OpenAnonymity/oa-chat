@@ -41,7 +41,7 @@ function setCompatFlag() {
 
 class ChatDatabase {
     constructor() {
-        this.dbName = 'oa-fastchat';
+        this.dbName = 'oa-fastchat'; // Intentional: preserve existing IndexedDB data across app rename to oa-chat
         this.version = 4;
         this.db = null;
         this.compatMode = false;

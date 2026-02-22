@@ -1,4 +1,4 @@
-## `oa-fastchat`
+## `oa-chat`
 
 A minimal, fast chat client that talks directly to the selected inference backend (OpenRouter by default) using ephemeral, unlinkable access credentials obtained via the Open Anonymity network. Everything runs directly in the browser with no backend; development is HTML-first, while production builds are bundled with esbuild and minified with terser.
 

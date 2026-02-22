@@ -246,7 +246,7 @@ class ThanksPanel {
                     </button>
                 </div>
 
-                <p class="text-sm text-muted-foreground mb-4">Thanks for trying out oa-fastchat! Consider requesting an invite code below. We will send an invite code as soon as we have more capacity.</p>
+                <p class="text-sm text-muted-foreground mb-4">Thanks for trying out oa-chat! Consider requesting an invite code below. We will send an invite code as soon as we have more capacity.</p>
 
                 <form id="thanks-invite-form" class="w-full">
                     <div class="invite-input-wrapper flex items-center w-full h-10 border rounded-lg transition-all ${hasError ? 'input-error' : ''}">

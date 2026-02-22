@@ -463,14 +463,38 @@ class ChatHistoryImportModal {
             });
         }
 
-        if (source === 'oa-fastchat') {
+        if (source === 'oa-chat' || source === 'oa-fastchat') {
+            const oaAliases = ['oa-chat', 'oa-fastchat'];
+            if (typeof chatDB.collectImportedSessionKeys === 'function') {
+                for (const aliasSource of oaAliases) {
+                    if (aliasSource === source) continue;
+                    const aliasKeys = await chatDB.collectImportedSessionKeys(aliasSource);
+                    aliasKeys.forEach(key => {
+                        knownIds.add(key);
+                        const prefix = `${aliasSource}:`;
+                        if (key.startsWith(prefix)) {
+                            knownIds.add(`${source}:${key.slice(prefix.length)}`);
+                        }
+                    });
+                }
+            }
+
             if (!existingSessions) {
                 existingSessions = await chatDB.getAllSessions();
             }
             existingSessions.forEach(session => {
+                const candidateIds = [];
                 if (session?.id) {
-                    knownIds.add(`${source}:${session.id}`);
+                    candidateIds.push(session.id);
                 }
+                if (session?.importedExternalId) {
+                    candidateIds.push(session.importedExternalId);
+                }
+                candidateIds.forEach(candidateId => {
+                    oaAliases.forEach(aliasSource => {
+                        knownIds.add(`${aliasSource}:${candidateId}`);
+                    });
+                });
             });
         }
 

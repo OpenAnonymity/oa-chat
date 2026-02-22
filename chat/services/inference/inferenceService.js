@@ -54,7 +54,7 @@ function getWelcomeContent(backend = getBackend()) {
     const providerName = backend.label;
     const accessLabel = backend.accessLabel;
     return {
-        title: 'oa-fastchat',
+        title: 'oa-chat',
         subtitle: 'by [The Open Anonymity Project](https://openanonymity.ai/)',
         content: ``.trim()
     };
