@@ -17,10 +17,12 @@ import {
     updateEditableDiff,
     getEditableDiffSelectionState
 } from '../services/editableDiffRenderer.js';
+import { normalizeReasoningEffort } from '../services/reasoningConfig.js';
 import { chatDB } from '../db.js';
 
 const MESSAGE_INPUT_MAX_HEIGHT_PX = 300;
 const MESSAGE_INPUT_PREVIEW_EXPANDED_MIN_HEIGHT_PX = 384;
+const SETTINGS_MENU_WIDTH_PX = 230;
 
 export default class ChatInput {
     /**
@@ -235,14 +237,19 @@ export default class ChatInput {
             await chatDB.saveSetting('searchEnabled', this.app.searchEnabled);
         });
 
-        // Reasoning toggle functionality (entire row is clickable)
-        const reasoningToggleRow = document.getElementById('reasoning-toggle-row');
-        if (reasoningToggleRow) {
-            reasoningToggleRow.addEventListener('click', async (e) => {
-                e.stopPropagation(); // Prevent menu from closing
-                this.app.reasoningEnabled = !this.app.reasoningEnabled;
-                this.updateReasoningToggleUI();
-                await chatDB.saveSetting('reasoningEnabled', this.app.reasoningEnabled);
+        // Reasoning effort control (extended-thinking toggle removed from UI;
+        // reasoning is kept enabled in app state for backward-compatible behavior)
+        const reasoningEffortToggle = document.getElementById('reasoning-effort-toggle');
+        if (reasoningEffortToggle) {
+            reasoningEffortToggle.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const btn = e.target.closest('.reasoning-effort-btn');
+                if (!btn || btn.disabled) return;
+
+                const nextEffort = normalizeReasoningEffort(btn.dataset.reasoningEffort);
+                this.app.reasoningEffort = nextEffort;
+                this.updateReasoningEffortUI();
+                await chatDB.saveSetting('reasoningEffort', nextEffort);
             });
         }
 
@@ -268,13 +275,9 @@ export default class ChatInput {
                 const btnRect = btn.getBoundingClientRect();
                 menu.style.left = `${btnRect.left}px`;
                 menu.style.bottom = `${window.innerHeight - btnRect.top + 8}px`;
-
-                // Lock width to the initial rendered size to prevent resizing on async content
-                const menuRect = menu.getBoundingClientRect();
-                if (menuRect.width) {
-                    menu.style.width = `${menuRect.width}px`;
-                    menu.style.maxWidth = `${menuRect.width}px`;
-                }
+                menu.style.width = `${SETTINGS_MENU_WIDTH_PX}px`;
+                menu.style.minWidth = `${SETTINGS_MENU_WIDTH_PX}px`;
+                menu.style.maxWidth = `${SETTINGS_MENU_WIDTH_PX}px`;
 
                 this.ensureScrubberModelsLoaded();
             } else {
@@ -1595,13 +1598,33 @@ export default class ChatInput {
     }
 
     /**
-     * Updates the visual state of the reasoning toggle.
+     * Legacy hook: extended-thinking toggle was removed from settings.
+     * Keep reasoning enabled and update the effort control only.
      */
     updateReasoningToggleUI() {
-        const toggle = document.getElementById('reasoning-toggle-btn');
-        if (!toggle) return;
-        toggle.classList.toggle('switch-active', this.app.reasoningEnabled);
-        toggle.classList.toggle('switch-inactive', !this.app.reasoningEnabled);
+        this.app.reasoningEnabled = true;
+        this.updateReasoningEffortUI();
+    }
+
+    /**
+     * Updates the visual state of the reasoning effort selector.
+     */
+    updateReasoningEffortUI() {
+        const container = document.getElementById('reasoning-effort-toggle');
+        if (!container) return;
+
+        const normalizedEffort = normalizeReasoningEffort(this.app.reasoningEffort);
+        this.app.reasoningEffort = normalizedEffort;
+        container.dataset.effort = normalizedEffort;
+        container.setAttribute('aria-disabled', 'false');
+        container.classList.remove('is-disabled');
+
+        const buttons = container.querySelectorAll('.reasoning-effort-btn');
+        buttons.forEach((button) => {
+            const isActive = button.dataset.reasoningEffort === normalizedEffort;
+            button.setAttribute('aria-checked', String(isActive));
+            button.disabled = false;
+        });
     }
 
     /**

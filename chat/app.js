@@ -20,6 +20,7 @@ import { getFileIconSvg } from './services/fileUtils.js';
 import { exportChats } from './services/globalExport.js';
 import { exportTickets } from './services/globalExport.js';
 import { parseReasoningContent } from './services/reasoningParser.js';
+import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort } from './services/reasoningConfig.js';
 import { fetchUrlMetadata } from './services/urlMetadata.js';
 import networkProxy from './services/networkProxy.js';
 import inferenceService from './services/inference/inferenceService.js';
@@ -157,6 +158,7 @@ class ChatApp {
 
         this.searchEnabled = true;
         this.reasoningEnabled = true;
+        this.reasoningEffort = DEFAULT_REASONING_EFFORT;
         this.sessionSearchQuery = '';
         this.sessionSearchDebounce = null;
         this.sessionSearchRequestId = 0;
@@ -1439,7 +1441,7 @@ class ChatApp {
         const settingsPromise = Promise.all([
             chatDB.getSetting('selectedModel'),
             chatDB.getSetting('searchEnabled'),
-            chatDB.getSetting('reasoningEnabled')
+            chatDB.getSetting('reasoningEffort')
         ]);
 
         // Restore session from sessionStorage as early as possible for chat area hydration.
@@ -1451,7 +1453,7 @@ class ChatApp {
             }
         }
 
-        const [storedModelPreference, savedSearchEnabled, savedReasoningEnabled] = await settingsPromise;
+        const [storedModelPreference, savedSearchEnabled, savedReasoningEffort] = await settingsPromise;
 
         // Process model preference
         const normalizedModelName = this.upgradeDefaultModelPreference(
@@ -1468,14 +1470,18 @@ class ChatApp {
         // Restore search state
         this.searchEnabled = savedSearchEnabled !== undefined ? savedSearchEnabled : true;
 
-        // Restore reasoning state
-        this.reasoningEnabled = savedReasoningEnabled !== undefined ? savedReasoningEnabled : true;
+        // Extended-thinking toggle is intentionally removed from UI for now.
+        // Keep the legacy flag always enabled and persist it for import/export compatibility.
+        this.reasoningEnabled = true;
+        chatDB.saveSetting('reasoningEnabled', true).catch(() => {});
+        this.reasoningEffort = normalizeReasoningEffort(savedReasoningEffort);
 
         // Render local data immediately (session from sessionStorage + model/settings from DB).
         this.renderMessages();
         this.renderCurrentModel();
         this.chatInput.updateSearchToggleUI();
         this.chatInput.updateReasoningToggleUI();
+        this.chatInput.updateReasoningEffortUI();
         this.updateShareButtonUI();
         // Force Safari to reset textarea layout after restoring session
         this.resetMessageInputLayout({ resetScroll: true });
@@ -3817,7 +3823,8 @@ class ChatApp {
                             this.chatArea.updateStreamingReasoning(streamingMessageId, streamedReasoning);
                         }
                     },
-                    this.reasoningEnabled // Use current reasoning toggle state
+                    this.reasoningEnabled, // Use current reasoning toggle state
+                    this.reasoningEffort
                 );
 
                 // Save the final message content with token data, reasoning, and citations
@@ -4365,7 +4372,8 @@ class ChatApp {
                             this.chatArea.updateStreamingReasoning(streamingMessageId, streamedReasoning);
                         }
                     },
-                    this.reasoningEnabled
+                    this.reasoningEnabled,
+                    this.reasoningEffort
                 );
 
                 // Save the final message content with token data, reasoning, and citations

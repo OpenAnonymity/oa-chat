@@ -518,19 +518,6 @@
                                                     </svg>
                                                 </a>
 
-                                                <!-- Reasoning toggle section -->
-                                                <div class="border-t border-border pt-2 mt-2">
-                                                    <div id="reasoning-toggle-row" class="flex items-center justify-between px-3 py-1.5 cursor-pointer hover-highlight rounded-md">
-                                                        <span class="text-sm text-popover-foreground select-none">Extended Thinking</span>
-                                                        <div
-                                                            id="reasoning-toggle-btn"
-                                                            class="switch-toggle switch-active"
-                                                        >
-                                                            <span class="switch-toggle-indicator"></span>
-                                                        </div>
-                                                    </div>
-                                                </div>
-
                                                 <!-- Data Controls Section (modular - can be moved elsewhere) -->
                                                 <div id="data-management-section" class="mt-2 border-t border-border pt-2">
                                                     <p class="px-3 pb-1 text-xs font-light tracking-wide text-muted-foreground">Data Controls</p>
@@ -569,6 +556,51 @@
                                                         <select id="scrubber-model-select" class="flex-1 min-w-0 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-popover-foreground focus:outline-none focus:ring-1 focus:ring-ring truncate">
                                                             <option value="" disabled selected>Loading…</option>
                                                         </select>
+                                                    </div>
+                                                </div>
+
+                                                <!-- Reasoning toggle section -->
+                                                <div class="border-t border-border pt-2 mt-2">
+                                                    <p class="px-3 pb-2 text-xs font-light tracking-wide text-muted-foreground">Thinking Effort</p>
+                                                    <!-- <div class="px-3 py-1 flex items-center gap-2">
+                                                        <span class="text-xs text-muted-foreground shrink-0">Thinking effort</span>
+                                                    </div> -->
+                                                    <div class="px-3 pb-1">
+                                                        <div id="reasoning-effort-toggle" class="theme-toggle-container reasoning-effort-toggle" role="radiogroup" aria-label="Reasoning effort selection" aria-disabled="false" data-effort="medium">
+                                                            <div class="theme-toggle-indicator"></div>
+                                                            <button type="button" class="theme-toggle-btn reasoning-effort-btn" data-reasoning-effort="low" aria-checked="false" aria-label="Low effort" title="Low effort">
+                                                                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" class="w-4 h-4">
+                                                                    <path d="M3 16.5V12.5" />
+                                                                    <path d="M7.7 16.5V10" class="effort-muted" />
+                                                                    <path d="M12.3 16.5V7.5" class="effort-muted" />
+                                                                    <path d="M17 16.5V5" class="effort-muted" />
+                                                                </svg>
+                                                            </button>
+                                                            <button type="button" class="theme-toggle-btn reasoning-effort-btn" data-reasoning-effort="medium" aria-checked="true" aria-label="Medium effort" title="Medium effort">
+                                                                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" class="w-4 h-4">
+                                                                    <path d="M3 16.5V12.5" />
+                                                                    <path d="M7.7 16.5V10" />
+                                                                    <path d="M12.3 16.5V7.5" class="effort-muted" />
+                                                                    <path d="M17 16.5V5" class="effort-muted" />
+                                                                </svg>
+                                                            </button>
+                                                            <button type="button" class="theme-toggle-btn reasoning-effort-btn" data-reasoning-effort="high" aria-checked="false" aria-label="High effort" title="High effort">
+                                                                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" class="w-4 h-4">
+                                                                    <path d="M3 16.5V12.5" />
+                                                                    <path d="M7.7 16.5V10" />
+                                                                    <path d="M12.3 16.5V7.5" />
+                                                                    <path d="M17 16.5V5" class="effort-muted" />
+                                                                </svg>
+                                                            </button>
+                                                            <button type="button" class="theme-toggle-btn reasoning-effort-btn" data-reasoning-effort="xhigh" aria-checked="false" aria-label="Heavy effort" title="Heavy effort">
+                                                                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" class="w-4 h-4">
+                                                                    <path d="M3 16.5V12.5" />
+                                                                    <path d="M7.7 16.5V10" />
+                                                                    <path d="M12.3 16.5V7.5" />
+                                                                    <path d="M17 16.5V5" />
+                                                                </svg>
+                                                            </button>
+                                                        </div>
                                                     </div>
                                                 </div>
 

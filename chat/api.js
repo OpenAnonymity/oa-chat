@@ -3,6 +3,7 @@ import networkProxy from './services/networkProxy.js';
 import { getDefaultModelConfig } from './services/modelConfig.js';
 import apiKeyStore from './services/apiKeyStore.js';
 import { loadModelCatalog, saveModelCatalog } from './services/modelCatalogCache.js';
+import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort } from './services/reasoningConfig.js';
 
 const OPENROUTER_BACKEND_ID = 'openrouter';
 
@@ -324,7 +325,7 @@ class OpenRouterAPI {
     }
 
     // Stream chat completion with support for multimodal content, web search, and reasoning traces
-    async streamCompletion(messages, modelId, apiKey, onChunk, onTokenUpdate, files = [], searchEnabled = false, abortController = null, onReasoningChunk = null, reasoningEnabled = true) {
+    async streamCompletion(messages, modelId, apiKey, onChunk, onTokenUpdate, files = [], searchEnabled = false, abortController = null, onReasoningChunk = null, reasoningEnabled = true, reasoningEffort = DEFAULT_REASONING_EFFORT) {
         const key = apiKey || this.getApiKey();
 
         if (!key) {
@@ -336,6 +337,11 @@ class OpenRouterAPI {
         if (searchEnabled && !modelId.includes(':online')) {
             effectiveModelId = `${modelId}:online`;
         }
+
+        const normalizedReasoningEffort = normalizeReasoningEffort(reasoningEffort);
+        const reasoningPayload = reasoningEnabled
+            ? { effort: normalizedReasoningEffort }
+            : null;
 
         // Always use chat/completions endpoint
         // We'll handle reasoning SSE events if they come through
@@ -583,10 +589,9 @@ class OpenRouterAPI {
 
             // Add reasoning parameter if enabled (OpenRouter unified reasoning API)
             // See: https://openrouter.ai/docs/guides/best-practices/reasoning-tokens
-            // Only apply to Claude models - other thinking models (Gemini, GPT) handle reasoning natively
-            const isClaudeModel = effectiveModelId.includes('anthropic/') || effectiveModelId.includes('claude');
-            if (reasoningEnabled && isClaudeModel) {
-                requestBody.reasoning = { enabled: true };
+            // OpenRouter maps this across providers/models based on support.
+            if (reasoningPayload) {
+                requestBody.reasoning = reasoningPayload;
             }
 
             const fetchOptions = {
@@ -621,7 +626,12 @@ class OpenRouterAPI {
 
             // Log the streaming request
             if (window.networkLogger) {
-                const logBody = { model: modelId, messages: messages.length + ' messages', stream: true };
+                const logBody = {
+                    model: modelId,
+                    messages: messages.length + ' messages',
+                    stream: true,
+                    reasoning: reasoningPayload
+                };
 
                 window.networkLogger.logRequest({
                     type: 'openrouter',
@@ -916,7 +926,12 @@ class OpenRouterAPI {
 
             // Log failed request
             if (window.networkLogger) {
-                const logBody = { model: modelId, messages: messages.length + ' messages', stream: true };
+                const logBody = {
+                    model: modelId,
+                    messages: messages.length + ' messages',
+                    stream: true,
+                    reasoning: reasoningPayload
+                };
 
                 window.networkLogger.logRequest({
                     type: 'openrouter',

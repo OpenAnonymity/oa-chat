@@ -6,6 +6,7 @@
 import ticketStore from './ticketStore.js';
 import preferencesStore, { PREF_KEYS } from './preferencesStore.js';
 import { chatDB } from '../db.js';
+import { normalizeReasoningEffort } from './reasoningConfig.js';
 
 const SUPPORTED_FORMAT_VERSIONS = ['1.0'];
 
@@ -245,6 +246,11 @@ async function applyPreferences(preferences) {
         if ('reasoningEnabled' in preferences) {
             await chatDB.saveSetting('reasoningEnabled', preferences.reasoningEnabled);
             applied.push('reasoningEnabled');
+        }
+
+        if ('reasoningEffort' in preferences) {
+            await chatDB.saveSetting('reasoningEffort', normalizeReasoningEffort(preferences.reasoningEffort));
+            applied.push('reasoningEffort');
         }
 
     }

@@ -6,6 +6,7 @@
 import preferencesStore, { PREF_KEYS } from './preferencesStore.js';
 import ticketStore from './ticketStore.js';
 import { chatDB } from '../db.js';
+import { normalizeReasoningEffort } from './reasoningConfig.js';
 
 const FORMAT_VERSION = '1.0';
 const APP_NAME = 'oa-fastchat';
@@ -95,6 +96,11 @@ async function collectPreferencesFromIndexedDB() {
         const reasoningEnabled = await chatDB.getSetting('reasoningEnabled');
         if (reasoningEnabled !== undefined) {
             preferences.reasoningEnabled = reasoningEnabled;
+        }
+
+        const reasoningEffort = await chatDB.getSetting('reasoningEffort');
+        if (reasoningEffort !== undefined) {
+            preferences.reasoningEffort = normalizeReasoningEffort(reasoningEffort);
         }
 
     } catch (e) {

@@ -1833,6 +1833,63 @@ html.serif-mode .share-preview-content {
     color: hsl(var(--color-foreground));
 }
 
+/* ----------------------------------------
+   Reasoning Effort Toggle (4-way Segmented Control)
+   Low / Medium / High / Heavy
+   ---------------------------------------- */
+
+.reasoning-effort-toggle .theme-toggle-indicator {
+    width: calc(25% - 3.5px);
+}
+
+.reasoning-effort-toggle[data-effort="low"] .theme-toggle-indicator {
+    transform: translateX(0);
+}
+
+.reasoning-effort-toggle[data-effort="medium"] .theme-toggle-indicator {
+    transform: translateX(calc(100% + 2px));
+}
+
+.reasoning-effort-toggle[data-effort="high"] .theme-toggle-indicator {
+    transform: translateX(calc(200% + 4px));
+}
+
+.reasoning-effort-toggle[data-effort="xhigh"] .theme-toggle-indicator {
+    transform: translateX(calc(300% + 6px));
+}
+
+.reasoning-effort-btn {
+    padding: 0.4rem 0.35rem;
+    color: hsl(var(--color-foreground) / 0.88);
+}
+
+.reasoning-effort-btn:hover {
+    color: hsl(var(--color-foreground));
+}
+
+.reasoning-effort-btn[aria-checked="true"] {
+    color: hsl(var(--color-foreground));
+}
+
+.reasoning-effort-btn svg {
+    display: block;
+    width: 1.05rem;
+    height: 1.05rem;
+    stroke-width: 2.2;
+}
+
+.reasoning-effort-btn .effort-muted {
+    opacity: 0.5;
+}
+
+.reasoning-effort-toggle.is-disabled {
+    opacity: 0.55;
+}
+
+.reasoning-effort-toggle.is-disabled .reasoning-effort-btn {
+    pointer-events: none;
+}
+
 /* Flat mode - Assistant messages: remove bubble, keep text */
 html.flat-mode .message-assistant {
     background-color: transparent;
