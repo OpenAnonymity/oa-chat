@@ -1,139 +1,76 @@
 /**
  * Privacy Pass Provider for OA Inference Tickets
- * Direct WASM implementation without browser extension dependency
+ * Pure JS implementation using @cloudflare/privacypass-ts (RFC 9578).
  */
 
-class WasmDirectProvider {
+import { publicVerif, TokenChallenge } from '../vendor/privacypass-ts/privacypass-ts.min.js';
+
+const { Client, BlindRSAMode } = publicVerif;
+
+function b64urlEncode(bytes) {
+    let s = '';
+    for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+    return btoa(s).replace(/\+/g, '-').replace(/\//g, '_');
+}
+
+function b64urlDecode(str) {
+    const padded = str.replace(/-/g, '+').replace(/_/g, '/');
+    return Uint8Array.from(atob(padded), c => c.charCodeAt(0));
+}
+
+class PrivacyPassProvider {
     constructor() {
         this.initialized = false;
-        this.wasm = null;
     }
 
     async initialize() {
         if (this.initialized) return true;
-
-        try {
-            console.log('Loading OA Inference Ticket WASM module...');
-
-            // Import the WASM module dynamically
-            const wasmModule = await import('../wasm/oa_inference_ticket.js');
-
-            // Initialize the WASM - fetch and load the .wasm file
-            await wasmModule.default('wasm/oa_inference_ticket_bg.wasm');
-
-            // Store reference to WASM functions
-            this.wasm = wasmModule;
-            this.initialized = true;
-
-            console.log('✅ OA Inference Ticket WASM initialized');
-            return true;
-        } catch (error) {
-            console.error('❌ Failed to initialize WASM:', error);
-            throw new Error(`WASM initialization failed: ${error.message}`);
-        }
+        this.initialized = true;
+        console.log('✅ Privacy Pass provider ready (pure JS, no WASM)');
+        return true;
     }
 
-    async createChallenge(issuerName, originInfo) {
-        // For compatibility - WASM creates challenge internally
+    async createChallenge() {
         return null;
     }
 
-    async createSingleTokenRequest(publicKey, challenge) {
+    async createSingleTokenRequest(publicKeyB64) {
         await this.initialize();
 
-        console.log('Creating token request with WASM');
+        if (!publicKeyB64) throw new Error('Missing required parameter: publicKey');
 
-        if (!publicKey) {
-            throw new Error('Missing required parameter: publicKey');
-        }
+        const pubKeyBytes = b64urlDecode(publicKeyB64);
 
-        try {
-            // Create WWW-Authenticate header for PublicToken (RSA)
-            const wwwAuthenticate = `PublicToken token-key="${publicKey}"`;
+        // TokenChallenge fields: the only field that matters is the token type
+        // (0x0002 = Blind RSA). issuerName is required by the library (min 1
+        // byte) but the server does not validate the challenge -- it only
+        // processes the raw TokenRequest/TokenResponse blind signature blobs.
+        // redemptionContext is empty (0 bytes) and originInfo is omitted,
+        // meaning the ticket carries no extra information beyond the blind
+        // signature itself. No metadata, no identity, no session binding.
+        const challenge = new TokenChallenge(
+            0x0002,
+            "if you found this, email hi@openanonymity.ai with code OA-BLIND-2026 -- we need you :D",
+            new Uint8Array(0)
+        );
 
-            const headerJson = JSON.stringify({
-                header: wwwAuthenticate,
-                error: ""
-            });
+        const client = new Client(BlindRSAMode.PSS);
+        const tokenRequest = await client.createTokenRequest(challenge, pubKeyBytes);
+        const blindedRequest = b64urlEncode(tokenRequest.serialize());
 
-            // Call WASM token_request function
-            const responseJson = await this.wasm.token_request(headerJson, 1);
-            const response = JSON.parse(responseJson);
-
-            // Check for errors
-            if (response.error && response.error !== "") {
-                throw new Error(`Token request failed: ${response.error}`);
-            }
-
-            // Extract client state and token request
-            const clientState = response[0];
-            const tokenRequestObj = response[1];
-
-            if (!tokenRequestObj) {
-                throw new Error('Invalid token request response from WASM');
-            }
-
-            // Extract blinded request
-            let blindedRequest = '';
-            if (typeof tokenRequestObj === 'string') {
-                blindedRequest = tokenRequestObj;
-            } else if (tokenRequestObj.token_request) {
-                blindedRequest = tokenRequestObj.token_request;
-            } else {
-                throw new Error('Invalid token request format');
-            }
-
-            console.log('✅ Inference ticket request created');
-
-            return {
-                blindedRequest: blindedRequest,
-                state: clientState.state
-            };
-        } catch (error) {
-            console.error('❌ Error creating ticket request:', error);
-            throw error;
-        }
+        return { blindedRequest, state: client };
     }
 
-    async finalizeToken(signedResponse, state) {
-        if (!signedResponse || !state) {
+    async finalizeToken(signedResponseB64, client) {
+        if (!signedResponseB64 || !client) {
             throw new Error('Missing required parameters: signedResponse, state');
         }
 
-        await this.initialize();
+        const responseBytes = b64urlDecode(signedResponseB64);
+        const tokenResponse = publicVerif.TokenResponse.deserialize(responseBytes);
+        const token = await client.finalize(tokenResponse);
 
-        try {
-            // Prepare data for finalization
-            const headerJson = JSON.stringify({ header: "", error: "" });
-            const clientStateJson = JSON.stringify({
-                state: state,
-                error: ""
-            });
-            const tokenResponseJson = JSON.stringify({
-                token_response: signedResponse,
-                error: ""
-            });
-
-            // Call WASM token_finalization function
-            const resultJson = await this.wasm.token_finalization(
-                headerJson,
-                clientStateJson,
-                tokenResponseJson
-            );
-
-            const result = JSON.parse(resultJson);
-
-            if (!result.tokens || result.tokens.length === 0) {
-                throw new Error('Token finalization failed');
-            }
-
-            console.log('✅ Inference ticket finalized');
-
-            return result.tokens[0];
-        } catch (error) {
-            console.error('❌ Error finalizing ticket:', error);
-            throw error;
-        }
+        return b64urlEncode(token.serialize());
     }
 
     async checkAvailability() {
@@ -141,16 +78,11 @@ class WasmDirectProvider {
             await this.initialize();
             return true;
         } catch (error) {
-            console.log('Direct WASM not available:', error.message);
+            console.log('Privacy Pass not available:', error.message);
             return false;
         }
     }
 }
 
-// Create and export singleton instance
-const privacyPassProvider = new WasmDirectProvider();
-
+const privacyPassProvider = new PrivacyPassProvider();
 export default privacyPassProvider;
-
-
-
