@@ -702,7 +702,7 @@ class WelcomePanel {
                             </svg>
                         </div>
                         <div>
-                            <p class="welcome-guarantee-title font-medium text-foreground">Unlinkable Chats with Frontier Models</p>
+                            <p class="welcome-guarantee-title font-medium text-foreground">Unlinkable Chats with Remote Models</p>
                             <p class="welcome-guarantee-body text-muted-foreground">Every session uses <a href="https://en.wikipedia.org/wiki/Blind_signature" target="_blank" rel="noopener noreferrer" class="text-foreground welcome-link">blind signatures</a> to request a fresh ephemeral key, so you are provably anonymous. <a href="https://openanonymity.ai/blog/unlinkable-inference/#2-secure-inference-proxies" target="_blank" rel="noopener noreferrer" class="text-foreground welcome-link">Secure inference proxies</a> ensure we have no access to your prompts or responses.</p>
                         </div>
                         <!-- --------------------Query sanitization-------------------- -->
