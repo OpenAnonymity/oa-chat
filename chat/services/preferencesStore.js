@@ -54,7 +54,7 @@ const DEFAULT_PREFERENCES = {
     [PREF_KEYS.hadTicketsBefore]: false,
     [PREF_KEYS.freeAccessRequested]: false,
     [PREF_KEYS.proxySettings]: {
-        enabled: false,
+        enabled: true,
         fallbackToDirect: true
     },
     [PREF_KEYS.sharePasswordMode]: 'pin',
