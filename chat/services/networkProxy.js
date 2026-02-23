@@ -4,7 +4,7 @@ import preferencesStore, { PREF_KEYS } from './preferencesStore.js';
 import { fetchRetry, fetchRetryJson } from './fetchRetry.js';
 
 const DEFAULT_SETTINGS = {
-    enabled: false,
+    enabled: true,
     fallbackToDirect: true
 };
 
