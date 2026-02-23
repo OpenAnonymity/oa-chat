@@ -159,14 +159,14 @@ class ThanksPanel {
 
     getInputHint(kind) {
         if (kind === 'email') {
-            return 'Press Enter to submit your email to the beta waitlist.';
+            return 'Press Enter to submit your email to the request waitlist.';
         }
 
         if (kind === 'inviteCode') {
             return 'Press Enter to redeem this 24-character invite code.';
         }
 
-        return 'Enter an email or a 24-character invite code.';
+        return '';
     }
 
     async redeemInviteCode(inviteCode) {
@@ -382,7 +382,7 @@ class ThanksPanel {
                     </button>
                 </div>
 
-                <p class="text-sm text-muted-foreground mb-4">Thanks for trying oa-chat! Enter your email to request a new invite, or redeem a 24-character invite code.</p>
+                <p class="text-sm text-muted-foreground mb-4">Thanks for trying oa-chat! Enter your email to request an invite code for more tickets, or redeem if you have one.</p>
 
                 <form id="thanks-invite-form" class="w-full">
                     <div class="invite-input-wrapper flex items-center w-full h-10 border rounded-lg transition-all ${hasError ? 'input-error' : ''}">
@@ -390,7 +390,7 @@ class ThanksPanel {
                             id="thanks-access-input"
                             type="text"
                             maxlength="254"
-                            placeholder="Enter email or invite code"
+                            placeholder="Enter email or 24-character invite code"
                             class="flex-1 h-full px-3 text-sm bg-transparent text-foreground placeholder:text-muted-foreground/50 focus:outline-none"
                             value="${this.escapeHtml(this.accessInput)}"
                             autocomplete="off"
