@@ -9,7 +9,10 @@ import themeManager from '../services/themeManager.js';
 
 // localStorage key for synchronous pre-hydration check (matches preferencesStore snapshot)
 const STORAGE_KEY_DISMISSED = 'oa-welcome-dismissed';
-const MODAL_CLASSES = 'w-full max-w-md rounded-2xl border border-border shadow-lg mx-4 flex flex-col welcome-modal-enter welcome-modal-glass';
+const MODAL_CLASSES = 'rounded-2xl border border-border shadow-lg flex flex-col welcome-modal-enter welcome-modal-glass welcome-modal-scaled';
+const WELCOME_DIALOG_BASE_WIDTH = 464;
+const WELCOME_DIALOG_VIEWPORT_WIDTH_RATIO = 0.94;
+const WELCOME_THEME_TOGGLE_CLEARANCE = 8;
 const BETA_SIGNUP_URL = 'https://openanonymity.ai/beta';
 const FREE_ACCESS_EMAIL_HINT_HTML = `Enter an email for limited free access (email collected only to prevent spam). We encourage you to <a href="${BETA_SIGNUP_URL}" target="_blank" rel="noopener noreferrer" class="underline hover:text-foreground transition-colors"><strong>sign up</strong></a> for more access!`;
 const FREE_ACCESS_UNAVAILABLE_HINT = 'Free access is unavailable right now. Please sign up for an invite code.';
@@ -45,6 +48,8 @@ class WelcomePanel {
         this.ticketsUpdatedHandler = null;
         this.welcomeAnchorTop = null;
         this.animateOnNextRender = false;
+        this.viewportResizeHandler = null;
+        this.overlayBasePadding = { top: 16, right: 16, bottom: 16, left: 16 };
     }
 
     async init() {
@@ -88,6 +93,10 @@ class WelcomePanel {
         document.documentElement.removeAttribute('data-welcome-hidden');
         this.app?.clearToast?.();
         this.app?.clearUpdateToast?.();
+        this.captureOverlayBasePadding();
+        this.ensureResponsiveScaleListener();
+        this.applyWelcomeDialogScale();
+        requestAnimationFrame(() => this.applyWelcomeDialogScale());
 
         // Attach close handlers
         this.overlay.onclick = (e) => { if (e.target === this.overlay) this.handleCloseAttempt(); };
@@ -103,16 +112,12 @@ class WelcomePanel {
     }
 
     isCloseAllowedByLinkContext() {
-        if (this.app?.hasInitialLinkContext) {
-            return true;
+        if (typeof this.app?.isElectronEnvironment === 'function') {
+            return this.app.isElectronEnvironment();
         }
-        if (this.app?.pendingTicketCode?.code) {
-            return true;
-        }
-        if (this.app?.rightPanel?.pendingInvitationSource) {
-            return true;
-        }
-        return false;
+
+        const ua = navigator?.userAgent || '';
+        return !!(window?.electronAPI?.isElectron || window?.process?.versions?.electron || ua.includes('Electron'));
     }
 
     close() {
@@ -124,10 +129,12 @@ class WelcomePanel {
         document.documentElement.setAttribute('data-welcome-hidden', 'true');
         this.overlay.style.alignItems = '';
         this.overlay.style.paddingTop = '';
+        this.overlay.style.paddingBottom = '';
         this.welcomeAnchorTop = null;
 
         this.themeUnsubscribe?.();
         this.themeUnsubscribe = null;
+        this.removeResponsiveScaleListener();
 
         if (this.escapeHandler) {
             document.removeEventListener('keydown', this.escapeHandler);
@@ -284,6 +291,7 @@ class WelcomePanel {
             feedbackEl.classList.remove('text-red-500', 'text-muted-foreground');
             feedbackEl.classList.add('hidden');
             this.resetWelcomeDialogAnchor();
+            this.applyWelcomeDialogScale();
             return;
         }
 
@@ -291,6 +299,7 @@ class WelcomePanel {
         feedbackEl.innerHTML = feedbackHtml;
         feedbackEl.classList.remove('hidden', 'text-red-500', 'text-muted-foreground');
         feedbackEl.classList.add(this.redeemError ? 'text-red-500' : 'text-muted-foreground');
+        this.applyWelcomeDialogScale();
     }
 
     anchorWelcomeDialogFromCurrentPosition() {
@@ -312,7 +321,86 @@ class WelcomePanel {
         if (!this.overlay) return;
         this.overlay.style.alignItems = '';
         this.overlay.style.paddingTop = '';
+        this.overlay.style.paddingBottom = '';
         this.welcomeAnchorTop = null;
+    }
+
+    captureOverlayBasePadding() {
+        if (!this.overlay) return;
+        const computedOverlayStyle = window.getComputedStyle(this.overlay);
+        this.overlayBasePadding = {
+            top: parseFloat(computedOverlayStyle.paddingTop) || 16,
+            right: parseFloat(computedOverlayStyle.paddingRight) || 16,
+            bottom: parseFloat(computedOverlayStyle.paddingBottom) || 16,
+            left: parseFloat(computedOverlayStyle.paddingLeft) || 16
+        };
+    }
+
+    ensureResponsiveScaleListener() {
+        if (this.viewportResizeHandler) return;
+
+        this.viewportResizeHandler = () => {
+            this.applyWelcomeDialogScale();
+        };
+
+        window.addEventListener('resize', this.viewportResizeHandler);
+        window.addEventListener('orientationchange', this.viewportResizeHandler);
+        if (window.visualViewport) {
+            window.visualViewport.addEventListener('resize', this.viewportResizeHandler);
+            window.visualViewport.addEventListener('scroll', this.viewportResizeHandler);
+        }
+    }
+
+    removeResponsiveScaleListener() {
+        if (!this.viewportResizeHandler) return;
+
+        window.removeEventListener('resize', this.viewportResizeHandler);
+        window.removeEventListener('orientationchange', this.viewportResizeHandler);
+        if (window.visualViewport) {
+            window.visualViewport.removeEventListener('resize', this.viewportResizeHandler);
+            window.visualViewport.removeEventListener('scroll', this.viewportResizeHandler);
+        }
+        this.viewportResizeHandler = null;
+    }
+
+    applyWelcomeDialogScale() {
+        if (!this.isOpen || !this.overlay) return;
+        if (this.overlay.classList.contains('hidden')) return;
+
+        const dialog = this.overlay.querySelector('[role="dialog"]');
+        if (!dialog) return;
+
+        const viewportWidth = window.visualViewport?.width || window.innerWidth;
+        const viewportHeight = window.visualViewport?.height || window.innerHeight;
+        const availableWidth = Math.max(1, viewportWidth - this.overlayBasePadding.left - this.overlayBasePadding.right);
+
+        const themeToggle = document.getElementById('welcome-theme-toggle');
+        const themeToggleBottom = themeToggle ? Math.ceil(themeToggle.getBoundingClientRect().bottom) : 0;
+        const minimumTopPadding = Math.max(
+            this.overlayBasePadding.top,
+            themeToggleBottom > 0 ? themeToggleBottom + WELCOME_THEME_TOGGLE_CLEARANCE : this.overlayBasePadding.top
+        );
+        const availableHeight = Math.max(1, viewportHeight - minimumTopPadding - this.overlayBasePadding.bottom);
+        const naturalDialogHeight = Math.max(1, dialog.offsetHeight);
+
+        const targetWidthFromScreen = Math.max(1, availableWidth * WELCOME_DIALOG_VIEWPORT_WIDTH_RATIO);
+        const chosenPanelWidth = Math.min(WELCOME_DIALOG_BASE_WIDTH, targetWidthFromScreen);
+        const widthScale = chosenPanelWidth / WELCOME_DIALOG_BASE_WIDTH;
+        const heightScale = availableHeight / naturalDialogHeight;
+        const scale = Math.min(1, widthScale, heightScale);
+        const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
+        const scaledDialogHeight = naturalDialogHeight * safeScale;
+        const extraVerticalSpace = Math.max(0, availableHeight - scaledDialogHeight);
+        const centeredTopPadding = minimumTopPadding + (extraVerticalSpace / 2);
+        const maximumTopPadding = minimumTopPadding + extraVerticalSpace;
+        const targetTopPadding = this.welcomeAnchorTop !== null
+            ? Math.min(maximumTopPadding, Math.max(minimumTopPadding, this.welcomeAnchorTop))
+            : centeredTopPadding;
+
+        dialog.style.setProperty('--welcome-modal-scale', safeScale.toFixed(4));
+        this.overlay.style.alignItems = 'flex-start';
+        this.overlay.style.paddingTop = `${Math.round(targetTopPadding)}px`;
+        this.overlay.style.paddingBottom = `${Math.round(this.overlayBasePadding.bottom)}px`;
     }
 
     // =========================================================================
@@ -514,6 +602,8 @@ class WelcomePanel {
             this.resetWelcomeDialogAnchor();
         }
         this.attachEventListeners();
+        this.applyWelcomeDialogScale();
+        requestAnimationFrame(() => this.applyWelcomeDialogScale());
     }
 
     renderWelcomeStep() {
@@ -554,8 +644,8 @@ class WelcomePanel {
                 <style>
                     /* Entrance animation matching app's subtle motion language */
                     @keyframes welcomeModalIn {
-                        from { opacity: 0; transform: scale(0.97) translateY(6px); }
-                        to { opacity: 1; transform: scale(1) translateY(0); }
+                        from { opacity: 0; transform: scale(calc(var(--welcome-modal-scale, 1) * 0.97)) translateY(6px); }
+                        to { opacity: 1; transform: scale(var(--welcome-modal-scale, 1)) translateY(0); }
                     }
                     .welcome-modal-enter {
                         animation: welcomeModalIn 0.2s ease-out;
@@ -1135,6 +1225,7 @@ class WelcomePanel {
     destroy() {
         this.themeUnsubscribe?.();
         this.themeUnsubscribe = null;
+        this.removeResponsiveScaleListener();
         if (this.ticketsUpdatedHandler) {
             window.removeEventListener('tickets-updated', this.ticketsUpdatedHandler);
             this.ticketsUpdatedHandler = null;

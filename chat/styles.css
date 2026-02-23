@@ -3662,6 +3662,16 @@ html {
 }
 
 /* Welcome landing (kept in static CSS to avoid runtime <style> injection jank) */
+.welcome-modal-scaled {
+    --welcome-modal-scale: 1;
+    width: 29rem !important;
+    max-width: 29rem !important;
+    flex-shrink: 0;
+    transform: scale(var(--welcome-modal-scale));
+    transform-origin: top center;
+    will-change: transform;
+}
+
 .welcome-landing {
     margin-top: 12vh;
     opacity: 0;
