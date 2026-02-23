@@ -475,6 +475,10 @@ class StationVerifier {
         console.log('📡 Querying broadcast for station verification status...');
 
         try {
+            // bypassProxy: verifier is a hardware-attested TEE with open-source
+            // code -- its behavior is provable via attestation. It does not log
+            // IPs. Even if it saw the user's IP, it cannot link it to user identity
+            // because the key carries no identity (blind signatures).
             const { response, data } = await networkProxy.fetchWithRetryJson(
                 `${VERIFIER_URL}/broadcast`,
                 {},

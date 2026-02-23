@@ -1,6 +1,37 @@
 /**
  * Privacy Pass Provider for OA Inference Tickets
  * Pure JS implementation using @cloudflare/privacypass-ts (RFC 9578).
+ *
+ * Unlinkability guarantee:
+ *
+ * This module implements RSA blind signatures (PublicToken protocol, 0x0002).
+ * During ticket issuance, the client blinds a token locally before sending it
+ * to the station for signing. The station signs the blinded request without
+ * seeing the underlying token. The client then unblinds the signed response
+ * locally to produce a finalized ticket.
+ *
+ * At redemption, the finalized ticket is cryptographically unlinkable to the
+ * blind-signing event. No party except the user has ever seen the finalized
+ * ticket before redemption. The station therefore cannot correlate "I signed
+ * blind request B" to "ticket T was redeemed for API key K."
+ *
+ * This is the cryptographic foundation of unlinkable inference: the station
+ * issues an ephemeral API key in exchange for a valid ticket, but cannot link
+ * that key back to any prior interaction or user identity.
+ *
+ * Implementation: @cloudflare/privacypass-ts (Apache-2.0)
+ *   - https://github.com/cloudflare/privacypass-ts
+ *   - Uses @cloudflare/blindrsa-ts for RSA blind signatures via Web Crypto API
+ *
+ * Note: this system only uses the blind signature primitive from Privacy Pass.
+ * Token challenges are client-defined and not validated server-side. A future
+ * simplification could drop to raw @cloudflare/blindrsa-ts:
+ *   - https://github.com/cloudflare/blindrsa-ts
+ *
+ * Performance: RSA blind operations use pure JS big-number math, which has
+ * some performance degradation compared to rust-based WASM but is not noticeable
+ * in practice since issuance (ticket acquisition) is infrequent. The benefit
+ * is ease of audit -- no compiled binaries comparison.
  */
 
 import { publicVerif, TokenChallenge } from '../vendor/privacypass-ts/privacypass-ts.min.js';

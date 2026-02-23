@@ -1,4 +1,10 @@
 // OpenRouter API integration
+//
+// Direct-to-provider architecture: all inference requests (completions, streaming)
+// go directly from the user's browser to OpenRouter over HTTPS. No OA system (org,
+// station, verifier) is in the inference data path. The ephemeral API key carries no
+// user identity binding -- OpenRouter sees inference traffic from an anonymous
+// ephemeral key with no way to identify the user behind it.
 import networkProxy from './services/networkProxy.js';
 import { getDefaultModelConfig } from './services/modelConfig.js';
 import apiKeyStore from './services/apiKeyStore.js';

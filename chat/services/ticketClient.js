@@ -1,6 +1,30 @@
 /**
- * Ticket Client
- * Handles inference ticket registration and API key provisioning via the org API.
+ * Ticket Client -- inference ticket lifecycle and ephemeral API key requests.
+ *
+ * Unlinkability model (for auditors):
+ *
+ * This module talks to the org API for ticket issuance and ephemeral API key requests.
+ * The org does NOT need to be trusted for unlinkability:
+ *
+ * 1. All blinding/unblinding runs client-side (privacyPass.js). The org
+ *    only ever sees blinded requests at issuance and finalized (unblinded)
+ *    tickets at redemption -- these are cryptographically unlinkable.
+ *
+ * 2. Even a fully malicious org cannot link issuance to redemption, cannot see
+ *    inference prompts/responses, and cannot deanonymize users. Its worst case
+ *    is denial of service, not privacy breach.
+ *
+ * 3. The org being closed-source does not affect unlinkability -- the
+ *    security-critical crypto runs client-side via @cloudflare/privacypass-ts
+ *    (Apache-2.0, auditable pure JS, no WASM).
+ *
+ * 4. Defense-in-depth: even if blind signature unlinkability were somehow
+ *    weakened through side channels (timing, IP), no OA system sees prompts or
+ *    responses (sent directly from browser to provider), so inference remains
+ *    unlinkable regardless.
+ *
+ * See docs/PRIVACY_MODEL.md, docs/UNLINKABILITY_PROOF.md, and
+ * https://openanonymity.ai/blog/unlinkable-inference/
  */
 
 import privacyPassProvider from './privacyPass.js';
@@ -154,6 +178,10 @@ class TicketClient {
         }
     }
 
+    // Unlinkability: the org learns the email here. It will know email -> credential
+    // -> N blinded tickets. However, blind signatures still prevent the org from
+    // linking specific redeemed finalized tickets back to this email, because blinded
+    // requests are cryptographically unlinkable to finalized tickets.
     async requestFreeAccess(email) {
         const freeAccessUrl = `${ORG_API_BASE}/chat/free_access`;
         const requestHeaders = { 'Content-Type': 'application/json' };
@@ -292,6 +320,13 @@ class TicketClient {
 
             if (progressCallback) progressCallback('Getting issuer public key...', 20);
 
+            // Public key consistency: this endpoint is publicly accessible and
+            // unauthenticated. Any user (or third party) can call it at any time
+            // to record the current public key and compare it against the key used
+            // in their own ticket issuance -- or against keys observed by others.
+            // Since these verification calls are made independently and at
+            // unpredictable times, the org cannot serve per-user keys without
+            // detection. Future: automated transparency log for key consistency.
             let publicKey;
             try {
                 const { data: keyData } = await networkProxy.fetchWithRetryJson(
@@ -343,6 +378,12 @@ class TicketClient {
 
             if (progressCallback) progressCallback('Sending blinded tickets to server for signing...', 50);
 
+            // Unlinkability: the org receives the credential and blinded requests here.
+            // It knows "credential X -> N blinded requests" but only ever sees the
+            // blinded form. At redemption (/api/request_key), the org will see finalized
+            // (unblinded) tickets for the first time -- cryptographically unlinkable to
+            // these blinded requests. Even with complete records, the org cannot correlate
+            // issuance to redemption. This is the core guarantee of blind signatures.
             const registerUrl = `${ORG_API_BASE}/api/alpha-register`;
             const registerBody = {
                 credential: invitationCode,
@@ -631,6 +672,16 @@ class TicketClient {
     /**
      * Request an API key by redeeming inference tickets.
      *
+     * Unlinkability: the org/station receives finalized tickets and returns an API key.
+     * The finalized ticket is the output of blind signature unblinding -- it is
+     * cryptographically unlinkable to the blind-signing event. No party except the
+     * user has ever seen this finalized ticket before this request. Even though this
+     * request routes through the org API, the finalized tickets presented here are
+     * seen by the org for the first time and are cryptographically unlinkable to the
+     * blinded requests from the earlier alphaRegister call. The org therefore cannot
+     * correlate "I signed blind request B" to "ticket T was redeemed for key K."
+     * The issued API key carries no user identity.
+     *
      * @param {number} ticketCount - Number of tickets to use (default: 1)
      * @returns {Promise<Object>} API key data with verification signatures
      */
@@ -708,7 +759,7 @@ class TicketClient {
                     if (!response.ok) {
                         const errorMessage = data.detail || data.error || data.message ||
                             (typeof data === 'string' ? data : null) ||
-                            `Failed to provision API key (${response.status})`;
+                            `Failed to request API key (${response.status})`;
 
                         if (response.status === 401 || errorMessage.includes('double-spending')) {
                             const ticketError = new Error('One or more tickets were already used. Please try again.');
@@ -852,7 +903,7 @@ class TicketClient {
                     if (!response.ok) {
                         const errorMessage = data.detail || data.error || data.message ||
                             (typeof data === 'string' ? data : null) ||
-                            `Failed to provision confidential API key (${response.status})`;
+                            `Failed to request confidential API key (${response.status})`;
 
                         if (response.status === 401 || errorMessage.includes('double-spending')) {
                             const ticketError = new Error('One or more tickets were already used. Please try again.');
@@ -875,7 +926,7 @@ class TicketClient {
             );
 
             if (!result) {
-                throw new Error('Failed to provision confidential API key.');
+                throw new Error('Failed to request confidential API key.');
             }
 
             return result;

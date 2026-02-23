@@ -1,5 +1,14 @@
 # Repository Guidelines
 
+## Privacy Model (read this first for audits)
+
+Before exploring the codebase, read [docs/PRIVACY_MODEL.md](docs/PRIVACY_MODEL.md) for
+the full unlinkability model and threat analysis. The core guarantee: **no party can link
+a user's identity to their inference activity, even if any OA component is malicious.**
+The org backend being closed-source does not affect this -- blinding runs client-side and
+no OA system sees prompts or responses. See also the blog post:
+[Unlinkable Inference as a User Privacy Architecture](https://openanonymity.ai/blog/unlinkable-inference/).
+
 ## Project Structure & Module Organization
 The app runs entirely in the browser and is organized as ES modules:
 
