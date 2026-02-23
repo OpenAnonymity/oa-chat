@@ -101,7 +101,8 @@ class TicketClient {
                 {
                     context: 'Free access availability',
                     maxAttempts: 1,
-                    timeoutMs: 10000
+                    timeoutMs: 10000,
+                    proxyConfig: { bypassProxy: true }
                 }
             );
 
@@ -173,7 +174,8 @@ class TicketClient {
                 {
                     context: 'Free access request',
                     maxAttempts: 1,
-                    timeoutMs: 15000
+                    timeoutMs: 15000,
+                    proxyConfig: { bypassProxy: true }
                 }
             ));
         } catch (error) {
