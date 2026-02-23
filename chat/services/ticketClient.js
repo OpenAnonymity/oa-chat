@@ -111,6 +111,183 @@ class TicketClient {
         return error;
     }
 
+    createWaitlistError(message, options = {}) {
+        const error = new Error(message);
+        if (options.code) error.code = options.code;
+        if (Number.isFinite(options.status)) error.status = options.status;
+        if (Number.isFinite(options.retryAfterSeconds) && options.retryAfterSeconds > 0) {
+            error.retryAfterSeconds = options.retryAfterSeconds;
+        }
+        return error;
+    }
+
+    isValidEmailInput(value) {
+        const trimmed = (value || '').trim();
+        if (!trimmed || trimmed.length > 254) return false;
+        return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
+    }
+
+    getQueryParams() {
+        if (typeof window === 'undefined') return {};
+        const params = new URLSearchParams(window.location.search);
+        const result = {};
+        params.forEach((value, key) => {
+            if (value !== '') result[key] = value;
+        });
+        return result;
+    }
+
+    cleanPayload(payload) {
+        return Object.fromEntries(
+            Object.entries(payload).filter(([, value]) => value !== undefined && value !== null && value !== '')
+        );
+    }
+
+    getWaitlistAccessToken() {
+        if (typeof window === 'undefined') return null;
+        return typeof window.OA_ACCESS_TOKEN === 'string' && window.OA_ACCESS_TOKEN.trim()
+            ? window.OA_ACCESS_TOKEN.trim()
+            : null;
+    }
+
+    async joinWaitlist(options = {}) {
+        const email = (options.email || '').trim();
+        if (!this.isValidEmailInput(email)) {
+            throw this.createWaitlistError('Please enter a valid email address.', {
+                code: 'WAITLIST_INVALID_EMAIL'
+            });
+        }
+
+        const queryParams = this.getQueryParams();
+        const utmKeys = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content'];
+        const queryUtm = utmKeys.reduce((acc, key) => {
+            const value = queryParams[key];
+            if (value) acc[key] = value;
+            return acc;
+        }, {});
+
+        const referralFromQuery =
+            queryParams.referral_code ||
+            queryParams.ref ||
+            queryParams.referral ||
+            null;
+
+        const payload = this.cleanPayload({
+            email,
+            name: (options.name || '').trim(),
+            affiliation: (options.affiliation || '').trim(),
+            source: (options.source || queryParams.source || 'beta').trim(),
+            referral_code: (options.referralCode || referralFromQuery || '').trim(),
+            ...queryUtm
+        });
+
+        const waitlistUrl = `${ORG_API_BASE}/api/waitlist/join`;
+        const accessToken = this.getWaitlistAccessToken();
+        const requestHeaders = {
+            'Content-Type': 'application/json',
+            ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
+        };
+
+        let response;
+        let data;
+        let text;
+
+        try {
+            ({ response, data, text } = await networkProxy.fetchWithRetryJson(
+                waitlistUrl,
+                {
+                    method: 'POST',
+                    headers: requestHeaders,
+                    body: JSON.stringify(payload)
+                },
+                {
+                    context: 'Waitlist join',
+                    maxAttempts: 1,
+                    timeoutMs: 15000,
+                    proxyConfig: { bypassProxy: true }
+                }
+            ));
+        } catch (error) {
+            networkLogger.logRequest({
+                type: 'ticket',
+                method: 'POST',
+                url: waitlistUrl,
+                status: 0,
+                request: {
+                    headers: networkLogger.sanitizeHeaders(requestHeaders),
+                    body: {
+                        email: '***',
+                        source: payload.source || null,
+                        has_referral: !!payload.referral_code,
+                        has_name: !!payload.name,
+                        has_affiliation: !!payload.affiliation
+                    }
+                },
+                error: error.message
+            });
+
+            throw this.createWaitlistError('Unable to submit right now. Please try again.', {
+                code: 'WAITLIST_SUBMIT_FAILED'
+            });
+        }
+
+        networkLogger.logRequest({
+            type: 'ticket',
+            method: 'POST',
+            url: waitlistUrl,
+            status: response.status,
+            request: {
+                headers: networkLogger.sanitizeHeaders(requestHeaders),
+                body: {
+                    email: '***',
+                    source: payload.source || null,
+                    has_referral: !!payload.referral_code,
+                    has_name: !!payload.name,
+                    has_affiliation: !!payload.affiliation
+                }
+            },
+            response: data
+        });
+
+        if (response.ok) {
+            return {
+                message: data?.message || "Thanks for joining! We'll be in touch soon.",
+                waitlistEntryId: data?.waitlist_entry_id || data?.entry_id || null,
+                waitlistStatus: data?.status || null
+            };
+        }
+
+        if (response.status === 429) {
+            const retryAfterSeconds = this.getRetryAfterSeconds(response, data);
+            throw this.createWaitlistError(
+                'You are submitting too quickly. Please try again in a moment.',
+                {
+                    code: 'WAITLIST_RATE_LIMITED',
+                    status: response.status,
+                    retryAfterSeconds
+                }
+            );
+        }
+
+        if (response.status === 422) {
+            throw this.createWaitlistError(
+                'Please enter a valid email address.',
+                {
+                    code: 'WAITLIST_INVALID_PAYLOAD',
+                    status: response.status
+                }
+            );
+        }
+
+        throw this.createWaitlistError(
+            data?.message || data?.error || data?.detail || text || 'Something went wrong. Please try again.',
+            {
+                code: data?.code || 'WAITLIST_SUBMIT_FAILED',
+                status: response.status
+            }
+        );
+    }
+
     async isFreeAccessAvailable() {
         const availabilityUrl = `${ORG_API_BASE}/chat/free_access/availability`;
         const requestHeaders = { 'Accept': 'application/json' };

@@ -145,6 +145,24 @@ export function getActivityDescription(log, detailed = false) {
             return 'Checking free access';
         }
 
+        if (type === 'ticket' && path.includes('/api/waitlist/join')) {
+            if (!detailed) {
+                if (status >= 200 && status < 300) {
+                    return 'Beta waitlist submitted';
+                } else if (status === 0) {
+                    return 'Failed to submit beta waitlist form';
+                }
+                return 'Submitting beta waitlist form';
+            }
+
+            if (status >= 200 && status < 300) {
+                return "Successfully submitted your beta waitlist form. We'll be in touch soon.";
+            } else if (status === 0) {
+                return 'Failed to submit the beta waitlist form due to a network error.';
+            }
+            return 'Submitting your beta waitlist form to OA...';
+        }
+
         // Ticket registration
         if (type === 'ticket' && path.includes('alpha-register')) {
             if (!detailed) {

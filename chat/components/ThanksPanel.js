@@ -7,7 +7,7 @@ import ticketClient from '../services/ticketClient.js';
 import themeManager from '../services/themeManager.js';
 
 const STORAGE_KEY_DISMISSED = 'oa-welcome-dismissed';
-const MODAL_CLASSES = 'w-full max-w-md rounded-2xl border border-border shadow-lg mx-4 flex flex-col welcome-modal-enter welcome-modal-glass';
+const MODAL_CLASSES = 'w-full max-w-md rounded-2xl border border-border shadow-lg mx-4 flex flex-col welcome-modal-glass';
 const SHARE_FEEDBACK_URL = 'https://forms.gle/HEmvxnJpN1jQC7CfA';
 
 class ThanksPanel {
@@ -16,17 +16,19 @@ class ThanksPanel {
         this.isOpen = false;
         this.overlay = document.getElementById('welcome-panel');
 
-        this.step = 'thanks'; // 'thanks' | 'redeeming'
-        this.inviteCode = '';
+        this.step = 'thanks';
+        this.accessInput = '';
         this.isRedeeming = false;
         this.redeemProgress = null;
         this.redeemError = null;
+        this.redeemInfo = null;
         this.ticketsRedeemed = 0;
 
         this.returnFocusEl = null;
         this.escapeHandler = null;
         this.themeUnsubscribe = null;
         this.ticketsUpdatedHandler = null;
+        this.animateOnNextRender = false;
     }
 
     async init() {
@@ -48,15 +50,18 @@ class ThanksPanel {
         this.returnFocusEl = document.activeElement;
 
         this.step = 'thanks';
-        this.inviteCode = '';
+        this.accessInput = '';
         this.isRedeeming = false;
         this.redeemProgress = null;
         this.redeemError = null;
+        this.redeemInfo = null;
         this.ticketsRedeemed = 0;
+        this.animateOnNextRender = true;
 
-        this.render();
         this.overlay.classList.remove('hidden');
         document.documentElement.removeAttribute('data-welcome-hidden');
+        this.render();
+        this.scheduleInitialInputFocus();
 
         this.overlay.onclick = (e) => {
             if (e.target === this.overlay) this.handleCloseAttempt();
@@ -65,6 +70,19 @@ class ThanksPanel {
             if (e.key === 'Escape') this.handleCloseAttempt();
         };
         document.addEventListener('keydown', this.escapeHandler);
+    }
+
+    scheduleInitialInputFocus() {
+        requestAnimationFrame(() => {
+            this.focusAccessInput();
+        });
+    }
+
+    focusAccessInput() {
+        if (!this.isOpen || this.isRedeeming) return;
+        const input = document.getElementById('thanks-access-input');
+        if (!input || document.activeElement === input) return;
+        input.focus({ preventScroll: true });
     }
 
     handleCloseAttempt() {
@@ -110,60 +128,135 @@ class ThanksPanel {
         return div.innerHTML;
     }
 
+    isEmailInput(value) {
+        const trimmed = (value || '').trim();
+        if (!trimmed || trimmed.length > 254) return false;
+        return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
+    }
+
+    normalizeInviteCode(value) {
+        return (value || '').trim().replace(/[\s-]+/g, '');
+    }
+
+    isInviteCodeInput(value) {
+        const normalized = this.normalizeInviteCode(value);
+        return normalized.length === 24 && /^[a-zA-Z0-9]+$/.test(normalized);
+    }
+
+    getInputKind(value) {
+        const trimmed = (value || '').trim();
+        if (!trimmed) return 'empty';
+        if (this.isEmailInput(trimmed)) return 'email';
+        if (this.isInviteCodeInput(trimmed)) return 'inviteCode';
+        return 'unknown';
+    }
+
+    getSubmitButtonConfig(kind) {
+        if (kind === 'email') return { ariaLabel: 'Join waitlist by email' };
+        if (kind === 'inviteCode') return { ariaLabel: 'Redeem invite code' };
+        return { ariaLabel: 'Continue' };
+    }
+
+    getInputHint(kind) {
+        if (kind === 'email') {
+            return 'Press Enter to submit your email to the beta waitlist.';
+        }
+
+        if (kind === 'inviteCode') {
+            return 'Press Enter to redeem this 24-character invite code.';
+        }
+
+        return 'Enter an email or a 24-character invite code.';
+    }
+
+    async redeemInviteCode(inviteCode) {
+        const result = await ticketClient.alphaRegister(inviteCode, (message, percent) => {
+            this.redeemProgress = { message, percent };
+            this.render();
+        });
+
+        this.ticketsRedeemed = result.tickets_issued;
+        this.isRedeeming = false;
+        this.redeemProgress = null;
+
+        // Notify ticket UI and close the panel (skip success screen in ThanksPanel).
+        window.dispatchEvent(new CustomEvent('tickets-updated'));
+        const redeemedCount = Number.isFinite(this.ticketsRedeemed)
+            ? this.ticketsRedeemed
+            : ticketClient.getTicketCount();
+        if (redeemedCount > 0) {
+            this.app?.showToast?.(
+                `${redeemedCount} ticket${redeemedCount === 1 ? '' : 's'} added.`,
+                'success'
+            );
+        } else {
+            this.app?.showToast?.('Tickets added.', 'success');
+        }
+        this.close();
+    }
+
     async handleInviteSubmit(e) {
         if (e) e.preventDefault();
 
-        const inputValue = this.inviteCode.trim();
-        if (!inputValue) {
-            this.redeemError = 'Please enter an invite code';
+        const inputValue = this.accessInput.trim();
+        const inputKind = this.getInputKind(inputValue);
+
+        if (inputKind === 'empty') {
+            this.redeemError = 'Please enter an email or invite code.';
+            this.redeemInfo = null;
             this.render();
             return;
         }
 
-        const inviteCode = inputValue.replace(/[\s-]+/g, '');
-        if (inviteCode.length !== 24) {
-            this.redeemError = 'Please enter a valid 24-character invite code';
+        if (inputKind === 'unknown') {
+            const maybeEmail = inputValue.includes('@');
+            this.redeemError = maybeEmail
+                ? 'Please enter a valid email address.'
+                : 'Please enter a valid email or 24-character invite code.';
+            this.redeemInfo = null;
             this.render();
             return;
         }
 
-        this.step = 'redeeming';
         this.isRedeeming = true;
         this.redeemError = null;
-        this.redeemProgress = { message: 'Starting...', percent: 0 };
+        this.redeemInfo = null;
+        this.redeemProgress = inputKind === 'email'
+            ? { message: 'Submitting waitlist form...', percent: 20 }
+            : { message: 'Starting...', percent: 0 };
         this.render();
 
         try {
-            const result = await ticketClient.alphaRegister(inviteCode, (message, percent) => {
-                this.redeemProgress = { message, percent };
+            if (inputKind === 'email') {
+                const waitlistResult = await ticketClient.joinWaitlist({
+                    email: inputValue,
+                    source: 'thanks_panel'
+                });
+
+                this.isRedeeming = false;
+                this.redeemProgress = null;
+                this.redeemError = null;
+                this.redeemInfo = waitlistResult?.message
+                    || "Thanks for joining! We'll be in touch soon.";
+                this.accessInput = '';
                 this.render();
-            });
-
-            this.ticketsRedeemed = result.tickets_issued;
-            this.isRedeeming = false;
-            this.redeemProgress = null;
-            this.step = 'thanks';
-
-            // Notify ticket UI and close the panel (skip success screen in ThanksPanel).
-            window.dispatchEvent(new CustomEvent('tickets-updated'));
-            const redeemedCount = Number.isFinite(this.ticketsRedeemed)
-                ? this.ticketsRedeemed
-                : ticketClient.getTicketCount();
-            if (redeemedCount > 0) {
-                this.app?.showToast?.(
-                    `${redeemedCount} ticket${redeemedCount === 1 ? '' : 's'} added.`,
-                    'success'
-                );
-            } else {
-                this.app?.showToast?.('Tickets added.', 'success');
+                this.app?.showToast?.('Waitlist form submitted.', 'success');
+                return;
             }
-            this.close();
+
+            const inviteCode = this.normalizeInviteCode(inputValue);
+            await this.redeemInviteCode(inviteCode);
             return;
         } catch (error) {
             console.error('Thanks panel invite error:', error);
-            this.step = 'thanks';
             this.isRedeeming = false;
-            this.redeemError = error.message || 'Failed to redeem invite code';
+            this.redeemProgress = null;
+            this.redeemInfo = null;
+            this.redeemError = error.message || (
+                inputKind === 'email'
+                    ? 'Failed to submit invite request'
+                    : 'Failed to redeem invite code'
+            );
             this.render();
         }
     }
@@ -171,20 +264,29 @@ class ThanksPanel {
     render() {
         if (!this.overlay) return;
 
-        switch (this.step) {
-            case 'thanks':
-                this.overlay.innerHTML = this.renderThanksStep();
-                break;
-            case 'redeeming':
-                this.overlay.innerHTML = this.renderRedeemingStep();
-                break;
-        }
+        this.overlay.innerHTML = this.renderThanksStep();
+        this.animateOnNextRender = false;
 
         this.attachEventListeners();
     }
 
     renderThanksStep() {
         const hasError = !!this.redeemError;
+        const hasInfo = !!this.redeemInfo;
+        const inputKind = this.getInputKind(this.accessInput);
+        const submitButton = this.getSubmitButtonConfig(inputKind);
+        const hintText = this.isRedeeming && this.redeemProgress?.message
+            ? this.redeemProgress.message
+            : this.getInputHint(inputKind);
+        const submitToneClass = inputKind === 'inviteCode'
+            ? 'invite-submit-redeem'
+            : 'invite-submit-email';
+        const isSubmitDisabled = this.isRedeeming || !this.accessInput.trim();
+        const feedbackText = hasError ? this.redeemError : this.redeemInfo;
+        const feedbackClass = hasError ? 'text-red-500' : 'text-emerald-600 dark:text-emerald-400';
+        const modalClass = this.animateOnNextRender
+            ? `${MODAL_CLASSES} welcome-modal-enter`
+            : MODAL_CLASSES;
 
         return `
             <div id="welcome-theme-toggle" class="theme-toggle-container" role="radiogroup" aria-label="Theme selection" data-theme="${themeManager.getPreference()}" style="position:fixed;top:12px;right:12px;z-index:9999">
@@ -206,7 +308,7 @@ class ThanksPanel {
                 </button>
             </div>
 
-            <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}" style="padding:28px 28px 20px">
+            <div role="dialog" aria-modal="true" class="${modalClass}" style="padding:28px 28px 20px">
                 <style>
                     @keyframes welcomeModalIn {
                         from { opacity: 0; transform: scale(0.97) translateY(6px); }
@@ -235,6 +337,40 @@ class ThanksPanel {
                     .invite-input-wrapper.input-error {
                         border-color: #ef4444;
                     }
+                    .invite-input-wrapper.input-error:focus-within {
+                        border-color: #ef4444;
+                    }
+                    .invite-submit-btn {
+                        box-shadow: inset 0 1px 0 rgba(255,255,255,0.14);
+                    }
+                    .invite-submit-btn.invite-submit-email {
+                        background: hsl(var(--blue-600));
+                    }
+                    .invite-submit-btn.invite-submit-email:hover {
+                        background: hsl(var(--blue-700));
+                    }
+                    .invite-submit-btn.invite-submit-redeem {
+                        background: #0f766e;
+                    }
+                    .invite-submit-btn.invite-submit-redeem:hover {
+                        background: #0d5f59;
+                    }
+                    .invite-submit-btn:disabled {
+                        opacity: 0.45;
+                        cursor: not-allowed;
+                    }
+                    .invite-submit-spinner {
+                        width: 14px;
+                        height: 14px;
+                        border: 2px solid rgba(255,255,255,0.28);
+                        border-top-color: #fff;
+                        border-radius: 9999px;
+                        animation: thanksSubmitSpin 0.7s linear infinite;
+                    }
+                    @keyframes thanksSubmitSpin {
+                        from { transform: rotate(0deg); }
+                        to { transform: rotate(360deg); }
+                    }
                 </style>
 
                 <div class="relative flex items-center mb-2">
@@ -246,52 +382,48 @@ class ThanksPanel {
                     </button>
                 </div>
 
-                <p class="text-sm text-muted-foreground mb-4">Thanks for trying out oa-chat! Consider requesting an invite code below. We will send an invite code as soon as we have more capacity.</p>
+                <p class="text-sm text-muted-foreground mb-4">Thanks for trying oa-chat! Enter your email to request a new invite, or redeem a 24-character invite code.</p>
 
                 <form id="thanks-invite-form" class="w-full">
                     <div class="invite-input-wrapper flex items-center w-full h-10 border rounded-lg transition-all ${hasError ? 'input-error' : ''}">
                         <input
-                            id="thanks-invite-code-input"
+                            id="thanks-access-input"
                             type="text"
-                            maxlength="24"
-                            placeholder="Invite code"
+                            maxlength="254"
+                            placeholder="Enter email or invite code"
                             class="flex-1 h-full px-3 text-sm bg-transparent text-foreground placeholder:text-muted-foreground/50 focus:outline-none"
-                            value="${this.escapeHtml(this.inviteCode)}"
+                            value="${this.escapeHtml(this.accessInput)}"
                             autocomplete="off"
                             autocorrect="off"
                             autocapitalize="off"
                             spellcheck="false"
+                            ${this.isRedeeming ? 'disabled' : ''}
                         />
                         <button
+                            id="thanks-submit-btn"
                             type="submit"
-                            class="flex-shrink-0 w-8 h-8 m-1 rounded-md bg-blue-600 text-white hover:bg-blue-700 transition-colors flex items-center justify-center disabled:opacity-50"
-                            aria-label="Redeem invite code"
+                            class="invite-submit-btn ${submitToneClass} flex-shrink-0 w-8 h-8 m-1 rounded-md text-white transition-colors flex items-center justify-center"
+                            aria-label="${submitButton.ariaLabel}"
+                            ${isSubmitDisabled ? 'disabled' : ''}
                         >
-                            <svg class="w-4 h-4" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                            ${this.isRedeeming
+                                ? '<span class="invite-submit-spinner" aria-hidden="true"></span>'
+                                : `<svg class="w-4 h-4" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
-                            </svg>
+                            </svg>`
+                            }
                         </button>
                     </div>
-                    <p class="text-xs leading-4 whitespace-pre-line mt-1.5 text-red-500 ${hasError ? '' : 'hidden'}">${this.escapeHtml(this.redeemError || '')}</p>
+                    <p id="thanks-input-hint" class="text-[11px] leading-4 mt-1.5 text-muted-foreground">${this.escapeHtml(hintText)}</p>
+                    <p id="thanks-form-feedback" class="text-xs leading-4 whitespace-pre-line mt-1.5 ${feedbackClass} ${(hasError || hasInfo) ? '' : 'hidden'}">${this.escapeHtml(feedbackText || '')}</p>
                 </form>
 
-                <div class="mt-3 flex items-stretch gap-2">
-                    <a
-                        href="https://openanonymity.ai/beta"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        class="btn-ghost-hover flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg text-sm font-medium transition-all duration-200 focus-visible:outline-none bg-background text-foreground h-10 px-3 shadow-sm border border-border"
-                    >
-                        <svg class="w-4 h-4 flex-shrink-0" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"></path>
-                        </svg>
-                        <span>Request invite code</span>
-                    </a>
+                <div class="mt-3">
                     <a
                         href="${SHARE_FEEDBACK_URL}"
                         target="_blank"
                         rel="noopener noreferrer"
-                        class="btn-ghost-hover flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg text-sm font-medium transition-all duration-200 focus-visible:outline-none bg-background text-foreground h-10 px-3 shadow-sm border border-border"
+                        class="btn-ghost-hover w-full inline-flex items-center justify-center gap-1.5 rounded-lg text-sm font-medium transition-all duration-200 focus-visible:outline-none bg-background text-foreground h-10 px-3 shadow-sm border border-border"
                     >
                         <svg class="w-4 h-4 flex-shrink-0" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path>
@@ -302,31 +434,6 @@ class ThanksPanel {
             </div>
         `;
     }
-
-    renderRedeemingStep() {
-        const progress = this.redeemProgress || { message: 'Processing...', percent: 0 };
-
-        return `
-            <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}" style="padding:28px">
-                <div class="flex flex-col items-center justify-center py-8">
-                    <div class="w-12 h-12 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div>
-
-                    <p class="text-sm font-medium text-foreground mb-2">${this.escapeHtml(progress.message)}</p>
-
-                    <div class="w-full max-w-xs h-2 bg-muted rounded-full overflow-hidden">
-                        <div
-                            class="h-full bg-blue-600 transition-all duration-300 ease-out"
-                            style="width: ${progress.percent}%"
-                        ></div>
-                    </div>
-                    <p class="text-xs text-muted-foreground mt-2">${progress.percent}% complete</p>
-                </div>
-            </div>
-        `;
-    }
-
-
-    // Success step intentionally omitted: on redemption we close the panel.
 
     attachEventListeners() {
         const themeToggle = document.getElementById('welcome-theme-toggle');
@@ -355,18 +462,58 @@ class ThanksPanel {
             form.onsubmit = (e) => this.handleInviteSubmit(e);
         }
 
-        const inviteInput = document.getElementById('thanks-invite-code-input');
-        if (inviteInput) {
-            inviteInput.oninput = (e) => {
-                this.inviteCode = e.target.value;
-                if (this.redeemError) {
+        const accessInput = document.getElementById('thanks-access-input');
+        if (accessInput) {
+            accessInput.oninput = (e) => {
+                this.accessInput = e.target.value;
+
+                if (this.redeemError || this.redeemInfo) {
                     this.redeemError = null;
-                    this.render();
+                    this.redeemInfo = null;
+                    this.clearInlineFeedbackUI();
                 }
+
+                this.updateInputActionUI();
             };
-            if (this.step === 'thanks') {
-                setTimeout(() => inviteInput.focus(), 100);
-            }
+            this.focusAccessInput();
+        }
+
+        this.updateInputActionUI();
+    }
+
+    clearInlineFeedbackUI() {
+        const feedback = document.getElementById('thanks-form-feedback');
+        if (feedback) {
+            feedback.textContent = '';
+            feedback.classList.add('hidden');
+            feedback.classList.remove('text-red-500', 'text-emerald-600', 'dark:text-emerald-400');
+        }
+
+        const input = document.getElementById('thanks-access-input');
+        const wrapper = input?.closest('.invite-input-wrapper');
+        if (wrapper) {
+            wrapper.classList.remove('input-error');
+        }
+    }
+
+    updateInputActionUI() {
+        const inputKind = this.getInputKind(this.accessInput);
+        const submitConfig = this.getSubmitButtonConfig(inputKind);
+        const isDisabled = this.isRedeeming || !this.accessInput.trim();
+
+        const submitBtn = document.getElementById('thanks-submit-btn');
+        if (submitBtn) {
+            submitBtn.setAttribute('aria-label', submitConfig.ariaLabel);
+            submitBtn.disabled = isDisabled;
+            submitBtn.classList.toggle('invite-submit-redeem', inputKind === 'inviteCode');
+            submitBtn.classList.toggle('invite-submit-email', inputKind !== 'inviteCode');
+        }
+
+        const hint = document.getElementById('thanks-input-hint');
+        if (hint) {
+            hint.textContent = this.isRedeeming && this.redeemProgress?.message
+                ? this.redeemProgress.message
+                : this.getInputHint(inputKind);
         }
     }
 
