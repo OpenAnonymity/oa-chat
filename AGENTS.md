@@ -45,11 +45,11 @@ The app runs entirely in the browser and is organized as ES modules:
   - `networkLogRenderer.js`: Shared description/icon/formatting helpers for logs and minimal views.
   - `apiKeyStore.js`: LocalStorage-backed legacy access store (`oa_access_key_data`).
   - `fileUtils.js`: Validation (10MB cap), type detection, base64, multimodal conversion, and local export of chats/tickets.
-  - `privacyPass.js`: Privacy Pass/cryptographic helpers (WASM-backed) for ticket flows.
+  - `privacyPass.js`: Privacy Pass/cryptographic helpers (pure JS via @cloudflare/privacypass-ts) for ticket flows.
   - `ticketClient.js`: Ticket lifecycle and access issuance (`alphaRegister`, `requestApiKey`), integrates with Privacy Pass artifacts and proxy fallback.
   - `providerIcons.js`: Maps provider names to icons under `img/`.
   - `themeManager.js`: System/light/dark preference management with pre-hydration application.
-- `wasm/`: WebAssembly artifacts for inference ticket/Privacy Pass operations (`oa_inference_ticket.js` + `.wasm`).
+- `vendor/privacypass-ts.js`: Bundled `@cloudflare/privacypass-ts` (Apache-2.0, pure JS) for blind signature operations.
 - `styles.css`: Design tokens synced with Tailwind config, prose formatting, reasoning/citation styles, proxy modals, message navigation styling, scroll behaviors, wide mode, and responsive states.
 - `tailwind.config.js`: Tailwind CLI configuration (root).
 - `tailwind.input.css` / `tailwind.generated.css`: Tailwind build input/output.
@@ -103,7 +103,7 @@ There is no automated test harness yet. Manually verify:
 - Network logging: entries appear with safe header masking; memory-only (fresh each tab).
 - Theme & layout: system/light/dark selection persists and applies pre-hydration; highlight.js theme sync; wide mode toggle persistence; right panel visibility persistence.
 - IndexedDB: sessions/messages/settings integrity through reloads; verifier broadcast cache and settings toggles; ensure no uncaught console errors.
-- WASM-backed flows (tickets/privacy) and proxy: exercise both success and error paths; show clear UI feedback and recover gracefully.
+- Ticket/privacy flows and proxy: exercise both success and error paths; show clear UI feedback and recover gracefully.
 
 ## Commit & Pull Request Guidelines
 Existing commits use short, present-tense descriptions (e.g. “changes in UI, activity, latex fix”). Follow that tone, keep the first line under ~70 characters, and group related changes together. Pull requests should include: a concise summary of the user-facing impact, screenshots or gifs for UI updates, notes on manual testing performed, and references to any related issues or discussions.
