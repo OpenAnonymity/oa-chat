@@ -6,6 +6,7 @@
 import ticketClient from '../services/ticketClient.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import themeManager from '../services/themeManager.js';
+import SmoothProgress from '../services/smoothProgress.js';
 
 // localStorage key for synchronous pre-hydration check (matches preferencesStore snapshot)
 const STORAGE_KEY_DISMISSED = 'oa-welcome-dismissed';
@@ -32,6 +33,10 @@ class WelcomePanel {
         this.isRedeeming = false;
         this.redeemProgress = null;
         this.redeemError = null;
+        this.smoothProgress = new SmoothProgress({
+            barSelector: '[data-smooth-progress="welcome"]',
+            textSelector: '[data-smooth-progress-text="welcome"]',
+        });
         this.ticketsRedeemed = 0;
         this.freeAccessRequested = false;
         this.freeAccessAvailable = false;
@@ -83,6 +88,7 @@ class WelcomePanel {
         this.isRedeeming = false;
         this.redeemProgress = null;
         this.redeemError = null;
+        this.smoothProgress.stop();
         this.ticketsRedeemed = 0;
         this.welcomeAnchorTop = null;
         this.animateOnNextRender = true;
@@ -123,6 +129,11 @@ class WelcomePanel {
     close() {
         if (!this.isOpen || !this.overlay) return;
         this.isOpen = false;
+        this.smoothProgress.stop();
+        if (this._emailSuccessTimer) {
+            clearTimeout(this._emailSuccessTimer);
+            this._emailSuccessTimer = null;
+        }
 
         this.overlay.classList.add('hidden');
         this.overlay.innerHTML = '';
@@ -203,12 +214,19 @@ class WelcomePanel {
                     this.ticketsRedeemed = Number.isFinite(expectedTickets) && expectedTickets > 0
                         ? expectedTickets
                         : ticketCount;
-                    this.pendingEmailRedemption = null;
-                    this.step = 'success';
-                    this.isRedeeming = false;
-                    this.redeemProgress = null;
-                    this.redeemError = null;
-                    this.render();
+                    this.smoothProgress.set(100);
+                    // Brief delay so user sees bar finish before success step
+                    this._emailSuccessTimer = setTimeout(() => {
+                        this._emailSuccessTimer = null;
+                        if (!this.isOpen) return;
+                        this.pendingEmailRedemption = null;
+                        this.step = 'success';
+                        this.isRedeeming = false;
+                        this.redeemProgress = null;
+                        this.redeemError = null;
+                        this.smoothProgress.stop();
+                        this.render();
+                    }, 400);
                 }
             }
         };
@@ -454,6 +472,8 @@ class WelcomePanel {
         this.redeemProgress = isEmailSubmission
             ? { message: 'Requesting free access...', percent: 20 }
             : { message: 'Starting...', percent: 0 };
+        this.smoothProgress.start();
+        if (isEmailSubmission) this.smoothProgress.set(20);
         this.render();
 
         try {
@@ -495,6 +515,7 @@ class WelcomePanel {
                         : null
                 };
                 this.redeemProgress = { message: 'Redeeming tickets...', percent: 60 };
+                this.smoothProgress.set(60);
                 this.render();
                 return;
             }
@@ -511,10 +532,15 @@ class WelcomePanel {
             }
 
             const result = await ticketClient.alphaRegister(this.inviteCode.trim().replace(/[\s-]+/g, ''), (message, percent) => {
+                this.smoothProgress.set(percent);
                 this.redeemProgress = { message, percent };
-                this.render();
+                // Update message text directly to avoid innerHTML replacement
+                // which would restart the spinner animation
+                const msgEl = document.querySelector('[data-smooth-progress-msg="welcome"]');
+                if (msgEl) msgEl.textContent = message;
             });
 
+            this.smoothProgress.stop();
             this.ticketsRedeemed = result.tickets_issued;
             this.step = 'success';
             this.isRedeeming = false;
@@ -525,6 +551,7 @@ class WelcomePanel {
 
         } catch (error) {
             console.error('Welcome panel invite error:', error);
+            this.smoothProgress.stop();
             if (isEmailSubmission) {
                 try {
                     await preferencesStore.savePreference(PREF_KEYS.freeAccessRequested, false);
@@ -959,16 +986,17 @@ class WelcomePanel {
                     <div class="w-12 h-12 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div>
 
                     <!-- Progress message -->
-                    <p class="text-sm font-medium text-foreground mb-2">${this.escapeHtml(progress.message)}</p>
+                    <p class="text-sm font-medium text-foreground mb-2" data-smooth-progress-msg="welcome">${this.escapeHtml(progress.message)}</p>
 
                     <!-- Progress bar -->
                     <div class="w-full max-w-xs h-2 bg-muted rounded-full overflow-hidden">
                         <div
-                            class="h-full bg-blue-600 transition-all duration-300 ease-out"
-                            style="width: ${progress.percent}%"
+                            class="h-full bg-blue-600"
+                            data-smooth-progress="welcome"
+                            style="width: ${this.smoothProgress.getDisplayed()}%"
                         ></div>
                     </div>
-                    <p class="text-xs text-muted-foreground mt-2">${progress.percent}% complete</p>
+                    <p class="text-xs text-muted-foreground mt-2" data-smooth-progress-text="welcome">${this.smoothProgress.getDisplayedRounded()}% complete</p>
                 </div>
             </div>
         `;
@@ -1223,6 +1251,11 @@ class WelcomePanel {
     }
 
     destroy() {
+        this.smoothProgress.stop();
+        if (this._emailSuccessTimer) {
+            clearTimeout(this._emailSuccessTimer);
+            this._emailSuccessTimer = null;
+        }
         this.themeUnsubscribe?.();
         this.themeUnsubscribe = null;
         this.removeResponsiveScaleListener();

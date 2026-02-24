@@ -473,8 +473,11 @@ class TicketClient {
     async alphaRegister(invitationCode, progressCallback) {
         console.log('=== Starting alphaRegister ===');
 
+        // Yield to browser rendering pipeline so rAF-driven progress bar can paint
+        const yieldToUI = () => new Promise(resolve => setTimeout(resolve, 0));
+
         try {
-            if (progressCallback) progressCallback('Validating ticket code...', 5);
+            if (progressCallback) progressCallback('Validating ticket code...', 1);
 
             if (!invitationCode || invitationCode.length !== 24) {
                 throw new Error('Invalid ticket code format (must be 24 characters)');
@@ -487,7 +490,7 @@ class TicketClient {
                 throw new Error('Invalid ticket code: unable to determine ticket count');
             }
 
-            if (progressCallback) progressCallback('Initializing Privacy Pass...', 10);
+            if (progressCallback) progressCallback('Initializing Privacy Pass...', 2);
 
             const hasProvider = await this.ppExtension.checkAvailability();
 
@@ -495,7 +498,8 @@ class TicketClient {
                 throw new Error('Privacy Pass is not available. Please check your configuration.');
             }
 
-            if (progressCallback) progressCallback('Getting issuer public key...', 20);
+            if (progressCallback) progressCallback('Getting issuer public key...', 3);
+            await yieldToUI();
 
             // Public key consistency: this endpoint is publicly accessible and
             // unauthenticated. Any user (or third party) can call it at any time
@@ -520,12 +524,16 @@ class TicketClient {
                 throw new Error(`Failed to get public key: ${error.message}`);
             }
 
-            if (progressCallback) progressCallback(`Blinding ${ticketCount} tickets...`, 25);
+            if (progressCallback) progressCallback(`Blinding ${ticketCount} tickets...`, 5);
+            await yieldToUI();
 
             const challenge = await this.ppExtension.createChallenge("oa-station", ["oa-station-api"]);
 
             const indexedBlindedRequests = [];
             const clientStates = [];
+
+            // Yield every N tickets so the browser can paint progress updates
+            const blindYieldInterval = Math.max(1, Math.min(8, Math.floor(ticketCount / 50)));
 
             for (let i = 0; i < ticketCount; i++) {
                 const result = await this.ppExtension.createSingleTokenRequest(publicKey, challenge);
@@ -533,12 +541,12 @@ class TicketClient {
                 indexedBlindedRequests.push([i, blindedRequest]);
                 clientStates.push([i, state]);
 
-                if (i > 0 && i % Math.max(1, Math.floor(ticketCount / 20)) === 0) {
-                    const progressPct = 25 + Math.floor((i / ticketCount) * 20);
-                    if (progressCallback) {
-                        progressCallback(`Blinding tickets... (${i}/${ticketCount})`, progressPct);
-                    }
+                if (progressCallback) {
+                    const progressPct = 5 + Math.round(((i + 1) / ticketCount) * 60);
+                    progressCallback(`Blinding tickets... (${i + 1}/${ticketCount})`, progressPct);
                 }
+
+                if (i % blindYieldInterval === 0) await yieldToUI();
             }
 
             // Log blinded tickets creation
@@ -553,7 +561,8 @@ class TicketClient {
                 }
             });
 
-            if (progressCallback) progressCallback('Sending blinded tickets to server for signing...', 50);
+            if (progressCallback) progressCallback('Sending blinded tickets to server for signing...', 65);
+            await yieldToUI();
 
             // Unlinkability: the org receives the credential and blinded requests here.
             // It knows "credential X -> N blinded requests" but only ever sees the
@@ -617,7 +626,7 @@ class TicketClient {
                 throw error;
             }
 
-            if (progressCallback) progressCallback('Signed tickets received...', 70);
+            if (progressCallback) progressCallback('Signed tickets received...', 67);
 
             const indexedSignedResponses = signData.signed_responses;
 
@@ -641,10 +650,13 @@ class TicketClient {
                 responseMap[idx] = signedResp;
             });
 
-            if (progressCallback) progressCallback('Unblinding tickets...', 75);
+            if (progressCallback) progressCallback('Unblinding tickets...', 67);
+            await yieldToUI();
 
             const tickets = [];
-            const progressInterval = Math.max(1, Math.floor(clientStates.length / 10));
+
+            // Yield every N tickets so the browser can paint progress updates
+            const unblindYieldInterval = Math.max(1, Math.min(8, Math.floor(clientStates.length / 50)));
 
             for (let i = 0; i < clientStates.length; i++) {
                 const [idx, state] = clientStates[i];
@@ -665,15 +677,15 @@ class TicketClient {
                     created_at: new Date().toISOString(),
                 });
 
-                if (i > 0 && i % progressInterval === 0) {
-                    const progressPct = 75 + Math.floor((i / clientStates.length) * 15);
-                    if (progressCallback) {
-                        progressCallback(`Unblinding tickets... (${i}/${clientStates.length})`, progressPct);
-                    }
+                if (progressCallback) {
+                    const progressPct = 67 + Math.round(((i + 1) / clientStates.length) * 30);
+                    progressCallback(`Unblinding tickets... (${i + 1}/${clientStates.length})`, progressPct);
                 }
+
+                if (i % unblindYieldInterval === 0) await yieldToUI();
             }
 
-            if (progressCallback) progressCallback('Saving tickets...', 90);
+            if (progressCallback) progressCallback('Saving tickets...', 97);
 
             // Log ticket unblinding completion
             networkLogger.logRequest({

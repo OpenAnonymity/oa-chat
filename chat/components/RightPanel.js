@@ -16,6 +16,7 @@ import { exportTickets } from '../services/globalExport.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import { chatDB } from '../db.js';
 import { SHARE_BASE_URL } from '../config.js';
+import SmoothProgress from '../services/smoothProgress.js';
 
 // Layout constant for toolbar overlay prediction
 const RIGHT_PANEL_WIDTH = 288; // 18rem = 288px
@@ -46,6 +47,10 @@ class RightPanel {
         this.isRenewingKey = false;
         this.registrationProgress = null;
         this.registrationError = null;
+        this.smoothProgress = new SmoothProgress({
+            barSelector: '[data-smooth-progress="right-panel"]',
+            textSelector: '[data-smooth-progress-text="right-panel"]',
+        });
         this.isImporting = false;
         this.importStatus = null;
         this.isSplitting = false;
@@ -600,6 +605,7 @@ class RightPanel {
         this.isRegistering = true;
         this.registrationError = null;
         this.registrationProgress = { message: 'Starting...', percent: 0 };
+        this.smoothProgress.start();
         this.renderTopSectionOnly();
 
         // Set current session for network logging
@@ -609,10 +615,15 @@ class RightPanel {
 
         try {
             await ticketClient.alphaRegister(invitationCode, (message, percent) => {
+                this.smoothProgress.set(percent);
                 this.registrationProgress = { message, percent };
-                this.renderTopSectionOnly();
+                // Update message text directly to avoid innerHTML replacement
+                const msgEl = document.querySelector('[data-smooth-progress-msg="right-panel"]');
+                if (msgEl) msgEl.textContent = message;
             });
 
+            this.smoothProgress.stop();
+            this.registrationProgress = null;
             this.ticketCount = ticketClient.getTicketCount();
 
             if (this.pendingInvitationSource) {
@@ -646,6 +657,8 @@ class RightPanel {
             }, 2000);
         } catch (error) {
             this.registrationError = error.message;
+            this.smoothProgress.stop();
+            this.registrationProgress = null;
         } finally {
             this.isRegistering = false;
             this.renderTopSectionOnly();
@@ -1852,9 +1865,9 @@ class RightPanel {
 
                     ${this.registrationProgress ? `
                         <div class="mt-2 text-[10px] space-y-1">
-                            <div class="text-foreground">${this.escapeHtml(this.registrationProgress.message)}</div>
+                            <div class="text-foreground" data-smooth-progress-msg="right-panel">${this.escapeHtml(this.registrationProgress.message)}</div>
                             <div class="w-full bg-muted rounded-full h-1.5">
-                                <div class="bg-primary h-1.5 rounded-full transition-all" style="width: ${this.registrationProgress.percent}%"></div>
+                                <div class="bg-primary h-1.5 rounded-full" data-smooth-progress="right-panel" style="width: ${this.smoothProgress.getDisplayed()}%"></div>
                             </div>
                         </div>
                     ` : ''}
@@ -2779,6 +2792,7 @@ class RightPanel {
     }
 
     destroy() {
+        this.smoothProgress.stop();
         this.hasMounted = false;
         if (this.timerInterval) {
             clearInterval(this.timerInterval);
