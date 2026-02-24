@@ -65,3 +65,6 @@ For the detailed privacy model, see [docs/PRIVACY_MODEL.md](docs/PRIVACY_MODEL.m
 ### Development
 - Keep devtools open — console warnings surface integration issues early.
 - Source modules live in `chat/` and can be served directly in dev; production builds bundle and minify output into `dist/chat`.
+
+### License
+This project is licensed under the GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later). See [LICENSE](LICENSE).
