@@ -240,7 +240,6 @@ class ThanksPanel {
                     || "Thanks for joining! We'll be in touch soon.";
                 this.accessInput = '';
                 this.render();
-                this.app?.showToast?.('Waitlist form submitted.', 'success');
                 return;
             }
 
