@@ -164,6 +164,7 @@ class ChatApp {
         this.sessionSearchRequestId = 0;
         this.uploadedFiles = [];
         this.fileUndoStack = []; // Track file paste operations for undo
+        this.filePreviewRenderVersion = 0; // Guard async preview renders against stale overwrites
         this.rightPanel = null;
         this.floatingPanel = null;
         this.messageNavigation = null;
@@ -173,6 +174,7 @@ class ChatApp {
         this.modelPicker = null;
         this.sessionStreamingStates = new Map(); // Track streaming state per session
         this.sessionScrollPositions = new Map(); // Track scrollTop per session in-memory
+        this.sessionChatbarStates = new Map(); // Track in-tab chatbar drafts per session
         this.chatScrollSaveFrame = null;
         this.isAutoScrollPaused = false; // Track if auto-scroll is paused during streaming
         this.scrollToBottomButton = null; // Reference to the floating scroll-to-bottom button
@@ -720,6 +722,68 @@ class ChatApp {
             this.saveCurrentSessionScrollPosition();
         }
         return true;
+    }
+
+    /**
+     * Internal per-session chatbar snapshot.
+     * ChatbarDraftState = { text, uploadedFiles, fileUndoStack, scrubberPending }
+     */
+    buildCurrentChatbarState() {
+        return {
+            text: this.elements.messageInput?.value || '',
+            uploadedFiles: [...this.uploadedFiles],
+            fileUndoStack: [...this.fileUndoStack],
+            scrubberPending: this.scrubberPending ? { ...this.scrubberPending } : null
+        };
+    }
+
+    saveChatbarStateForSession(sessionId) {
+        if (!sessionId) return;
+        this.sessionChatbarStates.set(sessionId, this.buildCurrentChatbarState());
+    }
+
+    applyChatbarState(state) {
+        const input = this.elements.messageInput;
+        if (!input) return;
+
+        this.chatInput?.clearScrubberPreview?.();
+
+        const normalized = state && typeof state === 'object' ? state : null;
+        const text = typeof normalized?.text === 'string' ? normalized.text : '';
+        const uploadedFiles = Array.isArray(normalized?.uploadedFiles) ? [...normalized.uploadedFiles] : [];
+        const fileUndoStack = Array.isArray(normalized?.fileUndoStack) ? [...normalized.fileUndoStack] : [];
+        const scrubberPending = normalized?.scrubberPending ? { ...normalized.scrubberPending } : null;
+
+        this.uploadedFiles = uploadedFiles;
+        this.scrubberPending = scrubberPending;
+
+        input.value = text;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+
+        // Input listeners clear file undo state; restore it after the dispatch.
+        this.fileUndoStack = fileUndoStack;
+
+        this.renderFilePreviews();
+        this.updateFileCountBadge();
+        this.updateInputState();
+    }
+
+    restoreChatbarStateForSession(sessionId) {
+        if (!sessionId) {
+            this.applyChatbarState(null);
+            return;
+        }
+        const state = this.sessionChatbarStates.get(sessionId) || null;
+        this.applyChatbarState(state);
+    }
+
+    clearChatbarStateForSession(sessionId) {
+        if (!sessionId) return;
+        this.sessionChatbarStates.delete(sessionId);
+    }
+
+    clearAllChatbarStates() {
+        this.sessionChatbarStates.clear();
     }
 
     /**
@@ -2098,6 +2162,9 @@ class ChatApp {
             }
             await chatDB.saveSession(existingSession);
 
+            if (this.state.currentSessionId) {
+                this.saveChatbarStateForSession(this.state.currentSessionId);
+            }
             this.state.currentSessionId = existingSession.id;
             sessionStorage.setItem(SESSION_STORAGE_KEY, existingSession.id);
             await chatDB.saveSetting('currentSessionId', existingSession.id);
@@ -2106,7 +2173,8 @@ class ChatApp {
             this.renderSessions();
             await this.renderMessages();
             this.renderCurrentModel();
-            this.updateInputState();
+            this.resetMessageInputLayout({ resetScroll: true });
+            this.restoreChatbarStateForSession(existingSession.id);
             this.updateShareButtonUI();
 
             if (this.rightPanel) {
@@ -2225,6 +2293,9 @@ class ChatApp {
             }
 
             // Switch to imported session
+            if (this.state.currentSessionId) {
+                this.saveChatbarStateForSession(this.state.currentSessionId);
+            }
             this.state.currentSessionId = session.id;
             sessionStorage.setItem(SESSION_STORAGE_KEY, session.id);
             await chatDB.saveSetting('currentSessionId', session.id);
@@ -2233,7 +2304,8 @@ class ChatApp {
             this.renderSessions();
             await this.renderMessages();
             this.renderCurrentModel();
-            this.updateInputState();
+            this.resetMessageInputLayout({ resetScroll: true });
+            this.restoreChatbarStateForSession(session.id);
             this.updateShareButtonUI();
 
             if (this.rightPanel) {
@@ -3012,9 +3084,18 @@ class ChatApp {
             return;
         }
 
+        const previousSessionId = this.state.currentSessionId;
         await this.ensureSessionLoaded(sessionId);
 
+        // Another user action may have switched/cleared sessions while loading.
+        if (this.state.currentSessionId !== previousSessionId) {
+            return;
+        }
+
         this.saveCurrentSessionScrollPosition();
+        if (previousSessionId) {
+            this.saveChatbarStateForSession(previousSessionId);
+        }
 
         // Clear edit state when switching sessions
         this.editingMessageId = null;
@@ -3048,8 +3129,8 @@ class ChatApp {
         }
 
         // Update UI based on new session's streaming state
-        this.updateInputState();
         this.resetMessageInputLayout({ resetScroll: true });
+        this.restoreChatbarStateForSession(sessionId);
         this.updateShareButtonUI();
 
         // Notify right panel of session change
@@ -3214,6 +3295,10 @@ class ChatApp {
      */
     async clearCurrentSession(options = {}) {
         const { awaitRender = false, immediate = false, emitDesktop = false } = options;
+        const previousSessionId = this.state.currentSessionId;
+        if (previousSessionId) {
+            this.saveChatbarStateForSession(previousSessionId);
+        }
         this.saveCurrentSessionScrollPosition();
         this.state.currentSessionId = null;
         this.updateUrlWithSession(null);
@@ -3237,14 +3322,11 @@ class ChatApp {
         const renderMessagesPromise = this.renderMessages();
         this.renderCurrentModel();
 
-        // Clear input
-        if (this.elements.messageInput) {
-            this.elements.messageInput.value = '';
-        }
+        // New-chat state should always start with an empty composer.
         this.resetMessageInputLayout({ resetScroll: true });
+        this.applyChatbarState(null);
 
         // Update input state
-        this.updateInputState();
         this.updateShareButtonUI();
 
         // Hide message navigation
@@ -4568,6 +4650,7 @@ class ChatApp {
     async deleteSession(sessionId) {
         const index = this.state.sessions.findIndex(s => s.id === sessionId);
         if (index > -1) {
+            const deletedCurrentSession = this.state.currentSessionId === sessionId;
             this.state.sessions.splice(index, 1);
             this.state.sessionsById.delete(sessionId);
 
@@ -4575,20 +4658,25 @@ class ChatApp {
             await chatDB.deleteSession(sessionId);
             await chatDB.deleteSessionMessages(sessionId);
             this.sessionScrollPositions.delete(sessionId);
+            this.clearChatbarStateForSession(sessionId);
 
             // Clear edit state if deleting current session
-            if (this.state.currentSessionId === sessionId) {
+            if (deletedCurrentSession) {
                 this.editingMessageId = null;
             }
 
             // Switch to another session if we deleted the current one
-            if (this.state.currentSessionId === sessionId) {
+            if (deletedCurrentSession) {
                 this.state.currentSessionId = this.state.sessions.length > 0 ? this.state.sessions[0].id : null;
                 await chatDB.saveSetting('currentSessionId', this.state.currentSessionId);
             }
 
             this.renderSessions();
             this.renderMessages();
+            if (deletedCurrentSession) {
+                this.resetMessageInputLayout({ resetScroll: true });
+                this.restoreChatbarStateForSession(this.state.currentSessionId);
+            }
 
             // Create new session if none exist
             if (this.state.sessions.length === 0) {
@@ -4831,6 +4919,9 @@ class ChatApp {
         }
 
         // Switch to new session
+        if (this.state.currentSessionId) {
+            this.saveChatbarStateForSession(this.state.currentSessionId);
+        }
         this.state.currentSessionId = newSessionId;
         await chatDB.saveSetting('currentSessionId', newSessionId);
 
@@ -4844,6 +4935,8 @@ class ChatApp {
         }
         this.renderMessages();
         this.renderCurrentModel();
+        this.resetMessageInputLayout({ resetScroll: true });
+        this.restoreChatbarStateForSession(newSessionId);
 
         // Notify right panel of session change
         if (this.rightPanel) {
@@ -4865,6 +4958,7 @@ class ChatApp {
         });
         this.sessionStreamingStates.clear();
         this.sessionScrollPositions.clear();
+        this.clearAllChatbarStates();
 
         this.state.sessions = [];
         this.state.sessionsById = new Map();
@@ -4880,6 +4974,7 @@ class ChatApp {
         // Render empty state while the new session is created
         this.renderSessions();
         this.renderMessages();
+        this.applyChatbarState(null);
 
         await this.createSession();
     }
@@ -6174,7 +6269,9 @@ Your API key has been cleared. A new key from a different station will be obtain
 
     async renderFilePreviews() {
         const container = this.elements.filePreviewsContainer;
-        if (this.uploadedFiles.length === 0) {
+        const renderVersion = ++this.filePreviewRenderVersion;
+        const files = [...this.uploadedFiles];
+        if (files.length === 0) {
             container.classList.add('hidden');
             return;
         }
@@ -6182,7 +6279,7 @@ Your API key has been cleared. A new key from a different station will be obtain
         container.classList.remove('hidden');
 
         // Generate previews with a horizontal card layout
-        const previewPromises = this.uploadedFiles.map(async (file, index) => {
+        const previewPromises = files.map(async (file, index) => {
             const fileSize = this.formatFileSize(file.size);
             const isImage = file.type.startsWith('image/');
 
@@ -6255,6 +6352,7 @@ Your API key has been cleared. A new key from a different station will be obtain
         });
 
         const previews = await Promise.all(previewPromises);
+        if (renderVersion !== this.filePreviewRenderVersion) return;
         container.innerHTML = previews.join('');
     }
 
