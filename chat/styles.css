@@ -4011,7 +4011,8 @@ html {
 
 /* Input Card - Frosted Glass Effect */
 #input-card {
-    background: hsl(var(--color-card) / var(--glass-opacity));
+    --chatbar-surface: hsl(var(--color-card) / var(--glass-opacity));
+    background: var(--chatbar-surface);
     backdrop-filter: blur(var(--glass-blur));
     -webkit-backdrop-filter: blur(var(--glass-blur));
     border-color: hsl(var(--color-border) / 0.6);
@@ -4126,7 +4127,7 @@ div:has(> #input-card.scrubber-preview-expanded) {
 /* Preview hint - positioning via Tailwind, CSS handles opacity states */
 #scrubber-preview-hint {
     z-index: 20;
-    background: hsl(var(--color-background) / 0.8);
+    background: transparent;
 }
 
 #input-card.scrubber-preview-editing #scrubber-preview-hint {
@@ -4211,7 +4212,8 @@ div:has(> #input-card.scrubber-preview-expanded) {
     font-weight: 500;
     padding: 1px 4px;
     border-radius: 4px;
-    background: hsl(var(--color-muted-foreground) / 0.12);
+    background: transparent;
+    border: 1px solid hsl(var(--color-border) / 0.55);
     color: hsl(var(--color-muted-foreground));
 }
 
