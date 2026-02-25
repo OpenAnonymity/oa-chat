@@ -28,7 +28,7 @@ const TINFOIL_MODEL = 'gpt-oss-120b';
 const TINFOIL_KEY_TICKETS_REQUIRED = 2;
 const KEYWORD_CHECK_INTERVAL_MS = 30 * 1000;
 const KEYWORD_DELAY_MS = 500; // Delay between keyword generations
-const KEYWORD_BACKLOG_ENABLED = true; // Temporary kill switch for queue/backfill processing
+const KEYWORD_BACKLOG_ENABLED = false; // Temporary kill switch for queue/backfill processing
 const DEDUP_TAG_THRESHOLD = 30; // Only dedup when distinct tags exceed this
 const DEDUP_COOLDOWN_MS = 1 * 60 * 1000; // 1 minute cooldown between dedup runs
 

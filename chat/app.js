@@ -38,6 +38,9 @@ import { messageMemoryContext } from './services/messageMemoryContext.js';
 import { chatDB } from './db.js';
 import sessionEmbedder from './services/sessionEmbedder.js';
 import keywordsGenerator from './services/keywordsGenerator.js';
+import memoryExtractor from './services/memoryExtractor.js';
+import memoryFileSystem from './services/memoryFileSystem.js';
+import MemoryEditor from './components/MemoryEditor.js';
 
 const DEFAULT_MODEL_NAME = inferenceService.getDefaultModelName();
 const SESSION_PAGE_SIZE = 80;
@@ -1317,6 +1320,7 @@ class ChatApp {
         this.memorySelector = new MemorySelector(this);
         this.chatHistoryImportModal = new ChatHistoryImportModal(this);
         this.accountModal = new AccountModal(this);
+        this.memoryEditor = new MemoryEditor(this);
         this.welcomePanel = new WelcomePanel(this);
         this.thanksPanel = new ThanksPanel(this);
         this.rightPanel = new RightPanel(this);
@@ -1378,6 +1382,11 @@ class ChatApp {
         // Initialize keywords generator queue and backfill (non-blocking)
         keywordsGenerator.init().catch((error) => {
             console.warn('Keywords generator init failed:', error);
+        });
+
+        // Initialize agentic memory filesystem (non-blocking)
+        memoryFileSystem.init().catch((error) => {
+            console.warn('Memory filesystem init failed:', error);
         });
 
         await accountService.init();
@@ -3594,6 +3603,12 @@ class ChatApp {
                 const mediaContent = [];
                 const shouldOverrideLastUserText = isLastUserMessage && !!apiOverrideContent;
 
+                // Inject agentic memory context if available (for last user message only)
+                if (isLastUserMessage && this._pendingAgenticMemory) {
+                    textContent = `--- Retrieved Memory Context ---\n${this._pendingAgenticMemory}\n---\n\n${textContent}`;
+                    this._pendingAgenticMemory = null;
+                }
+
                 // Add memory context if available
                 if (!shouldOverrideLastUserText && msg.memoryContext && msg.memoryContext.memories && msg.memoryContext.memories.length > 0) {
                     console.log('[Memory Context] Adding to message:', {
@@ -4100,6 +4115,17 @@ class ChatApp {
             hasMemoryContext = enrichmentResult.hasMemory;
         }
 
+        // Agentic memory retrieval (if existing memory enrichment didn't fire)
+        if (this.memoryEnabled && !hasMemoryContext) {
+            try {
+                const { default: agenticRetrieval } = await import('./services/agenticRetrieval.js');
+                const result = await agenticRetrieval.retrieveForQuery(content);
+                if (result?.content) this._pendingAgenticMemory = result.content;
+            } catch (err) {
+                console.warn('[App] Agentic retrieval skipped:', err);
+            }
+        }
+
         // Create session if none exists (first message creates the session)
         if (!this.getCurrentSession()) {
             await this.createSession();
@@ -4581,6 +4607,11 @@ class ChatApp {
                 // Trigger keywords generation after successful message (non-blocking)
                 keywordsGenerator.triggerGeneration(session.id, this).catch(err => {
                     console.warn('[App] Keywords generation failed:', err);
+                });
+
+                // Trigger agentic memory extraction (non-blocking)
+                memoryExtractor.processSession(session.id).catch(err => {
+                    console.warn('[App] Memory extraction failed:', err);
                 });
 
                 // Pre-cache scrubber restoration in background (if applicable)
@@ -5829,11 +5860,19 @@ class ChatApp {
             }
 
             // Ctrl+M or Cmd+M for memory selector - auto-insert all memories
-            if ((e.metaKey || e.ctrlKey) && e.key === 'm') {
+            if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === 'm') {
                 e.preventDefault();
                 if (this.chatInput && this.memoryEnabled) {
                     const query = this.elements.messageInput.value.trim();
                     this.chatInput.autoInsertAllMemories(query);
+                }
+            }
+
+            // Cmd/Ctrl + Shift + M for memory editor
+            if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'm' || e.key === 'M')) {
+                e.preventDefault();
+                if (this.memoryEditor) {
+                    this.memoryEditor.isOpen ? this.memoryEditor.close() : this.memoryEditor.open();
                 }
             }
 
