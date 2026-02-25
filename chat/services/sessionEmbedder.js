@@ -24,6 +24,7 @@ import ticketClient from './ticketClient.js';
 
 const CHECK_INTERVAL_MS = 30 * 1000; // Check every 30 seconds
 const MAX_CONTENT_LENGTH = 8000; // Truncate very long conversations
+const MAX_EMBEDDING_TEXT_LENGTH = 4000; // Summary memory should stay compact
 const BACKFILL_DELAY_MS = 500; // Delay between queue embeddings to avoid overwhelming the system
 
 const TINFOIL_BASE_URL = 'https://inference.tinfoil.sh';
@@ -375,10 +376,19 @@ class SessionEmbedder {
                 conversationText = conversationText.substring(0, MAX_CONTENT_LENGTH) + '...';
             }
 
+            let embeddingText = (typeof session.sessionMemory === 'string' && session.sessionMemory.trim().length > 0)
+                ? session.sessionMemory.trim()
+                : ((typeof session.summary === 'string' && session.summary.trim().length > 0)
+                    ? session.summary.trim()
+                    : conversationText);
+            if (embeddingText.length > MAX_EMBEDDING_TEXT_LENGTH) {
+                embeddingText = embeddingText.substring(0, MAX_EMBEDDING_TEXT_LENGTH) + '...';
+            }
+
             // Generate embedding
             console.debug(`[SessionEmbedder] Generating embedding for session ${sessionId}...`);
             const te0 = performance.now();
-            const embedding = await this.embedder.embedText(conversationText);
+            const embedding = await this.embedder.embedText(embeddingText);
             const te1 = performance.now();
 
             // Store in vector store
@@ -395,6 +405,8 @@ class SessionEmbedder {
                     sessionId,
                     title: session.title || 'Untitled',
                     summary: session.summary || null,
+                    sessionMemory: session.sessionMemory || null,
+                    embeddingSourceText: embeddingText,
                     conversationText: conversationText,
                     messageCount: messages.length,
                     model: session.model || null,
@@ -417,8 +429,8 @@ class SessionEmbedder {
             const embedMs = te1 - te0;
             const upsertMs = te2 - te1;
             const saveMs = te3 - te2;
-            this._embedTimings.push({ embedMs, upsertMs, saveMs, contentLength: conversationText.length, messageCount: messages.length, ts: Date.now() });
-            console.log(`[SessionEmbedder] Embedded session "${session.title || sessionId}" (${messages.length} messages) — embed: ${embedMs.toFixed(2)}ms, upsert: ${upsertMs.toFixed(2)}ms, save: ${saveMs.toFixed(2)}ms`);
+            this._embedTimings.push({ embedMs, upsertMs, saveMs, contentLength: embeddingText.length, messageCount: messages.length, ts: Date.now() });
+            console.log(`[SessionEmbedder] Embedded session "${session.title || sessionId}" (${messages.length} messages) from memory summary — embed: ${embedMs.toFixed(2)}ms, upsert: ${upsertMs.toFixed(2)}ms, save: ${saveMs.toFixed(2)}ms`);
             return true;
 
         } catch (error) {
@@ -491,6 +503,7 @@ class SessionEmbedder {
                 sessionId: r.metadata?.sessionId,
                 title: r.metadata?.title,
                 summary: r.metadata?.summary,
+                sessionMemory: r.metadata?.sessionMemory,
                 keywords: this._getKeywordsForResult(r, sessionMap),
                 conversationText: r.metadata?.conversationText,
                 messageCount: r.metadata?.messageCount,
@@ -832,6 +845,7 @@ Available tags: ${JSON.stringify(allTags)}`;
                     sessionId: r.metadata?.sessionId,
                     title: r.metadata?.title,
                     summary: r.metadata?.summary,
+                    sessionMemory: r.metadata?.sessionMemory,
                     keywords,
                     matchedTags: matchedTags,
                     matchedSessionTags,

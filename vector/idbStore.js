@@ -85,10 +85,19 @@ export async function loadVectorItems(db, collection) {
             const vector = value.vector instanceof Float32Array
                 ? value.vector
                 : new Float32Array(value.vector);
+            const metadata = value.metadata ?? null;
+            if (
+                metadata &&
+                typeof metadata === 'object' &&
+                typeof value.sessionMemory === 'string' &&
+                (!metadata.sessionMemory || typeof metadata.sessionMemory !== 'string')
+            ) {
+                metadata.sessionMemory = value.sessionMemory;
+            }
             items.push({
                 id: value.id,
                 vector,
-                metadata: value.metadata ?? null
+                metadata
             });
             cursor.continue();
         };
@@ -109,6 +118,7 @@ export async function persistVectorItems(db, collection, items) {
             id: item.id,
             vector: item.vector,
             metadata: item.metadata ?? null,
+            sessionMemory: typeof item.metadata?.sessionMemory === 'string' ? item.metadata.sessionMemory : null,
             updatedAt: Date.now()
         });
     }

@@ -595,6 +595,7 @@ class ChatHistoryImportModal {
                 updatedAt,
                 model: sessionModel,
                 summary: typeof sessionData.summary === 'string' ? sessionData.summary : null,
+                sessionMemory: typeof sessionData.sessionMemory === 'string' ? sessionData.sessionMemory : null,
                 keywords: Array.isArray(sessionData.keywords) ? sessionData.keywords : [],
                 keywordsGeneratedAt: sessionData.keywordsGeneratedAt || null,
                 messageCountAtGeneration: sessionData.messageCountAtGeneration || null,

@@ -83,6 +83,7 @@ function normalizeOaExport(data) {
             updatedAt,
             model: session.model || null,
             summary: typeof session.summary === 'string' ? session.summary : null,
+            sessionMemory: typeof session.sessionMemory === 'string' ? session.sessionMemory : null,
             keywords: Array.isArray(session.keywords) ? session.keywords : [],
             keywordsGeneratedAt: session.keywordsGeneratedAt || null,
             messageCountAtGeneration: session.messageCountAtGeneration || null,

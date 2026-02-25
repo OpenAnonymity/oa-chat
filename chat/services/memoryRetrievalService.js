@@ -97,13 +97,13 @@ class MemoryRetrievalService {
         if (!sessionResults || sessionResults.length === 0) return [];
         
         return sessionResults.map((result, idx) => {
-            const fullText = result.conversationText || '';
+            const fullText = result.sessionMemory || result.conversationText || '';
             // Truncate for UI display (300 chars)
             const displayText = fullText.length > 300 ? fullText.substring(0, 300) + '...' : fullText;
             
             const memory = {
                 title: result.summary || result.title || 'Untitled Session',
-                summary: this.summarizeConversation(fullText, 200),
+                summary: result.sessionMemory || this.summarizeConversation(fullText, 200),
                 content: displayText,
                 displayContent: displayText,
                 fullContent: fullText,  // Full text for API/message sending

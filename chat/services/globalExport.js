@@ -182,6 +182,266 @@ export async function exportChats() {
     }
 }
 
+function sanitizeFileNamePart(value, fallback = 'untagged') {
+    const raw = typeof value === 'string' ? value.trim().toLowerCase() : '';
+    const safe = raw
+        .replace(/[^a-z0-9._-]+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '');
+    return safe || fallback;
+}
+
+function buildTagMemoryMarkdown(tag, entries, exportedAtIso) {
+    const lines = [];
+    lines.push(`# Memory: ${tag}`);
+    lines.push('');
+    lines.push(`Exported: ${exportedAtIso}`);
+    lines.push(`Sessions: ${entries.length}`);
+    lines.push('');
+
+    for (const entry of entries) {
+        lines.push(`## ${entry.title}`);
+        lines.push('');
+        lines.push(`- Session ID: \`${entry.id}\``);
+        lines.push(`- Updated At: ${new Date(entry.updatedAt || entry.createdAt || Date.now()).toISOString()}`);
+        lines.push('');
+        lines.push(entry.sessionMemory || '_No session memory summary available._');
+        lines.push('');
+    }
+
+    return lines.join('\n').trimEnd() + '\n';
+}
+
+function buildMemoryIndexMarkdown(sessionRecords, exportedAtIso) {
+    const lines = [];
+    lines.push('# Memory Index');
+    lines.push('');
+    lines.push(`Exported: ${exportedAtIso}`);
+    lines.push(`Sessions: ${sessionRecords.length}`);
+    lines.push('');
+    lines.push('## Entries');
+    lines.push('');
+
+    const sorted = [...sessionRecords].sort((a, b) =>
+        (a.title || '').localeCompare(b.title || '') || (a.id || '').localeCompare(b.id || '')
+    );
+
+    for (const record of sorted) {
+        const tags = Array.isArray(record.tags) && record.tags.length > 0 ? record.tags.join(', ') : 'untagged';
+        const updatedAt = new Date(record.updatedAt || record.createdAt || Date.now()).toISOString();
+        lines.push(`- Session ID: \`${record.id}\` | Title: ${record.title} | Updated At: ${updatedAt} | Tags: ${tags}`);
+    }
+
+    lines.push('');
+    return lines.join('\n');
+}
+
+function createCrc32Table() {
+    const table = new Uint32Array(256);
+    for (let i = 0; i < 256; i += 1) {
+        let c = i;
+        for (let j = 0; j < 8; j += 1) {
+            c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+        }
+        table[i] = c >>> 0;
+    }
+    return table;
+}
+
+const CRC32_TABLE = createCrc32Table();
+
+function crc32(bytes) {
+    let crc = 0xFFFFFFFF;
+    for (let i = 0; i < bytes.length; i += 1) {
+        crc = CRC32_TABLE[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8);
+    }
+    return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
+function dosDateTime(date = new Date()) {
+    const year = Math.max(1980, date.getFullYear());
+    const month = date.getMonth() + 1;
+    const day = date.getDate();
+    const hours = date.getHours();
+    const minutes = date.getMinutes();
+    const seconds = Math.floor(date.getSeconds() / 2);
+    const dosTime = (hours << 11) | (minutes << 5) | seconds;
+    const dosDate = ((year - 1980) << 9) | (month << 5) | day;
+    return { dosTime, dosDate };
+}
+
+function uint16LE(value) {
+    const out = new Uint8Array(2);
+    out[0] = value & 0xFF;
+    out[1] = (value >>> 8) & 0xFF;
+    return out;
+}
+
+function uint32LE(value) {
+    const out = new Uint8Array(4);
+    out[0] = value & 0xFF;
+    out[1] = (value >>> 8) & 0xFF;
+    out[2] = (value >>> 16) & 0xFF;
+    out[3] = (value >>> 24) & 0xFF;
+    return out;
+}
+
+function concatUint8Arrays(chunks) {
+    const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+    const out = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+        out.set(chunk, offset);
+        offset += chunk.length;
+    }
+    return out;
+}
+
+function createZipBlob(files) {
+    const encoder = new TextEncoder();
+    const now = new Date();
+    const { dosTime, dosDate } = dosDateTime(now);
+    const localParts = [];
+    const centralParts = [];
+    let localOffset = 0;
+
+    for (const file of files) {
+        const fileNameBytes = encoder.encode(file.fileName);
+        const dataBytes = encoder.encode(file.content);
+        const checksum = crc32(dataBytes);
+        const size = dataBytes.length;
+
+        const localHeader = concatUint8Arrays([
+            uint32LE(0x04034b50),
+            uint16LE(20),
+            uint16LE(0),
+            uint16LE(0),
+            uint16LE(dosTime),
+            uint16LE(dosDate),
+            uint32LE(checksum),
+            uint32LE(size),
+            uint32LE(size),
+            uint16LE(fileNameBytes.length),
+            uint16LE(0),
+            fileNameBytes
+        ]);
+
+        localParts.push(localHeader, dataBytes);
+
+        const centralHeader = concatUint8Arrays([
+            uint32LE(0x02014b50),
+            uint16LE(20),
+            uint16LE(20),
+            uint16LE(0),
+            uint16LE(0),
+            uint16LE(dosTime),
+            uint16LE(dosDate),
+            uint32LE(checksum),
+            uint32LE(size),
+            uint32LE(size),
+            uint16LE(fileNameBytes.length),
+            uint16LE(0),
+            uint16LE(0),
+            uint16LE(0),
+            uint16LE(0),
+            uint32LE(0),
+            uint32LE(localOffset),
+            fileNameBytes
+        ]);
+        centralParts.push(centralHeader);
+
+        localOffset += localHeader.length + dataBytes.length;
+    }
+
+    const centralDirectory = concatUint8Arrays(centralParts);
+    const localData = concatUint8Arrays(localParts);
+
+    const endOfCentralDirectory = concatUint8Arrays([
+        uint32LE(0x06054b50),
+        uint16LE(0),
+        uint16LE(0),
+        uint16LE(files.length),
+        uint16LE(files.length),
+        uint32LE(centralDirectory.length),
+        uint32LE(localData.length),
+        uint16LE(0)
+    ]);
+
+    const zipBytes = concatUint8Arrays([localData, centralDirectory, endOfCentralDirectory]);
+    return new Blob([zipBytes], { type: 'application/zip' });
+}
+
+export async function exportMemoryAsTagMarkdown() {
+    try {
+        const chats = await collectChats();
+        const sessions = Array.isArray(chats.sessions) ? chats.sessions : [];
+        if (sessions.length === 0) {
+            return { success: false, fileCount: 0, tagCount: 0 };
+        }
+
+        const exportedAt = new Date().toISOString();
+        const tagMap = new Map();
+        const sessionRecords = [];
+
+        for (const session of sessions) {
+            const tags = Array.isArray(session.keywords) && session.keywords.length > 0
+                ? session.keywords
+                    .filter(tag => typeof tag === 'string' && tag.trim().length > 0)
+                    .map(tag => tag.trim().toLowerCase())
+                : ['untagged'];
+            const uniqueTags = Array.from(new Set(tags));
+
+            const entry = {
+                id: session.id,
+                title: session.summary || session.title || 'Untitled Session',
+                sessionMemory: (typeof session.sessionMemory === 'string' && session.sessionMemory.trim().length > 0)
+                    ? session.sessionMemory.trim()
+                    : (typeof session.summary === 'string' ? session.summary.trim() : ''),
+                updatedAt: session.updatedAt,
+                createdAt: session.createdAt,
+                tags: uniqueTags
+            };
+            sessionRecords.push(entry);
+
+            for (const tag of uniqueTags) {
+                if (!tagMap.has(tag)) {
+                    tagMap.set(tag, []);
+                }
+                tagMap.get(tag).push(entry);
+            }
+        }
+
+        const files = Array.from(tagMap.entries())
+            .sort((a, b) => a[0].localeCompare(b[0]))
+            .map(([tag, entries]) => ({
+                tag,
+                fileName: `${sanitizeFileNamePart(tag)}.md`,
+                content: buildTagMemoryMarkdown(tag, entries, exportedAt)
+            }));
+
+        files.unshift({
+            tag: 'index',
+            fileName: 'index.md',
+            content: buildMemoryIndexMarkdown(sessionRecords, exportedAt)
+        });
+
+        const zipBlob = createZipBlob(files);
+        const zipUrl = URL.createObjectURL(zipBlob);
+        const a = document.createElement('a');
+        a.href = zipUrl;
+        a.download = `memory-${exportedAt.replace(/[:.]/g, '-')}.zip`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(zipUrl);
+
+        return { success: true, fileCount: files.length, tagCount: files.length };
+    } catch (error) {
+        console.error('Error exporting memory markdown:', error);
+        return { success: false, fileCount: 0, tagCount: 0 };
+    }
+}
+
 /**
  * Save a blob to disk using File System Access API if available, otherwise fallback.
  * Returns true if the file was saved (or fallback was used), false if user cancelled.

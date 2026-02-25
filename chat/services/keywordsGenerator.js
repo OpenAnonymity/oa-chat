@@ -34,6 +34,7 @@ const DEDUP_COOLDOWN_MS = 1 * 60 * 1000; // 1 hour cooldown between dedup runs
 const KEYWORDS_GENERATION_PROMPT = `Analyze this conversation and generate:
 1. A concise title about the main topic (max 50 chars, descriptive and specific - NOT meta descriptions like "Chat about X" or "Discussion on Y")
 2. Exactly 3 broad, generic keywords for retrieval (high-level topics, not specific technical terms)
+3. If the conversation includes personal details (identity, preferences, feelings, relationships, health, finances, or private life context), one keyword MUST be exactly "personal"
 
 Format your response as JSON:
 {
@@ -46,6 +47,40 @@ Bad title examples: "Chat about Python", "Discussion on React", "Conversation ab
 
 Examples of good generic keywords: "programming", "data analysis", "web development", "debugging", "design", "business", "learning"
 Examples of bad (too specific) keywords: "react-hooks", "tensorflow-2.0", "mongodb-atlas"
+When personal context appears, include: "personal"
+
+Conversation:`;
+
+const SESSION_MEMORY_PROMPT = `Summarize the conversation into retrieval-optimized memory blocks.
+
+Output format (plain text only, exact section headers):
+GOAL:
+- ...
+
+DECISIONS:
+- ...
+
+CONSTRAINTS:
+- ...
+
+ARTIFACTS (files, APIs, tools, models, IDs, paths):
+- ...
+
+OPEN ITEMS:
+- ...
+
+Each bullet must:
+- be atomic (one fact per bullet),
+- include concrete nouns and specific terms from the chat,
+- avoid pronouns when possible,
+- avoid fluff/meta commentary.
+
+Rules:
+- 8-14 bullets total across all sections.
+- Keep each bullet under 20 words.
+- Prefer durable facts and explicit outcomes.
+- If a section has no data, write: - none
+- No JSON/XML/markdown code fences.
 
 Conversation:`;
 
@@ -115,10 +150,19 @@ class KeywordsGenerator {
             const allSessions = await chatDB.getAllSessions();
             if (!allSessions || allSessions.length === 0) return;
 
+<<<<<<< Updated upstream
             const needsKeywords = allSessions.filter(s =>
                 (!s.summary || !s.keywords || s.keywords.length === 0)
                 && !s.disableAutoEmbeddingKeywords
             );
+=======
+            const needsKeywords = allSessions.filter(s => {
+                const hasSummary = typeof s.summary === 'string' && s.summary.trim().length > 0;
+                const hasKeywords = Array.isArray(s.keywords) && s.keywords.length > 0;
+                const hasSessionMemory = typeof s.sessionMemory === 'string' && s.sessionMemory.trim().length > 0;
+                return !hasSummary || !hasKeywords || !hasSessionMemory;
+            });
+>>>>>>> Stashed changes
 
             if (needsKeywords.length === 0) {
                 console.log('[KeywordsGenerator] All sessions already have keywords');
@@ -216,9 +260,24 @@ class KeywordsGenerator {
 
         const session = await chatDB.getSession(sessionId);
         if (!session) return null;
+<<<<<<< Updated upstream
         if (session.disableAutoEmbeddingKeywords && !force) return null;
         if (session.summary && Array.isArray(session.keywords) && session.keywords.length > 0) {
             return { summary: session.summary, keywords: session.keywords };
+=======
+        if (
+            session.summary &&
+            Array.isArray(session.keywords) &&
+            session.keywords.length > 0 &&
+            typeof session.sessionMemory === 'string' &&
+            session.sessionMemory.trim().length > 0
+        ) {
+            return {
+                summary: session.summary,
+                keywords: session.keywords,
+                sessionMemory: session.sessionMemory
+            };
+>>>>>>> Stashed changes
         }
 
         const result = await this.generateForSession(sessionId, null, { force });
@@ -265,7 +324,13 @@ class KeywordsGenerator {
                     }
 
                     // Already has keywords — skip
-                    if (session.summary && session.keywords && session.keywords.length > 0) {
+                    if (
+                        session.summary &&
+                        session.keywords &&
+                        session.keywords.length > 0 &&
+                        typeof session.sessionMemory === 'string' &&
+                        session.sessionMemory.trim().length > 0
+                    ) {
                         this.queue.splice(idx, 1);
                         continue;
                     }
@@ -355,6 +420,10 @@ class KeywordsGenerator {
 
         // Generate if session has never had keywords generated
         if (!session.summary || !session.keywords || session.keywords.length === 0) {
+            return true;
+        }
+
+        if (!session.sessionMemory || !session.sessionMemory.trim()) {
             return true;
         }
 
@@ -460,8 +529,9 @@ class KeywordsGenerator {
             // Get model for generation (use a fast, cheap model)
             const modelId = this.getGenerationModel(session);
 
-            // Build prompt
+            // Build prompts
             const prompt = `${KEYWORDS_GENERATION_PROMPT}\n${conversationText}`;
+            const sessionMemoryPrompt = `${SESSION_MEMORY_PROMPT}\n${conversationText}`;
 
             // Build messages for generation
             const generationMessages = [
@@ -493,10 +563,17 @@ class KeywordsGenerator {
                 null, // abortController
                 null, // onReasoningChunk
                 false, // reasoningEnabled
-                { temperature: 0, max_tokens: 150 } // extraBody
+                { temperature: 0, max_tokens: 220 } // extraBody
             );
 
-            return this._parseAndSave(fullResponse, session, filteredMessages.length, app);
+            const sessionMemory = await this._generateSessionMemoryWithBackend(
+                backend,
+                modelId,
+                token,
+                sessionMemoryPrompt
+            );
+
+            return this._parseAndSave(fullResponse, session, filteredMessages.length, app, sessionMemory);
 
         } catch (error) {
             console.error('[KeywordsGenerator] Error generating keywords:', error);
@@ -591,8 +668,18 @@ class KeywordsGenerator {
         }
 
         // Skip if already has keywords
-        if (session.summary && session.keywords && session.keywords.length > 0) {
-            return { summary: session.summary, keywords: session.keywords };
+        if (
+            session.summary &&
+            session.keywords &&
+            session.keywords.length > 0 &&
+            typeof session.sessionMemory === 'string' &&
+            session.sessionMemory.trim().length > 0
+        ) {
+            return {
+                summary: session.summary,
+                keywords: session.keywords,
+                sessionMemory: session.sessionMemory
+            };
         }
 
         // Ensure we have a valid Tinfoil key
@@ -620,8 +707,9 @@ class KeywordsGenerator {
                 })
                 .join('\n\n');
 
-            // Build prompt
+            // Build prompts
             const prompt = `${KEYWORDS_GENERATION_PROMPT}\n${conversationText}`;
+            const sessionMemoryPrompt = `${SESSION_MEMORY_PROMPT}\n${conversationText}`;
 
             console.log('[KeywordsGenerator] Generating keywords for session:', sessionId, '\nPrompt:\n', prompt);
 
@@ -638,7 +726,7 @@ class KeywordsGenerator {
                         ]
                     }
                 ],
-                max_output_tokens: 150,
+                max_output_tokens: 220,
                 temperature: 0,
                 stream: false
             }, { backendId: TINFOIL_BACKEND_ID });
@@ -650,7 +738,8 @@ class KeywordsGenerator {
                 return null;
             }
 
-            return this._parseAndSave(fullResponse, session, filteredMessages.length);
+            const sessionMemory = await this._generateSessionMemoryWithTinfoil(sessionMemoryPrompt);
+            return this._parseAndSave(fullResponse, session, filteredMessages.length, null, sessionMemory);
 
         } catch (error) {
             console.error('[KeywordsGenerator] Tinfoil generation error:', error);
@@ -693,26 +782,10 @@ class KeywordsGenerator {
      * @param {Object} session - Session object (will be mutated and saved)
      * @param {number} messageCount - Number of non-local messages at generation time
      * @param {Object} app - Optional app reference for in-memory state updates
-     * @returns {Promise<Object|null>} { summary, keywords } or null on error
+     * @returns {Promise<Object|null>} { summary, keywords, sessionMemory } or null on error
      */
-    async _parseAndSave(fullResponse, session, messageCount, app = null) {
-        // Parse the JSON response
-        let parsedData = null;
-        try {
-            // Try to extract JSON from the response (in case model adds extra text)
-            const jsonMatch = fullResponse.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-                parsedData = JSON.parse(jsonMatch[0]);
-            } else {
-                parsedData = JSON.parse(fullResponse);
-            }
-        } catch (parseError) {
-            console.error('[KeywordsGenerator] Failed to parse JSON response:', parseError);
-            console.log('[KeywordsGenerator] Raw response:', fullResponse);
-
-            // Fallback: try to extract manually
-            parsedData = this.fallbackParse(fullResponse);
-        }
+    async _parseAndSave(fullResponse, session, messageCount, app = null, generatedSessionMemory = null) {
+        let parsedData = this.parseKeywordsResponse(fullResponse);
 
         if (!parsedData || !parsedData.summary || !parsedData.keywords) {
             console.warn('[KeywordsGenerator] Invalid response format:', parsedData);
@@ -730,9 +803,19 @@ class KeywordsGenerator {
         const summary = typeof parsedData.summary === 'string'
             ? parsedData.summary.trim().substring(0, 50) // Max 50 chars for title
             : null;
+        const existingSessionMemory = typeof session.sessionMemory === 'string'
+            ? session.sessionMemory.trim().substring(0, 4000)
+            : null;
+        const sessionMemory = typeof generatedSessionMemory === 'string'
+            ? generatedSessionMemory.trim().substring(0, 4000)
+            : (existingSessionMemory || summary);
 
         if (!summary || keywords.length === 0) {
-            console.warn('[KeywordsGenerator] Invalid parsed data:', { summary, keywords });
+            console.warn('[KeywordsGenerator] Invalid parsed data:', {
+                summary,
+                keywords,
+                hasSessionMemory: !!sessionMemory
+            });
             return null;
         }
 
@@ -742,6 +825,7 @@ class KeywordsGenerator {
         const sessionToSave = latestSession || session;
         sessionToSave.summary = summary;
         sessionToSave.keywords = keywords;
+        sessionToSave.sessionMemory = sessionMemory;
         sessionToSave.keywordsGeneratedAt = Date.now();
         sessionToSave.messageCountAtGeneration = messageCount;
         await chatDB.saveSession(sessionToSave);
@@ -752,14 +836,141 @@ class KeywordsGenerator {
             if (inMemorySession) {
                 inMemorySession.summary = summary;
                 inMemorySession.keywords = keywords;
+                inMemorySession.sessionMemory = sessionMemory;
                 inMemorySession.keywordsGeneratedAt = Date.now();
                 inMemorySession.messageCountAtGeneration = messageCount;
             }
         }
 
-        console.log('[KeywordsGenerator] Generated keywords:', { summary, keywords });
+        try {
+            const { default: sessionEmbedder } = await import('./sessionEmbedder.js');
+            sessionEmbedder.enqueue(session.id);
+            sessionEmbedder.processQueue();
+        } catch (error) {
+            console.warn('[KeywordsGenerator] Failed to queue re-embed after summary generation:', error);
+        }
 
-        return { summary, keywords };
+        console.log('[KeywordsGenerator] Generated keywords/session memory:', {
+            summary,
+            keywords,
+            sessionMemoryPreview: `${sessionMemory.substring(0, 120)}${sessionMemory.length > 120 ? '...' : ''}`
+        });
+
+        return { summary, keywords, sessionMemory };
+    }
+
+    parseKeywordsResponse(text) {
+        if (typeof text !== 'string') return null;
+        const raw = text.trim();
+        if (!raw) return null;
+
+        const candidates = [];
+        const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+        if (fenced?.[1]) {
+            candidates.push(fenced[1].trim());
+        }
+        const firstBrace = raw.indexOf('{');
+        if (firstBrace >= 0) {
+            candidates.push(raw.slice(firstBrace).trim());
+        }
+        candidates.push(raw);
+
+        for (const candidate of candidates) {
+            const parsed = this.tryParseKeywordJson(candidate);
+            if (parsed) return parsed;
+        }
+
+        console.error('[KeywordsGenerator] Failed to parse JSON response');
+        console.log('[KeywordsGenerator] Raw response:', raw);
+        return this.fallbackParse(raw);
+    }
+
+    tryParseKeywordJson(candidate) {
+        if (!candidate) return null;
+        const attempts = [candidate];
+        if (!candidate.endsWith('}')) {
+            attempts.push(`${candidate}}`);
+        }
+
+        for (const attempt of attempts) {
+            try {
+                const parsed = JSON.parse(attempt);
+                if (parsed && typeof parsed === 'object') {
+                    return parsed;
+                }
+            } catch (error) {
+                // Continue to next attempt.
+            }
+        }
+        return null;
+    }
+
+    async _generateSessionMemoryWithBackend(backend, modelId, token, prompt) {
+        try {
+            const messages = [{ role: 'user', content: prompt }];
+            let fullResponse = '';
+            await backend.streamCompletion(
+                messages,
+                modelId,
+                token,
+                (chunk) => {
+                    if (chunk) {
+                        fullResponse += chunk;
+                    }
+                },
+                null,
+                null,
+                false,
+                null,
+                null,
+                false,
+                { temperature: 0, max_tokens: 350 }
+            );
+            return this._normalizeSessionMemory(fullResponse);
+        } catch (error) {
+            console.warn('[KeywordsGenerator] Session memory generation failed (backend):', error);
+            return null;
+        }
+    }
+
+    async _generateSessionMemoryWithTinfoil(prompt) {
+        try {
+            const response = await localInferenceService.createResponse({
+                model: TINFOIL_MODEL,
+                input: [
+                    {
+                        role: 'user',
+                        content: [
+                            {
+                                type: 'input_text',
+                                text: prompt
+                            }
+                        ]
+                    }
+                ],
+                max_output_tokens: 350,
+                temperature: 0,
+                stream: false
+            }, { backendId: TINFOIL_BACKEND_ID });
+
+            const text = this._extractOutputText(response);
+            return this._normalizeSessionMemory(text);
+        } catch (error) {
+            console.warn('[KeywordsGenerator] Session memory generation failed (tinfoil):', error);
+            return null;
+        }
+    }
+
+    _normalizeSessionMemory(text) {
+        if (typeof text !== 'string') return null;
+        const cleaned = text
+            .replace(/\r/g, '')
+            .split('\n')
+            .map(line => line.trim())
+            .filter(Boolean)
+            .join('\n')
+            .trim();
+        return cleaned || null;
     }
 
     /**
@@ -770,19 +981,37 @@ class KeywordsGenerator {
      */
     fallbackParse(text) {
         try {
-            const summaryMatch = text.match(/summary["\s:]+([^"\n]+)/i);
-            const keywordsMatch = text.match(/keywords["\s:]+\[([^\]]+)\]/i);
+            const summaryMatch = text.match(/"summary"\s*:\s*"([^"]+)"/i)
+                || text.match(/summary["\s:]+([^"\n]+)/i)
+                || text.match(/^summary\s*[:=-]\s*(.+)$/im);
+            const keywordsMatch = text.match(/"keywords"\s*:\s*\[([^\]]+)\]/i)
+                || text.match(/keywords["\s:]+\[([^\]]+)\]/i)
+                || text.match(/^keywords\s*[:=-]\s*(.+)$/im);
 
-            if (!summaryMatch || !keywordsMatch) {
+            if (!summaryMatch) {
                 return null;
             }
 
             const summary = summaryMatch[1].trim().replace(/[",]/g, '');
-            const keywordsStr = keywordsMatch[1];
-            const keywords = keywordsStr
-                .split(',')
-                .map(k => k.trim().replace(/["\[\]]/g, ''))
+            const keywordsStr = keywordsMatch ? keywordsMatch[1] : '';
+            let keywords = keywordsStr
+                .split(/[,\n]/)
+                .map(k => k.trim().replace(/["\[\]-]/g, ''))
                 .filter(k => k.length > 0);
+
+            if (keywords.length === 0) {
+                const lineKeywords = text
+                    .split('\n')
+                    .map(line => line.trim())
+                    .filter(line => /^[-*]\s*/.test(line))
+                    .map(line => line.replace(/^[-*]\s*/, '').trim())
+                    .filter(Boolean);
+                keywords = lineKeywords.slice(0, 3);
+            }
+
+            if (keywords.length === 0) {
+                return null;
+            }
 
             return { summary, keywords };
         } catch (error) {

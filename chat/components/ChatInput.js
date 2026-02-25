@@ -6,7 +6,7 @@
 
 import themeManager from '../services/themeManager.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
-import { exportAllData, exportChats, exportTickets } from '../services/globalExport.js';
+import { exportAllData, exportChats, exportTickets, exportMemoryAsTagMarkdown } from '../services/globalExport.js';
 import { importFromFile, formatImportSummary } from '../services/globalImport.js';
 import ticketClient from '../services/ticketClient.js';
 import scrubberService from '../services/scrubberService.js';
@@ -382,6 +382,8 @@ export default class ChatInput {
                     return; // Don't close menu until file is selected
                 } else if (action === 'export-chats') {
                     await this.handleExportChats();
+                } else if (action === 'export-memory-md') {
+                    await this.handleExportMemoryMarkdown();
                 } else if (action === 'import-history') {
                     this.app.chatHistoryImportModal?.open();
                 } else if (action === 'export-tickets') {
@@ -1827,6 +1829,24 @@ export default class ChatInput {
         } catch (error) {
             console.error('Chat export failed:', error);
             this.app.showToast?.('Failed to export chats', 'error');
+        }
+    }
+
+    /**
+     * Handles the Export Memory action.
+     * Exports session memory summaries as one markdown file per tag in a zip.
+     */
+    async handleExportMemoryMarkdown() {
+        try {
+            const result = await exportMemoryAsTagMarkdown();
+            if (result.success) {
+                this.app.showToast?.(`Exported memory zip with ${result.fileCount} tag file${result.fileCount !== 1 ? 's' : ''}`, 'success');
+            } else {
+                this.app.showToast?.('Failed to export memory markdown', 'error');
+            }
+        } catch (error) {
+            console.error('Memory markdown export failed:', error);
+            this.app.showToast?.('Failed to export memory markdown', 'error');
         }
     }
 
