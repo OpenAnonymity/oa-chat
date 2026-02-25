@@ -15,7 +15,7 @@ const WELCOME_DIALOG_BASE_WIDTH = 464;
 const WELCOME_DIALOG_VIEWPORT_WIDTH_RATIO = 0.94;
 const WELCOME_THEME_TOGGLE_CLEARANCE = 8;
 const BETA_SIGNUP_URL = 'https://openanonymity.ai/beta';
-const FREE_ACCESS_EMAIL_HINT_HTML = `Email collected to prevent abuse and is unlinked from the free access (we have limited research budget). Consider <a href="${BETA_SIGNUP_URL}" target="_blank" rel="noopener noreferrer" class="underline hover:text-foreground transition-colors">requesting</a> an invite code.`;
+const FREE_ACCESS_EMAIL_HINT_HTML = `Email collected only to prevent abuse and is unlinked from the free access. Consider <a href="${BETA_SIGNUP_URL}" target="_blank" rel="noopener noreferrer" class="underline hover:text-foreground transition-colors">requesting</a> an invite code!`;
 const FREE_ACCESS_UNAVAILABLE_HINT = 'Free access is unavailable right now. Please request an invite code.';
 const FREE_ACCESS_UNAVAILABLE_HINT_HTML = `Free access is unavailable right now. Please <a href="${BETA_SIGNUP_URL}" target="_blank" rel="noopener noreferrer" class="underline hover:text-foreground transition-colors">request</a> an invite code.`;
 
@@ -304,16 +304,18 @@ class WelcomePanel {
                 ? FREE_ACCESS_UNAVAILABLE_HINT_HTML
                 : this.escapeHtml(this.redeemError))
             : (showHint ? FREE_ACCESS_EMAIL_HINT_HTML : '');
+        // Preserve the current top position before content height changes so
+        // mode switches shrink/expand from the bottom.
+        this.anchorWelcomeDialogFromCurrentPosition();
+
         if (!feedbackHtml) {
             feedbackEl.innerHTML = '';
             feedbackEl.classList.remove('text-red-500', 'text-muted-foreground');
             feedbackEl.classList.add('hidden');
-            this.resetWelcomeDialogAnchor();
             this.applyWelcomeDialogScale();
             return;
         }
 
-        this.anchorWelcomeDialogFromCurrentPosition();
         feedbackEl.innerHTML = feedbackHtml;
         feedbackEl.classList.remove('hidden', 'text-red-500', 'text-muted-foreground');
         feedbackEl.classList.add(this.redeemError ? 'text-red-500' : 'text-muted-foreground');
