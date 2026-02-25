@@ -28,13 +28,13 @@ const TINFOIL_MODEL = 'gpt-oss-120b';
 const TINFOIL_KEY_TICKETS_REQUIRED = 2;
 const KEYWORD_CHECK_INTERVAL_MS = 30 * 1000;
 const KEYWORD_DELAY_MS = 500; // Delay between keyword generations
-const KEYWORD_BACKLOG_ENABLED = false; // Temporary kill switch for queue/backfill processing
+const KEYWORD_BACKLOG_ENABLED = true; // Temporary kill switch for queue/backfill processing
 const DEDUP_TAG_THRESHOLD = 30; // Only dedup when distinct tags exceed this
-const DEDUP_COOLDOWN_MS = 1 * 60 * 1000; // 1 hour cooldown between dedup runs
+const DEDUP_COOLDOWN_MS = 1 * 60 * 1000; // 1 minute cooldown between dedup runs
 
 const KEYWORDS_GENERATION_PROMPT = `Analyze this conversation and generate:
 1. A concise title about the main topic (max 50 chars, descriptive and specific - NOT meta descriptions like "Chat about X" or "Discussion on Y")
-2. Exactly 3 broad, generic keywords for retrieval (high-level topics, not specific technical terms)
+2. Exactly 3 keywords that capture WHAT this conversation is specifically about, so it can be retrieved later and distinguished from other conversations on similar topics
 
 Format your response as JSON:
 {
@@ -45,22 +45,46 @@ Format your response as JSON:
 Good title examples: "Python API Integration", "React State Management", "Database Schema Design"
 Bad title examples: "Chat about Python", "Discussion on React", "Conversation about databases"
 
-Examples of good generic keywords: "programming", "data analysis", "web development", "debugging", "design", "business", "learning"
-Examples of bad (too specific) keywords: "react-hooks", "tensorflow-2.0", "mongodb-atlas"
+Keywords should be specific enough to distinguish this conversation from others. Think: "what would I search for to find this conversation again?"
+- Good keywords: "utility bill dispute", "apartment move-out", "React state management", "resume formatting", "meal prep planning"
+- Bad keywords (too vague): "finance", "programming", "personal", "help", "learning"
+- Bad keywords (too specific): "react-hooks-v18.2", "tensorflow-2.0.1", "mongodb-atlas-m10"
 
 Conversation:`;
 
-const TAG_DEDUP_PROMPT = `You are a tag deduplication assistant. Given a list of tags used across chat sessions, identify groups of tags that are genuinely synonymous (same concept, different wording).
+const TAG_DEDUP_PROMPT = `You are a tag deduplication assistant. Given a list of tags used across chat sessions, merge tags that refer to the same concept so the total number of distinct tags is reduced toward 30 or fewer.
 
-Return a JSON object mapping each redundant tag to its canonical (preferred) form. Only include tags that have synonyms — omit tags that are unique. Pick the most common or clearest tag as canonical.
+Return a JSON object mapping each redundant tag to its canonical (preferred) form. Only include tags that should be merged — omit tags that are already unique. Pick the most common or clearest tag as canonical.
 
-Example input: ["programming", "coding", "web development", "web dev", "debugging", "leisure", "lifestyle"]
-Example output: {"coding": "programming", "web dev": "web development", "leisure": "lifestyle"}
+Example input: ["programming", "coding", "code help", "web development", "web dev", "debugging", "bug fixing", "leisure", "lifestyle"]
+Example output: {"coding": "programming", "code help": "programming", "web dev": "web development", "bug fixing": "debugging", "leisure": "lifestyle"}
+
+Merge criteria (from most to least aggressive):
+1. Exact synonyms: "coding" → "programming", "web dev" → "web development"
+2. Spelling/phrasing variants: "data-analysis" → "data analysis", "ML" → "machine learning"
+3. Overlapping concepts where one subsumes the other: "code help" → "programming", "bug fixing" → "debugging"
+
+Do NOT merge tags that serve different retrieval purposes — if someone would search for them separately, keep them separate. E.g. "utility bill dispute" and "apartment costs" should stay distinct.
+
+Return valid JSON only, no extra text.
+
+Tags:`;
+
+const TAG_CLUSTER_PROMPT = `You are organizing a user's chat history tags into memory categories for later retrieval. Group the tags so that when the user starts a new conversation, relevant past context can be surfaced by category.
+
+Return a JSON object where keys are category names and values are arrays of tags belonging to that category.
+
+Example input: ["utility bill dispute", "apartment move-out", "React state management", "API integration", "resume formatting", "job interview prep", "meal prep planning", "workout routine"]
+Example output: {"Housing & Logistics": ["utility bill dispute", "apartment move-out"], "Software Development": ["React state management", "API integration"], "Career": ["resume formatting", "job interview prep"], "Health & Lifestyle": ["meal prep planning", "workout routine"]}
 
 Rules:
-- Only group genuinely synonymous tags (same meaning)
-- Do not group related-but-different tags (e.g. "python" and "programming" are NOT synonyms)
-- The canonical tag can be one from the list or a new clearer form
+- Read each tag carefully and place it based on what the tag actually MEANS, not superficial word overlap
+- Use short, clear category names (2-3 words max)
+- Every input tag must appear in exactly one category
+- Aim for 4-8 categories — enough to be useful, few enough to scan quickly
+- Group by the user's INTENT (why they asked), not just topic similarity
+- Do NOT dump unrelated tags into the nearest large category — create a new category if needed
+- A category can contain a single tag if it doesn't fit elsewhere
 - Return valid JSON only, no extra text
 
 Tags:`;
@@ -92,7 +116,7 @@ class KeywordsGenerator {
             // Start periodic dedup timer
             if (this.dedupInterval) clearInterval(this.dedupInterval);
             this.dedupInterval = setInterval(() => {
-                this.deduplicateTags();
+                this.deduplicateAndClusterTags();
             }, DEDUP_COOLDOWN_MS);
         } else {
             this.queue = [];
@@ -661,7 +685,7 @@ class KeywordsGenerator {
                         ]
                     }
                 ],
-                max_output_tokens: 150,
+                max_output_tokens: 500,
                 temperature: 0,
                 stream: false
             }, { backendId: TINFOIL_BACKEND_ID });
@@ -898,10 +922,10 @@ class KeywordsGenerator {
     // ---- Tag deduplication ----
 
     /**
-     * Deduplicate synonym tags across all sessions using Tinfoil LLM.
+     * Deduplicate synonym tags and cluster into categories across all sessions using Tinfoil LLM.
      * Guarded by cooldown and in-progress flag.
      */
-    async deduplicateTags() {
+    async deduplicateAndClusterTags() {
         // Guard: cooldown
         if (Date.now() - this._lastDedupTimestamp < DEDUP_COOLDOWN_MS) {
             return;
@@ -934,7 +958,7 @@ class KeywordsGenerator {
 
             const distinctTags = Array.from(tagToSessionIds.keys());
             if (distinctTags.length <= DEDUP_TAG_THRESHOLD) {
-                console.log(`[KeywordsGenerator] Dedup skipped — only ${distinctTags.length} distinct tags (threshold: ${DEDUP_TAG_THRESHOLD}): ${distinctTags.join(', ')}`);
+                console.log(`[KeywordsGenerator] Dedup skipped — only ${distinctTags.length} distinct tags (threshold: ${DEDUP_TAG_THRESHOLD})`);
                 return;
             }
 
@@ -947,8 +971,8 @@ class KeywordsGenerator {
 
             console.log(`[KeywordsGenerator] Running tag deduplication on ${distinctTags.length} distinct tags: ${distinctTags.join(', ')}...`);
 
-            // Call LLM for dedup mapping
-            const response = await localInferenceService.createResponse({
+            // ---- Call 1: Dedup (flat synonym mapping) ----
+            const dedupResponse = await localInferenceService.createResponse({
                 model: TINFOIL_MODEL,
                 input: [
                     {
@@ -956,54 +980,49 @@ class KeywordsGenerator {
                         content: [
                             {
                                 type: 'input_text',
-                                text: `${TAG_DEDUP_PROMPT}\n${JSON.stringify(distinctTags)}`
+                                text: `${TAG_DEDUP_PROMPT}\nThere are currently ${distinctTags.length} tags. Try to reduce to ${DEDUP_TAG_THRESHOLD} or fewer.\n${JSON.stringify(distinctTags)}`
                             }
                         ]
                     }
                 ],
-                max_output_tokens: 500,
-                temperature: 0,
+                max_output_tokens: 4000,
+                temperature: 0.3,
                 stream: false
             }, { backendId: TINFOIL_BACKEND_ID });
 
-            const responseText = this._extractOutputText(response);
-            if (!responseText) {
-                console.warn('[KeywordsGenerator] Empty dedup response');
-                return;
-            }
-
-            // Parse JSON mapping
-            let mapping;
-            try {
-                const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-                mapping = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(responseText);
-            } catch (parseError) {
-                console.warn('[KeywordsGenerator] Dedup response parse failed:', parseError);
-                return;
-            }
-
-            if (!mapping || typeof mapping !== 'object') return;
-
-            // Validate and filter mapping
+            console.log('[KeywordsGenerator] Raw dedup API response:', JSON.stringify(dedupResponse).slice(0, 500));
+            const dedupText = this._extractOutputText(dedupResponse);
             const validMapping = {};
-            for (const [oldTag, canonical] of Object.entries(mapping)) {
-                const normalizedOld = typeof oldTag === 'string' ? oldTag.trim().toLowerCase() : '';
-                const normalizedCanonical = typeof canonical === 'string' ? canonical.trim().toLowerCase() : '';
-                if (!normalizedOld || !normalizedCanonical) continue;
-                if (normalizedOld === normalizedCanonical) continue; // Skip identity
-                if (!tagToSessionIds.has(normalizedOld)) continue; // Skip unknown old tags
-                validMapping[normalizedOld] = normalizedCanonical;
+
+            if (dedupText) {
+                try {
+                    const jsonMatch = dedupText.match(/\{[\s\S]*\}/);
+                    const mapping = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(dedupText);
+
+                    if (mapping && typeof mapping === 'object') {
+                        for (const [oldTag, canonical] of Object.entries(mapping)) {
+                            const normalizedOld = typeof oldTag === 'string' ? oldTag.trim().toLowerCase() : '';
+                            const normalizedCanonical = typeof canonical === 'string' ? canonical.trim().toLowerCase() : '';
+                            if (!normalizedOld || !normalizedCanonical) continue;
+                            if (normalizedOld === normalizedCanonical) continue;
+                            if (!tagToSessionIds.has(normalizedOld)) continue;
+                            validMapping[normalizedOld] = normalizedCanonical;
+                        }
+                    }
+                } catch (parseError) {
+                    console.warn('[KeywordsGenerator] Dedup response parse failed:', parseError, '\nRaw response:', dedupText);
+                }
+            } else {
+                console.warn('[KeywordsGenerator] Empty dedup response');
             }
 
             if (Object.keys(validMapping).length === 0) {
                 console.log('[KeywordsGenerator] Dedup found no synonym mappings to apply');
-                this._lastDedupTimestamp = Date.now();
-                return;
+            } else {
+                console.log('[KeywordsGenerator] Dedup mapping:', validMapping);
             }
 
-            console.log('[KeywordsGenerator] Dedup mapping:', validMapping);
-
-            // Apply mapping to affected sessions
+            // Apply dedup mapping to affected sessions
             const affectedSessionIds = new Set();
             const sessionMap = new Map(allSessions.map(s => [s.id, s]));
 
@@ -1015,16 +1034,97 @@ class KeywordsGenerator {
                     const session = sessionMap.get(sessionId);
                     if (!session || !Array.isArray(session.keywords)) continue;
 
-                    // Remap: replace old tag with canonical
                     session.keywords = session.keywords.map(kw => {
                         const normalized = typeof kw === 'string' ? kw.trim().toLowerCase() : kw;
                         return normalized === oldTag ? canonical : normalized;
                     });
 
-                    // Deduplicate within session
                     session.keywords = [...new Set(session.keywords)];
-
                     affectedSessionIds.add(sessionId);
+                }
+            }
+
+            // Compute post-dedup canonical tags for clustering
+            const postDedupTags = new Set();
+            for (const session of allSessions) {
+                if (Array.isArray(session.keywords)) {
+                    for (const kw of session.keywords) {
+                        const tag = typeof kw === 'string' ? kw.trim().toLowerCase() : '';
+                        if (tag) postDedupTags.add(tag);
+                    }
+                }
+            }
+            const clusterInputTags = Array.from(postDedupTags);
+
+            // ---- Call 2: Cluster (post-dedup tags → categories) ----
+            if (clusterInputTags.length > 0) {
+                const clusterResponse = await localInferenceService.createResponse({
+                    model: TINFOIL_MODEL,
+                    input: [
+                        {
+                            role: 'user',
+                            content: [
+                                {
+                                    type: 'input_text',
+                                    text: `${TAG_CLUSTER_PROMPT}\n${JSON.stringify(clusterInputTags)}`
+                                }
+                            ]
+                        }
+                    ],
+                    max_output_tokens: 4000,
+                    temperature: 0.3,
+                    stream: false
+                }, { backendId: TINFOIL_BACKEND_ID });
+
+                const clusterText = this._extractOutputText(clusterResponse);
+
+                if (clusterText) {
+                    try {
+                        const jsonMatch = clusterText.match(/\{[\s\S]*\}/);
+                        const clusters = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(clusterText);
+
+                        if (clusters && typeof clusters === 'object') {
+                            // Invert clusters into tag → category map
+                            const tagToCategory = {};
+                            for (const [category, tags] of Object.entries(clusters)) {
+                                if (!Array.isArray(tags)) continue;
+                                for (const tag of tags) {
+                                    const normalized = typeof tag === 'string' ? tag.trim().toLowerCase() : '';
+                                    if (normalized) tagToCategory[normalized] = category;
+                                }
+                            }
+
+                            // For each session: majority vote on category
+                            for (const session of allSessions) {
+                                if (!Array.isArray(session.keywords) || session.keywords.length === 0) continue;
+
+                                const votes = {};
+                                for (const kw of session.keywords) {
+                                    const cat = tagToCategory[typeof kw === 'string' ? kw.trim().toLowerCase() : ''];
+                                    if (cat) votes[cat] = (votes[cat] || 0) + 1;
+                                }
+
+                                let bestCat = null, bestCount = 0;
+                                for (const [cat, count] of Object.entries(votes)) {
+                                    if (count > bestCount) { bestCount = count; bestCat = cat; }
+                                }
+
+                                if (bestCat && session.category !== bestCat) {
+                                    session.category = bestCat;
+                                    sessionMap.set(session.id, session);
+                                    affectedSessionIds.add(session.id);
+                                }
+                            }
+
+                            const categoryCount = new Set(Object.values(tagToCategory)).size;
+                            console.log(`[KeywordsGenerator] Clustering assigned ${categoryCount} categories across sessions`);
+                            console.log('[KeywordsGenerator] Clusters:', clusters);
+                        }
+                    } catch (parseError) {
+                        console.warn('[KeywordsGenerator] Cluster response parse failed:', parseError, '\nRaw response:', clusterText);
+                    }
+                } else {
+                    console.warn('[KeywordsGenerator] Empty cluster response');
                 }
             }
 
@@ -1038,7 +1138,7 @@ class KeywordsGenerator {
                 }
             }
 
-            console.log(`[KeywordsGenerator] Dedup complete — updated ${savedCount} sessions`);
+            console.log(`[KeywordsGenerator] Dedup + cluster complete — updated ${savedCount} sessions`);
 
             // Re-embed affected sessions
             if (affectedSessionIds.size > 0) {
@@ -1087,7 +1187,7 @@ class KeywordsGenerator {
 
             if (this.queue.length === 0 && !this.processing) {
                 clearInterval(pollId);
-                this.deduplicateTags();
+                this.deduplicateAndClusterTags();
             }
         }, POLL_INTERVAL_MS);
     }
