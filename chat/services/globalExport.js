@@ -97,10 +97,6 @@ async function collectPreferencesFromIndexedDB() {
             preferences.reasoningEnabled = reasoningEnabled;
         }
 
-        const modelPickerConfig = await chatDB.getSetting('modelPickerConfig');
-        if (modelPickerConfig !== undefined) {
-            preferences.modelPickerConfig = modelPickerConfig;
-        }
     } catch (e) {
         console.warn('Failed to load settings from IndexedDB:', e);
     }

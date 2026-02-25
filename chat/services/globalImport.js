@@ -247,10 +247,6 @@ async function applyPreferences(preferences) {
             applied.push('reasoningEnabled');
         }
 
-        if ('modelPickerConfig' in preferences && preferences.modelPickerConfig) {
-            await chatDB.saveSetting('modelPickerConfig', preferences.modelPickerConfig);
-            applied.push('modelPickerConfig');
-        }
     }
 
     return applied;

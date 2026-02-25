@@ -11,6 +11,7 @@ import ChatHistoryImportModal from './components/ChatHistoryImportModal.js';
 import AccountModal from './components/AccountModal.js';
 import MemorySelector from './components/MemorySelector.js';
 import WelcomePanel from './components/WelcomePanel.js';
+import ThanksPanel from './components/ThanksPanel.js';
 import { buildTypingIndicator } from './components/MessageTemplates.js';
 import themeManager from './services/themeManager.js';
 import preferencesStore, { PREF_KEYS } from './services/preferencesStore.js';
@@ -28,7 +29,7 @@ import scrubberService from './services/scrubberService.js';
 import shareService from './services/shareService.js';
 import shareModals from './components/ShareModals.js';
 import { getTicketCost, initModelTiers } from './services/modelTiers.js';
-import { initPinnedModels } from './services/modelConfig.js';
+import { initPinnedModels, onPinnedModelsUpdate, getDisabledModels } from './services/modelConfig.js';
 import accountService from './services/accountService.js';
 import apiKeyStore from './services/apiKeyStore.js';
 import { generateUlid21 } from './services/ulid.js';
@@ -47,7 +48,7 @@ const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const UPDATE_CHECK_INITIAL_DELAY_MS = 45 * 1000;
 
 // Layout constants for toolbar overlay prediction
-const SIDEBAR_WIDTH = 256;      // 16rem = 256px
+const SIDEBAR_WIDTH = 220;      // Default sidebar width = minimum width
 const RIGHT_PANEL_WIDTH = 288;  // 18rem = 288px
 const TOOLBAR_PREDICTION_GRACE_MS = 350; // Grace period to respect predicted state during animations
 
@@ -197,7 +198,9 @@ class ChatApp {
         this.updateCheckInFlight = false;
         this.pendingStorageRefresh = false;
         this.storageReloadTimer = null;
+        this.pendingModelAvailabilityRefresh = false;
         this.pendingTicketCode = null;
+        this.hasInitialLinkContext = this.detectInitialLinkContext();
         this.splitCodeWarningOverlay = null;
 
         // Link preview state
@@ -213,12 +216,115 @@ class ChatApp {
         this.init();
     }
 
+    detectInitialLinkContext() {
+        try {
+            const url = new URL(window.location.href);
+            if (/^\/tickets\/[^/?#]+/i.test(url.pathname)) {
+                return true;
+            }
+
+            const params = url.searchParams;
+            return params.has('tickets') || params.has('sharing') || params.has('s');
+        } catch (error) {
+            return false;
+        }
+    }
+
     getDefaultModelId() {
-        return inferenceService.getDefaultModelId(this.getCurrentSession());
+        const session = this.getCurrentSession();
+        const fallbackModel = this.getFallbackModelEntry(session);
+        return fallbackModel?.id || inferenceService.getDefaultModelId(session);
     }
 
     getDefaultModelName() {
-        return inferenceService.getDefaultModelName(this.getCurrentSession());
+        const session = this.getCurrentSession();
+        const fallbackModel = this.getFallbackModelEntry(session);
+        return fallbackModel?.name || inferenceService.getDefaultModelName(session);
+    }
+
+    getDisabledModelSet() {
+        return new Set(getDisabledModels());
+    }
+
+    filterDisabledModels(models) {
+        if (!Array.isArray(models) || models.length === 0) {
+            return [];
+        }
+
+        const disabledSet = this.getDisabledModelSet();
+        if (disabledSet.size === 0) {
+            return [...models];
+        }
+
+        return models.filter(model => model && !disabledSet.has(model.id));
+    }
+
+    getFallbackModelEntry(session) {
+        if (!Array.isArray(this.state.models) || this.state.models.length === 0) {
+            return null;
+        }
+
+        const defaultModelId = inferenceService.getDefaultModelId(session);
+        const defaultModel = this.state.models.find(m => m.id === defaultModelId);
+        if (defaultModel) {
+            return defaultModel;
+        }
+
+        return this.state.models[0] || null;
+    }
+
+    applyDisabledModelFilter() {
+        const previousModels = Array.isArray(this.state.models) ? this.state.models : [];
+        const previousIds = previousModels.map(model => model.id).join('|');
+        const filteredModels = this.filterDisabledModels(previousModels);
+        const filteredIds = filteredModels.map(model => model.id).join('|');
+
+        const changed = previousIds !== filteredIds;
+        if (!changed) {
+            return false;
+        }
+
+        this.state.models = filteredModels;
+        this.state.modelsVersion += 1;
+
+        if (this.modelPicker) {
+            if (!this.elements.modelPickerModal.classList.contains('hidden')) {
+                this.modelPicker.renderModels(this.elements.modelSearch?.value || '');
+            } else {
+                this.modelPicker.warmRender();
+            }
+        }
+
+        this.renderCurrentModel();
+        return true;
+    }
+
+    async refreshModelsForAvailabilityUpdate() {
+        if (this.state.modelsLoading) {
+            this.pendingModelAvailabilityRefresh = true;
+            return;
+        }
+
+        try {
+            await this.loadModels();
+            this.applyDisabledModelFilter();
+            this.renderCurrentModel();
+            if (this.modelPicker) {
+                if (!this.elements.modelPickerModal.classList.contains('hidden')) {
+                    this.modelPicker.renderModels(this.elements.modelSearch?.value || '');
+                } else {
+                    this.modelPicker.warmRender();
+                }
+            }
+        } catch (error) {
+            console.warn('Failed to refresh models after availability update:', error);
+            this.applyDisabledModelFilter();
+        }
+
+        if (this.pendingModelAvailabilityRefresh) {
+            this.pendingModelAvailabilityRefresh = false;
+            await this.refreshModelsForAvailabilityUpdate();
+        }
     }
 
     attachDownloadLinkHandler(rootEl) {
@@ -1212,6 +1318,7 @@ class ChatApp {
         this.chatHistoryImportModal = new ChatHistoryImportModal(this);
         this.accountModal = new AccountModal(this);
         this.welcomePanel = new WelcomePanel(this);
+        this.thanksPanel = new ThanksPanel(this);
         this.rightPanel = new RightPanel(this);
         this.rightPanel.mount();
 
@@ -1327,9 +1434,12 @@ class ChatApp {
         // Initialize message navigation
         this.messageNavigation = new MessageNavigation(this);
 
-        // Initialize model tiers and pinned models (loads cache, fetches fresh data in background)
+        // Initialize model tiers and model availability (loads cache, fetches fresh data in background)
         initModelTiers();
         initPinnedModels();
+        onPinnedModelsUpdate(() => {
+            this.refreshModelsForAvailabilityUpdate();
+        });
 
         // Keep slower service startup off the critical render path.
         void (async () => {
@@ -1363,9 +1473,16 @@ class ChatApp {
             await networkProxy.syncWithPreferences().catch(err => console.warn('Proxy pref sync failed:', err));
             networkProxy.initialize().catch(err => console.warn('Proxy init failed:', err));
 
-            await this.welcomePanel.init().catch((error) => {
-                console.warn('Welcome panel init failed:', error);
-            });
+            const hadTicketsBefore = !!await preferencesStore.getPreference(PREF_KEYS.hadTicketsBefore);
+            if (hadTicketsBefore) {
+                await this.thanksPanel.init().catch((error) => {
+                    console.warn('Thanks panel init failed:', error);
+                });
+            } else {
+                await this.welcomePanel.init().catch((error) => {
+                    console.warn('Welcome panel init failed:', error);
+                });
+            }
         })();
 
         // Load settings from IndexedDB in parallel; this is independent of sidebar history load.
@@ -1557,6 +1674,20 @@ class ChatApp {
         return rawCode.trim().replace(/[\s-]+/g, '');
     }
 
+    ingestTicketCode(code, options = {}) {
+        if (!this.rightPanel) return false;
+
+        const normalizedCode = this.normalizeTicketCode(code);
+        if (!normalizedCode) return false;
+
+        const autoRedeem = options.autoRedeem !== false;
+        const source = options.source || null;
+
+        this.rightPanel.show();
+        this.rightPanel.applyInvitationCodeFromLink(normalizedCode, { autoRedeem, source });
+        return true;
+    }
+
     /**
      * Capture ticket code from URL and clean the path/query.
      * Supports /tickets/<code> and ?tickets=<code>.
@@ -1621,9 +1752,7 @@ class ChatApp {
         this.pendingTicketCode = null;
 
         if (!code) return;
-
-        this.rightPanel.show();
-        this.rightPanel.applyInvitationCodeFromLink(code, { autoRedeem: !!autoRedeem, source });
+        this.ingestTicketCode(code, { autoRedeem: !!autoRedeem, source });
     }
 
     /**
@@ -1745,6 +1874,20 @@ class ChatApp {
             return;
         }
 
+        // If local changes exist, never overwrite this session in place.
+        // Offer "fresh copy" flow and keep local edits in the existing session.
+        const hasLocalChanges = await this.hasLocalChangesSinceImport(existingSession);
+        if (hasLocalChanges) {
+            const wantsFresh = await this.showForkedSessionPrompt(existingSession);
+            if (wantsFresh) {
+                await this.markImportedSessionAsForked(existingSession);
+                await this.importSharedSession(shareId);
+            } else {
+                await this.switchSession(existingSession.id);
+            }
+            return;
+        }
+
         const wantsFresh = await this.showImportUpdatePrompt(existingSession);
         if (wantsFresh) {
             await this.importSharedSessionWithData(shareId, shareData);
@@ -1760,6 +1903,42 @@ class ChatApp {
      */
     showImportUpdatePrompt(existingSession) {
         return shareModals.showUpdatePrompt(existingSession);
+    }
+
+    /**
+     * Detect whether an imported session has local changes since the last import.
+     * Uses timestamp baseline when available and falls back to message-count drift.
+     * @param {Object} session - Imported session
+     * @returns {Promise<boolean>} True if local changes are detected
+     */
+    async hasLocalChangesSinceImport(session) {
+        if (!session?.importedFrom) return false;
+
+        const baselineTs = Number(session.lastImportedAt);
+        if (Number.isFinite(baselineTs) && Number(session.updatedAt) > baselineTs) {
+            return true;
+        }
+
+        const importedCount = Number(session.importedMessageCount);
+        if (!Number.isFinite(importedCount) || importedCount < 0) {
+            return false;
+        }
+
+        const currentMessages = await chatDB.getSessionMessages(session.id);
+        return currentMessages.length !== importedCount;
+    }
+
+    /**
+     * Convert an imported session into a local fork so it no longer auto-updates from upstream share.
+     * @param {Object} session - Current session
+     */
+    async markImportedSessionAsForked(session) {
+        if (!session?.importedFrom) return;
+
+        session.forkedFrom = session.importedFrom;
+        session.importedFrom = null;
+        session.importedCiphertext = null;
+        await chatDB.saveSession(session);
     }
 
     /**
@@ -1951,6 +2130,7 @@ class ChatApp {
             existingSession.searchEnabled = payload.session.searchEnabled ?? true;
             existingSession.inferenceBackend = payload.session.inferenceBackend || existingSession.inferenceBackend || inferenceService.getDefaultBackendId();
             existingSession.updatedAt = Date.now();
+            existingSession.lastImportedAt = existingSession.updatedAt;
             existingSession.importedMessageCount = payload.messages.length;
             existingSession.importedCiphertext = encryptedData.ciphertext;
 
@@ -2312,6 +2492,11 @@ class ChatApp {
         }
     }
 
+    isWelcomeWorkflowActive() {
+        if (!this.welcomePanel?.isOpen) return false;
+        return ['welcome', 'redeeming', 'success'].includes(this.welcomePanel.step);
+    }
+
     /**
      * Show a toast notification
      * @param {string} message - Message to display
@@ -2319,6 +2504,10 @@ class ChatApp {
      * @param {number} durationMs - Time to auto-dismiss in milliseconds
      */
     showToast(message, type = 'success', durationMs = 3000) {
+        if (this.isWelcomeWorkflowActive()) {
+            return;
+        }
+
         this.clearToast();
 
         const toast = document.createElement('div');
@@ -2366,6 +2555,10 @@ class ChatApp {
     }
 
     showLoadingToast(message) {
+        if (this.isWelcomeWorkflowActive()) {
+            return () => {};
+        }
+
         this.clearToast();
 
         const toast = document.createElement('div');
@@ -2391,6 +2584,10 @@ class ChatApp {
     }
 
     showUpdateToast() {
+        if (this.isWelcomeWorkflowActive()) {
+            return;
+        }
+
         if (this.updateToastVisible) {
             return;
         }
@@ -2665,7 +2862,8 @@ class ChatApp {
         }
 
         try {
-            this.state.models = await inferenceService.fetchModels(this.getCurrentSession());
+            const fetchedModels = await inferenceService.fetchModels(this.getCurrentSession());
+            this.state.models = this.filterDisabledModels(fetchedModels);
         } catch (error) {
             console.error('Failed to load models:', error);
             // Fallback models are already set in API
@@ -3480,6 +3678,12 @@ class ChatApp {
         let session = this.getCurrentSession();
         if (!session) return;
 
+        // Any local regeneration on an imported session forks it from upstream updates.
+        if (session.importedFrom) {
+            await this.markImportedSessionAsForked(session);
+            this.updateUrlWithSession(session.id);
+        }
+
         // Check if current session is already streaming
         const streamingState = this.getSessionStreamingState(session.id);
         if (streamingState.isStreaming) return;
@@ -3542,41 +3746,30 @@ class ChatApp {
                 await chatDB.saveSession(session);
             }
 
-            if (!modelNameToUse) {
-                const defaultModelId = inferenceService.getDefaultModelId(session);
-                const defaultModel = this.state.models.find(m => m.id === defaultModelId);
-                if (defaultModel) {
-                    modelNameToUse = this.normalizeModelName(defaultModel.name);
-                } else {
-                    const gpt4oModel = this.state.models.find(m => m.name.toLowerCase().includes('gpt-4o'));
-                    if (gpt4oModel) {
-                        modelNameToUse = this.normalizeModelName(gpt4oModel.name);
-                    } else if (this.state.models.length > 0) {
-                        modelNameToUse = this.normalizeModelName(this.state.models[0].name);
-                    }
-                }
+            let selectedModelEntry = modelNameToUse
+                ? this.state.models.find(m => m.name === modelNameToUse)
+                : null;
 
-                if (modelNameToUse) {
-                    session.model = modelNameToUse;
-                    await chatDB.saveSession(session);
-                    this.renderCurrentModel();
+            if (!selectedModelEntry) {
+                const fallbackModel = this.getFallbackModelEntry(session);
+                if (fallbackModel) {
+                    selectedModelEntry = fallbackModel;
+                    modelNameToUse = this.normalizeModelName(fallbackModel.name);
+                    if (session.model !== modelNameToUse) {
+                        session.model = modelNameToUse;
+                        await chatDB.saveSession(session);
+                        this.renderCurrentModel();
+                    }
                 }
             }
 
-            if (!modelNameToUse) {
+            if (!modelNameToUse || !selectedModelEntry) {
                 console.warn('No available models to send message.');
                 await this.addMessage('assistant', 'No models are available right now. Please add a model and try again.', { isLocalOnly: true });
                 return;
             }
 
-            const selectedModelEntry = this.state.models.find(m => m.name === modelNameToUse);
-            let modelIdForRequest;
-
-            if (selectedModelEntry) {
-                modelIdForRequest = selectedModelEntry.id;
-            } else {
-                modelIdForRequest = inferenceService.getDefaultModelId(session);
-            }
+            const modelIdForRequest = selectedModelEntry.id;
 
             // Show typing indicator (only if still viewing this session)
             const typingId = this.isViewingSession(session.id) ? this.showTypingIndicator(modelNameToUse) : null;
@@ -3920,20 +4113,10 @@ class ChatApp {
             this._lastApiContent = apiContent;
         }
 
-        // If this is an imported session and URL still shows the original share ID,
-        // "fork" it - update URL to local session ID and mark as forked
+        // Any local user message on an imported session forks it from upstream updates.
         if (session.importedFrom) {
-            const params = new URLSearchParams(window.location.search);
-            const urlShareId = shareService.normalizeShareId(params.get('s'));
-            if (urlShareId === session.importedFrom) {
-                // Move importedFrom to forkedFrom (for UI display only)
-                // Clear importedFrom so this session won't receive updates from share
-                session.forkedFrom = session.importedFrom;
-                session.importedFrom = null;
-                session.importedCiphertext = null;  // No longer tracking updates
-                await chatDB.saveSession(session);  // Persist the fork
-                this.updateUrlWithSession(session.id);
-            }
+            await this.markImportedSessionAsForked(session);
+            this.updateUrlWithSession(session.id);
         }
 
         // TODO: Re-enable verifier offline check later
@@ -4124,43 +4307,30 @@ class ChatApp {
                 await chatDB.saveSession(session);
             }
 
-            // Use backend default model as fallback
-            if (!modelNameToUse) {
-                const defaultModelId = inferenceService.getDefaultModelId(session);
-                const defaultModel = this.state.models.find(m => m.id === defaultModelId);
-                if (defaultModel) {
-                    modelNameToUse = this.normalizeModelName(defaultModel.name);
-                } else {
-                    const gpt4oModel = this.state.models.find(m => m.name.toLowerCase().includes('gpt-4o'));
-                    if (gpt4oModel) {
-                        modelNameToUse = this.normalizeModelName(gpt4oModel.name);
-                    } else if (this.state.models.length > 0) {
-                        modelNameToUse = this.normalizeModelName(this.state.models[0].name);
-                    }
-                }
+            let selectedModelEntry = modelNameToUse
+                ? this.state.models.find(m => m.name === modelNameToUse)
+                : null;
 
-                if (modelNameToUse) {
-                    session.model = modelNameToUse;
-                    await chatDB.saveSession(session);
-                    this.renderCurrentModel();
+            if (!selectedModelEntry) {
+                const fallbackModel = this.getFallbackModelEntry(session);
+                if (fallbackModel) {
+                    selectedModelEntry = fallbackModel;
+                    modelNameToUse = this.normalizeModelName(fallbackModel.name);
+                    if (session.model !== modelNameToUse) {
+                        session.model = modelNameToUse;
+                        await chatDB.saveSession(session);
+                        this.renderCurrentModel();
+                    }
                 }
             }
 
-            if (!modelNameToUse) {
+            if (!modelNameToUse || !selectedModelEntry) {
                 console.warn('No available models to send message.');
                 await this.addMessage('assistant', 'No models are available right now. Please add a model and try again.', { isLocalOnly: true });
                 return; // Return early
             }
 
-            const selectedModelEntry = this.state.models.find(m => m.name === modelNameToUse);
-            let modelIdForRequest;
-
-            if (selectedModelEntry) {
-                modelIdForRequest = selectedModelEntry.id;
-            } else {
-                // Models may not be loaded yet - fall back to default
-                modelIdForRequest = inferenceService.getDefaultModelId(session);
-            }
+            const modelIdForRequest = selectedModelEntry.id;
 
             // Show typing indicator (only if still viewing this session)
             let typingId = this.isViewingSession(session.id) ? this.showTypingIndicator(modelNameToUse) : null;
@@ -4562,71 +4732,6 @@ class ChatApp {
     }
 
     /**
-     * Generate keywords and embeddings for a specific imported session.
-     * Used when an import skipped embedding and the user triggers it manually.
-     *
-     * @param {string} sessionId - Session ID to process
-     */
-    async generateSessionEmbeddings(sessionId) {
-        if (!sessionId) return;
-
-        const session = this.state.sessionsById.get(sessionId) || await chatDB.getSession(sessionId);
-        if (!session) {
-            this.showToast('Session not found', 'error');
-            return;
-        }
-
-        const dismissLoading = this.showLoadingToast('Generating embeddings...');
-
-        try {
-            if (!sessionEmbedder.initialized) {
-                await sessionEmbedder.init();
-            }
-            if (!keywordsGenerator.initialized) {
-                await keywordsGenerator.init();
-            }
-
-            if (session.disableAutoEmbeddingKeywords) {
-                const updatedSession = { ...session, disableAutoEmbeddingKeywords: false };
-                await chatDB.saveSession(updatedSession);
-                this.state.sessionsById.set(sessionId, updatedSession);
-                const existingIndex = this.state.sessions.findIndex(item => item.id === sessionId);
-                if (existingIndex !== -1) {
-                    this.state.sessions[existingIndex] = updatedSession;
-                }
-            }
-
-            const keywordResult = await keywordsGenerator.ensureSessionKeywords(sessionId, { force: true });
-            const embedded = await sessionEmbedder.embedSession(sessionId);
-
-            const refreshed = await chatDB.getSession(sessionId);
-            if (refreshed) {
-                this.state.sessionsById.set(sessionId, refreshed);
-                const index = this.state.sessions.findIndex(item => item.id === sessionId);
-                if (index !== -1) {
-                    this.state.sessions[index] = refreshed;
-                }
-                this.renderSessions();
-            }
-
-            if (embedded && keywordResult) {
-                this.showToast('Embeddings and keywords generated', 'success');
-            } else if (embedded) {
-                this.showToast('Embedding generated', 'success');
-            } else if (keywordResult) {
-                this.showToast('Keywords generated (embedding unavailable)', 'success');
-            } else {
-                this.showToast('Could not generate embeddings for this session', 'error');
-            }
-        } catch (error) {
-            console.error('Failed to generate embeddings:', error);
-            this.showToast(error.message || 'Failed to generate embeddings', 'error');
-        } finally {
-            dismissLoading?.();
-        }
-    }
-
-    /**
      * Deletes a session and its messages.
      * @param {string} sessionId - ID of the session to delete
      */
@@ -4728,6 +4833,11 @@ class ChatApp {
     async confirmEditPrompt(messageId) {
         const session = this.getCurrentSession();
         if (!session) return;
+
+        if (session.importedFrom) {
+            await this.markImportedSessionAsForked(session);
+            this.updateUrlWithSession(session.id);
+        }
 
         const textarea = document.querySelector(`.edit-prompt-textarea[data-message-id="${messageId}"]`);
         if (!textarea) return;
@@ -5469,6 +5579,23 @@ class ChatApp {
         }
     }
 
+    getCurrentSidebarWidth() {
+        const sidebar = this.elements.sidebar;
+        if (!sidebar) return SIDEBAR_WIDTH;
+
+        const inlineWidth = parseFloat(sidebar.style.width);
+        if (Number.isFinite(inlineWidth) && inlineWidth > 0) {
+            return inlineWidth;
+        }
+
+        const measuredWidth = sidebar.getBoundingClientRect().width;
+        if (measuredWidth > 0) {
+            return measuredWidth;
+        }
+
+        return SIDEBAR_WIDTH;
+    }
+
     hideSidebar(options = {}) {
         const shouldPersist = options.persist ?? !this.isMobileView();
         const shouldPredictToolbar = options.predictToolbar !== false;
@@ -5494,10 +5621,11 @@ class ChatApp {
         }
         this.updateWideModeButtonVisibility();
         if (shouldPredictToolbar) {
+            const sidebarWidth = this.getCurrentSidebarWidth();
             // Predict final width: sidebar is closing, main area will be WIDER
             // Only affects width on desktop, on mobile sidebar overlays
             // Grace period in updateToolbarDivider blocks intermediate updates during animation
-            this.updateToolbarDivider(this.isMobileView() ? 0 : SIDEBAR_WIDTH);
+            this.updateToolbarDivider(this.isMobileView() ? 0 : sidebarWidth);
         } else {
             this.updateToolbarDivider();
         }
@@ -5533,9 +5661,10 @@ class ChatApp {
         }
         this.updateWideModeButtonVisibility();
         if (shouldPredictToolbar) {
+            const sidebarWidth = this.getCurrentSidebarWidth();
             // Predict final width: sidebar is opening, main area will be NARROWER
             // Only affects width on desktop, on mobile sidebar overlays
-            this.updateToolbarDivider(this.isMobileView() ? 0 : -SIDEBAR_WIDTH);
+            this.updateToolbarDivider(this.isMobileView() ? 0 : -sidebarWidth);
         } else {
             this.updateToolbarDivider();
         }
@@ -6413,13 +6542,16 @@ Your API key has been cleared. A new key from a different station will be obtain
         const backend = inferenceService.getBackendForSession(session);
         const availableTickets = ticketClient.getTicketCount();
         if (availableTickets === 0) {
-            throw new Error("You have no inference tickets. Please open the right panel to enter an invitation code and get tickets.");
+            throw new Error("You have no inference tickets left. Please redeem an invite code for more tickets at the System Panel (right) or request beta access at [here](https://openanonymity.ai/beta/).");
         }
 
         // Determine model ID from session model name
         const modelName = session.model || inferenceService.getDefaultModelName(session);
-        const modelEntry = this.state.models.find(m => m.name === modelName);
-        const modelId = modelEntry?.id || inferenceService.getDefaultModelId(session);
+        const modelEntry = this.state.models.find(m => m.name === modelName) || this.getFallbackModelEntry(session);
+        if (!modelEntry) {
+            throw new Error('No enabled models are currently available. Please try again later.');
+        }
+        const modelId = modelEntry.id;
 
         // Calculate ticket cost based on model tier and reasoning state
         const ticketsRequired = getTicketCost(modelId, this.reasoningEnabled);

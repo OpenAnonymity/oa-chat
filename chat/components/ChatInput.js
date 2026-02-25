@@ -10,6 +10,8 @@ import { exportAllData, exportChats, exportTickets, exportMemoryAsTagMarkdown } 
 import { importFromFile, formatImportSummary } from '../services/globalImport.js';
 import ticketClient from '../services/ticketClient.js';
 import scrubberService from '../services/scrubberService.js';
+import sessionEmbedder from '../services/sessionEmbedder.js';
+import keywordsGenerator from '../services/keywordsGenerator.js';
 import {
     renderEditableDiff,
     extractTextFromEditableDiff,
@@ -21,6 +23,7 @@ import { chatDB } from '../db.js';
 import { mentionService } from '../services/mentionService.js';
 
 const MESSAGE_INPUT_MAX_HEIGHT_PX = 300;
+const MESSAGE_INPUT_PREVIEW_EXPANDED_MIN_HEIGHT_PX = 384;
 
 export default class ChatInput {
     /**
@@ -86,6 +89,7 @@ export default class ChatInput {
             }
             input.style.maxHeight = `${maxHeight}px`;
             input.style.height = Math.min(contentHeight, maxHeight) + 'px';
+            this.syncScrubberPreviewHeight();
             this.app.updateInputState();
             
             // Check for mention context
@@ -391,6 +395,8 @@ export default class ChatInput {
                 } else if (action === 'import-tickets') {
                     this.handleImportTickets();
                     return; // Don't close menu until file is selected
+                } else if (action === 'run-embedding-backfill') {
+                    await this.handleRunEmbeddingBackfill();
                 }
                 this.app.elements.settingsMenu.classList.add('hidden');
             }
@@ -573,6 +579,7 @@ export default class ChatInput {
 
         // Set input height to content height (capped at max)
         input.style.height = Math.min(contentHeight, maxHeight) + 'px';
+        this.syncScrubberPreviewHeight();
 
         // Update toast position if needed
         if (this.app.updateToastPosition) {
@@ -700,6 +707,7 @@ export default class ChatInput {
         console.log('[Scrubber] Control key toggling preview');
         this.scrubberDiffState.previewVisible = true;
         this.app.elements.inputCard.classList.add('scrubber-preview-active');
+        this.syncScrubberPreviewHeight();
 
         if (this.app.elements.scrubberPreviewDiff) {
             this.app.elements.scrubberPreviewDiff.removeAttribute('aria-hidden');
@@ -731,6 +739,7 @@ export default class ChatInput {
             this.app.elements.scrubberPreviewDiff.setAttribute('aria-hidden', 'true');
         }
         this.setScrubberPreviewEditing(false);
+        this.resetScrubberPreviewHeight();
         this.resetScrubberPreviewHint();
         console.log('[Scrubber] Preview hidden');
         this.hideOriginalPromptPreview();
@@ -775,6 +784,7 @@ export default class ChatInput {
         }
         this.hideScrubberPreview();
         this.scrubberDiffState.previewRendered = false;
+        this.resetScrubberPreviewHeight();
         if (this.scrubberDiffState.previewCleanup) {
             this.scrubberDiffState.previewCleanup();
             this.scrubberDiffState.previewCleanup = null;
@@ -1328,6 +1338,7 @@ export default class ChatInput {
         }
         this.setScrubberPreviewEditing(false);
         this.resetScrubberPreviewHint();
+        this.resetScrubberPreviewHeight();
         this.hideOriginalPromptPreview();
         // Trigger textarea resize to collapse back to content height
         this.app.elements.messageInput?.dispatchEvent(new Event('input', { bubbles: true }));
@@ -1453,6 +1464,25 @@ export default class ChatInput {
         const center = (inputRect.top + inputRect.height / 2) - rowRect.top;
         if (!Number.isFinite(center)) return;
         row.style.setProperty('--scrubber-hint-center', `${center}px`);
+    }
+
+    syncScrubberPreviewHeight() {
+        const previewDiff = this.app.elements.scrubberPreviewDiff;
+        if (!previewDiff) return;
+
+        const isExpanded = this.app.elements.inputCard?.classList.contains('scrubber-preview-expanded');
+        const expandedMax = Math.floor(window.innerHeight * 0.55);
+        const maxHeight = isExpanded
+            ? Math.max(MESSAGE_INPUT_PREVIEW_EXPANDED_MIN_HEIGHT_PX, expandedMax)
+            : MESSAGE_INPUT_MAX_HEIGHT_PX;
+
+        previewDiff.style.maxHeight = `${maxHeight}px`;
+    }
+
+    resetScrubberPreviewHeight() {
+        const previewDiff = this.app.elements.scrubberPreviewDiff;
+        if (!previewDiff) return;
+        previewDiff.style.removeProperty('max-height');
     }
 
     resetScrubberPreviewHint() {
@@ -1962,6 +1992,39 @@ export default class ChatInput {
         } catch (error) {
             console.error('Import processing failed:', error);
             this.app.showToast?.('Failed to import data', 'error');
+        } finally {
+            dismissToast?.();
+        }
+    }
+
+    /**
+     * Starts keyword and embedding backfill using the existing background services.
+     */
+    async handleRunEmbeddingBackfill() {
+        const dismissToast = this.app.showLoadingToast?.('Starting embedding backfill...');
+        try {
+            if (!sessionEmbedder.initialized) {
+                await sessionEmbedder.init();
+            }
+            if (!keywordsGenerator.initialized) {
+                await keywordsGenerator.init();
+            }
+
+            await Promise.all([
+                keywordsGenerator.startBackfill(),
+                sessionEmbedder.startBackfill()
+            ]);
+
+            const status = sessionEmbedder.getBackfillStatus?.();
+            const queued = Number.isFinite(status?.queueLength) ? status.queueLength : null;
+            if (queued && queued > 0) {
+                this.app.showToast?.(`Embedding backfill started (${queued} queued)`, 'success');
+            } else {
+                this.app.showToast?.('Embedding backfill started', 'success');
+            }
+        } catch (error) {
+            console.error('Failed to start embedding backfill:', error);
+            this.app.showToast?.(error.message || 'Failed to start embedding backfill', 'error');
         } finally {
             dismissToast?.();
         }

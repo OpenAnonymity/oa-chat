@@ -631,14 +631,12 @@ class RightPanel {
             const input = document.getElementById('invitation-code-input');
             if (input) input.value = '';
 
-            // Auto-close progress, form, and ticket info panel after success
+            // Auto-close progress and form after success
             setTimeout(() => {
                 this.registrationProgress = null;
                 this.showInvitationForm = false;
                 this.invitationFormPreference = false;
                 preferencesStore.savePreference(PREF_KEYS.invitationFormVisible, false);
-                this.showTicketInfo = false;
-                preferencesStore.savePreference(PREF_KEYS.ticketInfoVisible, false);
                 this.pendingInvitationCode = null;
                 this.pendingInvitationTickets = null;
                 this.pendingInvitationSource = null;
@@ -1474,7 +1472,11 @@ class RightPanel {
                         <div class="space-y-1">
                             <div class="text-[10px] text-muted-foreground font-medium">Response Summary</div>
                             <div class="text-[10px] text-muted-foreground bg-background p-2 rounded border border-border/50 break-words">
-                                ${this.escapeHtml(networkLogger.getResponseSummary(log.response, log.status) || 'Request completed successfully')}
+                                ${this.escapeHtml(networkLogger.getResponseSummary(log.response, log.status, {
+                                    type: log.type,
+                                    method: log.method,
+                                    url: log.url
+                                }) || 'Request completed successfully')}
                             </div>
                         </div>
                     ` : ''}
@@ -1648,9 +1650,6 @@ class RightPanel {
         const signedResponse = this.currentTicket?.signed_response || fallbackTicketValue;
         const finalizedTicket = this.currentTicket?.finalized_ticket || fallbackTicketValue;
         const pendingTickets = Number.isFinite(this.pendingInvitationTickets) ? this.pendingInvitationTickets : null;
-        const pendingTicketsLabel = pendingTickets
-            ? `${pendingTickets} ticket${pendingTickets === 1 ? '' : 's'}`
-            : 'tickets';
         const maxSplitCount = this.getMaxSplitCount();
         const splitShareUrl = this.getTicketCodeShareUrl(this.splitResult?.code);
         const splitShareUrlEscaped = splitShareUrl ? this.escapeHtml(splitShareUrl) : '';
@@ -1685,12 +1684,6 @@ class RightPanel {
                         </svg>
                     </button>
                 </div>
-
-                ${this.pendingInvitationCode ? `
-                    <div class="mt-2 text-[10px] text-muted-foreground">
-                        Ticket code detected • redeeming ${pendingTicketsLabel}...
-                    </div>
-                ` : ''}
 
                 <div class="mt-2 flex items-center gap-1.5">
                     <input
@@ -1765,26 +1758,28 @@ class RightPanel {
                 <div id="split-result" class="split-result-card">
                     <div class="split-result-header">
                         <span class="split-result-title">Ticket code created for ${this.splitResult.ticketsConsumed || 1} valid ticket${(this.splitResult.ticketsConsumed || 1) === 1 ? '' : 's'}</span>
+                        <button
+                            id="split-result-dismiss"
+                            class="split-result-icon-btn split-result-dismiss-btn"
+                            title="Dismiss"
+                            type="button"
+                        >
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M18 6L6 18M6 6l12 12"/>
+                            </svg>
+                        </button>
                     </div>
-                    <div class="split-result-code-row">
-                        <code class="split-result-code">${this.escapeHtml(this.splitResult.code)}</code>
+                    <div class="split-result-field-row">
+                        <code class="split-result-field-value">${this.escapeHtml(this.splitResult.code)}</code>
                         <button
                             id="split-result-copy"
                             class="split-result-icon-btn"
+                            type="button"
                             title="Copy ticket code"
                         >
                             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <rect width="14" height="14" x="8" y="8" rx="2"/>
                                 <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
-                            </svg>
-                        </button>
-                        <button
-                            id="split-result-dismiss"
-                            class="split-result-icon-btn"
-                            title="Dismiss"
-                        >
-                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M18 6L6 18M6 6l12 12"/>
                             </svg>
                         </button>
                     </div>
@@ -1793,10 +1788,10 @@ class RightPanel {
                         <div class="split-result-share-label">
                             You can share the tickets with this link:
                         </div>
-                        <div class="split-result-share-row">
+                        <div class="split-result-field-row">
                             <a
                                 id="split-result-share-link"
-                                class="split-result-share-link"
+                                class="split-result-field-value split-result-share-link"
                                 href="${splitShareUrlAttribute}"
                                 target="_blank"
                                 rel="noopener noreferrer"
@@ -1804,11 +1799,14 @@ class RightPanel {
                             >${splitShareUrlEscaped}</a>
                             <button
                                 id="split-result-copy-link"
-                                class="split-result-share-copy-btn"
+                                class="split-result-icon-btn"
                                 type="button"
                                 title="Copy ticket share link"
                             >
-                                Copy Link
+                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect width="14" height="14" x="8" y="8" rx="2"/>
+                                    <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
+                                </svg>
                             </button>
                         </div>
                     </div>
@@ -1818,22 +1816,38 @@ class RightPanel {
 
                 ${this.showInvitationForm ? `
                     <form id="invitation-code-form" class="space-y-2 mt-3 p-3 bg-muted/10 rounded-lg">
-                        <input
-                            id="invitation-code-input"
-                            type="text"
-                            placeholder="Enter 24-char ticket code"
-                            maxlength="24"
-                            class="input-focus-clean w-full px-3 py-2 text-xs border border-border rounded-md bg-background text-foreground placeholder:text-muted-foreground transition-all"
-                            value="${this.pendingInvitationCode ? this.escapeHtml(this.pendingInvitationCode) : ''}"
-                            ${this.isRegistering ? 'disabled' : ''}
-                        />
-                        <button
-                            type="submit"
-                            class="btn-ghost-hover w-full inline-flex items-center justify-center rounded-md text-xs font-medium transition-all duration-200 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 bg-background text-foreground h-8 px-3 shadow-sm border border-border"
-                            ${this.isRegistering ? 'disabled' : ''}
+                        <div class="invitation-code-input-shell flex items-center w-full h-8 border border-border rounded-md bg-background transition-all">
+                            <input
+                                id="invitation-code-input"
+                                type="text"
+                                placeholder="Enter 24-char ticket code"
+                                maxlength="24"
+                                class="flex-1 h-full px-3 text-xs bg-transparent text-foreground placeholder:text-muted-foreground/70 focus:outline-none"
+                                value="${this.pendingInvitationCode ? this.escapeHtml(this.pendingInvitationCode) : ''}"
+                                ${this.isRegistering ? 'disabled' : ''}
+                            />
+                            <button
+                                type="submit"
+                                class="flex-shrink-0 w-6 h-6 m-1 rounded-md border border-border bg-background text-muted-foreground hover:text-foreground hover:bg-accent transition-colors flex items-center justify-center disabled:opacity-50 disabled:pointer-events-none"
+                                aria-label="${this.isRegistering ? 'Redeeming ticket code' : 'Redeem ticket code'}"
+                                ${this.isRegistering ? 'disabled' : ''}
+                            >
+                                <svg class="w-3 h-3" width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
+                                </svg>
+                            </button>
+                        </div>
+                        <a
+                            href="https://openanonymity.ai/beta"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            class="btn-ghost-hover w-full inline-flex items-center justify-center gap-1.5 rounded-md text-xs font-medium transition-all duration-200 focus-visible:outline-none bg-background text-foreground h-8 px-3 shadow-sm border border-border"
                         >
-                            ${this.isRegistering ? 'Redeeming...' : 'Redeem Code'}
-                        </button>
+                            <svg class="w-3 h-3 flex-shrink-0" width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"></path>
+                            </svg>
+                            <span>Request beta access</span>
+                        </a>
                     </form>
 
                     ${this.registrationProgress ? `

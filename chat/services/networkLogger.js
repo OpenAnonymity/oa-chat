@@ -233,20 +233,60 @@ class NetworkLogger {
     /**
      * Get summary of response data
      */
-    getResponseSummary(response, status) {
+    getResponseSummary(response, status, context = {}) {
         if (!response) return status ? `Status: ${status}` : '';
 
         try {
             const data = typeof response === 'string'
                 ? JSON.parse(response)
                 : response;
+            let path = '';
+            if (context?.url) {
+                try {
+                    path = new URL(context.url).pathname;
+                } catch {
+                    path = '';
+                }
+            }
+
+            if (context?.type === 'ticket' && path.includes('/chat/free_access')) {
+                if (status >= 200 && status < 300) {
+                    if (typeof data?.access_code === 'string' && data.access_code.trim()) {
+                        return 'Free-access invite code received';
+                    }
+                    if (data?.waitlist_only === true || data?.waitlist_status) {
+                        return 'Added to free-access waitlist';
+                    }
+                    if (typeof data?.message === 'string' && data.message.trim()) {
+                        return data.message.substring(0, 100);
+                    }
+                    return 'Free access request accepted';
+                }
+
+                if (status === 409) {
+                    return typeof data?.error === 'string' && data.error.trim()
+                        ? `Conflict: ${data.error.substring(0, 80)}`
+                        : 'Conflict: email already used';
+                }
+
+                if (status === 429) {
+                    return typeof data?.error === 'string' && data.error.trim()
+                        ? `Limited: ${data.error.substring(0, 80)}`
+                        : 'Free access unavailable right now';
+                }
+            }
 
             if (data.choices && data.choices.length > 0) {
                 const content = data.choices[0].message?.content || '';
                 return content.substring(0, 100) + (content.length > 100 ? '...' : '');
             }
 
-            if (data.code || data.invitation_code || data.credential) {
+            if (
+                data.invitation_code ||
+                data.credential ||
+                (typeof data?.access_code === 'string' && data.access_code.trim()) ||
+                (typeof data?.code === 'string' && /^[a-f0-9]{24}$/i.test(data.code.trim()))
+            ) {
                 return 'Ticket code received';
             }
 

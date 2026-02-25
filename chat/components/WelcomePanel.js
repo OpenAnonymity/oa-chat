@@ -1,6 +1,6 @@
 /**
  * Welcome Panel Component
- * First-run welcome modal for new users, invitation code redemption, and account creation prompt.
+ * First-run welcome modal for new users, invite code redemption, and account creation prompt.
  */
 
 import ticketClient from '../services/ticketClient.js';
@@ -10,6 +10,10 @@ import themeManager from '../services/themeManager.js';
 // localStorage key for synchronous pre-hydration check (matches preferencesStore snapshot)
 const STORAGE_KEY_DISMISSED = 'oa-welcome-dismissed';
 const MODAL_CLASSES = 'w-full max-w-md rounded-2xl border border-border shadow-lg mx-4 flex flex-col welcome-modal-enter welcome-modal-glass';
+const BETA_SIGNUP_URL = 'https://openanonymity.ai/beta';
+const FREE_ACCESS_EMAIL_HINT_HTML = `You can get limited experimental access by entering an email (collected only to prevent spam). We encourage you to <a href="${BETA_SIGNUP_URL}" target="_blank" rel="noopener noreferrer" class="underline hover:text-foreground transition-colors">sign up</a> for full beta access.`;
+const FREE_ACCESS_UNAVAILABLE_HINT = 'Experimental access is unavailable right now. Please sign up for full beta access.';
+const FREE_ACCESS_UNAVAILABLE_HINT_HTML = `Experimental access is unavailable right now. Please <a href="${BETA_SIGNUP_URL}" target="_blank" rel="noopener noreferrer" class="underline hover:text-foreground transition-colors">sign up</a> for full beta access.`;
 
 class WelcomePanel {
     constructor(app) {
@@ -19,22 +23,35 @@ class WelcomePanel {
 
         // Flow state
         this.step = 'welcome'; // 'welcome' | 'redeeming' | 'success'
-        this.invitationCode = '';
+        this.accessMode = 'preview'; // 'preview' | 'beta'
+        this.previewEmail = '';
+        this.inviteCode = '';
         this.isRedeeming = false;
         this.redeemProgress = null;
         this.redeemError = null;
         this.ticketsRedeemed = 0;
-        this.dontShowAgain = false;
+        this.freeAccessRequested = false;
+        this.freeAccessAvailable = false;
+        this.freeAccessAvailability = null;
+        this.canUseEmailForFreeAccess = false;
+        this.allowManualClose = false;
+        this.pendingEmailRedemption = null; // { expectedTickets:number|null }
 
         // UI state
         this.returnFocusEl = null;
         this.escapeHandler = null;
         this.importCloseHandler = null;
         this.themeUnsubscribe = null;
+        this.ticketsUpdatedHandler = null;
+        this.welcomeAnchorTop = null;
+        this.animateOnNextRender = false;
     }
 
     async init() {
         if (!this.overlay) return;
+        this.ensureTicketsUpdatedListener();
+        if (!this.shouldShow()) return;
+        await this.refreshFreeAccessEligibility({ renderIfOpen: false });
         if (!this.shouldShow()) return;
         this.open();
     }
@@ -51,17 +68,26 @@ class WelcomePanel {
         if (this.isOpen || !this.overlay) return;
         this.isOpen = true;
         this.returnFocusEl = document.activeElement;
+        this.allowManualClose = this.isCloseAllowedByLinkContext();
 
         // Reset state on open
         this.step = 'welcome';
-        this.invitationCode = '';
+        this.accessMode = 'preview';
+        this.previewEmail = '';
+        this.inviteCode = '';
         this.isRedeeming = false;
         this.redeemProgress = null;
         this.redeemError = null;
         this.ticketsRedeemed = 0;
+        this.welcomeAnchorTop = null;
+        this.animateOnNextRender = true;
+        this.pendingEmailRedemption = null;
 
         this.render();
         this.overlay.classList.remove('hidden');
+        document.documentElement.removeAttribute('data-welcome-hidden');
+        this.app?.clearToast?.();
+        this.app?.clearUpdateToast?.();
 
         // Attach close handlers
         this.overlay.onclick = (e) => { if (e.target === this.overlay) this.handleCloseAttempt(); };
@@ -72,22 +98,33 @@ class WelcomePanel {
     handleCloseAttempt() {
         // Don't allow closing during active redemption
         if (this.isRedeeming) return;
-        // Don't allow closing without tickets
-        if (ticketClient.getTicketCount() === 0) return;
+        if (!this.allowManualClose) return;
         this.close();
+    }
+
+    isCloseAllowedByLinkContext() {
+        if (this.app?.hasInitialLinkContext) {
+            return true;
+        }
+        if (this.app?.pendingTicketCode?.code) {
+            return true;
+        }
+        if (this.app?.rightPanel?.pendingInvitationSource) {
+            return true;
+        }
+        return false;
     }
 
     close() {
         if (!this.isOpen || !this.overlay) return;
         this.isOpen = false;
 
-        // Save dismissal preference if checked
-        if (this.dontShowAgain) {
-            preferencesStore.savePreference(PREF_KEYS.welcomeDismissed, true);
-        }
-
         this.overlay.classList.add('hidden');
         this.overlay.innerHTML = '';
+        document.documentElement.setAttribute('data-welcome-hidden', 'true');
+        this.overlay.style.alignItems = '';
+        this.overlay.style.paddingTop = '';
+        this.welcomeAnchorTop = null;
 
         this.themeUnsubscribe?.();
         this.themeUnsubscribe = null;
@@ -111,6 +148,173 @@ class WelcomePanel {
         return div.innerHTML;
     }
 
+    isEmailInput(value) {
+        const trimmed = (value || '').trim();
+        if (!trimmed || trimmed.length > 254) return false;
+        return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
+    }
+
+    isPreviewMode() {
+        return this.accessMode === 'preview';
+    }
+
+    ensureValidAccessMode() {
+        if (!this.accessMode) {
+            this.accessMode = 'preview';
+        }
+    }
+
+    getCurrentAccessValue() {
+        return this.isPreviewMode() ? this.previewEmail : this.inviteCode;
+    }
+
+    setCurrentAccessValue(value) {
+        if (this.isPreviewMode()) {
+            this.previewEmail = value;
+            return;
+        }
+        this.inviteCode = value;
+    }
+
+    ensureTicketsUpdatedListener() {
+        if (this.ticketsUpdatedHandler) return;
+
+        this.ticketsUpdatedHandler = () => {
+            if (!this.isOpen) return;
+
+            if (this.step === 'welcome') {
+                this.render();
+                return;
+            }
+
+            // Preview access redemption happens through the ticket panel redemption pipeline.
+            // Once tickets arrive, show the same success step as invite-code redemption.
+            if (this.step === 'redeeming' && this.pendingEmailRedemption) {
+                const ticketCount = ticketClient.getTicketCount();
+                if (ticketCount > 0) {
+                    const expectedTickets = this.pendingEmailRedemption.expectedTickets;
+                    this.ticketsRedeemed = Number.isFinite(expectedTickets) && expectedTickets > 0
+                        ? expectedTickets
+                        : ticketCount;
+                    this.pendingEmailRedemption = null;
+                    this.step = 'success';
+                    this.isRedeeming = false;
+                    this.redeemProgress = null;
+                    this.redeemError = null;
+                    this.render();
+                }
+            }
+        };
+
+        window.addEventListener('tickets-updated', this.ticketsUpdatedHandler);
+    }
+
+    async refreshFreeAccessEligibility(options = {}) {
+        const renderIfOpen = options.renderIfOpen !== false;
+
+        try {
+            this.freeAccessRequested = !!await preferencesStore.getPreference(PREF_KEYS.freeAccessRequested);
+        } catch (error) {
+            this.freeAccessRequested = false;
+        }
+
+        if (this.freeAccessRequested) {
+            const hasAnyTicketHistory =
+                ticketClient.getTicketCount() > 0 ||
+                ticketClient.getArchivedTicketCount() > 0;
+
+            if (!hasAnyTicketHistory) {
+                try {
+                    await preferencesStore.savePreference(PREF_KEYS.freeAccessRequested, false);
+                } catch (error) {
+                    console.warn('Failed to clear stale free access requested state:', error);
+                }
+                this.freeAccessRequested = false;
+            }
+        }
+
+        if (this.freeAccessRequested) {
+            this.freeAccessAvailable = false;
+            this.freeAccessAvailability = {
+                available: false,
+                reasonCode: 'FREE_ACCESS_ALREADY_REQUESTED',
+                retryAfterSeconds: null,
+                issuanceEnabled: null
+            };
+            this.canUseEmailForFreeAccess = false;
+            if (renderIfOpen && this.isOpen && this.step === 'welcome') {
+                this.render();
+            }
+            return this.canUseEmailForFreeAccess;
+        }
+
+        const availability = await ticketClient.isFreeAccessAvailable();
+        this.freeAccessAvailability = availability;
+        this.freeAccessAvailable = availability?.available === true;
+        const reasonCode = typeof availability?.reasonCode === 'string'
+            ? availability.reasonCode.toUpperCase()
+            : '';
+        const explicitlyUnavailable =
+            reasonCode === 'FREE_ACCESS_DISABLED' ||
+            reasonCode === 'FREE_ACCESS_LIMITED';
+        this.canUseEmailForFreeAccess = !explicitlyUnavailable;
+        this.ensureValidAccessMode();
+
+        if (renderIfOpen && this.isOpen && this.step === 'welcome') {
+            this.render();
+        }
+
+        return this.canUseEmailForFreeAccess;
+    }
+
+    updateInlineInviteFeedback() {
+        if (this.step !== 'welcome') return;
+
+        const feedbackEl = document.getElementById('invite-feedback-text');
+        if (!feedbackEl) return;
+
+        const showHint = this.isPreviewMode() && !this.redeemError && this.previewEmail.trim().length > 0;
+        const feedbackHtml = this.redeemError
+            ? (this.redeemError === FREE_ACCESS_UNAVAILABLE_HINT
+                ? FREE_ACCESS_UNAVAILABLE_HINT_HTML
+                : this.escapeHtml(this.redeemError))
+            : (showHint ? FREE_ACCESS_EMAIL_HINT_HTML : '');
+        if (!feedbackHtml) {
+            feedbackEl.innerHTML = '';
+            feedbackEl.classList.remove('text-red-500', 'text-muted-foreground');
+            feedbackEl.classList.add('hidden');
+            this.resetWelcomeDialogAnchor();
+            return;
+        }
+
+        this.anchorWelcomeDialogFromCurrentPosition();
+        feedbackEl.innerHTML = feedbackHtml;
+        feedbackEl.classList.remove('hidden', 'text-red-500', 'text-muted-foreground');
+        feedbackEl.classList.add(this.redeemError ? 'text-red-500' : 'text-muted-foreground');
+    }
+
+    anchorWelcomeDialogFromCurrentPosition() {
+        if (!this.overlay) return;
+
+        const dialog = this.overlay.querySelector('[role="dialog"]');
+        if (!dialog) return;
+
+        if (this.welcomeAnchorTop === null) {
+            const rect = dialog.getBoundingClientRect();
+            this.welcomeAnchorTop = Math.max(16, Math.round(rect.top));
+        }
+
+        this.overlay.style.alignItems = 'flex-start';
+        this.overlay.style.paddingTop = `${this.welcomeAnchorTop}px`;
+    }
+
+    resetWelcomeDialogAnchor() {
+        if (!this.overlay) return;
+        this.overlay.style.alignItems = '';
+        this.overlay.style.paddingTop = '';
+        this.welcomeAnchorTop = null;
+    }
+
     // =========================================================================
     // Flow Handlers
     // =========================================================================
@@ -118,21 +322,107 @@ class WelcomePanel {
     async handleInviteSubmit(e) {
         if (e) e.preventDefault();
 
-        const code = this.invitationCode.trim();
-        if (!code || code.length !== 24) {
-            this.redeemError = 'Please enter a valid 24-character invitation code';
-            this.render();
-            return;
+        this.ensureValidAccessMode();
+        const isEmailSubmission = this.isPreviewMode();
+
+        if (isEmailSubmission) {
+            if (!this.canUseEmailForFreeAccess) {
+                this.redeemError = FREE_ACCESS_UNAVAILABLE_HINT;
+                this.render();
+                return;
+            }
+
+            const emailValue = this.previewEmail.trim();
+            if (!emailValue) {
+                this.redeemError = 'Please enter your email';
+                this.render();
+                return;
+            }
+
+            if (!this.isEmailInput(emailValue)) {
+                this.redeemError = 'Please enter a valid email format (xxx@xxx.xxx).';
+                this.render();
+                return;
+            }
+        } else {
+            const rawInviteCode = this.inviteCode.trim();
+            if (!rawInviteCode) {
+                this.redeemError = 'Please enter an invite code';
+                this.render();
+                return;
+            }
+
+            const inviteCode = rawInviteCode.replace(/[\s-]+/g, '');
+            if (inviteCode.length !== 24) {
+                this.redeemError = 'Please enter a valid 24-character invite code';
+                this.render();
+                return;
+            }
         }
 
         this.step = 'redeeming';
         this.isRedeeming = true;
         this.redeemError = null;
-        this.redeemProgress = { message: 'Starting...', percent: 0 };
+        this.redeemProgress = isEmailSubmission
+            ? { message: 'Requesting free access...', percent: 20 }
+            : { message: 'Starting...', percent: 0 };
         this.render();
 
         try {
-            const result = await ticketClient.alphaRegister(code, (message, percent) => {
+            if (isEmailSubmission) {
+                const freeAccessResult = await ticketClient.requestFreeAccess(this.previewEmail.trim());
+
+                const accessCode = typeof freeAccessResult.accessCode === 'string'
+                    ? freeAccessResult.accessCode.trim()
+                    : '';
+
+                if (accessCode) {
+                    await preferencesStore.savePreference(PREF_KEYS.freeAccessRequested, true);
+                    this.freeAccessRequested = true;
+                    this.freeAccessAvailable = false;
+                    this.freeAccessAvailability = {
+                        available: false,
+                        reasonCode: 'FREE_ACCESS_ALREADY_REQUESTED',
+                        retryAfterSeconds: null,
+                        issuanceEnabled: null
+                    };
+                    this.canUseEmailForFreeAccess = false;
+
+                const ingested = this.app?.ingestTicketCode?.(accessCode, {
+                    autoRedeem: true,
+                    source: 'free_access'
+                });
+
+                if (!ingested) {
+                    this.isRedeeming = false;
+                    this.step = 'welcome';
+                    this.redeemError = 'Free access code issued, but automatic redemption failed. Please redeem it in the ticket panel.';
+                    this.render();
+                    return;
+                }
+
+                this.pendingEmailRedemption = {
+                    expectedTickets: Number.isFinite(freeAccessResult.ticketsGranted) && freeAccessResult.ticketsGranted > 0
+                        ? freeAccessResult.ticketsGranted
+                        : null
+                };
+                this.redeemProgress = { message: 'Redeeming tickets...', percent: 60 };
+                this.render();
+                return;
+            }
+
+                await preferencesStore.savePreference(PREF_KEYS.freeAccessRequested, false);
+                this.freeAccessRequested = false;
+                await this.refreshFreeAccessEligibility({ renderIfOpen: false });
+
+                this.step = 'welcome';
+                this.isRedeeming = false;
+                this.redeemError = FREE_ACCESS_UNAVAILABLE_HINT;
+                this.render();
+                return;
+            }
+
+            const result = await ticketClient.alphaRegister(this.inviteCode.trim().replace(/[\s-]+/g, ''), (message, percent) => {
                 this.redeemProgress = { message, percent };
                 this.render();
             });
@@ -147,9 +437,21 @@ class WelcomePanel {
 
         } catch (error) {
             console.error('Welcome panel invite error:', error);
+            if (isEmailSubmission) {
+                try {
+                    await preferencesStore.savePreference(PREF_KEYS.freeAccessRequested, false);
+                    this.freeAccessRequested = false;
+                    await this.refreshFreeAccessEligibility({ renderIfOpen: false });
+                } catch (saveError) {
+                    console.warn('Failed to persist free access requested state:', saveError);
+                }
+                this.redeemError = FREE_ACCESS_UNAVAILABLE_HINT;
+            }
             this.step = 'welcome';
             this.isRedeeming = false;
-            this.redeemError = error.message || 'Failed to redeem invitation code';
+            if (!isEmailSubmission) {
+                this.redeemError = error.message || 'Failed to redeem invite code';
+            }
             this.render();
         }
     }
@@ -183,10 +485,6 @@ class WelcomePanel {
         input.click();
     }
 
-    handleDontShowAgainChange(checked) {
-        this.dontShowAgain = checked;
-    }
-
     // =========================================================================
     // Render
     // =========================================================================
@@ -206,11 +504,32 @@ class WelcomePanel {
                 break;
         }
 
+        const dialog = this.overlay.querySelector('[role="dialog"]');
+        if (dialog && !this.animateOnNextRender) {
+            dialog.classList.remove('welcome-modal-enter');
+        }
+        this.animateOnNextRender = false;
+
+        if (this.step !== 'welcome') {
+            this.resetWelcomeDialogAnchor();
+        }
         this.attachEventListeners();
     }
 
     renderWelcomeStep() {
+        this.ensureValidAccessMode();
         const hasError = !!this.redeemError;
+        const isPreviewMode = this.isPreviewMode();
+        const inputPlaceholder = isPreviewMode ? 'Email address' : 'Invite code';
+        const inputMaxLength = isPreviewMode ? 254 : 24;
+        const inputValue = this.getCurrentAccessValue();
+        const showPreviewHint = isPreviewMode && !hasError && this.previewEmail.trim().length > 0;
+        const feedbackHtml = hasError
+            ? (this.redeemError === FREE_ACCESS_UNAVAILABLE_HINT
+                ? FREE_ACCESS_UNAVAILABLE_HINT_HTML
+                : this.escapeHtml(this.redeemError))
+            : (showPreviewHint ? FREE_ACCESS_EMAIL_HINT_HTML : '');
+        const feedbackClass = hasError ? 'text-red-500' : 'text-muted-foreground';
 
         return `
             <div id="welcome-theme-toggle" class="theme-toggle-container" role="radiogroup" aria-label="Theme selection" data-theme="${themeManager.getPreference()}" style="position:fixed;top:12px;right:12px;z-index:9999">
@@ -359,14 +678,15 @@ class WelcomePanel {
                 </style>
 
                 <!-- Header -->
-                <div class="flex items-center justify-between mb-1">
+                <div class="relative flex items-center mb-1">
                     <h2 class="text-lg font-semibold text-foreground">Welcome to oa-fastchat!</h2>
-                    ${ticketClient.getTicketCount() > 0 ? `
-                    <button id="close-welcome-btn" class="text-muted-foreground hover:text-foreground transition-colors p-1 -mr-1 rounded-lg hover:bg-accent" aria-label="Close">
+                    ${this.allowManualClose ? `
+                    <button id="close-welcome-btn" class="text-muted-foreground hover:text-foreground transition-colors p-1 rounded-lg hover:bg-accent" style="position:absolute;top:-10px;right:-8px" aria-label="Close">
                         <svg class="w-4 h-4" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
                         </svg>
-                    </button>` : ''}
+                    </button>
+                    ` : ''}
                 </div>
 
                 <p class="text-sm text-muted-foreground mb-4">A simple, fast, <a href="https://github.com/openanonymity/oa-fastchat" target="_blank" rel="noopener noreferrer" class="text-foreground welcome-link">open-source</a>, and <a href="https://openanonymity.ai/blog/unlinkable-inference/" target="_blank" rel="noopener noreferrer" class="text-foreground welcome-link">provably unlinkable</a> chat client by <a href="https://openanonymity.ai/" target="_blank" rel="noopener noreferrer" class="text-foreground welcome-link">The Open Anonymity Project</a>.</p>
@@ -383,7 +703,7 @@ class WelcomePanel {
                         </div>
                         <div>
                             <p class="welcome-guarantee-title font-medium text-foreground">Unlinkable Chats with Frontier Models</p>
-                            <p class="welcome-guarantee-body text-muted-foreground">Every session uses <a href="https://en.wikipedia.org/wiki/Blind_signature" target="_blank" rel="noopener noreferrer" class="text-foreground welcome-link">blind signatures</a> to request a distinct ephemeral key, so sessions are unlinkable. <a href="https://openanonymity.ai/blog/unlinkable-inference/#2-secure-inference-proxies" target="_blank" rel="noopener noreferrer" class="text-foreground welcome-link">Secure inference proxies</a> ensure we have no access to your prompts or responses.</p>
+                            <p class="welcome-guarantee-body text-muted-foreground">Every session uses <a href="https://en.wikipedia.org/wiki/Blind_signature" target="_blank" rel="noopener noreferrer" class="text-foreground welcome-link">blind signatures</a> to request a fresh ephemeral key, so you are provably anonymous. <a href="https://openanonymity.ai/blog/unlinkable-inference/#2-secure-inference-proxies" target="_blank" rel="noopener noreferrer" class="text-foreground welcome-link">Secure inference proxies</a> ensure we have no access to your prompts or responses.</p>
                         </div>
                         <!-- --------------------Query sanitization-------------------- -->
                         <div class="welcome-icon-box">
@@ -395,7 +715,7 @@ class WelcomePanel {
                         </div>
                         <div>
                             <p class="welcome-guarantee-title font-medium text-foreground">Sanitize Prompts via Confidential Models</p>
-                            <p class="welcome-guarantee-body text-muted-foreground">Built-in PII removal and prompt re-writing by gpt-oss-120b on an <a href="https://www.nvidia.com/en-us/data-center/solutions/confidential-computing/" target="_blank" rel="noopener noreferrer" class="text-foreground welcome-link">GPU enclave</a>. Try it with tab-tab!</p>
+                            <p class="welcome-guarantee-body text-muted-foreground">Built-in PII removal + prompt re-writing by gpt-oss-120b on an <a href="https://www.nvidia.com/en-us/data-center/solutions/confidential-computing/" target="_blank" rel="noopener noreferrer" class="text-foreground welcome-link">GPU enclave</a>. Try it with tab-tab!</p>
                         </div>
                         <!-- --------------------Local data storage-------------------- -->
                         <div class="welcome-icon-box">
@@ -407,8 +727,8 @@ class WelcomePanel {
                             </svg>
                         </div>
                         <div>
-                            <p class="welcome-guarantee-title font-medium text-foreground">The Entire App is Local</p>
-                            <p class="welcome-guarantee-body text-muted-foreground">All data and features are stored (IndexedDB) and implemented (JS) locally in browser. This makes it very fast!</p>
+                            <p class="welcome-guarantee-title font-medium text-foreground">The Entire App is Local. It's Fast!</p>
+                            <p class="welcome-guarantee-body text-muted-foreground">All data and features are stored (IndexedDB) and implemented (JS) locally in browser. Simple, minimal, and fast.</p>
                         </div>
                         <!-- --------------------Encrypted sync-------------------- -->
                         <div class="welcome-icon-box">
@@ -421,17 +741,31 @@ class WelcomePanel {
                             <p class="welcome-guarantee-body text-muted-foreground">You can optionally create an account to encrypted-sync your local data with Passkeys (e.g., with Apple touch ID).</p>
                         </div>
                 </div>
+                <div class="mb-2 flex justify-start">
+                    <div id="welcome-access-mode-toggle" class="encryption-mode-toggle" role="radiogroup" aria-label="Welcome access mode">
+                        <button
+                            type="button"
+                            class="encryption-mode-btn ${isPreviewMode ? 'active' : ''}"
+                            data-access-mode="preview"
+                        >Free Preview</button>
+                        <button
+                            type="button"
+                            class="encryption-mode-btn ${!isPreviewMode ? 'active' : ''}"
+                            data-access-mode="beta"
+                        >Beta Access</button>
+                        <div class="encryption-mode-indicator"></div>
+                    </div>
+                </div>
 
-                <!-- Invitation code form -->
                 <form id="invite-form" class="w-full">
                     <div class="invite-input-wrapper invite-input-glass flex items-center w-full h-10 border rounded-lg transition-all ${hasError ? 'input-error' : ''}">
                         <input
                             id="invite-code-input"
                             type="text"
-                            maxlength="24"
-                            placeholder="Invitation code"
+                            maxlength="${inputMaxLength}"
+                            placeholder="${inputPlaceholder}"
                             class="flex-1 h-full px-3 text-sm bg-transparent text-foreground placeholder:text-muted-foreground/50 focus:outline-none"
-                            value="${this.escapeHtml(this.invitationCode)}"
+                            value="${this.escapeHtml(inputValue)}"
                             autocomplete="off"
                             autocorrect="off"
                             autocapitalize="off"
@@ -440,14 +774,14 @@ class WelcomePanel {
                         <button
                             type="submit"
                             class="flex-shrink-0 w-8 h-8 m-1 rounded-md bg-blue-600 text-white hover:bg-blue-700 transition-colors flex items-center justify-center disabled:opacity-50"
-                            aria-label="Redeem invitation"
+                            aria-label="${isPreviewMode ? 'Request limited preview' : 'Redeem invite code'}"
                         >
                             <svg class="w-4 h-4" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
                             </svg>
                         </button>
                     </div>
-                    ${hasError ? `<p class="text-xs text-red-500 mt-1.5">${this.escapeHtml(this.redeemError)}</p>` : ''}
+                    <p id="invite-feedback-text" class="text-xs leading-4 mt-1.5 ${feedbackClass} ${feedbackHtml ? '' : 'hidden'}">${feedbackHtml}</p>
                 </form>
 
                 <!-- Divider -->
@@ -482,19 +816,7 @@ class WelcomePanel {
                 </div>
 
                 <!-- Footer -->
-                ${ticketClient.getTicketCount() > 0 ? `
-                <div class="flex items-center justify-center" style="margin-top:10px">
-                    <label class="flex items-center gap-2 cursor-pointer select-none">
-                        <input
-                            type="checkbox"
-                            id="dont-show-again"
-                            class="w-4 h-4 rounded border-border text-blue-600 focus:ring-blue-500/20"
-                            ${this.dontShowAgain ? 'checked' : ''}
-                        />
-                        <span class="text-xs text-muted-foreground">Don't show this again</span>
-                    </label>
-                </div>` : ''}
-                <div class="flex items-center justify-between" style="margin-top:${ticketClient.getTicketCount() > 0 ? '6' : '22'}px">
+                <div class="flex items-center justify-between" style="margin-top:22px">
                     <a
                         href="https://openanonymity.ai/blog/unlinkable-inference/"
                         target="_blank"
@@ -528,7 +850,19 @@ class WelcomePanel {
         const progress = this.redeemProgress || { message: 'Processing...', percent: 0 };
 
         return `
-            <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}" style="padding:28px">
+            <div role="dialog" aria-modal="true" class="${MODAL_CLASSES} welcome-redeeming-surface" style="padding:28px">
+                <style>
+                    .welcome-redeeming-surface {
+                        background: hsl(var(--color-background) / 0.72);
+                        backdrop-filter: blur(20px) saturate(1.2);
+                        -webkit-backdrop-filter: blur(20px) saturate(1.2);
+                    }
+                    #welcome-panel {
+                        background: rgba(0,0,0,0.35) !important;
+                        backdrop-filter: blur(4px) !important;
+                        -webkit-backdrop-filter: blur(4px) !important;
+                    }
+                </style>
                 <div class="flex flex-col items-center justify-center py-8">
                     <!-- Spinner -->
                     <div class="w-12 h-12 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div>
@@ -550,6 +884,11 @@ class WelcomePanel {
     }
 
     renderSuccessStep() {
+        const currentTicketCount = ticketClient.getTicketCount();
+        const availableTickets = Number.isFinite(currentTicketCount) && currentTicketCount >= 0
+            ? currentTicketCount
+            : this.ticketsRedeemed;
+
         return `
             <div role="dialog" aria-modal="true" class="${MODAL_CLASSES} welcome-modal-glass welcome-success-surface" style="padding:28px 28px 20px">
                 <style>
@@ -566,6 +905,22 @@ class WelcomePanel {
                         flex-shrink: 0;
                     }
                     .dark .success-tick { background: hsl(152 50% 40%); }
+                    .welcome-step-badge {
+                        width: 1.3rem;
+                        height: 1.3rem;
+                        border-radius: 9999px;
+                        display: inline-flex;
+                        align-items: center;
+                        justify-content: center;
+                        flex-shrink: 0;
+                        font-size: 11px;
+                        line-height: 1;
+                        font-weight: 600;
+                        margin-top: 1px;
+                        border: 1px solid hsl(var(--color-border));
+                        color: hsl(var(--color-muted-foreground));
+                        background: transparent;
+                    }
                 </style>
 
                 <!-- Header -->
@@ -578,9 +933,23 @@ class WelcomePanel {
                     <h2 class="text-lg font-semibold text-foreground">You're all set!</h2>
                 </div>
 
-                <p class="text-sm text-muted-foreground" style="margin-bottom:14px">
-                    ${this.ticketsRedeemed} ticket${this.ticketsRedeemed !== 1 ? 's' : ''} added. Tickets authenticate chat sessions, and costs vary by model tier (see model picker).
-                </p>
+                <div class="text-sm text-muted-foreground" style="margin-bottom:14px;line-height:1.45">
+                    <p class="text-sm font-semibold text-foreground" style="margin-bottom:8px">How It Works</p>
+                    <ol class="list-none" style="margin:4px 0 0;padding:0;display:grid;gap:8px">
+                        <li class="flex items-start gap-2">
+                            <span class="welcome-step-badge">1</span>
+                                <span>You have <span class="font-semibold text-foreground">${availableTickets} inference ticket${availableTickets === 1 ? '' : 's'}</span>. Think of these as cash: payment tokens that are unlinked to you.</span>
+                        </li>
+                        <li class="flex items-start gap-2">
+                            <span class="welcome-step-badge">2</span>
+                            <span>Each session costs a fixed amount of tickets (e.g. Gemini 3 Pro costs 3 tickets).</span>
+                        </li>
+                        <li class="flex items-start gap-2">
+                            <span class="welcome-step-badge">3</span>
+                            <span>You can start a chat directly and tickets are used automatically!</span>
+                        </li>
+                    </ol>
+                </div>
 
                 <!-- Action buttons -->
                 <div class="flex items-stretch gap-3">
@@ -603,8 +972,18 @@ class WelcomePanel {
                         </svg>
                     </button>
                 </div>
-                <p class="text-muted-foreground" style="margin-top:10px;font-size:11px;line-height:1.3">
+                <p class="text-muted-foreground" style="margin-top:16px;font-size:11px;line-height:1.3">
                     Account is optional and enables encrypted-sync of your data (tickets, preferences, and soon chat sessions) with Passkeys.
+                </p>
+                <p class="text-muted-foreground" style="margin-top:8px;font-size:10.5px;line-height:1.35">
+                    <strong class="text-foreground">System Panel</strong> (right) shows how many tickets you have left and additional technical details. You can hide it by pressing
+                    <span aria-hidden="true" class="inline-flex items-center justify-center mx-0.5" style="vertical-align:middle">
+                        <svg class="w-3.5 h-3.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                            <rect x="4" y="4" width="16" height="16" rx="2"></rect>
+                            <path d="M14 4h4a2 2 0 012 2v12a2 2 0 01-2 2h-4V4z" fill="currentColor" fill-opacity="0.15" stroke="none"></path>
+                            <path d="M14 4v16"></path>
+                        </svg>
+                    </span> at the top right.
                 </p>
             </div>
         `;
@@ -638,6 +1017,67 @@ class WelcomePanel {
         const closeBtn = document.getElementById('close-welcome-btn');
         if (closeBtn) closeBtn.onclick = () => this.handleCloseAttempt();
 
+        const accessModeToggle = document.getElementById('welcome-access-mode-toggle');
+        if (accessModeToggle) {
+            const modeButtons = accessModeToggle.querySelectorAll('.encryption-mode-btn[data-access-mode]');
+            const modeIndicator = accessModeToggle.querySelector('.encryption-mode-indicator');
+
+            const updateModeIndicator = (activeBtn) => {
+                if (!modeIndicator || !activeBtn) return;
+                const containerRect = accessModeToggle.getBoundingClientRect();
+                const btnRect = activeBtn.getBoundingClientRect();
+                modeIndicator.style.width = `${btnRect.width}px`;
+                modeIndicator.style.transform = `translateX(${btnRect.left - containerRect.left - 2}px)`;
+            };
+
+            modeButtons.forEach((btn) => {
+                btn.onclick = () => {
+                    const mode = btn.dataset.accessMode;
+                    if (!mode || mode === this.accessMode) return;
+
+                    this.accessMode = mode;
+                    this.redeemError = null;
+
+                    modeButtons.forEach((button) => {
+                        button.classList.toggle('active', button.dataset.accessMode === mode);
+                    });
+                    updateModeIndicator(btn);
+
+                    const inviteInput = document.getElementById('invite-code-input');
+                    if (inviteInput) {
+                        const isPreviewMode = this.isPreviewMode();
+                        inviteInput.maxLength = isPreviewMode ? 254 : 24;
+                        inviteInput.placeholder = isPreviewMode ? 'Email address' : 'Invite code';
+                        inviteInput.value = this.getCurrentAccessValue();
+                    }
+
+                    const submitBtn = document.querySelector('#invite-form button[type="submit"]');
+                    if (submitBtn) {
+                        submitBtn.setAttribute('aria-label', this.isPreviewMode() ? 'Request limited preview' : 'Redeem invite code');
+                    }
+
+                    const inputWrapper = inviteInput?.closest('.invite-input-wrapper');
+                    if (inputWrapper) {
+                        inputWrapper.classList.remove('input-error');
+                    }
+                    this.updateInlineInviteFeedback();
+
+                    inviteInput?.focus();
+                };
+            });
+
+            const activeModeButton = accessModeToggle.querySelector('.encryption-mode-btn.active');
+            if (activeModeButton && modeIndicator) {
+                requestAnimationFrame(() => {
+                    modeIndicator.style.transition = 'none';
+                    updateModeIndicator(activeModeButton);
+                    requestAnimationFrame(() => {
+                        modeIndicator.style.transition = '';
+                    });
+                });
+            }
+        }
+
         const inviteForm = document.getElementById('invite-form');
         if (inviteForm) {
             inviteForm.onsubmit = (e) => this.handleInviteSubmit(e);
@@ -646,22 +1086,22 @@ class WelcomePanel {
         const inviteInput = document.getElementById('invite-code-input');
         if (inviteInput) {
             inviteInput.oninput = (e) => {
-                this.invitationCode = e.target.value;
+                this.setCurrentAccessValue(e.target.value);
                 // Clear error when user starts typing
                 if (this.redeemError) {
                     this.redeemError = null;
-                    this.render();
+                    const wrapper = inviteInput.closest('.invite-input-wrapper');
+                    if (wrapper) wrapper.classList.remove('input-error');
+                    this.updateInlineInviteFeedback();
+                    return;
                 }
+
+                this.updateInlineInviteFeedback();
             };
             // Focus the input when on welcome step
             if (this.step === 'welcome') {
                 setTimeout(() => inviteInput.focus(), 100);
             }
-        }
-
-        const dontShowAgainCheckbox = document.getElementById('dont-show-again');
-        if (dontShowAgainCheckbox) {
-            dontShowAgainCheckbox.onchange = (e) => this.handleDontShowAgainChange(e.target.checked);
         }
 
         const importDataBtn = document.getElementById('import-data-btn');
@@ -694,6 +1134,10 @@ class WelcomePanel {
     destroy() {
         this.themeUnsubscribe?.();
         this.themeUnsubscribe = null;
+        if (this.ticketsUpdatedHandler) {
+            window.removeEventListener('tickets-updated', this.ticketsUpdatedHandler);
+            this.ticketsUpdatedHandler = null;
+        }
         if (this.escapeHandler) {
             document.removeEventListener('keydown', this.escapeHandler);
             this.escapeHandler = null;

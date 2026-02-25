@@ -4,12 +4,11 @@
  * and model selection interactions.
  *
  * CONFIGURATION:
- * Model config (pinned/blocked models, defaults) is stored in services/modelConfig.js
- * and persisted to IndexedDB. Edit DEFAULT_CONFIG there or use saveModelConfig() at runtime.
+ * Model defaults + availability (pinned/disabled) are sourced from services/modelConfig.js.
  */
 
 import { getProviderIcon } from '../services/providerIcons.js';
-import { loadModelConfig, getDefaultModelConfig, onPinnedModelsUpdate } from '../services/modelConfig.js';
+import { getDefaultModelConfig, onPinnedModelsUpdate } from '../services/modelConfig.js';
 import { getTicketCost, onModelTiersUpdate } from '../services/modelTiers.js';
 import { chatDB } from '../db.js';
 
@@ -23,7 +22,7 @@ export default class ModelPicker {
         // Load defaults synchronously for immediate use
         const defaults = getDefaultModelConfig();
         this.pinnedModels = defaults.pinnedModels;
-        this.blockedModels = new Set(defaults.blockedModels);
+        this.disabledModels = new Set(defaults.disabledModels || []);
         this.defaultModelName = defaults.defaultModelName;
 
         // Keyboard navigation state
@@ -37,10 +36,7 @@ export default class ModelPicker {
         this.modelConfigVersion = 0;
         this.searchDebounceTimer = null;
 
-        // Load persisted config (overrides defaults if user has customizations in DB)
-        this._loadConfig();
-
-        // Listen for pinned models updates (API fetch completed)
+        // Listen for pinned/disabled updates (API fetch completed)
         onPinnedModelsUpdate(() => this._onConfigUpdate());
 
         // Listen for model tiers updates (for ticket cost display)
@@ -54,30 +50,13 @@ export default class ModelPicker {
     _onConfigUpdate() {
         const defaults = getDefaultModelConfig();
         this.pinnedModels = defaults.pinnedModels;
+        this.disabledModels = new Set(defaults.disabledModels || []);
         this.modelConfigVersion += 1;
 
         // Re-render if modal is currently visible
         if (!this.app.elements.modelPickerModal.classList.contains('hidden')) {
             const searchTerm = this.app.elements.modelSearch?.value || '';
             this.renderModels(searchTerm, true);
-        }
-    }
-
-    /**
-     * Loads config from database and updates instance properties.
-     * Defaults are already set in constructor, so this only matters if user
-     * has saved custom config via saveModelConfig(). In practice, DB is empty
-     * and this returns the same defaults.
-     */
-    async _loadConfig() {
-        try {
-            const config = await loadModelConfig();
-            this.pinnedModels = config.pinnedModels;
-            this.blockedModels = new Set(config.blockedModels);
-            this.defaultModelName = config.defaultModelName;
-            this.modelConfigVersion += 1;
-        } catch (e) {
-            console.warn('ModelPicker: failed to load config', e);
         }
     }
 
@@ -177,14 +156,14 @@ export default class ModelPicker {
     /**
      * Filters models based on search term using multi-word substring matching.
      * Space-separated words are matched independently (AND logic).
-     * Also excludes blocked models from the list.
+     * Also excludes disabled models from the list.
      * @param {string} searchTerm - Search query (space-separated words)
      * @returns {Array} Filtered models
      */
     filterModels(searchTerm = '') {
-        // First filter out blocked models
+        // First filter out disabled models
         const allowedModels = this.app.state.models.filter(model =>
-            !this.blockedModels.has(model.id)
+            !this.disabledModels.has(model.id)
         );
 
         // Split into non-empty lowercase terms
@@ -372,7 +351,14 @@ export default class ModelPicker {
             : '<span class="w-4 h-4 flex-shrink-0"></span>';
 
         // Build ticket badge - always show for all models
-        const ticketBadge = `<span class="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-medium flex-shrink-0 min-w-[26px] text-center" title="${ticketCost} ticket${ticketCost > 1 ? 's' : ''}">${ticketCost}×</span>`;
+        const ticketBadge = `
+            <span class="text-xs px-2 py-1 rounded bg-muted text-muted-foreground font-medium flex-shrink-0 min-w-[34px] inline-flex items-center justify-center gap-1.5" title="${ticketCost} ticket${ticketCost > 1 ? 's' : ''}">
+                <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z"></path>
+                </svg>
+                <span>${ticketCost}</span>
+            </span>
+        `;
 
         return `
             <div class="model-option px-2 py-1.5 rounded-sm cursor-pointer transition-colors hover:bg-accent ${isSelected ? 'bg-accent' : ''}" data-model-name="${model.name}">
@@ -429,7 +415,9 @@ export default class ModelPicker {
             return false;
         }
         // Check by name or id (imported chats may have model slugs or IDs)
-        return this.app.state.models.some(m => m.name === modelName || m.id === modelName);
+        return this.app.state.models.some(
+            m => (m.name === modelName || m.id === modelName) && !this.disabledModels.has(m.id)
+        );
     }
 
     /**

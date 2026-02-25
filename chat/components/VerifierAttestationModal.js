@@ -64,7 +64,7 @@ class VerifierAttestationModal {
             this.attestation = attestation;
             this.verification = await this.verifyAttestation(this.attestation);
             this.zeroTrustEvidence = zeroTrustEvidence;
-            
+
             this.isLoading = false;
             this.render();
             this.setupEventListeners();
@@ -169,7 +169,7 @@ class VerifierAttestationModal {
             // Get anonymous token for GHCR
             const tokenUrl = `https://ghcr.io/token?scope=repository:${owner}/${image}:pull`;
             const tokenResponse = await fetch(tokenUrl);
-            
+
             if (!tokenResponse.ok) {
                 result.error = 'Could not get GHCR token (may be private)';
                 return result;
@@ -218,7 +218,7 @@ class VerifierAttestationModal {
             // Query Rekor transparency log for this digest
             // Sigstore stores container signatures indexed by the digest hash
             const digestHash = digest.replace('sha256:', '');
-            
+
             // Search Rekor by hash
             const searchUrl = 'https://rekor.sigstore.dev/api/v1/index/retrieve';
             const searchResponse = await fetch(searchUrl, {
@@ -231,7 +231,7 @@ class VerifierAttestationModal {
                 // Try alternative search by artifact
                 const altSearchUrl = `https://rekor.sigstore.dev/api/v1/log/entries?logIndex=&hash=${digestHash}`;
                 const altResponse = await fetch(altSearchUrl);
-                
+
                 if (!altResponse.ok) {
                     result.error = 'No Sigstore entry found';
                     return result;
@@ -239,7 +239,7 @@ class VerifierAttestationModal {
             }
 
             const uuids = await searchResponse.json();
-            
+
             if (!uuids || uuids.length === 0) {
                 result.error = 'No transparency log entries found';
                 return result;
@@ -255,7 +255,7 @@ class VerifierAttestationModal {
                 result.verified = true;
                 result.entries = uuids.length;
                 result.rekorUrl = `https://search.sigstore.dev/?hash=${digestHash}`;
-                
+
                 // Try to extract more info from entry
                 const entry = Object.values(entryData)[0];
                 if (entry?.body) {
@@ -287,7 +287,7 @@ class VerifierAttestationModal {
             keysLoaded: false,
             error: null
         };
-        
+
         if (!attestation.token || !attestation.verify_at) {
             result.error = 'Missing JWT token or verify_at URL';
             return result;
@@ -297,7 +297,7 @@ class VerifierAttestationModal {
             const [headerB64] = attestation.token.split('.');
             const headerJson = this.base64UrlDecode(headerB64);
             const header = JSON.parse(headerJson);
-            
+
             result.keyId = header.kid;
             result.jku = header.jku;
 
@@ -328,7 +328,7 @@ class VerifierAttestationModal {
 
             const cryptoKey = await this.importJwk(key);
             const signatureValid = await this.verifyJwtSignature(attestation.token, cryptoKey);
-            
+
             result.verified = signatureValid;
             if (!signatureValid) {
                 result.error = 'JWT signature verification failed';
@@ -363,7 +363,7 @@ class VerifierAttestationModal {
     async verifyJwtSignature(token, cryptoKey) {
         const [headerB64, payloadB64, signatureB64] = token.split('.');
         const data = new TextEncoder().encode(`${headerB64}.${payloadB64}`);
-        
+
         const signatureStr = this.base64UrlDecode(signatureB64);
         const signature = new Uint8Array(signatureStr.length);
         for (let i = 0; i < signatureStr.length; i++) {
@@ -395,7 +395,7 @@ class VerifierAttestationModal {
 
             const hostData = attestation.summary?.host_data;
             result.verified = result.computedHash === hostData;
-            
+
             if (!result.verified && hostData) {
                 result.error = 'Policy hash does not match hardware measurement';
             }
@@ -411,7 +411,7 @@ class VerifierAttestationModal {
         if (!attestation.policy?.decoded) return null;
 
         const policyStr = attestation.policy.decoded;
-        
+
         const idMatch = policyStr.match(/"id":"(ghcr\.io\/[^"]+)"/);
         const containerId = idMatch ? idMatch[1] : null;
 
@@ -865,12 +865,12 @@ class VerifierAttestationModal {
     render() {
         const a = this.attestation;
         const v = this.verification;
-        
+
         const isFullyVerified = v?.jwtVerified && v?.policyVerified;
         const hasPartialVerification = v?.jwtVerified || v?.policyVerified;
 
         this.overlay.innerHTML = `
-            <div class="verifier-modal-content bg-background rounded-xl shadow-2xl max-w-xl w-full mx-4 animate-in zoom-in-95 overflow-hidden max-h-[90vh] flex flex-col">
+            <div class="verifier-modal-content bg-background border border-border rounded-xl shadow-2xl max-w-xl w-full mx-4 animate-in zoom-in-95 overflow-hidden flex flex-col">
                 <div class="p-4 flex items-center justify-between shrink-0">
                     <div class="flex items-center gap-2">
                         <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-muted/50">
@@ -879,7 +879,7 @@ class VerifierAttestationModal {
                                 ${isFullyVerified ? '<path d="M9 12l2 2 4-4"/>' : ''}
                             </svg>
                         </div>
-                        <h2 class="text-sm font-semibold text-foreground">Verifier Attestation</h2>
+                        <h2 class="text-sm font-semibold text-foreground">Ephemeral Access Key & OA-Verifier Attestation</h2>
                     </div>
                     <button class="verifier-modal-close text-muted-foreground hover:text-foreground transition-colors p-1.5 rounded-lg hover:bg-muted/50">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -904,10 +904,7 @@ class VerifierAttestationModal {
     renderLoading() {
         return `
             <div class="flex flex-col items-center justify-center py-8 space-y-3">
-                <svg class="w-8 h-8 text-muted-foreground animate-spin" viewBox="0 0 24 24" fill="none">
-                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
+                <div class="w-12 h-12 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
                 <p class="text-xs text-muted-foreground">Fetching and verifying attestation...</p>
             </div>
         `;
@@ -937,72 +934,140 @@ class VerifierAttestationModal {
         const container = v?.containerInfo;
 
         return `
-            <!-- Zero Trust Section - Collapsible -->
-            <details class="border border-border/30 rounded-md px-2 py-1.5">
-                <summary class="cursor-pointer text-xs text-muted-foreground hover:text-foreground transition-colors">
-                    Zero Trust Evidence for the whole system (click to expand)
+            <div class="p-3 rounded-lg border border-border bg-card space-y-1.5">
+                <h3 class="text-xs font-semibold text-foreground">What is an Ephemeral Access Key?</h3>
+                <p class="text-[11px] text-muted-foreground leading-relaxed">
+                    An Ephemeral Access Key is a disposable credential for one chat session, like a prepaid SIM card. It is short-lived and credit-capped, so it cannot be reused broadly.
+                </p>
+                <p class="text-[11px] text-muted-foreground leading-relaxed">
+                    Your device redeems tickets to get this key, then uses it over HTTPS for inference. OA treats both short-lived provider tokens and equivalent short-lived enclave sessions as Ephemeral Access Keys, and each session-specific key limits blast radius if one leaks.
+                </p>
+            </div>
+
+            <div class="p-3 rounded-lg border border-border/70 bg-muted/20 space-y-1.5">
+                <h3 class="text-xs font-semibold text-foreground">How the OA-Verifier Checks Your Ephemeral Access Key</h3>
+                <p class="text-[11px] text-muted-foreground leading-relaxed">
+                    After an Ephemeral Access Key is issued, the app runs these checks automatically:
+                </p>
+                <ul class="list-disc list-inside space-y-0.5 text-[11px] text-muted-foreground">
+                    <li><span class="text-foreground font-medium">Key Issuance Proof Chain:</span> shows signatures and expiry proving the key came from OA's ticket flow.</li>
+                    <li><span class="text-foreground font-medium">Code Auditability:</span> links the verifier image/code so you can inspect what it should run.</li>
+                    <li><span class="text-foreground font-medium">Hardware Attestation:</span> proves the verifier runtime identity from confidential hardware.</li>
+                    <li><span class="text-foreground font-medium">JWT + Policy Verification:</span> validates the attestation signature and measured runtime hash.</li>
+                </ul>
+            </div>
+
+            <!-- Key Issuance Proof Chain -->
+            <details class="verifier-collapsible group rounded-lg border border-border bg-card overflow-hidden">
+                <summary style="list-style:none;" class="verifier-collapsible-summary cursor-pointer px-3 py-2.5 flex items-center justify-between gap-3 hover:bg-muted/40 transition-colors">
+                    <div class="flex items-center gap-2 min-w-0">
+                        <svg class="w-3.5 h-3.5 text-muted-foreground shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M9 12l2 2 4-4"/>
+                            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                        </svg>
+                        <span class="text-xs font-medium text-foreground truncate">Key Issuance Proof Chain</span>
+                    </div>
+                    <svg class="w-3 h-3 text-muted-foreground transition-transform group-open:rotate-90 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M9 18l6-6-6-6"/>
+                    </svg>
                 </summary>
-                <div class="mt-2">
+                <div class="border-t border-border px-3 py-2.5">
                     ${this.renderZeroTrustSection(a, v, evidence)}
                 </div>
             </details>
 
-            <!-- Code Auditability Section - Collapsible -->
+            <!-- Code Auditability -->
             ${container ? `
-                <details class="border border-border/30 rounded-md px-2 py-1.5">
-                    <summary class="cursor-pointer text-xs text-muted-foreground hover:text-foreground transition-colors">
-                        Code Auditability (click to expand)
+                <details class="verifier-collapsible group rounded-lg border border-border bg-card overflow-hidden">
+                    <summary style="list-style:none;" class="verifier-collapsible-summary cursor-pointer px-3 py-2.5 flex items-center justify-between gap-3 hover:bg-muted/40 transition-colors">
+                        <div class="flex items-center gap-2 min-w-0">
+                            <svg class="w-3.5 h-3.5 text-muted-foreground shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/>
+                                <polyline points="14 2 14 8 20 8"/>
+                                <line x1="16" y1="13" x2="8" y2="13"/>
+                                <line x1="16" y1="17" x2="8" y2="17"/>
+                            </svg>
+                            <span class="text-xs font-medium text-foreground truncate">Code Auditability</span>
+                        </div>
+                        <svg class="w-3 h-3 text-muted-foreground transition-transform group-open:rotate-90 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M9 18l6-6-6-6"/>
+                        </svg>
                     </summary>
-                    <div class="mt-2">
+                    <div class="border-t border-border px-3 py-2.5">
                         ${this.renderCodeAuditability(container, v)}
                     </div>
                 </details>
             ` : ''}
 
             <!-- Hardware Attestation -->
-            <div class="space-y-2">
-                <h3 class="text-xs font-medium text-foreground">Hardware Attestation</h3>
-                <div class="p-3 rounded-lg border border-border bg-card space-y-1.5">
-                    ${this.renderRow('Type', summary.attestation_type || 'Unknown', summary.attestation_type ? 'text-foreground' : 'text-muted-foreground')}
-                    ${this.renderRow('Debug Disabled', summary.debug_disabled === true ? 'Yes' : summary.debug_disabled === false ? 'No' : 'Unknown', summary.debug_disabled === true ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400')}
-                    ${this.renderRow('Compliance', summary.compliance_status || 'Unknown')}
-                    ${this.renderRow('Issuer', this.formatIssuer(summary.issuer), 'text-foreground truncate', true)}
+            <div class="rounded-lg border border-border bg-card overflow-hidden">
+                <div class="px-3 py-2.5 border-b border-border bg-muted/20 flex items-center gap-2">
+                    <svg class="w-3.5 h-3.5 text-muted-foreground shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                    </svg>
+                    <h3 class="text-xs font-medium text-foreground">Hardware Attestation</h3>
+                </div>
+                <div class="px-3 py-2.5 space-y-2">
+                    <p class="text-[11px] text-muted-foreground">Verifies the verifier service is running in a genuine confidential-computing environment.</p>
+                    <div class="space-y-1.5">
+                        ${this.renderRow('Type', summary.attestation_type || 'Unknown', summary.attestation_type ? 'text-foreground' : 'text-muted-foreground')}
+                        ${this.renderRow('Debug Disabled', summary.debug_disabled === true ? 'Yes' : summary.debug_disabled === false ? 'No' : 'Unknown', summary.debug_disabled === true ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400')}
+                        ${this.renderRow('Compliance', summary.compliance_status || 'Unknown')}
+                        ${this.renderRow('Issuer', this.formatIssuer(summary.issuer), 'text-foreground truncate', true)}
+                    </div>
                 </div>
             </div>
 
             <!-- JWT Signature -->
-            <div class="space-y-2">
-                <h3 class="text-xs font-medium text-foreground">JWT Signature</h3>
-                <div class="p-3 rounded-lg border border-border bg-card space-y-1.5">
-                    ${this.renderStatusRow('Status', v?.jwtVerified, v?.jwtError, 'Verified')}
-                    ${v?.jwtKeyId ? this.renderRow('Key ID', v.jwtKeyId.substring(0, 20) + '...', 'text-foreground font-mono text-xs') : ''}
-                    ${v?.jwtIssuer ? this.renderRow('Issuer', this.formatIssuer(v.jwtIssuer), 'text-foreground truncate', true) : ''}
-                    ${v?.azureKeysLoaded ? this.renderRow('Azure Keys', 'Loaded', 'text-green-600 dark:text-green-400') : ''}
+            <div class="rounded-lg border border-border bg-card overflow-hidden">
+                <div class="px-3 py-2.5 border-b border-border bg-muted/20 flex items-center gap-2">
+                    <svg class="w-3.5 h-3.5 text-muted-foreground shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M9 12l2 2 4-4"/>
+                        <path d="M20 6L9 17l-5-5"/>
+                    </svg>
+                    <h3 class="text-xs font-medium text-foreground">JWT Signature</h3>
+                </div>
+                <div class="px-3 py-2.5 space-y-2">
+                    <p class="text-[11px] text-muted-foreground">Confirms the attestation token is cryptographically signed by Azure Attestation.</p>
+                    <div class="space-y-1.5">
+                        ${this.renderStatusRow('Status', v?.jwtVerified, v?.jwtError, 'Verified')}
+                        ${v?.jwtKeyId ? this.renderRow('Key ID', v.jwtKeyId.substring(0, 20) + '...', 'text-foreground font-mono text-xs') : ''}
+                        ${v?.jwtIssuer ? this.renderRow('Issuer', this.formatIssuer(v.jwtIssuer), 'text-foreground truncate', true) : ''}
+                        ${v?.azureKeysLoaded ? this.renderRow('Azure Keys', 'Loaded', 'text-green-600 dark:text-green-400') : ''}
+                    </div>
                 </div>
             </div>
 
             <!-- Policy Verification -->
-            <div class="space-y-2">
-                <h3 class="text-xs font-medium text-foreground">Policy Verification</h3>
-                <div class="p-3 rounded-lg border border-border bg-card space-y-1.5">
-                    ${this.renderStatusRow('Status', v?.policyVerified, v?.policyError, 'Hardware Verified')}
-                    ${v?.computedHash ? `
-                        <div class="flex justify-between items-start gap-3">
-                            <span class="text-xs text-muted-foreground/70 shrink-0">Computed Hash</span>
-                            <span class="text-xs font-mono text-foreground truncate" title="${v.computedHash}">${v.computedHash.substring(0, 16)}...</span>
-                        </div>
-                    ` : ''}
-                    ${v?.hostData ? `
-                        <div class="flex justify-between items-start gap-3">
-                            <span class="text-xs text-muted-foreground/70 shrink-0">Hardware host_data</span>
-                            <span class="text-xs font-mono text-foreground truncate" title="${v.hostData}">${v.hostData.substring(0, 16)}...</span>
-                        </div>
-                    ` : ''}
-                    ${v?.policyVerified ? `
-                        <div class="mt-1.5 text-xs text-green-600 dark:text-green-400">
-                            ✓ Policy hash matches hardware measurement
-                        </div>
-                    ` : ''}
+            <div class="rounded-lg border border-border bg-card overflow-hidden">
+                <div class="px-3 py-2.5 border-b border-border bg-muted/20 flex items-center gap-2">
+                    <svg class="w-3.5 h-3.5 text-muted-foreground shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M4 7h16M4 12h16M4 17h10"/>
+                    </svg>
+                    <h3 class="text-xs font-medium text-foreground">Policy Verification</h3>
+                </div>
+                <div class="px-3 py-2.5 space-y-2">
+                    <p class="text-[11px] text-muted-foreground">Confirms the enclave's measured runtime matches the expected policy hash.</p>
+                    <div class="space-y-1.5">
+                        ${this.renderStatusRow('Status', v?.policyVerified, v?.policyError, 'Hardware Verified')}
+                        ${v?.computedHash ? `
+                            <div class="flex justify-between items-start gap-3">
+                                <span class="text-xs text-muted-foreground/70 shrink-0">Computed Hash</span>
+                                <span class="text-xs font-mono text-foreground truncate" title="${v.computedHash}">${v.computedHash.substring(0, 16)}...</span>
+                            </div>
+                        ` : ''}
+                        ${v?.hostData ? `
+                            <div class="flex justify-between items-start gap-3">
+                                <span class="text-xs text-muted-foreground/70 shrink-0">Hardware host_data</span>
+                                <span class="text-xs font-mono text-foreground truncate" title="${v.hostData}">${v.hostData.substring(0, 16)}...</span>
+                            </div>
+                        ` : ''}
+                        ${v?.policyVerified ? `
+                            <div class="mt-1.5 text-xs text-green-600 dark:text-green-400">
+                                ✓ Policy hash matches hardware measurement
+                            </div>
+                        ` : ''}
+                    </div>
                 </div>
             </div>
 
@@ -1029,19 +1094,29 @@ class VerifierAttestationModal {
                 `}
             </div>
 
-            <!-- Verify Yourself - Collapsible -->
-            <details class="border border-border/30 rounded-md px-2 py-1.5 mt-2">
-                <summary class="cursor-pointer text-xs text-muted-foreground hover:text-foreground transition-colors">
-                    Verify Yourself (click to expand)
+            <!-- Verify Yourself -->
+            <details class="verifier-collapsible group rounded-lg border border-border bg-card overflow-hidden">
+                <summary style="list-style:none;" class="verifier-collapsible-summary cursor-pointer px-3 py-2.5 flex items-center justify-between gap-3 hover:bg-muted/40 transition-colors">
+                    <div class="flex items-center gap-2 min-w-0">
+                        <svg class="w-3.5 h-3.5 text-muted-foreground shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M15 12H9"/>
+                            <path d="M12 9v6"/>
+                            <path d="M21 12a9 9 0 1 1-9-9"/>
+                        </svg>
+                        <span class="text-xs font-medium text-foreground truncate">Verify Yourself</span>
+                    </div>
+                    <svg class="w-3 h-3 text-muted-foreground transition-transform group-open:rotate-90 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M9 18l6-6-6-6"/>
+                    </svg>
                 </summary>
-                <div class="mt-2 text-xs space-y-2">
-                    <div class="rounded-lg border border-border bg-card p-3 text-muted-foreground space-y-2">
+                <div class="border-t border-border px-3 py-2.5 text-xs space-y-2">
+                    <div class="rounded-lg border border-border bg-muted/20 p-3 text-muted-foreground space-y-2">
                         <p class="text-xs font-medium text-foreground">Run the verification script</p>
                         <p>Download and run the zero-trust verification script:</p>
                         <code class="verifier-command p-2 bg-muted/70 border border-border rounded text-[11px] font-mono text-foreground"><span class="verifier-command-line">curl -sL https://raw.githubusercontent.com/OpenAnonymity/oa-verifier/main/verify.sh \\</span><span class="verifier-command-line">| bash -s ${VERIFIER_URL}</span></code>
                         <p>This script independently verifies the attestation without trusting this UI.</p>
                     </div>
-                    <div class="rounded-lg border border-border bg-card p-3 text-muted-foreground space-y-1.5">
+                    <div class="rounded-lg border border-border bg-muted/20 p-3 text-muted-foreground space-y-1.5">
                         <p class="text-xs font-medium text-foreground">What is being verified?</p>
                         <ul class="list-disc list-inside space-y-1">
                             <li><strong class="text-foreground">JWT Signature:</strong> Verified against Azure Attestation Service public keys</li>
@@ -1062,108 +1137,102 @@ class VerifierAttestationModal {
         const isSigstorePending = v?.sigstoreVerified === null;
 
         return `
-            <div class="space-y-1.5">
-                <h3 class="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-                    <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>
-                    Code is Auditable
-                </h3>
-                <div class="p-2.5 rounded-lg border border-border bg-card space-y-2.5">
-                    <p class="text-[11px] text-muted-foreground">
-                        All code processing your data comes from a trusted open-source repository and is auditable.
-                    </p>
+            <div class="space-y-2.5">
+                <p class="text-[11px] text-muted-foreground">
+                    All code processing your data comes from a trusted open-source repository and is auditable.
+                </p>
 
-                    <!-- Container Digest Verification -->
-                    <div class="p-2 rounded-md border ${isGhcrVerified ? 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20' : 'border-border bg-muted/30'} space-y-1.5">
-                        <div class="flex items-center justify-between">
-                            <span class="text-[11px] font-medium">Container Registry (GHCR)</span>
-                            ${isGhcrPending ? `
-                                <span class="text-[10px] text-muted-foreground flex items-center gap-1">
-                                    <svg class="w-2.5 h-2.5 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                                    Verifying...
-                                </span>
-                            ` : isGhcrVerified ? `
-                                <span class="text-[10px] text-green-600 dark:text-green-400 flex items-center gap-1">
-                                    <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>
-                                    Verified
-                                </span>
-                            ` : `
-                                <span class="text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
-                                    <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                                    ${v?.ghcrError || 'Not verified'}
-                                </span>
-                            `}
-                        </div>
-                        <div class="text-[10px] font-mono text-foreground bg-muted/70 border border-border p-1.5 rounded overflow-x-auto whitespace-nowrap">
-                            ${container.digest || 'N/A'}
-                        </div>
-                        ${container.ghcrUrl ? `
-                            <a href="${container.ghcrUrl}" target="_blank" rel="noopener" class="inline-flex items-center gap-1 text-[10px] text-blue-500 hover:underline">
-                                <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-                                View on GitHub Container Registry
-                            </a>
-                        ` : ''}
+                <!-- Container Digest Verification -->
+                <div class="p-2 rounded-md border ${isGhcrVerified ? 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20' : 'border-border bg-muted/30'} space-y-1.5">
+                    <div class="flex items-center justify-between">
+                        <span class="text-[11px] font-medium">Container Registry (GHCR)</span>
+                        ${isGhcrPending ? `
+                            <span class="text-[10px] text-muted-foreground flex items-center gap-1">
+                                <svg class="w-2.5 h-2.5 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                                Verifying...
+                            </span>
+                        ` : isGhcrVerified ? `
+                            <span class="text-[10px] text-green-600 dark:text-green-400 flex items-center gap-1">
+                                <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>
+                                Verified
+                            </span>
+                        ` : `
+                            <span class="text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                                <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                                ${v?.ghcrError || 'Not verified'}
+                            </span>
+                        `}
                     </div>
-
-                    <!-- Sigstore Transparency Log -->
-                    <div class="p-2 rounded-md border ${isSigstoreVerified ? 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20' : 'border-border bg-muted/30'} space-y-1.5">
-                        <div class="flex items-center justify-between">
-                            <span class="text-[11px] font-medium">Sigstore Transparency Log</span>
-                            ${isSigstorePending ? `
-                                <span class="text-[10px] text-muted-foreground flex items-center gap-1">
-                                    <svg class="w-2.5 h-2.5 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                                    Checking...
-                                </span>
-                            ` : isSigstoreVerified ? `
-                                <span class="text-[10px] text-green-600 dark:text-green-400 flex items-center gap-1">
-                                    <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>
-                                    ${v.sigstoreEntries || 1} ${v.sigstoreEntries === 1 ? 'entry' : 'entries'} found
-                                </span>
-                            ` : `
-                                <span class="text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
-                                    <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                                    ${v?.sigstoreError || 'Not found'}
-                                </span>
-                            `}
-                        </div>
-                        <p class="text-[10px] text-muted-foreground">
-                            Verifies that the source code was correctly built through GitHub Actions and the resulting binary is recorded in the Sigstore transparency log.
-                        </p>
-                        ${v?.sigstoreRekorUrl ? `
-                            <a href="${v.sigstoreRekorUrl}" target="_blank" rel="noopener" class="inline-flex items-center gap-1 text-[10px] text-blue-500 hover:underline">
-                                <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-                                View on Sigstore
-                            </a>
-                        ` : ''}
+                    <div class="text-[10px] font-mono text-foreground bg-muted/70 border border-border p-1.5 rounded overflow-x-auto whitespace-nowrap">
+                        ${container.digest || 'N/A'}
                     </div>
-
-                    <!-- Source Repository -->
-                    <div class="p-2 rounded-md border border-border bg-muted/30 space-y-1">
-                        <span class="text-[11px] font-medium">Configuration Repository</span>
-                        <p class="text-[10px] text-muted-foreground">
-                            The configuration repository specifies exactly what code is running inside the secure enclave.
-                        </p>
-                        ${container.repoUrl ? `
-                            <a href="${container.repoUrl}" target="_blank" rel="noopener" class="inline-flex items-center gap-1 text-[11px] text-blue-500 hover:underline font-medium">
-                                <svg class="w-3 h-3" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
-                                ${container.owner}/${container.image}
-                            </a>
-                        ` : ''}
-                    </div>
-
-                    <!-- Container Details (collapsible) -->
-                    <details class="group">
-                        <summary class="cursor-pointer flex items-center gap-2 text-[11px] text-muted-foreground hover:text-foreground">
-                            <svg class="w-2.5 h-2.5 transition-transform group-open:rotate-90" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
-                            Additional container info
-                        </summary>
-                        <div class="mt-1.5 p-1.5 rounded border border-border bg-muted/20 space-y-1 text-[10px]">
-                            ${this.renderRow('Registry', container.registry, 'text-foreground')}
-                            ${this.renderRow('Owner', container.owner, 'text-foreground')}
-                            ${this.renderRow('Image', container.image, 'text-foreground')}
-                            ${this.renderRow('Command', container.command, 'text-foreground font-mono')}
-                        </div>
-                    </details>
+                    ${container.ghcrUrl ? `
+                        <a href="${container.ghcrUrl}" target="_blank" rel="noopener" class="inline-flex items-center gap-1 text-[10px] text-blue-500 hover:underline">
+                            <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                            View on GitHub Container Registry
+                        </a>
+                    ` : ''}
                 </div>
+
+                <!-- Sigstore Transparency Log -->
+                <div class="p-2 rounded-md border ${isSigstoreVerified ? 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20' : 'border-border bg-muted/30'} space-y-1.5">
+                    <div class="flex items-center justify-between">
+                        <span class="text-[11px] font-medium">Sigstore Transparency Log</span>
+                        ${isSigstorePending ? `
+                            <span class="text-[10px] text-muted-foreground flex items-center gap-1">
+                                <svg class="w-2.5 h-2.5 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                                Checking...
+                            </span>
+                        ` : isSigstoreVerified ? `
+                            <span class="text-[10px] text-green-600 dark:text-green-400 flex items-center gap-1">
+                                <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>
+                                ${v.sigstoreEntries || 1} ${v.sigstoreEntries === 1 ? 'entry' : 'entries'} found
+                            </span>
+                        ` : `
+                            <span class="text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                                <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                                ${v?.sigstoreError || 'Not found'}
+                            </span>
+                        `}
+                    </div>
+                    <p class="text-[10px] text-muted-foreground">
+                        Verifies that the source code was correctly built through GitHub Actions and the resulting binary is recorded in the Sigstore transparency log.
+                    </p>
+                    ${v?.sigstoreRekorUrl ? `
+                        <a href="${v.sigstoreRekorUrl}" target="_blank" rel="noopener" class="inline-flex items-center gap-1 text-[10px] text-blue-500 hover:underline">
+                            <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                            View on Sigstore
+                        </a>
+                    ` : ''}
+                </div>
+
+                <!-- Source Repository -->
+                <div class="p-2 rounded-md border border-border bg-muted/30 space-y-1">
+                    <span class="text-[11px] font-medium">Configuration Repository</span>
+                    <p class="text-[10px] text-muted-foreground">
+                        The configuration repository specifies exactly what code is running inside the secure enclave.
+                    </p>
+                    ${container.repoUrl ? `
+                        <a href="${container.repoUrl}" target="_blank" rel="noopener" class="inline-flex items-center gap-1 text-[11px] text-blue-500 hover:underline font-medium">
+                            <svg class="w-3 h-3" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+                            ${container.owner}/${container.image}
+                        </a>
+                    ` : ''}
+                </div>
+
+                <!-- Container Details (collapsible) -->
+                <details class="group">
+                    <summary class="cursor-pointer flex items-center gap-2 text-[11px] text-muted-foreground hover:text-foreground">
+                        <svg class="w-2.5 h-2.5 transition-transform group-open:rotate-90" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+                        Additional container info
+                    </summary>
+                    <div class="mt-1.5 p-1.5 rounded border border-border bg-muted/20 space-y-1 text-[10px]">
+                        ${this.renderRow('Registry', container.registry, 'text-foreground')}
+                        ${this.renderRow('Owner', container.owner, 'text-foreground')}
+                        ${this.renderRow('Image', container.image, 'text-foreground')}
+                        ${this.renderRow('Command', container.command, 'text-foreground font-mono')}
+                    </div>
+                </details>
             </div>
         `;
     }
@@ -1311,9 +1380,9 @@ class VerifierAttestationModal {
         const steps = [
             {
                 number: 1,
-                title: 'Verifier runtime is open and attestable',
-                description: 'The verifier is open-source and its runtime policy is measured by Azure Confidential Containers.',
-                proves: 'Anyone can check that the verifier is currently running the exact code and privacy rules it claims.',
+                title: 'Verifier runtime is attestable',
+                description: 'The verifier is open source, and Azure confidential-computing measurements report what is running.',
+                proves: 'You can independently check the verifier runtime identity and policy claims.',
                 tone: 'success',
                 evidence: attestationEvidence,
                 showLiveEvidence: hasAttestationLiveEvidence,
@@ -1335,9 +1404,9 @@ class VerifierAttestationModal {
             },
             {
                 number: 2,
-                title: "Verifier confirms key ownership on station's account",
-                description: "The verifier checks the submitted key against station's account and returns ownership verification status.",
-                proves: 'The issued API key is confirmed as belonging to the registered station OpenRouter account, blocking shadow-account issuance.',
+                title: 'Verifier checks key ownership',
+                description: "The verifier validates the submitted key against the station's provider account.",
+                proves: 'The issued key is confirmed as station-owned, which blocks shadow-account key issuance.',
                 tone: 'success',
                 evidence: ownershipEvidence,
                 showLiveEvidence: hasOwnershipLiveEvidence,
@@ -1359,9 +1428,9 @@ class VerifierAttestationModal {
             },
             {
                 number: 3,
-                title: 'Every key response is double-signed',
-                description: 'The key payload includes both station and org Ed25519 signatures.',
-                proves: 'MITM tampering or key replacement is detectable because signatures bind key + station + expiry.',
+                title: 'Issued key response is double-signed',
+                description: 'The key payload carries both station and org Ed25519 signatures.',
+                proves: 'Tampering is detectable because signatures bind key, station identity, and expiry together.',
                 tone: 'success',
                 evidence: signatureEvidence,
                 showLiveEvidence: hasSignatureLiveEvidence,
@@ -1383,9 +1452,9 @@ class VerifierAttestationModal {
             },
             {
                 number: 4,
-                title: 'Station registry + client key lineage validation',
-                description: 'The app validates station signatures against the registered public keys from verifier broadcast records.',
-                proves: 'Key lineage maps to a registered station, with ban visibility and client-side signature checks.',
+                title: 'Station registry and key lineage checks',
+                description: 'The app validates signatures against station public keys from verifier broadcast records.',
+                proves: 'Key lineage maps to a registered station, with ban visibility and client-side signature validation.',
                 tone: 'success',
                 evidence: {
                     broadcast: broadcastEvidence,
@@ -1411,30 +1480,24 @@ class VerifierAttestationModal {
         ];
 
         const summaryClasses = this.getStepToneClasses('success');
-        const summaryTitle = 'Zero-trust chain enforced';
-        const summaryBody = 'This flow attests the verifier runtime, validates key ownership lineage, and binds issued ephemeral keys to signed station identity.';
+        const summaryTitle = 'Key issuance chain verified';
+        const summaryBody = 'This flow attests the verifier runtime, checks ownership lineage, and binds issued ephemeral keys to signed station identity.';
 
         return `
-            <div class="space-y-1.5">
-                <h3 class="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-                    <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 12l2 2 4-4"/><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-                    Why The Whole System Is Zero Trust
-                </h3>
-                <div class="p-2.5 rounded-lg border border-border bg-card space-y-2.5">
-                    <p class="text-[11px] text-muted-foreground">
-                        Click each proof item to inspect exact evidence (attestation fields, broadcast snapshot, signed payload details, and client-side verification inputs).
+            <div class="space-y-2.5">
+                <p class="text-[11px] text-muted-foreground">
+                    Expand each item to inspect live evidence (attestation fields, broadcast snapshot, signed payload details, and local verification inputs).
+                </p>
+
+                <div class="space-y-1.5">
+                    ${steps.map((step) => this.renderZeroTrustStep(step)).join('')}
+                </div>
+
+                <div class="p-2 rounded-md border ${summaryClasses.border} ${summaryClasses.bg}">
+                    <div class="text-[11px] font-semibold ${summaryClasses.text}">${this.escapeHtml(summaryTitle)}</div>
+                    <p class="text-[11px] mt-0.5 ${summaryClasses.subtleText}">
+                        ${this.escapeHtml(summaryBody)}
                     </p>
-
-                    <div class="space-y-1.5">
-                        ${steps.map((step) => this.renderZeroTrustStep(step)).join('')}
-                    </div>
-
-                    <div class="p-2 rounded-md border ${summaryClasses.border} ${summaryClasses.bg}">
-                        <div class="text-[11px] font-semibold ${summaryClasses.text}">${this.escapeHtml(summaryTitle)}</div>
-                        <p class="text-[11px] mt-0.5 ${summaryClasses.subtleText}">
-                            ${this.escapeHtml(summaryBody)}
-                        </p>
-                    </div>
                 </div>
             </div>
         `;
@@ -1592,7 +1655,7 @@ class VerifierAttestationModal {
     setupEventListeners() {
         this.overlay.querySelector('.verifier-modal-close')?.addEventListener('click', () => this.close());
         this.overlay.querySelector('.verifier-modal-done')?.addEventListener('click', () => this.close());
-        
+
         this.overlay.querySelector('.verifier-retry-btn')?.addEventListener('click', () => {
             this.isLoading = true;
             this.error = null;

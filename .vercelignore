@@ -4,8 +4,12 @@
 /*
 !/chat
 !/chat/**
+!/embeddings
+!/embeddings/**
 !/local_inference
 !/local_inference/**
+!/vector
+!/vector/**
 !/scripts
 !/scripts/**
 !/package.json

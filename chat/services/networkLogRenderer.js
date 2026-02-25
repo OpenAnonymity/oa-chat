@@ -141,6 +141,10 @@ export function getActivityDescription(log, detailed = false) {
         const urlObj = new URL(url);
         const path = urlObj.pathname;
 
+        if (type === 'ticket' && path.includes('/chat/free_access')) {
+            return 'Checking free access';
+        }
+
         // Ticket registration
         if (type === 'ticket' && path.includes('alpha-register')) {
             if (!detailed) {

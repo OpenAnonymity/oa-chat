@@ -42,6 +42,17 @@
                 if (savedState === 'false') {
                     document.documentElement.setAttribute('data-left-sidebar-hidden', 'true');
                 }
+
+                const rawWidth = localStorage.getItem('oa-left-sidebar-width');
+                const parsedWidth = parseInt(rawWidth, 10);
+                if (Number.isFinite(parsedWidth) && parsedWidth > 0) {
+                    const minWidth = 220;
+                    const maxDragWidth = 420;
+                    const layoutMaxWidth = Math.max(minWidth, window.innerWidth - 240);
+                    const maxWidth = Math.max(minWidth, Math.min(maxDragWidth, layoutMaxWidth));
+                    const clampedWidth = Math.max(minWidth, Math.min(maxWidth, parsedWidth));
+                    document.documentElement.style.setProperty('--oa-left-sidebar-width', `${clampedWidth}px`);
+                }
             } catch (error) {
                 console.warn('Unable to apply left sidebar state:', error);
             }
@@ -504,7 +515,7 @@
                                                 </svg>
                                             </button>
                                             <!-- Settings Dropdown Menu (hidden by default) -->
-                                            <div id="settings-menu" class="hidden z-[100] rounded-lg border shadow-xl p-2 w-[260px] overflow-hidden settings-menu-glass">
+                                            <div id="settings-menu" class="hidden z-[100] rounded-lg border shadow-xl p-2 min-w-[220px] settings-menu-glass">
                                                 <a href="https://forms.gle/HEmvxnJpN1jQC7CfA" target="_blank" rel="noopener noreferrer" class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors flex items-center justify-between">
                                                     <span>Share Feedback</span>
                                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
@@ -549,6 +560,10 @@
                                                         <span class="text-xs text-muted-foreground w-12 shrink-0">Tickets</span>
                                                         <button data-action="export-tickets" class="flex-1 px-2 py-1 text-[11px] text-popover-foreground hover-highlight rounded transition-colors border border-border text-center">Export</button>
                                                         <button data-action="import-tickets" class="flex-1 px-2 py-1 text-[11px] text-popover-foreground hover-highlight rounded transition-colors border border-border text-center">Import</button>
+                                                    </div>
+                                                    <div class="px-3 py-1 flex items-center gap-2">
+                                                        <span class="text-xs text-muted-foreground w-12 shrink-0">Embed</span>
+                                                        <button data-action="run-embedding-backfill" class="flex-1 px-2 py-1 text-[11px] text-popover-foreground hover-highlight rounded transition-colors border border-border text-center">Run Backfill</button>
                                                     </div>
                                                     <div class="px-3 py-1 flex items-center gap-2">
                                                         <span class="text-xs text-muted-foreground w-12 shrink-0">ChatGPT</span>

@@ -23,6 +23,7 @@ const HIGH_ACTIVITY_THRESHOLD = 2;       // 2+ requests = high activity
 const PENDING_BASE_BACKOFF_MS = 5000;    // 5 seconds initial backoff
 const PENDING_MAX_BACKOFF_MS = 300000;   // 5 minutes max backoff
 const PENDING_MAX_ATTEMPTS = 10;         // Max retry attempts
+const RECENTLY_ATTESTED_MAX_ATTEMPTS = 3; // 1 initial + 2 background retries
 
 /**
  * Classify whether a submitKey error is a hard failure (reject key) or soft failure (retry)
@@ -98,7 +99,7 @@ class StationVerifier {
         this.completionRequests = []; // timestamps of recent completion requests
         
         // Pending key submissions for background retry
-        // Map<keyHash, {keyData, attempts, nextRetryAt, backoffMs, stationId, logId}>
+        // Map<keyHash, {keyData, attempts, nextRetryAt, backoffMs, stationId, logId, maxAttempts}>
         this.pendingSubmissions = new Map();
     }
     
@@ -709,8 +710,9 @@ class StationVerifier {
      * - { status: 'unverified', detail?: string, data?: {...} } - Policy skip (no retry)
      * - { status: 'rejected', error: Error, bannedStation?: {...} } - Hard failure
      * 
-     * For trusted stations, soft failures (network/5xx) are silently skipped.
-     * For non-trusted stations, soft failures queue for background retry.
+     * For recently attested stations, soft failures (network/5xx/429) are queued for
+     * background retry while allowing immediate key usage.
+     * For non-recently-attested stations, soft failures are rejected.
      * 
      * @param {object} keyData - Key data from org's /request_key response
      * @returns {Promise<{status: 'verified'|'pending'|'unverified'|'rejected', ...}>}
@@ -751,8 +753,8 @@ class StationVerifier {
                 },
                 {
                     context: 'Verifier submit_key',
-                    maxAttempts: 3,
-                    timeoutMs: 30000,
+                    maxAttempts: 1,
+                    timeoutMs: 5000,
                     proxyConfig: { bypassProxy: true }
                 }
             );
@@ -837,7 +839,7 @@ class StationVerifier {
                         request: { station_id: keyData.stationId },
                         response: { message: 'The verifier is currently unreachable. Station integrity will be attested as soon as verifier comes <a href="https://verifier.openanonymity.ai/health" target="_blank" rel="noopener noreferrer" class="underline hover:text-amber-700 dark:hover:text-amber-300">online</a>. You can continue sending messages normally because this station was recently attested by other users.' }
                     });
-                    this._queuePendingSubmission(keyData, keyHash, logEntry.id);
+                    this._queuePendingSubmission(keyData, keyHash, logEntry.id, RECENTLY_ATTESTED_MAX_ATTEMPTS);
                     return { status: 'pending', keyHash };
                 }
                 
@@ -902,7 +904,7 @@ class StationVerifier {
                     request: { station_id: keyData.stationId },
                     response: { message: 'The verifier is currently unreachable. Station integrity will be attested as soon as verifier comes <a href="https://verifier.openanonymity.ai/health" target="_blank" rel="noopener noreferrer" class="underline hover:text-amber-700 dark:hover:text-amber-300">online</a>. You can continue sending messages normally because this station was recently attested by other users.' }
                 });
-                this._queuePendingSubmission(keyData, keyHash, logEntry.id);
+                this._queuePendingSubmission(keyData, keyHash, logEntry.id, RECENTLY_ATTESTED_MAX_ATTEMPTS);
                 return { status: 'pending', keyHash };
             }
 
@@ -942,11 +944,12 @@ class StationVerifier {
     /**
      * Queue a key submission for background retry
      */
-    _queuePendingSubmission(keyData, keyHash, logId) {
+    _queuePendingSubmission(keyData, keyHash, logId, maxAttempts = PENDING_MAX_ATTEMPTS) {
         if (!keyHash || !keyData) return;
         
         const existing = this.pendingSubmissions.get(keyHash);
         if (existing) {
+            existing.maxAttempts = Math.min(existing.maxAttempts ?? maxAttempts, maxAttempts);
             existing.attempts++;
             existing.backoffMs = getNextBackoff(existing.backoffMs);
             existing.nextRetryAt = Date.now() + existing.backoffMs;
@@ -957,7 +960,8 @@ class StationVerifier {
                 attempts: 1,
                 backoffMs: PENDING_BASE_BACKOFF_MS,
                 nextRetryAt: Date.now() + PENDING_BASE_BACKOFF_MS,
-                logId
+                logId,
+                maxAttempts
             });
         }
         console.log(`📋 Queued verification retry for ${keyHash}, next attempt in ${Math.round((this.pendingSubmissions.get(keyHash).backoffMs)/1000)}s`);
@@ -975,7 +979,8 @@ class StationVerifier {
             if (now < pending.nextRetryAt) continue;
             
             // Check max attempts
-            if (pending.attempts >= PENDING_MAX_ATTEMPTS) {
+            const maxAttempts = pending.maxAttempts ?? PENDING_MAX_ATTEMPTS;
+            if (pending.attempts >= maxAttempts) {
                 console.warn(`⚠️ Verification retry ${keyHash} exceeded max attempts, giving up`);
                 this.pendingSubmissions.delete(keyHash);
                 continue;
@@ -999,7 +1004,7 @@ class StationVerifier {
                     },
                     {
                         context: 'Verifier submit_key retry',
-                        maxAttempts: 2,
+                        maxAttempts: 1,
                         timeoutMs: 15000,
                         proxyConfig: { bypassProxy: true }
                     }

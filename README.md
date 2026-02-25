@@ -46,3 +46,4 @@ For a deeper breakdown, see `AGENTS.md`.
 ### Development
 - Keep devtools open — console warnings surface integration issues early.
 - Source modules live in `chat/` and can be served directly in dev; production builds bundle and minify output into `dist/chat`.
+

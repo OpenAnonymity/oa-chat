@@ -170,52 +170,117 @@ export class OramaBackend {
         const includeVectors = options.includeVectors === true;
         const filter = typeof options.filter === 'function' ? options.filter : null;
         const minScore = Number.isFinite(options.minScore) ? options.minScore : null;
+        const debug = options.debug === true;
+        const debugLabel = typeof options.debugLabel === 'string' && options.debugLabel
+            ? options.debugLabel
+            : 'vector-search';
 
         const similarity = clampSimilarity(minScore ?? 0);
-        const oversample = filter ? Math.min(this.metadataById.size, Math.max(limit * 3, limit + 10)) : limit;
+        const initialOversample = filter
+            ? Math.min(this.metadataById.size, Math.max(limit * 3, limit + 10))
+            : limit;
+        let oversample = initialOversample;
+        const maxOversample = this.metadataById.size;
+        const passStats = [];
+        let finalResults = [];
 
-        const response = await this.module.search(this.orama, {
-            mode: 'vector',
-            vector: {
-                value: Array.from(queryVector),
-                property: this.vectorProperty
-            },
-            limit: oversample,
-            similarity,
-            includeVectors
-        });
+        while (true) {
+            const response = await this.module.search(this.orama, {
+                mode: 'vector',
+                vector: {
+                    value: Array.from(queryVector),
+                    property: this.vectorProperty
+                },
+                limit: oversample,
+                similarity,
+                includeVectors
+            });
 
-        const hits = response?.hits || [];
-        const results = [];
+            const hits = response?.hits || [];
+            const results = [];
+            let filteredOutCount = 0;
+            let minScoreRejectedCount = 0;
 
-        for (const hit of hits) {
-            const oramaId = hit.id;
-            const idFromMap = this.oramaIdToId.get(oramaId);
-            const docId = idFromMap || hit.document?.[this.idField] || oramaId;
-            const metadata = this.metadataById.get(docId) ?? null;
-            if (filter && !filter(metadata, docId)) {
-                continue;
-            }
-
-            const score = hit.score ?? 0;
-            if (minScore !== null && score < minScore) {
-                continue;
-            }
-
-            const entry = { id: docId, score, metadata };
-            if (includeVectors) {
-                const vector = this.vectorById.get(docId);
-                if (vector) {
-                    entry.vector = vector;
-                } else if (hit.document?.[this.vectorProperty]) {
-                    entry.vector = Float32Array.from(hit.document[this.vectorProperty]);
+            for (const hit of hits) {
+                const oramaId = hit.id;
+                const idFromMap = this.oramaIdToId.get(oramaId);
+                const docId = idFromMap || hit.document?.[this.idField] || oramaId;
+                const metadata = this.metadataById.get(docId) ?? null;
+                if (filter && !filter(metadata, docId)) {
+                    filteredOutCount += 1;
+                    continue;
                 }
+
+                const score = hit.score ?? 0;
+                if (minScore !== null && score < minScore) {
+                    minScoreRejectedCount += 1;
+                    continue;
+                }
+
+                const entry = { id: docId, score, metadata };
+                if (includeVectors) {
+                    const vector = this.vectorById.get(docId);
+                    if (vector) {
+                        entry.vector = vector;
+                    } else if (hit.document?.[this.vectorProperty]) {
+                        entry.vector = Float32Array.from(hit.document[this.vectorProperty]);
+                    }
+                }
+                results.push(entry);
+                if (results.length >= limit) break;
             }
-            results.push(entry);
-            if (results.length >= limit) break;
+
+            passStats.push({
+                oversample,
+                rawHits: hits.length,
+                filteredOutCount,
+                minScoreRejectedCount,
+                returned: results.length
+            });
+            finalResults = results;
+
+            // If no filter is active, one pass is enough.
+            if (!filter) {
+                break;
+            }
+
+            // Stop expanding if we already have enough results or we've exhausted corpus size.
+            if (results.length >= limit || oversample >= maxOversample) {
+                break;
+            }
+
+            // If the backend returned fewer hits than requested, there is no larger candidate set to fetch.
+            if (hits.length < oversample) {
+                break;
+            }
+
+            const nextOversample = Math.min(maxOversample, Math.max(oversample * 2, oversample + 10));
+            if (nextOversample <= oversample) {
+                break;
+            }
+            oversample = nextOversample;
         }
 
-        return results;
+        if (debug) {
+            const last = passStats[passStats.length - 1] || {
+                oversample,
+                rawHits: 0,
+                filteredOutCount: 0,
+                minScoreRejectedCount: 0,
+                returned: finalResults.length
+            };
+            console.log(
+                `[OramaBackend] ${debugLabel} — total vectors: ${this.metadataById.size}, ` +
+                `requested k: ${limit}, oversample: ${last.oversample} (initial: ${initialOversample}), ` +
+                `raw hits: ${last.rawHits}, filtered out: ${last.filteredOutCount}, ` +
+                `minScore rejected: ${last.minScoreRejectedCount}, returned: ${last.returned}, passes: ${passStats.length}`
+            );
+            if (passStats.length > 1) {
+                console.log(`[OramaBackend] ${debugLabel} oversample passes: ${JSON.stringify(passStats)}`);
+            }
+        }
+
+        return finalResults;
     }
 
     async count() {
