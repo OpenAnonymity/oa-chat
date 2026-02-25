@@ -22,13 +22,18 @@ const EXTRACTION_PROMPT = `You are a memory manager. Given a conversation and th
 Only save information that would be useful to recall in a **future** conversation — personal facts, preferences, project context, interests, or recurring topics. Return "none" if the conversation doesn't reveal anything new worth remembering.
 
 Do NOT save:
-- Information already covered in the memory index
+- Information already present in existing files (check the file contents carefully — do not duplicate facts)
 - Vague or transient details (e.g. "help me with this", "thanks")
 - The assistant's own reasoning or suggestions — only facts grounded in what the user said or asked about
 
 Current memory index:
 \`\`\`
 {INDEX}
+\`\`\`
+
+Existing file contents:
+\`\`\`
+{FILE_CONTENTS}
 \`\`\`
 
 Conversation:
@@ -80,8 +85,9 @@ class MemoryExtractor {
             const conversationText = this._buildConversationText(filtered);
             if (!conversationText) return;
 
-            // Load current memory index
+            // Load current memory index and file contents (budget-capped)
             const index = await memoryFileSystem.getIndex() || '';
+            const fileContentsText = await this._buildFileContentsText();
 
             // Ensure we have an API key
             const apiKey = await this._ensureTinfoilKey();
@@ -92,6 +98,7 @@ class MemoryExtractor {
 
             const prompt = EXTRACTION_PROMPT
                 .replace('{INDEX}', index)
+                .replace('{FILE_CONTENTS}', fileContentsText)
                 .replace('{CONVERSATION}', conversationText);
 
             console.log('[MemoryExtractor] Processing session:', sessionId);
@@ -131,6 +138,27 @@ class MemoryExtractor {
         } finally {
             this._processingSet.delete(sessionId);
         }
+    }
+
+    async _buildFileContentsText() {
+        const MAX_TOTAL_CHARS = 4000;
+        const MAX_PER_FILE_CHARS = 800;
+        const allFiles = await memoryFileSystem.exportAll();
+        const realFiles = allFiles.filter(f => !f.path.endsWith('_index.md'));
+        if (realFiles.length === 0) return '(no files yet)';
+
+        let total = 0;
+        const parts = [];
+        for (const f of realFiles) {
+            const content = (f.content || '').length > MAX_PER_FILE_CHARS
+                ? f.content.slice(0, MAX_PER_FILE_CHARS) + '...(truncated)'
+                : f.content;
+            const entry = `--- ${f.path} ---\n${content}`;
+            if (total + entry.length > MAX_TOTAL_CHARS) break;
+            parts.push(entry);
+            total += entry.length;
+        }
+        return parts.join('\n\n');
     }
 
     _buildConversationText(messages) {

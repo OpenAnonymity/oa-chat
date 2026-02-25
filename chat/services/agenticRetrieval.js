@@ -74,13 +74,21 @@ class AgenticRetrieval {
 
             if (!paths || paths.length === 0) return null;
 
-            // Load the selected files
+            // Load the selected files (budget-capped)
+            const MAX_TOTAL_CHARS = 4000;
+            const MAX_PER_FILE_CHARS = 1500;
             const fileContents = [];
+            let total = 0;
             for (const path of paths.slice(0, MAX_FILES_TO_LOAD)) {
-                const content = await memoryFileSystem.read(path);
-                if (content) {
-                    fileContents.push(`### ${path}\n${content}`);
-                }
+                const raw = await memoryFileSystem.read(path);
+                if (!raw) continue;
+                const content = raw.length > MAX_PER_FILE_CHARS
+                    ? raw.slice(0, MAX_PER_FILE_CHARS) + '...(truncated)'
+                    : raw;
+                const entry = `### ${path}\n${content}`;
+                if (total + entry.length > MAX_TOTAL_CHARS) break;
+                fileContents.push(entry);
+                total += entry.length;
             }
 
             if (fileContents.length === 0) return null;
