@@ -21,7 +21,6 @@ export const VERIFIER_URL = 'https://verifier.openanonymity.ai';
 // operator sees connection metadata (timing, connecting IPs) but not request
 // content (TLS terminates at the destination). For stronger IP privacy, users
 // can use their own VPN/Tor instead of or in addition to this relay.
-// export const PROXY_URL = 'wss://proxy.openanonymity.ai/?secret=8d4fc1b2e7a9035f14c8d92afe6730bb';
 export const PROXY_URL = 'wss://websocket-proxy-server-twilight-feather-9805.fly.dev/?secret=8d4fc1b2e7a9035f14c8d92afe6730bb';
 
 // Base URL for shared chat links
