@@ -1864,13 +1864,16 @@ export default class ChatInput {
 
     /**
      * Handles the Export Memory action.
-     * Exports session memory summaries as one markdown file per tag in a zip.
+     * Exports session memory summaries as one markdown file per domain/folder in a zip.
      */
     async handleExportMemoryMarkdown() {
         try {
             const result = await exportMemoryAsTagMarkdown();
             if (result.success) {
-                this.app.showToast?.(`Exported memory zip with ${result.fileCount} tag file${result.fileCount !== 1 ? 's' : ''}`, 'success');
+                this.app.showToast?.(
+                    `Exported memory zip with ${result.folderCount} folder file${result.folderCount !== 1 ? 's' : ''} across ${result.domainCount} domain${result.domainCount !== 1 ? 's' : ''}`,
+                    'success'
+                );
             } else {
                 this.app.showToast?.('Failed to export memory markdown', 'error');
             }
@@ -2279,28 +2282,36 @@ export default class ChatInput {
                     .filter(tag => typeof tag === 'string' && tag.trim().length > 0)
                     .map(tag => tag.trim().toLowerCase())
             ));
-            const primaryTag = (typeof memory?.primaryRelevantTag === 'string' && memory.primaryRelevantTag.trim().length > 0)
-                ? memory.primaryRelevantTag.trim().toLowerCase()
-                : (relevantTags[0] || tags[0] || 'untagged');
-            return { memory, idx, tags, relevantTags, primaryTag };
+            const domain = (typeof (memory?.domain || memory?.category) === 'string' && String(memory.domain || memory.category).trim().length > 0)
+                ? String(memory.domain || memory.category).trim().toLowerCase()
+                : null;
+            const folder = (typeof memory?.folder === 'string' && memory.folder.trim().length > 0)
+                ? memory.folder.trim().toLowerCase()
+                : null;
+            const primaryCategory = domain
+                ? (folder ? `${domain} / ${folder}` : domain)
+                : (relevantTags[0] || tags[0] || 'uncategorized');
+            return { memory, idx, tags, relevantTags, domain, folder, primaryCategory };
         });
 
-        const contextTags = Array.from(new Set(
-            memoryEntries.flatMap(entry => entry.relevantTags)
+        const contextCategories = Array.from(new Set(
+            memoryEntries
+                .map(entry => entry.primaryCategory)
+                .filter(Boolean)
         ));
 
         const groupedContextMap = new Map();
         memoryEntries.forEach((entry) => {
-            if (!groupedContextMap.has(entry.primaryTag)) {
-                groupedContextMap.set(entry.primaryTag, []);
+            if (!groupedContextMap.has(entry.primaryCategory)) {
+                groupedContextMap.set(entry.primaryCategory, []);
             }
-            groupedContextMap.get(entry.primaryTag).push(entry);
+            groupedContextMap.get(entry.primaryCategory).push(entry);
         });
-        const groupedContext = Array.from(groupedContextMap.entries()).map(([tag, entries]) => ({ tag, entries }));
+        const groupedContext = Array.from(groupedContextMap.entries()).map(([groupLabel, entries]) => ({ groupLabel, entries }));
 
         if (groupedContext.length === 0 && memoryEntries.length > 0) {
             groupedContext.push({
-                tag: 'untagged',
+                groupLabel: 'uncategorized',
                 entries: memoryEntries
             });
         }
@@ -2347,17 +2358,17 @@ export default class ChatInput {
                             </svg>
                             Retrieved Context (${memories.length} item${memories.length === 1 ? '' : 's'})
                         </div>
-                        <div class="full-prompt-tag-caption">Related Tags Retrieved</div>
+                        <div class="full-prompt-tag-caption">Related Categories Retrieved</div>
                         <div class="full-prompt-tags">
-                            ${contextTags.length > 0
-                                ? contextTags.map(tag => `<span class="full-prompt-tag">${this.escapeHtml(tag)}</span>`).join('')
-                                : '<span class="full-prompt-tags-empty">No context tags</span>'
+                            ${contextCategories.length > 0
+                                ? contextCategories.map(category => `<span class="full-prompt-tag">${this.escapeHtml(category)}</span>`).join('')
+                                : '<span class="full-prompt-tags-empty">No context categories</span>'
                             }
                         </div>
                         <div class="full-prompt-tag-groups">
                             ${groupedContext.map((group) => `
                                 <div class="full-prompt-tag-group">
-                                    <div class="full-prompt-tag-group-title">#${this.escapeHtml(group.tag)}</div>
+                                    <div class="full-prompt-tag-group-title">#${this.escapeHtml(group.groupLabel)}</div>
                                     ${group.entries.map((entry) => {
                                         const m = entry.memory;
                                         const content = m.fullContent || m.displayContent || m.content || m.summary || '';

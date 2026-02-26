@@ -33,9 +33,15 @@ const TINFOIL_BACKEND_ID = 'tinfoil';
 const TINFOIL_MODEL = 'gpt-oss-120b';
 const TINFOIL_KEY_TICKETS_REQUIRED = 2;
 
-const TAG_MATCH_PROMPT = `Given a user query and a list of existing tags from past conversations, return only the tags that are semantically relevant to the query. A tag is relevant if a conversation about that topic could plausibly contain useful context for answering the query.
+const TAG_MATCH_PROMPT = `Given a user query and a list of existing domains from past conversations, return only the domains that are semantically relevant to the query. A domain is relevant if a conversation in that domain could plausibly contain useful context for answering the query.
 
-Return valid JSON only — an array of matching tag strings. If no tags match, return an empty array [].
+Return valid JSON only — an array of matching domain strings. If no domains match, return an empty array [].
+
+User query: `;
+
+const VALUE_MATCH_PROMPT = `Given a user query and a list of candidate values, return only the values that are semantically relevant to the query.
+
+Return valid JSON only — an array of matching strings. If no values match, return an empty array [].
 
 User query: `;
 
@@ -136,6 +142,11 @@ class SessionEmbedder {
             if (missingEmbeddings.size > 0) {
                 console.log(`[SessionEmbedder] Found ${missingEmbeddings.size} sessions missing stored embeddings`);
             }
+            const staleEmbeddings = await this._getStaleEmbeddingSessionIds(allSessions);
+            if (staleEmbeddings.size > 0) {
+                console.log(`[SessionEmbedder] Found ${staleEmbeddings.size} sessions with stale embedding metadata`);
+                console.log('[SessionEmbedder] Stale embedding session IDs (sample):', Array.from(staleEmbeddings).slice(0, 20));
+            }
 
             // Filter sessions that need embedding:
             // - No lastEmbeddedAt (never embedded)
@@ -146,7 +157,8 @@ class SessionEmbedder {
                 const lastEmbeddedAt = session.lastEmbeddedAt || 0;
                 return lastEmbeddedAt === 0
                     || updatedAt > lastEmbeddedAt
-                    || missingEmbeddings.has(session.id);
+                    || missingEmbeddings.has(session.id)
+                    || staleEmbeddings.has(session.id);
             });
 
             if (sessionsNeedingEmbedding.length === 0) {
@@ -226,8 +238,11 @@ class SessionEmbedder {
                     const lastEmbeddedAt = session.lastEmbeddedAt || 0;
 
                     if (updatedAt <= lastEmbeddedAt) {
-                        const hasStoredEmbedding = await this._hasStoredEmbedding(sessionId);
-                        if (hasStoredEmbedding) {
+                        const vectorId = this._vectorIdForSession(sessionId);
+                        const rows = await this.store.get(vectorId);
+                        const row = Array.isArray(rows) ? rows[0] : null;
+                        const hasStoredEmbedding = !!row;
+                        if (hasStoredEmbedding && !this._isEmbeddingMetadataStale(session, row)) {
                             // Already current and still present in vector DB — remove from queue
                             this.queue.splice(idx, 1);
                             continue;
@@ -347,6 +362,33 @@ class SessionEmbedder {
         }
     }
 
+    _normalizeCategoryValue(value) {
+        return typeof value === 'string' ? value.trim().toLowerCase() : '';
+    }
+
+    _isEmbeddingMetadataStale(session, row) {
+        if (!session || !row) return true;
+        const sessionCategory = this._normalizeCategoryValue(session.domain || session.category);
+        const rowCategory = this._normalizeCategoryValue(row?.metadata?.domain || row?.metadata?.category);
+
+        if (sessionCategory && rowCategory !== sessionCategory) {
+            return true;
+        }
+        const sessionFolder = this._normalizeCategoryValue(session.folder);
+        const rowFolder = this._normalizeCategoryValue(row?.metadata?.folder);
+        if (sessionFolder && rowFolder !== sessionFolder) {
+            return true;
+        }
+
+        const sessionMemory = typeof session.sessionMemory === 'string' ? session.sessionMemory.trim() : '';
+        const rowSessionMemory = typeof row?.metadata?.sessionMemory === 'string' ? row.metadata.sessionMemory.trim() : '';
+        if (sessionMemory && !rowSessionMemory) {
+            return true;
+        }
+
+        return false;
+    }
+
     async _getMissingEmbeddingSessionIds(sessionIds) {
         const uniqueIds = Array.from(new Set(
             (Array.isArray(sessionIds) ? sessionIds : [])
@@ -377,6 +419,39 @@ class SessionEmbedder {
         }
 
         return missing;
+    }
+
+    async _getStaleEmbeddingSessionIds(sessions) {
+        const validSessions = Array.isArray(sessions)
+            ? sessions.filter(s => s && typeof s.id === 'string' && s.id.length > 0)
+            : [];
+        const stale = new Set();
+
+        if (validSessions.length === 0 || !this.store) {
+            return stale;
+        }
+
+        try {
+            const vectorIds = validSessions.map(session => this._vectorIdForSession(session.id));
+            const rows = await this.store.get(vectorIds);
+            const rowById = new Map(
+                (Array.isArray(rows) ? rows : [])
+                    .filter(row => row && typeof row.id === 'string')
+                    .map(row => [row.id, row])
+            );
+
+            for (const session of validSessions) {
+                const vectorId = this._vectorIdForSession(session.id);
+                const row = rowById.get(vectorId);
+                if (row && this._isEmbeddingMetadataStale(session, row)) {
+                    stale.add(session.id);
+                }
+            }
+        } catch (error) {
+            console.warn('[SessionEmbedder] Failed to detect stale embedding metadata:', error);
+        }
+
+        return stale;
     }
 
     async _inspectEmbeddingRowsForSessions(sessionIds) {
@@ -561,6 +636,10 @@ class SessionEmbedder {
                     title: session.title || 'Untitled',
                     summary: session.summary || null,
                     sessionMemory: session.sessionMemory || null,
+                    domain: session.domain || session.category || null,
+                    folder: session.folder || null,
+                    folderSlug: session.folderSlug || null,
+                    category: session.domain || session.category || null,
                     embeddingSourceText: embeddingText,
                     conversationText: conversationText,
                     messageCount: messages.length,
@@ -570,6 +649,13 @@ class SessionEmbedder {
                     updatedAt: session.updatedAt || null
                 }
             }]);
+            console.log('[SessionEmbedder] Upserted embedding metadata:', {
+                sessionId,
+                domain: session.domain || session.category || null,
+                folder: session.folder || null,
+                folderSlug: session.folderSlug || null,
+                hasSessionMemory: typeof session.sessionMemory === 'string' && session.sessionMemory.trim().length > 0
+            });
             const te2 = performance.now();
 
             // Update only lastEmbeddedAt on the freshest session record to avoid
@@ -655,6 +741,9 @@ class SessionEmbedder {
             const sessionMap = await this._getSessionMapForResults(results);
 
             return results.map(r => ({
+                domain: sessionMap.get(r.metadata?.sessionId)?.domain || r.metadata?.domain || r.metadata?.category || null,
+                folder: sessionMap.get(r.metadata?.sessionId)?.folder || r.metadata?.folder || null,
+                category: sessionMap.get(r.metadata?.sessionId)?.domain || r.metadata?.domain || r.metadata?.category || null,
                 sessionId: r.metadata?.sessionId,
                 title: r.metadata?.title,
                 summary: r.metadata?.summary,
@@ -839,6 +928,19 @@ class SessionEmbedder {
         return '';
     }
 
+    _normalizeValue(value) {
+        return (typeof value === 'string' ? value.trim().toLowerCase() : '');
+    }
+
+    _tokenizeQuery(query) {
+        if (typeof query !== 'string') return [];
+        return query
+            .toLowerCase()
+            .split(/[^a-z0-9]+/g)
+            .map(t => t.trim())
+            .filter(t => t.length >= 3);
+    }
+
     /**
      * Use LLM to identify which existing tags are semantically relevant to the query.
      *
@@ -903,6 +1005,94 @@ Available tags: ${JSON.stringify(allTags)}`;
         }
     }
 
+    async _matchValuesWithLLM(query, values, promptPrefix = VALUE_MATCH_PROMPT) {
+        if (!Array.isArray(values) || values.length === 0) return [];
+
+        const apiKey = await this._ensureTinfoilKey();
+        if (!apiKey) {
+            return [];
+        }
+
+        const normalizedUnique = Array.from(new Set(
+            values.map(v => this._normalizeValue(v)).filter(Boolean)
+        ));
+        if (normalizedUnique.length === 0) return [];
+
+        const prompt = `${promptPrefix}"${query}"\nAvailable values: ${JSON.stringify(normalizedUnique)}`;
+
+        const response = await localInferenceService.createResponse({
+            model: TINFOIL_MODEL,
+            input: [
+                {
+                    role: 'user',
+                    content: [
+                        {
+                            type: 'input_text',
+                            text: prompt
+                        }
+                    ]
+                }
+            ],
+            max_output_tokens: 240,
+            temperature: 0,
+            stream: false
+        }, { backendId: TINFOIL_BACKEND_ID });
+
+        const responseText = this._extractOutputText(response);
+        if (!responseText) return [];
+
+        try {
+            const jsonMatch = responseText.match(/\[[\s\S]*\]/);
+            const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(responseText);
+            if (!Array.isArray(parsed)) return [];
+            const allowed = new Set(normalizedUnique);
+            return parsed
+                .map(v => this._normalizeValue(v))
+                .filter(v => allowed.has(v));
+        } catch (parseError) {
+            console.warn('[SessionEmbedder] Failed to parse LLM value-match response:', parseError);
+            return [];
+        }
+    }
+
+    _computeFusionScores({ queryTerms, category, keywords, matchedCategories, matchedTags, embeddingScore }) {
+        const normalizedCategory = this._normalizeValue(category);
+        const normalizedKeywords = Array.isArray(keywords)
+            ? keywords.map(v => this._normalizeValue(v)).filter(Boolean)
+            : [];
+        const matchedCategorySet = new Set((matchedCategories || []).map(v => this._normalizeValue(v)));
+        const matchedTagSet = new Set((matchedTags || []).map(v => this._normalizeValue(v)));
+        const querySet = new Set(queryTerms || []);
+
+        let categoryScore = 0;
+        if (normalizedCategory && matchedCategorySet.has(normalizedCategory)) {
+            categoryScore = 1;
+        } else if (normalizedCategory) {
+            const categoryParts = normalizedCategory.split(/[^a-z0-9]+/g).filter(Boolean);
+            const lexicalHits = categoryParts.filter(part => querySet.has(part)).length;
+            if (lexicalHits > 0) {
+                categoryScore = Math.min(0.7, lexicalHits / Math.max(1, categoryParts.length));
+            }
+        }
+
+        let tagScore = 0;
+        if (normalizedKeywords.length > 0) {
+            const exactTagMatches = normalizedKeywords.filter(tag => matchedTagSet.has(tag)).length;
+            const lexicalTagHits = normalizedKeywords.filter(tag => {
+                const parts = tag.split(/[^a-z0-9]+/g).filter(Boolean);
+                return parts.some(part => querySet.has(part));
+            }).length;
+            const matchedPart = exactTagMatches / normalizedKeywords.length;
+            const lexicalPart = lexicalTagHits / normalizedKeywords.length;
+            tagScore = Math.min(1, (matchedPart * 0.75) + (lexicalPart * 0.45));
+        }
+
+        const safeEmbeddingScore = Number.isFinite(embeddingScore) ? Math.max(0, Math.min(1, embeddingScore)) : 0;
+        const fusedScore = (safeEmbeddingScore * 0.65) + (categoryScore * 0.20) + (tagScore * 0.15);
+
+        return { fusedScore, categoryScore, tagScore, embeddingScore: safeEmbeddingScore };
+    }
+
     /**
      * Search sessions using LLM-based tag matching + embedding similarity.
      *
@@ -930,151 +1120,197 @@ Available tags: ${JSON.stringify(allTags)}`;
         }
 
         try {
-            // Phase 1: Collect all distinct tags
+            // Phase 1: collect all session metadata used by filter/ranking.
             const allSessions = await chatDB.getAllSessions();
+            const allCategories = new Set();
+            const allFolders = new Set();
             const allTags = new Set();
+            const sessionById = new Map();
             if (allSessions) {
                 for (const session of allSessions) {
-                    if (!Array.isArray(session.keywords)) continue;
-                    for (const kw of session.keywords) {
-                        const tag = typeof kw === 'string' ? kw.trim().toLowerCase() : '';
-                        if (tag) allTags.add(tag);
+                    if (!session?.id) continue;
+                    sessionById.set(session.id, session);
+                    const category = typeof (session.domain || session.category) === 'string'
+                        ? (session.domain || session.category).trim().toLowerCase()
+                        : '';
+                    if (category) {
+                        allCategories.add(category);
+                    }
+                    const folder = typeof session.folder === 'string'
+                        ? session.folder.trim().toLowerCase()
+                        : '';
+                    if (folder) {
+                        allFolders.add(folder);
+                    }
+                    if (Array.isArray(session.keywords)) {
+                        for (const kw of session.keywords) {
+                            const tag = typeof kw === 'string' ? kw.trim().toLowerCase() : '';
+                            if (tag) allTags.add(tag);
+                        }
                     }
                 }
             }
 
-            // Phase 2: LLM-based tag matching
+            // Phase 2: domain match, folder match, then tag match.
+            let matchedCategories = [];
+            let matchedFolders = [];
             let matchedTags = [];
-            if (allTags.size > 0) {
+            if (allCategories.size > 0) {
                 try {
-                    matchedTags = await this._matchTagsWithLLM(query, Array.from(allTags));
+                    matchedCategories = await this._matchValuesWithLLM(query, Array.from(allCategories), TAG_MATCH_PROMPT);
                 } catch (error) {
-                    console.warn('[SessionEmbedder] LLM tag matching failed:', error);
+                    console.warn('[SessionEmbedder] LLM category matching failed:', error);
                     if (error.message?.includes('401') || error.message?.includes('403')) {
                         this._tinfoilKey = null;
                         this._tinfoilKeyInfo = null;
                     }
                 }
             }
+            if (allTags.size > 0) {
+                try {
+                    matchedTags = await this._matchValuesWithLLM(query, Array.from(allTags));
+                } catch (error) {
+                    console.warn('[SessionEmbedder] LLM tag matching failed:', error);
+                }
+            }
+            if (allFolders.size > 0) {
+                try {
+                    matchedFolders = await this._matchValuesWithLLM(query, Array.from(allFolders));
+                } catch (error) {
+                    console.warn('[SessionEmbedder] LLM folder matching failed:', error);
+                }
+            }
 
-            // Phase 3: Embedding search with tag filter
+            // Phase 3: embedding search + fused ranking.
             const t0 = performance.now();
             const queryEmbedding = await this.embedder.embedText(query);
             const t1 = performance.now();
+            const candidateK = Math.max(k * 12, 40);
+            const embeddingResults = await this.store.search(queryEmbedding, candidateK, options);
+            const t2 = performance.now();
 
-            let embeddingResults;
-            let usedTagFilter = false;
-            let tagFilterDiagnostics = null;
-            const matchedTagSet = new Set(matchedTags);
-
-            if (matchedTagSet.size > 0) {
-                // Filter vector search to sessions whose IndexedDB keywords overlap with matched tags
-                const matchedSessionIds = new Set();
-                if (allSessions) {
-                    for (const session of allSessions) {
-                        if (!session?.id || !Array.isArray(session.keywords)) continue;
-                        const hasMatch = session.keywords.some(kw =>
-                            matchedTagSet.has(typeof kw === 'string' ? kw.trim().toLowerCase() : '')
-                        );
-                        if (hasMatch) matchedSessionIds.add(session.id);
-                    }
+            const embeddingBySession = new Map();
+            for (const row of embeddingResults) {
+                const sid = row?.metadata?.sessionId;
+                if (typeof sid === 'string' && !embeddingBySession.has(sid)) {
+                    embeddingBySession.set(sid, row);
                 }
-
-                if (matchedSessionIds.size > 0) {
-                    usedTagFilter = true;
-                    const matchedSessionIdList = Array.from(matchedSessionIds);
-                    const totalVectorCount = await this.store.count();
-                    const rowDiagnostics = await this._inspectEmbeddingRowsForSessions(matchedSessionIdList);
-                    const estimatedCandidateWindow = Math.min(totalVectorCount, Math.max(k * 3, k + 10));
-                    tagFilterDiagnostics = {
-                        matchedSessionCount: matchedSessionIdList.length,
-                        totalVectorCount,
-                        estimatedCandidateWindow,
-                        rowDiagnostics
-                    };
-
-                    console.log(
-                        `[SessionEmbedder] tag filter diagnostics (pre-search) — ` +
-                        `matched tags: ${JSON.stringify(matchedTags)}, ` +
-                        `matched sessions: ${matchedSessionIdList.length}, ` +
-                        `vector rows total: ${totalVectorCount}, ` +
-                        `estimated candidate window: ${estimatedCandidateWindow}, ` +
-                        `matched-session vectors present: ${rowDiagnostics.presentCount}/${rowDiagnostics.totalSessions}, ` +
-                        `metadata.sessionId exact: ${rowDiagnostics.metadataSessionIdMatchCount}, ` +
-                        `metadata.sessionId missing: ${rowDiagnostics.metadataSessionIdMissingCount}, ` +
-                        `metadata.sessionId mismatch: ${rowDiagnostics.metadataSessionIdMismatchCount}`
-                    );
-
-                    if (rowDiagnostics.missingSessionIds.length > 0) {
-                        const missingSample = rowDiagnostics.missingSessionIds.slice(0, 10);
-                        console.log(
-                            `[SessionEmbedder] tag filter missing vector rows sample (${missingSample.length}/${rowDiagnostics.missingSessionIds.length}): ` +
-                            `${JSON.stringify(missingSample)}`
-                        );
-                    }
-
-                    if (rowDiagnostics.metadataIssueSamples.length > 0) {
-                        console.log(
-                            `[SessionEmbedder] tag filter metadata issue sample (${rowDiagnostics.metadataIssueSamples.length}): ` +
-                            `${JSON.stringify(rowDiagnostics.metadataIssueSamples)}`
-                        );
-                    }
-
-                    embeddingResults = await this.store.search(queryEmbedding, k, {
-                        ...options,
-                        filter: (metadata) => {
-                            const sessionId = metadata?.sessionId;
-                            return typeof sessionId === 'string' && matchedSessionIds.has(sessionId);
-                        },
-                        debug: true,
-                        debugLabel: 'sessionEmbedder tag+embedding'
-                    });
-                } else {
-                    // LLM matched tags but none map to sessions; fall back to pure embedding.
-                    embeddingResults = await this.store.search(queryEmbedding, k, options);
-                }
-            } else {
-                // Fallback: no tag matches — pure embedding search
-                embeddingResults = await this.store.search(queryEmbedding, k, options);
             }
 
-            const t2 = performance.now();
             const embedMs = t1 - t0;
             const retrievalMs = t2 - t1;
             this._searchTimings.push({ embedMs, retrievalMs, ts: Date.now() });
 
-            const matchType = matchedTagSet.size > 0 && usedTagFilter ? 'tag+embedding' : 'embedding';
-            console.log(`[SessionEmbedder] ${matchType} search — embed: ${embedMs.toFixed(2)}ms, retrieval: ${retrievalMs.toFixed(2)}ms, matched tags: ${JSON.stringify(matchedTags)}, results: ${embeddingResults.length}`);
-            if (matchType === 'tag+embedding' && embeddingResults.length === 0 && tagFilterDiagnostics) {
-                const { rowDiagnostics, matchedSessionCount, estimatedCandidateWindow } = tagFilterDiagnostics;
-                console.warn(
-                    `[SessionEmbedder] tag+embedding returned 0 results despite ${matchedSessionCount} matched sessions. ` +
-                    `Stored vectors for matched sessions: ${rowDiagnostics.presentCount}/${rowDiagnostics.totalSessions}. ` +
-                    `Estimated ranked candidate window: ${estimatedCandidateWindow}.`
-                );
+            const matchedCategorySet = new Set(matchedCategories.map(v => this._normalizeValue(v)));
+            const matchedFolderSet = new Set(matchedFolders.map(v => this._normalizeValue(v)));
+            const matchedTagSet = new Set(matchedTags.map(v => this._normalizeValue(v)));
+            const candidateSessionIds = new Set(embeddingBySession.keys());
+            const queryTerms = this._tokenizeQuery(query);
+
+            for (const session of allSessions || []) {
+                if (!session?.id) continue;
+                const category = this._normalizeValue(session.domain || session.category);
+                const folder = this._normalizeValue(session.folder);
+                const keywords = Array.isArray(session.keywords) ? session.keywords.map(v => this._normalizeValue(v)).filter(Boolean) : [];
+                const categoryMatch = category && matchedCategorySet.has(category);
+                const folderMatch = folder && matchedFolderSet.has(folder);
+                const tagMatch = keywords.some(kw => matchedTagSet.has(kw));
+                if (categoryMatch || folderMatch || tagMatch) {
+                    candidateSessionIds.add(session.id);
+                }
             }
 
-            const sessionMap = await this._getSessionMapForResults(embeddingResults);
-
-            return embeddingResults.map(r => {
-                const keywords = this._getKeywordsForResult(r, sessionMap);
-                const matchedSessionTags = matchedTags.filter(tag => keywords.includes(tag));
-                return {
-                    sessionId: r.metadata?.sessionId,
-                    title: r.metadata?.title,
-                    summary: r.metadata?.summary,
-                    sessionMemory: r.metadata?.sessionMemory,
+            const ranked = [];
+            for (const sessionId of candidateSessionIds) {
+                const embeddingRow = embeddingBySession.get(sessionId);
+                const session = sessionById.get(sessionId);
+                const metadata = embeddingRow?.metadata || {};
+                const sessionCategory = this._normalizeValue(session?.domain || session?.category || metadata?.domain || metadata?.category);
+                const sessionFolder = this._normalizeValue(session?.folder || metadata?.folder);
+                const keywords = Array.isArray(session?.keywords)
+                    ? session.keywords.map(v => this._normalizeValue(v)).filter(Boolean)
+                    : this._getKeywordsForResult(embeddingRow || { metadata }, new Map()).map(v => this._normalizeValue(v)).filter(Boolean);
+                const embeddingScore = Number.isFinite(embeddingRow?.score) ? embeddingRow.score : 0;
+                const scoreBreakdown = this._computeFusionScores({
+                    queryTerms,
+                    category: sessionCategory,
                     keywords,
-                    matchedTags: matchedTags,
+                    matchedCategories,
+                    matchedTags,
+                    embeddingScore
+                });
+                const matchedSessionCategories = sessionCategory && matchedCategorySet.has(sessionCategory)
+                    ? [sessionCategory]
+                    : [];
+                const matchedSessionFolders = sessionFolder && matchedFolderSet.has(sessionFolder)
+                    ? [sessionFolder]
+                    : [];
+                const matchedSessionTags = keywords.filter(tag => matchedTagSet.has(tag));
+                const folderScore = matchedSessionFolders.length > 0
+                    ? 1
+                    : (sessionFolder && queryTerms.some(t => sessionFolder.includes(t)) ? 0.5 : 0);
+                // Folder participates in candidate expansion, but not direct score fusion.
+                const fusedScore = (scoreBreakdown.embeddingScore * 0.65)
+                    + (scoreBreakdown.categoryScore * 0.20)
+                    + (scoreBreakdown.tagScore * 0.15);
+
+                ranked.push({
+                    sessionId,
+                    title: metadata?.title || session?.title,
+                    summary: metadata?.summary || session?.summary,
+                    sessionMemory: metadata?.sessionMemory || session?.sessionMemory,
+                    domain: sessionCategory || null,
+                    folder: sessionFolder || null,
+                    category: sessionCategory || null,
+                    keywords,
+                    matchedTags,
+                    matchedCategories,
+                    matchedFolders,
                     matchedSessionTags,
+                    matchedSessionCategories,
+                    matchedSessionFolders,
                     primaryMatchedTag: matchedSessionTags[0] || null,
-                    conversationText: r.metadata?.conversationText,
-                    messageCount: r.metadata?.messageCount,
-                    model: r.metadata?.model,
-                    embeddedAt: r.metadata?.embeddedAt,
-                    updatedAt: r.metadata?.updatedAt,
-                    score: r.score,
-                    matchType
+                    primaryMatchedCategory: matchedSessionCategories[0] || null,
+                    primaryMatchedFolder: matchedSessionFolders[0] || null,
+                    conversationText: metadata?.conversationText,
+                    messageCount: metadata?.messageCount,
+                    model: metadata?.model,
+                    embeddedAt: metadata?.embeddedAt,
+                    updatedAt: metadata?.updatedAt || session?.updatedAt,
+                    score: fusedScore,
+                    embeddingScore: scoreBreakdown.embeddingScore,
+                    categoryScore: scoreBreakdown.categoryScore,
+                    folderScore,
+                    tagScore: scoreBreakdown.tagScore,
+                    matchType: 'fused-domain-tag-embedding'
+                });
+            }
+
+            ranked.sort((a, b) =>
+                (b.score - a.score)
+                || ((b.folderScore || 0) - (a.folderScore || 0))
+            );
+            console.log('[SessionEmbedder] Top fused results:', ranked.slice(0, Math.min(5, ranked.length)).map(r => ({
+                sessionId: r.sessionId,
+                domain: r.domain,
+                folder: r.folder,
+                score: Number(r.score).toFixed(4),
+                embeddingScore: Number(r.embeddingScore).toFixed(4),
+                categoryScore: Number(r.categoryScore).toFixed(4),
+                folderScore: Number(r.folderScore).toFixed(4),
+                tagScore: Number(r.tagScore).toFixed(4)
+            })));
+
+            console.log(
+                `[SessionEmbedder] fused retrieval — embed: ${embedMs.toFixed(2)}ms, retrieval: ${retrievalMs.toFixed(2)}ms, ` +
+                `matched domains: ${JSON.stringify(matchedCategories)}, matched folders: ${JSON.stringify(matchedFolders)}, matched tags: ${JSON.stringify(matchedTags)}, candidates: ${ranked.length}`
+            );
+
+            return ranked.slice(0, k).map(r => {
+                return {
+                    ...r,
+                    matchedCategories: r.matchedCategories || [],
+                    matchedTags: r.matchedTags || []
                 };
             });
 

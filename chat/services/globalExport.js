@@ -178,7 +178,7 @@ export async function exportChats() {
     }
 }
 
-function sanitizeFileNamePart(value, fallback = 'untagged') {
+function sanitizeFileNamePart(value, fallback = 'uncategorized') {
     const raw = typeof value === 'string' ? value.trim().toLowerCase() : '';
     const safe = raw
         .replace(/[^a-z0-9._-]+/g, '-')
@@ -187,9 +187,9 @@ function sanitizeFileNamePart(value, fallback = 'untagged') {
     return safe || fallback;
 }
 
-function buildTagMemoryMarkdown(tag, entries, exportedAtIso) {
+function buildFolderMemoryMarkdown(domain, folder, entries, exportedAtIso) {
     const lines = [];
-    lines.push(`# Memory: ${tag}`);
+    lines.push(`# Memory: ${domain} / ${folder}`);
     lines.push('');
     lines.push(`Exported: ${exportedAtIso}`);
     lines.push(`Sessions: ${entries.length}`);
@@ -200,7 +200,13 @@ function buildTagMemoryMarkdown(tag, entries, exportedAtIso) {
         lines.push('');
         lines.push(`- Session ID: \`${entry.id}\``);
         lines.push(`- Updated At: ${new Date(entry.updatedAt || entry.createdAt || Date.now()).toISOString()}`);
+        lines.push(`- Domain: ${entry.domain}`);
+        lines.push(`- Folder: ${entry.folder}`);
         lines.push('');
+        if (entry.tags && entry.tags.length > 0) {
+            lines.push(`- Tags: ${entry.tags.join(', ')}`);
+            lines.push('');
+        }
         lines.push(entry.sessionMemory || '_No session memory summary available._');
         lines.push('');
     }
@@ -223,12 +229,68 @@ function buildMemoryIndexMarkdown(sessionRecords, exportedAtIso) {
     );
 
     for (const record of sorted) {
-        const tags = Array.isArray(record.tags) && record.tags.length > 0 ? record.tags.join(', ') : 'untagged';
+        const domain = record.domain || 'general-other';
+        const folder = record.folder || 'misc';
+        const tags = Array.isArray(record.tags) && record.tags.length > 0 ? record.tags.join(', ') : 'none';
         const updatedAt = new Date(record.updatedAt || record.createdAt || Date.now()).toISOString();
-        lines.push(`- Session ID: \`${record.id}\` | Title: ${record.title} | Updated At: ${updatedAt} | Tags: ${tags}`);
+        const path = `${sanitizeFileNamePart(domain)}/${sanitizeFileNamePart(folder)}.md`;
+        lines.push(`- Session ID: \`${record.id}\` | Title: ${record.title} | Updated At: ${updatedAt} | Domain: ${domain} | Folder: ${folder} | Tags: ${tags} | File: ${path}`);
     }
 
     lines.push('');
+    return lines.join('\n');
+}
+
+function buildDomainManifestMarkdown(domain, entries, exportedAtIso) {
+    const lines = [];
+    lines.push(`# Domain: ${domain}`);
+    lines.push('');
+    lines.push(`Exported: ${exportedAtIso}`);
+    lines.push(`Sessions: ${entries.length}`);
+    lines.push('');
+
+    const folderCounts = new Map();
+    const tagCounts = new Map();
+
+    for (const entry of entries) {
+        const folder = entry.folder || 'misc';
+        folderCounts.set(folder, (folderCounts.get(folder) || 0) + 1);
+
+        const tags = Array.isArray(entry.tags) ? entry.tags : [];
+        for (const tag of tags) {
+            tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1);
+        }
+    }
+
+    const folders = Array.from(folderCounts.entries())
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    const topTags = Array.from(tagCounts.entries())
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .slice(0, 50);
+
+    lines.push('## Folders');
+    lines.push('');
+    if (folders.length === 0) {
+        lines.push('- none');
+    } else {
+        for (const [folder, count] of folders) {
+            const path = `${sanitizeFileNamePart(domain)}/${sanitizeFileNamePart(folder)}.md`;
+            lines.push(`- ${folder}: ${count} session(s) -> ${path}`);
+        }
+    }
+    lines.push('');
+
+    lines.push('## Top Tags');
+    lines.push('');
+    if (topTags.length === 0) {
+        lines.push('- none');
+    } else {
+        for (const [tag, count] of topTags) {
+            lines.push(`- ${tag}: ${count}`);
+        }
+    }
+    lines.push('');
+
     return lines.join('\n');
 }
 
@@ -372,20 +434,28 @@ export async function exportMemoryAsTagMarkdown() {
         const chats = await collectChats();
         const sessions = Array.isArray(chats.sessions) ? chats.sessions : [];
         if (sessions.length === 0) {
-            return { success: false, fileCount: 0, tagCount: 0 };
+            return { success: false, fileCount: 0, folderCount: 0, domainCount: 0 };
         }
 
         const exportedAt = new Date().toISOString();
-        const tagMap = new Map();
+        const folderMap = new Map();
+        const domainSet = new Set();
         const sessionRecords = [];
 
         for (const session of sessions) {
-            const tags = Array.isArray(session.keywords) && session.keywords.length > 0
-                ? session.keywords
-                    .filter(tag => typeof tag === 'string' && tag.trim().length > 0)
-                    .map(tag => tag.trim().toLowerCase())
-                : ['untagged'];
-            const uniqueTags = Array.from(new Set(tags));
+            const domain = (typeof (session.domain || session.category) === 'string' && String(session.domain || session.category).trim().length > 0)
+                ? String(session.domain || session.category).trim().toLowerCase()
+                : 'general-other';
+            const folder = (typeof session.folder === 'string' && session.folder.trim().length > 0)
+                ? session.folder.trim().toLowerCase()
+                : 'misc';
+            const tags = Array.isArray(session.keywords)
+                ? Array.from(new Set(
+                    session.keywords
+                        .filter(tag => typeof tag === 'string' && tag.trim().length > 0)
+                        .map(tag => tag.trim().toLowerCase())
+                ))
+                : [];
 
             const entry = {
                 id: session.id,
@@ -395,30 +465,57 @@ export async function exportMemoryAsTagMarkdown() {
                     : (typeof session.summary === 'string' ? session.summary.trim() : ''),
                 updatedAt: session.updatedAt,
                 createdAt: session.createdAt,
-                tags: uniqueTags
+                domain,
+                folder,
+                tags
             };
             sessionRecords.push(entry);
+            domainSet.add(domain);
 
-            for (const tag of uniqueTags) {
-                if (!tagMap.has(tag)) {
-                    tagMap.set(tag, []);
-                }
-                tagMap.get(tag).push(entry);
+            const folderKey = `${domain}::${folder}`;
+            if (!folderMap.has(folderKey)) {
+                folderMap.set(folderKey, { domain, folder, entries: [] });
             }
+            folderMap.get(folderKey).entries.push(entry);
         }
 
-        const files = Array.from(tagMap.entries())
-            .sort((a, b) => a[0].localeCompare(b[0]))
-            .map(([tag, entries]) => ({
-                tag,
-                fileName: `${sanitizeFileNamePart(tag)}.md`,
-                content: buildTagMemoryMarkdown(tag, entries, exportedAt)
+        const files = Array.from(folderMap.values())
+            .sort((a, b) => (a.domain.localeCompare(b.domain) || a.folder.localeCompare(b.folder)))
+            .map(({ domain, folder, entries }) => ({
+                domain,
+                folder,
+                fileName: `${sanitizeFileNamePart(domain)}/${sanitizeFileNamePart(folder)}.md`,
+                content: buildFolderMemoryMarkdown(domain, folder, entries, exportedAt)
             }));
 
+        const domainManifestFiles = Array.from(domainSet.values())
+            .sort((a, b) => a.localeCompare(b))
+            .map((domain) => {
+                const domainEntries = sessionRecords.filter(record => record.domain === domain);
+                return {
+                    domain,
+                    fileName: `${sanitizeFileNamePart(domain)}.md`,
+                    content: buildDomainManifestMarkdown(domain, domainEntries, exportedAt)
+                };
+            });
+        files.unshift(...domainManifestFiles);
+
+        console.log('[Memory Export] Folder groups prepared:', files.map(f => ({
+            fileName: f.fileName,
+            domain: f.domain,
+            folder: f.folder
+        })));
+
         files.unshift({
-            tag: 'index',
+            domain: 'index',
             fileName: 'index.md',
             content: buildMemoryIndexMarkdown(sessionRecords, exportedAt)
+        });
+        console.log('[Memory Export] Export summary:', {
+            sessions: sessions.length,
+            domains: domainSet.size,
+            domainManifests: domainManifestFiles.length,
+            folders: files.length - 1 - domainManifestFiles.length
         });
 
         const zipBlob = createZipBlob(files);
@@ -431,10 +528,15 @@ export async function exportMemoryAsTagMarkdown() {
         document.body.removeChild(a);
         URL.revokeObjectURL(zipUrl);
 
-        return { success: true, fileCount: files.length, tagCount: files.length };
+        return {
+            success: true,
+            fileCount: files.length,
+            folderCount: Math.max(0, files.length - 1 - domainManifestFiles.length),
+            domainCount: domainSet.size
+        };
     } catch (error) {
         console.error('Error exporting memory markdown:', error);
-        return { success: false, fileCount: 0, tagCount: 0 };
+        return { success: false, fileCount: 0, folderCount: 0, domainCount: 0 };
     }
 }
 

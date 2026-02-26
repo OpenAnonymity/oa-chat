@@ -291,7 +291,7 @@ export default class MemorySelector {
     }
 
     /**
-     * Render memories in the list, grouped by keywords
+     * Render memories in the list, grouped by category (fallback: first tag)
      */
     renderMemories() {
         const list = this.container?.querySelector('#memory-list');
@@ -324,19 +324,19 @@ export default class MemorySelector {
             return;
         }
 
-        // Group memories by keywords
-        const keywordGroups = this.groupMemoriesByKeywords(filtered);
+        // Group memories by category
+        const categoryGroups = this.groupMemoriesByCategory(filtered);
 
         // Build HTML with keyword groups
         let html = '';
-        for (const [keyword, items] of Object.entries(keywordGroups)) {
+        for (const [category, items] of Object.entries(categoryGroups)) {
             if (items.length === 0) continue;
 
-            // Only show keyword header if there are memories with this keyword
-            if (keyword !== '_no_keywords_') {
+            // Only show heading if there are classified memories
+            if (category !== '_no_category_') {
                 html += `
                     <div class="px-2 py-1 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
-                        ${this.escapeHtml(keyword)}
+                        ${this.escapeHtml(category)}
                     </div>
                 `;
             }
@@ -367,40 +367,49 @@ export default class MemorySelector {
     }
 
     /**
-     * Group memories by their keywords
-     * Each memory appears only once under its primary (first) keyword
+     * Group memories by category (fallback: first keyword).
      * @param {Array} filtered - Filtered memories with originalIdx
-     * @returns {Object} - Map of keyword to memories
+     * @returns {Object} - Map of category to memories
      */
-    groupMemoriesByKeywords(filtered) {
+    groupMemoriesByCategory(filtered) {
         const groups = {};
 
         for (const item of filtered) {
-            const keywords = item.memory.keywords || [];
+            const domain = typeof (item.memory.domain || item.memory.category) === 'string'
+                ? (item.memory.domain || item.memory.category).trim().toLowerCase()
+                : '';
+            const folder = typeof item.memory.folder === 'string'
+                ? item.memory.folder.trim().toLowerCase()
+                : '';
+            const keywords = Array.isArray(item.memory.keywords) ? item.memory.keywords : [];
+            const bucketLabel = domain
+                ? (folder ? `${domain} / ${folder}` : domain)
+                : '';
             
-            if (keywords.length === 0) {
-                // No keywords - add to ungrouped
-                if (!groups['_no_keywords_']) {
-                    groups['_no_keywords_'] = [];
+            if (bucketLabel) {
+                if (!groups[bucketLabel]) {
+                    groups[bucketLabel] = [];
                 }
-                groups['_no_keywords_'].push(item);
+                groups[bucketLabel].push(item);
+            } else if (keywords.length > 0) {
+                const fallbackCategory = String(keywords[0]).trim().toLowerCase();
+                if (!groups[fallbackCategory]) {
+                    groups[fallbackCategory] = [];
+                }
+                groups[fallbackCategory].push(item);
             } else {
-                // Add to FIRST keyword group only (primary keyword)
-                const primaryKeyword = keywords[0].toLowerCase();
-                if (!groups[primaryKeyword]) {
-                    groups[primaryKeyword] = [];
+                if (!groups['_no_category_']) {
+                    groups['_no_category_'] = [];
                 }
-                groups[primaryKeyword].push(item);
+                groups['_no_category_'].push(item);
             }
         }
 
-        // Sort groups: keywords with most memories first, then alphabetically
+        // Sort groups: largest first, then alphabetically.
         const sorted = Object.entries(groups)
             .sort(([keyA, itemsA], [keyB, itemsB]) => {
-                // Put _no_keywords_ last
-                if (keyA === '_no_keywords_') return 1;
-                if (keyB === '_no_keywords_') return -1;
-                // Sort by count descending, then alphabetically
+                if (keyA === '_no_category_') return 1;
+                if (keyB === '_no_category_') return -1;
                 if (itemsA.length !== itemsB.length) {
                     return itemsB.length - itemsA.length;
                 }

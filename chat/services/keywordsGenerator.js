@@ -31,15 +31,41 @@ const KEYWORD_DELAY_MS = 500; // Delay between keyword generations
 const KEYWORD_BACKLOG_ENABLED = true; // Temporary kill switch for queue/backfill processing
 const DEDUP_TAG_THRESHOLD = 30; // Only dedup when distinct tags exceed this
 const DEDUP_COOLDOWN_MS = 1 * 60 * 1000; // 1 minute cooldown between dedup runs
+const DOMAIN_OPTIONS = [
+    'work-career',
+    'software-technical',
+    'learning-research',
+    'business-finance-legal',
+    'operations-admin',
+    'personal-relationships',
+    'health-wellness',
+    'home-life-logistics',
+    'creative-media',
+    'general-other'
+];
 
 const KEYWORDS_GENERATION_PROMPT = `Analyze this conversation and generate:
 1. A concise title about the main topic (max 50 chars, descriptive and specific - NOT meta descriptions like "Chat about X" or "Discussion on Y")
-2. Exactly 3 keywords that capture WHAT this conversation is specifically about, so it can be retrieved later and distinguished from other conversations on similar topics
-3. If the conversation includes personal details (identity, preferences, feelings, relationships, health, finances, or private life context), one keyword MUST be exactly "personal"
+2. One top-level domain from this fixed list:
+   - work-career
+   - software-technical
+   - learning-research
+   - business-finance-legal
+   - operations-admin
+   - personal-relationships
+   - health-wellness
+   - home-life-logistics
+   - creative-media
+   - general-other
+3. One short folder label (2-4 words) for directory organization under the domain
+4. Exactly 3 keywords that capture WHAT this conversation is specifically about, so it can be retrieved later and distinguished from other conversations on similar topics
+5. If the conversation includes personal details (identity, preferences, feelings, relationships, health, finances, or private life context), one keyword MUST be exactly "personal" and domain should usually be "personal-relationships" unless clearly health- or finance-specific
 
 Format your response as JSON:
 {
   "summary": "Main topic here",
+  "domain": "one-domain-from-list",
+  "folder": "short folder label",
   "keywords": ["keyword1", "keyword2", "keyword3"]
 }
 
@@ -53,6 +79,15 @@ Keywords should be specific enough to distinguish this conversation from others.
 When personal context appears, include: "personal"
 
 Conversation:`;
+
+function normalizeFolderSlug(value, fallback = 'misc') {
+    const raw = typeof value === 'string' ? value.trim().toLowerCase() : '';
+    const safe = raw
+        .replace(/[^a-z0-9._-]+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '');
+    return safe || fallback;
+}
 
 const SESSION_MEMORY_PROMPT = `Summarize the conversation into retrieval-optimized memory blocks.
 
@@ -188,7 +223,9 @@ class KeywordsGenerator {
                 const hasSummary = typeof s.summary === 'string' && s.summary.trim().length > 0;
                 const hasKeywords = Array.isArray(s.keywords) && s.keywords.length > 0;
                 const hasSessionMemory = typeof s.sessionMemory === 'string' && s.sessionMemory.trim().length > 0;
-                return !hasSummary || !hasKeywords || !hasSessionMemory;
+                const hasDomain = typeof s.domain === 'string' && s.domain.trim().length > 0;
+                const hasFolder = typeof s.folder === 'string' && s.folder.trim().length > 0;
+                return !hasSummary || !hasKeywords || !hasSessionMemory || !hasDomain || !hasFolder;
             });
 
             if (needsKeywords.length === 0) {
@@ -359,7 +396,11 @@ class KeywordsGenerator {
                         session.keywords &&
                         session.keywords.length > 0 &&
                         typeof session.sessionMemory === 'string' &&
-                        session.sessionMemory.trim().length > 0
+                        session.sessionMemory.trim().length > 0 &&
+                        typeof session.domain === 'string' &&
+                        session.domain.trim().length > 0 &&
+                        typeof session.folder === 'string' &&
+                        session.folder.trim().length > 0
                     ) {
                         this.queue.splice(idx, 1);
                         continue;
@@ -454,6 +495,14 @@ class KeywordsGenerator {
         }
 
         if (!session.sessionMemory || !session.sessionMemory.trim()) {
+            return true;
+        }
+
+        if (!session.domain || !String(session.domain).trim()) {
+            return true;
+        }
+
+        if (!session.folder || !String(session.folder).trim()) {
             return true;
         }
 
@@ -709,10 +758,16 @@ class KeywordsGenerator {
             session.keywords &&
             session.keywords.length > 0 &&
             typeof session.sessionMemory === 'string' &&
-            session.sessionMemory.trim().length > 0
+            session.sessionMemory.trim().length > 0 &&
+            typeof session.domain === 'string' &&
+            session.domain.trim().length > 0 &&
+            typeof session.folder === 'string' &&
+            session.folder.trim().length > 0
         ) {
             return {
                 summary: session.summary,
+                domain: session.domain,
+                folder: session.folder,
                 keywords: session.keywords,
                 sessionMemory: session.sessionMemory
             };
@@ -818,10 +873,15 @@ class KeywordsGenerator {
      * @param {Object} session - Session object (will be mutated and saved)
      * @param {number} messageCount - Number of non-local messages at generation time
      * @param {Object} app - Optional app reference for in-memory state updates
-     * @returns {Promise<Object|null>} { summary, keywords, sessionMemory } or null on error
+     * @returns {Promise<Object|null>} { summary, domain, folder, keywords, sessionMemory } or null on error
      */
     async _parseAndSave(fullResponse, session, messageCount, app = null, generatedSessionMemory = null) {
         let parsedData = this.parseKeywordsResponse(fullResponse);
+        console.log('[KeywordsGenerator] Parsed response candidate:', {
+            sessionId: session?.id,
+            hasParsedData: !!parsedData,
+            parsedKeys: parsedData ? Object.keys(parsedData) : []
+        });
 
         if (!parsedData || !parsedData.summary || !parsedData.keywords) {
             console.warn('[KeywordsGenerator] Invalid response format:', parsedData);
@@ -839,6 +899,28 @@ class KeywordsGenerator {
         const summary = typeof parsedData.summary === 'string'
             ? parsedData.summary.trim().substring(0, 50) // Max 50 chars for title
             : null;
+        const allowedDomains = new Set(DOMAIN_OPTIONS);
+        let domain = typeof parsedData.domain === 'string'
+            ? parsedData.domain.trim().toLowerCase()
+            : (typeof parsedData.category === 'string' ? parsedData.category.trim().toLowerCase() : '');
+        if (!allowedDomains.has(domain)) {
+            domain = keywords.includes('personal') ? 'personal-relationships' : 'general-other';
+        }
+        let folder = typeof parsedData.folder === 'string'
+            ? parsedData.folder.trim().toLowerCase()
+            : '';
+        if (!folder) {
+            folder = summary || keywords[0] || 'misc';
+        }
+        folder = folder.substring(0, 60);
+        const folderSlug = normalizeFolderSlug(folder);
+        console.log('[KeywordsGenerator] Normalized memory taxonomy:', {
+            sessionId: session?.id,
+            domain,
+            folder,
+            folderSlug,
+            keywords
+        });
         const existingSessionMemory = typeof session.sessionMemory === 'string'
             ? session.sessionMemory.trim().substring(0, 4000)
             : null;
@@ -860,17 +942,34 @@ class KeywordsGenerator {
         const latestSession = await chatDB.getSession(session.id);
         const sessionToSave = latestSession || session;
         sessionToSave.summary = summary;
+        sessionToSave.domain = domain;
+        sessionToSave.folder = folder;
+        sessionToSave.folderSlug = folderSlug;
+        sessionToSave.category = domain; // Legacy compatibility.
         sessionToSave.keywords = keywords;
         sessionToSave.sessionMemory = sessionMemory;
+        sessionToSave.lastEmbeddedAt = 0; // Force re-embed so vector metadata reflects new category.
         sessionToSave.keywordsGeneratedAt = Date.now();
         sessionToSave.messageCountAtGeneration = messageCount;
         await chatDB.saveSession(sessionToSave);
+        console.log('[KeywordsGenerator] Saved session taxonomy + forced re-embed:', {
+            sessionId: sessionToSave.id,
+            domain: sessionToSave.domain,
+            folder: sessionToSave.folder,
+            folderSlug: sessionToSave.folderSlug,
+            legacyCategory: sessionToSave.category,
+            lastEmbeddedAt: sessionToSave.lastEmbeddedAt
+        });
 
         // Update in-memory session in app state if app reference provided
         if (app && app.state && app.state.sessionsById) {
             const inMemorySession = app.state.sessionsById.get(session.id);
             if (inMemorySession) {
                 inMemorySession.summary = summary;
+                inMemorySession.domain = domain;
+                inMemorySession.folder = folder;
+                inMemorySession.folderSlug = folderSlug;
+                inMemorySession.category = domain;
                 inMemorySession.keywords = keywords;
                 inMemorySession.sessionMemory = sessionMemory;
                 inMemorySession.keywordsGeneratedAt = Date.now();
@@ -888,11 +987,13 @@ class KeywordsGenerator {
 
         console.log('[KeywordsGenerator] Generated keywords/session memory:', {
             summary,
+            domain,
+            folder,
             keywords,
             sessionMemoryPreview: `${sessionMemory.substring(0, 120)}${sessionMemory.length > 120 ? '...' : ''}`
         });
 
-        return { summary, keywords, sessionMemory };
+        return { summary, domain, folder, keywords, sessionMemory };
     }
 
     parseKeywordsResponse(text) {
@@ -1175,8 +1276,8 @@ class KeywordsGenerator {
             }
 
             const distinctTags = Array.from(tagToSessionIds.keys());
-            if (distinctTags.length <= DEDUP_TAG_THRESHOLD) {
-                console.log(`[KeywordsGenerator] Dedup skipped — only ${distinctTags.length} distinct tags (threshold: ${DEDUP_TAG_THRESHOLD})`);
+            if (distinctTags.length === 0) {
+                console.log('[KeywordsGenerator] Dedup skipped — no tags found');
                 return;
             }
 
@@ -1312,7 +1413,8 @@ class KeywordsGenerator {
                                 }
                             }
 
-                            // For each session: majority vote on category
+                            // For each session without explicit domain/folder:
+                            // use clustered label as folder, keep domain broad.
                             for (const session of allSessions) {
                                 if (!Array.isArray(session.keywords) || session.keywords.length === 0) continue;
 
@@ -1327,8 +1429,17 @@ class KeywordsGenerator {
                                     if (count > bestCount) { bestCount = count; bestCat = cat; }
                                 }
 
-                                if (bestCat && session.category !== bestCat) {
-                                    session.category = bestCat;
+                                const hasExplicitDomain = typeof session.domain === 'string' && session.domain.trim().length > 0;
+                                const hasExplicitFolder = typeof session.folder === 'string' && session.folder.trim().length > 0;
+                                if (bestCat && (!hasExplicitDomain || !hasExplicitFolder)) {
+                                    if (!hasExplicitDomain) {
+                                        session.domain = 'general-other';
+                                        session.category = 'general-other';
+                                    }
+                                    if (!hasExplicitFolder) {
+                                        session.folder = String(bestCat).trim().toLowerCase().substring(0, 60);
+                                        session.folderSlug = normalizeFolderSlug(session.folder);
+                                    }
                                     sessionMap.set(session.id, session);
                                     affectedSessionIds.add(session.id);
                                 }
