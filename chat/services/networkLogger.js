@@ -3,8 +3,6 @@
  * Tracks and stores network requests for debugging and monitoring
  */
 
-import { chatDB } from '../db.js';
-
 class NetworkLogger {
     constructor() {
         this.logs = [];
@@ -61,12 +59,6 @@ class NetworkLogger {
             this.logs = this.logs.slice(0, this.maxLogs);
         }
 
-        // Save to database - DISABLED (logs are now memory-only, ephemeral per tab)
-        // if (typeof chatDB !== 'undefined' && chatDB.db) {
-        //     chatDB.saveNetworkLog(logEntry).catch(err => console.error('Failed to save log:', err));
-        //     chatDB.clearOldNetworkLogs(this.maxLogs).catch(err => console.error('Failed to clear old logs:', err));
-        // }
-
         // Notify listeners
         this.notifyListeners();
 
@@ -74,17 +66,10 @@ class NetworkLogger {
     }
 
     /**
-     * Load logs from database - DISABLED (logs are now memory-only, ephemeral per tab)
+     * Load logs - logs are memory-only, ephemeral per tab
      */
     async loadLogs() {
-        // Database persistence disabled - logs start fresh on each tab/app startup
-        // if (typeof chatDB !== 'undefined' && chatDB.db) {
-        //     try {
-        //         this.logs = await chatDB.getAllNetworkLogs();
-        //     } catch (err) {
-        //         console.error('Failed to load logs:', err);
-        //     }
-        // }
+        // Logs start fresh on each tab/app startup
     }
 
     /**
@@ -120,20 +105,11 @@ class NetworkLogger {
     }
 
     /**
-     * Clear all logs (memory-only, database persistence disabled)
+     * Clear all logs (memory-only)
      */
     async clearAllLogs() {
         this.logs = [];
         this.notifyListeners();
-
-        // Clear from database - DISABLED (logs are now memory-only, ephemeral per tab)
-        // if (typeof chatDB !== 'undefined' && chatDB.db) {
-        //     try {
-        //         await chatDB.clearAllNetworkLogs();
-        //     } catch (err) {
-        //         console.error('Failed to clear logs from database:', err);
-        //     }
-        // }
     }
 
     /**
