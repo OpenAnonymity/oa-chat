@@ -227,16 +227,33 @@ class ChatHistoryImportModal {
             `;
         } else if (step === 'importing') {
             const progressPercent = progress.total ? Math.round((progress.processed / progress.total) * 100) : 0;
+            const embeddingPercent = embeddingProgress.total
+                ? Math.round((embeddingProgress.processed / embeddingProgress.total) * 100)
+                : 0;
             bodyHtml = `
                 <div class="space-y-4 text-sm">
                     <div class="text-sm text-foreground font-medium">Importing chats</div>
                     <div class="text-xs text-muted-foreground">${fileInfo}</div>
-                    <div class="w-full h-2 bg-muted rounded-full overflow-hidden">
-                        <div id="import-progress-fill" class="h-full bg-primary transition-all" style="width: ${progressPercent}%"></div>
+                    <div class="space-y-2">
+                        <div class="text-xs text-muted-foreground">Chat history import</div>
+                        <div class="w-full h-2 bg-muted rounded-full overflow-hidden">
+                            <div id="import-progress-fill" class="h-full bg-primary transition-all" style="width: ${progressPercent}%"></div>
+                        </div>
+                        <div id="import-progress-text" class="text-xs text-muted-foreground">
+                            ${progress.processed} of ${progress.total} sessions processed (${progressPercent}%)
+                        </div>
                     </div>
-                    <div id="import-progress-text" class="text-xs text-muted-foreground">
-                        ${progress.processed} of ${progress.total} sessions processed (${progressPercent}%)
-                    </div>
+                    ${generateEmbeddings ? `
+                        <div class="space-y-2">
+                            <div class="text-xs text-muted-foreground">Embeddings and keywords</div>
+                            <div class="w-full h-2 bg-muted rounded-full overflow-hidden">
+                                <div id="embedding-progress-fill" class="h-full bg-primary transition-all" style="width: ${embeddingPercent}%"></div>
+                            </div>
+                            <div id="embedding-progress-text" class="text-xs text-muted-foreground">
+                                Waiting for import to finish (${embeddingPercent}%)
+                            </div>
+                        </div>
+                    ` : ''}
                     <div class="grid grid-cols-3 gap-2 text-xs">
                         <div class="rounded-lg border border-border p-2 text-center">
                             <div class="text-muted-foreground">Imported</div>
@@ -267,18 +284,33 @@ class ChatHistoryImportModal {
                 </div>
             `;
         } else if (step === 'embedding') {
+            const importPercent = progress.total
+                ? Math.round((progress.processed / progress.total) * 100)
+                : 0;
             const progressPercent = embeddingProgress.total
                 ? Math.round((embeddingProgress.processed / embeddingProgress.total) * 100)
                 : 0;
             bodyHtml = `
                 <div class="space-y-4 text-sm">
-                    <div class="text-sm text-foreground font-medium">Generating embeddings</div>
+                    <div class="text-sm text-foreground font-medium">Finishing import</div>
                     <div class="text-xs text-muted-foreground">Please wait until embedding and keyword generation complete.</div>
-                    <div class="w-full h-2 bg-muted rounded-full overflow-hidden">
-                        <div id="embedding-progress-fill" class="h-full bg-primary transition-all" style="width: ${progressPercent}%"></div>
+                    <div class="space-y-2">
+                        <div class="text-xs text-muted-foreground">Chat history import</div>
+                        <div class="w-full h-2 bg-muted rounded-full overflow-hidden">
+                            <div id="import-progress-fill" class="h-full bg-primary transition-all" style="width: ${importPercent}%"></div>
+                        </div>
+                        <div id="import-progress-text" class="text-xs text-muted-foreground">
+                            ${progress.processed} of ${progress.total} sessions processed (${importPercent}%)
+                        </div>
                     </div>
-                    <div id="embedding-progress-text" class="text-xs text-muted-foreground">
-                        ${embeddingProgress.processed} of ${embeddingProgress.total} sessions processed (${progressPercent}%)
+                    <div class="space-y-2">
+                        <div class="text-xs text-muted-foreground">Embeddings and keywords</div>
+                        <div class="w-full h-2 bg-muted rounded-full overflow-hidden">
+                            <div id="embedding-progress-fill" class="h-full bg-primary transition-all" style="width: ${progressPercent}%"></div>
+                        </div>
+                        <div id="embedding-progress-text" class="text-xs text-muted-foreground">
+                            ${embeddingProgress.processed} of ${embeddingProgress.total} sessions processed (${progressPercent}%)
+                        </div>
                     </div>
                     <div class="grid grid-cols-3 gap-2 text-xs">
                         <div class="rounded-lg border border-border p-2 text-center">
