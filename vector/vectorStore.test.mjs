@@ -23,6 +23,14 @@ function createOramaStub() {
                     if (value !== condition.eq) return false;
                     continue;
                 }
+                if ('in' in condition) {
+                    if (!Array.isArray(condition.in) || !condition.in.includes(value)) return false;
+                    continue;
+                }
+                if ('nin' in condition) {
+                    if (Array.isArray(condition.nin) && condition.nin.includes(value)) return false;
+                    continue;
+                }
                 return false;
             }
             if (Array.isArray(condition)) {
@@ -262,6 +270,30 @@ test('orama backend: native where filter before top-k', async () => {
 
     const results = await store.search([1, 0], 1, {
         where: { id: 'keep' }
+    });
+
+    assert.equal(results.length, 1);
+    assert.equal(results[0].id, 'keep');
+});
+
+test('orama backend: native where supports in operator', async () => {
+    const module = createOramaStub();
+    const store = await createVectorStore({
+        name: 'orama-native-where-in',
+        dimension: 2,
+        metric: 'cosine',
+        backend: 'orama',
+        persistence: 'none',
+        moduleFactory: async () => module
+    });
+
+    await store.upsert([
+        { id: 'drop', vector: [1, 0], metadata: { sessionId: 's-drop' } },
+        { id: 'keep', vector: [0.7, 0.3], metadata: { sessionId: 's-keep' } }
+    ]);
+
+    const results = await store.search([1, 0], 1, {
+        where: { sessionId: { in: ['s-keep'] } }
     });
 
     assert.equal(results.length, 1);

@@ -394,4 +394,19 @@ export class OramaBackend {
         }
         this.orama = await create({ schema });
     }
+
+    _cosineSimilarity(a, b) {
+        let dot = 0;
+        let normA = 0;
+        let normB = 0;
+        for (let i = 0; i < this.dimension; i += 1) {
+            const av = a[i];
+            const bv = b[i];
+            dot += av * bv;
+            normA += av * av;
+            normB += bv * bv;
+        }
+        const denom = Math.sqrt(normA) * Math.sqrt(normB);
+        return denom > 0 ? dot / denom : 0;
+    }
 }

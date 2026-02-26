@@ -1010,7 +1010,7 @@ Available tags: ${JSON.stringify(allTags)}`;
                     embeddingResults = await this.store.search(queryEmbedding, k, {
                         ...options,
                         where: {
-                            sessionId: Array.from(matchedSessionIds)
+                            sessionId: { in: Array.from(matchedSessionIds) }
                         },
                         debug: true,
                         debugLabel: 'sessionEmbedder tag+embedding'
