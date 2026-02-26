@@ -28,3 +28,9 @@ export const SHARE_BASE_URL = 'https://chat.openanonymity.ai';
 
 // Retry up to this fraction of available tickets when tickets are already-used
 export const TICKET_RETRY_RATIO = 0.5;
+
+// Debug logging -- enabled in development (localhost), disabled in production builds.
+// The build script (scripts/build.mjs) replaces __DEV__ with false at build time.
+const __DEV_DEFAULT__ = typeof window !== 'undefined' &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+export const DEBUG = typeof __DEV__ !== 'undefined' ? __DEV__ : __DEV_DEFAULT__;

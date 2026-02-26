@@ -97,6 +97,7 @@ const build = async () => {
         chunkNames: 'chunk-[hash]',
         assetNames: 'asset-[hash]',
         target: ['es2020'],
+        define: { '__DEV__': 'false' },
         minify: true,
         metafile: true,
         logLevel: 'silent'
