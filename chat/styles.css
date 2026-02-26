@@ -2431,12 +2431,7 @@ html[data-right-panel-hidden="true"] #show-right-panel-btn {
     transition-delay: 0s;
 }
 
-/* Hide right panel button on mobile - panel doesn't make sense on narrow screens */
-@media (max-width: 767px) {
-    #show-right-panel-btn {
-        display: none !important;
-    }
-}
+/* Show right panel button on mobile too (panel is overlay on narrow screens). */
 
 /* Divider appears when scrolled AND content overlaps with toolbar */
 .chat-toolbar.toolbar-divider-visible {

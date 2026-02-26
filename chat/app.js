@@ -1615,7 +1615,10 @@ class ChatApp {
         let resizeDebounceTimer;
         window.addEventListener('resize', () => {
             clearTimeout(resizeDebounceTimer);
-            resizeDebounceTimer = setTimeout(() => this.updateToolbarDivider(), 350);
+            resizeDebounceTimer = setTimeout(() => {
+                this.updateWideModeButtonVisibility();
+                this.updateToolbarDivider();
+            }, 350);
         }, { passive: true });
 
         // Set up ResizeObserver to adjust chat area padding when input area expands
@@ -5359,12 +5362,12 @@ class ChatApp {
         const sidebarHidden = this.elements.sidebar?.classList.contains('sidebar-hidden');
         const isMobile = this.isMobileView();
 
-        if (hasSession) {
+        if (hasSession && !isMobile) {
             btn.classList.remove('hidden');
             btn.classList.add('flex');
-            // When sidebar hidden/mobile: show-sidebar-btn at left-4, wide-mode at left-14
+            // When sidebar hidden: show-sidebar-btn at left-4, wide-mode at left-14
             // When sidebar visible: wide-mode at left-4
-            if (sidebarHidden || isMobile) {
+            if (sidebarHidden) {
                 btn.classList.remove('left-4');
                 btn.classList.add('left-14');
             } else {
