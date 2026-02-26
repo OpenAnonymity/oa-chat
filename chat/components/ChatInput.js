@@ -297,21 +297,6 @@ export default class ChatInput {
             if (e.target.tagName === 'BUTTON') {
                 const action = e.target.dataset.action || e.target.textContent.trim();
 
-                // Copy Markdown functionality (temporarily disabled)
-                // if (action === 'Copy Markdown') {
-                //     await this.copyLatestMarkdown(e.target);
-                //     return; // Don't close menu immediately
-                // }
-
-                // TODO: Re-enable when implementing Clear Models functionality
-                // if (action === 'Clear Models') {
-                //     const session = this.app.getCurrentSession();
-                //     if (session) {
-                //         session.model = null;
-                //         await chatDB.saveSession(session);
-                //         this.app.renderCurrentModel();
-                //     }
-                // }
                 if (action === 'export-all-data') {
                     await this.handleExportAllData();
                 } else if (action === 'import-data') {

@@ -1,5 +1,13 @@
 {
   "name": "oa-chat",
+  "version": "1.0.0",
+  "description": "A ChatGPT-like AI chat app implementing unlinkable inference, where every session is unlinkable from each other and from your identity",
+  "author": "Open Anonymity Team",
+  "homepage": "https://openanonymity.ai",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/OpenAnonymity/oa-fastchat.git"
+  },
   "private": true,
   "license": "AGPL-3.0-or-later",
   "devDependencies": {

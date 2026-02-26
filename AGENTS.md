@@ -65,7 +65,7 @@ The app runs entirely in the browser and is organized as ES modules:
 - `vendor/`: Self-hosted third-party JS/CSS (Marked, KaTeX, Highlight.js, libcurl.js, hash-wasm, html2pdf).
 - `fonts/`: Self-hosted Google Fonts (`fonts.css` + WOFF2 files). Managed by `scripts/sync-fonts.mjs`.
 - `img/`: Provider and app icons.
-- `README.md`: Legacy, not the source of truth for architecture; see this file.
+- `README.md`: Project overview and quick-start guide.
 
 ## Build, Test, and Development Commands
 The app is still HTML-first for development, but production builds are bundled with esbuild and minified with terser.

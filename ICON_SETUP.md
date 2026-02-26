@@ -23,7 +23,7 @@ This is the easiest way to add icons. You can use icons from online sources or d
 
 'Meta': {
     type: 'url',
-    url: '/assets/meta-icon.png'  // Local file in public/assets folder
+    url: '/img/meta-icon.png'  // Local file in chat/img/ folder
 }
 ```
 
@@ -49,8 +49,8 @@ If you have SVG code, you can embed it directly:
 
 3. **Download and Host Locally**:
    - Download icon images
-   - Place in `public/assets/` folder
-   - Reference as `/assets/icon-name.png`
+   - Place in `chat/img/` folder
+   - Reference as `/img/icon-name.png`
 
 ### Example Setup
 
@@ -75,7 +75,7 @@ const PROVIDER_ICONS = {
 
     'Meta': {
         type: 'url',
-        url: '/assets/meta-icon.png'
+        url: '/img/meta-icon.png'
     },
 
     'Mistral': {
@@ -100,6 +100,6 @@ After adding icons, refresh your browser with `Cmd/Ctrl + Shift + R` to clear th
 If icons don't show:
 1. Check browser console for 404 errors
 2. Verify the URL is correct and publicly accessible
-3. For local files, ensure they're in the `public/` directory
+3. For local files, ensure they're in the `chat/` directory
 4. Hard refresh browser: `Cmd/Ctrl + Shift + R`
 

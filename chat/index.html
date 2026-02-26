@@ -273,10 +273,13 @@
         };
     </script>
 
-    <!-- Page View Analytics -->
+    <!-- Page View Analytics (disabled on localhost / self-hosted instances) -->
     <script type="module">
-        import { ORG_API_BASE } from './config.js';
-        fetch(`${ORG_API_BASE}/chat/v1/analytics/pageview`, { method: 'POST' }).catch(() => {});
+        if (location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+            import('./config.js').then(({ ORG_API_BASE }) => {
+                fetch(`${ORG_API_BASE}/chat/v1/analytics/pageview`, { method: 'POST' }).catch(() => {});
+            });
+        }
     </script>
 
     <link rel="stylesheet" href="styles.css">

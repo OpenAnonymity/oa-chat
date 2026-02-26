@@ -1,7 +1,5 @@
 // Main application logic
 import RightPanel from './components/RightPanel.js';
-// FEATURE DISABLED: Status indicator and activity banner - uncomment to re-enable
-import FloatingPanel from './components/FloatingPanel.js';
 import MessageNavigation from './components/MessageNavigation.js';
 import Sidebar from './components/Sidebar.js';
 import ChatArea from './components/ChatArea.js';
@@ -17,8 +15,7 @@ import preferencesStore, { PREF_KEYS } from './services/preferencesStore.js';
 import storageManager from './services/storageManager.js';
 import storageEvents from './services/storageEvents.js';
 import { getFileIconSvg } from './services/fileUtils.js';
-import { exportChats } from './services/globalExport.js';
-import { exportTickets } from './services/globalExport.js';
+import { exportChats, exportTickets } from './services/globalExport.js';
 import { parseReasoningContent } from './services/reasoningParser.js';
 import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort } from './services/reasoningConfig.js';
 import { fetchUrlMetadata } from './services/urlMetadata.js';
@@ -129,8 +126,6 @@ class ChatApp {
             settingsBtn: document.getElementById('settings-btn'),
             settingsMenu: document.getElementById('settings-menu'),
             searchToggle: document.getElementById('search-toggle'),
-            // clearChatBtn: document.getElementById('clear-chat-btn'), // Temporarily removed
-            // copyMarkdownBtn: document.getElementById('copy-markdown-btn'), // Temporarily removed
             toggleRightPanelBtn: document.getElementById('toggle-right-panel-btn'), // This might be legacy, but let's keep it for now.
             showRightPanelBtn: document.getElementById('show-right-panel-btn'),
             shareBtn: document.getElementById('share-btn'),
@@ -1442,10 +1437,6 @@ class ChatApp {
                 this.handleStorageEvent('messages-updated', payload);
             })
         ];
-
-        // FEATURE DISABLED: Status indicator and activity banner - uncomment to re-enable
-        // Initialize floating panel
-        // this.floatingPanel = new FloatingPanel(this);
 
         // Initialize message navigation
         this.messageNavigation = new MessageNavigation(this);
@@ -3868,11 +3859,7 @@ class ChatApp {
                         }
                     },
                     (tokenUpdate) => {
-                        // FEATURE DISABLED: Token count display - uncomment to re-enable
                         streamingTokenCount = tokenUpdate.completionTokens || 0;
-                        // if (tokenUpdate.isStreaming && this.chatArea) {
-                        //     this.chatArea.updateStreamingTokens(streamingMessageId, streamingTokenCount);
-                        // }
                     },
                     [], // No files for regeneration (files are included in processedMessages)
                     this.searchEnabled, // Use current search toggle state
@@ -3939,10 +3926,6 @@ class ChatApp {
 
                 // Only update UI if still viewing the same session
                 if (this.chatArea && this.isViewingSession(session.id)) {
-                    // FEATURE DISABLED: Token count display - uncomment to re-enable
-                    // if (streamingMessage.tokenCount) {
-                    //     this.chatArea.updateFinalTokens(streamingMessageId, streamingMessage.tokenCount);
-                    // }
                     // Finalize reasoning display with markdown processing and timing
                     if (streamingMessage.reasoning) {
                         this.chatArea.finalizeReasoningDisplay(streamingMessageId, streamingMessage.reasoning, streamingMessage.reasoningDuration);
@@ -4068,25 +4051,6 @@ class ChatApp {
             await this.markImportedSessionAsForked(session);
             this.updateUrlWithSession(session.id);
         }
-
-        // TODO: Re-enable verifier offline check later
-        // // Block if verifier is offline (unless user acknowledged)
-        // // This must be checked FIRST before any message is sent
-        // const verifierOffline = stationVerifier.isOffline();
-        // console.log(`🔍 Verifier status check: online=${stationVerifier.verifierOnline}, isOffline=${verifierOffline}, skipOfflineCheck=${skipOfflineCheck}`);
-        // if (verifierOffline && !skipOfflineCheck) {
-        //     console.log('⚠️ Blocking - showing verifier offline warning');
-        //     this.showVerifierOfflineWarningModal({
-        //         lastSuccessful: stationVerifier.lastSuccessfulBroadcast,
-        //         timeSince: stationVerifier.getTimeSinceLastBroadcast(),
-        //         error: 'Verifier unreachable',
-        //         onSendAnyway: () => {
-        //             // Re-call sendMessage with skip flag
-        //             this.sendMessage(true);
-        //         }
-        //     });
-        //     return; // Block until user acknowledges
-        // }
 
         // Block sending if station is banned (check both state and cached broadcast data)
         const verifier = inferenceService.getVerificationAdapter(session);
@@ -4420,12 +4384,7 @@ class ChatApp {
                         }
                     },
                     (tokenUpdate) => {
-                        // FEATURE DISABLED: Token count display - uncomment to re-enable
-                        // Update streaming token count in real-time
                         streamingTokenCount = tokenUpdate.completionTokens || 0;
-                        // if (tokenUpdate.isStreaming && this.chatArea) {
-                        //     this.chatArea.updateStreamingTokens(streamingMessageId, streamingTokenCount);
-                        // }
                     },
                     [], // Files are now included in processedMessages, not passed separately
                     searchEnabled,
@@ -4563,7 +4522,6 @@ class ChatApp {
                 // The following are inference backend HTTP status codes, not OA infra
                 if (error.status === 402) {
                     // Credit/token limit errors
-                    // userFriendlyMessage = `Ephemeral key is out of credit limit. Renew or extend the key`;
                     userFriendlyMessage = `Sorry, I encountered an error while processing your request. Try submitting the query again. **Error**: ${errorMessage}`;
                 } else if (error.status === 401) {
                     // Authentication errors
