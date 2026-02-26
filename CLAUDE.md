@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-oa-chat is a browser-based chat client that communicates directly with inference backends (OpenRouter by default) using ephemeral, unlinkable access credentials via the Open Anonymity network. Development is HTML-first; production builds are bundled with esbuild and minified with terser.
+oa-chat is a ChatGPT-like AI chat app that implements unlinkable inference — AI inference where every request is verifiably decoupled from each other, and from your identity. It communicates directly with inference backends (OpenRouter by default) using ephemeral access keys obtained via blind signatures. Everything runs in the browser with no server backend. Development is HTML-first; production builds are bundled with esbuild and minified with terser.
 
 ## Development Commands
 
@@ -52,12 +52,14 @@ npm run fonts:sync
 - `ticketClient.js`: Ticket lifecycle and access issuance (Privacy Pass integration)
 - `networkLogger.js`: In-memory request logging with header sanitization
 
-**WebAssembly (`wasm/`):**
-- Privacy Pass/ticket cryptographic operations
-
 **Local Assets:**
 - `chat/vendor/`: Marked, KaTeX (+ fonts), Highlight.js, libcurl.js, hash-wasm, html2pdf
 - `chat/fonts/`: self-hosted Google Fonts (`fonts.css` + WOFF2 files, managed via `scripts/sync-fonts.mjs`)
+
+**Additional Modules (in development):**
+- `embeddings/`: Text embedding service with pluggable backends
+- `vector/`: Vector store with IndexedDB backend and Orama integration
+- `local_inference/`: Local inference backends (Ollama, vLLM, WebLLM, HTTP OpenAI)
 
 ## Code Style
 
