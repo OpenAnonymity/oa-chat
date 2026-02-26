@@ -3,6 +3,37 @@ import assert from 'node:assert/strict';
 import { createVectorStore, decodeVectorId, encodeVectorId } from './index.js';
 
 function createOramaStub() {
+    function matchesWhere(doc, where) {
+        if (!where || typeof where !== 'object') return true;
+
+        if (Array.isArray(where.and)) {
+            return where.and.every((entry) => matchesWhere(doc, entry));
+        }
+        if (Array.isArray(where.or)) {
+            return where.or.some((entry) => matchesWhere(doc, entry));
+        }
+        if (where.not && typeof where.not === 'object') {
+            return !matchesWhere(doc, where.not);
+        }
+
+        for (const [key, condition] of Object.entries(where)) {
+            const value = doc[key];
+            if (condition && typeof condition === 'object' && !Array.isArray(condition)) {
+                if ('eq' in condition) {
+                    if (value !== condition.eq) return false;
+                    continue;
+                }
+                return false;
+            }
+            if (Array.isArray(condition)) {
+                if (!condition.includes(value)) return false;
+                continue;
+            }
+            if (value !== condition) return false;
+        }
+        return true;
+    }
+
     const module = {
         create: async ({ schema }) => ({
             schema,
@@ -30,9 +61,13 @@ function createOramaStub() {
             const { value, property } = options.vector;
             const limit = options.limit ?? 10;
             const similarity = options.similarity ?? 0;
+            const where = options.where ?? null;
 
             const results = [];
             for (const [id, doc] of db.docs.entries()) {
+                if (!matchesWhere(doc, where)) {
+                    continue;
+                }
                 const vec = doc[property];
                 let dot = 0;
                 let qnorm = 0;
@@ -207,4 +242,77 @@ test('orama backend: update + remove', async () => {
     await store.remove('x');
     const count = await store.count();
     assert.equal(count, 1);
+});
+
+test('orama backend: native where filter before top-k', async () => {
+    const module = createOramaStub();
+    const store = await createVectorStore({
+        name: 'orama-native-where',
+        dimension: 2,
+        metric: 'cosine',
+        backend: 'orama',
+        persistence: 'none',
+        moduleFactory: async () => module
+    });
+
+    await store.upsert([
+        { id: 'drop', vector: [1, 0] },
+        { id: 'keep', vector: [0.7, 0.3] }
+    ]);
+
+    const results = await store.search([1, 0], 1, {
+        where: { id: 'keep' }
+    });
+
+    assert.equal(results.length, 1);
+    assert.equal(results[0].id, 'keep');
+});
+
+test('orama backend: object filter alias maps to native where', async () => {
+    const module = createOramaStub();
+    const store = await createVectorStore({
+        name: 'orama-object-filter-alias',
+        dimension: 2,
+        metric: 'cosine',
+        backend: 'orama',
+        persistence: 'none',
+        moduleFactory: async () => module
+    });
+
+    await store.upsert([
+        { id: 'drop-1', vector: [1, 0], metadata: { sessionId: 's-drop' } },
+        { id: 'drop-2', vector: [0.98, 0.02], metadata: { sessionId: 's-drop' } },
+        { id: 'keep-1', vector: [0.9, 0.1], metadata: { sessionId: 's-keep' } },
+        { id: 'keep-2', vector: [0.8, 0.2], metadata: { sessionId: 's-keep' } }
+    ]);
+
+    const results = await store.search([1, 0], 1, {
+        filter: { sessionId: 's-keep' }
+    });
+
+    assert.equal(results.length, 1);
+    assert.equal(results[0].id, 'keep-1');
+});
+
+test('orama backend: function filter fallback still works', async () => {
+    const module = createOramaStub();
+    const store = await createVectorStore({
+        name: 'orama-function-filter-fallback',
+        dimension: 2,
+        metric: 'cosine',
+        backend: 'orama',
+        persistence: 'none',
+        moduleFactory: async () => module
+    });
+
+    await store.upsert([
+        { id: 'a', vector: [1, 0], metadata: { sessionId: 's1' } }
+    ]);
+
+    const results = await store.search([1, 0], 1, {
+        filter: (metadata) => metadata?.sessionId === 's1'
+    });
+
+    assert.equal(results.length, 1);
+    assert.equal(results[0].id, 'a');
 });

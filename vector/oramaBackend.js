@@ -10,6 +10,7 @@ import {
 
 const DEFAULT_VECTOR_PROPERTY = 'embedding';
 const DEFAULT_ID_FIELD = 'id';
+const DEFAULT_SESSION_FIELD = 'sessionId';
 
 function clampSimilarity(value) {
     if (!Number.isFinite(value)) return 0;
@@ -30,6 +31,7 @@ export class OramaBackend {
         this.normalizeVectors = options.normalize ?? (this.metric === 'cosine');
         this.vectorProperty = options.vectorProperty || DEFAULT_VECTOR_PROPERTY;
         this.idField = options.idField || DEFAULT_ID_FIELD;
+        this.sessionField = options.sessionField || DEFAULT_SESSION_FIELD;
         this.dbName = options.dbName || 'oa-vector-store';
         this.collection = options.collection || options.name || 'default';
         this.persistence = options.persistence || 'indexeddb';
@@ -59,6 +61,7 @@ export class OramaBackend {
         this.normalizeVectors = options.normalize ?? this.normalizeVectors ?? (this.metric === 'cosine');
         this.vectorProperty = options.vectorProperty || this.vectorProperty;
         this.idField = options.idField || this.idField;
+        this.sessionField = options.sessionField || this.sessionField;
         this.dbName = options.dbName || this.dbName;
         this.collection = options.collection || options.name || this.collection;
         this.persistence = options.persistence || this.persistence;
@@ -169,6 +172,11 @@ export class OramaBackend {
         const queryVector = prepareVector(query, this.dimension, this.normalizeVectors);
         const includeVectors = options.includeVectors === true;
         const filter = typeof options.filter === 'function' ? options.filter : null;
+        const where = options.where && typeof options.where === 'object'
+            ? options.where
+            : (options.filter && typeof options.filter === 'object' && !Array.isArray(options.filter)
+                ? options.filter
+                : null);
         const minScore = Number.isFinite(options.minScore) ? options.minScore : null;
         const debug = options.debug === true;
         const debugLabel = typeof options.debugLabel === 'string' && options.debugLabel
@@ -176,108 +184,93 @@ export class OramaBackend {
             : 'vector-search';
 
         const similarity = clampSimilarity(minScore ?? 0);
-        const initialOversample = filter
-            ? Math.min(this.metadataById.size, Math.max(limit * 3, limit + 10))
-            : limit;
-        let oversample = initialOversample;
-        const maxOversample = this.metadataById.size;
-        const passStats = [];
-        let finalResults = [];
 
-        while (true) {
-            const response = await this.module.search(this.orama, {
-                mode: 'vector',
-                vector: {
-                    value: Array.from(queryVector),
-                    property: this.vectorProperty
-                },
-                limit: oversample,
-                similarity,
-                includeVectors
-            });
-
-            const hits = response?.hits || [];
-            const results = [];
-            let filteredOutCount = 0;
+        // Compatibility path for arbitrary predicates. Prefer `where` for indexed fast filtering.
+        if (filter) {
+            let candidateCount = 0;
             let minScoreRejectedCount = 0;
+            const scored = [];
 
-            for (const hit of hits) {
-                const oramaId = hit.id;
-                const idFromMap = this.oramaIdToId.get(oramaId);
-                const docId = idFromMap || hit.document?.[this.idField] || oramaId;
-                const metadata = this.metadataById.get(docId) ?? null;
-                if (filter && !filter(metadata, docId)) {
-                    filteredOutCount += 1;
-                    continue;
-                }
+            for (const [id, metadata] of this.metadataById.entries()) {
+                if (!filter(metadata, id)) continue;
+                candidateCount += 1;
+                const vector = this.vectorById.get(id);
+                if (!vector) continue;
 
-                const score = hit.score ?? 0;
-                if (minScore !== null && score < minScore) {
+                const score = this._cosineSimilarity(queryVector, vector);
+                if (score < similarity) {
                     minScoreRejectedCount += 1;
                     continue;
                 }
 
-                const entry = { id: docId, score, metadata };
+                const entry = { id, score, metadata: metadata ?? null };
                 if (includeVectors) {
-                    const vector = this.vectorById.get(docId);
-                    if (vector) {
-                        entry.vector = vector;
-                    } else if (hit.document?.[this.vectorProperty]) {
-                        entry.vector = Float32Array.from(hit.document[this.vectorProperty]);
-                    }
+                    entry.vector = vector;
                 }
-                results.push(entry);
-                if (results.length >= limit) break;
+                scored.push(entry);
             }
 
-            passStats.push({
-                oversample,
-                rawHits: hits.length,
-                filteredOutCount,
-                minScoreRejectedCount,
-                returned: results.length
-            });
-            finalResults = results;
+            scored.sort((a, b) => b.score - a.score);
+            const finalResults = scored.slice(0, limit);
 
-            // If no filter is active, one pass is enough.
-            if (!filter) {
-                break;
+            if (debug) {
+                console.log(
+                    `[OramaBackend] ${debugLabel} — total vectors: ${this.metadataById.size}, ` +
+                    `requested k: ${limit}, filtered candidates: ${candidateCount}, ` +
+                    `minScore rejected: ${minScoreRejectedCount}, returned: ${finalResults.length}, passes: 1`
+                );
             }
 
-            // Stop expanding if we already have enough results or we've exhausted corpus size.
-            if (results.length >= limit || oversample >= maxOversample) {
-                break;
+            return finalResults;
+        }
+
+        const response = await this.module.search(this.orama, {
+            mode: 'vector',
+            vector: {
+                value: Array.from(queryVector),
+                property: this.vectorProperty
+            },
+            limit,
+            similarity,
+            includeVectors,
+            ...(where ? { where } : {})
+        });
+
+        const hits = response?.hits || [];
+        const finalResults = [];
+        let minScoreRejectedCount = 0;
+
+        for (const hit of hits) {
+            const oramaId = hit.id;
+            const idFromMap = this.oramaIdToId.get(oramaId);
+            const docId = idFromMap || hit.document?.[this.idField] || oramaId;
+            const metadata = this.metadataById.get(docId) ?? null;
+
+            const score = hit.score ?? 0;
+            if (minScore !== null && score < minScore) {
+                minScoreRejectedCount += 1;
+                continue;
             }
 
-            // If the backend returned fewer hits than requested, there is no larger candidate set to fetch.
-            if (hits.length < oversample) {
-                break;
+            const entry = { id: docId, score, metadata };
+            if (includeVectors) {
+                const vector = this.vectorById.get(docId);
+                if (vector) {
+                    entry.vector = vector;
+                } else if (hit.document?.[this.vectorProperty]) {
+                    entry.vector = Float32Array.from(hit.document[this.vectorProperty]);
+                }
             }
-
-            const nextOversample = Math.min(maxOversample, Math.max(oversample * 2, oversample + 10));
-            if (nextOversample <= oversample) {
-                break;
-            }
-            oversample = nextOversample;
+            finalResults.push(entry);
         }
 
         if (debug) {
-            const last = passStats[passStats.length - 1] || {
-                oversample,
-                rawHits: 0,
-                filteredOutCount: 0,
-                minScoreRejectedCount: 0,
-                returned: finalResults.length
-            };
             console.log(
                 `[OramaBackend] ${debugLabel} — total vectors: ${this.metadataById.size}, ` +
-                `requested k: ${limit}, oversample: ${last.oversample} (initial: ${initialOversample}), ` +
-                `raw hits: ${last.rawHits}, filtered out: ${last.filteredOutCount}, ` +
-                `minScore rejected: ${last.minScoreRejectedCount}, returned: ${last.returned}, passes: ${passStats.length}`
+                `requested k: ${limit}, raw hits: ${hits.length}, ` +
+                `native where: ${where ? 'yes' : 'no'}, ` +
+                `minScore rejected: ${minScoreRejectedCount}, returned: ${finalResults.length}, passes: 1`
             );
-            if (passStats.length > 1) {
-                console.log(`[OramaBackend] ${debugLabel} oversample passes: ${JSON.stringify(passStats)}`);
-            }
         }
 
         return finalResults;
@@ -337,6 +330,7 @@ export class OramaBackend {
         if (!items || items.length === 0) return;
         const docs = items.map((item) => ({
             [this.idField]: item.id,
+            [this.sessionField]: typeof item.metadata?.sessionId === 'string' ? item.metadata.sessionId : '',
             [this.vectorProperty]: Array.from(item.vector)
         }));
 
@@ -391,6 +385,7 @@ export class OramaBackend {
     async _createOrama() {
         const schema = {
             [this.idField]: 'string',
+            [this.sessionField]: 'enum',
             [this.vectorProperty]: `vector[${this.dimension}]`
         };
         const create = this.module.create;

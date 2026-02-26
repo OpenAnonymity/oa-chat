@@ -1009,9 +1009,8 @@ Available tags: ${JSON.stringify(allTags)}`;
 
                     embeddingResults = await this.store.search(queryEmbedding, k, {
                         ...options,
-                        filter: (metadata) => {
-                            const sessionId = metadata?.sessionId;
-                            return typeof sessionId === 'string' && matchedSessionIds.has(sessionId);
+                        where: {
+                            sessionId: Array.from(matchedSessionIds)
                         },
                         debug: true,
                         debugLabel: 'sessionEmbedder tag+embedding'
