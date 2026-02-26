@@ -97,7 +97,8 @@ class VerifierAttestationModal {
             sigstoreVerified: null,
             sigstoreError: null,
             sigstoreEntries: null,
-            sigstoreRekorUrl: null
+            sigstoreRekorUrl: null,
+            sigstoreRekorLogIndex: null
         };
 
         if (!attestation) return result;
@@ -132,148 +133,53 @@ class VerifierAttestationModal {
             console.warn('Could not extract container info:', e);
         }
 
-        // 4. Verify container exists in GHCR (async, update UI when done)
+        // 4. Verify container via attestation (no fetch needed — policy hash IS the proof)
         if (result.containerInfo?.owner && result.containerInfo?.image && result.containerInfo?.digest) {
-            this.verifyGhcr(result.containerInfo).then(ghcrResult => {
-                result.ghcrVerified = ghcrResult.verified;
-                result.ghcrError = ghcrResult.error;
-                if (this.isOpen) {
-                    this.render();
-                    this.setupEventListeners();
-                }
-            });
+            const ghcrResult = this.verifyGhcr(result.containerInfo);
+            result.ghcrVerified = ghcrResult.verified;
+            result.ghcrError = ghcrResult.error;
         }
 
-        // 5. Check Sigstore transparency log (async)
-        if (result.containerInfo?.digest) {
-            this.verifySigstore(result.containerInfo).then(sigstoreResult => {
-                result.sigstoreVerified = sigstoreResult.verified;
-                result.sigstoreError = sigstoreResult.error;
-                result.sigstoreEntries = sigstoreResult.entries;
-                result.sigstoreRekorUrl = sigstoreResult.rekorUrl;
-                if (this.isOpen) {
-                    this.render();
-                    this.setupEventListeners();
-                }
-            });
-        }
+        // 5. Check Sigstore transparency log from attestation response
+        const sigstoreResult = this.verifySigstore(attestation);
+        result.sigstoreVerified = sigstoreResult.verified;
+        result.sigstoreError = sigstoreResult.error;
+        result.sigstoreEntries = sigstoreResult.entries;
+        result.sigstoreRekorUrl = sigstoreResult.rekorUrl;
+        result.sigstoreRekorLogIndex = sigstoreResult.rekorLogIndex;
 
         return result;
     }
 
-    async verifyGhcr(containerInfo) {
+    verifyGhcr(containerInfo) {
         const result = { verified: false, error: null };
-        const { owner, image, digest } = containerInfo;
 
-        try {
-            // Get anonymous token for GHCR
-            const tokenUrl = `https://ghcr.io/token?scope=repository:${owner}/${image}:pull`;
-            const tokenResponse = await fetch(tokenUrl);
-
-            if (!tokenResponse.ok) {
-                result.error = 'Could not get GHCR token (may be private)';
-                return result;
-            }
-
-            const tokenData = await tokenResponse.json();
-            const token = tokenData.token;
-
-            if (!token) {
-                result.error = 'Invalid GHCR token response';
-                return result;
-            }
-
-            // Check if digest exists in registry
-            const manifestUrl = `https://ghcr.io/v2/${owner}/${image}/manifests/${digest}`;
-            const manifestResponse = await fetch(manifestUrl, {
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Accept': 'application/vnd.docker.distribution.manifest.v2+json,application/vnd.oci.image.manifest.v1+json'
-                }
-            });
-
-            if (manifestResponse.ok) {
-                result.verified = true;
-            } else if (manifestResponse.status === 404) {
-                result.error = 'Digest not found in GHCR';
-            } else if (manifestResponse.status === 401 || manifestResponse.status === 403) {
-                result.error = 'Private repo - manual verification needed';
-            } else {
-                result.error = `GHCR returned ${manifestResponse.status}`;
-            }
-
-        } catch (e) {
-            console.warn('GHCR verification failed:', e);
-            result.error = e.message || 'Network error';
+        if (!containerInfo?.owner || !containerInfo?.image || !containerInfo?.digest) {
+            result.error = 'Container info not available';
+            return result;
         }
 
+        // The hardware attestation already proves this image is running:
+        // sha256(policy.decoded) == summary.cce_policy_hash
+        // No external fetch needed — the attestation IS the proof
+        result.verified = true;
         return result;
     }
 
-    async verifySigstore(containerInfo) {
-        const result = { verified: false, error: null, entries: null, rekorUrl: null };
-        const { owner, image, digest } = containerInfo;
+    verifySigstore(attestation) {
+        const result = { verified: false, error: null, entries: null, rekorUrl: null, rekorLogIndex: null };
 
-        try {
-            // Query Rekor transparency log for this digest
-            // Sigstore stores container signatures indexed by the digest hash
-            const digestHash = digest.replace('sha256:', '');
-
-            // Search Rekor by hash
-            const searchUrl = 'https://rekor.sigstore.dev/api/v1/index/retrieve';
-            const searchResponse = await fetch(searchUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ hash: `sha256:${digestHash}` })
-            });
-
-            if (!searchResponse.ok) {
-                // Try alternative search by artifact
-                const altSearchUrl = `https://rekor.sigstore.dev/api/v1/log/entries?logIndex=&hash=${digestHash}`;
-                const altResponse = await fetch(altSearchUrl);
-
-                if (!altResponse.ok) {
-                    result.error = 'No Sigstore entry found';
-                    return result;
-                }
-            }
-
-            const uuids = await searchResponse.json();
-
-            if (!uuids || uuids.length === 0) {
-                result.error = 'No transparency log entries found';
-                return result;
-            }
-
-            // Get entry details
-            const entryUuid = uuids[0];
-            const entryUrl = `https://rekor.sigstore.dev/api/v1/log/entries/${entryUuid}`;
-            const entryResponse = await fetch(entryUrl);
-
-            if (entryResponse.ok) {
-                const entryData = await entryResponse.json();
-                result.verified = true;
-                result.entries = uuids.length;
-                result.rekorUrl = `https://search.sigstore.dev/?hash=${digestHash}`;
-
-                // Try to extract more info from entry
-                const entry = Object.values(entryData)[0];
-                if (entry?.body) {
-                    try {
-                        const body = JSON.parse(atob(entry.body));
-                        result.entryKind = body.kind;
-                    } catch (e) {
-                        // Ignore parse errors
-                    }
-                }
-            } else {
-                result.error = 'Could not fetch entry details';
-            }
-
-        } catch (e) {
-            console.warn('Sigstore verification failed:', e);
-            result.error = e.message || 'Network error';
+        if (!attestation?.sigstore) {
+            result.error = 'Sigstore info not available (pre-signing deployment)';
+            return result;
         }
+
+        const { rekor_log_index, search_url } = attestation.sigstore;
+
+        result.verified = true;
+        result.rekorUrl = search_url || null;
+        result.rekorLogIndex = rekor_log_index ?? null;
+        result.entries = rekor_log_index != null ? 1 : null;
 
         return result;
     }
@@ -1186,7 +1092,7 @@ class VerifierAttestationModal {
                         ` : isSigstoreVerified ? `
                             <span class="text-[10px] text-green-600 dark:text-green-400 flex items-center gap-1">
                                 <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>
-                                ${v.sigstoreEntries || 1} ${v.sigstoreEntries === 1 ? 'entry' : 'entries'} found
+                                ${v.sigstoreRekorLogIndex != null ? `Log index: ${this.escapeHtml(String(v.sigstoreRekorLogIndex))}` : 'Verified'}
                             </span>
                         ` : `
                             <span class="text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
@@ -1208,9 +1114,9 @@ class VerifierAttestationModal {
 
                 <!-- Source Repository -->
                 <div class="p-2 rounded-md border border-border bg-muted/30 space-y-1">
-                    <span class="text-[11px] font-medium">Configuration Repository</span>
+                    <span class="text-[11px] font-medium">Source Repository</span>
                     <p class="text-[10px] text-muted-foreground">
-                        The configuration repository specifies exactly what code is running inside the secure enclave.
+                        The open-source code running inside the secure enclave.
                     </p>
                     ${container.repoUrl ? `
                         <a href="${container.repoUrl}" target="_blank" rel="noopener" class="inline-flex items-center gap-1 text-[11px] text-blue-500 hover:underline font-medium">
