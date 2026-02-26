@@ -34,21 +34,21 @@ function isHardFailure(error, response, data) {
     // Banned station = hard failure
     if (data?.status === 'banned') return true;
     if (error?.status === 'banned') return true;
-    
+
     // Explicit hard failures from verifier (request/validation/auth/ban/not found)
     if ([400, 401, 403, 404].includes(response?.status)) {
         return true;
     }
-    
+
     // Signature/validation errors from verifier = hard failure
     const errorMsg = (error?.message || data?.detail || data?.error || '').toLowerCase();
-    if (errorMsg.includes('invalid signature') || 
+    if (errorMsg.includes('invalid signature') ||
         errorMsg.includes('signature mismatch') ||
         errorMsg.includes('expired') ||
         errorMsg.includes('invalid key')) {
         return true;
     }
-    
+
     // Everything else (network errors, timeouts, 5xx, 429) = soft failure
     return false;
 }
@@ -65,44 +65,44 @@ class StationVerifier {
     constructor() {
         // Verification state per station
         this.stationStates = new Map(); // stationId -> state
-        
+
         // Current active station (for UI display)
         this.currentStationId = null;
-        
+
         // Broadcast check interval
         this.broadcastCheckInterval = null;
         this.currentIntervalMs = BASE_INTERVAL_MS;
-        
+
         // Verifier online status
         this.verifierOnline = null; // null = unknown, true = online, false = offline
         this.lastSuccessfulBroadcast = null;
         this.consecutiveFailures = 0;
         this.offlineWarningShown = false;
-        
+
         // Last broadcast response (ground truth until next call)
         this.lastBroadcastData = null; // { verified_stations: [], banned_stations: [], timestamp: ... }
-        
+
         // Callbacks for warnings
         this.onStaleWarning = null;
         this.onBannedWarning = null;
         this.onOfflineWarning = null;
-        
+
         // Track which stations we've already shown warnings for (to avoid spam)
         this.warningShownFor = new Set();
         this.bannedWarningShownFor = new Set();
-        
+
         // Cached attestation data
         this.attestationCache = null;
         this.attestationCacheTime = null;
-        
+
         // Completion request tracking for dynamic interval
         this.completionRequests = []; // timestamps of recent completion requests
-        
+
         // Pending key submissions for background retry
         // Map<keyHash, {keyData, attempts, nextRetryAt, backoffMs, stationId, logId, maxAttempts}>
         this.pendingSubmissions = new Map();
     }
-    
+
     /**
      * Record a completion request (called from app.js when sending to inference backend)
      */
@@ -114,14 +114,14 @@ class StationVerifier {
         // Recalculate interval
         this.updateDynamicInterval();
     }
-    
+
     /**
      * Calculate and update the broadcast check interval based on activity
      */
     updateDynamicInterval() {
         const now = Date.now();
         const recentRequests = this.completionRequests.filter(t => now - t < ACTIVITY_WINDOW_MS).length;
-        
+
         let newInterval;
         if (recentRequests >= HIGH_ACTIVITY_THRESHOLD) {
             // High activity: use ratio based on request count
@@ -131,7 +131,7 @@ class StationVerifier {
         } else {
             newInterval = BASE_INTERVAL_MS;
         }
-        
+
         // Only restart interval if it changed significantly
         if (Math.abs(newInterval - this.currentIntervalMs) > 5000) {
             console.log(`📊 Activity: ${recentRequests} requests in last minute, interval: ${newInterval/1000}s`);
@@ -139,7 +139,7 @@ class StationVerifier {
             this.restartBroadcastInterval();
         }
     }
-    
+
     /**
      * Restart the broadcast interval with current interval setting
      */
@@ -157,7 +157,7 @@ class StationVerifier {
     async init() {
         console.log('🔄 Initializing verifier...');
         console.log(`  chatDB available: ${!!window.chatDB}`);
-        
+
         // Load persisted broadcast data from database (ground truth)
         try {
             const broadcastData = await window.chatDB?.getSetting('lastBroadcastData');
@@ -169,7 +169,7 @@ class StationVerifier {
                     this.lastSuccessfulBroadcast = broadcastData.timestamp;
                 }
                 console.log(`📋 Loaded broadcast data from database (${broadcastData.timestamp})`);
-                
+
                 // Apply verified stations
                 if (broadcastData.verified_stations) {
                     for (const station of broadcastData.verified_stations) {
@@ -182,7 +182,7 @@ class StationVerifier {
                     }
                     console.log(`  ✅ ${broadcastData.verified_stations.length} verified stations`);
                 }
-                
+
                 // Apply banned stations
                 if (broadcastData.banned_stations) {
                     for (const banned of broadcastData.banned_stations) {
@@ -223,12 +223,12 @@ class StationVerifier {
             console.warn('💾 No broadcast data to persist');
             return;
         }
-        
+
         if (!window.chatDB) {
             console.warn('💾 chatDB not available for persistence');
             return;
         }
-        
+
         try {
             await window.chatDB.saveSetting('lastBroadcastData', this.lastBroadcastData);
             const verified = this.lastBroadcastData.verified_stations?.length || 0;
@@ -313,7 +313,7 @@ class StationVerifier {
     setCurrentStation(stationId, session = null) {
         this.currentStationId = stationId;
         window.dispatchEvent(new CustomEvent('verification-updated'));
-        
+
         // Check if this station is already known to be banned
         const state = this.stationStates.get(stationId);
         if (state?.banned && this.onBannedWarning) {
@@ -372,21 +372,21 @@ class StationVerifier {
     getStalenessLevel(stationId) {
         const state = this.stationStates.get(stationId);
         if (!state) return 'unverified';
-        
+
         if (state.banned) {
             return 'banned';
         }
-        
+
         if (state.status === 'none' || !state.lastVerified) {
             return 'unverified';
         }
-        
+
         if (state.status === 'failed' || !state.trustworthy) {
             return 'critical';
         }
 
         const timeSinceVerified = Date.now() - new Date(state.lastVerified).getTime();
-        
+
         if (timeSinceVerified > STALE_CRITICAL_MS) {
             return 'critical';
         }
@@ -407,13 +407,13 @@ class StationVerifier {
 
         const diffMs = Date.now() - new Date(state.lastVerified).getTime();
         const diffMins = Math.floor(diffMs / 60000);
-        
+
         if (diffMins < 1) return 'just now';
         if (diffMins < 60) return `${diffMins}m ago`;
-        
+
         const diffHours = Math.floor(diffMins / 60);
         if (diffHours < 24) return `${diffHours}h ago`;
-        
+
         return new Date(state.lastVerified).toLocaleDateString();
     }
 
@@ -427,13 +427,13 @@ class StationVerifier {
 
         const diffMs = Date.now() - new Date(this.lastSuccessfulBroadcast).getTime();
         const diffMins = Math.floor(diffMs / 60000);
-        
+
         if (diffMins < 1) return 'just now';
         if (diffMins < 60) return `${diffMins}m ago`;
-        
+
         const diffHours = Math.floor(diffMins / 60);
         if (diffHours < 24) return `${diffHours}h ago`;
-        
+
         return new Date(this.lastSuccessfulBroadcast).toLocaleString();
     }
 
@@ -509,7 +509,7 @@ class StationVerifier {
                 banned_stations: banned,
                 timestamp: this.lastSuccessfulBroadcast
             };
-            
+
             // Apply to station states
             for (const station of verified) {
                 const state = this.getStationState(station.station_id);
@@ -521,7 +521,7 @@ class StationVerifier {
                 state.banReason = null;
                 state.bannedAt = null;
             }
-            
+
             for (const station of banned) {
                 const state = this.getStationState(station.station_id);
                 state.banned = true;
@@ -530,7 +530,7 @@ class StationVerifier {
                 state.status = 'banned';
                 state.trustworthy = false;
             }
-            
+
             // Persist to database
             this.persistBroadcastData();
 
@@ -539,14 +539,14 @@ class StationVerifier {
         } catch (error) {
             console.warn('⚠️ Broadcast query failed:', error.message);
             console.log(`📋 Keeping last successful broadcast data from: ${this.lastSuccessfulBroadcast || 'never'}`);
-            
+
             // Track failures - but DO NOT overwrite lastSuccessfulBroadcast or lastBroadcastData
             this.consecutiveFailures++;
-            
+
             // After 2 consecutive failures, consider verifier offline
             if (this.consecutiveFailures >= 2) {
                 this.verifierOnline = false;
-                
+
                 // Trigger offline warning (only once until back online)
                 if (!this.offlineWarningShown && this.onOfflineWarning) {
                     this.offlineWarningShown = true;
@@ -557,7 +557,7 @@ class StationVerifier {
                     });
                 }
             }
-            
+
             throw error;
         }
     }
@@ -591,7 +591,7 @@ class StationVerifier {
         try {
             const broadcastData = await this.queryBroadcast();
             const { verified, banned } = this.parseBroadcastData(broadcastData);
-            
+
             // Check if station is banned
             const bannedInfo = banned.find(s => s.station_id === this.currentStationId);
             if (bannedInfo) {
@@ -707,17 +707,17 @@ class StationVerifier {
     /**
      * Submit key data to verifier for validation before AI inference
      * POST /submit_key
-     * 
+     *
      * Returns a status object:
      * - { status: 'verified', data: {...} } - Success (or trusted station skip)
      * - { status: 'pending', ... } - Soft failure, queued for background retry
      * - { status: 'unverified', detail?: string, data?: {...} } - Policy skip (no retry)
      * - { status: 'rejected', error: Error, bannedStation?: {...} } - Hard failure
-     * 
+     *
      * For recently attested stations, soft failures (network/5xx/429) are queued for
      * background retry while allowing immediate key usage.
      * For non-recently-attested stations, soft failures are rejected.
-     * 
+     *
      * @param {object} keyData - Key data from org's /request_key response
      * @returns {Promise<{status: 'verified'|'pending'|'unverified'|'rejected', ...}>}
      */
@@ -800,7 +800,7 @@ class StationVerifier {
 
                 const errorMessage = data?.error || data?.detail || data?.message || 'Verification failed';
                 const error = new Error(errorMessage);
-                
+
                 // Check if this is a hard failure (4xx, banned, signature errors)
                 if (isHardFailure(error, response, data)) {
                     networkLogger.logRequest({
@@ -811,9 +811,9 @@ class StationVerifier {
                         request: { station_id: keyData.stationId },
                         response: data
                     });
-                    
+
                     console.error('❌ Key verification hard failure:', errorMessage);
-                    
+
                     // Attach detailed banned station info if available
                     if (data?.status === 'banned' && data?.banned_station) {
                         error.status = 'banned';
@@ -828,10 +828,10 @@ class StationVerifier {
                             }
                         };
                     }
-                    
+
                     return { status: 'rejected', error };
                 }
-                
+
                 // Soft failure - only recently attested stations get retry
                 if (keyData.recentlyAttested) {
                     console.warn('⚠️ Key verification soft failure, queuing for retry:', errorMessage);
@@ -841,12 +841,12 @@ class StationVerifier {
                         url: `${VERIFIER_URL}/submit_key`,
                         status: 'pending',
                         request: { station_id: keyData.stationId },
-                        response: { message: 'The verifier is currently unreachable. Station integrity will be attested as soon as verifier comes <a href="https://verifier.openanonymity.ai/health" target="_blank" rel="noopener noreferrer" class="underline hover:text-amber-700 dark:hover:text-amber-300">online</a>. You can continue sending messages normally because this station was recently attested by other users.' }
+                        response: { message: 'The verifier is currently unreachable. Station integrity will be attested as soon as verifier comes <a href="https://verifier2.openanonymity.ai/health" target="_blank" rel="noopener noreferrer" class="underline hover:text-amber-700 dark:hover:text-amber-300">online</a>. You can continue sending messages normally because this station was recently attested by other users.' }
                     });
                     this._queuePendingSubmission(keyData, keyHash, logEntry.id, RECENTLY_ATTESTED_MAX_ATTEMPTS);
                     return { status: 'pending', keyHash };
                 }
-                
+
                 // Non-recently attested station - all failures are hard failures
                 networkLogger.logRequest({
                     type: 'verification',
@@ -884,16 +884,16 @@ class StationVerifier {
                 request: { station_id: keyData.stationId },
                 response: data
             });
-            
+
             // Remove from pending if it was queued
             this.pendingSubmissions.delete(keyHash);
-            
+
             console.log('✅ Key verified:', data.status);
             return { status: 'verified', data };
 
         } catch (error) {
             // Convert AbortError to user-friendly message
-            const friendlyError = error.name === 'AbortError' 
+            const friendlyError = error.name === 'AbortError'
                 ? new Error('Verification request timed out.')
                 : error;
 
@@ -906,7 +906,7 @@ class StationVerifier {
                     url: `${VERIFIER_URL}/submit_key`,
                     status: 'pending',
                     request: { station_id: keyData.stationId },
-                    response: { message: 'The verifier is currently unreachable. Station integrity will be attested as soon as verifier comes <a href="https://verifier.openanonymity.ai/health" target="_blank" rel="noopener noreferrer" class="underline hover:text-amber-700 dark:hover:text-amber-300">online</a>. You can continue sending messages normally because this station was recently attested by other users.' }
+                    response: { message: 'The verifier is currently unreachable. Station integrity will be attested as soon as verifier comes <a href="https://verifier2.openanonymity.ai/health" target="_blank" rel="noopener noreferrer" class="underline hover:text-amber-700 dark:hover:text-amber-300">online</a>. You can continue sending messages normally because this station was recently attested by other users.' }
                 });
                 this._queuePendingSubmission(keyData, keyHash, logEntry.id, RECENTLY_ATTESTED_MAX_ATTEMPTS);
                 return { status: 'pending', keyHash };
@@ -928,7 +928,7 @@ class StationVerifier {
             return { status: 'rejected', error: friendlyError };
         }
     }
-    
+
     /**
      * Generate a hash for a key (for tracking)
      */
@@ -944,13 +944,13 @@ class StationVerifier {
             return `${key.slice(0, 8)}...${key.slice(-4)}`;
         }
     }
-    
+
     /**
      * Queue a key submission for background retry
      */
     _queuePendingSubmission(keyData, keyHash, logId, maxAttempts = PENDING_MAX_ATTEMPTS) {
         if (!keyHash || !keyData) return;
-        
+
         const existing = this.pendingSubmissions.get(keyHash);
         if (existing) {
             existing.maxAttempts = Math.min(existing.maxAttempts ?? maxAttempts, maxAttempts);
@@ -970,18 +970,18 @@ class StationVerifier {
         }
         console.log(`📋 Queued verification retry for ${keyHash}, next attempt in ${Math.round((this.pendingSubmissions.get(keyHash).backoffMs)/1000)}s`);
     }
-    
+
     /**
      * Process pending submissions - called from broadcast check interval
      */
     async _processPendingSubmissions() {
         if (this.pendingSubmissions.size === 0) return;
-        
+
         const now = Date.now();
-        
+
         for (const [keyHash, pending] of this.pendingSubmissions) {
             if (now < pending.nextRetryAt) continue;
-            
+
             // Check max attempts
             const maxAttempts = pending.maxAttempts ?? PENDING_MAX_ATTEMPTS;
             if (pending.attempts >= maxAttempts) {
@@ -989,9 +989,9 @@ class StationVerifier {
                 this.pendingSubmissions.delete(keyHash);
                 continue;
             }
-            
+
             console.log(`🔄 Retrying verification for ${keyHash} (attempt ${pending.attempts + 1})`);
-            
+
             try {
                 const { response, data } = await networkProxy.fetchWithRetryJson(
                     `${VERIFIER_URL}/submit_key`,
@@ -1013,7 +1013,7 @@ class StationVerifier {
                         proxyConfig: { bypassProxy: true }
                     }
                 );
-                
+
                 if (response.ok) {
                     if (data?.status === 'unverified') {
                         console.warn(`⚠️ Verification retry ${keyHash} returned unverified:`, data?.detail || 'unverified');
@@ -1082,7 +1082,7 @@ class StationVerifier {
         const checkBroadcast = async () => {
             // Process pending verification retries
             await this._processPendingSubmissions();
-            
+
             // Only check broadcast if we have a current station
             if (!this.currentStationId) {
                 try {
@@ -1150,7 +1150,7 @@ class StationVerifier {
                 const now = new Date();
                 const hasValidKey = session?.apiKey &&
                     (!session.expiresAt || new Date(session.expiresAt) > now);
-                
+
                 if (!state.banned && hasValidKey) {
                     const staleness = this.getStalenessLevel(stationId);
                     if ((staleness === 'critical' || staleness === 'unverified') && this.onStaleWarning) {
@@ -1178,7 +1178,7 @@ class StationVerifier {
 
         // Store function for dynamic interval restarts
         this._broadcastCheckFn = checkBroadcast;
-        
+
         // Check immediately on start
         checkBroadcast();
 

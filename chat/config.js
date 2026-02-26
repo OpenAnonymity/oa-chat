@@ -14,7 +14,7 @@ export const ORG_API_BASE = 'https://org.openanonymity.ai';
 // Verifier service -- hardware-attested (AMD SEV-SNP) station compliance
 // enforcer. Open-source and auditable. Enforces privacy toggles and key
 // ownership on stations. Not in the inference data path.
-export const VERIFIER_URL = 'https://verifier.openanonymity.ai';
+export const VERIFIER_URL = 'https://verifier2.openanonymity.ai';
 
 // WebSocket proxy -- a shared IP-hiding relay for all users (not a secret).
 // The "secret" parameter is a shared access token, not per-user. The proxy

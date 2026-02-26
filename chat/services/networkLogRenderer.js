@@ -328,7 +328,7 @@ export function getActivityDescription(log, detailed = false) {
         }
 
         // Verifier endpoint - station integrity verification
-        if (type === 'verification' || urlObj.host === 'verifier.openanonymity.ai' || urlObj.host.includes('localhost')) {
+        if (type === 'verification' || urlObj.host === 'verifier2.openanonymity.ai' || urlObj.host.includes('localhost')) {
             const verificationDetail = log.detail || response?.detail;
             const isAttestationRequest = path.includes('/attestation');
             if (!detailed) {
@@ -367,7 +367,7 @@ export function getActivityDescription(log, detailed = false) {
                     return 'Attesting verifier hardware and policy integrity.';
                 }
                 if (verificationDetail === 'verifier_unreachable_uncertified') {
-                    return 'The verifier could not be <a href="https://verifier.openanonymity.ai/health" target="_blank" rel="noopener noreferrer" class="underline hover:text-amber-700 dark:hover:text-amber-300">reached</a> to verify this station, the key is rejected.';
+                    return 'The verifier could not be <a href="https://verifier2.openanonymity.ai/health" target="_blank" rel="noopener noreferrer" class="underline hover:text-amber-700 dark:hover:text-amber-300">reached</a> to verify this station, the key is rejected.';
                 } else if (verificationDetail === 'ownership_check_error') {
                     return 'Verification temporarily unavailable due to verifier networking issues. The webapp will automatically retry in the background.';
                 } else if (verificationDetail === 'rate_limited') {
@@ -376,7 +376,7 @@ export function getActivityDescription(log, detailed = false) {
                     return 'The API key expires too soon to perform ownership verification. This is expected behavior for keys near their expiry time. This should not occur unless the app delays verification or has been modified.';
                 }
                 if (status === 'queued' || status === 'pending') {
-                    return 'The verifier is currently unreachable. Station integrity will be attested as soon as verifier comes <a href="https://verifier.openanonymity.ai/health" target="_blank" rel="noopener noreferrer" class="underline hover:text-amber-700 dark:hover:text-amber-300">online</a>. You can continue sending messages normally because this station was recently attested by other users.';
+                    return 'The verifier is currently unreachable. Station integrity will be attested as soon as verifier comes <a href="https://verifier2.openanonymity.ai/health" target="_blank" rel="noopener noreferrer" class="underline hover:text-amber-700 dark:hover:text-amber-300">online</a>. You can continue sending messages normally because this station was recently attested by other users.';
                 } else if (status >= 200 && status < 300) {
                     return 'Successfully verified the integrity of the key issuing station.';
                 } else if (status >= 400 || status === 0) {
@@ -458,7 +458,7 @@ export function getActivityIcon(log) {
         const path = urlObj.pathname;
 
         // Verifier - shield checkmark icon for integrity verification
-        if (urlObj.host === 'verifier.openanonymity.ai') {
+        if (urlObj.host === 'verifier2.openanonymity.ai') {
             return `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path>
             </svg>`;
