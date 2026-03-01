@@ -111,7 +111,9 @@
                     } catch { return false; }
                 })();
 
-                if (dismissed || hasTickets) {
+                const hasSharedSession = new URLSearchParams(window.location.search).has('s');
+
+                if (dismissed || hasTickets || hasSharedSession) {
                     document.documentElement.setAttribute('data-welcome-hidden', 'true');
                 }
             } catch (error) {

@@ -71,6 +71,8 @@ class WelcomePanel {
         if (localStorage.getItem(STORAGE_KEY_DISMISSED) === 'true') return false;
         // Don't show if user already has tickets
         if (ticketClient.getTicketCount() > 0) return false;
+        // Don't show if loading a shared conversation
+        if (new URLSearchParams(window.location.search).has('s')) return false;
         return true;
     }
 
