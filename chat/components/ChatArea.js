@@ -411,13 +411,21 @@ export default class ChatArea {
      */
     handleCopyCodeBlock(btn) {
         // Get code from data attribute (preserves original formatting)
+        let decodedCode;
         const code = btn.dataset.code;
-        if (!code) return;
-
-        // Decode HTML entities that were escaped for the attribute
-        const tempEl = document.createElement('textarea');
-        tempEl.innerHTML = code;
-        const decodedCode = tempEl.value;
+        if (code) {
+            // Decode HTML entities that were escaped for the attribute
+            const tempEl = document.createElement('textarea');
+            tempEl.innerHTML = code;
+            decodedCode = tempEl.value;
+        } else {
+            // Fallback: extract from the <pre><code> sibling (handles cases where
+            // data-code attribute was lost during HTML round-tripping e.g. DOMParser)
+            const wrapper = btn.closest('.code-block-wrapper');
+            const codeEl = wrapper && wrapper.querySelector('pre code');
+            decodedCode = codeEl ? codeEl.textContent : '';
+        }
+        if (!decodedCode) return;
 
         // Get button elements for animation
         const svg = btn.querySelector('.copy-icon');

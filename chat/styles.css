@@ -1401,6 +1401,9 @@ html.switching-theme *::after {
     background-color: var(--code-block-header);
     border-bottom: 1px solid var(--code-block-border);
     min-height: 2rem;
+    overflow: hidden;
+    position: relative;
+    z-index: 1;
 }
 
 .code-block-lang {
@@ -1409,6 +1412,10 @@ html.switching-theme *::after {
     color: hsl(var(--color-muted-foreground));
     text-transform: lowercase;
     letter-spacing: 0.02em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
 }
 
 .code-block-copy-btn {
@@ -1424,6 +1431,8 @@ html.switching-theme *::after {
     border-radius: 0.25rem;
     cursor: pointer;
     transition: all 0.15s ease;
+    white-space: nowrap;
+    flex-shrink: 0;
 }
 
 .code-block-copy-btn:hover {
@@ -1449,6 +1458,7 @@ html.switching-theme *::after {
     overflow-x: auto;
     font-size: 0.8125rem;
     line-height: 1.5;
+    position: relative;
 }
 
 .code-block-wrapper pre code {
