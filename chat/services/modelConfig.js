@@ -49,6 +49,7 @@ const DEFAULT_CONFIG = {
 const GPT_CHAT_MODEL_ID_PATTERN = /^gpt-([a-z0-9.-]+)-chat(?:-\d{8})?$/i;
 const GPT_CHAT_DISPLAY_NAME_PATTERN = /^(?:openai:\s*)?gpt[-\s]?([a-z0-9.-]+)\s+chat(?:\s+\d{8})?$/i;
 const TRAILING_MODEL_DATE_DISPLAY_PATTERN = /\s+\(?(?:19|20)\d{6}\)?$/;
+const TRAILING_MODEL_DATE_ID_PATTERN = /-(?:19|20)\d{6}$/;
 
 function toModelIdWithoutRouting(modelReference) {
     if (typeof modelReference !== 'string') return null;
@@ -71,6 +72,23 @@ function formatOpenAiInstantDisplayName(variant) {
 function stripTrailingModelDateDisplaySuffix(modelReference) {
     if (typeof modelReference !== 'string') return modelReference;
     return modelReference.replace(TRAILING_MODEL_DATE_DISPLAY_PATTERN, '').trim();
+}
+
+function stripTrailingModelDateIdSuffix(modelReference) {
+    if (typeof modelReference !== 'string') return modelReference;
+    const baseModelId = toModelIdWithoutRouting(modelReference);
+    if (!baseModelId) return modelReference;
+
+    const slashIndex = baseModelId.lastIndexOf('/');
+    const prefix = slashIndex === -1 ? '' : `${baseModelId.slice(0, slashIndex + 1)}`;
+    const modelSlug = slashIndex === -1 ? baseModelId : baseModelId.slice(slashIndex + 1);
+    const strippedSlug = modelSlug.replace(TRAILING_MODEL_DATE_ID_PATTERN, '');
+
+    if (strippedSlug === modelSlug) {
+        return modelReference;
+    }
+
+    return `${prefix}${strippedSlug}`;
 }
 
 /**
@@ -106,6 +124,12 @@ export function getStandardizedModelDisplayName(modelReference) {
     const gptChatDisplayMatch = trimmed.match(GPT_CHAT_DISPLAY_NAME_PATTERN);
     if (gptChatDisplayMatch) {
         return formatOpenAiInstantDisplayName(gptChatDisplayMatch[1]);
+    }
+
+    const strippedId = stripTrailingModelDateIdSuffix(trimmed);
+    if (strippedId !== trimmed) {
+        const remapped = getStandardizedModelDisplayName(strippedId);
+        return remapped || strippedId;
     }
 
     // Generic cleanup for dated display names from providers:

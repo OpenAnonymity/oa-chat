@@ -7,6 +7,7 @@
 import { getProviderIcon } from '../services/providerIcons.js';
 import { extractDomain } from '../services/urlMetadata.js';
 import { getFileIconSvg } from '../services/fileUtils.js';
+import { getStandardizedModelDisplayName } from '../services/modelConfig.js';
 
 // In-memory cache for reasoning trace expanded state (persists across session switches)
 const reasoningExpandedState = new Set();
@@ -961,6 +962,12 @@ function buildCitationsSection(citations, messageId) {
  */
 function extractShortModelName(fullName) {
     if (!fullName || typeof fullName !== 'string') return fullName;
+
+    const standardized = getStandardizedModelDisplayName(fullName);
+    if (standardized) {
+        fullName = standardized;
+    }
+
     // Handle "Provider: ModelName" format
     const colonIdx = fullName.indexOf(': ');
     if (colonIdx !== -1) {
