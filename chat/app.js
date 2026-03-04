@@ -3906,7 +3906,11 @@ class ChatApp {
                 // Parse and save the cleaned reasoning
                 streamingMessage.reasoning = rawReasoning ? parseReasoningContent(rawReasoning) : null;
                 streamingMessage.tokenCount = tokenData.totalTokens || tokenData.completionTokens || streamingTokenCount;
-                streamingMessage.model = this.normalizeModelName(tokenData.model || modelNameToUse);
+                const streamReportedModel = tokenData.model || modelIdForRequest;
+                const resolvedFinalModelName = this.normalizeModelName(
+                    inferenceService.getDisplayName(streamReportedModel, modelNameToUse, session)
+                ) || modelNameToUse;
+                streamingMessage.model = resolvedFinalModelName;
                 streamingMessage.streamingTokens = null;
                 streamingMessage.streamingReasoning = false;
                 streamingMessage.streamingPending = false;
@@ -4427,7 +4431,11 @@ class ChatApp {
                 // Parse and save the cleaned reasoning
                 streamingMessage.reasoning = rawReasoning ? parseReasoningContent(rawReasoning) : null;
                 streamingMessage.tokenCount = tokenData.completionTokens || streamingTokenCount;
-                streamingMessage.model = this.normalizeModelName(tokenData.model || modelNameToUse);
+                const streamReportedModel = tokenData.model || modelIdForRequest;
+                const resolvedFinalModelName = this.normalizeModelName(
+                    inferenceService.getDisplayName(streamReportedModel, modelNameToUse, session)
+                ) || modelNameToUse;
+                streamingMessage.model = resolvedFinalModelName;
                 streamingMessage.streamingTokens = null; // Clear streaming tokens after completion
                 streamingMessage.streamingReasoning = false; // Clear streaming reasoning flag
                 streamingMessage.citations = tokenData.citations || null;

@@ -102,13 +102,15 @@ class OpenRouterAPI {
 
     // Get custom display name for a model, or return the default name
     getDisplayName(modelId, defaultName) {
+        const isDisplayName = (value) => typeof value === 'string' && value.length > 0 && !value.includes('/');
+
         const standardizedFromId = getStandardizedModelDisplayName(modelId);
-        if (standardizedFromId) {
+        if (isDisplayName(standardizedFromId)) {
             return standardizedFromId;
         }
 
         const standardizedFromDefaultName = getStandardizedModelDisplayName(defaultName);
-        if (standardizedFromDefaultName) {
+        if (isDisplayName(standardizedFromDefaultName)) {
             return standardizedFromDefaultName;
         }
 
