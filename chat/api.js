@@ -6,7 +6,8 @@
 // user identity binding -- OpenRouter sees inference traffic from an anonymous
 // ephemeral key with no way to identify the user behind it.
 import networkProxy from './services/networkProxy.js';
-import { getDefaultModelConfig, getStandardizedModelDisplayName } from './services/modelConfig.js';
+import { getDefaultModelConfig } from './services/modelConfig.js';
+import { resolveModelDisplayName } from './services/modelNames.js';
 import apiKeyStore from './services/apiKeyStore.js';
 import { loadModelCatalog, saveModelCatalog } from './services/modelCatalogCache.js';
 import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort } from './services/reasoningConfig.js';
@@ -102,20 +103,11 @@ class OpenRouterAPI {
 
     // Get custom display name for a model, or return the default name
     getDisplayName(modelId, defaultName) {
-        const isDisplayName = (value) => typeof value === 'string' && value.length > 0 && !value.includes('/');
-
-        const standardizedFromId = getStandardizedModelDisplayName(modelId);
-        if (isDisplayName(standardizedFromId)) {
-            return standardizedFromId;
-        }
-
-        const standardizedFromDefaultName = getStandardizedModelDisplayName(defaultName);
-        if (isDisplayName(standardizedFromDefaultName)) {
-            return standardizedFromDefaultName;
-        }
-
-        // Check if there's a custom override for exact model ID
-        return this.displayNameOverrides[modelId] || defaultName;
+        return resolveModelDisplayName({
+            modelId,
+            fallbackDisplayName: defaultName,
+            displayNameOverrides: this.displayNameOverrides
+        });
     }
 
     // Format models to our structure

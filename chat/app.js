@@ -2946,6 +2946,8 @@ class ChatApp {
      *   backend display-name overrides when available.
      * - Legacy aliases (e.g. "OpenAI: GPT-5.1 Chat"), which are mapped to
      *   canonical display names.
+     * - Provider labels with date suffixes (e.g. "... 20260219"), normalized
+     *   by the shared model-name standardizer.
      *
      * Returns the original value when no conversion is necessary so that
      * newer/custom names remain untouched.
