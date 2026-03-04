@@ -26,7 +26,7 @@ import scrubberService from './services/scrubberService.js';
 import shareService from './services/shareService.js';
 import shareModals from './components/ShareModals.js';
 import { getTicketCost, initModelTiers } from './services/modelTiers.js';
-import { initPinnedModels, onPinnedModelsUpdate, getDisabledModels } from './services/modelConfig.js';
+import { initPinnedModels, onPinnedModelsUpdate, getDisabledModels, getStandardizedModelDisplayName } from './services/modelConfig.js';
 import accountService from './services/accountService.js';
 import apiKeyStore from './services/apiKeyStore.js';
 import { generateUlid21 } from './services/ulid.js';
@@ -2958,9 +2958,16 @@ class ChatApp {
             return modelIdOrName;
         }
 
+        const standardized = getStandardizedModelDisplayName(modelIdOrName);
+        if (standardized) {
+            return standardized;
+        }
+
         // If model ID, get display name from backend overrides
         if (modelIdOrName.includes('/')) {
-            return inferenceService.getDisplayName(modelIdOrName, modelIdOrName, this.getCurrentSession());
+            const displayName = inferenceService.getDisplayName(modelIdOrName, modelIdOrName, this.getCurrentSession());
+            const standardizedDisplayName = getStandardizedModelDisplayName(displayName);
+            return standardizedDisplayName || displayName;
         }
 
         if (MODEL_NAME_ALIASES.has(modelIdOrName)) {
@@ -3899,7 +3906,7 @@ class ChatApp {
                 // Parse and save the cleaned reasoning
                 streamingMessage.reasoning = rawReasoning ? parseReasoningContent(rawReasoning) : null;
                 streamingMessage.tokenCount = tokenData.totalTokens || tokenData.completionTokens || streamingTokenCount;
-                streamingMessage.model = tokenData.model || modelNameToUse;
+                streamingMessage.model = this.normalizeModelName(tokenData.model || modelNameToUse);
                 streamingMessage.streamingTokens = null;
                 streamingMessage.streamingReasoning = false;
                 streamingMessage.streamingPending = false;
@@ -4420,7 +4427,7 @@ class ChatApp {
                 // Parse and save the cleaned reasoning
                 streamingMessage.reasoning = rawReasoning ? parseReasoningContent(rawReasoning) : null;
                 streamingMessage.tokenCount = tokenData.completionTokens || streamingTokenCount;
-                streamingMessage.model = tokenData.model || modelNameToUse;
+                streamingMessage.model = this.normalizeModelName(tokenData.model || modelNameToUse);
                 streamingMessage.streamingTokens = null; // Clear streaming tokens after completion
                 streamingMessage.streamingReasoning = false; // Clear streaming reasoning flag
                 streamingMessage.citations = tokenData.citations || null;

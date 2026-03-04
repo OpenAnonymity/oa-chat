@@ -46,6 +46,82 @@ const DEFAULT_CONFIG = {
     },
 };
 
+const GPT_CHAT_MODEL_ID_PATTERN = /^gpt-([a-z0-9.-]+)-chat(?:-\d{8})?$/i;
+const GPT_CHAT_DISPLAY_NAME_PATTERN = /^(?:openai:\s*)?gpt[-\s]?([a-z0-9.-]+)\s+chat(?:\s+\d{8})?$/i;
+const TRAILING_MODEL_DATE_DISPLAY_PATTERN = /\s+\(?(?:19|20)\d{6}\)?$/;
+
+function toModelIdWithoutRouting(modelReference) {
+    if (typeof modelReference !== 'string') return null;
+    const trimmed = modelReference.trim();
+    if (!trimmed) return null;
+    return trimmed.split(':')[0];
+}
+
+function extractModelSlug(modelReference) {
+    const baseModelId = toModelIdWithoutRouting(modelReference);
+    if (!baseModelId) return null;
+    const slashIndex = baseModelId.lastIndexOf('/');
+    return slashIndex === -1 ? baseModelId : baseModelId.slice(slashIndex + 1);
+}
+
+function formatOpenAiInstantDisplayName(variant) {
+    return `OpenAI: GPT-${variant} Instant`;
+}
+
+function stripTrailingModelDateDisplaySuffix(modelReference) {
+    if (typeof modelReference !== 'string') return modelReference;
+    return modelReference.replace(TRAILING_MODEL_DATE_DISPLAY_PATTERN, '').trim();
+}
+
+/**
+ * Standardize model references into canonical UI display names when possible.
+ * Returns null when no standardization rule applies.
+ *
+ * Supported cases:
+ * - Known exact ID overrides from DEFAULT_CONFIG.displayNameOverrides
+ * - All gpt-*-chat model IDs, including dated snapshots (e.g. gpt-5.3-chat-20260303)
+ * - Legacy display labels like "GPT-5.3 Chat" / "OpenAI: GPT-5.3 Chat"
+ *
+ * @param {string} modelReference - Model ID or display name
+ * @returns {string|null}
+ */
+export function getStandardizedModelDisplayName(modelReference) {
+    if (typeof modelReference !== 'string') return null;
+    const trimmed = modelReference.trim();
+    if (!trimmed) return null;
+
+    const baseModelId = toModelIdWithoutRouting(trimmed);
+    if (baseModelId && DEFAULT_CONFIG.displayNameOverrides[baseModelId]) {
+        return DEFAULT_CONFIG.displayNameOverrides[baseModelId];
+    }
+
+    const modelSlug = extractModelSlug(trimmed);
+    if (modelSlug) {
+        const gptChatIdMatch = modelSlug.match(GPT_CHAT_MODEL_ID_PATTERN);
+        if (gptChatIdMatch) {
+            return formatOpenAiInstantDisplayName(gptChatIdMatch[1]);
+        }
+    }
+
+    const gptChatDisplayMatch = trimmed.match(GPT_CHAT_DISPLAY_NAME_PATTERN);
+    if (gptChatDisplayMatch) {
+        return formatOpenAiInstantDisplayName(gptChatDisplayMatch[1]);
+    }
+
+    // Generic cleanup for dated display names from providers:
+    // e.g. "Claude 4.6 Opus 20260205" -> "Claude 4.6 Opus"
+    // e.g. "Gemini 3.1 Pro Preview 20260219" -> "Gemini 3.1 Pro Preview"
+    if (!trimmed.includes('/')) {
+        const stripped = stripTrailingModelDateDisplaySuffix(trimmed);
+        if (stripped !== trimmed) {
+            const remapped = getStandardizedModelDisplayName(stripped);
+            return remapped || stripped;
+        }
+    }
+
+    return null;
+}
+
 function normalizeModelIdList(value) {
     if (!Array.isArray(value)) return [];
 
