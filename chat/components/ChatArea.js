@@ -2252,14 +2252,19 @@ export default class ChatArea {
                                             const content = m.fullContent || m.displayContent || m.content || m.summary || '';
                                             return `
                                                 <div class="full-prompt-memory-item">
-                                                    <div class="full-prompt-memory-title">${entry.idx + 1}. ${this.escapeHtml(m.title || 'Untitled')}</div>
+                                                    <div class="full-prompt-memory-title-row">
+                                                        <div class="full-prompt-memory-title-text">${entry.idx + 1}. ${this.escapeHtml(m.title || 'Untitled')}</div>
+                                                        <button type="button" class="full-prompt-memory-toggle-btn" aria-expanded="false">
+                                                            Expand
+                                                        </button>
+                                                    </div>
                                                     <div class="full-prompt-memory-tags">
                                                         ${(entry.relevantTags.length > 0 ? entry.relevantTags : entry.tags).length > 0
                                                             ? (entry.relevantTags.length > 0 ? entry.relevantTags : entry.tags).map(tag => `<span class="full-prompt-memory-tag">${this.escapeHtml(tag)}</span>`).join('')
                                                             : '<span class="full-prompt-memory-tags-empty">No tags</span>'
                                                         }
                                                     </div>
-                                                    <div class="full-prompt-memory-content">${this.escapeHtml(content)}</div>
+                                                    <div class="full-prompt-memory-content is-collapsed">${this.escapeHtml(content)}</div>
                                                 </div>
                                             `;
                                         }).join('')}
@@ -2319,6 +2324,19 @@ export default class ChatArea {
             if (e.target === modal) {
                 closeModal();
             }
+        });
+
+        modal.querySelectorAll('.full-prompt-memory-toggle-btn').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const memoryItem = btn.closest('.full-prompt-memory-item');
+                const memoryContent = memoryItem?.querySelector('.full-prompt-memory-content');
+                if (!memoryContent) {
+                    return;
+                }
+                const isCollapsed = memoryContent.classList.toggle('is-collapsed');
+                btn.textContent = isCollapsed ? 'Expand' : 'Collapse';
+                btn.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
+            });
         });
 
         copyBtn.addEventListener('click', async () => {
