@@ -62,6 +62,8 @@ export default class ChatInput {
         this.scrubberModelSelect = null;
         // Store undone scrubber state for redo functionality
         this.scrubberUndoState = null;
+        this.memoryChipListExpanded = false;
+        this.memoryPanelViewMode = 'list';
     }
 
     /**
@@ -2129,66 +2131,36 @@ export default class ChatInput {
         if (!memories || memories.length === 0) {
             container.classList.add('hidden');
             container.innerHTML = '';
+            this.memoryChipListExpanded = false;
             return;
         }
 
         container.classList.remove('hidden');
-        
-        // Add show full prompt button
-        const showPromptBtn = `
-            <button 
-                id="show-full-prompt-btn" 
-                class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors border border-border bg-muted/50 hover:bg-muted text-foreground"
-                type="button"
-                title="Show complete prompt with memory context"
-            >
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-                </svg>
-                Show full prompt
-            </button>
-        `;
-        
-        const chipsHtml = memories.map((memory, index) => {
-            const title = memory.title || `Memory ${index + 1}`;
-
-            return `
-                <div class="memory-chip" data-memory-index="${index}">
-                    <span class="memory-chip-text">${this.escapeHtml(title)}</span>
-                    <button class="memory-chip-remove" type="button" aria-label="Remove memory" data-memory-index="${index}">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-                        </svg>
+        const memoryCount = memories.length;
+        const countLabel = `${memoryCount} memories selected`;
+        container.innerHTML = `
+            <div class="memory-chip-shell">
+                <div class="memory-chip-summary-row">
+                    <span class="memory-chip-count-badge" aria-live="polite">${this.escapeHtml(countLabel)}</span>
+                    <button
+                        id="show-memory-details-btn"
+                        class="memory-chip-toggle"
+                        type="button"
+                        aria-label="Show full prompt details"
+                    >
+                        <span>Show details</span>
                     </button>
                 </div>
-            `;
-        }).join('');
-        
-        container.innerHTML = `
-            <div class="flex items-center gap-2 flex-wrap">
-                ${chipsHtml}
-                ${showPromptBtn}
             </div>
         `;
 
-        // Add click handler for show full prompt button
-        const showPromptButton = container.querySelector('#show-full-prompt-btn');
-        if (showPromptButton) {
-            showPromptButton.addEventListener('click', (e) => {
+        const showDetailsButton = container.querySelector('#show-memory-details-btn');
+        if (showDetailsButton) {
+            showDetailsButton.addEventListener('click', (e) => {
                 e.stopPropagation();
                 this.showFullPromptPreview();
             });
         }
-
-        // Add click handlers for remove buttons
-        container.querySelectorAll('.memory-chip-remove').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const index = parseInt(btn.dataset.memoryIndex);
-                this.removeMemoryChip(index);
-            });
-        });
     }
 
     /**
@@ -2246,9 +2218,13 @@ export default class ChatInput {
         let rawOverrideDraft = typeof draft?.rawOverrideDraft === 'string'
             ? draft.rawOverrideDraft
             : (hasExistingOverride ? this.app._lastApiContent : '');
+        let memoryViewMode = (draft?.memoryViewMode === 'grouped' || draft?.memoryViewMode === 'list')
+            ? draft.memoryViewMode
+            : this.memoryPanelViewMode;
+        this.memoryPanelViewMode = memoryViewMode;
 
-        const memories = this.app.pendingMemoryContext.memories;
-        const memoryEntries = memories.map((memory, idx) => {
+        const getCurrentMemories = () => this.app.pendingMemoryContext?.memories || [];
+        const buildMemoryEntries = (memoryList) => memoryList.map((memory, idx) => {
             const tags = Array.from(new Set(
                 (Array.isArray(memory?.keywords) ? memory.keywords : [])
                     .filter(tag => typeof tag === 'string' && tag.trim().length > 0)
@@ -2264,29 +2240,79 @@ export default class ChatInput {
                 : (relevantTags[0] || tags[0] || 'untagged');
             return { memory, idx, tags, relevantTags, primaryTag };
         });
-
+        const buildGroupedContext = (entries) => {
+            const groupedContextMap = new Map();
+            entries.forEach((entry) => {
+                if (!groupedContextMap.has(entry.primaryTag)) {
+                    groupedContextMap.set(entry.primaryTag, []);
+                }
+                groupedContextMap.get(entry.primaryTag).push(entry);
+            });
+            const groupedContext = Array.from(groupedContextMap.entries()).map(([tag, tagEntries]) => ({ tag, entries: tagEntries }));
+            if (groupedContext.length === 0 && entries.length > 0) {
+                groupedContext.push({
+                    tag: 'untagged',
+                    entries
+                });
+            }
+            return groupedContext;
+        };
+        const initialMemoryEntries = buildMemoryEntries(getCurrentMemories());
         const contextTags = Array.from(new Set(
-            memoryEntries.flatMap(entry => entry.relevantTags)
+            initialMemoryEntries.flatMap(entry => entry.relevantTags)
         ));
 
-        const groupedContextMap = new Map();
-        memoryEntries.forEach((entry) => {
-            if (!groupedContextMap.has(entry.primaryTag)) {
-                groupedContextMap.set(entry.primaryTag, []);
+        const renderMemoryTags = (entry) => {
+            const tags = (entry.relevantTags.length > 0 ? entry.relevantTags : entry.tags).slice(0, 4);
+            if (tags.length === 0) {
+                return '<span class="full-prompt-memory-tags-empty">No tags</span>';
             }
-            groupedContextMap.get(entry.primaryTag).push(entry);
-        });
-        const groupedContext = Array.from(groupedContextMap.entries()).map(([tag, entries]) => ({ tag, entries }));
-
-        if (groupedContext.length === 0 && memoryEntries.length > 0) {
-            groupedContext.push({
-                tag: 'untagged',
-                entries: memoryEntries
-            });
-        }
+            return tags.map(tag => `<span class="full-prompt-memory-tag">${this.escapeHtml(tag)}</span>`).join('');
+        };
+        const renderMemoryItem = (entry) => {
+            const m = entry.memory;
+            const content = m.fullContent || m.displayContent || m.content || m.summary || '';
+            return `
+                <div class="full-prompt-memory-item" data-memory-index="${entry.idx}">
+                    <div class="full-prompt-memory-title-row">
+                        <div class="full-prompt-memory-title-text">${this.escapeHtml(m.title || 'Untitled')}</div>
+                        <div class="full-prompt-memory-actions">
+                            <button type="button" class="full-prompt-memory-toggle-btn" aria-expanded="false">
+                                Expand
+                            </button>
+                            <button class="full-prompt-delete-btn" data-memory-index="${entry.idx}" type="button" title="Delete this context item">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="full-prompt-memory-tags">${renderMemoryTags(entry)}</div>
+                    <div class="full-prompt-memory-content is-collapsed">${this.escapeHtml(content || 'No preview available')}</div>
+                </div>
+            `;
+        };
+        const renderMemoryViewHtml = () => {
+            const entries = buildMemoryEntries(getCurrentMemories());
+            if (memoryViewMode === 'grouped') {
+                return buildGroupedContext(entries).map((group) => `
+                    <div class="full-prompt-tag-group">
+                        <div class="full-prompt-tag-group-title">#${this.escapeHtml(group.tag)}</div>
+                        <div class="full-prompt-view-group-list">
+                            ${group.entries.map((entry) => renderMemoryItem(entry)).join('')}
+                        </div>
+                    </div>
+                `).join('');
+            }
+            return `
+                <div class="full-prompt-list-view">
+                    ${entries.map((entry) => renderMemoryItem(entry)).join('')}
+                </div>
+            `;
+        };
 
         const buildDefaultPayload = (queryText) => {
-            const memoryContent = memories.map((m, idx) => {
+            const memoryContent = getCurrentMemories().map((m, idx) => {
                 const content = m.fullContent || m.displayContent || m.content || m.summary || '';
                 return `--- Retrieved Context ${idx + 1}: ${m.title || 'Untitled'} ---\n${content}`;
             }).join('\n\n');
@@ -2325,65 +2351,22 @@ export default class ChatInput {
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
                             </svg>
-                            Selected Context (${memories.length} item${memories.length === 1 ? '' : 's'})
+                            Selected Context <span class="full-prompt-count-wrap">(<span id="full-prompt-context-count">${getCurrentMemories().length} item${getCurrentMemories().length === 1 ? '' : 's'}</span>)</span>
                             <span class="full-prompt-edit-hint">editable list</span>
                         </div>
-                        <div class="full-prompt-memory-search-row">
-                            <input
-                                type="text"
-                                id="full-prompt-memory-search"
-                                class="full-prompt-memory-search-input"
-                                placeholder="Search and add memory context..."
-                                value=""
-                            />
-                            <button
-                                type="button"
-                                id="full-prompt-memory-search-btn"
-                                class="full-prompt-memory-search-btn"
-                            >
-                                Search
-                            </button>
-                        </div>
-                        <div id="full-prompt-memory-search-results" class="full-prompt-memory-search-results hidden"></div>
                         <div class="full-prompt-tag-caption">Related Tags Retrieved</div>
-                        <div class="full-prompt-tags">
+                        <div class="full-prompt-tags" id="full-prompt-context-tags">
                             ${contextTags.length > 0
                                 ? contextTags.map(tag => `<span class="full-prompt-tag">${this.escapeHtml(tag)}</span>`).join('')
                                 : '<span class="full-prompt-tags-empty">No context tags</span>'
                             }
                         </div>
-                        <div class="full-prompt-tag-groups">
-                            ${groupedContext.map((group) => `
-                                <div class="full-prompt-tag-group">
-                                    <div class="full-prompt-tag-group-title">#${this.escapeHtml(group.tag)}</div>
-                                    ${group.entries.map((entry) => {
-                                        const m = entry.memory;
-                                        const content = m.fullContent || m.displayContent || m.content || m.summary || '';
-                                        return `
-                                            <div class="full-prompt-memory-item collapsible collapsed" data-memory-index="${entry.idx}">
-                                                <div class="full-prompt-memory-title collapsible-header">
-                                                    <svg class="collapsible-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
-                                                        <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
-                                                    </svg>
-                                                    <span>${entry.idx + 1}. ${this.escapeHtml(m.title || 'Untitled')}</span>
-                                                    <button class="full-prompt-delete-btn" data-memory-index="${entry.idx}" type="button" title="Delete this context item">
-                                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
-                                                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
-                                                        </svg>
-                                                    </button>
-                                                </div>
-                                                <div class="full-prompt-memory-tags">
-                                                    ${(entry.relevantTags.length > 0 ? entry.relevantTags : entry.tags).length > 0
-                                                        ? (entry.relevantTags.length > 0 ? entry.relevantTags : entry.tags).map(tag => `<span class="full-prompt-memory-tag">${this.escapeHtml(tag)}</span>`).join('')
-                                                        : '<span class="full-prompt-memory-tags-empty">No tags</span>'
-                                                    }
-                                                </div>
-                                                <div class="full-prompt-memory-content collapsible-content">${this.escapeHtml(content)}</div>
-                                            </div>
-                                        `;
-                                    }).join('')}
-                                </div>
-                            `).join('')}
+                        <div class="full-prompt-view-switch" role="tablist" aria-label="Memory panel view">
+                            <button type="button" class="full-prompt-view-btn ${memoryViewMode === 'grouped' ? 'active' : ''}" data-memory-view="grouped" role="tab" aria-selected="${memoryViewMode === 'grouped' ? 'true' : 'false'}">Group by tag</button>
+                            <button type="button" class="full-prompt-view-btn ${memoryViewMode === 'list' ? 'active' : ''}" data-memory-view="list" role="tab" aria-selected="${memoryViewMode === 'list' ? 'true' : 'false'}">List</button>
+                        </div>
+                        <div class="full-prompt-memory-view-panel">
+                            ${renderMemoryViewHtml()}
                         </div>
                     </div>
                     <div class="full-prompt-section">
@@ -2448,58 +2431,6 @@ export default class ChatInput {
 
         document.body.appendChild(modal);
 
-        // Add collapsible functionality for memory items
-        modal.querySelectorAll('.collapsible-header').forEach(header => {
-            header.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const item = header.closest('.collapsible');
-                item.classList.toggle('collapsed');
-            });
-        });
-
-        // Add delete button handlers for memory items
-        modal.querySelectorAll('.full-prompt-delete-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const memoryIndex = parseInt(btn.dataset.memoryIndex);
-                if (!Number.isNaN(memoryIndex)) {
-                    // Remove from pendingMemoryContext
-                    if (this.app.pendingMemoryContext && this.app.pendingMemoryContext.memories) {
-                        if (rawOverrideEnabled && rawOverrideDraft.trim()) {
-                            const confirmed = window.confirm('Deleting context will discard raw payload override. Continue?');
-                            if (!confirmed) return;
-                            rawOverrideEnabled = false;
-                            rawOverrideDraft = '';
-                            this.app._lastApiContent = null;
-                        }
-                        this.app.pendingMemoryContext.memories.splice(memoryIndex, 1);
-                        this.app.pendingMemoryContext.sessionIds.splice(memoryIndex, 1);
-                        
-                        // If no memories left, clear the context and close modal
-                        if (this.app.pendingMemoryContext.memories.length === 0) {
-                            this.app.pendingMemoryContext = null;
-                            this.renderMemoryChips([]);
-                            closeModal();
-                        } else {
-                            // Re-render chips to reflect deletion immediately.
-                            this.renderMemoryChips(this.app.pendingMemoryContext.memories);
-                            // Rebuild the modal with updated memories
-                            const userQueryTextarea = modal.querySelector('#full-prompt-user-query');
-                            const rawTextarea = modal.querySelector('#full-prompt-raw-textarea');
-                            if (userQueryTextarea) userQueryDraft = userQueryTextarea.value;
-                            if (rawTextarea) rawOverrideDraft = rawTextarea.value;
-                            closeModal();
-                            this.showFullPromptPreview({
-                                userQuery: userQueryDraft,
-                                rawOverrideEnabled,
-                                rawOverrideDraft
-                            });
-                        }
-                    }
-                }
-            });
-        });
-
         // Event listeners
         const closeBtn = modal.querySelector('#close-prompt-preview-input');
         const copyBtn = modal.querySelector('#copy-full-prompt-input');
@@ -2508,31 +2439,107 @@ export default class ChatInput {
         const finalPreviewEl = modal.querySelector('#full-prompt-final-preview');
         const rawToggle = modal.querySelector('#full-prompt-raw-toggle');
         const rawTextarea = modal.querySelector('#full-prompt-raw-textarea');
-        const memorySearchInput = modal.querySelector('#full-prompt-memory-search');
-        const memorySearchBtn = modal.querySelector('#full-prompt-memory-search-btn');
-        const memorySearchResults = modal.querySelector('#full-prompt-memory-search-results');
         const advancedWarning = modal.querySelector('#full-prompt-advanced-warning');
+        const memoryViewPanelEl = modal.querySelector('.full-prompt-memory-view-panel');
+        const memoryViewButtons = () => Array.from(modal.querySelectorAll('.full-prompt-view-btn'));
         const deleteButtons = () => Array.from(modal.querySelectorAll('.full-prompt-delete-btn'));
-        const memoryHeaders = () => Array.from(modal.querySelectorAll('.collapsible-header'));
+        const memoryToggleButtons = () => Array.from(modal.querySelectorAll('.full-prompt-memory-toggle-btn'));
         let hasEditedRawDraft = !!(rawOverrideDraft && rawOverrideDraft.trim().length > 0);
-        let memorySearchResultsData = [];
         const hasRawDiffFromStructured = () => rawOverrideDraft.trim() && rawOverrideDraft.trim() !== buildDefaultPayload(userQueryDraft).trim();
-
-        const getCurrentModalDraft = () => ({
-            userQuery: userQueryTextarea?.value ?? userQueryDraft,
-            rawOverrideEnabled,
-            rawOverrideDraft: rawTextarea?.value ?? rawOverrideDraft
-        });
-
-        const rerenderModal = () => {
-            const draftState = getCurrentModalDraft();
-            closeModal();
-            this.showFullPromptPreview(draftState);
-        };
 
         const updateFinalPreview = () => {
             if (!finalPreviewEl) return;
             finalPreviewEl.textContent = getEffectivePayload();
+        };
+        const updateMemoryViewButtonsUI = () => {
+            memoryViewButtons().forEach((btn) => {
+                const isActive = btn.dataset.memoryView === memoryViewMode;
+                btn.classList.toggle('active', isActive);
+                btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+            });
+        };
+        const bindMemoryItemHandlers = () => {
+            deleteButtons().forEach((btn) => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const memoryIndex = Number.parseInt(btn.dataset.memoryIndex, 10);
+                    if (Number.isNaN(memoryIndex)) {
+                        return;
+                    }
+                    if (!this.app.pendingMemoryContext || !this.app.pendingMemoryContext.memories) {
+                        return;
+                    }
+                    if (rawOverrideEnabled && rawOverrideDraft.trim()) {
+                        const confirmed = window.confirm('Deleting context will discard raw payload override. Continue?');
+                        if (!confirmed) return;
+                        rawOverrideEnabled = false;
+                        rawOverrideDraft = '';
+                        this.app._lastApiContent = null;
+                        if (rawToggle) {
+                            rawToggle.checked = false;
+                        }
+                    }
+                    this.app.pendingMemoryContext.memories.splice(memoryIndex, 1);
+                    this.app.pendingMemoryContext.sessionIds.splice(memoryIndex, 1);
+
+                    if (this.app.pendingMemoryContext.memories.length === 0) {
+                        this.app.pendingMemoryContext = null;
+                        this.renderMemoryChips([]);
+                        closeModal();
+                        return;
+                    }
+
+                    this.renderMemoryChips(this.app.pendingMemoryContext.memories);
+                    updateContextSummaryUI();
+                    renderMemoryViewPanel();
+                    updateRawModeUI();
+                    updateFinalPreview();
+                });
+            });
+
+            memoryToggleButtons().forEach((btn) => {
+                btn.addEventListener('click', () => {
+                    const memoryItem = btn.closest('.full-prompt-memory-item');
+                    const memoryContent = memoryItem?.querySelector('.full-prompt-memory-content');
+                    if (!memoryContent) {
+                        return;
+                    }
+                    const isCollapsed = memoryContent.classList.toggle('is-collapsed');
+                    btn.textContent = isCollapsed ? 'Expand' : 'Collapse';
+                    btn.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
+                });
+            });
+        };
+        const renderMemoryViewPanel = () => {
+            if (!memoryViewPanelEl) return;
+            memoryViewPanelEl.innerHTML = renderMemoryViewHtml();
+            bindMemoryItemHandlers();
+            updateMemoryViewButtonsUI();
+        };
+        const getCurrentContextTags = () => {
+            const currentMemories = this.app.pendingMemoryContext?.memories || [];
+            const tags = currentMemories.flatMap((memory) => (
+                Array.isArray(memory?.relevantTags) ? memory.relevantTags : []
+            ));
+            return Array.from(new Set(
+                tags
+                    .filter(tag => typeof tag === 'string' && tag.trim().length > 0)
+                    .map(tag => tag.trim().toLowerCase())
+            ));
+        };
+        const updateContextSummaryUI = () => {
+            const currentCount = this.app.pendingMemoryContext?.memories?.length || 0;
+            const countEl = modal.querySelector('#full-prompt-context-count');
+            if (countEl) {
+                countEl.textContent = `${currentCount} item${currentCount === 1 ? '' : 's'}`;
+            }
+            const tagsEl = modal.querySelector('#full-prompt-context-tags');
+            if (tagsEl) {
+                const tags = getCurrentContextTags();
+                tagsEl.innerHTML = tags.length > 0
+                    ? tags.map(tag => `<span class="full-prompt-tag">${this.escapeHtml(tag)}</span>`).join('')
+                    : '<span class="full-prompt-tags-empty">No context tags</span>';
+            }
         };
         const updateRawModeUI = () => {
             if (!rawTextarea) return;
@@ -2552,192 +2559,16 @@ export default class ChatInput {
                 btn.classList.toggle('opacity-40', rawOverrideEnabled);
                 btn.classList.toggle('pointer-events-none', rawOverrideEnabled);
             });
-            memoryHeaders().forEach((header) => {
-                header.classList.toggle('pointer-events-none', rawOverrideEnabled);
-                header.classList.toggle('opacity-70', rawOverrideEnabled);
+            memoryViewButtons().forEach((btn) => {
+                btn.disabled = rawOverrideEnabled;
+                btn.classList.toggle('opacity-50', rawOverrideEnabled);
+                btn.classList.toggle('pointer-events-none', rawOverrideEnabled);
             });
-            if (memorySearchInput) {
-                memorySearchInput.disabled = rawOverrideEnabled;
-            }
-            if (memorySearchBtn) {
-                memorySearchBtn.disabled = rawOverrideEnabled;
-            }
+            memoryToggleButtons().forEach((btn) => {
+                btn.disabled = rawOverrideEnabled;
+                btn.classList.toggle('opacity-50', rawOverrideEnabled);
+            });
             updateFinalPreview();
-        };
-
-        const renderMemorySearchResults = (state = 'idle') => {
-            if (!memorySearchResults) return;
-            if (rawOverrideEnabled || state === 'idle') {
-                memorySearchResults.classList.add('hidden');
-                memorySearchResults.innerHTML = '';
-                return;
-            }
-            memorySearchResults.classList.remove('hidden');
-            if (state === 'loading') {
-                memorySearchResults.innerHTML = `<div class="full-prompt-memory-search-status">Searching memory context...</div>`;
-                return;
-            }
-            if (state === 'error') {
-                memorySearchResults.innerHTML = `<div class="full-prompt-memory-search-status">Unable to search memory context</div>`;
-                return;
-            }
-            if (!memorySearchResultsData.length) {
-                memorySearchResults.innerHTML = `<div class="full-prompt-memory-search-status">No additional memory context found</div>`;
-                return;
-            }
-            memorySearchResults.innerHTML = memorySearchResultsData.map((memory, index) => {
-                const title = this.escapeHtml(memory.title || 'Untitled');
-                const content = this.escapeHtml((memory.summary || memory.content || memory.displayContent || '').slice(0, 180));
-                return `
-                    <div class="full-prompt-memory-search-item">
-                        <div class="full-prompt-memory-search-meta">
-                            <div class="full-prompt-memory-search-title">${title}</div>
-                            <div class="full-prompt-memory-search-snippet">${content}</div>
-                        </div>
-                        <button type="button" class="full-prompt-memory-search-add-btn" data-search-index="${index}">Add</button>
-                    </div>
-                `;
-            }).join('');
-            memorySearchResults.querySelectorAll('.full-prompt-memory-search-add-btn').forEach((btn) => {
-                btn.addEventListener('click', () => {
-                    const idx = Number.parseInt(btn.dataset.searchIndex, 10);
-                    if (Number.isNaN(idx)) return;
-                    const memory = memorySearchResultsData[idx];
-                    if (!memory) return;
-                    const existing = this.app.pendingMemoryContext?.memories || [];
-                    const limits = this.app.memoryLimits || {};
-                    const maxItems = Number.isFinite(limits.maxItems) ? limits.maxItems : 8;
-                    if (existing.length >= maxItems) {
-                        this.app.showToast?.(`You can select up to ${maxItems} context items`, 'info');
-                        return;
-                    }
-                    const existingIds = new Set(existing.map((m) => m.id || m.session_id || m.sessionId));
-                    const id = memory.id || memory.session_id || memory.sessionId;
-                    if (id && existingIds.has(id)) {
-                        this.app.showToast?.('Context item is already selected', 'info');
-                        return;
-                    }
-                    const nextMemories = [...existing, memory];
-                    const tokenEstimate = this.app.estimateMemoryContextTokens?.(nextMemories) || 0;
-                    const maxTokens = Number.isFinite(limits.maxEstimatedTokens) ? limits.maxEstimatedTokens : 3500;
-                    if (tokenEstimate > maxTokens) {
-                        this.app.showToast?.('Selected memory context is too large. Remove some items and try again.', 'error');
-                        return;
-                    }
-                    if (!this.app.pendingMemoryContext) {
-                        this.app.pendingMemoryContext = {
-                            memories: [],
-                            sessionIds: [],
-                            timestamp: Date.now()
-                        };
-                    }
-                    this.app.pendingMemoryContext.memories.push(memory);
-                    const sid = memory.session_id || memory.sessionId;
-                    if (sid) {
-                        this.app.pendingMemoryContext.sessionIds.push(sid);
-                    }
-                    this.app.pendingMemoryContext.timestamp = Date.now();
-                    this.app.storePendingMemoryContextForSession?.();
-                    this.renderMemoryChips(this.app.pendingMemoryContext.memories);
-                    this.app.showToast?.('Context item added', 'success');
-                    rerenderModal();
-                });
-            });
-        };
-
-        const runMemorySearch = async () => {
-            if (rawOverrideEnabled) return;
-            const query = memorySearchInput?.value?.trim();
-            if (!query) {
-                renderMemorySearchResults('idle');
-                return;
-            }
-            renderMemorySearchResults('loading');
-            try {
-                const queryLower = query.toLowerCase();
-                const queryTokens = Array.from(new Set(
-                    queryLower
-                        .split(/\s+/)
-                        .map((token) => token.trim())
-                        .filter((token) => token.length > 0)
-                ));
-                const selectedIds = new Set((this.app.pendingMemoryContext?.memories || []).map((m) => m.id || m.session_id || m.sessionId));
-                const sessions = await chatDB.getAllSessions();
-                const sessionsList = Array.isArray(sessions) ? sessions : [];
-
-                const scored = sessionsList.map((session) => {
-                    const title = String(session?.title || '');
-                    const summary = String(session?.summary || '');
-                    const keywords = Array.isArray(session?.keywords) ? session.keywords.map((k) => String(k).toLowerCase()) : [];
-                    const haystack = `${title} ${summary} ${keywords.join(' ')}`.toLowerCase();
-                    let score = 0;
-                    if (haystack.includes(queryLower)) score += 4;
-                    queryTokens.forEach((token) => {
-                        if (haystack.includes(token)) score += 1;
-                    });
-                    return { session, score };
-                }).filter((entry) => entry.score > 0);
-
-                scored.sort((a, b) => {
-                    if (b.score !== a.score) return b.score - a.score;
-                    const aTime = a.session?.updatedAt || a.session?.createdAt || 0;
-                    const bTime = b.session?.updatedAt || b.session?.createdAt || 0;
-                    return bTime - aTime;
-                });
-
-                const topSessions = scored.slice(0, 8);
-                const memoriesFound = [];
-                for (const entry of topSessions) {
-                    const session = entry.session;
-                    if (!session?.id) continue;
-                    const memoryId = `session:${session.id}`;
-                    if (selectedIds.has(memoryId) || selectedIds.has(session.id)) continue;
-                    const messages = await chatDB.getSessionMessages(session.id);
-                    const conversationText = (messages || [])
-                        .map((message) => {
-                            const role = message?.role === 'assistant' ? 'Assistant' : 'User';
-                            return `${role}: ${String(message?.content || '').trim()}`;
-                        })
-                        .filter((line) => line.length > 0)
-                        .join('\n')
-                        .slice(0, 8000);
-                    const displayText = conversationText.length > 300
-                        ? `${conversationText.slice(0, 300)}...`
-                        : conversationText;
-                    const summary = session.summary
-                        || displayText
-                        || 'No summary available';
-                    const keywords = Array.isArray(session.keywords) ? session.keywords.map((k) => String(k).toLowerCase()) : [];
-                    const relevantTags = keywords.filter((tag) => queryTokens.some((token) => tag.includes(token)));
-                    memoriesFound.push({
-                        id: memoryId,
-                        sessionId: session.id,
-                        session_id: session.id,
-                        title: session.summary || session.title || 'Untitled Session',
-                        summary,
-                        content: displayText,
-                        displayContent: displayText,
-                        fullContent: conversationText,
-                        keywords,
-                        relevantTags,
-                        primaryRelevantTag: relevantTags[0] || keywords[0] || null,
-                        timestamp: session.updatedAt || session.createdAt || Date.now(),
-                        sessionTitle: session.title || session.summary || 'Untitled Session'
-                    });
-                }
-
-                memorySearchResultsData = memoriesFound
-                    .filter((memory) => {
-                        const id = memory.id || memory.session_id || memory.sessionId;
-                        return !id || !selectedIds.has(id);
-                    })
-                    .slice(0, 6);
-                renderMemorySearchResults('done');
-            } catch (error) {
-                console.error('Failed to keyword-search memory context from full prompt panel:', error);
-                memorySearchResultsData = [];
-                renderMemorySearchResults('error');
-            }
         };
 
         let isClosed = false;
@@ -2812,16 +2643,18 @@ export default class ChatInput {
             hasEditedRawDraft = true;
             updateFinalPreview();
         });
-        memorySearchBtn?.addEventListener('click', () => {
-            runMemorySearch();
+        memoryViewButtons().forEach((btn) => {
+            btn.addEventListener('click', () => {
+                if (rawOverrideEnabled) return;
+                const nextView = btn.dataset.memoryView;
+                if (nextView !== 'grouped' && nextView !== 'list') return;
+                if (nextView === memoryViewMode) return;
+                memoryViewMode = nextView;
+                this.memoryPanelViewMode = memoryViewMode;
+                renderMemoryViewPanel();
+                updateRawModeUI();
+            });
         });
-        memorySearchInput?.addEventListener('keydown', (event) => {
-            if (event.key === 'Enter') {
-                event.preventDefault();
-                runMemorySearch();
-            }
-        });
-
         useBtn.addEventListener('click', () => {
             if (!userQueryTextarea) return;
             userQueryDraft = userQueryTextarea.value;
@@ -2837,6 +2670,8 @@ export default class ChatInput {
             closeModal();
         });
 
+        bindMemoryItemHandlers();
+        updateMemoryViewButtonsUI();
         updateRawModeUI();
         updateFinalPreview();
         document.addEventListener('keydown', handleKeydown);
