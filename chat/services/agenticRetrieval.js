@@ -47,7 +47,7 @@ class AgenticRetrieval {
     /**
      * Retrieve relevant memory context for a user query.
      * @param {string} query — the user's message text
-     * @returns {Promise<{content: string, paths: string[]}|null>}
+     * @returns {Promise<{files: {path: string, content: string}[], paths: string[]}|null>}
      */
     async retrieveForQuery(query) {
         if (!query || !query.trim()) return null;
@@ -77,7 +77,7 @@ class AgenticRetrieval {
             // Load the selected files (budget-capped)
             const MAX_TOTAL_CHARS = 4000;
             const MAX_PER_FILE_CHARS = 1500;
-            const fileContents = [];
+            const files = [];
             let total = 0;
             for (const path of paths.slice(0, MAX_FILES_TO_LOAD)) {
                 const raw = await memoryFileSystem.read(path);
@@ -85,18 +85,16 @@ class AgenticRetrieval {
                 const content = raw.length > MAX_PER_FILE_CHARS
                     ? raw.slice(0, MAX_PER_FILE_CHARS) + '...(truncated)'
                     : raw;
-                const entry = `### ${path}\n${content}`;
-                if (total + entry.length > MAX_TOTAL_CHARS) break;
-                fileContents.push(entry);
-                total += entry.length;
+                if (total + content.length > MAX_TOTAL_CHARS) break;
+                files.push({ path, content });
+                total += content.length;
             }
 
-            if (fileContents.length === 0) return null;
+            if (files.length === 0) return null;
 
-            const assembled = fileContents.join('\n\n');
-            console.log(`[AgenticRetrieval] Retrieved ${fileContents.length} memory files for query`);
+            console.log(`[AgenticRetrieval] Retrieved ${files.length} memory files for query`);
 
-            return { content: assembled, paths };
+            return { files, paths };
 
         } catch (error) {
             console.error('[AgenticRetrieval] Error:', error);

@@ -3603,12 +3603,6 @@ class ChatApp {
                 const mediaContent = [];
                 const shouldOverrideLastUserText = isLastUserMessage && !!apiOverrideContent;
 
-                // Inject agentic memory context if available (for last user message only)
-                if (isLastUserMessage && this._pendingAgenticMemory) {
-                    textContent = `--- Retrieved Memory Context ---\n${this._pendingAgenticMemory}\n---\n\n${textContent}`;
-                    this._pendingAgenticMemory = null;
-                }
-
                 // Add memory context if available
                 if (!shouldOverrideLastUserText && msg.memoryContext && msg.memoryContext.memories && msg.memoryContext.memories.length > 0) {
                     console.log('[Memory Context] Adding to message:', {
@@ -4120,7 +4114,21 @@ class ChatApp {
             try {
                 const { default: agenticRetrieval } = await import('./services/agenticRetrieval.js');
                 const result = await agenticRetrieval.retrieveForQuery(content);
-                if (result?.content) this._pendingAgenticMemory = result.content;
+                if (result?.files?.length > 0) {
+                    this.pendingMemoryContext = {
+                        sessionIds: result.files.map(f => `agentic:${f.path}`),
+                        memories: result.files.map(f => ({
+                            title: f.path,
+                            content: f.content.substring(0, 200),
+                            fullContent: f.content,
+                            summary: f.content.substring(0, 200),
+                            keywords: [],
+                            relevantTags: [],
+                            isAgenticMemory: true
+                        })),
+                        timestamp: Date.now()
+                    };
+                }
             } catch (err) {
                 console.warn('[App] Agentic retrieval skipped:', err);
             }
