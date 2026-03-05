@@ -10,6 +10,15 @@ import { localInferenceService } from '../../local_inference/index.js';
 import { chatDB } from '../db.js';
 import { TINFOIL_API_KEY } from '../config.js';
 import ticketClient from './ticketClient.js';
+import {
+    compactBullets,
+    ensureBulletMetadata,
+    inferTopicFromPath,
+    parseMemoryBullets,
+    renderCompactedMemoryDocument,
+    todayIsoDate
+} from './memoryBulletUtils.js';
+import memoryBulletIndex from './memoryBulletIndex.js';
 
 const TINFOIL_BASE_URL = 'https://inference.tinfoil.sh';
 const TINFOIL_BACKEND_ID = 'tinfoil';
@@ -17,14 +26,15 @@ const TINFOIL_MODEL = 'gpt-oss-120b';
 const TINFOIL_KEY_TICKETS_REQUIRED = 2;
 const MAX_CONVERSATION_CHARS = 8000;
 
-const EXTRACTION_PROMPT = `You are a memory manager. Given a conversation and the current memory index, decide if a **concrete, reusable fact** should be saved.
+const EXTRACTION_PROMPT = `You are a memory manager. Given a conversation and the current memory index, decide if a **concrete, reusable fact** should be saved to memory.
 
-Only save information that would be useful to recall in a **future** conversation — personal facts, preferences, project context, interests, or recurring topics. Return "none" if the conversation doesn't reveal anything new worth remembering.
+Only save information that would be useful to recall in a **future** conversation — personal facts, preferences, project context, interests, constraints, or recurring topics. Return "none" if the conversation doesn't reveal anything new worth remembering.
 
 Do NOT save:
 - Information already present in existing files (check the file contents carefully — do not duplicate facts)
 - Vague or transient details (e.g. "help me with this", "thanks")
 - The assistant's own reasoning or suggestions — only facts grounded in what the user said or asked about
+- Sensitive secrets (passwords, auth tokens, private keys, full payment data, government IDs)
 
 Current memory index:
 \`\`\`
@@ -61,14 +71,21 @@ How to decide:
 
 Rules:
 - Default to "none" if nothing new is worth remembering.
-- Prefer "append" to existing files over creating new ones. One file per topic.
+- Prefer "append" to existing files over creating new ones. Use targeted "update" when replacing stale/conflicting facts.
+- One file per topic.
 - Use "update" if a fact in an existing file is now stale or contradicted (e.g. user changed jobs, moved cities). The updated content should replace the outdated memory block, not duplicate it.
 - Use "create" for an entirely new topic that doesn't fit any existing file (e.g. a brand-new project, a distinct area of interest).
-- "title": a concise label for this memory item (e.g. "Background", "Career Interests"). Do NOT include markdown heading markers like ## in the title.
-- "content": bullet points with raw facts only. Do NOT include a heading — the title is separate. No filler commentary like "this helps tailor future conversations" or "noted for future reference".
-  Good: {"title": "Background", "content": "- Software engineer at Acme Corp\\n- Hobbies: hiking, cooking"}
-  Bad: {"title": "User Background", "content": "## Background\\n\\nThese details can help tailor future recommendations..."}
-- For "none", path, title, and content can be empty strings.`;
+- Preferred namespaces (not mandatory): personal/, preferences/, projects/, temporary/.
+- If none fit well, create a clear new folder name for the topic instead of forcing a bad fit.
+- If new information contradicts existing memory, use "update" and replace the stale/conflicting fact.
+- Time-sensitive facts must include date context in content (e.g. "As of 2026-03-05: ...").
+- Content format: markdown headers + concise bullet points with raw facts only.
+- Every bullet must include metadata: topic, updated_at, and optional expires_at.
+- Bullet format: "- Fact text | topic=topic-name | updated_at=YYYY-MM-DD | expires_at=YYYY-MM-DD(optional)"
+- Avoid filler commentary like "this helps tailor future conversations" or "noted for future reference".
+- Good: "## Active\\n### Personal\\n- Attends Stanford University | topic=personal | updated_at=2026-03-05"
+- Bad: "# User Background\\n\\nThese details can help tailor future recommendations..."
+- For "none", path and content can be empty strings.`;
 
 class MemoryExtractor {
     constructor() {
@@ -242,13 +259,14 @@ class MemoryExtractor {
             case 'create':
             case 'update':
                 await memoryFileSystem.write(path, wrapped);
+                await memoryFileSystem.write(path, this._normalizeGeneratedContent(content, path));
+                await memoryBulletIndex.refreshPath(path);
                 break;
             case 'append': {
                 const existing = await memoryFileSystem.read(path);
-                const newContent = existing
-                    ? existing + '\n\n' + wrapped
-                    : wrapped;
+                const newContent = this._mergeWithExisting(existing, content, path);
                 await memoryFileSystem.write(path, newContent);
+                await memoryBulletIndex.refreshPath(path);
                 break;
             }
             default:
@@ -260,6 +278,47 @@ class MemoryExtractor {
         const date = new Date().toISOString().split('T')[0];
         const sessionAttr = sessionId ? ` session=${sessionId}` : '';
         return `<!-- @memory created=${date}${sessionAttr} -->\n## ${title}\n${content}\n<!-- @/memory -->`;
+    }
+    
+    _normalizeGeneratedContent(content, path) {
+        const incomingBullets = parseMemoryBullets(content);
+        if (incomingBullets.length === 0) {
+            return content;
+        }
+
+        const defaultTopic = inferTopicFromPath(path);
+        const normalized = incomingBullets.map((bullet) =>
+            ensureBulletMetadata(bullet, { defaultTopic, updatedAt: todayIsoDate() })
+        );
+        const compacted = compactBullets(normalized, { defaultTopic, maxActivePerTopic: 1000 });
+        return renderCompactedMemoryDocument(compacted.active, compacted.archive);
+    }
+
+    _mergeWithExisting(existing, incoming, path) {
+        const existingText = String(existing || '');
+        const incomingText = String(incoming || '');
+        const defaultTopic = inferTopicFromPath(path);
+        const today = todayIsoDate();
+
+        const existingBullets = parseMemoryBullets(existingText)
+            .map((bullet) => ensureBulletMetadata(bullet, { defaultTopic, updatedAt: today }));
+        const incomingBullets = parseMemoryBullets(incomingText)
+            .map((bullet) => ensureBulletMetadata(bullet, { defaultTopic, updatedAt: today }));
+
+        if (incomingBullets.length === 0) {
+            return existingText
+                ? `${existingText}\n\n${incomingText}`
+                : incomingText;
+        }
+
+        if (existingBullets.length === 0) {
+            const compacted = compactBullets(incomingBullets, { defaultTopic, maxActivePerTopic: 1000 });
+            return renderCompactedMemoryDocument(compacted.active, compacted.archive);
+        }
+
+        const merged = [...existingBullets, ...incomingBullets];
+        const compacted = compactBullets(merged, { defaultTopic, maxActivePerTopic: 1000 });
+        return renderCompactedMemoryDocument(compacted.active, compacted.archive);
     }
 
     /**

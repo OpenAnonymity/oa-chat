@@ -32,7 +32,9 @@ import apiKeyStore from './services/apiKeyStore.js';
 import { generateUlid21 } from './services/ulid.js';
 import { messageMemoryContext } from './services/messageMemoryContext.js';
 import memoryExtractor from './services/memoryExtractor.js';
+import memoryCompactor from './services/memoryCompactor.js';
 import memoryFileSystem from './services/memoryFileSystem.js';
+import memoryBulletIndex from './services/memoryBulletIndex.js';
 import MemoryEditor from './components/MemoryEditor.js';
 import { chatDB } from './db.js';
 
@@ -1470,6 +1472,10 @@ class ChatApp {
             // Initialize agentic memory filesystem (non-blocking)
             memoryFileSystem.init().catch((error) => {
                 console.warn('Memory filesystem init failed:', error);
+            });
+
+            memoryBulletIndex.init().catch((error) => {
+                console.warn('Memory bullet index init failed:', error);
             });
 
             try {
@@ -4883,6 +4889,9 @@ class ChatApp {
                 if (this.memoryEnabled) {
                     memoryExtractor.processSession(session.id).catch(err => {
                         console.warn('[App] Memory extraction failed:', err);
+                    });
+                    memoryCompactor.maybeCompact().catch(err => {
+                        console.warn('[App] Memory compaction failed:', err);
                     });
                 }
 
