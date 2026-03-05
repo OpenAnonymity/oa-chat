@@ -23,7 +23,7 @@ await store.upsert([
 ]);
 
 const results = await store.search(queryEmbedding, 5, {
-    filter: (metadata) => metadata?.sessionId === 's1'
+    where: { sessionId: 's1' }
 });
 ```
 
@@ -134,7 +134,12 @@ type VectorStoreOptions = {
 };
 
 type GetOptions = { includeVectors?: boolean };
-type SearchOptions = { filter?: (metadata: any, id: string) => boolean; minScore?: number; includeVectors?: boolean };
+type SearchOptions = {
+    filter?: ((metadata: any, id: string) => boolean) | Record<string, unknown>;
+    where?: Record<string, unknown>;
+    minScore?: number;
+    includeVectors?: boolean;
+};
 ```
 
 ### Item shape
@@ -180,9 +185,16 @@ type SearchResult = {
 ```
 
 Search options:
-- `filter(metadata, id)` → boolean
+- `filter(metadata, id)` → boolean (memory/indexeddb backends)
+- `where` (Orama) → native indexed filter, applied before top-k
+- object `filter` (Orama) → alias of `where`
 - `minScore` (number)
 - `includeVectors` (boolean)
+
+Notes:
+- For Orama, `where`/object `filter` uses native indexed filtering and is the fast path.
+- Function `filter(metadata, id)` remains supported as a compatibility fallback, but is slower.
+- For Orama-native filtering by session, `sessionId` is indexed and available via `where: { sessionId: ... }`.
 
 ### Error handling
 

@@ -3223,15 +3223,15 @@ html {
     position: absolute;
     top: -8px;
     left: -20px;
+    appearance: none;
     display: flex;
     align-items: center;
     gap: 4px;
     padding: 3px 8px;
     border-radius: 6px;
-    background-color: rgba(99, 102, 241, 0.2);
-    backdrop-filter: blur(4px);
-    color: rgba(99, 102, 241, 1);
-    border: 1px solid rgba(99, 102, 241, 0.3);
+    background-color: hsl(var(--color-muted) / 0.85);
+    color: hsl(var(--color-muted-foreground));
+    border: 1px solid hsl(var(--color-border));
     font-size: 0.7rem;
     font-weight: 500;
     z-index: 10;
@@ -3240,9 +3240,13 @@ html {
 }
 
 .memory-context-indicator:hover {
-    background-color: rgba(99, 102, 241, 0.3);
-    border-color: rgba(99, 102, 241, 0.4);
-    transform: scale(1.05);
+    background-color: hsl(var(--color-muted));
+    color: hsl(var(--color-foreground));
+}
+
+.memory-context-indicator:focus-visible {
+    outline: 2px solid hsl(var(--color-ring));
+    outline-offset: 2px;
 }
 
 .memory-context-indicator svg {
@@ -3256,43 +3260,94 @@ html {
 
 /* Memory context tooltip */
 .memory-context-tooltip {
-    position: absolute;
-    bottom: calc(100% + 8px);
-    left: 0;
-    max-width: 400px;
+    max-width: 340px;
     background-color: hsl(var(--color-popover));
     color: hsl(var(--color-popover-foreground));
     border: 1px solid hsl(var(--color-border));
-    border-radius: 8px;
-    padding: 12px;
+    border-radius: 10px;
+    padding: 0;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
     z-index: 100;
-    pointer-events: none;
-    opacity: 0;
-    animation: tooltipFadeIn 0.15s ease-out forwards;
+}
+
+.memory-context-tooltip-card {
+    padding: 0.65rem 0.75rem;
+}
+
+.memory-context-tooltip-header {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    margin-bottom: 0.45rem;
 }
 
 .memory-context-tooltip-title {
-    font-size: 0.75rem;
+    font-size: 0.72rem;
     font-weight: 600;
-    margin-bottom: 8px;
+    margin: 0;
     color: hsl(var(--color-foreground));
 }
 
-.memory-context-tooltip-content {
-    font-size: 0.7rem;
+.memory-context-tooltip-count {
+    margin-left: auto;
+    font-size: 0.68rem;
     color: hsl(var(--color-muted-foreground));
-    max-height: 200px;
+}
+
+.memory-context-tooltip-content {
+    max-height: 180px;
     overflow-y: auto;
 }
 
 .memory-context-tooltip-item {
-    padding: 4px 0;
-    border-bottom: 1px solid hsl(var(--color-border) / 0.5);
+    padding: 0.35rem 0;
+    border-bottom: 1px solid hsl(var(--color-border) / 0.55);
 }
 
 .memory-context-tooltip-item:last-child {
     border-bottom: none;
+}
+
+.memory-context-tooltip-item-title {
+    margin: 0;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: hsl(var(--color-foreground));
+    line-height: 1.3;
+}
+
+.memory-context-tooltip-item-body {
+    margin: 0.14rem 0 0;
+    font-size: 0.7rem;
+    line-height: 1.35;
+    color: hsl(var(--color-muted-foreground));
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.memory-context-tooltip-more {
+    margin: 0.35rem 0 0;
+    font-size: 0.69rem;
+    color: hsl(var(--color-muted-foreground));
+}
+
+.memory-context-open-btn {
+    width: 100%;
+    margin-top: 0.55rem;
+    border: 1px solid hsl(var(--color-border));
+    background: hsl(var(--color-muted) / 0.45);
+    color: hsl(var(--color-foreground));
+    border-radius: 7px;
+    padding: 0.34rem 0.5rem;
+    font-size: 0.72rem;
+    font-weight: 500;
+    transition: background-color 0.15s ease;
+}
+
+.memory-context-open-btn:hover {
+    background: hsl(var(--color-muted) / 0.7);
 }
 
 /* Full prompt preview modal */
@@ -3383,6 +3438,114 @@ html {
     gap: 0.5rem;
 }
 
+.full-prompt-section-subtle {
+    font-size: 0.75rem;
+    color: hsl(var(--color-muted-foreground));
+    margin-bottom: 0.5rem;
+}
+
+.full-prompt-memory-search-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.6rem;
+}
+
+.full-prompt-memory-search-input {
+    flex: 1;
+    min-width: 0;
+    background-color: hsl(var(--color-background));
+    border: 1px solid hsl(var(--color-border));
+    border-radius: 8px;
+    padding: 0.45rem 0.6rem;
+    font-size: 0.78rem;
+    color: hsl(var(--color-foreground));
+    outline: none;
+}
+
+.full-prompt-memory-search-input:focus {
+    border-color: hsl(var(--color-primary) / 0.55);
+}
+
+.full-prompt-memory-search-btn {
+    border: 1px solid hsl(var(--color-border));
+    background: hsl(var(--color-muted) / 0.35);
+    color: hsl(var(--color-foreground));
+    border-radius: 8px;
+    padding: 0.38rem 0.6rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.full-prompt-memory-search-btn:hover {
+    background: hsl(var(--color-muted) / 0.55);
+}
+
+.full-prompt-memory-search-results {
+    border: 1px solid hsl(var(--color-border) / 0.6);
+    background: hsl(var(--color-muted) / 0.12);
+    border-radius: 8px;
+    margin-bottom: 0.7rem;
+    max-height: 180px;
+    overflow-y: auto;
+    padding: 0.3rem;
+}
+
+.full-prompt-memory-search-status {
+    font-size: 0.75rem;
+    color: hsl(var(--color-muted-foreground));
+    padding: 0.45rem 0.5rem;
+}
+
+.full-prompt-memory-search-item {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.55rem;
+    border: 1px solid hsl(var(--color-border) / 0.45);
+    background: hsl(var(--color-background));
+    border-radius: 8px;
+    padding: 0.45rem 0.5rem;
+    margin-bottom: 0.35rem;
+}
+
+.full-prompt-memory-search-item:last-child {
+    margin-bottom: 0;
+}
+
+.full-prompt-memory-search-meta {
+    min-width: 0;
+    flex: 1;
+}
+
+.full-prompt-memory-search-title {
+    font-size: 0.76rem;
+    font-weight: 600;
+    color: hsl(var(--color-foreground));
+}
+
+.full-prompt-memory-search-snippet {
+    margin-top: 0.16rem;
+    font-size: 0.72rem;
+    color: hsl(var(--color-muted-foreground));
+    line-height: 1.35;
+}
+
+.full-prompt-memory-search-add-btn {
+    border: 1px solid hsl(var(--color-border));
+    background: hsl(var(--color-muted) / 0.3);
+    color: hsl(var(--color-foreground));
+    border-radius: 6px;
+    padding: 0.26rem 0.5rem;
+    font-size: 0.7rem;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.full-prompt-memory-search-add-btn:hover {
+    background: hsl(var(--color-muted) / 0.6);
+}
+
 .full-prompt-section-content {
     background-color: hsl(var(--color-muted) / 0.3);
     border: 1px solid hsl(var(--color-border) / 0.5);
@@ -3423,6 +3586,11 @@ html {
     background-color: hsl(var(--color-background));
 }
 
+.full-prompt-section-editable.full-prompt-structured-disabled {
+    background-color: hsl(var(--color-muted) / 0.2);
+    color: hsl(var(--color-muted-foreground));
+}
+
 .full-prompt-user-message-edit {
     min-height: 88px;
     max-height: 180px;
@@ -3443,6 +3611,17 @@ html {
 
 .full-prompt-raw-toggle-row input[type="checkbox"] {
     accent-color: hsl(var(--color-primary));
+}
+
+.full-prompt-advanced-warning {
+    border: 1px solid hsl(var(--color-amber-500, 38 92 50) / 0.35);
+    background: hsl(var(--color-amber-500, 38 92 50) / 0.08);
+    color: hsl(var(--color-foreground));
+    border-radius: 8px;
+    padding: 0.55rem 0.65rem;
+    font-size: 0.75rem;
+    line-height: 1.45;
+    margin-bottom: 0.6rem;
 }
 
 .full-prompt-raw-edit {
@@ -5260,7 +5439,8 @@ div:has(> #input-card.scrubber-preview-expanded) {
 
 .mention-item {
     display: flex;
-    align-items: center;
+    flex-direction: column;
+    align-items: flex-start;
     width: 100%;
     padding: 0.5rem 0.75rem;
     background: transparent;
@@ -5272,7 +5452,18 @@ div:has(> #input-card.scrubber-preview-expanded) {
     font-size: 0.875rem;
     color: hsl(var(--color-foreground));
     font-weight: 500;
-    white-space: nowrap;
+    white-space: normal;
+}
+
+.mention-item-title {
+    line-height: 1.2;
+}
+
+.mention-item-description {
+    font-size: 0.75rem;
+    font-weight: 400;
+    color: hsl(var(--color-muted-foreground));
+    margin-top: 0.15rem;
 }
 
 .mention-item:hover {
@@ -5288,8 +5479,8 @@ div:has(> #input-card.scrubber-preview-expanded) {
 /* Session highlight when memories are retrieved from it */
 .memory-retrieved-session {
     position: relative;
-    background-color: hsl(59 130 246 / 0.08); /* blue-600 with low opacity */
-    border-left: 3px solid hsl(59 130 246 / 0.5); /* blue-600 */
+    background-color: hsl(var(--color-accent-primary) / 0.08);
+    border-left: 3px solid hsl(var(--color-accent-primary) / 0.45);
     transition: all 200ms ease-out;
 }
 
@@ -5300,7 +5491,7 @@ div:has(> #input-card.scrubber-preview-expanded) {
     background: linear-gradient(
         90deg,
         transparent 0%,
-        hsl(59 130 246 / 0.05) 50%,
+        hsl(var(--color-accent-primary) / 0.05) 50%,
         transparent 100%
     );
     animation: memory-session-pulse 2s ease-in-out infinite;
@@ -5314,8 +5505,75 @@ div:has(> #input-card.scrubber-preview-expanded) {
 
 /* Session item hover state enhanced when highlighted */
 .memory-retrieved-session:hover {
-    background-color: hsl(59 130 246 / 0.15);
-    border-left-color: hsl(59 130 246 / 0.8);
+    background-color: hsl(var(--color-accent-primary) / 0.12);
+    border-left-color: hsl(var(--color-accent-primary) / 0.65);
+}
+
+/* Memory staging bar in input area */
+.memory-staging-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    border: 1px solid hsl(var(--color-border));
+    border-radius: 0.5rem;
+    padding: 0.3rem 0.45rem;
+    background: hsl(var(--color-background));
+}
+
+.memory-staging-bar-warning {
+    border-color: hsl(var(--color-border));
+}
+
+.memory-staging-main {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    flex-wrap: wrap;
+}
+
+.memory-staging-title {
+    font-size: 0.73rem;
+    font-weight: 500;
+    color: hsl(var(--color-foreground));
+}
+
+.memory-staging-count {
+    font-size: 0.7rem;
+    color: hsl(var(--color-muted-foreground));
+}
+
+.memory-staging-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.memory-staging-btn {
+    border: 1px solid transparent;
+    background: transparent;
+    color: hsl(var(--color-muted-foreground));
+    border-radius: 0.35rem;
+    padding: 0.12rem 0.34rem;
+    font-size: 0.7rem;
+    font-weight: 500;
+    transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.memory-staging-btn:hover {
+    color: hsl(var(--color-foreground));
+    background: hsl(var(--color-muted) / 0.65);
+    border-color: hsl(var(--color-border));
+}
+
+.memory-staging-btn-danger {
+    color: hsl(var(--color-muted-foreground));
+}
+
+.memory-send-summary {
+    margin-top: 0.3rem;
+    font-size: 0.7rem;
+    color: hsl(var(--color-muted-foreground));
 }
 
 /* Memory chips in input area */
@@ -5324,12 +5582,12 @@ div:has(> #input-card.scrubber-preview-expanded) {
     align-items: center;
     gap: 0.375rem;
     padding: 0.25rem 0.5rem;
-    background-color: hsl(var(--blue-500) / 0.15);
-    border: 1px solid hsl(var(--blue-500) / 0.3);
+    background-color: hsl(var(--color-muted) / 0.8);
+    border: 1px solid hsl(var(--color-border));
     border-radius: 0.375rem;
     font-size: 0.75rem;
     font-weight: 500;
-    color: hsl(var(--blue-600));
+    color: hsl(var(--color-foreground));
     cursor: default;
     transition: all 150ms ease;
     position: relative;
@@ -5337,19 +5595,19 @@ div:has(> #input-card.scrubber-preview-expanded) {
 }
 
 .dark .memory-chip {
-    background-color: hsl(var(--blue-600) / 0.2);
-    border-color: hsl(var(--blue-500) / 0.4);
-    color: hsl(var(--blue-500));
+    background-color: hsl(var(--color-muted) / 0.6);
+    border-color: hsl(var(--color-border));
+    color: hsl(var(--color-foreground));
 }
 
 .memory-chip:hover {
-    background-color: hsl(var(--blue-500) / 0.25);
-    border-color: hsl(var(--blue-500) / 0.5);
+    background-color: hsl(var(--color-muted));
+    border-color: hsl(var(--color-border));
 }
 
 .dark .memory-chip:hover {
-    background-color: hsl(var(--blue-600) / 0.3);
-    border-color: hsl(var(--blue-500) / 0.6);
+    background-color: hsl(var(--color-muted) / 0.75);
+    border-color: hsl(var(--color-border));
 }
 
 .memory-chip-text {
@@ -5372,22 +5630,22 @@ div:has(> #input-card.scrubber-preview-expanded) {
     border: none;
     cursor: pointer;
     padding: 0;
-    color: hsl(var(--blue-600));
+    color: hsl(var(--color-muted-foreground));
     transition: all 150ms ease;
 }
 
 .dark .memory-chip-remove {
-    color: hsl(var(--blue-500));
+    color: hsl(var(--color-muted-foreground));
 }
 
 .memory-chip-remove:hover {
-    background-color: hsl(var(--blue-500) / 0.3);
-    color: hsl(var(--blue-700));
+    background-color: hsl(var(--color-muted));
+    color: hsl(var(--color-foreground));
 }
 
 .dark .memory-chip-remove:hover {
-    background-color: hsl(var(--blue-500) / 0.4);
-    color: hsl(var(--blue-600));
+    background-color: hsl(var(--color-muted) / 0.8);
+    color: hsl(var(--color-foreground));
 }
 
 .memory-chip-remove svg {
