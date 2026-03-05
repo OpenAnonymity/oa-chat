@@ -39,7 +39,9 @@ import { chatDB } from './db.js';
 import sessionEmbedder from './services/sessionEmbedder.js';
 import keywordsGenerator from './services/keywordsGenerator.js';
 import memoryExtractor from './services/memoryExtractor.js';
+import memoryCompactor from './services/memoryCompactor.js';
 import memoryFileSystem from './services/memoryFileSystem.js';
+import memoryBulletIndex from './services/memoryBulletIndex.js';
 import MemoryEditor from './components/MemoryEditor.js';
 
 const DEFAULT_MODEL_NAME = inferenceService.getDefaultModelName();
@@ -1387,6 +1389,9 @@ class ChatApp {
         // Initialize agentic memory filesystem (non-blocking)
         memoryFileSystem.init().catch((error) => {
             console.warn('Memory filesystem init failed:', error);
+        });
+        memoryBulletIndex.init().catch((error) => {
+            console.warn('Memory bullet index init failed:', error);
         });
 
         await accountService.init();
@@ -4612,6 +4617,9 @@ class ChatApp {
                 // Trigger agentic memory extraction (non-blocking)
                 memoryExtractor.processSession(session.id).catch(err => {
                     console.warn('[App] Memory extraction failed:', err);
+                });
+                memoryCompactor.maybeCompact().catch(err => {
+                    console.warn('[App] Memory compaction failed:', err);
                 });
 
                 // Pre-cache scrubber restoration in background (if applicable)

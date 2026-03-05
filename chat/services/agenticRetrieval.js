@@ -9,12 +9,21 @@ import memoryFileSystem from './memoryFileSystem.js';
 import { localInferenceService } from '../../local_inference/index.js';
 import { TINFOIL_API_KEY } from '../config.js';
 import ticketClient from './ticketClient.js';
+import {
+    parseMemoryBullets,
+    renderMemoryBullet,
+    scoreMemoryBullet,
+    tokenizeQuery
+} from './memoryBulletUtils.js';
+import memoryBulletIndex from './memoryBulletIndex.js';
 
 const TINFOIL_BASE_URL = 'https://inference.tinfoil.sh';
 const TINFOIL_BACKEND_ID = 'tinfoil';
 const TINFOIL_MODEL = 'gpt-oss-120b';
 const TINFOIL_KEY_TICKETS_REQUIRED = 2;
 const MAX_FILES_TO_LOAD = 5;
+const MAX_TOTAL_CONTEXT_CHARS = 4000;
+const MAX_SNIPPETS = 18;
 
 const RETRIEVAL_PROMPT = `You are a memory retrieval system. Given a user's query and the index of their memory filesystem, decide which files (if any) contain relevant context.
 
@@ -74,27 +83,9 @@ class AgenticRetrieval {
 
             if (!paths || paths.length === 0) return null;
 
-            // Load the selected files (budget-capped)
-            const MAX_TOTAL_CHARS = 4000;
-            const MAX_PER_FILE_CHARS = 1500;
-            const fileContents = [];
-            let total = 0;
-            for (const path of paths.slice(0, MAX_FILES_TO_LOAD)) {
-                const raw = await memoryFileSystem.read(path);
-                if (!raw) continue;
-                const content = raw.length > MAX_PER_FILE_CHARS
-                    ? raw.slice(0, MAX_PER_FILE_CHARS) + '...(truncated)'
-                    : raw;
-                const entry = `### ${path}\n${content}`;
-                if (total + entry.length > MAX_TOTAL_CHARS) break;
-                fileContents.push(entry);
-                total += entry.length;
-            }
-
-            if (fileContents.length === 0) return null;
-
-            const assembled = fileContents.join('\n\n');
-            console.log(`[AgenticRetrieval] Retrieved ${fileContents.length} memory files for query`);
+            const assembled = await this._buildSnippetContext(paths.slice(0, MAX_FILES_TO_LOAD), query);
+            if (!assembled) return null;
+            console.log('[AgenticRetrieval] Retrieved snippet-level memory context');
 
             return { content: assembled, paths };
 
@@ -158,6 +149,99 @@ class AgenticRetrieval {
         }
 
         return [...allPaths].slice(0, MAX_FILES_TO_LOAD);
+    }
+
+    async _buildSnippetContext(paths, query) {
+        const queryTerms = tokenizeQuery(query);
+        const candidates = [];
+
+        await memoryBulletIndex.init();
+        const indexed = memoryBulletIndex.getBulletsForPaths(paths);
+
+        // Keep a safe fallback for first-run races.
+        if (indexed.length === 0) {
+            for (const path of paths) {
+                await memoryBulletIndex.refreshPath(path);
+            }
+        }
+
+        const indexedAfterRefresh = memoryBulletIndex.getBulletsForPaths(paths);
+        for (const item of indexedAfterRefresh) {
+            const score = scoreMemoryBullet(item.bullet, queryTerms);
+            candidates.push({
+                path: item.path,
+                score,
+                text: renderMemoryBullet(item.bullet),
+                updatedAt: item.bullet.updatedAt || '',
+                fileUpdatedAt: item.fileUpdatedAt || 0
+            });
+        }
+
+        // Legacy fallback if a path is still not indexable.
+        if (candidates.length === 0) {
+            for (const path of paths) {
+                const raw = await memoryFileSystem.read(path);
+                if (!raw) continue;
+                const bullets = parseMemoryBullets(raw);
+                if (bullets.length > 0) {
+                    for (const bullet of bullets) {
+                        const score = scoreMemoryBullet(bullet, queryTerms);
+                        candidates.push({ path, score, text: renderMemoryBullet(bullet), updatedAt: bullet.updatedAt || '' });
+                    }
+                    continue;
+                }
+                for (const snippet of this._extractLegacySnippets(raw, queryTerms)) {
+                    candidates.push({ path, score: snippet.score, text: `- ${snippet.text}`, updatedAt: '' });
+                }
+            }
+        }
+
+        if (candidates.length === 0) return null;
+
+        candidates.sort((a, b) => {
+            if (b.score !== a.score) return b.score - a.score;
+            return String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''));
+        });
+
+        const selected = candidates.slice(0, MAX_SNIPPETS);
+        const grouped = new Map();
+        for (const item of selected) {
+            const list = grouped.get(item.path) || [];
+            list.push(item.text);
+            grouped.set(item.path, list);
+        }
+
+        let total = 0;
+        const sections = [];
+        for (const [path, lines] of grouped.entries()) {
+            const section = `### ${path}\n${lines.join('\n')}`;
+            if (total + section.length > MAX_TOTAL_CONTEXT_CHARS) break;
+            sections.push(section);
+            total += section.length;
+        }
+
+        return sections.join('\n\n').trim();
+    }
+
+    _extractLegacySnippets(content, queryTerms) {
+        const lines = String(content || '')
+            .split('\n')
+            .map((line) => line.trim())
+            .filter(Boolean)
+            .filter((line) => !line.startsWith('#'));
+        if (lines.length === 0) return [];
+
+        const snippets = lines.map((line) => {
+            const lower = line.toLowerCase();
+            let score = 0;
+            for (const term of queryTerms) {
+                if (lower.includes(term)) score += 1;
+            }
+            return { text: line, score };
+        });
+
+        snippets.sort((a, b) => b.score - a.score);
+        return snippets.slice(0, 5);
     }
 
     async _isTrivialIndex(index) {
