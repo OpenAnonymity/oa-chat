@@ -1066,19 +1066,40 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
     // Use short model name for display (without provider prefix)
     const displayModelName = extractShortModelName(modelName);
+    const isPersonalAgent = typeof displayModelName === 'string' && displayModelName.trim().toLowerCase() === 'personal agent';
+    const personalAgentIcon = `
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" class="w-3.5 h-3.5 text-primary">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M18 6.75v3m-1.5-1.5h3" />
+        </svg>
+    `;
+    const assistantHeader = isPersonalAgent
+        ? `
+            <div class="${CLASSES.assistantHeader}">
+                <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow bg-muted">
+                    ${personalAgentIcon}
+                </div>
+                <span class="${CLASSES.assistantModelName}" style="font-size: 0.7rem;">personal agent</span>
+                <span class="${CLASSES.assistantTime}" style="font-size: 0.7rem;">${formatTime(message.timestamp)}</span>
+            </div>
+        `
+        : `
+            <div class="${CLASSES.assistantHeader}">
+                <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow ${bgClass}">
+                    ${iconData.html}
+                </div>
+                <span class="${CLASSES.assistantModelName}" style="font-size: 0.7rem;">${displayModelName}</span>
+                <span class="${CLASSES.assistantTime}" style="font-size: 0.7rem;">${formatTime(message.timestamp)}</span>
+                ${tokenDisplay}
+            </div>
+        `;
 
     // If message is pending (waiting for first chunk), show header with typing indicator
     if (message.streamingPending) {
         return `
             <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}"${getRawContentAttribute(message.content)}>
                 <div class="${CLASSES.assistantGroup}">
-                    <div class="${CLASSES.assistantHeader}">
-                        <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow ${bgClass}">
-                            ${iconData.html}
-                        </div>
-                        <span class="${CLASSES.assistantModelName}" style="font-size: 0.7rem;">${displayModelName}</span>
-                        <span class="${CLASSES.assistantTime}" style="font-size: 0.7rem;">${formatTime(message.timestamp)}</span>
-                    </div>
+                    ${assistantHeader}
                     <div class="flex gap-1 px-4 py-2">
                         <div class="w-2 h-2 bg-muted-foreground rounded-full animate-pulse"></div>
                         <div class="w-2 h-2 bg-muted-foreground rounded-full animate-pulse" style="animation-delay: 0.2s"></div>
@@ -1154,6 +1175,53 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     // Build citations section if there are citations
     const citationsBubble = buildCitationsSection(message.citations, message.id);
     const canRestoreScrubber = message.scrubber?.canRestore || message.scrubber?.redactedPrompt;
+    const memoryPromptStatus = message.memoryApprovalPrompt?.status;
+    const hasMemoryApprovalPrompt = memoryPromptStatus === 'pending';
+    const hasMemoryApprovedPrompt = memoryPromptStatus === 'approved' &&
+        typeof message.memoryApprovalPrompt?.linkedUserMessageId === 'string' &&
+        message.memoryApprovalPrompt.linkedUserMessageId.length > 0;
+    let memoryApprovalActions = '';
+    if (hasMemoryApprovalPrompt) {
+        memoryApprovalActions = `
+            <div class="flex items-center gap-2 w-full -mt-1">
+                <button
+                    type="button"
+                    class="memory-preview-btn inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors border border-border px-3 py-1.5 shadow-sm hover:bg-muted/60"
+                    data-message-id="${message.id}"
+                >
+                    View/Edit full prompt
+                </button>
+                <button
+                    type="button"
+                    class="memory-approval-btn inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors border border-border px-3 py-1.5 shadow-sm hover:bg-muted/60"
+                    data-message-id="${message.id}"
+                    data-decision="yes"
+                >
+                    Yes, include memory
+                </button>
+                <button
+                    type="button"
+                    class="memory-approval-btn inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors border border-border px-3 py-1.5 shadow-sm hover:bg-muted/60"
+                    data-message-id="${message.id}"
+                    data-decision="no"
+                >
+                    No, skip memory
+                </button>
+            </div>
+        `;
+    } else if (hasMemoryApprovedPrompt) {
+        memoryApprovalActions = `
+            <div class="flex items-center gap-2 w-full -mt-1">
+                <button
+                    type="button"
+                    class="memory-preview-btn inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors border border-border px-3 py-1.5 shadow-sm hover:bg-muted/60"
+                    data-user-message-id="${message.memoryApprovalPrompt.linkedUserMessageId}"
+                >
+                    View full prompt
+                </button>
+            </div>
+        `;
+    }
     const scrubberToggleButton = canRestoreScrubber ? `
         <button
             class="message-action-btn scrubber-restore-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
@@ -1164,49 +1232,47 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
             </svg>
         </button>
     ` : '';
+    const shouldHideAssistantActions = isPersonalAgent;
+    const assistantActionButtons = shouldHideAssistantActions ? '' : `
+        <button
+            class="message-action-btn copy-message-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+            data-message-id="${message.id}"
+            data-tooltip="Copy message">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
+            </svg>
+        </button>
+        <button
+            class="message-action-btn regenerate-message-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+            data-message-id="${message.id}"
+            data-tooltip="Regenerate response">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+            </svg>
+        </button>
+        <button
+            class="message-action-btn fork-conversation-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+            data-message-id="${message.id}"
+            data-tooltip="Fork conversation from here">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M2 12h6c6 0 10-4 14-8m-4 0h4v4M8 12c6 0 10 4 14 8m-4 0h4v-4" />
+            </svg>
+        </button>
+        ${scrubberToggleButton}
+    `;
 
     return `
         <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}"${getRawContentAttribute(message.content)}>
             <div class="${CLASSES.assistantGroup}">
-                <div class="${CLASSES.assistantHeader}">
-                    <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow ${bgClass}">
-                        ${iconData.html}
-                    </div>
-                    <span class="${CLASSES.assistantModelName}" style="font-size: 0.7rem;">${displayModelName}</span>
-                    <span class="${CLASSES.assistantTime}" style="font-size: 0.7rem;">${formatTime(message.timestamp)}</span>
-                    ${tokenDisplay}
-                </div>
+                ${assistantHeader}
                 ${reasoningBubble}
                 ${thumbnailsBubble}
                 ${textBubble}
                 ${imageBubble}
+                ${memoryApprovalActions}
                 <div class="flex items-center justify-between gap-2 w-full -mt-1">
                     <div class="flex items-center gap-1">
-                        <button
-                            class="message-action-btn copy-message-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
-                            data-message-id="${message.id}"
-                            data-tooltip="Copy message">
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
-                            </svg>
-                        </button>
-                        <button
-                            class="message-action-btn regenerate-message-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
-                            data-message-id="${message.id}"
-                            data-tooltip="Regenerate response">
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
-                            </svg>
-                        </button>
-                        <button
-                            class="message-action-btn fork-conversation-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
-                            data-message-id="${message.id}"
-                            data-tooltip="Fork conversation from here">
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M2 12h6c6 0 10-4 14-8m-4 0h4v4M8 12c6 0 10 4 14 8m-4 0h4v-4" />
-                            </svg>
-                        </button>
-                        ${scrubberToggleButton}
+                        ${assistantActionButtons}
                         ${noResponseNotice}
                     </div>
                     ${buildCitationsToggleButton(message.citations, message.id)}

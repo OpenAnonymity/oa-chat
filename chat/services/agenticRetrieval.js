@@ -49,10 +49,11 @@ class AgenticRetrieval {
      * @param {string} query — the user's message text
      * @returns {Promise<{files: {path: string, content: string}[], paths: string[]}|null>}
      */
-    async retrieveForQuery(query) {
+    async retrieveForQuery(query, onProgress = null) {
         if (!query || !query.trim()) return null;
 
         try {
+            onProgress?.({ stage: 'init', message: 'Reading memory index...' });
             await memoryFileSystem.init();
             const index = await memoryFileSystem.getIndex();
 
@@ -65,10 +66,12 @@ class AgenticRetrieval {
             let paths;
 
             if (apiKey) {
+                onProgress?.({ stage: 'retrieval', message: 'Selecting relevant memory files with Tinfoil...' });
                 paths = await this._llmRetrieval(query, index);
             } else {
                 // Fallback: brute-force text search
                 console.log('[AgenticRetrieval] No Tinfoil key, falling back to text search');
+                onProgress?.({ stage: 'retrieval', message: 'Tinfoil unavailable, using fallback text search...' });
                 paths = await this._textSearchFallback(query);
             }
 
@@ -80,6 +83,7 @@ class AgenticRetrieval {
             const files = [];
             let total = 0;
             for (const path of paths.slice(0, MAX_FILES_TO_LOAD)) {
+                onProgress?.({ stage: 'loading', message: `Loading ${path}...`, path });
                 const raw = await memoryFileSystem.read(path);
                 if (!raw) continue;
                 const content = raw.length > MAX_PER_FILE_CHARS
@@ -93,6 +97,11 @@ class AgenticRetrieval {
             if (files.length === 0) return null;
 
             console.log(`[AgenticRetrieval] Retrieved ${files.length} memory files for query`);
+            onProgress?.({
+                stage: 'complete',
+                message: `Retrieved ${files.length} memory file${files.length === 1 ? '' : 's'}.`,
+                paths: files.map(file => file.path)
+            });
 
             return { files, paths };
 
