@@ -6,6 +6,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 oa-chat is a ChatGPT-like AI chat app that implements unlinkable inference — AI inference where every request is verifiably decoupled from each other, and from your identity. It communicates directly with inference backends (OpenRouter by default) using ephemeral access keys obtained via blind signatures. Everything runs in the browser with no server backend. Development is HTML-first; production builds are bundled with esbuild and minified with terser.
 
+## Workflow Expectations
+
+Before touching implementation, read `docs/PRIVACY_MODEL.md` and the relevant files in
+`docs/` to understand the current product state. If the task touches UI or complicated
+state transitions, read `docs/APP_STATE.md` first and then any feature-specific doc that
+applies.
+
+Only after that should you inspect the code paths you expect to change and implement the
+work. When you finish meaningful investigation or implementation, update the relevant
+doc in `docs/` and record the non-obvious learnings in `docs/APP_STATE.md` so the next
+agent can pick up the state without rediscovering subtle behavior from scratch.
+
 ## Development Commands
 
 ```bash
@@ -104,3 +116,4 @@ No automated test harness. Manual verification checklist:
 ## Authoritative Documentation
 
 See `AGENTS.md` for comprehensive architecture details, testing guidelines, and security notes.
+See `docs/APP_STATE.md` for the living handoff log of current UI/state behavior and recent learnings.
