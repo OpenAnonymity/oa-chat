@@ -672,6 +672,13 @@
                                             </div>
                                         </div>
 
+                                        <!-- Memory Toggle -->
+                                        <button id="memory-toggle" class="inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-7 w-7 cursor-pointer select-none" data-tooltip="Add context" data-tooltip-position="top" aria-pressed="false">
+                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
+                                            </svg>
+                                        </button>
+
                                         <!-- Search Toggle -->
                                         <button id="search-toggle" class="inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-7 w-7 cursor-pointer select-none search-active" data-tooltip="Web search" data-tooltip-position="top" aria-pressed="true">
                                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
@@ -757,6 +764,9 @@
 
     <!-- Account Modal -->
     <div id="account-modal" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"></div>
+
+    <!-- Memory Editor Modal -->
+    <div id="memory-editor-modal" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"></div>
 
     <!-- Welcome Panel Modal -->
     <div id="welcome-panel" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"></div>

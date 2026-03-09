@@ -7,6 +7,7 @@
 import { buildMessageHTML, buildEmptyState, buildSharedIndicator, buildImportedIndicator, buildTypingIndicator, RAW_CLIPBOARD_ATTRIBUTE_ENABLED } from './MessageTemplates.js';
 import { exportChats, exportTickets } from '../services/globalExport.js';
 import { parseStreamingReasoningContent, parseReasoningContent } from '../services/reasoningParser.js';
+import { messageMemoryContext, highlightMemoryRetrievedSessions, clearMemorySessionHighlights } from '../services/messageMemoryContext.js';
 import { chatDB } from '../db.js';
 
 export default class ChatArea {
@@ -108,6 +109,27 @@ export default class ChatArea {
                 return;
             }
 
+            const memoryApprovalBtn = e.target.closest('.memory-approval-btn');
+            if (memoryApprovalBtn) {
+                const messageId = memoryApprovalBtn.dataset.messageId;
+                const decision = memoryApprovalBtn.dataset.decision;
+                await this.app.handleMemoryApprovalDecision(messageId, decision);
+                return;
+            }
+
+            const memoryPreviewBtn = e.target.closest('.memory-preview-btn');
+            if (memoryPreviewBtn) {
+                const messageId = memoryPreviewBtn.dataset.messageId;
+                const userMessageId = memoryPreviewBtn.dataset.userMessageId;
+                if (messageId || userMessageId) {
+                    await this.app.handleMemoryPromptPreviewRequest({
+                        messageId,
+                        userMessageId
+                    });
+                }
+                return;
+            }
+
             const scrubberBtn = e.target.closest('.scrubber-restore-btn');
             if (scrubberBtn) {
                 const messageId = scrubberBtn.dataset.messageId;
@@ -168,6 +190,43 @@ export default class ChatArea {
                 }
                 return;
             }
+
+            // Memory context indicator click toggles a pinned tooltip.
+            const memoryIndicator = e.target.closest('.memory-context-indicator');
+            if (memoryIndicator) {
+                e.preventDefault();
+                e.stopPropagation();
+                const messageId = memoryIndicator.dataset.messageId;
+                const tooltip = document.getElementById('memory-context-tooltip');
+                if (tooltip && tooltip.dataset.messageId === messageId && this.memoryTooltipPinned) {
+                    this.memoryTooltipPinned = false;
+                    this.memoryTooltipMessageId = null;
+                    this.hideMemoryContextTooltip();
+                    clearMemorySessionHighlights();
+                    return;
+                }
+                const context = messageMemoryContext.getMessageContext(messageId);
+                if (context && context.memories.length > 0) {
+                    this.memoryTooltipPinned = true;
+                    this.memoryTooltipMessageId = messageId;
+                    this.showMemoryContextTooltip(memoryIndicator, context, messageId);
+                    highlightMemoryRetrievedSessions(context.sessionIds);
+                }
+                return;
+            }
+
+            const openMemoryContextBtn = e.target.closest('.memory-context-open-btn');
+            if (openMemoryContextBtn) {
+                e.preventDefault();
+                e.stopPropagation();
+                const messageId = openMemoryContextBtn.dataset.messageId;
+                this.memoryTooltipPinned = false;
+                this.memoryTooltipMessageId = null;
+                this.hideMemoryContextTooltip();
+                clearMemorySessionHighlights();
+                await this.showFullPromptPreview(messageId);
+                return;
+            }
         });
 
         // Auto-grow edit textarea on input (debounced via requestAnimationFrame)
@@ -195,6 +254,122 @@ export default class ChatArea {
                     this.app.cancelEditMode(messageId);
                 }
             }
+        });
+
+        // Memory context tooltip listeners (badge-only trigger for less noise)
+        let currentHoveredIndicator = null;
+        let memoryHoverTimeout = null;
+        let memoryHideTimeout = null;
+
+        const cancelMemoryHoverTimeout = () => {
+            if (memoryHoverTimeout) {
+                clearTimeout(memoryHoverTimeout);
+                memoryHoverTimeout = null;
+            }
+        };
+
+        const cancelMemoryHideTimeout = () => {
+            if (memoryHideTimeout) {
+                clearTimeout(memoryHideTimeout);
+                memoryHideTimeout = null;
+            }
+        };
+
+        const scheduleMemoryHide = () => {
+            cancelMemoryHideTimeout();
+            memoryHideTimeout = setTimeout(() => {
+                currentHoveredIndicator = null;
+                this.hideMemoryContextTooltip();
+                clearMemorySessionHighlights();
+                this.memoryTooltipMessageId = null;
+            }, 220);
+        };
+
+        messagesContainer.addEventListener('mouseover', (e) => {
+            const indicator = e.target.closest('.memory-context-indicator');
+            if (!indicator) return;
+            if (this.memoryTooltipPinned && indicator.dataset.messageId === this.memoryTooltipMessageId) return;
+
+            if (currentHoveredIndicator === indicator) return;
+            currentHoveredIndicator = indicator;
+
+            cancelMemoryHideTimeout();
+            cancelMemoryHoverTimeout();
+
+            const messageId = indicator.dataset.messageId;
+            const context = messageMemoryContext.getMessageContext(messageId);
+            if (!context || context.memories.length === 0) return;
+
+            memoryHoverTimeout = setTimeout(() => {
+                this.showMemoryContextTooltip(indicator, context, messageId);
+                highlightMemoryRetrievedSessions(context.sessionIds);
+                this.memoryTooltipMessageId = messageId;
+            }, 120);
+        });
+
+        messagesContainer.addEventListener('mouseout', (e) => {
+            const indicator = e.target.closest('.memory-context-indicator');
+            if (!indicator) return;
+            if (this.memoryTooltipPinned) return;
+
+            const related = e.relatedTarget;
+            if (related && related.closest && related.closest('#memory-context-tooltip')) {
+                return;
+            }
+
+            cancelMemoryHoverTimeout();
+            scheduleMemoryHide();
+        });
+
+        messagesContainer.addEventListener('focusin', (e) => {
+            const indicator = e.target.closest('.memory-context-indicator');
+            if (!indicator) return;
+            cancelMemoryHideTimeout();
+            cancelMemoryHoverTimeout();
+            const messageId = indicator.dataset.messageId;
+            const context = messageMemoryContext.getMessageContext(messageId);
+            if (context && context.memories.length > 0) {
+                this.showMemoryContextTooltip(indicator, context, messageId);
+                highlightMemoryRetrievedSessions(context.sessionIds);
+                this.memoryTooltipMessageId = messageId;
+            }
+        });
+
+        messagesContainer.addEventListener('focusout', (e) => {
+            const indicator = e.target.closest('.memory-context-indicator');
+            if (!indicator || this.memoryTooltipPinned) return;
+            const related = e.relatedTarget;
+            if (related && related.closest && related.closest('#memory-context-tooltip')) return;
+            scheduleMemoryHide();
+        });
+
+        messagesContainer.addEventListener('keydown', (e) => {
+            const indicator = e.target.closest('.memory-context-indicator');
+            if (!indicator) return;
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                this.memoryTooltipPinned = false;
+                this.memoryTooltipMessageId = null;
+                this.hideMemoryContextTooltip();
+                clearMemorySessionHighlights();
+                return;
+            }
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                indicator.click();
+            }
+        });
+
+        document.addEventListener('mousedown', (e) => {
+            if (!this.memoryTooltipPinned) return;
+            const tooltip = document.getElementById('memory-context-tooltip');
+            const clickedIndicator = e.target.closest('.memory-context-indicator');
+            if (tooltip && tooltip.contains(e.target)) return;
+            if (clickedIndicator) return;
+            this.memoryTooltipPinned = false;
+            this.memoryTooltipMessageId = null;
+            this.hideMemoryContextTooltip();
+            clearMemorySessionHighlights();
         });
     }
 
@@ -466,29 +641,161 @@ export default class ChatArea {
             return;
         }
 
-        // Find the previous user message
-        const userMessage = messageIndex > 0 ? messages[messageIndex - 1] : null;
-        if (!userMessage || userMessage.role !== 'user') {
+        // Find the nearest previous user message.
+        // Personal-agent/local assistant messages can sit between the model response and user prompt.
+        const userMessageIndex = (() => {
+            for (let i = messageIndex - 1; i >= 0; i--) {
+                if (messages[i]?.role === 'user') return i;
+            }
+            return -1;
+        })();
+        if (userMessageIndex === -1) {
             return;
         }
 
-        // Delete the assistant message and all messages after it
-        const messagesToDelete = messages.slice(messageIndex);
-        for (const msg of messagesToDelete) {
-            await chatDB.deleteMessage(msg.id);
-        }
-
-        // Re-render messages to remove deleted messages from UI
-        await this.render();
-
-        // Trigger regeneration by calling the app's regenerateResponse method
-        await this.app.regenerateResponse();
+        // Regenerate from the originating user message so the full flow reruns:
+        // personal-agent memory retrieval + remote model response.
+        await this.app.regenerateFullFlowFromUserMessage(messages[userMessageIndex].id);
     }
 
     /**
      * Handles toggling scrubber restoration on an assistant message.
      * @param {string} messageId - The assistant message ID to restore/toggle
      */
+    /**
+     * Show tooltip with memory context for a message
+     */
+    showMemoryContextTooltip(indicatorEl, context, messageId) {
+        const existingTooltip = document.getElementById('memory-context-tooltip');
+        if (existingTooltip && existingTooltip.dataset.messageId === messageId) {
+            return;
+        }
+
+        this.hideMemoryContextTooltip();
+
+        const tooltip = document.createElement('div');
+        tooltip.id = 'memory-context-tooltip';
+        tooltip.className = 'memory-context-tooltip pointer-events-auto';
+        tooltip.dataset.messageId = messageId;
+
+        const memoryCount = context.memories.length;
+        const memoriesHtml = context.memories.slice(0, 2).map(m => `
+            <div class="memory-context-tooltip-item">
+                <p class="memory-context-tooltip-item-title">${m.title || 'Untitled'}</p>
+                <p class="memory-context-tooltip-item-body">${m.summary || m.content || ''}</p>
+            </div>
+        `).join('');
+
+        tooltip.innerHTML = `
+            <div class="memory-context-tooltip-card">
+                <div class="memory-context-tooltip-header">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4 text-muted-foreground">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
+                    </svg>
+                    <p class="memory-context-tooltip-title">Memory Context</p>
+                    <span class="memory-context-tooltip-count">${memoryCount} item${memoryCount === 1 ? '' : 's'}</span>
+                </div>
+                <div class="memory-context-tooltip-content">
+                    ${memoriesHtml}
+                    ${memoryCount > 2 ? `<p class="memory-context-tooltip-more">+${memoryCount - 2} more</p>` : ''}
+                </div>
+                <button type="button" class="memory-context-open-btn" data-message-id="${messageId}">Open Full Context</button>
+            </div>
+        `;
+
+        const openBtn = tooltip.querySelector('.memory-context-open-btn');
+        if (openBtn) {
+            openBtn.addEventListener('click', async (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                const targetMessageId = openBtn.dataset.messageId;
+                this.memoryTooltipPinned = false;
+                this.memoryTooltipMessageId = null;
+                this.hideMemoryContextTooltip();
+                clearMemorySessionHighlights();
+                await this.showFullPromptPreview(targetMessageId);
+            });
+        }
+
+        Object.assign(tooltip.style, {
+            position: 'fixed',
+            zIndex: '99998',
+            maxWidth: '320px',
+            opacity: '0',
+            transform: 'translateY(4px)',
+            transition: 'opacity 150ms ease-out, transform 150ms ease-out'
+        });
+
+        tooltip.addEventListener('mouseenter', () => {
+            const existingTimeout = this._memoryHideTimeout;
+            if (existingTimeout) {
+                clearTimeout(existingTimeout);
+                this._memoryHideTimeout = null;
+            }
+        });
+
+        tooltip.addEventListener('mouseleave', () => {
+            if (this.memoryTooltipPinned) return;
+            this._memoryHideTimeout = setTimeout(() => {
+                this.hideMemoryContextTooltip();
+                clearMemorySessionHighlights();
+            }, 150);
+        });
+
+        document.body.appendChild(tooltip);
+
+        const rect = indicatorEl.getBoundingClientRect();
+        const tooltipRect = tooltip.getBoundingClientRect();
+
+        const coarsePointer = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+        let top;
+        let left;
+
+        if (coarsePointer) {
+            top = window.innerHeight - tooltipRect.height - 16;
+            left = Math.max(8, (window.innerWidth - tooltipRect.width) / 2);
+        } else {
+            top = rect.top - tooltipRect.height - 10;
+            if (top < 8) {
+                top = rect.bottom + 10;
+            }
+            left = rect.left + (rect.width - tooltipRect.width) / 2;
+            if (left < 8) left = 8;
+            if (left + tooltipRect.width > window.innerWidth - 8) {
+                left = window.innerWidth - tooltipRect.width - 8;
+            }
+        }
+
+        Object.assign(tooltip.style, {
+            top: `${top}px`,
+            left: `${left}px`
+        });
+
+        requestAnimationFrame(() => {
+            tooltip.style.opacity = '1';
+            tooltip.style.transform = 'translateY(0)';
+        });
+    }
+
+    /**
+     * Hide memory context tooltip
+     */
+    hideMemoryContextTooltip() {
+        const tooltip = document.getElementById('memory-context-tooltip');
+        if (tooltip) {
+            tooltip.style.opacity = '0';
+            tooltip.style.transform = 'translateY(4px)';
+            setTimeout(() => tooltip.remove(), 150);
+        }
+    }
+
+    /**
+     * Store memory context for a message (called when message is sent with memory)
+     */
+    storeMessageMemoryContext(messageId, memories, sessionIds) {
+        messageMemoryContext.setMessageContext(messageId, memories, sessionIds);
+    }
+
     async handleScrubberRestore(messageId) {
         await this.app.toggleScrubberRestore(messageId);
     }
@@ -614,6 +921,18 @@ export default class ChatArea {
             this.attachDownloadHandler();
             return;
         }
+
+        // Restore memory context for all messages from persistent storage
+        // This repopulates the in-memory messageMemoryMap after a page refresh
+        messages.forEach(message => {
+            if (message.memoryContext && message.memoryContext.sessionIds?.length > 0) {
+                messageMemoryContext.setMessageContext(
+                    message.id,
+                    message.memoryContext.memories || [],
+                    message.memoryContext.sessionIds || []
+                );
+            }
+        });
 
         // Build HTML for all messages using shared templates
         const helpers = {
@@ -1866,5 +2185,237 @@ export default class ChatArea {
         }
         // Sync the model picker button
         this.updateEditModelPickerButton();
+    }
+
+    async showFullPromptPreview(messageId) {
+        const session = this.app.getCurrentSession?.();
+        let message = null;
+
+        if (session?.id) {
+            const messages = await chatDB.getSessionMessages(session.id);
+            message = (messages || []).find((m) => m.id === messageId) || null;
+        }
+
+        if (!message || message.role !== 'user') {
+            return;
+        }
+
+        const context = messageMemoryContext.getMessageContext(messageId);
+        const hasMemory = context && context.memories && context.memories.length > 0;
+        const memoryEntries = hasMemory
+            ? context.memories.map((memory, idx) => {
+                const tags = Array.from(new Set(
+                    (Array.isArray(memory?.keywords) ? memory.keywords : [])
+                        .filter(tag => typeof tag === 'string' && tag.trim().length > 0)
+                        .map(tag => tag.trim().toLowerCase())
+                ));
+                const relevantTags = Array.from(new Set(
+                    (Array.isArray(memory?.relevantTags) ? memory.relevantTags : [])
+                        .filter(tag => typeof tag === 'string' && tag.trim().length > 0)
+                        .map(tag => tag.trim().toLowerCase())
+                ));
+                const primaryTag = (typeof memory?.primaryRelevantTag === 'string' && memory.primaryRelevantTag.trim().length > 0)
+                    ? memory.primaryRelevantTag.trim().toLowerCase()
+                    : (relevantTags[0] || tags[0] || 'untagged');
+                return { memory, idx, tags, relevantTags, primaryTag };
+            })
+            : [];
+        const contextTags = Array.from(new Set(memoryEntries.flatMap(entry => entry.relevantTags)));
+        const groupedContextMap = new Map();
+        memoryEntries.forEach((entry) => {
+            if (!groupedContextMap.has(entry.primaryTag)) {
+                groupedContextMap.set(entry.primaryTag, []);
+            }
+            groupedContextMap.get(entry.primaryTag).push(entry);
+        });
+        const groupedContext = Array.from(groupedContextMap.entries()).map(([tag, entries]) => ({ tag, entries }));
+
+        if (hasMemory && groupedContext.length === 0 && memoryEntries.length > 0) {
+            groupedContext.push({
+                tag: 'untagged',
+                entries: memoryEntries
+            });
+        }
+
+        let fullPrompt = '';
+
+        if (hasMemory) {
+            const memoryContent = context.memories.map((m, idx) => {
+                const content = m.fullContent || m.displayContent || m.content || m.summary || '';
+                return `--- Retrieved Context ${idx + 1}: ${m.title || 'Untitled'} ---\n${content}`;
+            }).join('\n\n');
+
+            fullPrompt = `${memoryContent}\n\n--- User Query ---\n${message.content}`;
+        } else {
+            fullPrompt = message.content;
+        }
+
+        const modal = document.createElement('div');
+        modal.className = 'full-prompt-preview-modal';
+        modal.innerHTML = `
+            <div class="full-prompt-preview-content">
+                <div class="full-prompt-preview-header">
+                    <div class="full-prompt-preview-title">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+                        </svg>
+                        Full Prompt with Context
+                    </div>
+                    <button class="full-prompt-preview-close" id="close-prompt-preview">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+                <div class="full-prompt-preview-body">
+                    ${hasMemory ? `
+                        <div class="full-prompt-section">
+                            <div class="full-prompt-section-title">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
+                                </svg>
+                                Retrieved Context (${context.memories.length} item${context.memories.length === 1 ? '' : 's'})
+                            </div>
+                            <div class="full-prompt-tag-caption">Related Tags Retrieved</div>
+                            <div class="full-prompt-tags">
+                                ${contextTags.length > 0
+                                    ? contextTags.map(tag => `<span class="full-prompt-tag">${this.escapeHtml(tag)}</span>`).join('')
+                                    : '<span class="full-prompt-tags-empty">No context tags</span>'
+                                }
+                            </div>
+                            <div class="full-prompt-tag-groups">
+                                ${groupedContext.map((group) => `
+                                    <div class="full-prompt-tag-group">
+                                        <div class="full-prompt-tag-group-title">#${this.escapeHtml(group.tag)}</div>
+                                        ${group.entries.map((entry) => {
+                                            const m = entry.memory;
+                                            const content = m.fullContent || m.displayContent || m.content || m.summary || '';
+                                            return `
+                                                <div class="full-prompt-memory-item">
+                                                    <div class="full-prompt-memory-title-row">
+                                                        <div class="full-prompt-memory-title-text">${entry.idx + 1}. ${this.escapeHtml(m.title || 'Untitled')}</div>
+                                                        <button type="button" class="full-prompt-memory-toggle-btn" aria-expanded="false">
+                                                            Expand
+                                                        </button>
+                                                    </div>
+                                                    <div class="full-prompt-memory-tags">
+                                                        ${(entry.relevantTags.length > 0 ? entry.relevantTags : entry.tags).length > 0
+                                                            ? (entry.relevantTags.length > 0 ? entry.relevantTags : entry.tags).map(tag => `<span class="full-prompt-memory-tag">${this.escapeHtml(tag)}</span>`).join('')
+                                                            : '<span class="full-prompt-memory-tags-empty">No tags</span>'
+                                                        }
+                                                    </div>
+                                                    <div class="full-prompt-memory-content is-collapsed">${this.escapeHtml(content)}</div>
+                                                </div>
+                                            `;
+                                        }).join('')}
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+                    <div class="full-prompt-section">
+                        <div class="full-prompt-section-title">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
+                            </svg>
+                            ${hasMemory ? 'User Query' : 'User Message'}
+                        </div>
+                        <div class="full-prompt-section-content">${this.escapeHtml(message.content)}</div>
+                    </div>
+                    ${hasMemory ? `
+                        <div class="full-prompt-section">
+                            <div class="full-prompt-section-title">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z" />
+                                </svg>
+                                Complete Prompt Sent to API
+                            </div>
+                            <div class="full-prompt-section-content">${this.escapeHtml(fullPrompt)}</div>
+                        </div>
+                    ` : ''}
+                </div>
+                <div class="full-prompt-preview-footer">
+                    <div class="full-prompt-hint">
+                        <kbd class="inline-flex items-center justify-center rounded border border-border bg-muted px-2 py-1 text-xs font-mono">Esc</kbd>
+                        <span>to close</span>
+                    </div>
+                    <button class="full-prompt-copy-btn" id="copy-full-prompt">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
+                        </svg>
+                        Copy Full Prompt
+                    </button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        const closeBtn = modal.querySelector('#close-prompt-preview');
+        const copyBtn = modal.querySelector('#copy-full-prompt');
+
+        const closeModal = () => {
+            modal.remove();
+        };
+
+        closeBtn.addEventListener('click', closeModal);
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                closeModal();
+            }
+        });
+
+        modal.querySelectorAll('.full-prompt-memory-toggle-btn').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const memoryItem = btn.closest('.full-prompt-memory-item');
+                const memoryContent = memoryItem?.querySelector('.full-prompt-memory-content');
+                if (!memoryContent) {
+                    return;
+                }
+                const isCollapsed = memoryContent.classList.toggle('is-collapsed');
+                btn.textContent = isCollapsed ? 'Expand' : 'Collapse';
+                btn.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
+            });
+        });
+
+        copyBtn.addEventListener('click', async () => {
+            try {
+                await navigator.clipboard.writeText(fullPrompt);
+                copyBtn.innerHTML = `
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                    </svg>
+                    Copied!
+                `;
+                setTimeout(() => {
+                    copyBtn.innerHTML = `
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
+                        </svg>
+                        Copy Full Prompt
+                    `;
+                }, 2000);
+            } catch (err) {
+                console.error('Failed to copy:', err);
+            }
+        });
+
+        const handleKeydown = (e) => {
+            if (e.key === 'Escape') {
+                closeModal();
+                document.removeEventListener('keydown', handleKeydown);
+            }
+        };
+        document.addEventListener('keydown', handleKeydown);
+
+        modal.addEventListener('remove', () => {
+            document.removeEventListener('keydown', handleKeydown);
+        });
+    }
+
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text || '';
+        return div.innerHTML;
     }
 }

@@ -30,6 +30,10 @@ import { initPinnedModels, onPinnedModelsUpdate, getDisabledModels, getStandardi
 import accountService from './services/accountService.js';
 import apiKeyStore from './services/apiKeyStore.js';
 import { generateUlid21 } from './services/ulid.js';
+import { messageMemoryContext } from './services/messageMemoryContext.js';
+import memoryExtractor from './services/memoryExtractor.js';
+import memoryFileSystem from './services/memoryFileSystem.js';
+import MemoryEditor from './components/MemoryEditor.js';
 import { chatDB } from './db.js';
 
 const DEFAULT_MODEL_NAME = inferenceService.getDefaultModelName();
@@ -154,6 +158,7 @@ class ChatApp {
         this.searchEnabled = true;
         this.reasoningEnabled = true;
         this.reasoningEffort = DEFAULT_REASONING_EFFORT;
+        this.memoryEnabled = false;
         this.sessionSearchQuery = '';
         this.sessionSearchDebounce = null;
         this.sessionSearchRequestId = 0;
@@ -176,6 +181,10 @@ class ChatApp {
         this.scrollButtonCheckInterval = null; // Interval for checking button visibility during streaming
         this.scrubberService = scrubberService;
         this.scrubberPending = null;
+        this.pendingMemoryContext = null; // Track memory context for next message
+        this.memoryApprovalRequests = new Map(); // messageId -> resolver for pending memory approval
+        this.memoryApprovalDrafts = new Map(); // retrieval messageId -> draft state for pre-approval editing
+        this.memoryEditor = null;
         this.deleteHistoryReturnFocusEl = null;
         this.isDeletingAllChats = false;
         this.appVersionSignature = null;
@@ -1357,6 +1366,7 @@ class ChatApp {
         this.modelPicker = new ModelPicker(this);
         this.chatHistoryImportModal = new ChatHistoryImportModal(this);
         this.accountModal = new AccountModal(this);
+        this.memoryEditor = new MemoryEditor(this);
         this.welcomePanel = new WelcomePanel(this);
         this.thanksPanel = new ThanksPanel(this);
         this.rightPanel = new RightPanel(this);
@@ -1457,6 +1467,11 @@ class ChatApp {
                 console.warn('Scrubber init failed:', error);
             });
 
+            // Initialize agentic memory filesystem (non-blocking)
+            memoryFileSystem.init().catch((error) => {
+                console.warn('Memory filesystem init failed:', error);
+            });
+
             try {
                 await accountService.init();
                 if (typeof requestIdleCallback === 'function') {
@@ -1487,7 +1502,9 @@ class ChatApp {
         const settingsPromise = Promise.all([
             chatDB.getSetting('selectedModel'),
             chatDB.getSetting('searchEnabled'),
-            chatDB.getSetting('reasoningEffort')
+            chatDB.getSetting('reasoningEffort'),
+            chatDB.getSetting('memoryEnabled'),
+            chatDB.getSetting('scrubEnabled')
         ]);
 
         // Restore session from sessionStorage as early as possible for chat area hydration.
@@ -1499,7 +1516,7 @@ class ChatApp {
             }
         }
 
-        const [storedModelPreference, savedSearchEnabled, savedReasoningEffort] = await settingsPromise;
+        const [storedModelPreference, savedSearchEnabled, savedReasoningEffort, savedMemoryEnabled, savedScrubEnabled] = await settingsPromise;
 
         // Process model preference
         const normalizedModelName = this.upgradeDefaultModelPreference(
@@ -1522,10 +1539,25 @@ class ChatApp {
         chatDB.saveSetting('reasoningEnabled', true).catch(() => {});
         this.reasoningEffort = normalizeReasoningEffort(savedReasoningEffort);
 
+        // Restore memory state
+        this.memoryEnabled = savedMemoryEnabled !== undefined ? savedMemoryEnabled : false;
+
+        // Restore scrubbing state (if saved)
+        if (savedScrubEnabled !== undefined) {
+            this.scrubEnabled = savedScrubEnabled;
+        }
+
+        // Enforce mutual exclusivity: memory and scrubbing cannot both be enabled
+        if (this.memoryEnabled && this.scrubEnabled) {
+            this.scrubEnabled = false;
+            await chatDB.saveSetting('scrubEnabled', false);
+        }
+
         // Render local data immediately (session from sessionStorage + model/settings from DB).
         this.renderMessages();
         this.renderCurrentModel();
         this.chatInput.updateSearchToggleUI();
+        this.chatInput.updateMemoryToggleUI();
         this.chatInput.updateReasoningToggleUI();
         this.chatInput.updateReasoningEffortUI();
         this.updateShareButtonUI();
@@ -3420,7 +3452,9 @@ class ChatApp {
             searchEnabled: metadata.searchEnabled || false,
             citations: metadata.citations || null,
             isLocalOnly: Boolean(metadata.isLocalOnly),
-            scrubber: metadata.scrubber || null
+            scrubber: metadata.scrubber || null,
+            memoryContext: metadata.memoryContext || null,
+            memoryApprovalPrompt: metadata.memoryApprovalPrompt || null
         };
 
         await chatDB.saveMessage(message);
@@ -3671,6 +3705,45 @@ class ChatApp {
         }
 
         return result;
+    }
+
+    /**
+     * Re-run the full memory retrieval + model response flow from a user message.
+     * Deletes everything after the user message, re-runs agentic retrieval, then regenerates.
+     */
+    async regenerateFullFlowFromUserMessage(userMessageId) {
+        const session = this.getCurrentSession();
+        if (!session || !userMessageId) return;
+        if (this.isCurrentSessionStreaming()) return;
+
+        const messages = await chatDB.getSessionMessages(session.id);
+        const userMessageIndex = messages.findIndex((msg) => msg.id === userMessageId && msg.role === 'user');
+        if (userMessageIndex === -1) return;
+
+        const userMessage = messages[userMessageIndex];
+
+        // Remove all messages after the selected user message (old personal-agent + old model response).
+        const messagesToDelete = messages.slice(userMessageIndex + 1);
+        for (const msg of messagesToDelete) {
+            await chatDB.deleteMessage(msg.id);
+        }
+
+        // Reset previous memory context/overrides so the flow is rebuilt from scratch.
+        userMessage.memoryContext = null;
+        await chatDB.saveMessage(userMessage);
+        messageMemoryContext.clearMessageContext(userMessage.id);
+        this.pendingMemoryContext = null;
+        this._lastApiContent = null;
+
+        await this.renderMessages();
+
+        // Re-run personal-agent retrieval/approval before calling the remote model.
+        const query = typeof userMessage.content === 'string' ? userMessage.content : '';
+        if (this.memoryEnabled) {
+            await this.runAgenticMemoryRetrievalFlow(query, userMessage);
+        }
+
+        await this.regenerateResponse();
     }
 
     /**
@@ -4085,6 +4158,234 @@ class ChatApp {
     }
 
     /**
+     * Resolve a pending memory approval prompt.
+     * @param {string} messageId
+     * @param {string} decision - "yes" or "no"
+     */
+    async handleMemoryApprovalDecision(messageId, decision) {
+        const resolver = this.memoryApprovalRequests.get(messageId);
+        if (!resolver) return;
+        this.memoryApprovalRequests.delete(messageId);
+        resolver(decision === 'yes');
+    }
+
+    /**
+     * Wait for the user to approve or reject retrieved memory.
+     * @param {string} messageId
+     * @returns {Promise<boolean>}
+     */
+    waitForMemoryApproval(messageId) {
+        return new Promise((resolve) => {
+            this.memoryApprovalRequests.set(messageId, resolve);
+        });
+    }
+
+    /**
+     * Open full prompt preview for a specific user message.
+     * @param {string} userMessageId
+     */
+    async handleMemoryPromptPreviewRequest({ messageId = null, userMessageId = null } = {}) {
+        if (messageId && this.memoryApprovalDrafts.has(messageId)) {
+            const draft = this.memoryApprovalDrafts.get(messageId);
+            if (!draft || !this.chatInput?.showFullPromptPreview) return;
+
+            // Load editable draft into the existing full-prompt editor without touching the main input.
+            this.pendingMemoryContext = draft.memoryContext
+                ? JSON.parse(JSON.stringify(draft.memoryContext))
+                : null;
+            this._lastApiContent = draft.rawOverride || null;
+
+            this.chatInput.showFullPromptPreview({
+                userQuery: draft.userQuery || '',
+                rawOverrideEnabled: !!(draft.rawOverride && draft.rawOverride.trim()),
+                rawOverrideDraft: draft.rawOverride || '',
+                persistToInput: false,
+                onApply: (applied) => {
+                    const nextContext = applied?.memoryContext
+                        ? JSON.parse(JSON.stringify(applied.memoryContext))
+                        : null;
+                    draft.userQuery = typeof applied?.userQuery === 'string'
+                        ? applied.userQuery
+                        : draft.userQuery;
+                    draft.rawOverride = applied?.rawOverrideEnabled && typeof applied?.rawOverrideDraft === 'string' && applied.rawOverrideDraft.trim()
+                        ? applied.rawOverrideDraft
+                        : null;
+                    draft.effectivePayload = (typeof applied?.effectivePayload === 'string' && applied.effectivePayload.trim())
+                        ? applied.effectivePayload
+                        : null;
+                    draft.memoryContext = nextContext;
+                    this.memoryApprovalDrafts.set(messageId, draft);
+                }
+            });
+            return;
+        }
+
+        if (!userMessageId || !this.chatArea?.showFullPromptPreview) return;
+        await this.chatArea.showFullPromptPreview(userMessageId);
+    }
+
+    /**
+     * Save and refresh a local assistant status message.
+     * @param {Object} message
+     */
+    async persistLocalAssistantStatus(message) {
+        await chatDB.saveMessage(message);
+        if (this.chatArea && this.isViewingSession(message.sessionId)) {
+            this.chatArea.updateMessage(message);
+        }
+    }
+
+    /**
+     * Attach retrieved memory context to the already-saved user message.
+     * @param {Object} userMessage
+     * @param {Object} memoryContext
+     */
+    async applyMemoryContextToUserMessage(userMessage, memoryContext) {
+        if (!userMessage || !memoryContext) return;
+        userMessage.memoryContext = memoryContext;
+        await chatDB.saveMessage(userMessage);
+        messageMemoryContext.setMessageContext(
+            userMessage.id,
+            memoryContext.memories || [],
+            memoryContext.sessionIds || []
+        );
+        if (this.chatArea && this.isViewingSession(userMessage.sessionId)) {
+            this.chatArea.updateMessage(userMessage);
+        }
+    }
+
+    /**
+     * Run agentic memory retrieval with immediate assistant UI feedback and approval.
+     * @param {string} query
+     * @param {Object} userMessage
+     */
+    async runAgenticMemoryRetrievalFlow(query, userMessage) {
+        if (!this.memoryEnabled || !query || !query.trim() || !userMessage) {
+            return;
+        }
+
+        const progressState = {
+            init: 'Queued',
+            retrieval: 'Queued',
+            loading: 'Queued'
+        };
+
+        const formatProgress = () => {
+            return [
+                'Retrieving memory for this message...',
+                '',
+                `- Index: ${progressState.init}`,
+                `- Selection: ${progressState.retrieval}`,
+                `- Loading: ${progressState.loading}`
+            ].join('\n');
+        };
+
+        const retrievalMessage = await this.addMessage('assistant', formatProgress(), {
+            isLocalOnly: true,
+            model: 'personal agent'
+        });
+        if (!retrievalMessage) return;
+
+        try {
+            const { default: agenticRetrieval } = await import('./services/agenticRetrieval.js');
+            const result = await agenticRetrieval.retrieveForQuery(query, (progress) => {
+                if (!progress || !progress.stage) return;
+                if (progress.stage === 'init') {
+                    progressState.init = progress.message || 'Done';
+                } else if (progress.stage === 'retrieval') {
+                    progressState.retrieval = progress.message || 'Done';
+                } else if (progress.stage === 'loading') {
+                    progressState.loading = progress.path || progress.message || 'Loading...';
+                } else if (progress.stage === 'complete') {
+                    progressState.loading = progress.message || 'Done';
+                }
+                retrievalMessage.content = formatProgress();
+                this.persistLocalAssistantStatus(retrievalMessage).catch((error) => {
+                    console.warn('[App] Failed to persist memory progress message:', error);
+                });
+            });
+
+            if (!result?.files?.length) {
+                retrievalMessage.content = 'No relevant memory found. Sending without memory context.';
+                retrievalMessage.memoryApprovalPrompt = null;
+                await this.persistLocalAssistantStatus(retrievalMessage);
+                return;
+            }
+
+            const fileList = result.files.map((file) => `- \`${file.path}\``).join('\n');
+            retrievalMessage.content = `Retrieved ${result.files.length} memory file${result.files.length === 1 ? '' : 's'}:\n${fileList}\n\nInclude this memory in the final model request?`;
+            retrievalMessage.memoryApprovalPrompt = {
+                status: 'pending',
+                files: result.files.map((file) => file.path)
+            };
+            const initialMemoryContext = {
+                sessionIds: result.files.map((file) => `agentic:${file.path}`),
+                memories: result.files.map((file) => ({
+                    title: file.path,
+                    content: file.content.substring(0, 200),
+                    fullContent: file.content,
+                    summary: file.content.substring(0, 200),
+                    keywords: [],
+                    relevantTags: [],
+                    isAgenticMemory: true
+                })),
+                timestamp: Date.now()
+            };
+            this.memoryApprovalDrafts.set(retrievalMessage.id, {
+                userMessageId: userMessage.id,
+                userQuery: userMessage.content || query,
+                rawOverride: null,
+                effectivePayload: null,
+                memoryContext: JSON.parse(JSON.stringify(initialMemoryContext))
+            });
+            await this.persistLocalAssistantStatus(retrievalMessage);
+
+            const approved = await this.waitForMemoryApproval(retrievalMessage.id);
+            const memoryDraft = this.memoryApprovalDrafts.get(retrievalMessage.id);
+            const memoryContext = memoryDraft?.memoryContext || initialMemoryContext;
+
+            if (approved) {
+                const nextUserQuery = typeof memoryDraft?.userQuery === 'string'
+                    ? memoryDraft.userQuery.trim()
+                    : '';
+                if (nextUserQuery && nextUserQuery !== userMessage.content) {
+                    userMessage.content = nextUserQuery;
+                    await chatDB.saveMessage(userMessage);
+                    if (this.chatArea && this.isViewingSession(userMessage.sessionId)) {
+                        this.chatArea.updateMessage(userMessage);
+                    }
+                }
+                const approvedPayload = (typeof memoryDraft?.effectivePayload === 'string' && memoryDraft.effectivePayload.trim())
+                    ? memoryDraft.effectivePayload
+                    : (memoryDraft?.rawOverride || null);
+                this._lastApiContent = approvedPayload;
+                console.log('[Memory Approval] Using approved payload override:', this._lastApiContent);
+                this.pendingMemoryContext = memoryContext;
+                await this.applyMemoryContextToUserMessage(userMessage, memoryContext);
+                retrievalMessage.content = `Memory approved. Added ${result.files.length} item${result.files.length === 1 ? '' : 's'} to the request.`;
+                retrievalMessage.memoryApprovalPrompt = {
+                    status: 'approved',
+                    linkedUserMessageId: userMessage.id
+                };
+            } else {
+                this.pendingMemoryContext = null;
+                this._lastApiContent = null;
+                retrievalMessage.content = 'Memory skipped. Sending without retrieved memory context.';
+                retrievalMessage.memoryApprovalPrompt = null;
+            }
+            await this.persistLocalAssistantStatus(retrievalMessage);
+        } catch (error) {
+            console.warn('[App] Agentic retrieval skipped:', error);
+            retrievalMessage.content = 'Memory retrieval unavailable. Sending without memory context.';
+            retrievalMessage.memoryApprovalPrompt = null;
+            await this.persistLocalAssistantStatus(retrievalMessage);
+        } finally {
+            this.memoryApprovalRequests.delete(retrievalMessage.id);
+            this.memoryApprovalDrafts.delete(retrievalMessage.id);
+        }
+    }
+
+    /**
      * Sends a user message and streams the AI response.
      * Handles API key acquisition, model selection, and streaming updates.
      */
@@ -4094,6 +4395,7 @@ class ChatApp {
         const content = rawContent.trim();
         const hasFiles = this.uploadedFiles.length > 0;
         if (!content && !hasFiles) return;
+        this.pendingMemoryContext = null;
 
         // Create session if none exists (first message creates the session)
         if (!this.getCurrentSession()) {
@@ -4203,6 +4505,11 @@ class ChatApp {
             this.updateFileCountBadge();
             this.updateInputState();
             this.resetMessageInputLayout({ resetScroll: true });
+
+            // If memory is enabled, surface retrieval as an assistant-side status flow and ask approval.
+            if (this.memoryEnabled) {
+                await this.runAgenticMemoryRetrievalFlow(content, userMessage);
+            }
 
             // Auto-scroll remains paused while the response streams
 
@@ -4537,6 +4844,13 @@ class ChatApp {
                 // Pre-cache scrubber restoration in background (if applicable)
                 if (streamingMessage.scrubber?.canRestore) {
                     this.preCacheScrubberRestore(streamingMessage);
+                }
+
+                // Trigger agentic memory extraction (non-blocking)
+                if (this.memoryEnabled) {
+                    memoryExtractor.processSession(session.id).catch(err => {
+                        console.warn('[App] Memory extraction failed:', err);
+                    });
                 }
 
                 break retryLoop; // Success - exit retry loop
@@ -5800,6 +6114,14 @@ class ChatApp {
                 e.preventDefault();
                 if (this.modelPicker) {
                     this.modelPicker.toggle();
+                }
+            }
+
+            // Cmd/Ctrl + Shift + M for memory editor
+            if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'm' || e.key === 'M')) {
+                e.preventDefault();
+                if (this.memoryEditor) {
+                    this.memoryEditor.isOpen ? this.memoryEditor.close() : this.memoryEditor.open();
                 }
             }
 

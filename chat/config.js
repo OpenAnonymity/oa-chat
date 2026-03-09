@@ -3,6 +3,18 @@
  * Centralized constants used across multiple services.
  */
 
+const readRuntimeConfigValue = (key) => {
+    if (typeof globalThis === 'undefined') return '';
+
+    const config = globalThis.__OA_CONFIG__;
+    if (config && typeof config[key] === 'string') {
+        return config[key].trim();
+    }
+
+    const directValue = globalThis[key];
+    return typeof directValue === 'string' ? directValue.trim() : '';
+};
+
 // Organization API -- orchestrates ticket issuance and ephemeral API key requests.
 // Does NOT need to be trusted for unlinkability: all blinding/unblinding runs
 // client-side (@cloudflare/privacypass-ts), the org cannot correlate issuance to redemption (blind
@@ -34,3 +46,6 @@ export const TICKET_RETRY_RATIO = 0.5;
 const __DEV_DEFAULT__ = typeof window !== 'undefined' &&
     (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 export const DEBUG = typeof __DEV__ !== 'undefined' ? __DEV__ : __DEV_DEFAULT__;
+
+// Optional runtime override for static Tinfoil key (empty by default)
+export const TINFOIL_API_KEY = readRuntimeConfigValue('TINFOIL_API_KEY');
