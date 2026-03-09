@@ -190,6 +190,8 @@ class ChatApp {
         this.scrubberService = scrubberService;
         this.scrubberPending = null;
         this.pendingMemoryContext = null; // Track memory context for next message
+        this.memoryApprovalRequests = new Map(); // messageId -> resolver for pending memory approval
+        this.memoryApprovalDrafts = new Map(); // retrieval messageId -> draft state for pre-approval editing
         this.deleteHistoryReturnFocusEl = null;
         this.isDeletingAllChats = false;
         this.lastCtrlKeyTime = 0; // Track double Ctrl/Cmd key press for memory selector
@@ -1520,7 +1522,7 @@ class ChatApp {
         );
         if (normalizedModelName && normalizedModelName !== storedModelPreference) {
             // Save in background, don't block
-            chatDB.saveSetting('selectedModel', normalizedModelName).catch(() => {});
+            chatDB.saveSetting('selectedModel', normalizedModelName).catch(() => { });
         }
         if (normalizedModelName) {
             this.state.pendingModelName = normalizedModelName;
@@ -2443,7 +2445,7 @@ class ChatApp {
                 await this.renderMessages();
             },
             showToast: (msg, type, durationMs) => this.showToast(msg, type, durationMs)
-            });
+        });
     }
 
     /**
@@ -2565,7 +2567,7 @@ class ChatApp {
 
     showLoadingToast(message) {
         if (this.isWelcomeWorkflowActive()) {
-            return () => {};
+            return () => { };
         }
 
         this.clearToast();
@@ -2793,18 +2795,18 @@ class ChatApp {
         };
 
         setTimeout(() => {
-            checkForUpdate().catch(() => {});
+            checkForUpdate().catch(() => { });
         }, UPDATE_CHECK_INITIAL_DELAY_MS);
 
         this.updateCheckInterval = setInterval(() => {
             if (document.visibilityState === 'visible') {
-                checkForUpdate().catch(() => {});
+                checkForUpdate().catch(() => { });
             }
         }, UPDATE_CHECK_INTERVAL_MS);
 
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'visible') {
-                checkForUpdate().catch(() => {});
+                checkForUpdate().catch(() => { });
             }
         });
     }
@@ -2929,7 +2931,7 @@ class ChatApp {
      */
     generateId() {
         const raw = generateSessionId();
-        return `${raw.slice(0,5)}-${raw.slice(5,10)}-${raw.slice(10,15)}-${raw.slice(15)}`;
+        return `${raw.slice(0, 5)}-${raw.slice(5, 10)}-${raw.slice(10, 15)}-${raw.slice(15)}`;
     }
 
     /**
@@ -3396,7 +3398,8 @@ class ChatApp {
             citations: metadata.citations || null,
             isLocalOnly: Boolean(metadata.isLocalOnly),
             scrubber: metadata.scrubber || null,
-            memoryContext: metadata.memoryContext || null
+            memoryContext: metadata.memoryContext || null,
+            memoryApprovalPrompt: metadata.memoryApprovalPrompt || null
         };
 
         console.log('[addMessage] Creating message with memoryContext:', message.memoryContext);
@@ -3610,13 +3613,13 @@ class ChatApp {
                         memoriesCount: msg.memoryContext.memories.length,
                         memories: msg.memoryContext.memories
                     });
-                    
+
                     const memoryText = msg.memoryContext.memories.map((m, idx) => {
                         return `\n--- Retrieved Memory ${idx + 1}: ${m.title || 'Untitled'} ---\n${m.fullContent || m.content || m.summary || ''}`;
                     }).join('\n');
-                    
+
                     textContent = `${memoryText}\n\n--- User Query ---\n${textContent}`;
-                    
+
                     console.log('[Memory Context] Final message content:', textContent);
                 }
 
@@ -3677,6 +3680,47 @@ class ChatApp {
         }
 
         return result;
+    }
+
+    /**
+     * Regenerate from an existing user message by re-running the full flow:
+     * memory retrieval/approval (personal agent) + remote model response.
+     * @param {string} userMessageId
+     */
+    async regenerateFullFlowFromUserMessage(userMessageId) {
+        const session = this.getCurrentSession();
+        if (!session || !userMessageId) return;
+        if (this.isCurrentSessionStreaming()) return;
+
+        const messages = await chatDB.getSessionMessages(session.id);
+        const userMessageIndex = messages.findIndex((msg) => msg.id === userMessageId && msg.role === 'user');
+        if (userMessageIndex === -1) return;
+
+        const userMessage = messages[userMessageIndex];
+
+        // Remove all messages after the selected user message (old personal-agent + old model response).
+        const messagesToDelete = messages.slice(userMessageIndex + 1);
+        for (const msg of messagesToDelete) {
+            await chatDB.deleteMessage(msg.id);
+        }
+
+        // Reset previous memory context/overrides so the flow is rebuilt from scratch.
+        userMessage.memoryContext = null;
+        await chatDB.saveMessage(userMessage);
+        messageMemoryContext.clearMessageContext(userMessage.id);
+        this.pendingMemoryContext = null;
+        this._lastApiContent = null;
+        this.chatInput?.clearMemoryChips?.();
+
+        await this.renderMessages();
+
+        // Re-run personal-agent retrieval/approval before calling the remote model.
+        const query = typeof userMessage.content === 'string' ? userMessage.content : '';
+        if (this.memoryEnabled) {
+            await this.runAgenticMemoryRetrievalFlow(query, userMessage);
+        }
+
+        await this.regenerateResponse();
     }
 
     /**
@@ -4086,6 +4130,234 @@ class ChatApp {
     }
 
     /**
+     * Resolve a pending memory approval prompt.
+     * @param {string} messageId
+     * @param {string} decision - "yes" or "no"
+     */
+    async handleMemoryApprovalDecision(messageId, decision) {
+        const resolver = this.memoryApprovalRequests.get(messageId);
+        if (!resolver) return;
+        this.memoryApprovalRequests.delete(messageId);
+        resolver(decision === 'yes');
+    }
+
+    /**
+     * Wait for the user to approve or reject retrieved memory.
+     * @param {string} messageId
+     * @returns {Promise<boolean>}
+     */
+    waitForMemoryApproval(messageId) {
+        return new Promise((resolve) => {
+            this.memoryApprovalRequests.set(messageId, resolve);
+        });
+    }
+
+    /**
+     * Open full prompt preview for a specific user message.
+     * @param {string} userMessageId
+     */
+    async handleMemoryPromptPreviewRequest({ messageId = null, userMessageId = null } = {}) {
+        if (messageId && this.memoryApprovalDrafts.has(messageId)) {
+            const draft = this.memoryApprovalDrafts.get(messageId);
+            if (!draft || !this.chatInput?.showFullPromptPreview) return;
+
+            // Load editable draft into the existing full-prompt editor without touching the main input.
+            this.pendingMemoryContext = draft.memoryContext
+                ? JSON.parse(JSON.stringify(draft.memoryContext))
+                : null;
+            this._lastApiContent = draft.rawOverride || null;
+
+            this.chatInput.showFullPromptPreview({
+                userQuery: draft.userQuery || '',
+                rawOverrideEnabled: !!(draft.rawOverride && draft.rawOverride.trim()),
+                rawOverrideDraft: draft.rawOverride || '',
+                persistToInput: false,
+                onApply: (applied) => {
+                    const nextContext = applied?.memoryContext
+                        ? JSON.parse(JSON.stringify(applied.memoryContext))
+                        : null;
+                    draft.userQuery = typeof applied?.userQuery === 'string'
+                        ? applied.userQuery
+                        : draft.userQuery;
+                    draft.rawOverride = applied?.rawOverrideEnabled && typeof applied?.rawOverrideDraft === 'string' && applied.rawOverrideDraft.trim()
+                        ? applied.rawOverrideDraft
+                        : null;
+                    draft.effectivePayload = (typeof applied?.effectivePayload === 'string' && applied.effectivePayload.trim())
+                        ? applied.effectivePayload
+                        : null;
+                    draft.memoryContext = nextContext;
+                    this.memoryApprovalDrafts.set(messageId, draft);
+                }
+            });
+            return;
+        }
+
+        if (!userMessageId || !this.chatArea?.showFullPromptPreview) return;
+        await this.chatArea.showFullPromptPreview(userMessageId);
+    }
+
+    /**
+     * Save and refresh a local assistant status message.
+     * @param {Object} message
+     */
+    async persistLocalAssistantStatus(message) {
+        await chatDB.saveMessage(message);
+        if (this.chatArea && this.isViewingSession(message.sessionId)) {
+            this.chatArea.updateMessage(message);
+        }
+    }
+
+    /**
+     * Attach retrieved memory context to the already-saved user message.
+     * @param {Object} userMessage
+     * @param {Object} memoryContext
+     */
+    async applyMemoryContextToUserMessage(userMessage, memoryContext) {
+        if (!userMessage || !memoryContext) return;
+        userMessage.memoryContext = memoryContext;
+        await chatDB.saveMessage(userMessage);
+        messageMemoryContext.setMessageContext(
+            userMessage.id,
+            memoryContext.memories || [],
+            memoryContext.sessionIds || []
+        );
+        if (this.chatArea && this.isViewingSession(userMessage.sessionId)) {
+            this.chatArea.updateMessage(userMessage);
+        }
+    }
+
+    /**
+     * Run agentic memory retrieval with immediate assistant UI feedback and approval.
+     * @param {string} query
+     * @param {Object} userMessage
+     */
+    async runAgenticMemoryRetrievalFlow(query, userMessage) {
+        if (!this.memoryEnabled || !query || !query.trim() || !userMessage) {
+            return;
+        }
+
+        const progressState = {
+            init: 'Queued',
+            retrieval: 'Queued',
+            loading: 'Queued'
+        };
+
+        const formatProgress = () => {
+            return [
+                'Retrieving memory for this message...',
+                '',
+                `- Index: ${progressState.init}`,
+                `- Selection: ${progressState.retrieval}`,
+                `- Loading: ${progressState.loading}`
+            ].join('\n');
+        };
+
+        const retrievalMessage = await this.addMessage('assistant', formatProgress(), {
+            isLocalOnly: true,
+            model: 'personal agent'
+        });
+        if (!retrievalMessage) return;
+
+        try {
+            const { default: agenticRetrieval } = await import('./services/agenticRetrieval.js');
+            const result = await agenticRetrieval.retrieveForQuery(query, (progress) => {
+                if (!progress || !progress.stage) return;
+                if (progress.stage === 'init') {
+                    progressState.init = progress.message || 'Done';
+                } else if (progress.stage === 'retrieval') {
+                    progressState.retrieval = progress.message || 'Done';
+                } else if (progress.stage === 'loading') {
+                    progressState.loading = progress.path || progress.message || 'Loading...';
+                } else if (progress.stage === 'complete') {
+                    progressState.loading = progress.message || 'Done';
+                }
+                retrievalMessage.content = formatProgress();
+                this.persistLocalAssistantStatus(retrievalMessage).catch((error) => {
+                    console.warn('[App] Failed to persist memory progress message:', error);
+                });
+            });
+
+            if (!result?.files?.length) {
+                retrievalMessage.content = 'No relevant memory found. Sending without memory context.';
+                retrievalMessage.memoryApprovalPrompt = null;
+                await this.persistLocalAssistantStatus(retrievalMessage);
+                return;
+            }
+
+            const fileList = result.files.map((file) => `- \`${file.path}\``).join('\n');
+            retrievalMessage.content = `Retrieved ${result.files.length} memory file${result.files.length === 1 ? '' : 's'}:\n${fileList}\n\nInclude this memory in the final model request?`;
+            retrievalMessage.memoryApprovalPrompt = {
+                status: 'pending',
+                files: result.files.map((file) => file.path)
+            };
+            const initialMemoryContext = {
+                sessionIds: result.files.map((file) => `agentic:${file.path}`),
+                memories: result.files.map((file) => ({
+                    title: file.path,
+                    content: file.content.substring(0, 200),
+                    fullContent: file.content,
+                    summary: file.content.substring(0, 200),
+                    keywords: [],
+                    relevantTags: [],
+                    isAgenticMemory: true
+                })),
+                timestamp: Date.now()
+            };
+            this.memoryApprovalDrafts.set(retrievalMessage.id, {
+                userMessageId: userMessage.id,
+                userQuery: userMessage.content || query,
+                rawOverride: null,
+                effectivePayload: null,
+                memoryContext: JSON.parse(JSON.stringify(initialMemoryContext))
+            });
+            await this.persistLocalAssistantStatus(retrievalMessage);
+
+            const approved = await this.waitForMemoryApproval(retrievalMessage.id);
+            const memoryDraft = this.memoryApprovalDrafts.get(retrievalMessage.id);
+            const memoryContext = memoryDraft?.memoryContext || initialMemoryContext;
+
+            if (approved) {
+                const nextUserQuery = typeof memoryDraft?.userQuery === 'string'
+                    ? memoryDraft.userQuery.trim()
+                    : '';
+                if (nextUserQuery && nextUserQuery !== userMessage.content) {
+                    userMessage.content = nextUserQuery;
+                    await chatDB.saveMessage(userMessage);
+                    if (this.chatArea && this.isViewingSession(userMessage.sessionId)) {
+                        this.chatArea.updateMessage(userMessage);
+                    }
+                }
+                const approvedPayload = (typeof memoryDraft?.effectivePayload === 'string' && memoryDraft.effectivePayload.trim())
+                    ? memoryDraft.effectivePayload
+                    : (memoryDraft?.rawOverride || null);
+                this._lastApiContent = approvedPayload;
+                console.log('[Memory Approval] Using approved payload override:', this._lastApiContent);
+                this.pendingMemoryContext = memoryContext;
+                await this.applyMemoryContextToUserMessage(userMessage, memoryContext);
+                retrievalMessage.content = `Memory approved. Added ${result.files.length} item${result.files.length === 1 ? '' : 's'} to the request.`;
+                retrievalMessage.memoryApprovalPrompt = {
+                    status: 'approved',
+                    linkedUserMessageId: userMessage.id
+                };
+            } else {
+                this.pendingMemoryContext = null;
+                this._lastApiContent = null;
+                retrievalMessage.content = 'Memory skipped. Sending without retrieved memory context.';
+                retrievalMessage.memoryApprovalPrompt = null;
+            }
+            await this.persistLocalAssistantStatus(retrievalMessage);
+        } catch (error) {
+            console.warn('[App] Agentic retrieval skipped:', error);
+            retrievalMessage.content = 'Memory retrieval unavailable. Sending without memory context.';
+            retrievalMessage.memoryApprovalPrompt = null;
+            await this.persistLocalAssistantStatus(retrievalMessage);
+        } finally {
+            this.memoryApprovalRequests.delete(retrievalMessage.id);
+            this.memoryApprovalDrafts.delete(retrievalMessage.id);
+        }
+    }
+
+    /**
      * Sends a user message and streams the AI response.
      * Handles API key acquisition, model selection, and streaming updates.
      */
@@ -4095,6 +4367,7 @@ class ChatApp {
         const content = rawContent.trim();
         const hasFiles = this.uploadedFiles.length > 0;
         if (!content && !hasFiles) return;
+        this.pendingMemoryContext = null;
 
         let displayContent = content;
         let apiContent = content;
@@ -4146,7 +4419,7 @@ class ChatApp {
 
         let session = this.getCurrentSession();
         if (!session) return; // Safety check
-        
+
         // Store the API content for use later in streaming (if memory was used)
         if (hasMemoryContext) {
             this._lastApiContent = apiContent;
@@ -4253,31 +4526,9 @@ class ChatApp {
                     showingOriginal: false
                 };
             }
-            // Add memory context if available
-            if (this.pendingMemoryContext) {
-                console.log('[SendMessage] Adding pendingMemoryContext to metadata:', this.pendingMemoryContext);
-                metadata.memoryContext = {
-                    sessionIds: this.pendingMemoryContext.sessionIds,
-                    memories: this.pendingMemoryContext.memories,
-                    timestamp: this.pendingMemoryContext.timestamp
-                };
-            } else {
-                console.log('[SendMessage] No pendingMemoryContext available');
-            }
             this.isAutoScrollPaused = true;
             const userMessage = await this.addMessage('user', displayContent || '', metadata);
 
-            // Store memory context in service if available (for hover display)
-            if (this.pendingMemoryContext && userMessage && userMessage.id) {
-                const { messageMemoryContext } = await import('./services/messageMemoryContext.js');
-                messageMemoryContext.setMessageContext(
-                    userMessage.id,
-                    this.pendingMemoryContext.memories,
-                    this.pendingMemoryContext.sessionIds
-                );
-                // Clear pending context after using it
-                this.pendingMemoryContext = null;
-            }
             if (userMessage?.id) {
                 emitDesktopEvent('oa-desktop:user-message-added', {
                     sessionId: session.id,
@@ -4296,6 +4547,12 @@ class ChatApp {
 
             // Clear memory chips from input area
             this.chatInput?.clearMemoryChips();
+
+            // If memory is enabled, surface retrieval as an assistant-side status flow and ask approval.
+            // This removes the "silent lag" between send click and actual model request.
+            if (this.memoryEnabled && !hasMemoryContext) {
+                await this.runAgenticMemoryRetrievalFlow(content, userMessage);
+            }
 
             // Auto-scroll remains paused while the response streams
 
@@ -4398,74 +4655,111 @@ class ChatApp {
             };
 
             retryLoop: while (retryCount <= MAX_RETRIES) {
-            try {
-                // Get AI response from inference backend with streaming
-                const messages = await chatDB.getSessionMessages(session.id);
-                const filteredMessages = messages.filter(msg => !msg.isLocalOnly);
-                const sanitizedMessages = this.sanitizeMessagesForApi(filteredMessages);
-                const hasScrubberContext = this.hasScrubberContext(filteredMessages);
-                const scrubberMetadata = this.createAssistantScrubberMetadata({
-                    originalPrompt: scrubberOriginalPrompt,
-                    redactedPrompt: scrubberRedactedPrompt,
-                    hasScrubberContext
-                });
+                try {
+                    // Get AI response from inference backend with streaming
+                    const messages = await chatDB.getSessionMessages(session.id);
+                    const filteredMessages = messages.filter(msg => !msg.isLocalOnly);
+                    const sanitizedMessages = this.sanitizeMessagesForApi(filteredMessages);
+                    const hasScrubberContext = this.hasScrubberContext(filteredMessages);
+                    const scrubberMetadata = this.createAssistantScrubberMetadata({
+                        originalPrompt: scrubberOriginalPrompt,
+                        redactedPrompt: scrubberRedactedPrompt,
+                        hasScrubberContext
+                    });
 
-                // Process messages to include file content from stored metadata
-                let processedMessages = this.processMessagesWithFiles(sanitizedMessages, modelIdForRequest);
+                    // Process messages to include file content from stored metadata
+                    let processedMessages = this.processMessagesWithFiles(sanitizedMessages, modelIdForRequest);
 
-                // Clear one-shot API override after materializing processed payload.
-                if (this._lastApiContent) {
-                    delete this._lastApiContent;
-                }
+                    // Clear one-shot API override after materializing processed payload.
+                    if (this._lastApiContent) {
+                        delete this._lastApiContent;
+                    }
 
-                // Create a placeholder message for streaming
-                const streamingMessageId = this.generateId();
-                streamedContent = '';
-                streamedReasoning = '';
-                let streamingTokenCount = 0;
+                    // Create a placeholder message for streaming
+                    const streamingMessageId = this.generateId();
+                    streamedContent = '';
+                    streamedReasoning = '';
+                    let streamingTokenCount = 0;
 
-                // Prepare assistant message object (don't save to DB yet - wait for first chunk)
-                streamingMessage = {
-                    id: streamingMessageId,
-                    sessionId: session.id,
-                    role: 'assistant',
-                    content: '',
-                    reasoning: '',
-                    timestamp: Date.now(),
-                    model: modelNameToUse,
-                    tokenCount: null,
-                    streamingTokens: 0,
-                    streamingReasoning: false,
-                    scrubber: scrubberMetadata
-                };
+                    // Prepare assistant message object (don't save to DB yet - wait for first chunk)
+                    streamingMessage = {
+                        id: streamingMessageId,
+                        sessionId: session.id,
+                        role: 'assistant',
+                        content: '',
+                        reasoning: '',
+                        timestamp: Date.now(),
+                        model: modelNameToUse,
+                        tokenCount: null,
+                        streamingTokens: 0,
+                        streamingReasoning: false,
+                        scrubber: scrubberMetadata
+                    };
 
-                // Track progress for periodic saves
-                let lastSaveLength = 0;
-                const SAVE_INTERVAL_CHARS = 100; // Save every 100 characters
-                firstChunkReceived = false;
-                let firstContentChunk = true; // Track when content starts (after reasoning)
-                let reasoningStartTime = null;
-                let reasoningEndTime = null;
+                    // Track progress for periodic saves
+                    let lastSaveLength = 0;
+                    const SAVE_INTERVAL_CHARS = 100; // Save every 100 characters
+                    firstChunkReceived = false;
+                    let firstContentChunk = true; // Track when content starts (after reasoning)
+                    let reasoningStartTime = null;
+                    let reasoningEndTime = null;
 
-                // Stream the response with token tracking
-                const tokenData = await inferenceService.streamCompletion(
-                    processedMessages,
-                    modelIdForRequest,
-                    session,
-                    async (chunk, imageData) => {
-                        // On first chunk (of any kind), remove typing indicator and append message
-                        if (!firstChunkReceived) {
-                            firstChunkReceived = true;
-                            if (typingId) this.removeTypingIndicator(typingId);
+                    // Stream the response with token tracking
+                    const tokenData = await inferenceService.streamCompletion(
+                        processedMessages,
+                        modelIdForRequest,
+                        session,
+                        async (chunk, imageData) => {
+                            // On first chunk (of any kind), remove typing indicator and append message
+                            if (!firstChunkReceived) {
+                                firstChunkReceived = true;
+                                if (typingId) this.removeTypingIndicator(typingId);
 
-                            // Handle text content
+                                // Handle text content
+                                if (chunk) {
+                                    streamedContent += chunk;
+                                    streamingMessage.content = streamedContent;
+                                    streamingMessage.streamingTokens = Math.ceil(streamedContent.length / 4);
+
+                                    // If reasoning happened before content, finalize reasoning display now
+                                    if (reasoningStartTime && streamedReasoning.length > 0) {
+                                        reasoningEndTime = Date.now();
+                                        const reasoningDuration = reasoningEndTime - reasoningStartTime;
+
+                                        // Update the reasoning subtitle to show duration immediately (only if viewing this session)
+                                        if (this.chatArea && this.isViewingSession(session.id)) {
+                                            this.chatArea.updateReasoningSubtitleToDuration(
+                                                streamingMessageId,
+                                                reasoningDuration
+                                            );
+                                        }
+                                        firstContentChunk = false; // Mark that we've handled the transition
+                                    }
+                                }
+
+                                // Handle image data
+                                if (imageData && imageData.images) {
+                                    if (!streamingMessage.images) streamingMessage.images = [];
+                                    this.addImagesWithDedup(streamingMessage.images, imageData.images);
+                                }
+
+                                // Save message to DB (always) and append to UI (only if viewing this session)
+                                if (chunk || (imageData && imageData.images)) {
+                                    await chatDB.saveMessage(streamingMessage);
+                                    if (this.chatArea && this.isViewingSession(session.id)) {
+                                        await this.chatArea.appendMessage(streamingMessage);
+                                    }
+                                }
+                                return; // Exit after first chunk handling
+                            }
+
+                            // Handle subsequent chunks
                             if (chunk) {
                                 streamedContent += chunk;
-                                streamingMessage.content = streamedContent;
-                                streamingMessage.streamingTokens = Math.ceil(streamedContent.length / 4);
 
-                                // If reasoning happened before content, finalize reasoning display now
-                                if (reasoningStartTime && streamedReasoning.length > 0) {
+                                // If this is the first content chunk after reasoning, finalize reasoning display
+                                if (firstContentChunk && reasoningStartTime && streamedReasoning.length > 0) {
+                                    firstContentChunk = false;
                                     reasoningEndTime = Date.now();
                                     const reasoningDuration = reasoningEndTime - reasoningStartTime;
 
@@ -4476,263 +4770,226 @@ class ChatApp {
                                             reasoningDuration
                                         );
                                     }
-                                    firstContentChunk = false; // Mark that we've handled the transition
                                 }
                             }
 
-                            // Handle image data
                             if (imageData && imageData.images) {
                                 if (!streamingMessage.images) streamingMessage.images = [];
                                 this.addImagesWithDedup(streamingMessage.images, imageData.images);
+                                await chatDB.saveMessage(streamingMessage);
+                                // Only update UI if still viewing the same session
+                                if (this.chatArea && this.isViewingSession(session.id)) {
+                                    this.chatArea.updateStreamingImages(streamingMessageId, streamingMessage.images);
+                                }
                             }
 
-                            // Save message to DB (always) and append to UI (only if viewing this session)
-                            if (chunk || (imageData && imageData.images)) {
+                            // Periodically save partial content
+                            if (chunk && streamedContent.length - lastSaveLength >= SAVE_INTERVAL_CHARS) {
+                                streamingMessage.content = streamedContent;
+                                streamingMessage.streamingTokens = Math.ceil(streamedContent.length / 4);
                                 await chatDB.saveMessage(streamingMessage);
+                                lastSaveLength = streamedContent.length;
+                            }
+
+                            // Update UI with new content (only if viewing this session)
+                            if (chunk && this.chatArea && this.isViewingSession(session.id)) {
+                                this.chatArea.updateStreamingMessage(streamingMessageId, streamedContent);
+                            }
+                        },
+                        (tokenUpdate) => {
+                            // FEATURE DISABLED: Token count display - uncomment to re-enable
+                            // Update streaming token count in real-time
+                            streamingTokenCount = tokenUpdate.completionTokens || 0;
+                            // if (tokenUpdate.isStreaming && this.chatArea) {
+                            //     this.chatArea.updateStreamingTokens(streamingMessageId, streamingTokenCount);
+                            // }
+                        },
+                        [], // Files are now included in processedMessages, not passed separately
+                        searchEnabled,
+                        abortController,
+                        async (reasoningChunk) => {
+                            // Handle reasoning trace streaming
+                            if (!firstChunkReceived) {
+                                firstChunkReceived = true;
+                                reasoningStartTime = Date.now();
+                                if (typingId) this.removeTypingIndicator(typingId);
+                                streamingMessage.reasoning = reasoningChunk;
+                                streamingMessage.streamingReasoning = true;
+                                streamedReasoning = reasoningChunk;
+                                await chatDB.saveMessage(streamingMessage);
+                                // Only update UI if still viewing the same session
                                 if (this.chatArea && this.isViewingSession(session.id)) {
                                     await this.chatArea.appendMessage(streamingMessage);
                                 }
+                            } else {
+                                streamedReasoning += reasoningChunk;
+                                streamingMessage.reasoning = streamedReasoning;
                             }
-                            return; // Exit after first chunk handling
-                        }
 
-                        // Handle subsequent chunks
-                        if (chunk) {
-                            streamedContent += chunk;
-
-                            // If this is the first content chunk after reasoning, finalize reasoning display
-                            if (firstContentChunk && reasoningStartTime && streamedReasoning.length > 0) {
-                                firstContentChunk = false;
-                                reasoningEndTime = Date.now();
-                                const reasoningDuration = reasoningEndTime - reasoningStartTime;
-
-                                // Update the reasoning subtitle to show duration immediately (only if viewing this session)
-                                if (this.chatArea && this.isViewingSession(session.id)) {
-                                    this.chatArea.updateReasoningSubtitleToDuration(
-                                        streamingMessageId,
-                                        reasoningDuration
-                                    );
-                                }
-                            }
-                        }
-
-                        if (imageData && imageData.images) {
-                            if (!streamingMessage.images) streamingMessage.images = [];
-                            this.addImagesWithDedup(streamingMessage.images, imageData.images);
-                            await chatDB.saveMessage(streamingMessage);
-                            // Only update UI if still viewing the same session
+                            // Update UI with new reasoning content (only if viewing this session)
                             if (this.chatArea && this.isViewingSession(session.id)) {
-                                this.chatArea.updateStreamingImages(streamingMessageId, streamingMessage.images);
+                                this.chatArea.updateStreamingReasoning(streamingMessageId, streamedReasoning);
                             }
-                        }
+                        },
+                        this.reasoningEnabled
+                    );
 
-                        // Periodically save partial content
-                        if (chunk && streamedContent.length - lastSaveLength >= SAVE_INTERVAL_CHARS) {
-                            streamingMessage.content = streamedContent;
-                            streamingMessage.streamingTokens = Math.ceil(streamedContent.length / 4);
-                            await chatDB.saveMessage(streamingMessage);
-                            lastSaveLength = streamedContent.length;
-                        }
-
-                        // Update UI with new content (only if viewing this session)
-                        if (chunk && this.chatArea && this.isViewingSession(session.id)) {
-                            this.chatArea.updateStreamingMessage(streamingMessageId, streamedContent);
-                        }
-                    },
-                    (tokenUpdate) => {
-                        // FEATURE DISABLED: Token count display - uncomment to re-enable
-                        // Update streaming token count in real-time
-                        streamingTokenCount = tokenUpdate.completionTokens || 0;
-                        // if (tokenUpdate.isStreaming && this.chatArea) {
-                        //     this.chatArea.updateStreamingTokens(streamingMessageId, streamingTokenCount);
-                        // }
-                    },
-                    [], // Files are now included in processedMessages, not passed separately
-                    searchEnabled,
-                    abortController,
-                    async (reasoningChunk) => {
-                        // Handle reasoning trace streaming
-                        if (!firstChunkReceived) {
-                            firstChunkReceived = true;
-                            reasoningStartTime = Date.now();
-                            if (typingId) this.removeTypingIndicator(typingId);
-                            streamingMessage.reasoning = reasoningChunk;
-                            streamingMessage.streamingReasoning = true;
-                            streamedReasoning = reasoningChunk;
-                            await chatDB.saveMessage(streamingMessage);
-                            // Only update UI if still viewing the same session
-                            if (this.chatArea && this.isViewingSession(session.id)) {
-                                await this.chatArea.appendMessage(streamingMessage);
-                            }
-                        } else {
-                            streamedReasoning += reasoningChunk;
-                            streamingMessage.reasoning = streamedReasoning;
-                        }
-
-                        // Update UI with new reasoning content (only if viewing this session)
-                        if (this.chatArea && this.isViewingSession(session.id)) {
-                            this.chatArea.updateStreamingReasoning(streamingMessageId, streamedReasoning);
-                        }
-                    },
-                    this.reasoningEnabled
-                );
-
-                // Save the final message content with token data, reasoning, and citations
-                streamingMessage.content = streamedContent;
-                if (streamingMessage.scrubber) {
-                    streamingMessage.scrubber.redactedResponse = streamedContent;
-                }
-                const rawReasoning = tokenData.reasoning || streamedReasoning || null;
-                // Parse and save the cleaned reasoning
-                streamingMessage.reasoning = rawReasoning ? parseReasoningContent(rawReasoning) : null;
-                streamingMessage.tokenCount = tokenData.completionTokens || streamingTokenCount;
-                streamingMessage.model = tokenData.model || modelNameToUse;
-                streamingMessage.streamingTokens = null; // Clear streaming tokens after completion
-                streamingMessage.streamingReasoning = false; // Clear streaming reasoning flag
-                streamingMessage.citations = tokenData.citations || null;
-
-                // Calculate reasoning duration if reasoning was used
-                if (streamingMessage.reasoning && reasoningStartTime) {
-                    // Use already-calculated end time if available, otherwise calculate now
-                    const finalReasoningEndTime = reasoningEndTime || Date.now();
-                    streamingMessage.reasoningDuration = finalReasoningEndTime - reasoningStartTime;
-                }
-
-                await chatDB.saveMessage(streamingMessage);
-
-                // Fetch metadata for citations asynchronously and update UI
-                if (streamingMessage.citations && streamingMessage.citations.length > 0) {
-                    this.enrichCitationsAndUpdateUI(streamingMessage);
-                }
-
-                // Re-render the message to finalize its state (only if viewing this session)
-                if (this.chatArea && this.isViewingSession(session.id)) {
-                    await this.chatArea.finalizeStreamingMessage(streamingMessage);
-                    // Finalize reasoning display with markdown processing and timing
-                    if (streamingMessage.reasoning) {
-                        this.chatArea.finalizeReasoningDisplay(streamingMessage.id, streamingMessage.reasoning, streamingMessage.reasoningDuration);
+                    // Save the final message content with token data, reasoning, and citations
+                    streamingMessage.content = streamedContent;
+                    if (streamingMessage.scrubber) {
+                        streamingMessage.scrubber.redactedResponse = streamedContent;
                     }
-                }
+                    const rawReasoning = tokenData.reasoning || streamedReasoning || null;
+                    // Parse and save the cleaned reasoning
+                    streamingMessage.reasoning = rawReasoning ? parseReasoningContent(rawReasoning) : null;
+                    streamingMessage.tokenCount = tokenData.completionTokens || streamingTokenCount;
+                    streamingMessage.model = tokenData.model || modelNameToUse;
+                    streamingMessage.streamingTokens = null; // Clear streaming tokens after completion
+                    streamingMessage.streamingReasoning = false; // Clear streaming reasoning flag
+                    streamingMessage.citations = tokenData.citations || null;
 
-                // Record activity for session embedding after successful message
-                sessionEmbedder.recordActivity(session.id);
-
-                // Trigger keywords generation after successful message (non-blocking)
-                keywordsGenerator.triggerGeneration(session.id, this).catch(err => {
-                    console.warn('[App] Keywords generation failed:', err);
-                });
-
-                // Trigger agentic memory extraction (non-blocking)
-                memoryExtractor.processSession(session.id).catch(err => {
-                    console.warn('[App] Memory extraction failed:', err);
-                });
-
-                // Pre-cache scrubber restoration in background (if applicable)
-                if (streamingMessage.scrubber?.canRestore) {
-                    this.preCacheScrubberRestore(streamingMessage);
-                }
-
-                break retryLoop; // Success - exit retry loop
-
-            } catch (error) {
-                console.error('Error getting AI response:', error);
-                if (typingId) this.removeTypingIndicator(typingId);
-
-                // Check if error was due to cancellation
-                if (error.isCancelled) {
-                    // Keep the partial message if there's content, otherwise remove it
-                    if (streamingMessage && firstChunkReceived) {
-                        if (streamedContent.trim() || streamedReasoning.trim()) {
-                            // Save the partial content with a note
-                            streamingMessage.content = streamedContent;
-                            // Parse and save the cleaned reasoning
-                            streamingMessage.reasoning = streamedReasoning ? parseReasoningContent(streamedReasoning) : null;
-                            streamingMessage.tokenCount = null;
-                            streamingMessage.streamingTokens = null;
-                            streamingMessage.streamingReasoning = false;
-                            await chatDB.saveMessage(streamingMessage);
-                            // Only update UI if still viewing the same session
-                            if (this.chatArea && this.isViewingSession(session.id)) {
-                                await this.chatArea.finalizeStreamingMessage(streamingMessage);
-                                // Finalize reasoning display with markdown processing
-                                if (streamingMessage.reasoning) {
-                                    this.chatArea.finalizeReasoningDisplay(streamingMessage.id, streamingMessage.reasoning);
-                                }
-                            }
-                        } else {
-                            // Remove empty message if no content was generated
-                            await chatDB.deleteMessage(streamingMessage.id);
-                            // Only remove from UI if still viewing the same session
-                            if (this.isViewingSession(session.id)) {
-                                const messageEl = document.querySelector(`[data-message-id="${streamingMessage.id}"]`);
-                                if (messageEl) {
-                                    messageEl.remove();
-                                }
-                            }
-                        }
+                    // Calculate reasoning duration if reasoning was used
+                    if (streamingMessage.reasoning && reasoningStartTime) {
+                        // Use already-calculated end time if available, otherwise calculate now
+                        const finalReasoningEndTime = reasoningEndTime || Date.now();
+                        streamingMessage.reasoningDuration = finalReasoningEndTime - reasoningStartTime;
                     }
-                    // If firstChunkReceived is false, message was never added to UI or DB, nothing to clean up
-                    break retryLoop; // Don't retry cancelled requests
-                }
 
-                // Check if we should retry (only if no content received yet)
-                if (!firstChunkReceived && retryCount < MAX_RETRIES && isRetryableError(error)) {
-                    retryCount++;
-                    console.log(`Retrying request (attempt ${retryCount + 1}/${MAX_RETRIES + 1}) after error:`, error.message);
-                    // Small delay before retry (500ms * attempt number)
-                    await new Promise(r => setTimeout(r, 500 * retryCount));
-                    // Re-show typing indicator for retry
-                    typingId = this.isViewingSession(session.id) ? this.showTypingIndicator(modelNameToUse) : null;
-                    continue retryLoop;
-                }
-
-                // Non-retryable or exhausted retries - show error to user
-                const errorMessage = error.message;
-
-                // Customize messages for specific error types
-                let userFriendlyMessage = `Sorry, I encountered an error while processing your request. Try re-submitting the query. **Error**: ${errorMessage}`;
-
-                // The following are inference backend HTTP status codes, not OA infra
-                if (error.status === 402) {
-                    // Credit/token limit errors
-                    // userFriendlyMessage = `Ephemeral key is out of credit limit. Renew or extend the key`;
-                    userFriendlyMessage = `Sorry, I encountered an error while processing your request. Try submitting the query again. **Error**: ${errorMessage}`;
-                } else if (error.status === 401) {
-                    // Authentication errors
-                    userFriendlyMessage = `Authentication error. Please check the system panel (right side) and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor)!`;
-                } else if (error.status === 503 || error.status === 502 || error.status === 504) {
-                    // Service unavailable / gateway errors (after retries exhausted)
-                    userFriendlyMessage = `Gateway error (after ${retryCount} retries). Please take a look at the system panel and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor).`;
-                } else if (errorMessage.includes('proxy') || errorMessage.includes('Proxy')) {
-                    // Proxy/connection errors
-                    userFriendlyMessage = `Proxy error. Please take a look at the system panel and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor).`;
-                } else if (errorMessage.includes('No API key')) {
-                    // No API key errors
-                    userFriendlyMessage = `API key error. Please take a look at the system panel and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor).`;
-                } else {
-                    // Generic fallback (after retries if applicable)
-                    const retryNote = retryCount > 0 ? ` (after ${retryCount} retries)` : '';
-                    userFriendlyMessage = `⚠️ **Error**${retryNote}: ${errorMessage}`;
-                }
-
-                if (firstChunkReceived && streamingMessage) {
-                    // Message was already added to UI, update it with error
-                    streamingMessage.content = userFriendlyMessage;
-                    streamingMessage.tokenCount = null;
-                    streamingMessage.streamingTokens = null;
-                    streamingMessage.streamingReasoning = false;
-                    streamingMessage.isLocalOnly = true;
                     await chatDB.saveMessage(streamingMessage);
-                    // Only update UI if still viewing the same session
+
+                    // Fetch metadata for citations asynchronously and update UI
+                    if (streamingMessage.citations && streamingMessage.citations.length > 0) {
+                        this.enrichCitationsAndUpdateUI(streamingMessage);
+                    }
+
+                    // Re-render the message to finalize its state (only if viewing this session)
                     if (this.chatArea && this.isViewingSession(session.id)) {
                         await this.chatArea.finalizeStreamingMessage(streamingMessage);
+                        // Finalize reasoning display with markdown processing and timing
+                        if (streamingMessage.reasoning) {
+                            this.chatArea.finalizeReasoningDisplay(streamingMessage.id, streamingMessage.reasoning, streamingMessage.reasoningDuration);
+                        }
                     }
-                } else if (this.isViewingSession(session.id)) {
-                    // Error before first chunk - message never added to UI, add new error message
-                    await this.addMessage('assistant', userFriendlyMessage, { isLocalOnly: true });
+
+                    // Record activity for session embedding after successful message
+                    sessionEmbedder.recordActivity(session.id);
+
+                    // Trigger keywords generation after successful message (non-blocking)
+                    keywordsGenerator.triggerGeneration(session.id, this).catch(err => {
+                        console.warn('[App] Keywords generation failed:', err);
+                    });
+
+                    // Trigger agentic memory extraction (non-blocking)
+                    memoryExtractor.processSession(session.id).catch(err => {
+                        console.warn('[App] Memory extraction failed:', err);
+                    });
+
+                    // Pre-cache scrubber restoration in background (if applicable)
+                    if (streamingMessage.scrubber?.canRestore) {
+                        this.preCacheScrubberRestore(streamingMessage);
+                    }
+
+                    break retryLoop; // Success - exit retry loop
+
+                } catch (error) {
+                    console.error('Error getting AI response:', error);
+                    if (typingId) this.removeTypingIndicator(typingId);
+
+                    // Check if error was due to cancellation
+                    if (error.isCancelled) {
+                        // Keep the partial message if there's content, otherwise remove it
+                        if (streamingMessage && firstChunkReceived) {
+                            if (streamedContent.trim() || streamedReasoning.trim()) {
+                                // Save the partial content with a note
+                                streamingMessage.content = streamedContent;
+                                // Parse and save the cleaned reasoning
+                                streamingMessage.reasoning = streamedReasoning ? parseReasoningContent(streamedReasoning) : null;
+                                streamingMessage.tokenCount = null;
+                                streamingMessage.streamingTokens = null;
+                                streamingMessage.streamingReasoning = false;
+                                await chatDB.saveMessage(streamingMessage);
+                                // Only update UI if still viewing the same session
+                                if (this.chatArea && this.isViewingSession(session.id)) {
+                                    await this.chatArea.finalizeStreamingMessage(streamingMessage);
+                                    // Finalize reasoning display with markdown processing
+                                    if (streamingMessage.reasoning) {
+                                        this.chatArea.finalizeReasoningDisplay(streamingMessage.id, streamingMessage.reasoning);
+                                    }
+                                }
+                            } else {
+                                // Remove empty message if no content was generated
+                                await chatDB.deleteMessage(streamingMessage.id);
+                                // Only remove from UI if still viewing the same session
+                                if (this.isViewingSession(session.id)) {
+                                    const messageEl = document.querySelector(`[data-message-id="${streamingMessage.id}"]`);
+                                    if (messageEl) {
+                                        messageEl.remove();
+                                    }
+                                }
+                            }
+                        }
+                        // If firstChunkReceived is false, message was never added to UI or DB, nothing to clean up
+                        break retryLoop; // Don't retry cancelled requests
+                    }
+
+                    // Check if we should retry (only if no content received yet)
+                    if (!firstChunkReceived && retryCount < MAX_RETRIES && isRetryableError(error)) {
+                        retryCount++;
+                        console.log(`Retrying request (attempt ${retryCount + 1}/${MAX_RETRIES + 1}) after error:`, error.message);
+                        // Small delay before retry (500ms * attempt number)
+                        await new Promise(r => setTimeout(r, 500 * retryCount));
+                        // Re-show typing indicator for retry
+                        typingId = this.isViewingSession(session.id) ? this.showTypingIndicator(modelNameToUse) : null;
+                        continue retryLoop;
+                    }
+
+                    // Non-retryable or exhausted retries - show error to user
+                    const errorMessage = error.message;
+
+                    // Customize messages for specific error types
+                    let userFriendlyMessage = `Sorry, I encountered an error while processing your request. Try re-submitting the query. **Error**: ${errorMessage}`;
+
+                    // The following are inference backend HTTP status codes, not OA infra
+                    if (error.status === 402) {
+                        // Credit/token limit errors
+                        // userFriendlyMessage = `Ephemeral key is out of credit limit. Renew or extend the key`;
+                        userFriendlyMessage = `Sorry, I encountered an error while processing your request. Try submitting the query again. **Error**: ${errorMessage}`;
+                    } else if (error.status === 401) {
+                        // Authentication errors
+                        userFriendlyMessage = `Authentication error. Please check the system panel (right side) and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor)!`;
+                    } else if (error.status === 503 || error.status === 502 || error.status === 504) {
+                        // Service unavailable / gateway errors (after retries exhausted)
+                        userFriendlyMessage = `Gateway error (after ${retryCount} retries). Please take a look at the system panel and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor).`;
+                    } else if (errorMessage.includes('proxy') || errorMessage.includes('Proxy')) {
+                        // Proxy/connection errors
+                        userFriendlyMessage = `Proxy error. Please take a look at the system panel and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor).`;
+                    } else if (errorMessage.includes('No API key')) {
+                        // No API key errors
+                        userFriendlyMessage = `API key error. Please take a look at the system panel and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor).`;
+                    } else {
+                        // Generic fallback (after retries if applicable)
+                        const retryNote = retryCount > 0 ? ` (after ${retryCount} retries)` : '';
+                        userFriendlyMessage = `⚠️ **Error**${retryNote}: ${errorMessage}`;
+                    }
+
+                    if (firstChunkReceived && streamingMessage) {
+                        // Message was already added to UI, update it with error
+                        streamingMessage.content = userFriendlyMessage;
+                        streamingMessage.tokenCount = null;
+                        streamingMessage.streamingTokens = null;
+                        streamingMessage.streamingReasoning = false;
+                        streamingMessage.isLocalOnly = true;
+                        await chatDB.saveMessage(streamingMessage);
+                        // Only update UI if still viewing the same session
+                        if (this.chatArea && this.isViewingSession(session.id)) {
+                            await this.chatArea.finalizeStreamingMessage(streamingMessage);
+                        }
+                    } else if (this.isViewingSession(session.id)) {
+                        // Error before first chunk - message never added to UI, add new error message
+                        await this.addMessage('assistant', userFriendlyMessage, { isLocalOnly: true });
+                    }
+                    break retryLoop; // Exit after showing error
                 }
-                break retryLoop; // Exit after showing error
-            }
             } // End of retryLoop
         } finally {
             // Clear streaming state for this session
@@ -4756,7 +5013,7 @@ class ChatApp {
         const model = this.state.models.find(m => m.name === modelName);
         const providerName = model ? model.provider : 'OpenAI';
         const id = 'typing-' + Date.now();
-            const typingHtml = buildTypingIndicator(id, providerName);
+        const typingHtml = buildTypingIndicator(id, providerName);
         this.elements.messagesContainer.insertAdjacentHTML('beforeend', typingHtml);
         if (!this.isAutoScrollPaused) {
             this.scrollToBottom(true);
@@ -5418,8 +5675,8 @@ class ChatApp {
         const results = await chatDB.searchSessions(session => {
             const title = (session.title || '').toLowerCase();
             const summary = (session.summary || '').toLowerCase();
-            const keywords = Array.isArray(session.keywords) 
-                ? session.keywords.join(' ').toLowerCase() 
+            const keywords = Array.isArray(session.keywords)
+                ? session.keywords.join(' ').toLowerCase()
                 : '';
             const searchText = `${title} ${summary} ${keywords}`;
             return this.fuzzyMatch(query, searchText);
@@ -5449,8 +5706,8 @@ class ChatApp {
         const inMemory = this.state.sessions.filter(session => {
             const title = (session.title || '').toLowerCase();
             const summary = (session.summary || '').toLowerCase();
-            const keywords = Array.isArray(session.keywords) 
-                ? session.keywords.join(' ').toLowerCase() 
+            const keywords = Array.isArray(session.keywords)
+                ? session.keywords.join(' ').toLowerCase()
                 : '';
             const searchText = `${title} ${summary} ${keywords}`;
             return this.fuzzyMatch(query, searchText);
@@ -6470,14 +6727,14 @@ Your API key has been cleared. A new key from a different station will be obtain
                 const isPdf = file.type === 'application/pdf';
                 const isAudio = file.type.startsWith('audio/');
                 const isText = file.type.startsWith('text/') ||
-                              file.type.includes('json') ||
-                              file.type.includes('javascript') ||
-                              file.type.includes('xml') ||
-                              file.type.includes('sh') ||
-                              file.type.includes('yaml') ||
-                              file.type.includes('toml') ||
-                              // Also check by file extension for code files that might have generic MIME types
-                              /\.(go|py|js|ts|jsx|tsx|java|c|cpp|h|hpp|cs|rb|php|swift|kt|rs|scala|r|m|mm|sql|sh|bash|zsh|pl|lua|vim|el|clj|ex|exs|erl|hrl|hs|lhs|ml|mli|fs|fsx|fsi|v|sv|svh|vhd|vhdl|tcl|awk|sed|diff|patch|md|markdown|rst|tex|bib|csv|tsv|txt|log|cfg|conf|ini|toml|yaml|yml|xml|html|css|scss|sass|less|json|jsonl|proto|thrift)$/i.test(file.name);
+                    file.type.includes('json') ||
+                    file.type.includes('javascript') ||
+                    file.type.includes('xml') ||
+                    file.type.includes('sh') ||
+                    file.type.includes('yaml') ||
+                    file.type.includes('toml') ||
+                    // Also check by file extension for code files that might have generic MIME types
+                    /\.(go|py|js|ts|jsx|tsx|java|c|cpp|h|hpp|cs|rb|php|swift|kt|rs|scala|r|m|mm|sql|sh|bash|zsh|pl|lua|vim|el|clj|ex|exs|erl|hrl|hs|lhs|ml|mli|fs|fsx|fsi|v|sv|svh|vhd|vhdl|tcl|awk|sed|diff|patch|md|markdown|rst|tex|bib|csv|tsv|txt|log|cfg|conf|ini|toml|yaml|yml|xml|html|css|scss|sass|less|json|jsonl|proto|thrift)$/i.test(file.name);
 
                 let fileTypeForIcon = null;
                 if (isPdf) fileTypeForIcon = 'pdf';

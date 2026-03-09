@@ -111,6 +111,27 @@ export default class ChatArea {
                 return;
             }
 
+            const memoryApprovalBtn = e.target.closest('.memory-approval-btn');
+            if (memoryApprovalBtn) {
+                const messageId = memoryApprovalBtn.dataset.messageId;
+                const decision = memoryApprovalBtn.dataset.decision;
+                await this.app.handleMemoryApprovalDecision(messageId, decision);
+                return;
+            }
+
+            const memoryPreviewBtn = e.target.closest('.memory-preview-btn');
+            if (memoryPreviewBtn) {
+                const messageId = memoryPreviewBtn.dataset.messageId;
+                const userMessageId = memoryPreviewBtn.dataset.userMessageId;
+                if (messageId || userMessageId) {
+                    await this.app.handleMemoryPromptPreviewRequest({
+                        messageId,
+                        userMessageId
+                    });
+                }
+                return;
+            }
+
             const scrubberBtn = e.target.closest('.scrubber-restore-btn');
             if (scrubberBtn) {
                 const messageId = scrubberBtn.dataset.messageId;
@@ -756,23 +777,21 @@ export default class ChatArea {
             return;
         }
 
-        // Find the previous user message
-        const userMessage = messageIndex > 0 ? messages[messageIndex - 1] : null;
-        if (!userMessage || userMessage.role !== 'user') {
+        // Find the nearest previous user message.
+        // Personal-agent/local assistant messages can sit between the model response and user prompt.
+        const userMessageIndex = (() => {
+            for (let i = messageIndex - 1; i >= 0; i--) {
+                if (messages[i]?.role === 'user') return i;
+            }
+            return -1;
+        })();
+        if (userMessageIndex === -1) {
             return;
         }
 
-        // Delete the assistant message and all messages after it
-        const messagesToDelete = messages.slice(messageIndex);
-        for (const msg of messagesToDelete) {
-            await chatDB.deleteMessage(msg.id);
-        }
-
-        // Re-render messages to remove deleted messages from UI
-        await this.render();
-
-        // Trigger regeneration by calling the app's regenerateResponse method
-        await this.app.regenerateResponse();
+        // Regenerate from the originating user message so the full flow reruns:
+        // personal-agent memory retrieval + remote model response.
+        await this.app.regenerateFullFlowFromUserMessage(messages[userMessageIndex].id);
     }
 
     /**

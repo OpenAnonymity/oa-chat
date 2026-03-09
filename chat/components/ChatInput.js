@@ -2205,6 +2205,8 @@ export default class ChatInput {
             return;
         }
 
+        const onApply = typeof draft?.onApply === 'function' ? draft.onApply : null;
+        const persistToInput = draft?.persistToInput !== false;
         const initialUserQuery = typeof draft?.userQuery === 'string'
             ? draft.userQuery
             : (this.app.elements.messageInput.value || '');
@@ -2659,13 +2661,27 @@ export default class ChatInput {
             if (!userQueryTextarea) return;
             userQueryDraft = userQueryTextarea.value;
 
-            this.app.elements.messageInput.value = userQueryDraft;
-            this.app.elements.messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+            if (persistToInput) {
+                this.app.elements.messageInput.value = userQueryDraft;
+                this.app.elements.messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+            }
 
-            if (rawOverrideEnabled && rawOverrideDraft.trim()) {
-                this.app._lastApiContent = rawOverrideDraft;
-            } else {
-                this.app._lastApiContent = null;
+            const appliedRawOverride = (rawOverrideEnabled && rawOverrideDraft.trim()) ? rawOverrideDraft : null;
+            if (persistToInput) {
+                if (appliedRawOverride) {
+                    this.app._lastApiContent = appliedRawOverride;
+                } else {
+                    this.app._lastApiContent = null;
+                }
+            }
+            if (onApply) {
+                onApply({
+                    userQuery: userQueryDraft,
+                    rawOverrideEnabled,
+                    rawOverrideDraft,
+                    effectivePayload: getEffectivePayload(),
+                    memoryContext: this.app.pendingMemoryContext
+                });
             }
             closeModal();
         });
