@@ -32,20 +32,21 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   model coordinated across `chat/app.js`, `chat/api.js`, `chat/components/ChatArea.js`,
   `chat/components/MessageTemplates.js`, and `chat/services/networkLogRenderer.js`.
   The phases are:
-  - `waiting`: Before the provider response stream is open.
-  - `stream-open`: The HTTP/SSE stream is open, but no reasoning/content token has been
-    rendered yet.
+  - `requesting-key`: The session is actively redeeming tickets for a fresh access token.
+  - `waiting-response`: The access token is ready and the app is waiting for reasoning or
+    response output to begin.
 - 2026-03-09: Pending copy is semantic, not purely cosmetic.
   - Show `Requesting ephemeral key` only when the session actually needs a new or renewed
     access token (`!getAccessToken(session)` or `isAccessExpired(session)`).
   - If the session already has a valid access token, start directly at `Waiting for response`.
-  - This matters for models/providers where the first streamed payload is reasoning rather
-    than visible answer text; do not assume there will be an intermediate content token to
-    correct the copy later.
+  - If the session starts without access, flip to `Waiting for response` when key redemption
+    succeeds, at the same boundary that produces the `Ephemeral access key granted` activity.
+    Do not wait for the first streamed token, because some providers emit reasoning or answer
+    tokens immediately and otherwise make key acquisition look slower than it was.
 - 2026-03-09: `Response stream open` in the activity timeline intentionally means
-  "stream established", not "visible output rendered". Keep this aligned with the pending
-  placeholder semantics in chat. The timeline text was changed specifically to avoid the
-  previous misleading `Response received` wording.
+  "HTTP/SSE stream established", not "visible output rendered". Keep this separate from the
+  pending placeholder semantics in chat: the label should already be `Waiting for response`
+  once access is granted, so the later stream-open event must not visually reset the shimmer.
 - 2026-03-09: Avoid DOM replacement during pending-state phase changes.
   - Updating the standalone placeholder by replacing the whole node caused visible header
     flashes and restarted the shimmer.
@@ -67,8 +68,20 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - The buttons are not reliably actionable during pure reasoning streaming anyway.
   - A placeholder row is kept in the layout to avoid a jump when the buttons appear once
     actual output content starts.
+  - Any stream-time DOM insertion that adds text/images before final re-render must target
+    the shared action-row anchor, not only the real toolbar row. Otherwise the placeholder
+    stays above the new content and creates a temporary gap between the reasoning trace and
+    the streaming answer until completion.
 - 2026-03-09: Pending shimmer styling is intentionally distinct from the reasoning-trace
   shimmer.
   - Pending labels use a dimmer muted-gray shimmer so they read as pre-output status, not
     as actual reasoning content.
   - Both `Requesting ephemeral key` and `Waiting for response` share the same shimmer effect.
+- 2026-03-09: Production build cache-busting matters for pending-state UI correctness.
+  - JS entry bundles were already hash-versioned, but `index.html` also references shared
+    local CSS/vendor assets that can otherwise remain stale in browser cache.
+  - `scripts/build.mjs` now appends the current build hash as `?v=<hash>` to local
+    `link[href]` and `script[src]` references in `dist/index.html` so fresh JS does not run
+    against stale shared CSS.
+  - If users report "the pending UI looks wrong only in one browser" after deploy, inspect
+    the built `index.html` first and confirm the versioned asset refs are present.

@@ -39,6 +39,26 @@ const replaceBundleBlock = (html, name, scriptPath) => {
     return html.replace(blockRegex, tag);
 };
 
+const versionStaticAssetRefs = (html, version) => {
+    if (!version) return html;
+
+    const addVersion = (rawUrl) => {
+        if (!rawUrl) return rawUrl;
+        if (/^(?:[a-z]+:)?\/\//i.test(rawUrl) || rawUrl.startsWith('data:')) return rawUrl;
+        if (/[?&]v=/.test(rawUrl)) return rawUrl;
+        const joiner = rawUrl.includes('?') ? '&' : '?';
+        return `${rawUrl}${joiner}v=${version}`;
+    };
+
+    return html
+        .replace(/(<link\b[^>]*\bhref=")([^"]+)(")/g, (_, prefix, href, suffix) => {
+            return `${prefix}${addVersion(href)}${suffix}`;
+        })
+        .replace(/(<script\b[^>]*\bsrc=")([^"]+)(")/g, (_, prefix, src, suffix) => {
+            return `${prefix}${addVersion(src)}${suffix}`;
+        });
+};
+
 const collectJsFiles = async (dir) => {
     const entries = await fs.readdir(dir, { withFileTypes: true });
     const files = [];
@@ -122,6 +142,9 @@ const build = async () => {
     html = replaceBundleBlock(html, 'PRELUDE', preludeScriptPath);
     html = replaceBundleBlock(html, 'APP', appScriptPath);
 
+    const appHash = appOutput[0].match(/-([a-z0-9]+)\.js$/i)?.[1];
+    html = versionStaticAssetRefs(html, appHash);
+
     await fs.writeFile(indexPath, html, 'utf8');
 
     const jsFiles = await collectJsFiles(assetsDir);
@@ -140,7 +163,6 @@ const build = async () => {
     }));
 
     // Extract content hash from esbuild output filename for update checking
-    const appHash = appOutput[0].match(/-([a-z0-9]+)\.js$/i)?.[1];
     if (appHash) {
         await fs.writeFile(
             path.join(outDir, 'build.json'),

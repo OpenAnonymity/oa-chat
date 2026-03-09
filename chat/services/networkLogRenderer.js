@@ -278,7 +278,7 @@ export function getActivityDescription(log, detailed = false) {
 
                 if (!detailed) {
                     if (status >= 200 && status < 300) {
-                        return 'Response stream open';
+                        return 'Response stream created';
                     } else if (status === 0) {
                         return 'Inference request failed';
                     }
@@ -308,7 +308,7 @@ export function getActivityDescription(log, detailed = false) {
 
                 if (!detailed) {
                     if (status >= 200 && status < 300) {
-                        return 'Response stream open';
+                        return 'Response stream created';
                     } else if (status === 0) {
                         return 'Inference request failed';
                     }

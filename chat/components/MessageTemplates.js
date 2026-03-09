@@ -86,7 +86,9 @@ function escapeHtmlAttribute(text) {
 }
 
 function normalizePendingPhase(phase) {
-    return phase === 'stream-open' ? 'stream-open' : 'waiting';
+    return phase === 'requesting-key' || phase === 'waiting'
+        ? 'requesting-key'
+        : 'waiting-response';
 }
 
 function formatPendingTimestamp(timestamp) {
@@ -99,12 +101,12 @@ function formatPendingTimestamp(timestamp) {
 }
 
 function getPendingIndicatorLabel(phase) {
-    return normalizePendingPhase(phase) === 'stream-open'
+    return normalizePendingPhase(phase) === 'waiting-response'
         ? 'Waiting for response'
         : 'Requesting ephemeral key';
 }
 
-function buildPendingIndicatorContent(phase = 'waiting') {
+function buildPendingIndicatorContent(phase = 'requesting-key') {
     const normalizedPhase = normalizePendingPhase(phase);
     const shimmerClass = ' pending-response-streaming';
     const label = getPendingIndicatorLabel(normalizedPhase);
@@ -1088,7 +1090,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
 
     // If message is pending (waiting for first chunk), show header with typing indicator
     if (message.streamingPending) {
-        const pendingPhase = message.streamingPhase || options.pendingPhase || 'waiting';
+        const pendingPhase = message.streamingPhase || options.pendingPhase || 'requesting-key';
         return `
             <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}"${getRawContentAttribute(message.content)}>
                 <div class="${CLASSES.assistantGroup}">
@@ -1102,7 +1104,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
                     <div class="px-2 py-1">
                         ${buildPendingIndicatorContent(pendingPhase)}
                     </div>
-                    <div class="assistant-actions-placeholder w-full -mt-1" aria-hidden="true"></div>
+                    <div class="assistant-actions-anchor assistant-actions-placeholder w-full -mt-1" aria-hidden="true"></div>
                 </div>
             </div>
         `;
@@ -1188,9 +1190,9 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
         </button>
     ` : '';
     const assistantActionsRow = hideAssistantActionsDuringReasoning ? `
-        <div class="assistant-actions-placeholder w-full -mt-1" aria-hidden="true"></div>
+        <div class="assistant-actions-anchor assistant-actions-placeholder w-full -mt-1" aria-hidden="true"></div>
     ` : `
-        <div class="flex items-center justify-between gap-2 w-full -mt-1">
+        <div class="assistant-actions-anchor assistant-actions-row flex items-center justify-between gap-2 w-full -mt-1">
             <div class="flex items-center gap-1">
                 <button
                     class="message-action-btn copy-message-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
@@ -1251,7 +1253,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
  * @param {string} providerName - Provider name (e.g., "OpenAI", "Anthropic")
  * @returns {string} HTML string
  */
-function buildTypingIndicator(id, providerName, modelName, timestamp, phase = 'waiting') {
+function buildTypingIndicator(id, providerName, modelName, timestamp, phase = 'requesting-key') {
     const iconData = getProviderIcon(providerName, 'w-3.5 h-3.5');
     const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
     const displayModelName = extractShortModelName(modelName);
@@ -1268,7 +1270,7 @@ function buildTypingIndicator(id, providerName, modelName, timestamp, phase = 'w
                 <div class="px-2 py-1">
                     ${buildPendingIndicatorContent(phase)}
                 </div>
-                <div class="assistant-actions-placeholder w-full -mt-1" aria-hidden="true"></div>
+                <div class="assistant-actions-anchor assistant-actions-placeholder w-full -mt-1" aria-hidden="true"></div>
             </div>
         </div>
     `;

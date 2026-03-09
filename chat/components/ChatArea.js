@@ -981,20 +981,19 @@ export default class ChatArea {
         if (!contentEl) {
             const groupEl = messageEl.querySelector('.group.flex.w-full.flex-col');
             if (groupEl) {
-                // Find the reasoning trace element to insert after it
-                const reasoningEl = groupEl.querySelector('.reasoning-trace');
-                const actionButtons = groupEl.querySelector('.flex.items-center.justify-between');
+                // The action anchor may be either the real toolbar row or the placeholder
+                // that reserves its footprint during reasoning-only streaming.
+                const actionAnchor = groupEl.querySelector(':scope > .assistant-actions-anchor');
 
                 // Create the text bubble
                 const textBubble = document.createElement('div');
                 textBubble.className = 'py-3 px-4 font-normal message-assistant w-full flex items-center';
                 textBubble.innerHTML = '<div class="min-w-0 w-full overflow-hidden message-content prose"></div>';
 
-                // Insert after reasoning trace but before action buttons
-                if (reasoningEl && actionButtons) {
-                    groupEl.insertBefore(textBubble, actionButtons);
-                } else if (actionButtons) {
-                    groupEl.insertBefore(textBubble, actionButtons);
+                // Keep streamed content above the action row placeholder so reasoning
+                // does not leave a temporary gap before the answer.
+                if (actionAnchor) {
+                    groupEl.insertBefore(textBubble, actionAnchor);
                 } else {
                     groupEl.appendChild(textBubble);
                 }
@@ -1500,9 +1499,8 @@ export default class ChatArea {
         let imageBubble = messageEl.querySelector('.message-assistant-images');
 
         if (!imageBubble) {
-            // Create the image bubble after text bubble but before action buttons wrapper
-            // Use the outer wrapper selector (justify-between) to get a direct child of groupEl
-            const actionButtonsWrapper = groupEl.querySelector(':scope > .flex.items-center.justify-between');
+            // Create the image bubble after text bubble but before the shared action anchor.
+            const actionButtonsWrapper = groupEl.querySelector(':scope > .assistant-actions-anchor');
 
             imageBubble = document.createElement('div');
             imageBubble.className = 'font-normal message-assistant-images w-full';

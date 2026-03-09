@@ -3175,7 +3175,7 @@ class ChatApp {
             this.sessionStreamingStates.set(sessionId, {
                 isStreaming: false,
                 abortController: null,
-                phase: 'waiting'
+                phase: 'requesting-key'
             });
         }
         return this.sessionStreamingStates.get(sessionId);
@@ -3187,14 +3187,28 @@ class ChatApp {
      * @param {boolean} isStreaming - Whether session is streaming
      * @param {AbortController} abortController - Abort controller for the stream
      */
-    setSessionStreamingState(sessionId, isStreaming, abortController = null) {
+    normalizePendingPhase(phase) {
+        return phase === 'requesting-key' || phase === 'waiting'
+            ? 'requesting-key'
+            : 'waiting-response';
+    }
+
+    advancePendingStateAfterAccessGranted(sessionId, typingId = null) {
+        this.updateSessionStreamingPhase(sessionId, 'waiting-response');
+        if (typingId) {
+            this.updateTypingIndicator(typingId, 'waiting-response');
+        }
+    }
+
+    setSessionStreamingState(sessionId, isStreaming, abortController = null, phase = 'requesting-key') {
         const existingState = this.getSessionStreamingState(sessionId);
+        const normalizedPhase = this.normalizePendingPhase(phase);
         this.sessionStreamingStates.set(sessionId, {
             isStreaming,
             abortController,
             phase: isStreaming
-                ? (existingState.isStreaming ? existingState.phase : 'waiting')
-                : 'waiting'
+                ? (existingState.isStreaming ? this.normalizePendingPhase(existingState.phase) : normalizedPhase)
+                : 'requesting-key'
         });
 
         // Start periodic button visibility check when streaming starts
@@ -3219,7 +3233,7 @@ class ChatApp {
         const state = this.getSessionStreamingState(sessionId);
         this.sessionStreamingStates.set(sessionId, {
             ...state,
-            phase: phase === 'stream-open' ? 'stream-open' : 'waiting'
+            phase: this.normalizePendingPhase(phase)
         });
     }
 
@@ -3236,9 +3250,9 @@ class ChatApp {
 
     getCurrentSessionStreamingPhase() {
         const session = this.getCurrentSession();
-        if (!session) return 'waiting';
+        if (!session) return 'requesting-key';
         const state = this.getSessionStreamingState(session.id);
-        return state.phase || 'waiting';
+        return this.normalizePendingPhase(state.phase);
     }
 
     /**
@@ -3683,7 +3697,8 @@ class ChatApp {
 
         // Create abort controller for this stream
         const abortController = new AbortController();
-        this.setSessionStreamingState(session.id, true, abortController);
+        const initialPendingPhase = this.resolvePendingPhaseForSession(session);
+        this.setSessionStreamingState(session.id, true, abortController, initialPendingPhase);
 
         // Pause auto-scroll for streaming (set immediately)
         this.isAutoScrollPaused = true;
@@ -3702,7 +3717,6 @@ class ChatApp {
         }
 
         try {
-            const initialPendingPhase = this.resolvePendingPhaseForSession(session);
             const typingModelName = this.normalizeModelName(session.model) || session.model || this.state.pendingModelName || inferenceService.getDefaultModelName(session);
             const typingId = this.isViewingSession(session.id)
                 ? this.showTypingIndicator(typingModelName, initialPendingPhase)
@@ -3717,7 +3731,11 @@ class ChatApp {
                     if (this.floatingPanel) {
                         this.floatingPanel.showMessage(`Acquiring ${accessLabel}...`, 'info');
                     }
-                    await this.acquireAndSetAccess(session);
+                    await this.acquireAndSetAccess(session, {
+                        onGranted: () => {
+                            this.advancePendingStateAfterAccessGranted(session.id, typingId);
+                        }
+                    });
                     if (this.floatingPanel) {
                         this.floatingPanel.showMessage(`Successfully acquired ${accessLabel}!`, 'success', 2000);
                     }
@@ -3812,7 +3830,7 @@ class ChatApp {
                     streamingTokens: 0,
                     streamingReasoning: false,
                     streamingPending: true, // Indicates waiting for first chunk
-                    streamingPhase: 'waiting',
+                    streamingPhase: this.getSessionStreamingState(session.id).phase || initialPendingPhase,
                     scrubber: scrubberMetadata
                 };
 
@@ -3894,7 +3912,7 @@ class ChatApp {
                     abortController,
                     async () => {
                         this.updateSessionStreamingPhase(session.id, 'stream-open');
-                        streamingMessage.streamingPhase = 'stream-open';
+                        streamingMessage.streamingPhase = this.getSessionStreamingState(session.id).phase;
                         if (typingId) {
                             this.updateTypingIndicator(typingId, 'stream-open');
                         }
@@ -4122,7 +4140,8 @@ class ChatApp {
 
         // Create abort controller for this stream
         const abortController = new AbortController();
-        this.setSessionStreamingState(session.id, true, abortController);
+        const initialPendingPhase = this.resolvePendingPhaseForSession(session);
+        this.setSessionStreamingState(session.id, true, abortController, initialPendingPhase);
 
         // Store current files and search state before clearing
         const currentFiles = [...this.uploadedFiles];
@@ -4201,7 +4220,6 @@ class ChatApp {
                 }, 50);
             }
 
-            const initialPendingPhase = this.resolvePendingPhaseForSession(session);
             const typingModelName = this.normalizeModelName(session.model) || session.model || this.state.pendingModelName || inferenceService.getDefaultModelName(session);
             let typingId = this.isViewingSession(session.id)
                 ? this.showTypingIndicator(typingModelName, initialPendingPhase)
@@ -4216,7 +4234,11 @@ class ChatApp {
                     if (this.floatingPanel) {
                         this.floatingPanel.showMessage(`Acquiring ${accessLabel}...`, 'info');
                     }
-                    await this.acquireAndSetAccess(session);
+                    await this.acquireAndSetAccess(session, {
+                        onGranted: () => {
+                            this.advancePendingStateAfterAccessGranted(session.id, typingId);
+                        }
+                    });
                     if (this.floatingPanel) {
                         this.floatingPanel.showMessage(`${accessLabel} ready`, 'success', 2000);
                     }
@@ -4324,7 +4346,7 @@ class ChatApp {
                     streamingTokens: 0,
                     streamingReasoning: false,
                     streamingPending: true,
-                    streamingPhase: 'waiting',
+                    streamingPhase: this.getSessionStreamingState(session.id).phase || initialPendingPhase,
                     scrubber: scrubberMetadata
                 };
 
@@ -4437,7 +4459,7 @@ class ChatApp {
                     abortController,
                     async () => {
                         this.updateSessionStreamingPhase(session.id, 'stream-open');
-                        streamingMessage.streamingPhase = 'stream-open';
+                        streamingMessage.streamingPhase = this.getSessionStreamingState(session.id).phase;
                         if (typingId) {
                             this.updateTypingIndicator(typingId, 'stream-open');
                         }
@@ -4568,8 +4590,9 @@ class ChatApp {
                     await new Promise(r => setTimeout(r, 500 * retryCount));
                     // Re-show typing indicator for retry
                     if (typingId) this.removeTypingIndicator(typingId);
-                    this.updateSessionStreamingPhase(session.id, 'waiting');
-                    typingId = this.isViewingSession(session.id) ? this.showTypingIndicator(modelNameToUse, 'waiting') : null;
+                    const retryPendingPhase = this.resolvePendingPhaseForSession(session);
+                    this.updateSessionStreamingPhase(session.id, retryPendingPhase);
+                    typingId = this.isViewingSession(session.id) ? this.showTypingIndicator(modelNameToUse, retryPendingPhase) : null;
                     continue retryLoop;
                 }
 
@@ -4641,7 +4664,7 @@ class ChatApp {
      * @param {string} modelName - Display name of the model that's "typing"
      * @returns {string} ID of the typing indicator element
      */
-    showTypingIndicator(modelName, phase = 'waiting') {
+    showTypingIndicator(modelName, phase = 'requesting-key') {
         const model = this.state.models.find(m => m.name === modelName);
         const providerName = model ? model.provider : 'OpenAI';
         const id = 'typing-' + Date.now();
@@ -4655,21 +4678,22 @@ class ChatApp {
     }
 
     resolvePendingPhaseForSession(session) {
-        if (!session) return 'waiting';
+        if (!session) return 'requesting-key';
         const hasAccessToken = !!inferenceService.getAccessToken(session);
         const isAccessExpired = inferenceService.isAccessExpired(session);
-        return (!hasAccessToken || isAccessExpired) ? 'waiting' : 'stream-open';
+        return (!hasAccessToken || isAccessExpired) ? 'requesting-key' : 'waiting-response';
     }
 
     updateTypingIndicator(id, phase) {
         const indicator = document.getElementById(id);
         if (!indicator) return;
-        if (indicator.dataset.phase === phase) return;
+        const normalizedPhase = this.normalizePendingPhase(phase);
+        if (indicator.dataset.phase === normalizedPhase) return;
 
-        indicator.dataset.phase = phase;
+        indicator.dataset.phase = normalizedPhase;
         const label = indicator.querySelector('.pending-response-label');
         if (label) {
-            label.textContent = phase === 'stream-open'
+            label.textContent = normalizedPhase === 'waiting-response'
                 ? 'Waiting for response'
                 : 'Requesting ephemeral key';
             label.classList.add('pending-response-streaming');
@@ -6466,8 +6490,9 @@ Your API key has been cleared. A new key from a different station will be obtain
         session.apiKeyInfo.verifierSubmitKeyProof = this.buildVerifierSubmitKeyProof(verifyResult, session.apiKeyInfo);
     }
 
-    async acquireAndSetAccess(session) {
+    async acquireAndSetAccess(session, options = {}) {
         if (!session) throw new Error("No active session found.");
+        const { onGranted } = options;
 
         const backend = inferenceService.getBackendForSession(session);
         const availableTickets = ticketClient.getTicketCount();
@@ -6520,6 +6545,14 @@ Your API key has been cleared. A new key from a different station will be obtain
 
         if (!result) {
             throw new Error('All available tickets were already spent');
+        }
+
+        if (typeof onGranted === 'function') {
+            try {
+                await onGranted(result);
+            } catch (error) {
+                console.warn('Pending-state update after access grant failed:', error);
+            }
         }
 
         inferenceService.setAccessInfo(session, result);
