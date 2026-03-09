@@ -9,13 +9,19 @@
  * like a human doing grep.
  */
 
+import { parseMemoryBlocks, extractBlockTitles } from './memoryBlockParser.js';
+
 const DB_NAME = 'oa-memory-fs';
 const DB_VERSION = 1;
 const STORE_NAME = 'memoryFiles';
 
 const BOOTSTRAP_INDEX = `# Memory Index
 
-_No files yet._
+## Structure
+- personal/ — User background, preferences, interests, career
+- projects/ — One file per project (e.g. projects/recipe-app.md)
+
+_No memories yet._
 `;
 
 class MemoryFileSystem {
@@ -71,6 +77,8 @@ class MemoryFileSystem {
         const now = Date.now();
         const seeds = [
             { path: '_index.md', content: BOOTSTRAP_INDEX, l0: 'Root index of memory filesystem', parentPath: '', createdAt: now, updatedAt: now },
+            { path: 'personal/about.md', content: '', l0: '', itemCount: 0, titles: [], parentPath: 'personal', createdAt: now, updatedAt: now },
+            { path: 'projects/about.md', content: '', l0: '', itemCount: 0, titles: [], parentPath: 'projects', createdAt: now, updatedAt: now },
         ];
 
         return new Promise((resolve, reject) => {
@@ -119,6 +127,8 @@ class MemoryFileSystem {
             path,
             content,
             l0: this._generateL0(content),
+            itemCount: parseMemoryBlocks(content).length || 0,
+            titles: extractBlockTitles(content),
             parentPath,
             createdAt: existing?.createdAt ?? now,
             updatedAt: now,
@@ -255,11 +265,19 @@ class MemoryFileSystem {
             .sort((a, b) => a.path.localeCompare(b.path));
 
         let indexContent = '# Memory Index\n\n';
+        indexContent += '## Structure\n';
+        indexContent += '- personal/ — User background, preferences, interests, career\n';
+        indexContent += '- projects/ — One file per project (e.g. projects/recipe-app.md)\n\n';
 
         if (files.length > 0) {
             indexContent += '## Files\n';
             for (const f of files) {
-                indexContent += `- ${f.path} — ${f.l0}\n`;
+                const count = f.itemCount || 0;
+                const updated = f.updatedAt ? new Date(f.updatedAt).toISOString().split('T')[0] : '';
+                const meta = count > 0
+                    ? `(${count} item${count !== 1 ? 's' : ''}, updated ${updated})`
+                    : updated ? `(updated ${updated})` : '';
+                indexContent += `- ${f.path} ${meta} — ${f.l0}\n`;
             }
         } else {
             indexContent += '_No files yet._\n';
@@ -303,7 +321,15 @@ class MemoryFileSystem {
 
     _generateL0(content) {
         if (!content) return '';
-        // First non-heading, non-empty line, max 100 chars
+
+        // Prefer block titles if structured blocks exist
+        const titles = extractBlockTitles(content);
+        if (titles.length > 0) {
+            const joined = titles.join('; ');
+            return joined.length > 100 ? joined.slice(0, 97) + '...' : joined;
+        }
+
+        // Fallback: first non-heading, non-empty line, max 100 chars
         const lines = content.split('\n');
         for (const line of lines) {
             const trimmed = line.trim();

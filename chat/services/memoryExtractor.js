@@ -45,17 +45,30 @@ Respond with a single JSON object (no markdown fences):
 {
   "action": "create" | "append" | "update" | "none",
   "path": "directory/filename.md",
-  "content": "markdown content to write",
+  "title": "short descriptive title for this memory item",
+  "content": "- fact 1\\n- fact 2",
   "reason": "brief explanation"
 }
 
+Directory structure:
+- personal/about.md — All personal facts: background, preferences, interests, career, education, location
+- projects/<project-name>.md — One file per project/app/task (e.g. projects/recipe-app.md, projects/blog-redesign.md)
+
+How to decide:
+- Personal facts (name, job, hobbies, preferences, location, education) → append to "personal/about.md"
+- Project/app/codebase/task details → create or append to "projects/<short-project-name>.md" (lowercase, hyphenated)
+- If unsure, default to "personal/about.md"
+
 Rules:
 - Default to "none" if nothing new is worth remembering.
-- Prefer "append" to existing files over creating new ones. One file per topic (e.g. one personal/background.md, not separate files for education, hobbies, etc).
-- Content format: headers and bullet points with raw facts only. No filler commentary like "this helps tailor future conversations" or "noted for future reference".
-  Good: "## Background\\n- Software engineer at Acme Corp\\n- Hobbies: hiking, cooking"
-  Bad: "# User Background\\n\\nThese details can help tailor future recommendations..."
-- For "none", path and content can be empty strings.`;
+- Prefer "append" to existing files over creating new ones. One file per topic.
+- Use "update" if a fact in an existing file is now stale or contradicted (e.g. user changed jobs, moved cities). The updated content should replace the outdated memory block, not duplicate it.
+- Use "create" for an entirely new topic that doesn't fit any existing file (e.g. a brand-new project, a distinct area of interest).
+- "title": a concise label for this memory item (e.g. "Background", "Career Interests"). Do NOT include markdown heading markers like ## in the title.
+- "content": bullet points with raw facts only. Do NOT include a heading — the title is separate. No filler commentary like "this helps tailor future conversations" or "noted for future reference".
+  Good: {"title": "Background", "content": "- Software engineer at Acme Corp\\n- Hobbies: hiking, cooking"}
+  Bad: {"title": "User Background", "content": "## Background\\n\\nThese details can help tailor future recommendations..."}
+- For "none", path, title, and content can be empty strings.`;
 
 class MemoryExtractor {
     constructor() {
@@ -127,7 +140,7 @@ class MemoryExtractor {
             const parsed = this._parseResponse(responseText);
             if (!parsed) return;
 
-            await this._executeAction(parsed);
+            await this._executeAction(parsed, sessionId);
 
         } catch (error) {
             console.error('[MemoryExtractor] Error:', error);
@@ -219,26 +232,34 @@ class MemoryExtractor {
         }
     }
 
-    async _executeAction(parsed) {
-        const { action, path, content, reason } = parsed;
+    async _executeAction(parsed, sessionId) {
+        const { action, path, content, title, reason } = parsed;
         console.log(`[MemoryExtractor] ${action} → ${path} (${reason})`);
+
+        const wrapped = this._wrapMemoryBlock(title || '', content, sessionId);
 
         switch (action) {
             case 'create':
             case 'update':
-                await memoryFileSystem.write(path, content);
+                await memoryFileSystem.write(path, wrapped);
                 break;
             case 'append': {
                 const existing = await memoryFileSystem.read(path);
                 const newContent = existing
-                    ? existing + '\n\n' + content
-                    : content;
+                    ? existing + '\n\n' + wrapped
+                    : wrapped;
                 await memoryFileSystem.write(path, newContent);
                 break;
             }
             default:
                 console.warn('[MemoryExtractor] Unknown action:', action);
         }
+    }
+
+    _wrapMemoryBlock(title, content, sessionId) {
+        const date = new Date().toISOString().split('T')[0];
+        const sessionAttr = sessionId ? ` session=${sessionId}` : '';
+        return `<!-- @memory created=${date}${sessionAttr} -->\n## ${title}\n${content}\n<!-- @/memory -->`;
     }
 
     /**

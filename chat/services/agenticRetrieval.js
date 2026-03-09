@@ -159,10 +159,12 @@ class AgenticRetrieval {
     }
 
     async _isTrivialIndex(index) {
-        // Check if there are any actual (non-index) files in the filesystem
+        // Check if there are any actual memory blocks (not just seed placeholders)
         const all = await memoryFileSystem.exportAll();
         const realFiles = all.filter(f => !f.path.endsWith('_index.md'));
-        return realFiles.length === 0;
+        if (realFiles.length === 0) return true;
+        // Seed files have itemCount: 0 — only fire retrieval if real content exists
+        return !realFiles.some(f => (f.itemCount || 0) > 0);
     }
 
     _extractOutputText(response) {

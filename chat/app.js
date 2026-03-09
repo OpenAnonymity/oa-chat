@@ -4115,17 +4115,22 @@ class ChatApp {
                 const { default: agenticRetrieval } = await import('./services/agenticRetrieval.js');
                 const result = await agenticRetrieval.retrieveForQuery(content);
                 if (result?.files?.length > 0) {
+                    const { extractBlockTitles } = await import('./services/memoryBlockParser.js');
                     this.pendingMemoryContext = {
                         sessionIds: result.files.map(f => `agentic:${f.path}`),
-                        memories: result.files.map(f => ({
-                            title: f.path,
-                            content: f.content.substring(0, 200),
-                            fullContent: f.content,
-                            summary: f.content.substring(0, 200),
-                            keywords: [],
-                            relevantTags: [],
-                            isAgenticMemory: true
-                        })),
+                        memories: result.files.map(f => {
+                            const titles = extractBlockTitles(f.content);
+                            const displayTitle = titles.length > 0 ? titles.join('; ') : f.path;
+                            return {
+                                title: displayTitle,
+                                content: f.content.substring(0, 200),
+                                fullContent: f.content,
+                                summary: f.content.substring(0, 200),
+                                keywords: [],
+                                relevantTags: [],
+                                isAgenticMemory: true
+                            };
+                        }),
                         timestamp: Date.now()
                     };
                 }
