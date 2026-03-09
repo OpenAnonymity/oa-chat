@@ -623,6 +623,9 @@ export default class ChatArea {
 
         // Check if this session is currently streaming
         const isSessionStreaming = this.app.isCurrentSessionStreaming();
+        const streamingPhase = this.app.getCurrentSessionStreamingPhase
+            ? this.app.getCurrentSessionStreamingPhase()
+            : 'waiting';
 
         // Check if this is an imported (or forked from import) session with new messages added
         // importedFrom = share import (can still receive updates)
@@ -647,6 +650,7 @@ export default class ChatArea {
             const options = this.app.getMessageTemplateOptions ? this.app.getMessageTemplateOptions(message.id) : {};
             // Pass session streaming state to template
             options.isSessionStreaming = isSessionStreaming;
+            options.pendingPhase = streamingPhase;
             // Normalize streaming state for messages loaded from DB.
             // If streamingReasoning/streamingTokens are set AND session is NOT currently streaming,
             // it means streaming was interrupted (e.g., browser closed, network error).
@@ -689,7 +693,7 @@ export default class ChatArea {
             // Get provider from session model for the typing indicator
             const sessionModel = this.app.state.models?.find(m => m.name === session.model);
             const providerName = sessionModel?.provider || 'OpenAI';
-            messagesHtml += buildTypingIndicator('typing-restore-' + Date.now(), providerName);
+            messagesHtml += buildTypingIndicator('typing-restore-' + Date.now(), providerName, session.model, Date.now(), streamingPhase);
         }
 
         messagesContainer.innerHTML = messagesHtml;
@@ -812,6 +816,9 @@ export default class ChatArea {
                 formatTime: this.app.formatTime.bind(this.app)
             };
             const options = this.app.getMessageTemplateOptions ? this.app.getMessageTemplateOptions(message.id) : {};
+            options.pendingPhase = this.app.getCurrentSessionStreamingPhase
+                ? this.app.getCurrentSessionStreamingPhase()
+                : 'waiting';
 
             // Build new HTML
             const newHtml = buildMessageHTML(message, helpers, this.app.state.models, session.model, options);
@@ -1528,9 +1535,6 @@ export default class ChatArea {
 
         if (!session) return;
 
-        // Remove any typing indicators (including restored ones from render())
-        messagesContainer.querySelectorAll('[id^="typing-"]').forEach(el => el.remove());
-
         // Check if we need to clear the empty state
         const emptyState = messagesContainer.querySelector('.text-center.text-muted-foreground');
         if (emptyState) {
@@ -1567,6 +1571,34 @@ export default class ChatArea {
                     });
                 }
                 // Update scroll button visibility (no auto-scroll for appended messages)
+                this.app.updateScrollButtonVisibility();
+                if (this.app.messageNavigation) {
+                    this.app.messageNavigation.update();
+                }
+                return;
+            }
+        }
+
+        const existingTypingIndicator = messagesContainer.querySelector('[id^="typing-"]');
+        if (existingTypingIndicator) {
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = messageHtml;
+            const newMessageEl = tempDiv.firstElementChild;
+            if (newMessageEl) {
+                existingTypingIndicator.replaceWith(newMessageEl);
+                messagesContainer.querySelectorAll('[id^="typing-"]').forEach(el => el.remove());
+
+                const contentEl = newMessageEl.querySelector('.message-content');
+                if (contentEl) {
+                    renderMathInElement(contentEl, {
+                        delimiters: [
+                            {left: '$$', right: '$$', display: true},
+                            {left: '\\[', right: '\\]', display: true},
+                            {left: '\\(', right: '\\)', display: false}
+                        ],
+                        throwOnError: false
+                    });
+                }
                 this.app.updateScrollButtonVisibility();
                 if (this.app.messageNavigation) {
                     this.app.messageNavigation.update();

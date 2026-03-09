@@ -51,7 +51,7 @@ const CLASSES = {
     assistantBubble: 'py-3 px-4 font-normal message-assistant w-full flex items-center',
     assistantContent: 'min-w-0 w-full overflow-hidden message-content prose',
 
-    typingWrapper: 'w-full px-2 md:px-3 fade-in pb-4',
+    typingWrapper: 'w-full px-2 md:px-3 self-start pb-0',
     typingGroup: 'flex items-center gap-4',
     typingAvatar: 'flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow bg-muted p-0.5',
     typingAvatarText: 'text-xs font-semibold',
@@ -83,6 +83,36 @@ function escapeHtmlAttribute(text) {
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/\n/g, '&#10;');
+}
+
+function normalizePendingPhase(phase) {
+    return phase === 'stream-open' ? 'stream-open' : 'waiting';
+}
+
+function formatPendingTimestamp(timestamp) {
+    return new Date(timestamp).toLocaleTimeString('en-US', {
+        hour12: false,
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+    });
+}
+
+function getPendingIndicatorLabel(phase) {
+    return normalizePendingPhase(phase) === 'stream-open'
+        ? 'Waiting for response'
+        : 'Requesting ephemeral key';
+}
+
+function buildPendingIndicatorContent(phase = 'waiting') {
+    const normalizedPhase = normalizePendingPhase(phase);
+    const shimmerClass = ' pending-response-streaming';
+    const label = getPendingIndicatorLabel(normalizedPhase);
+    return `
+        <div class="pending-response-line">
+            <span class="pending-response-label${shimmerClass}">${escapeHtml(label)}</span>
+        </div>
+    `;
 }
 
 export const RAW_CLIPBOARD_ATTRIBUTE_ENABLED = (() => {
@@ -1058,6 +1088,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
 
     // If message is pending (waiting for first chunk), show header with typing indicator
     if (message.streamingPending) {
+        const pendingPhase = message.streamingPhase || options.pendingPhase || 'waiting';
         return `
             <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}"${getRawContentAttribute(message.content)}>
                 <div class="${CLASSES.assistantGroup}">
@@ -1068,11 +1099,10 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
                         <span class="${CLASSES.assistantModelName}" style="font-size: 0.7rem;">${displayModelName}</span>
                         <span class="${CLASSES.assistantTime}" style="font-size: 0.7rem;">${formatTime(message.timestamp)}</span>
                     </div>
-                    <div class="flex gap-1 px-4 py-2">
-                        <div class="w-2 h-2 bg-muted-foreground rounded-full animate-pulse"></div>
-                        <div class="w-2 h-2 bg-muted-foreground rounded-full animate-pulse" style="animation-delay: 0.2s"></div>
-                        <div class="w-2 h-2 bg-muted-foreground rounded-full animate-pulse" style="animation-delay: 0.4s"></div>
+                    <div class="px-2 py-1">
+                        ${buildPendingIndicatorContent(pendingPhase)}
                     </div>
+                    <div class="assistant-actions-placeholder w-full -mt-1" aria-hidden="true"></div>
                 </div>
             </div>
         `;
@@ -1130,6 +1160,8 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     // Reasoning-only responses can happen when generation is manually interrupted.
     const hasReasoningOutput = typeof message.reasoning === 'string' && message.reasoning.trim().length > 0;
     const hasNoOutput = !processedContent && !hasReasoningOutput && (!message.images || message.images.length === 0);
+    const hasRenderableAssistantOutput = !!processedContent || !!generatedImagesHtml || !!thumbnailsBubble;
+    const hideAssistantActionsDuringReasoning = !!message.streamingReasoning && !hasRenderableAssistantOutput;
     // Message is complete if:
     // - Not actively streaming reasoning
     // - streamingTokens is null/undefined (finalized)
@@ -1143,6 +1175,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
 
     // Build citations section if there are citations
     const citationsBubble = buildCitationsSection(message.citations, message.id);
+    const citationsToggle = buildCitationsToggleButton(message.citations, message.id);
     const canRestoreScrubber = message.scrubber?.canRestore || message.scrubber?.redactedPrompt;
     const scrubberToggleButton = canRestoreScrubber ? `
         <button
@@ -1154,6 +1187,41 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
             </svg>
         </button>
     ` : '';
+    const assistantActionsRow = hideAssistantActionsDuringReasoning ? `
+        <div class="assistant-actions-placeholder w-full -mt-1" aria-hidden="true"></div>
+    ` : `
+        <div class="flex items-center justify-between gap-2 w-full -mt-1">
+            <div class="flex items-center gap-1">
+                <button
+                    class="message-action-btn copy-message-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+                    data-message-id="${message.id}"
+                    data-tooltip="Copy message">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
+                    </svg>
+                </button>
+                <button
+                    class="message-action-btn regenerate-message-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+                    data-message-id="${message.id}"
+                    data-tooltip="Regenerate response">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                    </svg>
+                </button>
+                <button
+                    class="message-action-btn fork-conversation-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+                    data-message-id="${message.id}"
+                    data-tooltip="Fork conversation from here">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M2 12h6c6 0 10-4 14-8m-4 0h4v4M8 12c6 0 10 4 14 8m-4 0h4v-4" />
+                    </svg>
+                </button>
+                ${scrubberToggleButton}
+                ${noResponseNotice}
+            </div>
+            ${citationsToggle}
+        </div>
+    `;
 
     return `
         <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}"${getRawContentAttribute(message.content)}>
@@ -1170,37 +1238,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
                 ${thumbnailsBubble}
                 ${textBubble}
                 ${imageBubble}
-                <div class="flex items-center justify-between gap-2 w-full -mt-1">
-                    <div class="flex items-center gap-1">
-                        <button
-                            class="message-action-btn copy-message-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
-                            data-message-id="${message.id}"
-                            data-tooltip="Copy message">
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
-                            </svg>
-                        </button>
-                        <button
-                            class="message-action-btn regenerate-message-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
-                            data-message-id="${message.id}"
-                            data-tooltip="Regenerate response">
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
-                            </svg>
-                        </button>
-                        <button
-                            class="message-action-btn fork-conversation-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
-                            data-message-id="${message.id}"
-                            data-tooltip="Fork conversation from here">
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M2 12h6c6 0 10-4 14-8m-4 0h4v4M8 12c6 0 10 4 14 8m-4 0h4v-4" />
-                            </svg>
-                        </button>
-                        ${scrubberToggleButton}
-                        ${noResponseNotice}
-                    </div>
-                    ${buildCitationsToggleButton(message.citations, message.id)}
-                </div>
+                ${assistantActionsRow}
                 ${citationsBubble}
             </div>
         </div>
@@ -1213,20 +1251,24 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
  * @param {string} providerName - Provider name (e.g., "OpenAI", "Anthropic")
  * @returns {string} HTML string
  */
-function buildTypingIndicator(id, providerName) {
+function buildTypingIndicator(id, providerName, modelName, timestamp, phase = 'waiting') {
     const iconData = getProviderIcon(providerName, 'w-3.5 h-3.5');
     const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
+    const displayModelName = extractShortModelName(modelName);
     return `
-        <div id="${id}" class="${CLASSES.typingWrapper}">
-            <div class="${CLASSES.typingGroup}">
-                <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow ${bgClass} p-0.5">
-                    ${iconData.html}
+        <div id="${id}" class="${CLASSES.typingWrapper}" data-provider-name="${escapeHtmlAttribute(providerName)}" data-phase="${escapeHtmlAttribute(normalizePendingPhase(phase))}">
+            <div class="${CLASSES.assistantGroup}">
+                <div class="${CLASSES.assistantHeader}">
+                    <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow ${bgClass} p-0.5">
+                        ${iconData.html}
+                    </div>
+                    <span class="${CLASSES.assistantModelName}" style="font-size: 0.7rem;">${escapeHtml(displayModelName)}</span>
+                    <span class="${CLASSES.assistantTime}" style="font-size: 0.7rem;">${formatPendingTimestamp(timestamp)}</span>
                 </div>
-                <div class="${CLASSES.typingDots}">
-                    <div class="${CLASSES.typingDot}"></div>
-                    <div class="${CLASSES.typingDot}" style="animation-delay: 0.2s"></div>
-                    <div class="${CLASSES.typingDot}" style="animation-delay: 0.4s"></div>
+                <div class="px-2 py-1">
+                    ${buildPendingIndicatorContent(phase)}
                 </div>
+                <div class="assistant-actions-placeholder w-full -mt-1" aria-hidden="true"></div>
             </div>
         </div>
     `;

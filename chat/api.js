@@ -335,7 +335,7 @@ class OpenRouterAPI {
     }
 
     // Stream chat completion with support for multimodal content, web search, and reasoning traces
-    async streamCompletion(messages, modelId, apiKey, onChunk, onTokenUpdate, files = [], searchEnabled = false, abortController = null, onReasoningChunk = null, reasoningEnabled = true, reasoningEffort = DEFAULT_REASONING_EFFORT) {
+    async streamCompletion(messages, modelId, apiKey, onChunk, onTokenUpdate, files = [], searchEnabled = false, abortController = null, onStreamOpen = null, onReasoningChunk = null, reasoningEnabled = true, reasoningEffort = DEFAULT_REASONING_EFFORT) {
         const key = apiKey || this.getApiKey();
 
         if (!key) {
@@ -632,6 +632,10 @@ class OpenRouterAPI {
                 error.status = response.status;
                 error.data = errorData;
                 throw error;
+            }
+
+            if (typeof onStreamOpen === 'function') {
+                await onStreamOpen();
             }
 
             // Log the streaming request

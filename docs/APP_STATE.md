@@ -28,3 +28,47 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 - 2026-03-08: Established this file as the canonical handoff log for ongoing web-app
   state. Future agents should read it before UI-heavy work and update it after learning
   something that is not obvious from the code alone.
+- 2026-03-09: Assistant streaming/pending UI now has an explicit two-phase placeholder
+  model coordinated across `chat/app.js`, `chat/api.js`, `chat/components/ChatArea.js`,
+  `chat/components/MessageTemplates.js`, and `chat/services/networkLogRenderer.js`.
+  The phases are:
+  - `waiting`: Before the provider response stream is open.
+  - `stream-open`: The HTTP/SSE stream is open, but no reasoning/content token has been
+    rendered yet.
+- 2026-03-09: Pending copy is semantic, not purely cosmetic.
+  - Show `Requesting ephemeral key` only when the session actually needs a new or renewed
+    access token (`!getAccessToken(session)` or `isAccessExpired(session)`).
+  - If the session already has a valid access token, start directly at `Waiting for response`.
+  - This matters for models/providers where the first streamed payload is reasoning rather
+    than visible answer text; do not assume there will be an intermediate content token to
+    correct the copy later.
+- 2026-03-09: `Response stream open` in the activity timeline intentionally means
+  "stream established", not "visible output rendered". Keep this aligned with the pending
+  placeholder semantics in chat. The timeline text was changed specifically to avoid the
+  previous misleading `Response received` wording.
+- 2026-03-09: Avoid DOM replacement during pending-state phase changes.
+  - Updating the standalone placeholder by replacing the whole node caused visible header
+    flashes and restarted the shimmer.
+  - `updateTypingIndicator()` now mutates the existing label in place and no-ops if the
+    phase is unchanged.
+  - The first real assistant message must replace the existing pending placeholder in place
+    via `ChatArea.appendMessage()` rather than removing the placeholder and appending a new
+    node, otherwise the header visibly repaints.
+- 2026-03-09: Bottom-of-viewport spacing is easy to regress in the assistant pending flow.
+  - The standalone placeholder and the streamed assistant message must reserve the same
+    bottom footprint as a reasoning-only assistant message.
+  - `typingWrapper` was trimmed to match the assistant wrapper, and the pending states now
+    include the same invisible action-row spacer used by reasoning-only messages.
+  - If you tweak pending copy/layout again, compare three cases at the bottom of the screen:
+    `Requesting ephemeral key`, `Waiting for response`, and reasoning-trace-only streaming.
+- 2026-03-09: Assistant toolbar buttons (copy/regenerate/fork) are intentionally hidden
+  while a response is still in reasoning-only streaming and no actual output tokens/images
+  exist yet.
+  - The buttons are not reliably actionable during pure reasoning streaming anyway.
+  - A placeholder row is kept in the layout to avoid a jump when the buttons appear once
+    actual output content starts.
+- 2026-03-09: Pending shimmer styling is intentionally distinct from the reasoning-trace
+  shimmer.
+  - Pending labels use a dimmer muted-gray shimmer so they read as pre-output status, not
+    as actual reasoning content.
+  - Both `Requesting ephemeral key` and `Waiting for response` share the same shimmer effect.

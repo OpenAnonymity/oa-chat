@@ -680,6 +680,42 @@ html.switching-theme *::after {
     opacity: 1; /* Override parent's 0.85 opacity to match bold subtitles */
 }
 
+.pending-response-line {
+    margin-left: 1.375rem;
+    line-height: 1.25;
+    transform: translateY(-4px);
+}
+
+.pending-response-label {
+    font-size: 0.75rem;
+    color: hsl(var(--color-muted-foreground) / 0.8);
+}
+
+@keyframes pendingResponseShimmer {
+    0% {
+        background-position: 240% center;
+    }
+    100% {
+        background-position: 0% center;
+    }
+}
+
+.pending-response-streaming {
+    background-image: linear-gradient(
+        90deg,
+        hsl(var(--color-muted-foreground) / 0.48) 0%,
+        hsl(var(--color-muted-foreground) / 0.88) 50%,
+        hsl(var(--color-muted-foreground) / 0.48) 100%
+    ) !important;
+    background-size: 240% 100% !important;
+    background-repeat: repeat !important;
+    background-clip: text !important;
+    -webkit-background-clip: text !important;
+    -webkit-text-fill-color: transparent !important;
+    color: transparent !important;
+    animation: pendingResponseShimmer 1.9s ease-in-out infinite alternate !important;
+}
+
 /* Remove extra margins and whitespace from markdown elements in reasoning */
 .reasoning-content > *:first-child {
     margin-top: 0;
@@ -3249,6 +3285,11 @@ html {
 
 .message-action-btn:focus {
     opacity: 1;
+}
+
+.assistant-actions-placeholder {
+    min-height: 1.75rem;
+    pointer-events: none;
 }
 
 /* Extra bottom margin for the last user message (when no response follows)

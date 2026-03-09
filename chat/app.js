@@ -3174,7 +3174,8 @@ class ChatApp {
         if (!this.sessionStreamingStates.has(sessionId)) {
             this.sessionStreamingStates.set(sessionId, {
                 isStreaming: false,
-                abortController: null
+                abortController: null,
+                phase: 'waiting'
             });
         }
         return this.sessionStreamingStates.get(sessionId);
@@ -3187,9 +3188,13 @@ class ChatApp {
      * @param {AbortController} abortController - Abort controller for the stream
      */
     setSessionStreamingState(sessionId, isStreaming, abortController = null) {
+        const existingState = this.getSessionStreamingState(sessionId);
         this.sessionStreamingStates.set(sessionId, {
             isStreaming,
-            abortController
+            abortController,
+            phase: isStreaming
+                ? (existingState.isStreaming ? existingState.phase : 'waiting')
+                : 'waiting'
         });
 
         // Start periodic button visibility check when streaming starts
@@ -3210,6 +3215,14 @@ class ChatApp {
         this.updateInputState();
     }
 
+    updateSessionStreamingPhase(sessionId, phase) {
+        const state = this.getSessionStreamingState(sessionId);
+        this.sessionStreamingStates.set(sessionId, {
+            ...state,
+            phase: phase === 'stream-open' ? 'stream-open' : 'waiting'
+        });
+    }
+
     /**
      * Checks if current session is streaming
      * @returns {boolean}
@@ -3219,6 +3232,13 @@ class ChatApp {
         if (!session) return false;
         const state = this.getSessionStreamingState(session.id);
         return state.isStreaming;
+    }
+
+    getCurrentSessionStreamingPhase() {
+        const session = this.getCurrentSession();
+        if (!session) return 'waiting';
+        const state = this.getSessionStreamingState(session.id);
+        return state.phase || 'waiting';
     }
 
     /**
@@ -3682,6 +3702,12 @@ class ChatApp {
         }
 
         try {
+            const initialPendingPhase = this.resolvePendingPhaseForSession(session);
+            const typingModelName = this.normalizeModelName(session.model) || session.model || this.state.pendingModelName || inferenceService.getDefaultModelName(session);
+            const typingId = this.isViewingSession(session.id)
+                ? this.showTypingIndicator(typingModelName, initialPendingPhase)
+                : null;
+
             // Automatically acquire API key if needed
             const hasAccessToken = !!inferenceService.getAccessToken(session);
             const isAccessExpired = inferenceService.isAccessExpired(session);
@@ -3696,6 +3722,7 @@ class ChatApp {
                         this.floatingPanel.showMessage(`Successfully acquired ${accessLabel}!`, 'success', 2000);
                     }
                 } catch (error) {
+                    if (typingId) this.removeTypingIndicator(typingId);
                     if (this.floatingPanel) {
                         this.floatingPanel.showMessage(error.message, 'error', 5000);
                     }
@@ -3739,9 +3766,6 @@ class ChatApp {
             }
 
             const modelIdForRequest = selectedModelEntry.id;
-
-            // Show typing indicator (only if still viewing this session)
-            const typingId = this.isViewingSession(session.id) ? this.showTypingIndicator(modelNameToUse) : null;
 
             let streamingMessage = null;
             let streamedContent = '';
@@ -3788,6 +3812,7 @@ class ChatApp {
                     streamingTokens: 0,
                     streamingReasoning: false,
                     streamingPending: true, // Indicates waiting for first chunk
+                    streamingPhase: 'waiting',
                     scrubber: scrubberMetadata
                 };
 
@@ -3807,10 +3832,10 @@ class ChatApp {
                         // On first chunk (of any kind), remove typing indicator and append message
                         if (!firstChunkReceived) {
                             firstChunkReceived = true;
-                            if (typingId) this.removeTypingIndicator(typingId);
 
                             // Clear pending flag now that we have actual content
                             streamingMessage.streamingPending = false;
+                            streamingMessage.streamingPhase = null;
 
                             // Handle text content
                             if (chunk) {
@@ -3867,14 +3892,21 @@ class ChatApp {
                     [], // No files for regeneration (files are included in processedMessages)
                     this.searchEnabled, // Use current search toggle state
                     abortController,
+                    async () => {
+                        this.updateSessionStreamingPhase(session.id, 'stream-open');
+                        streamingMessage.streamingPhase = 'stream-open';
+                        if (typingId) {
+                            this.updateTypingIndicator(typingId, 'stream-open');
+                        }
+                    },
                     async (reasoningChunk) => {
                         // Handle reasoning trace streaming
                         if (!firstChunkReceived) {
                             firstChunkReceived = true;
                             reasoningStartTime = Date.now();
-                            if (typingId) this.removeTypingIndicator(typingId);
                             // Clear pending flag now that we have actual content
                             streamingMessage.streamingPending = false;
+                            streamingMessage.streamingPhase = null;
                             streamingMessage.reasoning = reasoningChunk;
                             streamingMessage.streamingReasoning = true;
                             streamedReasoning = reasoningChunk;
@@ -4169,6 +4201,12 @@ class ChatApp {
                 }, 50);
             }
 
+            const initialPendingPhase = this.resolvePendingPhaseForSession(session);
+            const typingModelName = this.normalizeModelName(session.model) || session.model || this.state.pendingModelName || inferenceService.getDefaultModelName(session);
+            let typingId = this.isViewingSession(session.id)
+                ? this.showTypingIndicator(typingModelName, initialPendingPhase)
+                : null;
+
             // Automatically acquire API key if needed
             const hasAccessToken = !!inferenceService.getAccessToken(session);
             const isAccessExpired = inferenceService.isAccessExpired(session);
@@ -4183,6 +4221,7 @@ class ChatApp {
                         this.floatingPanel.showMessage(`${accessLabel} ready`, 'success', 2000);
                     }
                 } catch (error) {
+                    if (typingId) this.removeTypingIndicator(typingId);
                     if (this.floatingPanel) {
                         this.floatingPanel.showMessage(error.message, 'error', 5000);
                     }
@@ -4226,9 +4265,6 @@ class ChatApp {
             }
 
             const modelIdForRequest = selectedModelEntry.id;
-
-            // Show typing indicator (only if still viewing this session)
-            let typingId = this.isViewingSession(session.id) ? this.showTypingIndicator(modelNameToUse) : null;
 
             // Declare variables outside try block so they're accessible in catch
             let streamingMessage = null;
@@ -4287,6 +4323,8 @@ class ChatApp {
                     tokenCount: null,
                     streamingTokens: 0,
                     streamingReasoning: false,
+                    streamingPending: true,
+                    streamingPhase: 'waiting',
                     scrubber: scrubberMetadata
                 };
 
@@ -4307,7 +4345,8 @@ class ChatApp {
                         // On first chunk (of any kind), remove typing indicator and append message
                         if (!firstChunkReceived) {
                             firstChunkReceived = true;
-                            if (typingId) this.removeTypingIndicator(typingId);
+                            streamingMessage.streamingPending = false;
+                            streamingMessage.streamingPhase = null;
 
                             // Handle text content
                             if (chunk) {
@@ -4396,12 +4435,20 @@ class ChatApp {
                     [], // Files are now included in processedMessages, not passed separately
                     searchEnabled,
                     abortController,
+                    async () => {
+                        this.updateSessionStreamingPhase(session.id, 'stream-open');
+                        streamingMessage.streamingPhase = 'stream-open';
+                        if (typingId) {
+                            this.updateTypingIndicator(typingId, 'stream-open');
+                        }
+                    },
                     async (reasoningChunk) => {
                         // Handle reasoning trace streaming
                         if (!firstChunkReceived) {
                             firstChunkReceived = true;
                             reasoningStartTime = Date.now();
-                            if (typingId) this.removeTypingIndicator(typingId);
+                            streamingMessage.streamingPending = false;
+                            streamingMessage.streamingPhase = null;
                             streamingMessage.reasoning = reasoningChunk;
                             streamingMessage.streamingReasoning = true;
                             streamedReasoning = reasoningChunk;
@@ -4520,7 +4567,9 @@ class ChatApp {
                     // Small delay before retry (500ms * attempt number)
                     await new Promise(r => setTimeout(r, 500 * retryCount));
                     // Re-show typing indicator for retry
-                    typingId = this.isViewingSession(session.id) ? this.showTypingIndicator(modelNameToUse) : null;
+                    if (typingId) this.removeTypingIndicator(typingId);
+                    this.updateSessionStreamingPhase(session.id, 'waiting');
+                    typingId = this.isViewingSession(session.id) ? this.showTypingIndicator(modelNameToUse, 'waiting') : null;
                     continue retryLoop;
                 }
 
@@ -4558,6 +4607,8 @@ class ChatApp {
                     streamingMessage.tokenCount = null;
                     streamingMessage.streamingTokens = null;
                     streamingMessage.streamingReasoning = false;
+                    streamingMessage.streamingPending = false;
+                    streamingMessage.streamingPhase = null;
                     streamingMessage.isLocalOnly = true;
                     await chatDB.saveMessage(streamingMessage);
                     // Only update UI if still viewing the same session
@@ -4565,6 +4616,7 @@ class ChatApp {
                         await this.chatArea.finalizeStreamingMessage(streamingMessage);
                     }
                 } else if (this.isViewingSession(session.id)) {
+                    if (typingId) this.removeTypingIndicator(typingId);
                     // Error before first chunk - message never added to UI, add new error message
                     await this.addMessage('assistant', userFriendlyMessage, { isLocalOnly: true });
                 }
@@ -4589,16 +4641,39 @@ class ChatApp {
      * @param {string} modelName - Display name of the model that's "typing"
      * @returns {string} ID of the typing indicator element
      */
-    showTypingIndicator(modelName) {
+    showTypingIndicator(modelName, phase = 'waiting') {
         const model = this.state.models.find(m => m.name === modelName);
         const providerName = model ? model.provider : 'OpenAI';
         const id = 'typing-' + Date.now();
-            const typingHtml = buildTypingIndicator(id, providerName);
+        const timestamp = Date.now();
+        const typingHtml = buildTypingIndicator(id, providerName, modelName, timestamp, phase);
         this.elements.messagesContainer.insertAdjacentHTML('beforeend', typingHtml);
         if (!this.isAutoScrollPaused) {
             this.scrollToBottom(true);
         }
         return id;
+    }
+
+    resolvePendingPhaseForSession(session) {
+        if (!session) return 'waiting';
+        const hasAccessToken = !!inferenceService.getAccessToken(session);
+        const isAccessExpired = inferenceService.isAccessExpired(session);
+        return (!hasAccessToken || isAccessExpired) ? 'waiting' : 'stream-open';
+    }
+
+    updateTypingIndicator(id, phase) {
+        const indicator = document.getElementById(id);
+        if (!indicator) return;
+        if (indicator.dataset.phase === phase) return;
+
+        indicator.dataset.phase = phase;
+        const label = indicator.querySelector('.pending-response-label');
+        if (label) {
+            label.textContent = phase === 'stream-open'
+                ? 'Waiting for response'
+                : 'Requesting ephemeral key';
+            label.classList.add('pending-response-streaming');
+        }
     }
 
     /**

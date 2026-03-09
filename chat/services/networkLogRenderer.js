@@ -278,7 +278,7 @@ export function getActivityDescription(log, detailed = false) {
 
                 if (!detailed) {
                     if (status >= 200 && status < 300) {
-                        return 'Response received';
+                        return 'Response stream open';
                     } else if (status === 0) {
                         return 'Inference request failed';
                     }
@@ -286,7 +286,7 @@ export function getActivityDescription(log, detailed = false) {
                 } else {
                     if (status >= 200 && status < 300) {
                         const model = request?.body?.model || 'Unknown model';
-                        return `Successfully processed your request using ${model}. Response received and displayed in chat.`;
+                        return `Successfully opened a response stream using ${model}. Waiting for the first visible tokens to appear in chat.`;
                     } else if (status === 0) {
                         return 'Inference request failed. This may be due to network issues, invalid API key, or model availability.';
                     }
@@ -308,7 +308,7 @@ export function getActivityDescription(log, detailed = false) {
 
                 if (!detailed) {
                     if (status >= 200 && status < 300) {
-                        return 'Response received';
+                        return 'Response stream open';
                     } else if (status === 0) {
                         return 'Inference request failed';
                     }
@@ -317,7 +317,7 @@ export function getActivityDescription(log, detailed = false) {
 
                 if (status >= 200 && status < 300) {
                     const model = request?.body?.model || 'Unknown model';
-                    return `Successfully processed your request using ${model} via ${backendLabel}. Response received and displayed in chat.`;
+                    return `Successfully opened a response stream using ${model} via ${backendLabel}. Waiting for the first visible tokens to appear in chat.`;
                 } else if (status === 0) {
                     return 'Inference request failed. This may be due to network issues, invalid credentials, or model availability.';
                 }
