@@ -1015,10 +1015,11 @@ class TicketClient {
 
     /**
      * Request a confidential API key by redeeming inference tickets.
+     * @param {string} name - Name/label for the key (default: 'OA-Scrubber-Key')
      * @param {number} ticketCount - Number of tickets to use (default: 1)
      * @returns {Promise<Object>} API key data
      */
-    async requestConfidentialApiKey(ticketCount = 1) {
+    async requestConfidentialApiKey(name = 'OA-Scrubber-Key', ticketCount = 1) {
         try {
             const { tickets, result } = await this.ticketStore.consumeTickets(
                 ticketCount,
@@ -1043,8 +1044,10 @@ class TicketClient {
 
                     const requestKeyUrl = `${ORG_API_BASE}/api/request_confidential_key`;
                     const requestHeaders = {
+                        'Content-Type': 'application/json',
                         'Authorization': authHeader,
                     };
+                    const requestBody = { name };
 
                     console.log(`🔐 Requesting confidential API key (${tickets.length} ticket${tickets.length > 1 ? 's' : ''})...`);
 
@@ -1057,6 +1060,7 @@ class TicketClient {
                             {
                                 method: 'POST',
                                 headers: requestHeaders,
+                                body: JSON.stringify(requestBody)
                             },
                             {
                                 context: 'Org confidential API key',
@@ -1072,6 +1076,7 @@ class TicketClient {
                             status: 0,
                             request: {
                                 headers: networkLogger.sanitizeHeaders(requestHeaders),
+                                body: requestBody
                             },
                             error: error.message
                         });
@@ -1085,6 +1090,7 @@ class TicketClient {
                         status: response.status,
                         request: {
                             headers: networkLogger.sanitizeHeaders(requestHeaders),
+                            body: requestBody
                         },
                         response: data
                     });
@@ -1092,7 +1098,7 @@ class TicketClient {
                     if (!response.ok) {
                         const errorMessage = data.detail || data.error || data.message ||
                             (typeof data === 'string' ? data : null) ||
-                            `Failed to request confidential API key (${response.status})`;
+                            `Failed to provision confidential API key (${response.status})`;
 
                         if (response.status === 401 || errorMessage.includes('double-spending')) {
                             const ticketError = new Error('One or more tickets were already used. Please try again.');
@@ -1115,7 +1121,7 @@ class TicketClient {
             );
 
             if (!result) {
-                throw new Error('Failed to request confidential API key.');
+                throw new Error('Failed to provision confidential API key.');
             }
 
             return result;

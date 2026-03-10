@@ -298,7 +298,7 @@ class ScrubberService {
         if (ticketCount < CONFIDENTIAL_KEY_TICKETS_REQUIRED) {
             throw new Error(`Not enough tickets. Need ${CONFIDENTIAL_KEY_TICKETS_REQUIRED}, have ${ticketCount}`);
         }
-        return ticketClient.requestConfidentialApiKey(CONFIDENTIAL_KEY_TICKETS_REQUIRED);
+        return ticketClient.requestConfidentialApiKey('scrubber', CONFIDENTIAL_KEY_TICKETS_REQUIRED);
     }
 
     getSessionScrubberKeyInfo(session) {

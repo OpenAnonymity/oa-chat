@@ -3615,6 +3615,9 @@ class ChatApp {
         const MAX_ATTACHED_IMAGES = 2; // Limit to avoid huge requests
         const filteredMessages = messages.filter(msg => !msg.isLocalOnly);
         const result = [];
+        const apiOverrideContent = (typeof this._lastApiContent === 'string' && this._lastApiContent.trim().length > 0)
+            ? this._lastApiContent
+            : null;
 
         // Helper: detect image-generating models (same pattern as modelTiers.js)
         const isImageModel = (modelId) => modelId && /image/i.test(modelId);
@@ -3654,6 +3657,31 @@ class ChatApp {
             if (msg.role === 'user') {
                 let textContent = msg.content || '';
                 const mediaContent = [];
+                const shouldOverrideLastUserText = isLastUserMessage && !!apiOverrideContent;
+
+                // Add memory context if available
+                if (!shouldOverrideLastUserText && msg.memoryContext && msg.memoryContext.memories && msg.memoryContext.memories.length > 0) {
+                    console.log('[Memory Context] Adding to message:', {
+                        messageId: msg.id,
+                        memoriesCount: msg.memoryContext.memories.length,
+                        memories: msg.memoryContext.memories
+                    });
+
+                    const memoryText = msg.memoryContext.memories.map((m, idx) => {
+                        return `\n--- Retrieved Memory ${idx + 1}: ${m.title || 'Untitled'} ---\n${m.fullContent || m.content || m.summary || ''}`;
+                    }).join('\n');
+
+                    textContent = `${memoryText}\n\n--- User Query ---\n${textContent}`;
+
+                    console.log('[Memory Context] Final message content:', textContent);
+                }
+
+                // One-shot override from full prompt editor or @memory enrichment:
+                // this is the exact text payload to send for the last user message.
+                if (shouldOverrideLastUserText) {
+                    textContent = apiOverrideContent;
+                    console.log('[SendMessage] Final API payload content (override):', textContent);
+                }
 
                 // Only attach image-model outputs to the LAST user message
                 if (isLastUserMessage && imagesToAttach.length > 0) {
@@ -4633,6 +4661,11 @@ class ChatApp {
 
                 // Process messages to include file content from stored metadata
                 const processedMessages = this.processMessagesWithFiles(sanitizedMessages, modelIdForRequest);
+
+                // Clear one-shot API override after materializing processed payload.
+                if (this._lastApiContent) {
+                    delete this._lastApiContent;
+                }
 
                 // Create a placeholder message for streaming
                 const streamingMessageId = this.generateId();

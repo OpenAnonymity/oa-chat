@@ -3292,6 +3292,47 @@ html {
     z-index: 50;
 }
 
+/* Memory Context Indicator */
+.memory-context-indicator {
+    position: absolute;
+    top: -8px;
+    left: -20px;
+    appearance: none;
+    border: 1px solid hsl(217.2 91.2% 84%);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    border-radius: 6px;
+    background-color: hsl(217.2 91.2% 94%);
+    color: hsl(var(--blue-700));
+    font-size: 0.7rem;
+    font-weight: 500;
+    z-index: 10;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.memory-context-indicator:hover {
+    background-color: hsl(217.2 91.2% 90%);
+    border-color: hsl(217.2 91.2% 78%);
+    color: hsl(var(--blue-700));
+}
+
+.memory-context-indicator:focus-visible {
+    outline: 2px solid hsl(var(--color-ring));
+    outline-offset: 2px;
+}
+
+.memory-context-indicator svg {
+    width: 12px;
+    height: 12px;
+}
+
+.memory-context-indicator span {
+    line-height: 1;
+}
+
 /* Memory context tooltip */
 .memory-context-tooltip {
     max-width: 340px;
