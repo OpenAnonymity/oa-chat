@@ -73,9 +73,12 @@ export async function runAgenticToolLoop(options) {
         const responseToolCalls = response.tool_calls || [];
         const responseText = _extractOutputText(response);
 
+        console.log(`[AgenticLoop] Iteration ${iterations}: ${responseToolCalls.length} tool call(s)${responseText ? ', text: ' + responseText.slice(0, 100) : ''}`);
+
         // No tool calls → LLM is done, return text response
         if (responseToolCalls.length === 0) {
             textResponse = responseText;
+            console.log(`[AgenticLoop] Done — no more tool calls after ${iterations} iteration(s). Text response: ${responseText ? responseText.length + ' chars' : 'empty'}`);
             break;
         }
 
@@ -103,6 +106,7 @@ export async function runAgenticToolLoop(options) {
 
             // Check for terminal tool
             if (terminalTool && toolName === terminalTool) {
+                console.log(`[AgenticLoop] Terminal tool: ${toolName}`, Object.keys(args));
                 terminalToolResult = { name: toolName, arguments: args };
                 toolCallLog.push({ name: toolName, args, result: '[terminal]', toolCallId });
                 onToolCall?.(toolName, args, '[terminal]');
@@ -144,6 +148,12 @@ export async function runAgenticToolLoop(options) {
 
         if (hitTerminal) break;
     }
+
+    if (iterations >= maxIterations && !terminalToolResult && !textResponse) {
+        console.warn(`[AgenticLoop] Hit max iterations (${maxIterations}) without terminal tool or text response`);
+    }
+
+    console.log(`[AgenticLoop] Summary: ${iterations} iteration(s), ${toolCallLog.length} tool call(s)${terminalToolResult ? ', terminal: ' + terminalToolResult.name : ''}${textResponse ? ', text response: ' + textResponse.length + ' chars' : ''}`);
 
     return {
         textResponse,
