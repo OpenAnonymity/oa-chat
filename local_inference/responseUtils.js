@@ -79,12 +79,20 @@ function normalizeInputItem(item) {
     }
 
     if (item.type === 'message' || item.role) {
-        return {
+        const normalized = {
             id: item.id || undefined,
             type: 'message',
             role: item.role || 'user',
             content: normalizeMessageContent(item.content)
         };
+        // Preserve tool-calling fields for multi-turn tool conversations
+        if (Array.isArray(item.tool_calls) && item.tool_calls.length > 0) {
+            normalized.tool_calls = item.tool_calls;
+        }
+        if (item.tool_call_id) {
+            normalized.tool_call_id = item.tool_call_id;
+        }
+        return normalized;
     }
 
     return item;
@@ -203,16 +211,30 @@ export function buildChatMessagesFromRequest(request, options = {}) {
 
     for (const item of inputItems) {
         if (!item) continue;
+        if (item.role === 'tool') {
+            messages.push({
+                role: 'tool',
+                content: typeof item.content === 'string' ? item.content : contentPartsToText(item.content),
+                tool_call_id: item.tool_call_id || item.call_id || ''
+            });
+            continue;
+        }
+
         if (item.type === 'message' || item.role) {
             const role = item.role || 'user';
             const text = contentPartsToText(item.content);
-            messages.push({ role: role === 'developer' ? 'system' : role, content: text });
+            const msg = { role: role === 'developer' ? 'system' : role, content: text };
+            if (role === 'assistant' && Array.isArray(item.tool_calls) && item.tool_calls.length > 0) {
+                msg.tool_calls = item.tool_calls;
+                if (!msg.content) msg.content = null;
+            }
+            messages.push(msg);
             continue;
         }
 
         if (item.type === 'function_call_output') {
             const outputText = item.output || item.content || '';
-            messages.push({ role: 'tool', content: outputText });
+            messages.push({ role: 'tool', content: outputText, tool_call_id: item.call_id || item.tool_call_id || '' });
         }
     }
 

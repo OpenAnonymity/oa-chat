@@ -3660,8 +3660,12 @@ class ChatApp {
                 const shouldOverrideLastUserText = isLastUserMessage && !!apiOverrideContent;
 
                 // Add memory context if available
-                if (!shouldOverrideLastUserText && msg.memoryContext && msg.memoryContext.memories && msg.memoryContext.memories.length > 0) {
-                    console.log('[Memory Context] Adding to message:', {
+                if (!shouldOverrideLastUserText && msg.memoryContext?.assembledContext) {
+                    console.log('[Memory Context] Using assembled context for message:', msg.id);
+                    textContent = `${msg.memoryContext.assembledContext}\n\n--- User Query ---\n${textContent}`;
+                    console.log('[Memory Context] Final message content:', textContent);
+                } else if (!shouldOverrideLastUserText && msg.memoryContext && msg.memoryContext.memories && msg.memoryContext.memories.length > 0) {
+                    console.log('[Memory Context] Adding individual memories to message:', {
                         messageId: msg.id,
                         memoriesCount: msg.memoryContext.memories.length,
                         memories: msg.memoryContext.memories
@@ -4357,6 +4361,7 @@ class ChatApp {
                     relevantTags: [],
                     isAgenticMemory: true
                 })),
+                assembledContext: result.assembledContext || null,
                 timestamp: Date.now()
             };
             this.memoryApprovalDrafts.set(retrievalMessage.id, {
@@ -4385,7 +4390,7 @@ class ChatApp {
                 }
                 const approvedPayload = (typeof memoryDraft?.effectivePayload === 'string' && memoryDraft.effectivePayload.trim())
                     ? memoryDraft.effectivePayload
-                    : (memoryDraft?.rawOverride || null);
+                    : (memoryDraft?.rawOverride || memoryContext.assembledContext || null);
                 this._lastApiContent = approvedPayload;
                 console.log('[Memory Approval] Using approved payload override:', this._lastApiContent);
                 this.pendingMemoryContext = memoryContext;

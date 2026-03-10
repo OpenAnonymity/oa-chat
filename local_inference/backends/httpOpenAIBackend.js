@@ -103,6 +103,13 @@ function buildChatRequestBody(request, messages) {
         body.user = request.user;
     }
 
+    if (Array.isArray(request.tools) && request.tools.length > 0) {
+        body.tools = request.tools;
+    }
+    if (request.tool_choice) {
+        body.tool_choice = request.tool_choice;
+    }
+
     return body;
 }
 
@@ -214,14 +221,20 @@ export function createOpenAICompatibleBackend({
             }
 
             const payload = await response.json();
-            const outputText = payload?.choices?.[0]?.message?.content || '';
+            const choice = payload?.choices?.[0]?.message || {};
+            const outputText = choice.content || '';
+            const toolCalls = Array.isArray(choice.tool_calls) ? choice.tool_calls : [];
             const usage = payload?.usage ? {
                 input_tokens: payload.usage.prompt_tokens ?? null,
                 output_tokens: payload.usage.completion_tokens ?? null,
                 total_tokens: payload.usage.total_tokens ?? null
             } : estimateTokenUsage(inputText, outputText);
 
-            return finalizeResponse(responseShell, outputText, usage);
+            const finalResponse = finalizeResponse(responseShell, outputText, usage);
+            if (toolCalls.length > 0) {
+                finalResponse.tool_calls = toolCalls;
+            }
+            return finalResponse;
         },
         async streamResponse(request, options = {}) {
             const messages = buildChatMessagesFromRequest(request, { systemPrompt: options.systemPrompt || '' });

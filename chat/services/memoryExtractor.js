@@ -1,15 +1,17 @@
 /**
  * MemoryExtractor — Write path for agentic memory.
  *
- * After each assistant response, examines the conversation and decides
- * whether to create/append/update a memory file. Uses the same Tinfoil
- * inference pattern as keywordsGenerator.
+ * After each assistant response, uses tool-calling via the agentic loop
+ * to examine the conversation and decide whether to create/append/update
+ * memory files.
  */
 import memoryFileSystem from './memoryFileSystem.js';
 import { localInferenceService } from '../../local_inference/index.js';
 import { chatDB } from '../db.js';
 import { TINFOIL_API_KEY } from '../config.js';
 import ticketClient from './ticketClient.js';
+import { runAgenticToolLoop } from './agenticToolLoop.js';
+import { createExtractionExecutors } from './memoryStorageBackend.js';
 import {
     compactBullets,
     ensureBulletMetadata,
@@ -26,14 +28,119 @@ const TINFOIL_MODEL = 'gpt-oss-120b';
 const TINFOIL_KEY_TICKETS_REQUIRED = 2;
 const MAX_CONVERSATION_CHARS = 8000;
 
-const EXTRACTION_PROMPT = `You are a memory manager. Given a conversation and the current memory index, decide if a **concrete, reusable fact** should be saved to memory.
+const EXTRACTION_TOOLS = [
+    {
+        type: 'function',
+        function: {
+            name: 'read_file',
+            description: 'Read the content of an existing memory file to inspect before writing.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    path: { type: 'string', description: 'File path to read (e.g. personal/about.md)' }
+                },
+                required: ['path']
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'create_new_file',
+            description: 'Create a new memory file. Use for an entirely new topic that does not fit any existing file.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    path: { type: 'string', description: 'File path (e.g. projects/recipe-app.md)' },
+                    content: { type: 'string', description: 'Bullet-point content to write' }
+                },
+                required: ['path', 'content']
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'create_new_folder',
+            description: 'Create a new folder in the memory filesystem.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    folder_path: { type: 'string', description: 'Folder path to create (e.g. projects)' }
+                },
+                required: ['folder_path']
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'append_memory',
+            description: 'Append new bullet points to an existing memory file.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    path: { type: 'string', description: 'File path to append to' },
+                    content: { type: 'string', description: 'Bullet-point content to append' }
+                },
+                required: ['path', 'content']
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'update_memory',
+            description: 'Overwrite an existing memory file with new content. Use when existing content is stale or contradicted.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    path: { type: 'string', description: 'File path to update' },
+                    content: { type: 'string', description: 'Complete new content for the file' }
+                },
+                required: ['path', 'content']
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'archive_memory',
+            description: 'Remove a specific bullet point or item from a memory file.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    path: { type: 'string', description: 'File path containing the item' },
+                    item_text: { type: 'string', description: 'The exact text of the item to remove' }
+                },
+                required: ['path', 'item_text']
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'delete_memory',
+            description: 'Delete an entire memory file.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    path: { type: 'string', description: 'File path to delete' }
+                },
+                required: ['path']
+            }
+        }
+    }
+];
 
-Only save information that would be useful to recall in a **future** conversation — personal facts, preferences, project context, interests, constraints, or recurring topics. Return "none" if the conversation doesn't reveal anything new worth remembering.
+const EXTRACTION_SYSTEM_PROMPT = `You are a memory manager. After reading a conversation, decide if any concrete, reusable facts should be saved to the user's memory files.
+
+Only save information useful in a **future** conversation — personal facts, preferences, project context, interests, constraints, recurring topics. Default to doing nothing if nothing new is worth remembering.
 
 Do NOT save:
-- Information already present in existing files (check the file contents carefully — do not duplicate facts)
+- Information already present in existing files (use read_file to check first)
 - Vague or transient details (e.g. "help me with this", "thanks")
-- The assistant's own reasoning or suggestions — only facts grounded in what the user said or asked about
+- The assistant's own reasoning or suggestions — only facts grounded in what the user said
 - Sensitive secrets (passwords, auth tokens, private keys, full payment data, government IDs)
 
 Current memory index:
@@ -41,51 +148,24 @@ Current memory index:
 {INDEX}
 \`\`\`
 
-Existing file contents:
-\`\`\`
-{FILE_CONTENTS}
-\`\`\`
-
-Conversation:
-\`\`\`
-{CONVERSATION}
-\`\`\`
-
-Respond with a single JSON object (no markdown fences):
-{
-  "action": "create" | "append" | "update" | "none",
-  "path": "directory/filename.md",
-  "title": "short descriptive title for this memory item",
-  "content": "- fact 1\\n- fact 2",
-  "reason": "brief explanation"
-}
-
 Directory structure:
 - personal/about.md — All personal facts: background, preferences, interests, career, education, location
-- projects/<project-name>.md — One file per project/app/task (e.g. projects/recipe-app.md, projects/blog-redesign.md)
+- projects/<project-name>.md — One file per project/app/task (lowercase, hyphenated)
+- Preferred namespaces: personal/, preferences/, projects/, temporary/
 
-How to decide:
-- Personal facts (name, job, hobbies, preferences, location, education) → append to "personal/about.md"
-- Project/app/codebase/task details → create or append to "projects/<short-project-name>.md" (lowercase, hyphenated)
-- If unsure, default to "personal/about.md"
+Instructions:
+1. Read the conversation below and decide if anything new should be saved.
+2. If so, use read_file first to check existing content (avoid duplicates).
+3. Use append_memory to add to existing files, or create_new_file for new topics.
+4. Format content as bullet points with metadata: "- Fact text | topic=topic-name | updated_at=YYYY-MM-DD"
+5. Time-sensitive facts must include date context (e.g. "As of 2026-03-05: ...").
+6. If nothing new is worth remembering, simply stop without calling any write tools.
 
 Rules:
-- Default to "none" if nothing new is worth remembering.
-- Prefer "append" to existing files over creating new ones. Use targeted "update" when replacing stale/conflicting facts.
-- One file per topic.
-- Use "update" if a fact in an existing file is now stale or contradicted (e.g. user changed jobs, moved cities). The updated content should replace the outdated fact, not duplicate it.
-- Use "create" for an entirely new topic that doesn't fit any existing file (e.g. a brand-new project, a distinct area of interest).
-- Preferred namespaces (not mandatory): personal/, preferences/, projects/, temporary/.
-- If none fit well, create a clear new folder name for the topic instead of forcing a bad fit.
-- If new information contradicts existing memory, use "update" and replace the stale/conflicting fact.
-- Time-sensitive facts must include date context in content (e.g. "As of 2026-03-05: ...").
-- Content format: markdown headers + concise bullet points with raw facts only.
-- Every bullet must include metadata: topic, updated_at, and optional expires_at.
-- Bullet format: "- Fact text | topic=topic-name | updated_at=YYYY-MM-DD | expires_at=YYYY-MM-DD(optional)"
-- Avoid filler commentary like "this helps tailor future conversations" or "noted for future reference".
-- Good: "## Active\\n### Personal\\n- Attends Stanford University | topic=personal | updated_at=2026-03-05"
-- Bad: "# User Background\\n\\nThese details can help tailor future recommendations..."
-- For "none", path and content can be empty strings.`;
+- Prefer append_memory to existing files over creating new ones. One file per topic.
+- Use update_memory only if a fact is now stale or contradicted.
+- Content should be raw facts only — no filler commentary.`;
+
 
 class MemoryExtractor {
     constructor() {
@@ -111,53 +191,51 @@ class MemoryExtractor {
             const filtered = messages.filter(m => !m.isLocalOnly);
             if (filtered.length < 2) return;
 
-            // Build truncated conversation text
             const conversationText = this._buildConversationText(filtered);
             if (!conversationText) return;
 
-            // Load current memory index and file contents (budget-capped)
             const index = await memoryFileSystem.getIndex() || '';
-            const fileContentsText = await this._buildFileContentsText();
 
-            // Ensure we have an API key
             const apiKey = await this._ensureTinfoilKey();
             if (!apiKey) {
                 console.log('[MemoryExtractor] No Tinfoil key available, skipping');
                 return;
             }
 
-            const prompt = EXTRACTION_PROMPT
-                .replace('{INDEX}', index)
-                .replace('{FILE_CONTENTS}', fileContentsText)
-                .replace('{CONVERSATION}', conversationText);
-
             console.log('[MemoryExtractor] Processing session:', sessionId);
 
-            const response = await localInferenceService.createResponse({
+            const systemPrompt = EXTRACTION_SYSTEM_PROMPT.replace('{INDEX}', index);
+            const toolExecutors = createExtractionExecutors(memoryFileSystem, {
+                normalizeContent: (content, path) => this._normalizeGeneratedContent(content, path),
+                mergeWithExisting: (existing, incoming, path) => this._mergeWithExisting(existing, incoming, path),
+                refreshIndex: (path) => memoryBulletIndex.refreshPath(path)
+            });
+
+            const { toolCallLog, iterations } = await runAgenticToolLoop({
                 model: TINFOIL_MODEL,
-                input: [
-                    {
-                        role: 'user',
-                        content: [
-                            { type: 'input_text', text: prompt }
-                        ]
-                    }
+                backendId: TINFOIL_BACKEND_ID,
+                tools: EXTRACTION_TOOLS,
+                toolExecutors,
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: `Conversation:\n\`\`\`\n${conversationText}\n\`\`\`` }
                 ],
-                max_output_tokens: 500,
+                maxIterations: 6,
+                maxOutputTokens: 500,
                 temperature: 0,
-                stream: false
-            }, { backendId: TINFOIL_BACKEND_ID });
+                onToolCall: (name, args, result) => {
+                    console.log(`[MemoryExtractor] Tool: ${name}`, args);
+                }
+            });
 
-            const responseText = this._extractOutputText(response);
-            if (!responseText) {
-                console.warn('[MemoryExtractor] Empty response');
-                return;
+            const writeTools = ['create_new_file', 'append_memory', 'update_memory', 'archive_memory', 'delete_memory'];
+            const writeCalls = toolCallLog.filter(e => writeTools.includes(e.name));
+
+            if (writeCalls.length > 0) {
+                console.log(`[MemoryExtractor] Completed: ${writeCalls.length} write operations in ${iterations} iterations`);
+            } else {
+                console.log('[MemoryExtractor] No memory actions needed');
             }
-
-            const parsed = this._parseResponse(responseText);
-            if (!parsed) return;
-
-            await this._executeAction(parsed);
 
         } catch (error) {
             console.error('[MemoryExtractor] Error:', error);
@@ -168,27 +246,6 @@ class MemoryExtractor {
         } finally {
             this._processingSet.delete(sessionId);
         }
-    }
-
-    async _buildFileContentsText() {
-        const MAX_TOTAL_CHARS = 4000;
-        const MAX_PER_FILE_CHARS = 800;
-        const allFiles = await memoryFileSystem.exportAll();
-        const realFiles = allFiles.filter(f => !f.path.endsWith('_index.md'));
-        if (realFiles.length === 0) return '(no files yet)';
-
-        let total = 0;
-        const parts = [];
-        for (const f of realFiles) {
-            const content = (f.content || '').length > MAX_PER_FILE_CHARS
-                ? f.content.slice(0, MAX_PER_FILE_CHARS) + '...(truncated)'
-                : f.content;
-            const entry = `--- ${f.path} ---\n${content}`;
-            if (total + entry.length > MAX_TOTAL_CHARS) break;
-            parts.push(entry);
-            total += entry.length;
-        }
-        return parts.join('\n\n');
     }
 
     _buildConversationText(messages) {
@@ -205,73 +262,6 @@ class MemoryExtractor {
         return text.trim();
     }
 
-    _extractOutputText(response) {
-        if (!response) return '';
-        if (typeof response.output_text === 'string') return response.output_text;
-        const output = Array.isArray(response.output) ? response.output : [];
-        for (const item of output) {
-            const content = Array.isArray(item?.content) ? item.content : [];
-            for (const part of content) {
-                if (part?.type === 'output_text' && typeof part.text === 'string') {
-                    return part.text;
-                }
-            }
-        }
-        return '';
-    }
-
-    _parseResponse(text) {
-        try {
-            const jsonMatch = text.match(/\{[\s\S]*\}/);
-            if (!jsonMatch) return null;
-            const parsed = JSON.parse(jsonMatch[0]);
-
-            if (!parsed.action || parsed.action === 'none') {
-                console.log('[MemoryExtractor] No memory action needed');
-                return null;
-            }
-
-            if (!parsed.path || !parsed.content) {
-                console.warn('[MemoryExtractor] Missing path or content in response');
-                return null;
-            }
-
-            // Ensure path ends with .md
-            if (!parsed.path.endsWith('.md')) {
-                parsed.path += '.md';
-            }
-
-            return parsed;
-        } catch (err) {
-            console.error('[MemoryExtractor] Parse error:', err);
-            console.log('[MemoryExtractor] Raw response:', text);
-            return null;
-        }
-    }
-
-    async _executeAction(parsed) {
-        const { action, path, content, reason } = parsed;
-        console.log(`[MemoryExtractor] ${action} → ${path} (${reason})`);
-        const normalizedContent = this._normalizeGeneratedContent(content, path);
-
-        switch (action) {
-            case 'create':
-            case 'update':
-                await memoryFileSystem.write(path, normalizedContent);
-                await memoryBulletIndex.refreshPath(path);
-                break;
-            case 'append': {
-                const existing = await memoryFileSystem.read(path);
-                const newContent = this._mergeWithExisting(existing, content, path);
-                await memoryFileSystem.write(path, newContent);
-                await memoryBulletIndex.refreshPath(path);
-                break;
-            }
-            default:
-                console.warn('[MemoryExtractor] Unknown action:', action);
-        }
-    }
-    
     _normalizeGeneratedContent(content, path) {
         const incomingBullets = parseMemoryBullets(content);
         if (incomingBullets.length === 0) {
@@ -313,9 +303,6 @@ class MemoryExtractor {
         return renderCompactedMemoryDocument(compacted.active, compacted.archive);
     }
 
-    /**
-     * Ensure a valid Tinfoil API key (same pattern as keywordsGenerator).
-     */
     async _ensureTinfoilKey() {
         const envKey = TINFOIL_API_KEY;
         if (envKey) {

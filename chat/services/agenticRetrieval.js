@@ -1,14 +1,16 @@
 /**
  * AgenticRetrieval — Read path for agentic memory.
  *
- * Before sending a message, reads the memory index and uses the LLM
- * to decide which files are relevant. Falls back to brute-force text
+ * Uses tool-calling via the agentic loop to let the LLM search, read,
+ * and assemble relevant memory context. Falls back to brute-force text
  * search if no Tinfoil key is available.
  */
 import memoryFileSystem from './memoryFileSystem.js';
 import { localInferenceService } from '../../local_inference/index.js';
 import { TINFOIL_API_KEY } from '../config.js';
 import ticketClient from './ticketClient.js';
+import { runAgenticToolLoop } from './agenticToolLoop.js';
+import { createRetrievalExecutors } from './memoryStorageBackend.js';
 import {
     parseMemoryBullets,
     renderMemoryBullet,
@@ -25,26 +27,67 @@ const MAX_FILES_TO_LOAD = 5;
 const MAX_TOTAL_CONTEXT_CHARS = 4000;
 const MAX_SNIPPETS = 18;
 
-const RETRIEVAL_PROMPT = `You are a memory retrieval system. Given a user's query and the index of their memory filesystem, decide which files (if any) contain relevant context.
+const RETRIEVAL_TOOLS = [
+    {
+        type: 'function',
+        function: {
+            name: 'retrieve_file',
+            description: 'Search memory files by keyword. Returns paths of files whose content or path matches the query. Use read_file instead if you already know the file path.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    query: { type: 'string', description: 'Keyword to search for in file contents (e.g. "cooking", "Stanford", "project")' }
+                },
+                required: ['query']
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'read_file',
+            description: 'Read the content of a memory file by its path.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    path: { type: 'string', description: 'File path to read (e.g. personal/about.md)' }
+                },
+                required: ['path']
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'append_mem_to_query',
+            description: 'Assemble the final memory context to attach to the user query. Call this when done selecting and reading files. The content you provide will be prepended to the user message.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    content: { type: 'string', description: 'The assembled memory context to attach to the query. Include relevant excerpts from the files you read.' }
+                },
+                required: ['content']
+            }
+        }
+    }
+];
 
-Memory index:
+const RETRIEVAL_SYSTEM_PROMPT = `You are a memory retrieval assistant. Your job is to find and assemble relevant personal context from the user's memory files to help answer their query.
+
+You have access to a memory filesystem. The index below shows all available files:
+
 \`\`\`
 {INDEX}
 \`\`\`
 
-User query: {QUERY}
+Instructions:
+1. Look at the index above. If you can already see relevant file paths, use read_file directly to read them.
+2. Use retrieve_file only when you need to search by keyword (e.g. "cooking", "Stanford") — it searches file contents, not paths.
+3. Read at most ${MAX_FILES_TO_LOAD} files.
+4. When you've found relevant context, call append_mem_to_query with curated excerpts.
+5. If nothing is relevant, call append_mem_to_query with an empty string.
 
-Respond with a single JSON object (no markdown fences, no extra text):
-{
-  "paths": ["path/to/file1.md", "path/to/file2.md"],
-  "reason": "brief explanation"
-}
-
-Rules:
-- Return only files listed in the index (not _index.md files themselves).
-- Return an empty paths array if nothing is relevant.
-- Maximum ${MAX_FILES_TO_LOAD} files.
-- Only include files whose content would genuinely help answer this specific query.`;
+Be selective — only include content that genuinely helps answer this specific query. Do not include everything you find.`;
 
 
 class AgenticRetrieval {
@@ -56,7 +99,7 @@ class AgenticRetrieval {
     /**
      * Retrieve relevant memory context for a user query.
      * @param {string} query — the user's message text
-     * @returns {Promise<{files: {path: string, content: string}[], paths: string[]}|null>}
+     * @returns {Promise<{files: {path: string, content: string}[], paths: string[], assembledContext: string|null}|null>}
      */
     async retrieveForQuery(query, onProgress = null) {
         if (!query || !query.trim()) return null;
@@ -72,50 +115,17 @@ class AgenticRetrieval {
 
             // Try LLM-driven retrieval first
             const apiKey = await this._ensureTinfoilKey();
-            let paths;
 
             if (apiKey) {
                 onProgress?.({ stage: 'retrieval', message: 'Selecting relevant memory files with Tinfoil...' });
-                paths = await this._llmRetrieval(query, index);
+                const result = await this._toolCallingRetrieval(query, index, onProgress);
+                return result;
             } else {
                 // Fallback: brute-force text search
                 console.log('[AgenticRetrieval] No Tinfoil key, falling back to text search');
                 onProgress?.({ stage: 'retrieval', message: 'Tinfoil unavailable, using fallback text search...' });
-                paths = await this._textSearchFallback(query);
+                return await this._textSearchFallbackWithLoad(query, onProgress);
             }
-
-            if (!paths || paths.length === 0) return null;
-
-            // Load the selected files (budget-capped)
-            const MAX_TOTAL_CHARS = 4000;
-            const MAX_PER_FILE_CHARS = 1500;
-            const files = [];
-            let total = 0;
-            for (const path of paths.slice(0, MAX_FILES_TO_LOAD)) {
-                onProgress?.({ stage: 'loading', message: `Loading ${path}...`, path });
-                const raw = await memoryFileSystem.read(path);
-                if (!raw) continue;
-                const content = raw.length > MAX_PER_FILE_CHARS
-                    ? raw.slice(0, MAX_PER_FILE_CHARS) + '...(truncated)'
-                    : raw;
-                if (total + content.length > MAX_TOTAL_CHARS) break;
-                files.push({ path, content });
-                total += content.length;
-            }
-
-            if (files.length === 0) return null;
-
-            console.log(`[AgenticRetrieval] Retrieved ${files.length} memory files for query`);
-            onProgress?.({
-                stage: 'complete',
-                message: `Retrieved ${files.length} memory file${files.length === 1 ? '' : 's'}.`,
-                paths: files.map(file => file.path)
-            });
-            const assembled = await this._buildSnippetContext(paths.slice(0, MAX_FILES_TO_LOAD), query);
-            if (!assembled) return null;
-            console.log('[AgenticRetrieval] Retrieved snippet-level memory context');
-
-            return { files, paths };
 
         } catch (error) {
             console.error('[AgenticRetrieval] Error:', error);
@@ -127,42 +137,97 @@ class AgenticRetrieval {
         }
     }
 
-    async _llmRetrieval(query, index) {
-        const prompt = RETRIEVAL_PROMPT
-            .replace('{INDEX}', index)
-            .replace('{QUERY}', query);
+    async _toolCallingRetrieval(query, index, onProgress) {
+        const systemPrompt = RETRIEVAL_SYSTEM_PROMPT.replace('{INDEX}', index);
+        const toolExecutors = createRetrievalExecutors(memoryFileSystem);
 
-        const response = await localInferenceService.createResponse({
+        const { terminalToolResult, toolCallLog, iterations } = await runAgenticToolLoop({
             model: TINFOIL_MODEL,
-            input: [
-                {
-                    role: 'user',
-                    content: [
-                        { type: 'input_text', text: prompt }
-                    ]
-                }
+            backendId: TINFOIL_BACKEND_ID,
+            tools: RETRIEVAL_TOOLS,
+            toolExecutors,
+            messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: query }
             ],
-            max_output_tokens: 300,
+            terminalTool: 'append_mem_to_query',
+            maxIterations: 8,
+            maxOutputTokens: 500,
             temperature: 0,
-            stream: false
-        }, { backendId: TINFOIL_BACKEND_ID });
+            onToolCall: (name, args, result) => {
+                onProgress?.({ stage: 'tool_call', message: `Tool: ${name}`, tool: name, args });
+            }
+        });
 
-        const responseText = this._extractOutputText(response);
-        if (!responseText) return null;
+        console.log(`[AgenticRetrieval] Completed in ${iterations} iterations, ${toolCallLog.length} tool calls`);
 
-        try {
-            const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-            if (!jsonMatch) return null;
-            const parsed = JSON.parse(jsonMatch[0]);
-
-            if (!Array.isArray(parsed.paths)) return null;
-
-            console.log(`[AgenticRetrieval] LLM selected: ${parsed.paths.join(', ')} (${parsed.reason})`);
-            return parsed.paths.filter(p => typeof p === 'string' && p.endsWith('.md'));
-        } catch (err) {
-            console.error('[AgenticRetrieval] Parse error:', err);
-            return null;
+        // Build files list from read_file calls in the log
+        const files = [];
+        const seenPaths = new Set();
+        for (const entry of toolCallLog) {
+            if (entry.name === 'read_file' && entry.args?.path && entry.result) {
+                const path = entry.args.path;
+                if (seenPaths.has(path)) continue;
+                try {
+                    const parsed = JSON.parse(entry.result);
+                    if (parsed.error) continue;
+                } catch { /* not JSON, it's file content */ }
+                seenPaths.add(path);
+                files.push({ path, content: entry.result });
+            }
         }
+
+        const assembledContext = terminalToolResult?.arguments?.content || null;
+        const paths = files.map(f => f.path);
+
+        if (files.length === 0 && !assembledContext) return null;
+
+        // Build snippet-level context using bullet index for the approval UI
+        const snippetContext = await this._buildSnippetContext(paths, query);
+
+        console.log(`[AgenticRetrieval] Retrieved ${files.length} memory files, assembled context: ${assembledContext ? assembledContext.length + ' chars' : 'none'}`);
+        onProgress?.({
+            stage: 'complete',
+            message: `Retrieved ${files.length} memory file${files.length === 1 ? '' : 's'}.`,
+            paths
+        });
+
+        return { files, paths, assembledContext: assembledContext || snippetContext };
+    }
+
+    async _textSearchFallbackWithLoad(query, onProgress) {
+        const paths = await this._textSearchFallback(query);
+        if (!paths || paths.length === 0) return null;
+
+        const MAX_TOTAL_CHARS = 4000;
+        const MAX_PER_FILE_CHARS = 1500;
+        const files = [];
+        let total = 0;
+        for (const path of paths.slice(0, MAX_FILES_TO_LOAD)) {
+            onProgress?.({ stage: 'loading', message: `Loading ${path}...`, path });
+            const raw = await memoryFileSystem.read(path);
+            if (!raw) continue;
+            const content = raw.length > MAX_PER_FILE_CHARS
+                ? raw.slice(0, MAX_PER_FILE_CHARS) + '...(truncated)'
+                : raw;
+            if (total + content.length > MAX_TOTAL_CHARS) break;
+            files.push({ path, content });
+            total += content.length;
+        }
+
+        if (files.length === 0) return null;
+
+        // Build snippet-level assembled context from fallback
+        const assembled = await this._buildSnippetContext(files.map(f => f.path), query);
+
+        console.log(`[AgenticRetrieval] Fallback retrieved ${files.length} memory files`);
+        onProgress?.({
+            stage: 'complete',
+            message: `Retrieved ${files.length} memory file${files.length === 1 ? '' : 's'}.`,
+            paths: files.map(f => f.path)
+        });
+
+        return { files, paths: files.map(f => f.path), assembledContext: assembled };
     }
 
     async _textSearchFallback(query) {
@@ -248,7 +313,7 @@ class AgenticRetrieval {
             total += section.length;
         }
 
-        return sections.join('\n\n').trim();
+        return sections.join('\n\n').trim() || null;
     }
 
     _extractLegacySnippets(content, queryTerms) {
@@ -273,27 +338,10 @@ class AgenticRetrieval {
     }
 
     async _isTrivialIndex(index) {
-        // Check if there are any actual memory blocks (not just seed placeholders)
         const all = await memoryFileSystem.exportAll();
         const realFiles = all.filter(f => !f.path.endsWith('_index.md'));
         if (realFiles.length === 0) return true;
-        // Seed files have itemCount: 0 — only fire retrieval if real content exists
         return !realFiles.some(f => (f.itemCount || 0) > 0);
-    }
-
-    _extractOutputText(response) {
-        if (!response) return '';
-        if (typeof response.output_text === 'string') return response.output_text;
-        const output = Array.isArray(response.output) ? response.output : [];
-        for (const item of output) {
-            const content = Array.isArray(item?.content) ? item.content : [];
-            for (const part of content) {
-                if (part?.type === 'output_text' && typeof part.text === 'string') {
-                    return part.text;
-                }
-            }
-        }
-        return '';
     }
 
     async _ensureTinfoilKey() {
