@@ -247,17 +247,7 @@ export default class ChatInput {
 
                 if (!this.app.memoryEnabled) {
                     this.app.pendingMemoryContext = null;
-                    // When memory is disabled, enable scrubbing
-                    this.app.scrubEnabled = true;
-                    await chatDB.saveSetting('scrubEnabled', true);
-                } else {
-                    // When memory is enabled, disable scrubbing
-                    this.app.scrubEnabled = false;
-                    await chatDB.saveSetting('scrubEnabled', false);
                 }
-
-                // Update scrubber hint visibility to reflect the change
-                this.updateScrubberHintVisibility();
             });
         }
 
@@ -427,12 +417,6 @@ export default class ChatInput {
             return;
         }
 
-        // Don't allow scrubbing when memory is enabled
-        if (this.app.memoryEnabled) {
-            this.resetScrubberTabShortcutState();
-            return;
-        }
-
         const now = Date.now();
         const withinWindow = now - this.scrubberState.lastTabAt < 420;
         this.scrubberState.lastTabAt = now;
@@ -542,17 +526,6 @@ export default class ChatInput {
             this.app.showToast('Nothing to scrub', 'error');
             return;
         }
-
-        // When scrubbing is triggered, disable memory
-        if (this.app.memoryEnabled) {
-            this.app.memoryEnabled = false;
-            this.updateMemoryToggleUI();
-            await chatDB.saveSetting('memoryEnabled', false);
-            this.app.pendingMemoryContext = null;
-        }
-        // Enable scrubbing
-        this.app.scrubEnabled = true;
-        await chatDB.saveSetting('scrubEnabled', true);
 
         const modeLabel = scrubberService.getModeLabel ? scrubberService.getModeLabel() : 'confidential model';
         const stopToast = this.app.showLoadingToast?.(`Scrubbing input query with ${modeLabel}`);
@@ -1317,14 +1290,6 @@ export default class ChatInput {
         const hint = document.getElementById('scrubber-shortcut-hint');
         const input = this.app.elements.messageInput;
         if (!hint || !input) return;
-
-        // Hide hint when memory is enabled (scrubbing is disabled)
-        if (this.app.memoryEnabled) {
-            hint.classList.add('hint-hidden');
-            hint.classList.remove('faded');
-            input.classList.remove('hint-visible');
-            return;
-        }
 
         const len = (input.value || '').length;
         // Hide hint completely after scrubbing (when tooltip can show)
