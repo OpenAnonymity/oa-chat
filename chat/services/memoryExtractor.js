@@ -73,7 +73,7 @@ Rules:
 - Default to "none" if nothing new is worth remembering.
 - Prefer "append" to existing files over creating new ones. Use targeted "update" when replacing stale/conflicting facts.
 - One file per topic.
-- Use "update" if a fact in an existing file is now stale or contradicted (e.g. user changed jobs, moved cities). The updated content should replace the outdated memory block, not duplicate it.
+- Use "update" if a fact in an existing file is now stale or contradicted (e.g. user changed jobs, moved cities). The updated content should replace the outdated fact, not duplicate it.
 - Use "create" for an entirely new topic that doesn't fit any existing file (e.g. a brand-new project, a distinct area of interest).
 - Preferred namespaces (not mandatory): personal/, preferences/, projects/, temporary/.
 - If none fit well, create a clear new folder name for the topic instead of forcing a bad fit.
@@ -157,7 +157,7 @@ class MemoryExtractor {
             const parsed = this._parseResponse(responseText);
             if (!parsed) return;
 
-            await this._executeAction(parsed, sessionId);
+            await this._executeAction(parsed);
 
         } catch (error) {
             console.error('[MemoryExtractor] Error:', error);
@@ -249,17 +249,15 @@ class MemoryExtractor {
         }
     }
 
-    async _executeAction(parsed, sessionId) {
-        const { action, path, content, title, reason } = parsed;
+    async _executeAction(parsed) {
+        const { action, path, content, reason } = parsed;
         console.log(`[MemoryExtractor] ${action} → ${path} (${reason})`);
-
-        const wrapped = this._wrapMemoryBlock(title || '', content, sessionId);
+        const normalizedContent = this._normalizeGeneratedContent(content, path);
 
         switch (action) {
             case 'create':
             case 'update':
-                await memoryFileSystem.write(path, wrapped);
-                await memoryFileSystem.write(path, this._normalizeGeneratedContent(content, path));
+                await memoryFileSystem.write(path, normalizedContent);
                 await memoryBulletIndex.refreshPath(path);
                 break;
             case 'append': {
@@ -272,12 +270,6 @@ class MemoryExtractor {
             default:
                 console.warn('[MemoryExtractor] Unknown action:', action);
         }
-    }
-
-    _wrapMemoryBlock(title, content, sessionId) {
-        const date = new Date().toISOString().split('T')[0];
-        const sessionAttr = sessionId ? ` session=${sessionId}` : '';
-        return `<!-- @memory created=${date}${sessionAttr} -->\n## ${title}\n${content}\n<!-- @/memory -->`;
     }
     
     _normalizeGeneratedContent(content, path) {

@@ -9,7 +9,10 @@
  * like a human doing grep.
  */
 
-import { parseMemoryBlocks, extractBlockTitles } from './memoryBlockParser.js';
+import {
+    countMemoryBullets,
+    extractMemoryTitles,
+} from './memoryBulletUtils.js';
 
 const DB_NAME = 'oa-memory-fs';
 const DB_VERSION = 1;
@@ -122,13 +125,14 @@ class MemoryFileSystem {
         const parentPath = this._parentPath(path);
         const now = Date.now();
         const existing = await this._get(path);
+        const nextContent = String(content || '');
 
         const record = {
             path,
-            content,
-            l0: this._generateL0(content),
-            itemCount: parseMemoryBlocks(content).length || 0,
-            titles: extractBlockTitles(content),
+            content: nextContent,
+            l0: this._generateL0(nextContent),
+            itemCount: countMemoryBullets(nextContent),
+            titles: extractMemoryTitles(nextContent),
             parentPath,
             createdAt: existing?.createdAt ?? now,
             updatedAt: now,
@@ -322,8 +326,7 @@ class MemoryFileSystem {
     _generateL0(content) {
         if (!content) return '';
 
-        // Prefer block titles if structured blocks exist
-        const titles = extractBlockTitles(content);
+        const titles = extractMemoryTitles(content);
         if (titles.length > 0) {
             const joined = titles.join('; ');
             return joined.length > 100 ? joined.slice(0, 97) + '...' : joined;

@@ -96,6 +96,27 @@ export function parseMemoryBullets(content) {
     return bullets;
 }
 
+export function countMemoryBullets(content) {
+    return parseMemoryBullets(content).length;
+}
+
+export function extractMemoryTitles(content) {
+    const lines = String(content || '').split('\n');
+    const titles = [];
+
+    for (const line of lines) {
+        const headingMatch = line.match(HEADING_REGEX);
+        if (!headingMatch) continue;
+
+        const title = headingMatch[1].trim();
+        if (!title) continue;
+        if (/^(active|archive)$/i.test(title)) continue;
+        titles.push(title);
+    }
+
+    return titles;
+}
+
 export function ensureBulletMetadata(bullet, options = {}) {
     const fallbackTopic = normalizeTopic(options.defaultTopic || 'general');
     const fallbackUpdatedAt = options.updatedAt || todayIsoDate();
