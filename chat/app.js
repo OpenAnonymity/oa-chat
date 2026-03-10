@@ -1547,12 +1547,6 @@ class ChatApp {
             this.scrubEnabled = savedScrubEnabled;
         }
 
-        // Enforce mutual exclusivity: memory and scrubbing cannot both be enabled
-        if (this.memoryEnabled && this.scrubEnabled) {
-            this.scrubEnabled = false;
-            await chatDB.saveSetting('scrubEnabled', false);
-        }
-
         // Render local data immediately (session from sessionStorage + model/settings from DB).
         this.renderMessages();
         this.renderCurrentModel();
