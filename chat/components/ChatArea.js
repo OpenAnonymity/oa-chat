@@ -2211,12 +2211,10 @@ export default class ChatArea {
         let fullPrompt = '';
 
         if (hasMemory) {
-            const memoryContent = context.memories.map((m, idx) => {
-                const content = m.fullContent || m.displayContent || m.content || m.summary || '';
-                return `--- Retrieved Context ${idx + 1}: ${m.title || 'Untitled'} ---\n${content}`;
-            }).join('\n\n');
-
-            fullPrompt = `${memoryContent}\n\n--- User Query ---\n${message.content}`;
+            fullPrompt = this.app.buildUserMessageWithMemoryContext(
+                message.memoryContext || { memories: context.memories },
+                message.content
+            );
         } else {
             fullPrompt = message.content;
         }

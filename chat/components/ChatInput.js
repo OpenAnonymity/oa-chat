@@ -1934,11 +1934,8 @@ export default class ChatInput {
             }).join('\n\n');
         };
         const buildDefaultPayload = (queryText) => {
-            const assembledContext = buildAssembledContext();
-            if (!assembledContext) {
-                return queryText.trim();
-            }
-            return `${assembledContext}\n\n--- User Query ---\n${queryText.trim()}`;
+            this.app.pendingMemoryContext.assembledContext = buildAssembledContext();
+            return this.app.buildUserMessageWithMemoryContext(this.app.pendingMemoryContext, queryText);
         };
         const getEffectivePayload = () => {
             if (rawOverrideEnabled && rawOverrideDraft.trim()) {
