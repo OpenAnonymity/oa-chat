@@ -3659,25 +3659,16 @@ class ChatApp {
                 const mediaContent = [];
                 const shouldOverrideLastUserText = isLastUserMessage && !!apiOverrideContent;
 
-                // Add memory context if available
+                // Add memory context wrapped in code fences so the model treats it as data, not instructions
                 if (!shouldOverrideLastUserText && msg.memoryContext?.assembledContext) {
                     console.log('[Memory Context] Using assembled context for message:', msg.id);
-                    textContent = `${msg.memoryContext.assembledContext}\n\n--- User Query ---\n${textContent}`;
-                    console.log('[Memory Context] Final message content:', textContent);
+                    textContent = `\`\`\`memory-context\n${msg.memoryContext.assembledContext}\n\`\`\`\n\n${textContent}`;
                 } else if (!shouldOverrideLastUserText && msg.memoryContext && msg.memoryContext.memories && msg.memoryContext.memories.length > 0) {
-                    console.log('[Memory Context] Adding individual memories to message:', {
-                        messageId: msg.id,
-                        memoriesCount: msg.memoryContext.memories.length,
-                        memories: msg.memoryContext.memories
-                    });
-
+                    console.log('[Memory Context] Adding individual memories to message:', msg.id);
                     const memoryText = msg.memoryContext.memories.map((m, idx) => {
-                        return `\n--- Retrieved Memory ${idx + 1}: ${m.title || 'Untitled'} ---\n${m.fullContent || m.content || m.summary || ''}`;
-                    }).join('\n');
-
-                    textContent = `${memoryText}\n\n--- User Query ---\n${textContent}`;
-
-                    console.log('[Memory Context] Final message content:', textContent);
+                        return `--- ${m.title || 'Untitled'} ---\n${m.fullContent || m.content || m.summary || ''}`;
+                    }).join('\n\n');
+                    textContent = `\`\`\`memory-context\n${memoryText}\n\`\`\`\n\n${textContent}`;
                 }
 
                 // One-shot override from full prompt editor or @memory enrichment:
