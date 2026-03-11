@@ -155,8 +155,9 @@ class AgenticRetrieval {
             maxOutputTokens: 500,
             temperature: 0,
             onToolCall: (name, args, result) => {
-                onProgress?.({ stage: 'tool_call', message: `Tool: ${name}`, tool: name, args });
-            }
+                onProgress?.({ stage: 'tool_call', message: `Tool: ${name}`, tool: name, args, result });
+            },
+            onModelText
         });
 
         console.log(`[AgenticRetrieval] Completed in ${iterations} iterations, ${toolCallLog.length} tool calls`);

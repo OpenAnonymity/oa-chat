@@ -11,6 +11,8 @@ import { getStandardizedModelDisplayName } from '../services/modelConfig.js';
 
 // In-memory cache for reasoning trace expanded state (persists across session switches)
 const reasoningExpandedState = new Set();
+// In-memory cache for agent trace expanded state
+const agentTraceExpandedState = new Set();
 
 // Welcome screen configuration
 const WELCOME_SHOW_LOGO = false;  // Set to true to show the logo icon
@@ -83,6 +85,136 @@ function escapeHtmlAttribute(text) {
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/\n/g, '&#10;');
+}
+
+/**
+ * Builds the agent activity trace UI — reasoning-trace-style collapsible.
+ *
+ * Three states:
+ *   Streaming  → content visible, only last 3 steps shown, shimmer subtitle
+ *   Done/collapsed (default) → content HIDDEN, just the toggle button ("N tool calls")
+ *   Done/expanded (user clicked) → content visible, ALL steps shown
+ */
+function buildAgentTrace(trace, messageId, isStreaming = false) {
+    const steps = Array.isArray(trace) ? trace : [];
+    if (steps.length === 0 && !isStreaming) return '';
+
+    const toggleId = `agent-trace-toggle-${messageId}`;
+    const subtitleId = `agent-trace-subtitle-${messageId}`;
+    const contentId = `agent-trace-content-${messageId}`;
+    const overflowId = `agent-trace-overflow-${messageId}`;
+
+    const isExpanded = agentTraceExpandedState.has(messageId);
+    // Streaming → always visible.  Done → hidden unless user expanded.
+    const contentVisible = isStreaming || isExpanded;
+    const contentHiddenClass = contentVisible ? '' : 'hidden';
+    const chevronRotation = contentVisible ? 'style="transform: rotate(180deg)"' : '';
+
+    // Subtitle
+    let subtitle;
+    if (isStreaming) {
+        const lastStep = steps[steps.length - 1];
+        if (lastStep?.type === 'tool_call') {
+            const argSnippet = lastStep.args ? Object.values(lastStep.args).filter(v => typeof v === 'string').join(', ') : '';
+            subtitle = argSnippet ? `${lastStep.tool}("${argSnippet}")` : lastStep.tool;
+        } else if (lastStep?.type === 'model_text') {
+            subtitle = lastStep.text.length > 120 ? lastStep.text.slice(0, 117) + '...' : lastStep.text;
+        } else if (lastStep?.type === 'phase') {
+            subtitle = lastStep.label;
+        } else {
+            subtitle = 'Searching memory...';
+        }
+    } else {
+        const toolCount = steps.filter(s => s.type === 'tool_call').length;
+        subtitle = `${toolCount} tool call${toolCount === 1 ? '' : 's'}`;
+    }
+
+    const buttonWidthClass = isStreaming ? 'w-full' : '';
+    const buttonFlexClass = isStreaming ? 'flex' : 'inline-flex';
+    const spanFlexClass = isStreaming ? 'flex-1 truncate' : '';
+    const spanAnimationClass = isStreaming ? 'reasoning-subtitle-streaming' : '';
+
+    // Render a single step
+    const renderStep = (step, isLatest) => {
+        if (step.type === 'tool_call') {
+            const argsStr = step.args ? Object.entries(step.args)
+                .map(([k, v]) => `${k}: ${typeof v === 'string' ? `"${v}"` : JSON.stringify(v)}`)
+                .join(', ')
+                : '';
+            const resultStr = formatToolResult(step.tool, step.result);
+            return `
+                <div class="agent-step${isLatest ? ' is-latest' : ''}">
+                    <span class="agent-step-name">${escapeHtml(step.tool)}</span>${argsStr ? `<span class="agent-step-args">(${escapeHtml(argsStr)})</span>` : ''}${resultStr ? ` <span class="agent-step-result">${escapeHtml(resultStr)}</span>` : ''}
+                </div>`;
+        }
+        if (step.type === 'model_text') {
+            const truncated = step.text.length > 200 ? step.text.slice(0, 197) + '...' : step.text;
+            return `
+                <div class="agent-step agent-step-model${isLatest ? ' is-latest' : ''}">
+                    <span class="agent-step-model-text">${escapeHtml(truncated)}</span>
+                </div>`;
+        }
+        if (step.type === 'phase') {
+            return `
+                <div class="agent-step agent-step-phase${isLatest ? ' is-latest' : ''}">
+                    <span class="agent-step-phase-label">${escapeHtml(step.label)}</span>
+                </div>`;
+        }
+        return '';
+    };
+
+    // During streaming: show only last 3 (overflow hidden).
+    // When expanded (user clicked after done): show ALL (overflow visible).
+    const MAX_VISIBLE = 3;
+    let stepsHtml = '';
+
+    if (steps.length > MAX_VISIBLE) {
+        const overflow = steps.slice(0, steps.length - MAX_VISIBLE);
+        const visible = steps.slice(steps.length - MAX_VISIBLE);
+        // Overflow: hidden during streaming (only 3 visible), shown when expanded after completion
+        const overflowHidden = isStreaming || !isExpanded;
+        stepsHtml += `<div class="agent-trace-overflow ${overflowHidden ? 'hidden' : ''}" id="${overflowId}">${overflow.map(s => renderStep(s, false)).join('')}</div>`;
+        stepsHtml += visible.map((s, i) => renderStep(s, i === visible.length - 1 && isStreaming)).join('');
+    } else {
+        stepsHtml = steps.map((s, i) => renderStep(s, i === steps.length - 1 && isStreaming)).join('');
+    }
+
+    return `
+        <div class="reasoning-trace w-full" id="agent-trace-${messageId}">
+            <button
+                class="reasoning-toggle ${buttonFlexClass} items-center gap-2 ${buttonWidthClass} px-2 py-1 text-left hover:bg-slate-2 rounded transition-colors"
+                id="${toggleId}"
+                onclick="window.toggleAgentTrace('${messageId}')"
+            >
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5 text-muted-foreground flex-shrink-0">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567 16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z" />
+                </svg>
+                <span id="${subtitleId}" class="text-xs text-muted-foreground ${spanFlexClass} ${spanAnimationClass}">${subtitle}</span>
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5 text-muted-foreground reasoning-chevron transition-transform flex-shrink-0" ${chevronRotation}>
+                    <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+                </svg>
+            </button>
+            <div class="reasoning-content agent-trace-content ${contentHiddenClass} text-xs text-muted-foreground" id="${contentId}">
+                ${stepsHtml}
+            </div>
+        </div>
+    `;
+}
+
+function formatToolResult(tool, result) {
+    if (!result || result === '[terminal]') return '';
+    if (tool === 'read_file') {
+        // Show first few words of the file content instead of char count
+        const preview = result.replace(/^#+\s*/gm, '').replace(/[-*]\s+/g, '').replace(/\n+/g, ' ').trim();
+        const short = preview.length > 80 ? preview.slice(0, 77) + '...' : preview;
+        return short ? '\u2192 ' + short : '';
+    }
+    try {
+        const parsed = JSON.parse(result);
+        if (parsed.error) return '\u2192 Error: ' + parsed.error;
+        if (Array.isArray(parsed.paths)) return '\u2192 ' + parsed.paths.join(', ');
+    } catch { /* not JSON */ }
+    return result.length > 120 ? '\u2192 ' + result.slice(0, 120) + '...' : '\u2192 ' + result;
 }
 
 function normalizePendingPhase(phase) {
@@ -1185,7 +1317,8 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     // Check if message is complete but has no user-visible output (no text, no reasoning, no images).
     // Reasoning-only responses can happen when generation is manually interrupted.
     const hasReasoningOutput = typeof message.reasoning === 'string' && message.reasoning.trim().length > 0;
-    const hasNoOutput = !processedContent && !hasReasoningOutput && (!message.images || message.images.length === 0);
+    const hasAgentTrace = message.agentTraceStreaming || (Array.isArray(message.agentTrace) && message.agentTrace.length > 0);
+    const hasNoOutput = !processedContent && !hasReasoningOutput && (!message.images || message.images.length === 0) && !hasAgentTrace;
     const hasRenderableAssistantOutput = !!processedContent || !!generatedImagesHtml || !!thumbnailsBubble;
     const hideAssistantActionsDuringReasoning = !!message.streamingReasoning && !hasRenderableAssistantOutput;
     // Message is complete if:
@@ -1198,6 +1331,14 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     const noResponseNotice = (hasNoOutput && isMessageComplete && !isSessionStreaming) ? `
         <span class="text-xs text-muted-foreground opacity-70">[Model provider returned no response. Try a new prompt or a new session.]</span>
     ` : '';
+
+    // Build agent activity trace for personal agent messages (reasoning-trace pattern)
+    const agentTraceBubble = isPersonalAgent && (
+        (Array.isArray(message.agentTrace) && message.agentTrace.length > 0) ||
+        message.agentTraceStreaming
+    )
+        ? buildAgentTrace(message.agentTrace || [], message.id, message.agentTraceStreaming || false)
+        : '';
 
     // Build citations section if there are citations
     const citationsBubble = buildCitationsSection(message.citations, message.id);
@@ -1315,6 +1456,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
             <div class="${CLASSES.assistantGroup}">
                 ${assistantHeader}
                 ${reasoningBubble}
+                ${agentTraceBubble}
                 ${thumbnailsBubble}
                 ${textBubble}
                 ${imageBubble}
@@ -1545,6 +1687,32 @@ if (typeof window !== 'undefined') {
     window.MessageTemplates.addInlineCitationMarkers = addInlineCitationMarkers;
     window.MessageTemplates.enhanceInlineLinks = enhanceInlineLinks;
     window.buildMessageHTML = buildMessageHTML; // Make buildMessageHTML globally available
+
+    // Global function to toggle agent trace — show/hide the full content + overflow
+    window.toggleAgentTrace = function(messageId) {
+        const contentEl = document.getElementById(`agent-trace-content-${messageId}`);
+        const overflowEl = document.getElementById(`agent-trace-overflow-${messageId}`);
+        const chevronEl = document.querySelector(`#agent-trace-toggle-${messageId} .reasoning-chevron`);
+
+        if (contentEl && chevronEl) {
+            const isHidden = contentEl.classList.contains('hidden');
+            if (isHidden) {
+                // Expand: show content + overflow (show ALL steps)
+                contentEl.classList.remove('hidden');
+                if (overflowEl) overflowEl.classList.remove('hidden');
+                chevronEl.style.transform = 'rotate(180deg)';
+                agentTraceExpandedState.add(messageId);
+            } else {
+                // Collapse: hide everything
+                contentEl.classList.add('hidden');
+                chevronEl.style.transform = 'rotate(0deg)';
+                agentTraceExpandedState.delete(messageId);
+            }
+            if (window.app && window.app.updateScrollButtonVisibility) {
+                window.app.updateScrollButtonVisibility();
+            }
+        }
+    };
 
     // Global function to toggle reasoning trace visibility
     window.toggleReasoning = function(messageId) {

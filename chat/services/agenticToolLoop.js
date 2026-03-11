@@ -43,6 +43,7 @@ export async function runAgenticToolLoop(options) {
         maxOutputTokens = DEFAULT_MAX_OUTPUT_TOKENS,
         temperature = DEFAULT_TEMPERATURE,
         onToolCall = null,
+        onModelText = null,
         signal = null
     } = options;
 
@@ -74,6 +75,11 @@ export async function runAgenticToolLoop(options) {
         const responseText = _extractOutputText(response);
 
         console.log(`[AgenticLoop] Iteration ${iterations}: ${responseToolCalls.length} tool call(s)${responseText ? ', text: ' + responseText.slice(0, 100) : ''}`);
+
+        // Forward model text to caller (even alongside tool calls)
+        if (responseText && onModelText) {
+            onModelText(responseText, iterations);
+        }
 
         // No tool calls → LLM is done, return text response
         if (responseToolCalls.length === 0) {

@@ -4281,52 +4281,59 @@ class ChatApp {
      * Run agentic memory retrieval with immediate assistant UI feedback and approval.
      * @param {string} query
      * @param {Object} userMessage
+     * @param {Object} [options]
+     * @param {string} [options.conversationText] — current session text to deduplicate against
      */
-    async runAgenticMemoryRetrievalFlow(query, userMessage) {
+    async runAgenticMemoryRetrievalFlow(query, userMessage, options = {}) {
         if (!this.memoryEnabled || !query || !query.trim() || !userMessage) {
             return;
         }
 
-        const progressState = {
-            init: 'Queued',
-            retrieval: 'Queued',
-            loading: 'Queued'
-        };
-
-        const formatProgress = () => {
-            return [
-                'Retrieving memory for this message...',
-                '',
-                `- Index: ${progressState.init}`,
-                `- Selection: ${progressState.retrieval}`,
-                `- Loading: ${progressState.loading}`
-            ].join('\n');
-        };
-
-        const retrievalMessage = await this.addMessage('assistant', formatProgress(), {
+        // Agent trace is the primary UI — no progress text
+        const retrievalMessage = await this.addMessage('assistant', '', {
             isLocalOnly: true,
-            model: 'personal agent'
+            model: 'steward agent'
         });
         if (!retrievalMessage) return;
+
+        const agentTrace = [];
+        retrievalMessage.agentTrace = agentTrace;
+        retrievalMessage.agentTraceStreaming = true;
+        await this.persistLocalAssistantStatus(retrievalMessage);
 
         try {
             const { default: agenticRetrieval } = await import('./services/agenticRetrieval.js');
             const result = await agenticRetrieval.retrieveForQuery(query, (progress) => {
                 if (!progress || !progress.stage) return;
-                if (progress.stage === 'init') {
-                    progressState.init = progress.message || 'Done';
-                } else if (progress.stage === 'retrieval') {
-                    progressState.retrieval = progress.message || 'Done';
-                } else if (progress.stage === 'loading') {
-                    progressState.loading = progress.path || progress.message || 'Loading...';
+                if (progress.stage === 'init' || progress.stage === 'retrieval') {
+                    agentTrace.push({ type: 'phase', label: progress.message || progress.stage });
+                    this.persistLocalAssistantStatus(retrievalMessage).catch(() => {});
+                } else if (progress.stage === 'tool_call') {
+                    agentTrace.push({
+                        type: 'tool_call',
+                        tool: progress.tool,
+                        args: progress.args || {},
+                        result: typeof progress.result === 'string' ? progress.result.slice(0, 500) : ''
+                    });
+                    this.persistLocalAssistantStatus(retrievalMessage).catch(() => {});
                 } else if (progress.stage === 'complete') {
-                    progressState.loading = progress.message || 'Done';
+                    agentTrace.push({ type: 'phase', label: progress.message || 'Complete' });
+                    this.persistLocalAssistantStatus(retrievalMessage).catch(() => {});
                 }
-                retrievalMessage.content = formatProgress();
-                this.persistLocalAssistantStatus(retrievalMessage).catch((error) => {
-                    console.warn('[App] Failed to persist memory progress message:', error);
-                });
+            }, {
+                conversationText: options.conversationText,
+                onModelText: (text, iteration) => {
+                    agentTrace.push({
+                        type: 'model_text',
+                        text,
+                        iteration
+                    });
+                    this.persistLocalAssistantStatus(retrievalMessage).catch(() => {});
+                }
             });
+
+            // Mark trace streaming complete — trace auto-collapses on re-render
+            retrievalMessage.agentTraceStreaming = false;
 
             if (!result?.files?.length) {
                 retrievalMessage.content = 'No relevant memory found. Sending without memory context.';
@@ -4400,6 +4407,7 @@ class ChatApp {
             await this.persistLocalAssistantStatus(retrievalMessage);
         } catch (error) {
             console.warn('[App] Agentic retrieval skipped:', error);
+            retrievalMessage.agentTraceStreaming = false;
             retrievalMessage.content = 'Memory retrieval unavailable. Sending without memory context.';
             retrievalMessage.memoryApprovalPrompt = null;
             await this.persistLocalAssistantStatus(retrievalMessage);
