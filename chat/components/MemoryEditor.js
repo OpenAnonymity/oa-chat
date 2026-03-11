@@ -2,11 +2,13 @@
  * MemoryEditor — Modal UI for browsing and editing memory files.
  *
  * File tree on left, markdown editor on right.
- * Follows AccountModal pattern: innerHTML + event delegation.
+ * Uses surgical DOM updates for file/folder clicks to prevent flash.
+ * Full re-render only for structural changes (create/delete/rename).
  */
 import memoryFileSystem from '../services/memoryFileSystem.js';
-
-const MODAL_CLASSES = 'w-full max-w-xl rounded-xl border border-border bg-background shadow-2xl mx-4 flex flex-col overflow-hidden';
+import memoryExtractor from '../services/memoryExtractor.js';
+import { chatDB } from '../db.js';
+import ticketClient from '../services/ticketClient.js';
 
 class MemoryEditor {
     constructor(app) {
@@ -28,9 +30,16 @@ class MemoryEditor {
         this.isCreatingFolder = false;
         this.newFilePath = '';
         this.newFolderName = '';
-        this.openDirMenu = null;       // which dir has its 3-dot menu open
-        this.renamingDir = null;        // which dir is being renamed inline
+        this.openDirMenu = null;
+        this.renamingDir = null;
         this.renamingDirValue = '';
+
+        // Backfill state
+        this.backfillState = null;
+        this.backfillProgress = { total: 0, processed: 0, extracted: 0, skipped: 0, errors: 0 };
+        this.backfillError = null;
+        this.backfillAbortController = null;
+        this._backfillSessions = null;
     }
 
     async open() {
@@ -59,6 +68,7 @@ class MemoryEditor {
 
     close() {
         if (!this.isOpen || !this.overlay) return;
+        this._cancelBackfill();
         this.isOpen = false;
         this.overlay.classList.add('hidden');
         this.overlay.innerHTML = '';
@@ -99,7 +109,7 @@ class MemoryEditor {
         return { dirs, rootFiles };
     }
 
-    // ─── Rendering ───────────────────────────────────────────────
+    // ─── Full Render (initial open + structural changes) ─────────
 
     render() {
         if (!this.overlay) return;
@@ -109,11 +119,16 @@ class MemoryEditor {
 
     _renderModal() {
         return `
-            <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}" style="height: 92vh">
+            <div role="dialog" aria-modal="true"
+                 class="memory-editor-dialog bg-background border border-border/60 rounded-2xl shadow-2xl w-full max-w-3xl mx-4 overflow-hidden flex flex-col"
+                 style="height: min(88vh, 780px)">
                 ${this._renderHeader()}
+                ${this.backfillState ? this._renderBackfillProgress() : ''}
                 <div class="flex flex-1 min-h-0">
-                    ${this._renderFileTree()}
-                    ${this._renderEditor()}
+                    ${this._renderSidebar()}
+                    <div id="memory-editor-pane" class="flex-1 flex flex-col min-w-0">
+                        ${this._renderEditorContent()}
+                    </div>
                 </div>
             </div>
         `;
@@ -121,16 +136,20 @@ class MemoryEditor {
 
     _renderHeader() {
         return `
-            <div class="flex items-center justify-between px-4 py-3 border-b border-border flex-shrink-0">
-                <h3 class="text-base font-medium text-foreground">Memory</h3>
+            <div class="flex items-center justify-between px-4 py-3 shrink-0" style="border-bottom: 1px solid hsl(var(--color-border) / 0.5)">
                 <div class="flex items-center gap-2">
-                    <button id="memory-new-folder-btn" class="text-xs px-2.5 py-1 rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
-                        New Folder
-                    </button>
-                    <button id="memory-new-file-btn" class="text-xs px-2.5 py-1 rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
-                        New File
-                    </button>
-                    <button id="memory-close-btn" class="text-muted-foreground hover:text-foreground transition-colors p-1 -mr-1 rounded-lg hover:bg-accent" aria-label="Close">
+                    <div class="flex h-7 w-7 items-center justify-center rounded-lg bg-muted/50">
+                        <svg class="w-3.5 h-3.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
+                        </svg>
+                    </div>
+                    <h2 class="text-sm font-semibold text-foreground">Memory</h2>
+                </div>
+                <div class="flex items-center gap-0.5">
+                    <button id="memory-backfill-btn" class="mem-header-btn" title="Process past conversations for memories">Backfill</button>
+                    <button id="memory-new-folder-btn" class="mem-header-btn">New Folder</button>
+                    <button id="memory-new-file-btn" class="mem-header-btn">New File</button>
+                    <button id="memory-close-btn" class="text-muted-foreground hover:text-foreground transition-colors p-1.5 rounded-lg hover:bg-muted/50 ml-1" aria-label="Close">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
                         </svg>
@@ -140,112 +159,122 @@ class MemoryEditor {
         `;
     }
 
-    _renderFileTree() {
+    _renderSidebar() {
         const { dirs, rootFiles } = this._getDirectoryStructure();
         const sortedDirs = Object.keys(dirs).sort();
 
-        let treeHtml = '';
+        let html = '';
 
-        // Directories
         for (const dir of sortedDirs) {
             const isExpanded = this.expandedDirs.has(dir);
-            const chevron = isExpanded
-                ? '<svg class="w-3 h-3 text-muted-foreground flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"></path></svg>'
-                : '<svg class="w-3 h-3 text-muted-foreground flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"></path></svg>';
-            const isMenuOpen = this.openDirMenu === dir;
             const isRenaming = this.renamingDir === dir;
 
             if (isRenaming) {
-                treeHtml += `
+                html += `
                     <div class="flex items-center gap-1.5 px-2 py-1">
-                        ${chevron}
+                        <svg class="mem-chevron ${isExpanded ? 'is-expanded' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"></path></svg>
+                        <svg class="w-4 h-4 text-amber-500/60 dark:text-amber-400/50 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"></path></svg>
                         <input id="memory-rename-dir-input" type="text" value="${this._escapeHtml(this.renamingDirValue)}"
-                            class="flex-1 min-w-0 text-sm px-1 py-0 rounded border border-border bg-background text-foreground font-medium focus:outline-none focus:ring-1 focus:ring-ring" />
+                            class="flex-1 min-w-0 text-[13px] px-1.5 py-0.5 rounded border border-border bg-background text-foreground font-medium focus:outline-none focus:ring-1 focus:ring-ring" />
                     </div>
                 `;
             } else {
-                treeHtml += `
-                    <div class="group memory-dir-row flex items-center px-2 py-1 hover:bg-accent rounded text-sm text-foreground" data-dir="${this._escapeHtml(dir)}">
-                        <div class="memory-dir-toggle flex items-center gap-1.5 flex-1 min-w-0 cursor-pointer" data-dir="${this._escapeHtml(dir)}">
-                            ${chevron}
-                            <span class="font-medium truncate">${this._escapeHtml(dir)}/</span>
-                        </div>
-                        <button class="memory-dir-menu-btn opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-background/50 text-muted-foreground flex-shrink-0" data-dir="${this._escapeHtml(dir)}">
+                html += `
+                    <div class="group mem-dir-row flex items-center gap-1 px-2 py-[5px] rounded-md cursor-pointer hover:bg-muted/40 transition-colors" data-dir="${this._escapeHtml(dir)}">
+                        <svg class="mem-chevron ${isExpanded ? 'is-expanded' : ''}" data-dir-chevron="${this._escapeHtml(dir)}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"></path></svg>
+                        <svg class="w-4 h-4 text-amber-500/60 dark:text-amber-400/50 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"></path></svg>
+                        <span class="text-[13px] font-medium text-foreground truncate flex-1">${this._escapeHtml(dir)}</span>
+                        <button class="memory-dir-menu-btn opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-muted/60 text-muted-foreground flex-shrink-0 transition-opacity" data-dir="${this._escapeHtml(dir)}">
                             <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path d="M10 6a2 2 0 110-4 2 2 0 010 4zm0 6a2 2 0 110-4 2 2 0 010 4zm0 6a2 2 0 110-4 2 2 0 010 4z"></path></svg>
                         </button>
                     </div>
                 `;
-                if (isMenuOpen) {
-                    treeHtml += `
-                        <div class="memory-dir-context-menu ml-6 mr-2 mb-1 rounded border border-border bg-background shadow-lg overflow-hidden" data-dir="${this._escapeHtml(dir)}">
-                            <button class="memory-dir-rename-btn w-full text-left text-xs px-3 py-1.5 hover:bg-accent text-foreground" data-dir="${this._escapeHtml(dir)}">Rename</button>
-                            <button class="memory-dir-delete-btn w-full text-left text-xs px-3 py-1.5 hover:bg-accent text-red-500" data-dir="${this._escapeHtml(dir)}">Delete</button>
-                        </div>
-                    `;
-                }
+                // Context menu (hidden by default, shown surgically)
+                const menuOpen = this.openDirMenu === dir;
+                html += `
+                    <div class="mem-dir-context-menu ${menuOpen ? '' : 'hidden'} ml-6 mr-2 mb-0.5 rounded-lg border border-border bg-popover shadow-lg overflow-hidden" data-dir-menu="${this._escapeHtml(dir)}">
+                        <button class="memory-dir-rename-btn w-full text-left text-xs px-3 py-1.5 hover:bg-muted/50 text-foreground transition-colors" data-dir="${this._escapeHtml(dir)}">Rename</button>
+                        <button class="memory-dir-delete-btn w-full text-left text-xs px-3 py-1.5 hover:bg-muted/50 text-red-500 transition-colors" data-dir="${this._escapeHtml(dir)}">Delete</button>
+                    </div>
+                `;
             }
 
-            if (isExpanded) {
-                for (const file of dirs[dir]) {
-                    const fileName = file.path.slice(dir.length + 1);
-                    const isSelected = file.path === this.selectedPath;
-                    treeHtml += `
-                        <div class="memory-file-item flex items-center gap-1.5 pl-6 pr-2 py-1 cursor-pointer rounded text-sm truncate ${isSelected ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground'}" data-path="${this._escapeHtml(file.path)}" title="${this._escapeHtml(file.l0)}">
-                            <svg class="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"></path></svg>
-                            <span class="truncate">${this._escapeHtml(fileName)}</span>
-                        </div>
-                    `;
-                }
+            // Children container (toggled surgically via hidden class)
+            html += `<div class="mem-dir-children ${isExpanded ? '' : 'hidden'}" data-dir-children="${this._escapeHtml(dir)}">`;
+            for (const file of dirs[dir]) {
+                const fileName = file.path.slice(dir.length + 1);
+                const isSelected = file.path === this.selectedPath;
+                html += this._renderFileItem(file.path, fileName, file.l0, isSelected, true);
             }
+            html += `</div>`;
         }
 
         // Root-level files
         for (const file of rootFiles) {
             const isSelected = file.path === this.selectedPath;
-            treeHtml += `
-                <div class="memory-file-item flex items-center gap-1.5 px-2 py-1 cursor-pointer rounded text-sm truncate ${isSelected ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground'}" data-path="${this._escapeHtml(file.path)}" title="${this._escapeHtml(file.l0)}">
-                    <svg class="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"></path></svg>
-                    <span class="truncate">${this._escapeHtml(file.path)}</span>
-                </div>
-            `;
+            html += this._renderFileItem(file.path, file.path, file.l0, isSelected, false);
         }
 
         // New folder input
         if (this.isCreatingFolder) {
-            treeHtml += `
+            html += `
                 <div class="px-2 py-1">
                     <input id="memory-new-folder-input" type="text" placeholder="folder-name" value="${this._escapeHtml(this.newFolderName)}"
-                        class="w-full text-xs px-2 py-1 rounded border border-border bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring" />
+                        class="w-full text-xs px-2 py-1.5 rounded border border-border bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring" />
                 </div>
             `;
         }
 
         // New file input
         if (this.isCreatingFile) {
-            treeHtml += `
+            html += `
                 <div class="px-2 py-1">
                     <input id="memory-new-file-input" type="text" placeholder="path/file.md" value="${this._escapeHtml(this.newFilePath)}"
-                        class="w-full text-xs px-2 py-1 rounded border border-border bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring" />
+                        class="w-full text-xs px-2 py-1.5 rounded border border-border bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring" />
                 </div>
             `;
         }
 
         if (this.files.length === 0 && !this.isCreatingFile && !this.isCreatingFolder) {
-            treeHtml = '<div class="px-2 py-4 text-xs text-muted-foreground text-center">No memory files yet</div>';
+            html = `
+                <div class="flex flex-col items-center justify-center py-10 px-4 text-center gap-2">
+                    <svg class="w-8 h-8 text-muted-foreground/15" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"></path>
+                    </svg>
+                    <span class="text-xs text-muted-foreground/50">No memory files yet</span>
+                </div>
+            `;
         }
 
         return `
-            <div class="w-48 flex-shrink-0 border-r border-border overflow-y-auto p-2">
-                ${treeHtml}
+            <div id="memory-sidebar" class="mem-sidebar w-56 flex-shrink-0 overflow-y-auto p-1.5"
+                 style="border-right: 1px solid hsl(var(--color-border) / 0.4); background: hsl(var(--color-card) / 0.5)">
+                ${html}
             </div>
         `;
     }
 
-    _renderEditor() {
+    _renderFileItem(path, displayName, tooltip, isSelected, isNested) {
+        const paddingClass = isNested ? 'pl-7 pr-2' : 'px-2';
+        const selectedClasses = isSelected
+            ? 'mem-file-selected bg-accent text-foreground'
+            : 'text-muted-foreground hover:bg-muted/30 hover:text-foreground';
+        return `
+            <div class="memory-file-item flex items-center gap-1.5 ${paddingClass} py-[5px] rounded-md cursor-pointer text-[13px] truncate transition-colors ${selectedClasses}" data-path="${this._escapeHtml(path)}" title="${this._escapeHtml(tooltip || '')}">
+                <svg class="w-3.5 h-3.5 flex-shrink-0 opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"></path></svg>
+                <span class="truncate">${this._escapeHtml(displayName)}</span>
+            </div>
+        `;
+    }
+
+    _renderEditorContent() {
         if (!this.selectedPath) {
             return `
-                <div class="flex-1 flex items-center justify-center text-sm text-muted-foreground p-4">
-                    Select a file to edit, or create a new one.
+                <div class="flex-1 flex flex-col items-center justify-center text-center p-8 gap-2">
+                    <svg class="w-10 h-10 text-muted-foreground/10" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"></path>
+                    </svg>
+                    <p class="text-sm text-muted-foreground/60">Select a file to view or edit</p>
                 </div>
             `;
         }
@@ -253,27 +282,20 @@ class MemoryEditor {
         const isIndex = this.selectedPath.endsWith('_index.md');
 
         return `
-            <div class="flex-1 flex flex-col min-w-0">
-                <div class="flex items-center justify-between px-3 py-2 border-b border-border flex-shrink-0">
-                    <span class="text-xs text-muted-foreground font-mono truncate">${this._escapeHtml(this.selectedPath)}</span>
-                    <div class="flex items-center gap-2 flex-shrink-0">
-                        ${this.isDirty ? '<span class="text-xs text-amber-500">Unsaved</span>' : ''}
-                        <button id="memory-save-btn" class="text-xs px-2 py-0.5 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent transition-colors ${this.isDirty ? '' : 'opacity-50 cursor-default'}">
-                            Save
-                        </button>
-                        ${!isIndex ? `
-                            <button id="memory-delete-btn" class="text-xs px-2 py-0.5 rounded border border-red-500/30 text-red-500 hover:bg-red-500/10 transition-colors">
-                                Delete
-                            </button>
-                        ` : ''}
-                    </div>
+            <div class="flex items-center justify-between px-3 py-2 shrink-0" style="border-bottom: 1px solid hsl(var(--color-border) / 0.35); background: hsl(var(--color-muted) / 0.08)">
+                <span class="text-xs text-muted-foreground font-mono truncate">${this._escapeHtml(this.selectedPath)}</span>
+                <div class="flex items-center gap-1.5 flex-shrink-0">
+                    ${this.isDirty ? '<span class="text-[11px] text-amber-500 font-medium">Unsaved</span>' : ''}
+                    <button id="memory-save-btn" class="mem-header-btn ${this.isDirty ? '' : 'opacity-30 pointer-events-none'}">Save</button>
+                    ${!isIndex ? '<button id="memory-delete-btn" class="mem-header-btn mem-header-btn-danger">Delete</button>' : ''}
                 </div>
-                <textarea id="memory-editor-textarea"
-                    class="flex-1 w-full p-3 text-sm font-mono bg-background text-foreground resize-none focus:outline-none"
-                    spellcheck="false"
-                    ${isIndex ? 'readonly' : ''}
-                >${this._escapeHtml(this.editorContent)}</textarea>
             </div>
+            <textarea id="memory-editor-textarea"
+                class="mem-textarea flex-1 w-full p-4 text-[13px] font-mono bg-transparent text-foreground resize-none focus:outline-none leading-relaxed"
+                spellcheck="false"
+                placeholder="Start typing..."
+                ${isIndex ? 'readonly' : ''}
+            >${this._escapeHtml(this.editorContent)}</textarea>
         `;
     }
 
@@ -282,180 +304,232 @@ class MemoryEditor {
     _attachEventListeners() {
         if (!this.overlay) return;
 
-        // Dismiss dir menu when clicking outside it
-        this.overlay.querySelector('[role="dialog"]')?.addEventListener('click', (e) => {
-            if (this.openDirMenu && !e.target.closest('.memory-dir-menu-btn') && !e.target.closest('.memory-dir-context-menu')) {
-                this.openDirMenu = null;
-                this.render();
-            }
-        });
+        // Header buttons
+        this.overlay.querySelector('#memory-close-btn')?.addEventListener('click', () => this.close());
+        this.overlay.querySelector('#memory-backfill-btn')?.addEventListener('click', () => this._startBackfill());
+        this.overlay.querySelector('#memory-new-folder-btn')?.addEventListener('click', () => this._startNewFolder());
+        this.overlay.querySelector('#memory-new-file-btn')?.addEventListener('click', () => this._startNewFile());
 
-        // Close button
-        const closeBtn = this.overlay.querySelector('#memory-close-btn');
-        if (closeBtn) closeBtn.onclick = () => this.close();
+        // Backfill buttons
+        this.overlay.querySelector('#backfill-start-btn')?.addEventListener('click', () => this._confirmBackfill());
+        const backfillCancelBtn = this.overlay.querySelector('#backfill-cancel-btn');
+        if (backfillCancelBtn) {
+            backfillCancelBtn.addEventListener('click', () => {
+                if (this.backfillState === 'running') this._cancelBackfill();
+                else this._dismissBackfill();
+            });
+        }
+        this.overlay.querySelector('#backfill-dismiss-btn')?.addEventListener('click', () => this._dismissBackfill());
 
-        // New folder button
-        const newFolderBtn = this.overlay.querySelector('#memory-new-folder-btn');
-        if (newFolderBtn) newFolderBtn.onclick = () => this._startNewFolder();
+        // Sidebar — single delegated listener for all sidebar interactions
+        const sidebar = this.overlay.querySelector('#memory-sidebar');
+        if (sidebar) {
+            sidebar.addEventListener('click', (e) => this._handleSidebarClick(e));
+        }
 
-        // New file button
-        const newBtn = this.overlay.querySelector('#memory-new-file-btn');
-        if (newBtn) newBtn.onclick = () => this._startNewFile();
+        // Input fields (new file/folder, rename)
+        this._attachInputListeners();
+        this._attachRenameListener();
 
-        // New folder input
+        // Editor listeners
+        this._attachEditorListeners();
+    }
+
+    _handleSidebarClick(e) {
+        // File click → surgical update (no re-render)
+        const fileItem = e.target.closest('.memory-file-item');
+        if (fileItem) {
+            this._selectFile(fileItem.dataset.path);
+            return;
+        }
+
+        // Dir menu button (check before dir-row to prevent toggle)
+        const menuBtn = e.target.closest('.memory-dir-menu-btn');
+        if (menuBtn) {
+            e.stopPropagation();
+            this._toggleDirMenu(menuBtn.dataset.dir);
+            return;
+        }
+
+        // Dir row click → surgical toggle (no re-render)
+        const dirRow = e.target.closest('.mem-dir-row');
+        if (dirRow) {
+            this._toggleDir(dirRow.dataset.dir);
+            return;
+        }
+
+        // Context menu: rename → needs full re-render (structural change)
+        const renameBtn = e.target.closest('.memory-dir-rename-btn');
+        if (renameBtn) {
+            e.stopPropagation();
+            this.openDirMenu = null;
+            this.renamingDir = renameBtn.dataset.dir;
+            this.renamingDirValue = renameBtn.dataset.dir;
+            this.render();
+            return;
+        }
+
+        // Context menu: delete → needs full re-render (structural change)
+        const deleteBtn = e.target.closest('.memory-dir-delete-btn');
+        if (deleteBtn) {
+            e.stopPropagation();
+            this.openDirMenu = null;
+            this._deleteFolder(deleteBtn.dataset.dir);
+            return;
+        }
+
+        // Click elsewhere → close menus
+        if (this.openDirMenu) {
+            this._closeAllMenus();
+        }
+    }
+
+    _attachInputListeners() {
         const newFolderInput = this.overlay.querySelector('#memory-new-folder-input');
         if (newFolderInput) {
             newFolderInput.focus();
             newFolderInput.onkeydown = (e) => {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    this._createNewFolder(newFolderInput.value.trim());
-                } else if (e.key === 'Escape') {
-                    this.isCreatingFolder = false;
-                    this.render();
-                }
+                if (e.key === 'Enter') { e.preventDefault(); this._createNewFolder(newFolderInput.value.trim()); }
+                else if (e.key === 'Escape') { this.isCreatingFolder = false; this.render(); }
             };
         }
 
-        // New file input
-        const newInput = this.overlay.querySelector('#memory-new-file-input');
-        if (newInput) {
-            newInput.focus();
-            newInput.onkeydown = (e) => {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    this._createNewFile(newInput.value.trim());
-                } else if (e.key === 'Escape') {
-                    this.isCreatingFile = false;
-                    this.render();
-                }
+        const newFileInput = this.overlay.querySelector('#memory-new-file-input');
+        if (newFileInput) {
+            newFileInput.focus();
+            newFileInput.onkeydown = (e) => {
+                if (e.key === 'Enter') { e.preventDefault(); this._createNewFile(newFileInput.value.trim()); }
+                else if (e.key === 'Escape') { this.isCreatingFile = false; this.render(); }
             };
         }
+    }
 
-        // Directory toggles (expand/collapse)
-        this.overlay.querySelectorAll('.memory-dir-toggle').forEach(el => {
-            el.onclick = (e) => {
-                e.stopPropagation();
-                const dir = el.dataset.dir;
-                this.openDirMenu = null;
-                if (this.expandedDirs.has(dir)) {
-                    this.expandedDirs.delete(dir);
-                } else {
-                    this.expandedDirs.add(dir);
-                }
-                this.render();
-            };
-        });
-
-        // Directory three-dot menu buttons
-        this.overlay.querySelectorAll('.memory-dir-menu-btn').forEach(el => {
-            el.onclick = (e) => {
-                e.stopPropagation();
-                const dir = el.dataset.dir;
-                this.openDirMenu = this.openDirMenu === dir ? null : dir;
-                this.render();
-            };
-        });
-
-        // Directory rename buttons
-        this.overlay.querySelectorAll('.memory-dir-rename-btn').forEach(el => {
-            el.onclick = (e) => {
-                e.stopPropagation();
-                const dir = el.dataset.dir;
-                this.openDirMenu = null;
-                this.renamingDir = dir;
-                this.renamingDirValue = dir;
-                this.render();
-            };
-        });
-
-        // Directory delete buttons
-        this.overlay.querySelectorAll('.memory-dir-delete-btn').forEach(el => {
-            el.onclick = (e) => {
-                e.stopPropagation();
-                const dir = el.dataset.dir;
-                this.openDirMenu = null;
-                this._deleteFolder(dir);
-            };
-        });
-
-        // Rename dir input
+    _attachRenameListener() {
         const renameDirInput = this.overlay.querySelector('#memory-rename-dir-input');
         if (renameDirInput) {
             renameDirInput.focus();
             renameDirInput.select();
             renameDirInput.onkeydown = (e) => {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    this._renameFolder(this.renamingDir, renameDirInput.value.trim());
-                } else if (e.key === 'Escape') {
-                    this.renamingDir = null;
-                    this.render();
-                }
+                if (e.key === 'Enter') { e.preventDefault(); this._renameFolder(this.renamingDir, renameDirInput.value.trim()); }
+                else if (e.key === 'Escape') { this.renamingDir = null; this.render(); }
             };
             renameDirInput.onblur = () => {
-                // Commit on blur if value changed
                 if (this.renamingDir) {
                     const val = renameDirInput.value.trim();
-                    if (val && val !== this.renamingDir) {
-                        this._renameFolder(this.renamingDir, val);
-                    } else {
-                        this.renamingDir = null;
-                        this.render();
-                    }
+                    if (val && val !== this.renamingDir) this._renameFolder(this.renamingDir, val);
+                    else { this.renamingDir = null; this.render(); }
                 }
             };
         }
+    }
 
-        // File selection
-        this.overlay.querySelectorAll('.memory-file-item').forEach(el => {
-            el.onclick = () => this._selectFile(el.dataset.path);
-        });
+    _attachEditorListeners() {
+        const textarea = this.overlay.querySelector('#memory-editor-textarea');
+        if (!textarea) return;
 
-        // Save button
+        textarea.oninput = () => {
+            this.editorContent = textarea.value;
+            if (!this.isDirty) {
+                this.isDirty = true;
+                // Surgically show unsaved indicator + enable save btn
+                const saveBtn = this.overlay.querySelector('#memory-save-btn');
+                if (saveBtn) {
+                    saveBtn.classList.remove('opacity-30', 'pointer-events-none');
+                }
+                const toolbar = saveBtn?.parentElement;
+                if (toolbar && !toolbar.querySelector('.text-amber-500')) {
+                    const span = document.createElement('span');
+                    span.className = 'text-[11px] text-amber-500 font-medium';
+                    span.textContent = 'Unsaved';
+                    toolbar.prepend(span);
+                }
+            }
+        };
+
+        textarea.onkeydown = (e) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+                e.preventDefault();
+                e.stopPropagation();
+                this._saveFile();
+            }
+        };
+
         const saveBtn = this.overlay.querySelector('#memory-save-btn');
         if (saveBtn) saveBtn.onclick = () => this._saveFile();
 
-        // Delete button
         const deleteBtn = this.overlay.querySelector('#memory-delete-btn');
         if (deleteBtn) deleteBtn.onclick = () => this._deleteFile();
-
-        // Textarea change tracking
-        const textarea = this.overlay.querySelector('#memory-editor-textarea');
-        if (textarea) {
-            textarea.oninput = () => {
-                this.editorContent = textarea.value;
-                this.isDirty = true;
-                // Update unsaved indicator without full re-render
-                const indicator = this.overlay.querySelector('#memory-save-btn');
-                if (indicator) {
-                    indicator.classList.remove('opacity-50', 'cursor-default');
-                }
-                const unsavedLabel = indicator?.previousElementSibling;
-                if (unsavedLabel && !unsavedLabel.classList.contains('text-amber-500')) {
-                    // Will show on next full render
-                }
-            };
-            // Ctrl/Cmd+S to save
-            textarea.onkeydown = (e) => {
-                if ((e.metaKey || e.ctrlKey) && e.key === 's') {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    this._saveFile();
-                }
-            };
-        }
     }
 
-    // ─── Actions ─────────────────────────────────────────────────
+    // ─── Surgical DOM Updates (no flash) ────────────────────────
 
     async _selectFile(path) {
         if (!path) return;
+
+        // Update sidebar selection classes without re-render
+        this.overlay.querySelectorAll('.memory-file-item.mem-file-selected').forEach(el => {
+            el.classList.remove('mem-file-selected', 'bg-accent', 'text-foreground');
+            el.classList.add('text-muted-foreground', 'hover:bg-muted/30', 'hover:text-foreground');
+        });
+        const newEl = this.overlay.querySelector(`.memory-file-item[data-path="${CSS.escape(path)}"]`);
+        if (newEl) {
+            newEl.classList.add('mem-file-selected', 'bg-accent', 'text-foreground');
+            newEl.classList.remove('text-muted-foreground', 'hover:bg-muted/30', 'hover:text-foreground');
+        }
+
+        // Load content
         this.selectedPath = path;
         this.editorContent = await memoryFileSystem.read(path) || '';
         this.isDirty = false;
-        this.render();
+
+        // Replace only the editor pane
+        this._updateEditorPane();
     }
+
+    _updateEditorPane() {
+        const pane = this.overlay.querySelector('#memory-editor-pane');
+        if (pane) {
+            pane.innerHTML = this._renderEditorContent();
+            this._attachEditorListeners();
+        }
+    }
+
+    _toggleDir(dir) {
+        const children = this.overlay.querySelector(`[data-dir-children="${CSS.escape(dir)}"]`);
+        const chevron = this.overlay.querySelector(`[data-dir-chevron="${CSS.escape(dir)}"]`);
+
+        if (this.expandedDirs.has(dir)) {
+            this.expandedDirs.delete(dir);
+            children?.classList.add('hidden');
+            chevron?.classList.remove('is-expanded');
+        } else {
+            this.expandedDirs.add(dir);
+            children?.classList.remove('hidden');
+            chevron?.classList.add('is-expanded');
+        }
+
+        this._closeAllMenus();
+    }
+
+    _toggleDirMenu(dir) {
+        // Close all other menus first
+        this.overlay.querySelectorAll('.mem-dir-context-menu').forEach(el => {
+            if (el.dataset.dirMenu !== dir) el.classList.add('hidden');
+        });
+
+        const menu = this.overlay.querySelector(`[data-dir-menu="${CSS.escape(dir)}"]`);
+        if (menu) {
+            const isHidden = menu.classList.toggle('hidden');
+            this.openDirMenu = isHidden ? null : dir;
+        }
+    }
+
+    _closeAllMenus() {
+        this.overlay.querySelectorAll('.mem-dir-context-menu:not(.hidden)').forEach(el => el.classList.add('hidden'));
+        this.openDirMenu = null;
+    }
+
+    // ─── Actions (structural changes → full render) ─────────────
 
     _startNewFolder() {
         this.isCreatingFolder = true;
@@ -466,13 +540,11 @@ class MemoryEditor {
 
     async _createNewFolder(name) {
         if (!name) return;
-        // Sanitize: no slashes, no .md extension
         name = name.replace(/[\/\\]/g, '').replace(/\.md$/i, '');
         if (!name) return;
 
         this.isCreatingFolder = false;
         this.expandedDirs.add(name);
-        // Pre-fill new file creation inside this folder
         this.isCreatingFile = true;
         this.newFilePath = name + '/';
         this.render();
@@ -493,7 +565,6 @@ class MemoryEditor {
         await memoryFileSystem.write(path, `# ${path.split('/').pop().replace('.md', '')}\n\n`);
         await this._loadFileTree();
 
-        // Expand parent directory
         const slashIdx = path.indexOf('/');
         if (slashIdx !== -1) {
             this.expandedDirs.add(path.slice(0, slashIdx));
@@ -533,7 +604,6 @@ class MemoryEditor {
         for (const f of toDelete) {
             await memoryFileSystem.delete(f.path);
         }
-        // Clear selection if it was inside this folder
         if (this.selectedPath?.startsWith(prefix)) {
             this.selectedPath = null;
             this.editorContent = '';
@@ -551,7 +621,6 @@ class MemoryEditor {
             this.render();
             return;
         }
-        // Sanitize
         newDir = newDir.replace(/[\/\\]/g, '');
         if (!newDir) { this.render(); return; }
 
@@ -563,7 +632,6 @@ class MemoryEditor {
             await memoryFileSystem.write(newPath, content || '');
             await memoryFileSystem.delete(f.path);
         }
-        // Update selection if it was inside old folder
         if (this.selectedPath?.startsWith(prefix)) {
             this.selectedPath = newDir + '/' + this.selectedPath.slice(prefix.length);
             this.editorContent = await memoryFileSystem.read(this.selectedPath) || '';
@@ -573,6 +641,206 @@ class MemoryEditor {
         await this._loadFileTree();
         this.render();
         this.app?.showToast?.(`Folder renamed to "${newDir}"`, 'success');
+    }
+
+    // ─── Backfill ────────────────────────────────────────────────
+
+    _renderBackfillProgress() {
+        const { total, processed, extracted, skipped, errors } = this.backfillProgress;
+        const percent = total ? Math.round((processed / total) * 100) : 0;
+
+        if (this.backfillState === 'confirming') {
+            const ticketCount = ticketClient.getTicketCount();
+            return `
+                <div class="px-4 py-3 bg-muted/20 flex-shrink-0" style="border-bottom: 1px solid hsl(var(--color-border) / 0.4)">
+                    <div class="text-sm text-foreground mb-1.5">
+                        <span class="font-semibold">${total}</span> unprocessed session${total === 1 ? '' : 's'} found.
+                        Each uses up to <span class="font-semibold">${memoryExtractor.ticketsPerSession}</span> tickets.
+                    </div>
+                    <div class="text-xs text-muted-foreground mb-3">
+                        You have <span class="font-semibold">${ticketCount}</span> ticket${ticketCount === 1 ? '' : 's'} available.
+                    </div>
+                    <div class="flex items-center gap-2 justify-end">
+                        <button id="backfill-cancel-btn" class="mem-header-btn">Cancel</button>
+                        <button id="backfill-start-btn" class="px-3 py-1 text-xs font-medium rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-all duration-200">
+                            Start Backfill
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        if (this.backfillState === 'running') {
+            return `
+                <div class="px-4 py-3 bg-muted/20 flex-shrink-0" style="border-bottom: 1px solid hsl(var(--color-border) / 0.4)">
+                    <div class="w-full h-1 bg-muted rounded-full overflow-hidden mb-2.5">
+                        <div id="backfill-progress-fill" class="h-full rounded-full transition-all duration-300" style="width: ${percent}%; background: hsl(var(--color-accent-primary))"></div>
+                    </div>
+                    <div class="flex items-center justify-between text-xs text-muted-foreground">
+                        <span id="backfill-progress-text" class="font-medium">${processed} / ${total} sessions</span>
+                        <div class="flex items-center gap-3">
+                            <span id="backfill-extracted-text">${extracted} extracted</span>
+                            <span id="backfill-skipped-text">${skipped} skipped</span>
+                            ${errors > 0 ? `<span id="backfill-errors-text" class="text-red-500">${errors} errors</span>` : ''}
+                            <button id="backfill-cancel-btn" class="mem-header-btn">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // complete | cancelled | error
+        const statusLabel = this.backfillState === 'complete' ? 'Complete'
+            : this.backfillState === 'cancelled' ? 'Cancelled'
+            : 'Stopped';
+        const statusColor = this.backfillState === 'complete' ? 'text-green-500'
+            : this.backfillState === 'error' ? 'text-red-500'
+            : 'text-amber-500';
+
+        return `
+            <div class="px-4 py-3 bg-muted/20 flex-shrink-0" style="border-bottom: 1px solid hsl(var(--color-border) / 0.4)">
+                <div class="flex items-center justify-between mb-1">
+                    <span class="text-sm font-medium ${statusColor}">${statusLabel}</span>
+                    <button id="backfill-dismiss-btn" class="mem-header-btn">Dismiss</button>
+                </div>
+                <div class="text-xs text-muted-foreground">
+                    ${processed} / ${total} sessions processed — ${extracted} extracted, ${skipped} skipped${errors > 0 ? `, <span class="text-red-500">${errors} errors</span>` : ''}
+                </div>
+                ${this.backfillError ? `<div class="text-xs text-red-500 mt-1">${this._escapeHtml(this.backfillError)}</div>` : ''}
+            </div>
+        `;
+    }
+
+    async _startBackfill() {
+        if (this.backfillState === 'running') return;
+
+        const unprocessed = await chatDB.getUnprocessedSessions();
+        if (unprocessed.length === 0) {
+            this.app?.showToast?.('All sessions already processed', 'success');
+            return;
+        }
+
+        this.backfillState = 'confirming';
+        this.backfillProgress = { total: unprocessed.length, processed: 0, extracted: 0, skipped: 0, errors: 0 };
+        this.backfillError = null;
+        this._backfillSessions = unprocessed;
+        this.render();
+    }
+
+    async _confirmBackfill() {
+        if (this.backfillState !== 'confirming' || !this._backfillSessions) return;
+
+        const sessions = this._backfillSessions;
+        sessions.sort((a, b) => (a.updatedAt || a.createdAt || 0) - (b.updatedAt || b.createdAt || 0));
+
+        this.backfillState = 'running';
+        this.backfillProgress = { total: sessions.length, processed: 0, extracted: 0, skipped: 0, errors: 0 };
+        this.backfillAbortController = new AbortController();
+        this.render();
+
+        const signal = this.backfillAbortController.signal;
+        let consecutiveNoKey = 0;
+
+        for (const session of sessions) {
+            if (signal.aborted) break;
+
+            if (!memoryExtractor.canAcquireKey()) {
+                consecutiveNoKey++;
+                if (consecutiveNoKey >= 2) {
+                    this.backfillError = 'Not enough tickets to continue. Register more tickets and try again.';
+                    this.backfillState = 'error';
+                    break;
+                }
+            } else {
+                consecutiveNoKey = 0;
+            }
+
+            try {
+                const result = await memoryExtractor.processSession(session.id, { signal });
+                if (signal.aborted) break;
+
+                if (result.status === 'processed') {
+                    this.backfillProgress.extracted++;
+                } else if (result.status === 'no_key') {
+                    this.backfillProgress.skipped++;
+                    consecutiveNoKey++;
+                    if (consecutiveNoKey >= 2) {
+                        this.backfillError = 'Not enough tickets to continue. Register more tickets and try again.';
+                        this.backfillState = 'error';
+                        break;
+                    }
+                } else {
+                    this.backfillProgress.skipped++;
+                }
+            } catch (err) {
+                if (signal.aborted) break;
+                this.backfillProgress.errors++;
+                console.warn('[MemoryBackfill] Error processing session:', session.id, err);
+            }
+
+            this.backfillProgress.processed++;
+            this._updateBackfillProgressUI();
+
+            // Yield to main thread periodically
+            if (this.backfillProgress.processed % 3 === 0) {
+                await new Promise(resolve => requestAnimationFrame(resolve));
+            }
+        }
+
+        if (this.backfillState === 'running') {
+            this.backfillState = signal.aborted ? 'cancelled' : 'complete';
+        }
+        this.backfillAbortController = null;
+        this._backfillSessions = null;
+        await this._loadFileTree();
+        this.render();
+    }
+
+    _cancelBackfill() {
+        if (this.backfillAbortController) {
+            this.backfillAbortController.abort();
+        }
+    }
+
+    _dismissBackfill() {
+        this.backfillState = null;
+        this.backfillError = null;
+        this._backfillSessions = null;
+        this.render();
+    }
+
+    _updateBackfillProgressUI() {
+        if (!this.overlay) return;
+        const { processed, total, extracted, skipped, errors } = this.backfillProgress;
+        const percent = total ? Math.round((processed / total) * 100) : 0;
+
+        const fill = this.overlay.querySelector('#backfill-progress-fill');
+        if (fill) fill.style.width = `${percent}%`;
+
+        const progressText = this.overlay.querySelector('#backfill-progress-text');
+        if (progressText) progressText.textContent = `${processed} / ${total} sessions`;
+
+        const extractedText = this.overlay.querySelector('#backfill-extracted-text');
+        if (extractedText) extractedText.textContent = `${extracted} extracted`;
+
+        const skippedText = this.overlay.querySelector('#backfill-skipped-text');
+        if (skippedText) skippedText.textContent = `${skipped} skipped`;
+
+        if (errors > 0) {
+            const errorsText = this.overlay.querySelector('#backfill-errors-text');
+            if (errorsText) {
+                errorsText.textContent = `${errors} errors`;
+            } else {
+                const cancelBtn = this.overlay.querySelector('#backfill-cancel-btn');
+                if (cancelBtn) {
+                    const span = document.createElement('span');
+                    span.id = 'backfill-errors-text';
+                    span.className = 'text-red-500';
+                    span.textContent = `${errors} errors`;
+                    cancelBtn.parentElement.insertBefore(span, cancelBtn);
+                }
+            }
+        }
     }
 
     // ─── Helpers ─────────────────────────────────────────────────

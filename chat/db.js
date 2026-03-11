@@ -310,6 +310,11 @@ class ChatDatabase {
         });
     }
 
+    async getUnprocessedSessions() {
+        const all = await this.getAllSessions();
+        return all.filter(s => !s.memoryProcessedAt);
+    }
+
     async getSessionsPage(limit = 80, cursor = null) {
         return new Promise((resolve, reject) => {
             const transaction = this.db.transaction(['sessions'], 'readonly');
