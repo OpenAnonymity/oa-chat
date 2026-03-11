@@ -12,6 +12,7 @@ import ticketClient from './ticketClient.js';
 import { runAgenticToolLoop } from './agenticToolLoop.js';
 import { createRetrievalExecutors } from './memoryStorageBackend.js';
 import {
+    normalizeFactText,
     parseMemoryBullets,
     renderMemoryBullet,
     scoreMemoryBullet,
@@ -99,10 +100,16 @@ class AgenticRetrieval {
     /**
      * Retrieve relevant memory context for a user query.
      * @param {string} query — the user's message text
+     * @param {Function} [onProgress]
+     * @param {Object} [options]
+     * @param {string} [options.conversationText] — current session text to filter out redundant facts
      * @returns {Promise<{files: {path: string, content: string}[], paths: string[], assembledContext: string|null}|null>}
      */
-    async retrieveForQuery(query, onProgress = null) {
+    async retrieveForQuery(query, onProgress = null, options = {}) {
         if (!query || !query.trim()) return null;
+
+        const conversationText = options.conversationText || null;
+        const onModelText = options.onModelText || null;
 
         try {
             onProgress?.({ stage: 'init', message: 'Reading memory index...' });
@@ -116,16 +123,23 @@ class AgenticRetrieval {
             // Try LLM-driven retrieval first
             const apiKey = await this._ensureTinfoilKey();
 
+            let result;
             if (apiKey) {
                 onProgress?.({ stage: 'retrieval', message: 'Selecting relevant memory files with Tinfoil...' });
-                const result = await this._toolCallingRetrieval(query, index, onProgress);
-                return result;
+                result = await this._toolCallingRetrieval(query, index, onProgress, conversationText, onModelText);
             } else {
                 // Fallback: brute-force text search
                 console.log('[AgenticRetrieval] No Tinfoil key, falling back to text search');
                 onProgress?.({ stage: 'retrieval', message: 'Tinfoil unavailable, using fallback text search...' });
-                return await this._textSearchFallbackWithLoad(query, onProgress);
+                result = await this._textSearchFallbackWithLoad(query, onProgress, conversationText);
             }
+
+            // Post-filter assembled context to remove facts already in the conversation
+            if (result?.assembledContext && conversationText) {
+                result.assembledContext = this._filterRedundantContext(result.assembledContext, conversationText);
+            }
+
+            return result;
 
         } catch (error) {
             console.error('[AgenticRetrieval] Error:', error);
@@ -137,7 +151,7 @@ class AgenticRetrieval {
         }
     }
 
-    async _toolCallingRetrieval(query, index, onProgress) {
+    async _toolCallingRetrieval(query, index, onProgress, conversationText, onModelText) {
         const systemPrompt = RETRIEVAL_SYSTEM_PROMPT.replace('{INDEX}', index);
         const toolExecutors = createRetrievalExecutors(memoryFileSystem);
 
@@ -184,7 +198,7 @@ class AgenticRetrieval {
         if (files.length === 0 && !assembledContext) return null;
 
         // Build snippet-level context using bullet index for the approval UI
-        const snippetContext = await this._buildSnippetContext(paths, query);
+        const snippetContext = await this._buildSnippetContext(paths, query, conversationText);
 
         console.log(`[AgenticRetrieval] Retrieved ${files.length} memory files, assembled context: ${assembledContext ? assembledContext.length + ' chars' : 'none'}`);
         onProgress?.({
@@ -196,7 +210,7 @@ class AgenticRetrieval {
         return { files, paths, assembledContext: assembledContext || snippetContext };
     }
 
-    async _textSearchFallbackWithLoad(query, onProgress) {
+    async _textSearchFallbackWithLoad(query, onProgress, conversationText) {
         const paths = await this._textSearchFallback(query);
         if (!paths || paths.length === 0) return null;
 
@@ -219,7 +233,7 @@ class AgenticRetrieval {
         if (files.length === 0) return null;
 
         // Build snippet-level assembled context from fallback
-        const assembled = await this._buildSnippetContext(files.map(f => f.path), query);
+        const assembled = await this._buildSnippetContext(files.map(f => f.path), query, conversationText);
 
         console.log(`[AgenticRetrieval] Fallback retrieved ${files.length} memory files`);
         onProgress?.({
@@ -245,9 +259,12 @@ class AgenticRetrieval {
         return [...allPaths].slice(0, MAX_FILES_TO_LOAD);
     }
 
-    async _buildSnippetContext(paths, query) {
+    async _buildSnippetContext(paths, query, conversationText) {
         const queryTerms = tokenizeQuery(query);
-        const candidates = [];
+        let candidates = [];
+        const convWords = conversationText
+            ? new Set(normalizeFactText(conversationText).split(/\s+/).filter(w => w.length >= 3))
+            : null;
 
         await memoryBulletIndex.init();
         const indexed = memoryBulletIndex.getBulletsForPaths(paths);
@@ -290,6 +307,16 @@ class AgenticRetrieval {
             }
         }
 
+        // Filter out bullets whose content is already in the current conversation
+        if (convWords && convWords.size > 0) {
+            candidates = candidates.filter(c => {
+                const factWords = normalizeFactText(c.text).split(/\s+/).filter(w => w.length >= 3);
+                if (factWords.length < 2) return true; // Too short to judge
+                const matchCount = factWords.filter(w => convWords.has(w)).length;
+                return matchCount / factWords.length < 0.8;
+            });
+        }
+
         if (candidates.length === 0) return null;
 
         candidates.sort((a, b) => {
@@ -315,6 +342,30 @@ class AgenticRetrieval {
         }
 
         return sections.join('\n\n').trim() || null;
+    }
+
+    /**
+     * Remove lines from assembled context whose key terms already appear in the conversation.
+     */
+    _filterRedundantContext(assembledContext, conversationText) {
+        const convWords = new Set(
+            normalizeFactText(conversationText).split(/\s+/).filter(w => w.length >= 3)
+        );
+        if (convWords.size === 0) return assembledContext;
+
+        const lines = assembledContext.split('\n');
+        const filtered = lines.filter(line => {
+            const trimmed = line.trim();
+            // Keep headings, empty lines, and non-bullet lines
+            if (!trimmed || trimmed.startsWith('#') || !trimmed.startsWith('-')) return true;
+            const factWords = normalizeFactText(trimmed).split(/\s+/).filter(w => w.length >= 3);
+            if (factWords.length < 2) return true;
+            const matchCount = factWords.filter(w => convWords.has(w)).length;
+            return matchCount / factWords.length < 0.8;
+        });
+
+        const result = filtered.join('\n').trim();
+        return result || null;
     }
 
     _extractLegacySnippets(content, queryTerms) {

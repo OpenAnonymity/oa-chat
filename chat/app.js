@@ -3763,7 +3763,12 @@ class ChatApp {
         // Re-run personal-agent retrieval/approval before calling the remote model.
         const query = typeof userMessage.content === 'string' ? userMessage.content : '';
         if (this.memoryEnabled) {
-            await this.runAgenticMemoryRetrievalFlow(query, userMessage);
+            const priorMessages = messages.slice(0, userMessageIndex + 1);
+            const conversationText = priorMessages
+                .filter(m => !m.isLocalOnly)
+                .map(m => m.content || '')
+                .join('\n');
+            await this.runAgenticMemoryRetrievalFlow(query, userMessage, { conversationText });
         }
 
         await this.regenerateResponse();
@@ -4540,7 +4545,12 @@ class ChatApp {
 
             // If memory is enabled, surface retrieval as an assistant-side status flow and ask approval.
             if (this.memoryEnabled) {
-                await this.runAgenticMemoryRetrievalFlow(content, userMessage);
+                const sessionMessages = await chatDB.getSessionMessages(session.id);
+                const conversationText = sessionMessages
+                    .filter(m => !m.isLocalOnly)
+                    .map(m => m.content || '')
+                    .join('\n');
+                await this.runAgenticMemoryRetrievalFlow(content, userMessage, { conversationText });
             }
 
             // Auto-scroll remains paused while the response streams
