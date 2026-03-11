@@ -42,7 +42,7 @@ function setCompatFlag() {
 class ChatDatabase {
     constructor() {
         this.dbName = 'oa-fastchat'; // Intentional: preserve existing IndexedDB data across app rename to oa-chat
-        this.version = 4;
+        this.version = 5;
         this.db = null;
         this.compatMode = false;
         this.initInFlight = null;
@@ -175,6 +175,22 @@ class ChatDatabase {
                     const logsStore = db.createObjectStore('networkLogs', { keyPath: 'id' });
                     logsStore.createIndex('timestamp', 'timestamp', { unique: false });
                     logsStore.createIndex('sessionId', 'sessionId', { unique: false });
+                }
+
+                if (!db.objectStoreNames.contains('executionRuns')) {
+                    const runsStore = db.createObjectStore('executionRuns', { keyPath: 'id' });
+                    runsStore.createIndex('sessionId', 'sessionId', { unique: false });
+                    runsStore.createIndex('messageId', 'messageId', { unique: false });
+                    runsStore.createIndex('timestamp', 'createdAt', { unique: false });
+                    runsStore.createIndex('status', 'status', { unique: false });
+                }
+
+                if (!db.objectStoreNames.contains('artifacts')) {
+                    const artifactsStore = db.createObjectStore('artifacts', { keyPath: 'id' });
+                    artifactsStore.createIndex('sessionId', 'sessionId', { unique: false });
+                    artifactsStore.createIndex('messageId', 'messageId', { unique: false });
+                    artifactsStore.createIndex('runId', 'runId', { unique: false });
+                    artifactsStore.createIndex('timestamp', 'createdAt', { unique: false });
                 }
             };
 
@@ -494,9 +510,11 @@ class ChatDatabase {
 
     async clearAllChats() {
         return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['sessions', 'messages'], 'readwrite');
+            const transaction = this.db.transaction(['sessions', 'messages', 'executionRuns', 'artifacts'], 'readwrite');
             const sessionsStore = transaction.objectStore('sessions');
             const messagesStore = transaction.objectStore('messages');
+            const runsStore = transaction.objectStore('executionRuns');
+            const artifactsStore = transaction.objectStore('artifacts');
 
             const handleError = (event) => reject(event.target.error);
 
@@ -508,9 +526,13 @@ class ChatDatabase {
 
             const sessionClearRequest = sessionsStore.clear();
             const messageClearRequest = messagesStore.clear();
+            const runClearRequest = runsStore.clear();
+            const artifactClearRequest = artifactsStore.clear();
 
             sessionClearRequest.onerror = handleError;
             messageClearRequest.onerror = handleError;
+            runClearRequest.onerror = handleError;
+            artifactClearRequest.onerror = handleError;
         });
     }
 
@@ -576,6 +598,242 @@ class ChatDatabase {
             request.onsuccess = () => {
                 this.emitStorageEvent('messages-updated', { messageId });
                 resolve();
+            };
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    // Execution runs
+    async saveExecutionRun(run) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['executionRuns'], 'readwrite');
+            const store = transaction.objectStore('executionRuns');
+            const request = store.put(run);
+
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async getExecutionRun(runId) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['executionRuns'], 'readonly');
+            const store = transaction.objectStore('executionRuns');
+            const request = store.get(runId);
+
+            request.onsuccess = () => resolve(request.result || null);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async getAllExecutionRuns() {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['executionRuns'], 'readonly');
+            const store = transaction.objectStore('executionRuns');
+            const request = store.getAll();
+
+            request.onsuccess = () => {
+                const runs = request.result || [];
+                runs.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+                resolve(runs);
+            };
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async getSessionExecutionRuns(sessionId) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['executionRuns'], 'readonly');
+            const store = transaction.objectStore('executionRuns');
+            const index = store.index('sessionId');
+            const request = index.getAll(sessionId);
+
+            request.onsuccess = () => {
+                const runs = request.result || [];
+                runs.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+                resolve(runs);
+            };
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async getMessageExecutionRuns(messageId) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['executionRuns'], 'readonly');
+            const store = transaction.objectStore('executionRuns');
+            const index = store.index('messageId');
+            const request = index.getAll(messageId);
+
+            request.onsuccess = () => {
+                const runs = request.result || [];
+                runs.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+                resolve(runs);
+            };
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async deleteSessionExecutionRuns(sessionId) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['executionRuns'], 'readwrite');
+            const store = transaction.objectStore('executionRuns');
+            const index = store.index('sessionId');
+            const request = index.openCursor(IDBKeyRange.only(sessionId));
+
+            request.onsuccess = (event) => {
+                const cursor = event.target.result;
+                if (cursor) {
+                    cursor.delete();
+                    cursor.continue();
+                } else {
+                    resolve();
+                }
+            };
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async deleteMessageExecutionRuns(messageId) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['executionRuns'], 'readwrite');
+            const store = transaction.objectStore('executionRuns');
+            const index = store.index('messageId');
+            const request = index.openCursor(IDBKeyRange.only(messageId));
+
+            request.onsuccess = (event) => {
+                const cursor = event.target.result;
+                if (cursor) {
+                    cursor.delete();
+                    cursor.continue();
+                } else {
+                    resolve();
+                }
+            };
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    // Artifacts
+    async saveArtifact(artifact) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['artifacts'], 'readwrite');
+            const store = transaction.objectStore('artifacts');
+            const request = store.put(artifact);
+
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async getArtifact(artifactId) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['artifacts'], 'readonly');
+            const store = transaction.objectStore('artifacts');
+            const request = store.get(artifactId);
+
+            request.onsuccess = () => resolve(request.result || null);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async getAllArtifacts() {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['artifacts'], 'readonly');
+            const store = transaction.objectStore('artifacts');
+            const request = store.getAll();
+
+            request.onsuccess = () => {
+                const artifacts = request.result || [];
+                artifacts.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+                resolve(artifacts);
+            };
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async getSessionArtifacts(sessionId) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['artifacts'], 'readonly');
+            const store = transaction.objectStore('artifacts');
+            const index = store.index('sessionId');
+            const request = index.getAll(sessionId);
+
+            request.onsuccess = () => {
+                const artifacts = request.result || [];
+                artifacts.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+                resolve(artifacts);
+            };
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async getMessageArtifacts(messageId) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['artifacts'], 'readonly');
+            const store = transaction.objectStore('artifacts');
+            const index = store.index('messageId');
+            const request = index.getAll(messageId);
+
+            request.onsuccess = () => {
+                const artifacts = request.result || [];
+                artifacts.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+                resolve(artifacts);
+            };
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async getRunArtifacts(runId) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['artifacts'], 'readonly');
+            const store = transaction.objectStore('artifacts');
+            const index = store.index('runId');
+            const request = index.getAll(runId);
+
+            request.onsuccess = () => {
+                const artifacts = request.result || [];
+                artifacts.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+                resolve(artifacts);
+            };
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async deleteSessionArtifacts(sessionId) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['artifacts'], 'readwrite');
+            const store = transaction.objectStore('artifacts');
+            const index = store.index('sessionId');
+            const request = index.openCursor(IDBKeyRange.only(sessionId));
+
+            request.onsuccess = (event) => {
+                const cursor = event.target.result;
+                if (cursor) {
+                    cursor.delete();
+                    cursor.continue();
+                } else {
+                    resolve();
+                }
+            };
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async deleteMessageArtifacts(messageId) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['artifacts'], 'readwrite');
+            const store = transaction.objectStore('artifacts');
+            const index = store.index('messageId');
+            const request = index.openCursor(IDBKeyRange.only(messageId));
+
+            request.onsuccess = (event) => {
+                const cursor = event.target.result;
+                if (cursor) {
+                    cursor.delete();
+                    cursor.continue();
+                } else {
+                    resolve();
+                }
             };
             request.onerror = () => reject(request.error);
         });

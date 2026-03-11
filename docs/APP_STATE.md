@@ -85,3 +85,31 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     against stale shared CSS.
   - If users report "the pending UI looks wrong only in one browser" after deploy, inspect
     the built `index.html` first and confirm the versioned asset refs are present.
+- 2026-03-11: Tool execution now lives behind a standalone runtime boundary. See
+  `docs/EXECUTION_MODEL.md`.
+  - The runtime code lives under `chat/shared/tool-runtime/` and is intentionally separate
+    from `local_inference/`, DOM code, IndexedDB code, and Electron preload code.
+  - `chat/services/tools/chatToolController.js` is the chat-only bridge layer. If future
+    work needs new tools or host capabilities, add them through the runtime/host contracts
+    first rather than wiring them directly into `ChatArea` or backend adapters.
+- 2026-03-11: Manual code-block execution is now additive to the existing assistant UI.
+  - Code blocks show run/preview/download buttons only when the active host exposes the
+    matching tool. Web only exposes browser-safe artifact tools; desktop-only tools should
+    come from `window.electronAPI.tools`.
+  - Current manual mappings are HTML preview, SVG preview, ICS download, and optional
+    Python/Shell execution when a desktop host advertises them.
+  - Plain assistant text is never auto-executed heuristically. Automatic execution should
+    happen only through structured tool calls in the runtime loop.
+- 2026-03-11: Execution persistence is message-attached but stored separately.
+  - Messages keep legacy flat fields for compatibility and may also store ordered `parts[]`
+    refs for tool runs/artifacts.
+  - IndexedDB now has `executionRuns` and `artifacts` stores. `ChatArea.render()` hydrates
+    `message.executionRuns` from those stores before rendering assistant messages.
+  - When deleting/truncating messages, delete runtime rows too. Otherwise exports can retain
+    orphaned runs and artifacts even though the message is gone.
+- 2026-03-11: Artifact previews are shared chat UI, not desktop-only UI.
+  - Execution cards render inside assistant messages and support rerun/open/download.
+  - HTML previews use a sandboxed iframe with an opaque origin and restrictive CSP so the
+    artifact can render interactively without parent DOM access or implicit network access.
+  - Keep this behavior in `oa-chat`; desktop should only supply host capabilities, not a
+    separate permanent execution surface.

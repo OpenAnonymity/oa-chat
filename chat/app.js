@@ -31,6 +31,7 @@ import accountService from './services/accountService.js';
 import apiKeyStore from './services/apiKeyStore.js';
 import { generateUlid21 } from './services/ulid.js';
 import { chatDB } from './db.js';
+import ChatToolController from './services/tools/chatToolController.js';
 
 const DEFAULT_MODEL_NAME = inferenceService.getDefaultModelName();
 const SESSION_PAGE_SIZE = 80;
@@ -163,6 +164,8 @@ class ChatApp {
         this.rightPanel = null;
         this.floatingPanel = null;
         this.messageNavigation = null;
+        this.toolController = null;
+        this.markdownRenderContext = null;
         this.sidebar = null;
         this.chatArea = null;
         this.chatInput = null;
@@ -408,6 +411,14 @@ class ChatApp {
         renderer.code = (code, language) => {
             const lang = language || '';
             const displayLang = lang ? this.formatLanguageName(lang) : '';
+            const renderContext = this.markdownRenderContext || null;
+            const toolActions = renderContext?.messageId
+                ? (this.toolController?.getCodeBlockActions({
+                    language: lang,
+                    code,
+                    messageId: renderContext.messageId
+                }) || [])
+                : [];
 
             // Apply syntax highlighting if available
             let highlightedCode = code;
@@ -428,9 +439,13 @@ class ChatApp {
                 highlightedCode = this.escapeHtml(code);
             }
 
+            const toolButtonsHtml = toolActions.map((action) => {
+                return `<button class="code-block-tool-btn" data-code="${escapeHtmlAttribute(code)}" data-language="${escapeHtmlAttribute(lang)}" data-tool-action="${escapeHtmlAttribute(action.actionId)}" data-message-id="${escapeHtmlAttribute(renderContext.messageId)}">${escapeHtml(action.label)}</button>`;
+            }).join('');
+
             // Compact HTML to avoid whitespace text nodes inside flex containers
             // which can create anonymous flex items and cause layout edge cases
-            return `<div class="code-block-wrapper"><div class="code-block-header"><span class="code-block-lang">${displayLang}</span><button class="code-block-copy-btn" data-code="${escapeHtmlAttribute(code)}"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="copy-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" /></svg><span class="copy-text">Copy code</span></button></div><pre><code class="hljs${lang ? ` language-${lang}` : ''}">${highlightedCode}</code></pre></div>`;
+            return `<div class="code-block-wrapper"><div class="code-block-header"><span class="code-block-lang">${displayLang}</span><div class="code-block-actions">${toolButtonsHtml}<button class="code-block-copy-btn" data-code="${escapeHtmlAttribute(code)}"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="copy-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" /></svg><span class="copy-text">Copy code</span></button></div></div><pre><code class="hljs${lang ? ` language-${lang}` : ''}">${highlightedCode}</code></pre></div>`;
         };
 
         renderer.html = (html) => escapeHtml(html);
@@ -543,7 +558,7 @@ class ChatApp {
      * Process content with protected LaTeX expressions
      * This prevents marked from breaking LaTeX delimiters
      */
-    processContentWithLatex(content) {
+    processContentWithLatex(content, renderContext = null) {
         // Store block-level and inline LaTeX to prevent markdown from breaking them
         const blockLatexPlaceholders = [];
         const inlineLatexPlaceholders = [];
@@ -571,7 +586,14 @@ class ChatApp {
         });
 
         // Process markdown (uses custom renderer configured in init)
-        let html = marked.parse(processedContent);
+        const previousContext = this.markdownRenderContext;
+        this.markdownRenderContext = renderContext;
+        let html = '';
+        try {
+            html = marked.parse(processedContent);
+        } finally {
+            this.markdownRenderContext = previousContext;
+        }
 
         // Restore block LaTeX without <p> wrapping
         blockLatexPlaceholders.forEach((latex, index) => {
@@ -1393,6 +1415,14 @@ class ChatApp {
             this.showToast('Chat storage is running in compatibility mode. Close other tabs and reload to finish the upgrade.', 'error');
         });
 
+        try {
+            this.toolController = new ChatToolController(this);
+            await this.toolController.init();
+        } catch (error) {
+            console.warn('Tool runtime init failed:', error);
+            this.toolController = null;
+        }
+
         // Now set up theme controls after chatInput is initialized
         this.updateThemeControls(themeManager.getPreference(), themeManager.getEffectiveTheme());
         this.themeUnsubscribe = themeManager.onChange((preference, effectiveTheme) => {
@@ -2100,7 +2130,7 @@ class ChatApp {
             // Delete old messages for this session
             const oldMessages = await chatDB.getSessionMessages(existingSession.id);
             for (const msg of oldMessages) {
-                await chatDB.deleteMessage(msg.id);
+                await this.deleteMessageWithRuntimeData(msg.id);
             }
 
             // Save new messages with existing session ID
@@ -3420,7 +3450,8 @@ class ChatApp {
             searchEnabled: metadata.searchEnabled || false,
             citations: metadata.citations || null,
             isLocalOnly: Boolean(metadata.isLocalOnly),
-            scrubber: metadata.scrubber || null
+            scrubber: metadata.scrubber || null,
+            parts: metadata.parts || null
         };
 
         await chatDB.saveMessage(message);
@@ -3444,6 +3475,18 @@ class ChatApp {
         }
         this.renderSessions(); // Re-render sessions to update sorting
         return message;
+    }
+
+    async deleteMessageRuntimeData(messageId) {
+        await Promise.all([
+            chatDB.deleteMessageExecutionRuns(messageId),
+            chatDB.deleteMessageArtifacts(messageId)
+        ]);
+    }
+
+    async deleteMessageWithRuntimeData(messageId) {
+        await this.deleteMessageRuntimeData(messageId);
+        await chatDB.deleteMessage(messageId);
     }
 
     /**
@@ -4005,7 +4048,7 @@ class ChatApp {
                 if (error.isCancelled) {
                     // If cancelled before first chunk, delete the placeholder message
                     if (streamingMessage && !firstChunkReceived) {
-                        await chatDB.deleteMessage(streamingMessage.id);
+                        await this.deleteMessageWithRuntimeData(streamingMessage.id);
                         // Remove from UI if viewing this session
                         if (this.isViewingSession(session.id)) {
                             const messageEl = document.querySelector(`[data-message-id="${streamingMessage.id}"]`);
@@ -4033,7 +4076,7 @@ class ChatApp {
                                 }
                             }
                         } else {
-                            await chatDB.deleteMessage(streamingMessage.id);
+                            await this.deleteMessageWithRuntimeData(streamingMessage.id);
                             // Only remove from UI if still viewing the same session
                             if (this.isViewingSession(session.id)) {
                                 const messageEl = document.querySelector(`[data-message-id="${streamingMessage.id}"]`);
@@ -4058,7 +4101,7 @@ class ChatApp {
                     } else {
                         // Error before first chunk - delete placeholder and show error
                         if (streamingMessage) {
-                            await chatDB.deleteMessage(streamingMessage.id);
+                            await this.deleteMessageWithRuntimeData(streamingMessage.id);
                             // Remove from UI if viewing this session
                             if (this.isViewingSession(session.id)) {
                                 const messageEl = document.querySelector(`[data-message-id="${streamingMessage.id}"]`);
@@ -4568,7 +4611,7 @@ class ChatApp {
                             }
                         } else {
                             // Remove empty message if no content was generated
-                            await chatDB.deleteMessage(streamingMessage.id);
+                            await this.deleteMessageWithRuntimeData(streamingMessage.id);
                             // Only remove from UI if still viewing the same session
                             if (this.isViewingSession(session.id)) {
                                 const messageEl = document.querySelector(`[data-message-id="${streamingMessage.id}"]`);
@@ -4725,6 +4768,8 @@ class ChatApp {
             // Delete from DB
             await chatDB.deleteSession(sessionId);
             await chatDB.deleteSessionMessages(sessionId);
+            await chatDB.deleteSessionExecutionRuns(sessionId);
+            await chatDB.deleteSessionArtifacts(sessionId);
             this.sessionScrollPositions.delete(sessionId);
             this.clearChatbarStateForSession(sessionId);
 
@@ -4843,7 +4888,7 @@ class ChatApp {
         // Delete all messages after this one (truncate conversation)
         const messagesToDelete = messages.slice(messageIndex + 1);
         for (const msg of messagesToDelete) {
-            await chatDB.deleteMessage(msg.id);
+            await this.deleteMessageWithRuntimeData(msg.id);
         }
 
         // Update session timestamp
@@ -5053,6 +5098,8 @@ class ChatApp {
         for (const session of sessions) {
             await chatDB.deleteSession(session.id);
             await chatDB.deleteSessionMessages(session.id);
+            await chatDB.deleteSessionExecutionRuns(session.id);
+            await chatDB.deleteSessionArtifacts(session.id);
         }
     }
 

@@ -531,6 +531,7 @@ class ChatHistoryImportModal {
                 searchEnabled: false,
                 citations: message.citations || null,
                 images: message.images || null,
+                parts: message.parts || null,
                 isLocalOnly: false
             }));
 

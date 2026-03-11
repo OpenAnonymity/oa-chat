@@ -1069,6 +1069,142 @@ function inferProvider(name) {
     return null;
 }
 
+function formatExecutionStatus(status) {
+    switch (status) {
+    case 'requested':
+        return 'Queued';
+    case 'running':
+        return 'Running';
+    case 'completed':
+        return 'Completed';
+    case 'failed':
+        return 'Failed';
+    case 'cancelled':
+        return 'Cancelled';
+    default:
+        return 'Pending';
+    }
+}
+
+function canOpenArtifact(artifact) {
+    if (!artifact) return false;
+    if (artifact.kind === 'html' || artifact.kind === 'svg' || artifact.kind === 'json') {
+        return true;
+    }
+    if (artifact.kind === 'text') {
+        return true;
+    }
+    if (typeof artifact.mimeType === 'string') {
+        return artifact.mimeType.startsWith('text/') || artifact.mimeType === 'application/json';
+    }
+    return false;
+}
+
+function buildExecutionArtifacts(artifacts = []) {
+    if (!Array.isArray(artifacts) || artifacts.length === 0) return '';
+
+    const artifactItems = artifacts.map((artifact) => {
+        const openButton = canOpenArtifact(artifact) ? `
+            <button
+                class="execution-artifact-open-btn"
+                data-artifact-id="${escapeHtmlAttribute(artifact.id)}"
+                data-tooltip="Open artifact"
+                data-tooltip-position="top">
+                Open
+            </button>
+        ` : '';
+        const downloadButton = artifact.download !== false ? `
+            <button
+                class="execution-artifact-download-btn"
+                data-artifact-id="${escapeHtmlAttribute(artifact.id)}"
+                data-tooltip="Download artifact"
+                data-tooltip-position="top">
+                Download
+            </button>
+        ` : '';
+
+        return `
+            <div class="execution-artifact-chip">
+                <div class="execution-artifact-chip-meta">
+                    <span class="execution-artifact-name">${escapeHtml(artifact.name || 'artifact')}</span>
+                    <span class="execution-artifact-kind">${escapeHtml((artifact.kind || artifact.mimeType || 'file').toString())}</span>
+                </div>
+                <div class="execution-artifact-chip-actions">
+                    ${openButton}
+                    ${downloadButton}
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    return `
+        <div class="execution-artifact-list">
+            ${artifactItems}
+        </div>
+    `;
+}
+
+function buildExecutionRunOutput(label, content, className) {
+    if (!content) return '';
+    return `
+        <details class="execution-run-output">
+            <summary>${escapeHtml(label)}</summary>
+            <pre class="${className}">${escapeHtml(content)}</pre>
+        </details>
+    `;
+}
+
+function buildExecutionRuns(message, formatTime) {
+    const runs = Array.isArray(message.executionRuns) ? message.executionRuns : [];
+    if (runs.length === 0) return '';
+
+    const cards = runs.map((run) => {
+        const status = run.status || 'requested';
+        const errorMessage = run.errorMessage ? `
+            <div class="execution-run-error">${escapeHtml(run.errorMessage)}</div>
+        ` : '';
+        const artifacts = buildExecutionArtifacts(run.artifacts || []);
+        const stdout = buildExecutionRunOutput('stdout', run.stdout, 'execution-run-stdout');
+        const stderr = buildExecutionRunOutput('stderr', run.stderr, 'execution-run-stderr');
+        const rerunButton = status === 'running' || status === 'requested'
+            ? ''
+            : `
+                <div class="execution-run-footer">
+                    <button
+                        class="execution-run-rerun-btn"
+                        data-run-id="${escapeHtmlAttribute(run.id)}"
+                        data-tooltip="Run again"
+                        data-tooltip-position="top">
+                        Rerun
+                    </button>
+                </div>
+            `;
+
+        return `
+            <div class="execution-run-card">
+                <div class="execution-run-header">
+                    <div class="execution-run-heading">
+                        <div class="execution-run-title">${escapeHtml(run.toolTitle || run.toolName || 'Tool run')}</div>
+                        <div class="execution-run-meta">${escapeHtml(formatTime(run.createdAt || Date.now()))}</div>
+                    </div>
+                    <span class="execution-run-status execution-run-status-${escapeHtmlAttribute(status)}">${escapeHtml(formatExecutionStatus(status))}</span>
+                </div>
+                ${errorMessage}
+                ${artifacts}
+                ${stdout}
+                ${stderr}
+                ${rerunButton}
+            </div>
+        `;
+    }).join('');
+
+    return `
+        <div class="execution-run-list">
+            ${cards}
+        </div>
+    `;
+}
+
 /**
  * Builds HTML for an assistant message bubble.
  * @param {Object} message - Message object
@@ -1128,7 +1264,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
         }
 
         // Then process with LaTeX/Markdown
-        processedContent = processContentWithLatex(processedContent);
+        processedContent = processContentWithLatex(processedContent, { messageId: message.id });
 
         // Style the citation markers [1], [2] into clickable elements
         if (message.citations && message.citations.length > 0) {
@@ -1157,12 +1293,13 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
             ${generatedImagesHtml}
         </div>
     ` : '';
+    const executionRunsHtml = buildExecutionRuns(message, formatTime);
 
     // Check if message is complete but has no user-visible output (no text, no reasoning, no images).
     // Reasoning-only responses can happen when generation is manually interrupted.
     const hasReasoningOutput = typeof message.reasoning === 'string' && message.reasoning.trim().length > 0;
     const hasNoOutput = !processedContent && !hasReasoningOutput && (!message.images || message.images.length === 0);
-    const hasRenderableAssistantOutput = !!processedContent || !!generatedImagesHtml || !!thumbnailsBubble;
+    const hasRenderableAssistantOutput = !!processedContent || !!generatedImagesHtml || !!thumbnailsBubble || !!executionRunsHtml;
     const hideAssistantActionsDuringReasoning = !!message.streamingReasoning && !hasRenderableAssistantOutput;
     // Message is complete if:
     // - Not actively streaming reasoning
@@ -1240,6 +1377,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
                 ${thumbnailsBubble}
                 ${textBubble}
                 ${imageBubble}
+                ${executionRunsHtml}
                 ${assistantActionsRow}
                 ${citationsBubble}
             </div>

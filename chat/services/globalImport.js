@@ -8,7 +8,7 @@ import preferencesStore, { PREF_KEYS } from './preferencesStore.js';
 import { chatDB } from '../db.js';
 import { normalizeReasoningEffort } from './reasoningConfig.js';
 
-const SUPPORTED_FORMAT_VERSIONS = ['1.0'];
+const SUPPORTED_FORMAT_VERSIONS = ['1.0', '1.1'];
 
 /**
  * Validate the import file structure.
@@ -62,7 +62,12 @@ async function importChats(chatsData, source = null) {
         return result;
     }
 
-    const { sessions = [], messages = [] } = chatsData;
+    const {
+        sessions = [],
+        messages = [],
+        executionRuns = [],
+        artifacts = []
+    } = chatsData;
 
     // Get existing session IDs
     const existingSessions = await chatDB.getAllSessions();
@@ -128,6 +133,18 @@ async function importChats(chatsData, source = null) {
 
         await chatDB.saveMessage(message);
         result.importedMessages++;
+    }
+
+    for (const run of executionRuns) {
+        if (!run || !run.id || !run.sessionId) continue;
+        if (!importedSessionIds.has(run.sessionId)) continue;
+        await chatDB.saveExecutionRun(run);
+    }
+
+    for (const artifact of artifacts) {
+        if (!artifact || !artifact.id || !artifact.sessionId) continue;
+        if (!importedSessionIds.has(artifact.sessionId)) continue;
+        await chatDB.saveArtifact(artifact);
     }
 
     return result;

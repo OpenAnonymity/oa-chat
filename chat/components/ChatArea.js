@@ -9,6 +9,19 @@ import { exportChats, exportTickets } from '../services/globalExport.js';
 import { parseStreamingReasoningContent, parseReasoningContent } from '../services/reasoningParser.js';
 import { chatDB } from '../db.js';
 
+function buildSandboxedHtmlArtifactDocument(content = '') {
+    const csp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; media-src data: blob:; style-src 'unsafe-inline'; font-src data:; script-src 'unsafe-inline'; connect-src 'none'; child-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; navigate-to 'none'">`;
+    const charset = '<meta charset="utf-8">';
+
+    if (/<head[\s>]/i.test(content)) {
+        return content.replace(/<head(\s[^>]*)?>/i, (match) => `${match}${charset}${csp}`);
+    }
+    if (/<html[\s>]/i.test(content)) {
+        return content.replace(/<html(\s[^>]*)?>/i, (match) => `${match}<head>${charset}${csp}</head>`);
+    }
+    return `<!doctype html><html><head>${charset}${csp}</head><body>${content}</body></html>`;
+}
+
 export default class ChatArea {
     /**
      * @param {Object} app - Reference to the main ChatApp instance
@@ -32,6 +45,7 @@ export default class ChatArea {
         this.pendingAutoGrowFrame = null;
         // Render generation counter - used to cancel stale renders during rapid session switching
         this.renderGeneration = 0;
+        this.activeArtifactViewerCleanup = null;
         this.setupEventListeners();
     }
 
@@ -84,6 +98,34 @@ export default class ChatArea {
             if (codeBlockCopyBtn) {
                 e.preventDefault();
                 this.handleCopyCodeBlock(codeBlockCopyBtn);
+                return;
+            }
+
+            const codeBlockToolBtn = e.target.closest('.code-block-tool-btn');
+            if (codeBlockToolBtn) {
+                e.preventDefault();
+                await this.handleCodeBlockTool(codeBlockToolBtn);
+                return;
+            }
+
+            const artifactOpenBtn = e.target.closest('.execution-artifact-open-btn');
+            if (artifactOpenBtn) {
+                e.preventDefault();
+                await this.handleOpenArtifact(artifactOpenBtn.dataset.artifactId);
+                return;
+            }
+
+            const artifactDownloadBtn = e.target.closest('.execution-artifact-download-btn');
+            if (artifactDownloadBtn) {
+                e.preventDefault();
+                await this.handleDownloadArtifact(artifactDownloadBtn.dataset.artifactId);
+                return;
+            }
+
+            const rerunExecutionBtn = e.target.closest('.execution-run-rerun-btn');
+            if (rerunExecutionBtn) {
+                e.preventDefault();
+                await this.handleRerunExecution(rerunExecutionBtn.dataset.runId);
                 return;
             }
 
@@ -446,6 +488,208 @@ export default class ChatArea {
         }, 2000);
     }
 
+    decodeEscapedAttributeText(value) {
+        if (!value) return '';
+        const tempEl = document.createElement('textarea');
+        tempEl.innerHTML = value;
+        return tempEl.value;
+    }
+
+    async handleCodeBlockTool(btn) {
+        if (!this.app.toolController) {
+            this.app.showToast('Tool runtime is unavailable.', 'error');
+            return;
+        }
+
+        const actionId = btn.dataset.toolAction;
+        const messageId = btn.dataset.messageId;
+        const language = btn.dataset.language || '';
+        const code = this.decodeEscapedAttributeText(btn.dataset.code || '');
+        if (!actionId || !messageId || !code) {
+            this.app.showToast('This code block cannot be executed.', 'error');
+            return;
+        }
+
+        const originalText = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Running...';
+
+        try {
+            await this.app.toolController.executeCodeBlockAction({
+                actionId,
+                messageId,
+                language,
+                code
+            });
+        } catch (error) {
+            console.error('Failed to execute code block action:', error);
+            this.app.showToast(error.message || 'Tool execution failed.', 'error');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = originalText;
+        }
+    }
+
+    async handleOpenArtifact(artifactId) {
+        if (!artifactId || !this.app.toolController) return;
+        try {
+            await this.app.toolController.openArtifact(artifactId);
+        } catch (error) {
+            console.error('Failed to open artifact:', error);
+            this.app.showToast(error.message || 'Failed to open artifact.', 'error');
+        }
+    }
+
+    async handleDownloadArtifact(artifactId) {
+        if (!artifactId || !this.app.toolController) return;
+        try {
+            await this.app.toolController.downloadArtifact(artifactId);
+        } catch (error) {
+            console.error('Failed to download artifact:', error);
+            this.app.showToast(error.message || 'Failed to download artifact.', 'error');
+        }
+    }
+
+    async handleRerunExecution(runId) {
+        if (!runId || !this.app.toolController) return;
+        try {
+            await this.app.toolController.rerunExecution(runId);
+        } catch (error) {
+            console.error('Failed to rerun execution:', error);
+            this.app.showToast(error.message || 'Failed to rerun tool.', 'error');
+        }
+    }
+
+    closeArtifactViewer() {
+        const existing = document.getElementById('artifact-viewer-overlay');
+        if (existing) {
+            existing.remove();
+        }
+        if (typeof this.activeArtifactViewerCleanup === 'function') {
+            this.activeArtifactViewerCleanup();
+            this.activeArtifactViewerCleanup = null;
+        }
+    }
+
+    showArtifactViewer(artifact) {
+        if (!artifact) return;
+        this.closeArtifactViewer();
+
+        const overlay = document.createElement('div');
+        overlay.id = 'artifact-viewer-overlay';
+        overlay.className = 'artifact-viewer-overlay';
+
+        const dialog = document.createElement('div');
+        dialog.className = 'artifact-viewer-dialog';
+
+        const header = document.createElement('div');
+        header.className = 'artifact-viewer-header';
+
+        const titleWrap = document.createElement('div');
+        titleWrap.className = 'artifact-viewer-title-wrap';
+
+        const title = document.createElement('div');
+        title.className = 'artifact-viewer-title';
+        title.textContent = artifact.name || 'Artifact';
+
+        const meta = document.createElement('div');
+        meta.className = 'artifact-viewer-meta';
+        meta.textContent = artifact.mimeType || artifact.kind || 'artifact';
+
+        titleWrap.appendChild(title);
+        titleWrap.appendChild(meta);
+
+        const headerActions = document.createElement('div');
+        headerActions.className = 'artifact-viewer-header-actions';
+
+        if (artifact.download !== false) {
+            const downloadBtn = document.createElement('button');
+            downloadBtn.className = 'artifact-viewer-download-btn';
+            downloadBtn.textContent = 'Download';
+            downloadBtn.addEventListener('click', async () => {
+                await this.handleDownloadArtifact(artifact.id);
+            });
+            headerActions.appendChild(downloadBtn);
+        }
+
+        const closeBtn = document.createElement('button');
+        closeBtn.className = 'artifact-viewer-close-btn';
+        closeBtn.type = 'button';
+        closeBtn.setAttribute('aria-label', 'Close artifact preview');
+        closeBtn.textContent = 'Close';
+        closeBtn.addEventListener('click', () => this.closeArtifactViewer());
+        headerActions.appendChild(closeBtn);
+
+        header.appendChild(titleWrap);
+        header.appendChild(headerActions);
+
+        const body = document.createElement('div');
+        body.className = 'artifact-viewer-body';
+
+        let cleanup = null;
+        if (artifact.kind === 'html' || artifact.mimeType === 'text/html') {
+            const frame = document.createElement('iframe');
+            frame.className = 'artifact-viewer-frame';
+            frame.setAttribute('sandbox', 'allow-scripts');
+            frame.setAttribute('referrerpolicy', 'no-referrer');
+            frame.srcdoc = buildSandboxedHtmlArtifactDocument(artifact.content || '');
+            body.appendChild(frame);
+        } else if (artifact.kind === 'svg' || artifact.mimeType === 'image/svg+xml') {
+            const img = document.createElement('img');
+            img.className = 'artifact-viewer-image';
+            const url = URL.createObjectURL(new Blob([artifact.content || ''], { type: artifact.mimeType || 'image/svg+xml' }));
+            img.src = url;
+            img.alt = artifact.name || 'Artifact preview';
+            body.appendChild(img);
+            cleanup = () => URL.revokeObjectURL(url);
+        } else if (artifact.kind === 'text' || artifact.kind === 'json' || (artifact.mimeType || '').startsWith('text/') || artifact.mimeType === 'application/json') {
+            const pre = document.createElement('pre');
+            pre.className = 'artifact-viewer-text';
+            if (artifact.kind === 'json' || artifact.mimeType === 'application/json') {
+                try {
+                    pre.textContent = JSON.stringify(JSON.parse(artifact.content || '{}'), null, 2);
+                } catch {
+                    pre.textContent = artifact.content || '';
+                }
+            } else {
+                pre.textContent = artifact.content || '';
+            }
+            body.appendChild(pre);
+        } else {
+            const empty = document.createElement('div');
+            empty.className = 'artifact-viewer-empty';
+            empty.textContent = 'This artifact type is only available as a download.';
+            body.appendChild(empty);
+        }
+
+        dialog.appendChild(header);
+        dialog.appendChild(body);
+        overlay.appendChild(dialog);
+
+        const handleOverlayClick = (event) => {
+            if (event.target === overlay) {
+                this.closeArtifactViewer();
+            }
+        };
+        const handleKeydown = (event) => {
+            if (event.key === 'Escape') {
+                this.closeArtifactViewer();
+            }
+        };
+
+        overlay.addEventListener('click', handleOverlayClick);
+        document.addEventListener('keydown', handleKeydown);
+        document.body.appendChild(overlay);
+
+        this.activeArtifactViewerCleanup = () => {
+            overlay.removeEventListener('click', handleOverlayClick);
+            document.removeEventListener('keydown', handleKeydown);
+            if (typeof cleanup === 'function') {
+                cleanup();
+            }
+        };
+    }
+
     /**
      * Handles regenerating an assistant message
      * @param {string} messageId - The assistant message ID to regenerate
@@ -475,7 +719,11 @@ export default class ChatArea {
         // Delete the assistant message and all messages after it
         const messagesToDelete = messages.slice(messageIndex);
         for (const msg of messagesToDelete) {
-            await chatDB.deleteMessage(msg.id);
+            if (typeof this.app.deleteMessageWithRuntimeData === 'function') {
+                await this.app.deleteMessageWithRuntimeData(msg.id);
+            } else {
+                await chatDB.deleteMessage(msg.id);
+            }
         }
 
         // Re-render messages to remove deleted messages from UI
@@ -511,7 +759,11 @@ export default class ChatArea {
         // Delete all messages after this user message
         const messagesToDelete = messages.slice(messageIndex + 1);
         for (const msg of messagesToDelete) {
-            await chatDB.deleteMessage(msg.id);
+            if (typeof this.app.deleteMessageWithRuntimeData === 'function') {
+                await this.app.deleteMessageWithRuntimeData(msg.id);
+            } else {
+                await chatDB.deleteMessage(msg.id);
+            }
         }
 
         await this.render();
@@ -600,11 +852,19 @@ export default class ChatArea {
         }
 
         // Load messages from IndexedDB
-        const messages = await chatDB.getSessionMessages(session.id);
+        const storedMessages = await chatDB.getSessionMessages(session.id);
 
         // Check if this render is stale (a newer render was triggered while we were loading messages)
         if (currentGeneration !== this.renderGeneration) {
             return; // Bail out - a newer render is in progress
+        }
+
+        const messages = this.app.toolController
+            ? await this.app.toolController.hydrateMessages(storedMessages)
+            : storedMessages;
+
+        if (currentGeneration !== this.renderGeneration) {
+            return;
         }
 
         if (messages.length === 0) {
@@ -816,6 +1076,7 @@ export default class ChatArea {
                 formatTime: this.app.formatTime.bind(this.app)
             };
             const options = this.app.getMessageTemplateOptions ? this.app.getMessageTemplateOptions(message.id) : {};
+            options.isSessionStreaming = this.app.isCurrentSessionStreaming();
             options.pendingPhase = this.app.getCurrentSessionStreamingPhase
                 ? this.app.getCurrentSessionStreamingPhase()
                 : 'waiting';
@@ -1007,7 +1268,7 @@ export default class ChatArea {
             contentEl.classList.add('streaming');
 
             // Use the app's LaTeX-safe processor
-            let processedContent = this.app.processContentWithLatex(content);
+            let processedContent = this.app.processContentWithLatex(content, { messageId });
 
             // Enhance inline links into styled buttons during streaming
             processedContent = window.MessageTemplates.enhanceInlineLinks(processedContent, messageId);
@@ -1700,7 +1961,7 @@ export default class ChatArea {
                 }
 
                 // Process LaTeX/Markdown
-                processedContent = this.app.processContentWithLatex(processedContent);
+                processedContent = this.app.processContentWithLatex(processedContent, { messageId: message.id });
 
                 // Style citation markers into clickable elements
                 if (message.citations && message.citations.length > 0) {

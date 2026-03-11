@@ -8,7 +8,7 @@ import ticketStore from './ticketStore.js';
 import { chatDB } from '../db.js';
 import { normalizeReasoningEffort } from './reasoningConfig.js';
 
-const FORMAT_VERSION = '1.0';
+const FORMAT_VERSION = '1.1';
 const APP_NAME = 'oa-chat';
 
 /**
@@ -116,22 +116,30 @@ async function collectPreferencesFromIndexedDB() {
  */
 export async function collectChats() {
     if (typeof chatDB === 'undefined' || !chatDB.db) {
-        return { sessions: [], messages: [] };
+        return { sessions: [], messages: [], executionRuns: [], artifacts: [] };
     }
 
     try {
         const sessions = await chatDB.getAllSessions();
         const allMessages = [];
+        const allExecutionRuns = [];
+        const allArtifacts = [];
 
         for (const session of sessions) {
-            const messages = await chatDB.getSessionMessages(session.id);
+            const [messages, executionRuns, artifacts] = await Promise.all([
+                chatDB.getSessionMessages(session.id),
+                chatDB.getSessionExecutionRuns(session.id),
+                chatDB.getSessionArtifacts(session.id)
+            ]);
             allMessages.push(...messages);
+            allExecutionRuns.push(...executionRuns);
+            allArtifacts.push(...artifacts);
         }
 
-        return { sessions, messages: allMessages };
+        return { sessions, messages: allMessages, executionRuns: allExecutionRuns, artifacts: allArtifacts };
     } catch (e) {
         console.error('Failed to collect chats:', e);
-        return { sessions: [], messages: [] };
+        return { sessions: [], messages: [], executionRuns: [], artifacts: [] };
     }
 }
 
@@ -176,7 +184,7 @@ export async function exportChats() {
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
 
-        console.log(`✅ Exported ${chats.sessions.length} sessions, ${chats.messages.length} messages`);
+        console.log(`✅ Exported ${chats.sessions.length} sessions, ${chats.messages.length} messages, ${chats.executionRuns.length} runs, ${chats.artifacts.length} artifacts`);
         return true;
     } catch (error) {
         console.error('Error exporting chats:', error);
