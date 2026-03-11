@@ -7,7 +7,7 @@ import memoryBulletIndex from './memoryBulletIndex.js';
 const COMPACT_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const TINFOIL_BASE_URL = 'https://inference.tinfoil.sh';
 const TINFOIL_BACKEND_ID = 'tinfoil';
-const TINFOIL_MODEL = 'gpt-oss-120b';
+const TINFOIL_MODEL = 'kimi-k2-5';
 const TINFOIL_KEY_TICKETS_REQUIRED = 2;
 const MAX_FILE_CHARS = 8000;
 

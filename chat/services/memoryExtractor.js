@@ -24,9 +24,9 @@ import memoryBulletIndex from './memoryBulletIndex.js';
 
 const TINFOIL_BASE_URL = 'https://inference.tinfoil.sh';
 const TINFOIL_BACKEND_ID = 'tinfoil';
-const TINFOIL_MODEL = 'gpt-oss-120b';
+const TINFOIL_MODEL = 'kimi-k2-5';
 const TINFOIL_KEY_TICKETS_REQUIRED = 2;
-const MAX_CONVERSATION_CHARS = 8000;
+const MAX_CONVERSATION_CHARS = 128000;
 
 const EXTRACTION_TOOLS = [
     {
