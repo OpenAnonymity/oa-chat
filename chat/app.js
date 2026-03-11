@@ -4215,36 +4215,17 @@ class ChatApp {
     async handleMemoryPromptPreviewRequest({ messageId = null, userMessageId = null } = {}) {
         if (messageId && this.memoryApprovalDrafts.has(messageId)) {
             const draft = this.memoryApprovalDrafts.get(messageId);
-            if (!draft || !this.chatInput?.showFullPromptPreview) return;
+            if (!draft || !draft.userMessageId || !this.chatArea?.showFullPromptPreview) return;
 
-            // Load editable draft into the existing full-prompt editor without touching the main input.
-            this.pendingMemoryContext = draft.memoryContext
-                ? JSON.parse(JSON.stringify(draft.memoryContext))
-                : null;
-            this._lastApiContent = draft.rawOverride || null;
-
-            this.chatInput.showFullPromptPreview({
-                userQuery: draft.userQuery || '',
-                rawOverrideEnabled: !!(draft.rawOverride && draft.rawOverride.trim()),
-                rawOverrideDraft: draft.rawOverride || '',
-                persistToInput: false,
-                onApply: (applied) => {
-                    const nextContext = applied?.memoryContext
-                        ? JSON.parse(JSON.stringify(applied.memoryContext))
-                        : null;
-                    draft.userQuery = typeof applied?.userQuery === 'string'
-                        ? applied.userQuery
-                        : draft.userQuery;
-                    draft.rawOverride = applied?.rawOverrideEnabled && typeof applied?.rawOverrideDraft === 'string' && applied.rawOverrideDraft.trim()
-                        ? applied.rawOverrideDraft
-                        : null;
-                    draft.effectivePayload = (typeof applied?.effectivePayload === 'string' && applied.effectivePayload.trim())
-                        ? applied.effectivePayload
-                        : null;
-                    draft.memoryContext = nextContext;
-                    this.memoryApprovalDrafts.set(messageId, draft);
-                }
-            });
+            // Temporarily register draft memory context so the read-only preview can display it
+            if (draft.memoryContext) {
+                messageMemoryContext.setMessageContext(
+                    draft.userMessageId,
+                    draft.memoryContext.memories || [],
+                    draft.memoryContext.sessionIds || []
+                );
+            }
+            await this.chatArea.showFullPromptPreview(draft.userMessageId);
             return;
         }
 
@@ -4355,15 +4336,22 @@ class ChatApp {
             };
             const initialMemoryContext = {
                 sessionIds: result.files.map((file) => `agentic:${file.path}`),
-                memories: result.files.map((file) => ({
-                    title: file.path,
-                    content: file.content.substring(0, 200),
-                    fullContent: file.content,
-                    summary: file.content.substring(0, 200),
-                    keywords: [],
-                    relevantTags: [],
-                    isAgenticMemory: true
-                })),
+                memories: result.files.map((file) => {
+                    const pathParts = file.path.split('/');
+                    const dir = pathParts.length > 1 ? pathParts[0] : '';
+                    const fileName = pathParts[pathParts.length - 1].replace(/\.md$/i, '');
+                    const derivedTags = [dir, fileName].filter(t => t && t !== '_index');
+                    return {
+                        title: file.path,
+                        content: file.content.substring(0, 200),
+                        fullContent: file.content,
+                        summary: file.content.substring(0, 200),
+                        keywords: derivedTags,
+                        relevantTags: derivedTags,
+                        primaryRelevantTag: dir || fileName || 'general',
+                        isAgenticMemory: true
+                    };
+                }),
                 assembledContext: result.assembledContext || null,
                 timestamp: Date.now()
             };

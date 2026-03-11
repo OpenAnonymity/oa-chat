@@ -2256,9 +2256,11 @@ export default class ChatArea {
             <div class="full-prompt-preview-content">
                 <div class="full-prompt-preview-header">
                     <div class="full-prompt-preview-title">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
-                        </svg>
+                        <div style="display:flex;align-items:center;justify-content:center;width:1.5rem;height:1.5rem;border-radius:0.375rem;background:hsl(var(--color-accent-primary) / 0.1)">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5" style="color:hsl(var(--color-accent-primary))">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+                            </svg>
+                        </div>
                         Full Prompt with Context
                     </div>
                     <button class="full-prompt-preview-close" id="close-prompt-preview">
@@ -2271,12 +2273,13 @@ export default class ChatArea {
                     ${hasMemory ? `
                         <div class="full-prompt-section">
                             <div class="full-prompt-section-title">
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4" style="color:hsl(var(--color-accent-primary) / 0.7)">
                                     <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
                                 </svg>
-                                Retrieved Context (${context.memories.length} item${context.memories.length === 1 ? '' : 's'})
+                                Retrieved Context
+                                <span style="font-weight:400;font-size:0.75rem;color:hsl(var(--color-muted-foreground));margin-left:0.25rem">${context.memories.length} item${context.memories.length === 1 ? '' : 's'}</span>
                             </div>
-                            <div class="full-prompt-tag-caption">Related Tags Retrieved</div>
+                            <div class="full-prompt-tag-caption">Related Tags</div>
                             <div class="full-prompt-tags">
                                 ${contextTags.length > 0
                                     ? contextTags.map(tag => `<span class="full-prompt-tag">${this.escapeHtml(tag)}</span>`).join('')
@@ -2295,7 +2298,7 @@ export default class ChatArea {
                                                     <div class="full-prompt-memory-title-row">
                                                         <div class="full-prompt-memory-title-text">${entry.idx + 1}. ${this.escapeHtml(m.title || 'Untitled')}</div>
                                                         <button type="button" class="full-prompt-memory-toggle-btn" aria-expanded="false">
-                                                            Expand
+                                                            Show
                                                         </button>
                                                     </div>
                                                     <div class="full-prompt-memory-tags">
@@ -2336,14 +2339,14 @@ export default class ChatArea {
                 </div>
                 <div class="full-prompt-preview-footer">
                     <div class="full-prompt-hint">
-                        <kbd class="inline-flex items-center justify-center rounded border border-border bg-muted px-2 py-1 text-xs font-mono">Esc</kbd>
+                        <kbd class="inline-flex items-center justify-center rounded-md border border-border bg-muted px-2 py-1 text-xs font-mono">Esc</kbd>
                         <span>to close</span>
                     </div>
                     <button class="full-prompt-copy-btn" id="copy-full-prompt">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
                         </svg>
-                        Copy Full Prompt
+                        Copy Prompt
                     </button>
                 </div>
             </div>
@@ -2373,7 +2376,7 @@ export default class ChatArea {
                     return;
                 }
                 const isCollapsed = memoryContent.classList.toggle('is-collapsed');
-                btn.textContent = isCollapsed ? 'Expand' : 'Collapse';
+                btn.textContent = isCollapsed ? 'Show' : 'Hide';
                 btn.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
             });
         });

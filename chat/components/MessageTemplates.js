@@ -1355,26 +1355,28 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
             <div class="flex items-center gap-2 w-full -mt-1">
                 <button
                     type="button"
-                    class="memory-preview-btn inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors border border-border px-3 py-1.5 shadow-sm hover:bg-muted/60"
-                    data-message-id="${message.id}"
-                >
-                    View/Edit full prompt
-                </button>
-                <button
-                    type="button"
-                    class="memory-approval-btn inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors border border-border px-3 py-1.5 shadow-sm hover:bg-muted/60"
+                    class="memory-approval-btn memory-approval-primary inline-flex items-center gap-1.5 justify-center rounded-lg text-xs font-medium transition-colors border px-3 py-1.5"
                     data-message-id="${message.id}"
                     data-decision="yes"
                 >
-                    Yes, include memory
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"></path></svg>
+                    Include memory
                 </button>
                 <button
                     type="button"
-                    class="memory-approval-btn inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors border border-border px-3 py-1.5 shadow-sm hover:bg-muted/60"
+                    class="memory-approval-btn inline-flex items-center justify-center rounded-lg text-xs font-medium transition-colors border border-border px-3 py-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/60"
                     data-message-id="${message.id}"
                     data-decision="no"
                 >
-                    No, skip memory
+                    Skip
+                </button>
+                <button
+                    type="button"
+                    class="memory-preview-btn inline-flex items-center gap-1 justify-center rounded-lg text-xs transition-colors text-muted-foreground hover:text-foreground px-2 py-1.5"
+                    data-message-id="${message.id}"
+                >
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.64 0 8.577 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.64 0-8.577-3.007-9.963-7.178z"></path><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                    View prompt
                 </button>
             </div>
         `;
@@ -1383,9 +1385,10 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
             <div class="flex items-center gap-2 w-full -mt-1">
                 <button
                     type="button"
-                    class="memory-preview-btn inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors border border-border px-3 py-1.5 shadow-sm hover:bg-muted/60"
+                    class="memory-preview-btn inline-flex items-center gap-1 justify-center rounded-lg text-xs transition-colors border border-border text-muted-foreground hover:text-foreground hover:bg-muted/60 px-3 py-1.5"
                     data-user-message-id="${message.memoryApprovalPrompt.linkedUserMessageId}"
                 >
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.64 0 8.577 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.64 0-8.577-3.007-9.963-7.178z"></path><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
                     View full prompt
                 </button>
             </div>
