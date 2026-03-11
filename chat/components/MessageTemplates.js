@@ -1105,11 +1105,10 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
     // Use short model name for display (without provider prefix)
     const displayModelName = extractShortModelName(modelName);
-    const isPersonalAgent = typeof displayModelName === 'string' && displayModelName.trim().toLowerCase() === 'personal agent';
+    const isPersonalAgent = typeof displayModelName === 'string' && (displayModelName.trim().toLowerCase() === 'personal agent' || displayModelName.trim().toLowerCase() === 'steward agent');
     const personalAgentIcon = `
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" class="w-3.5 h-3.5 text-primary">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z" />
-            <path stroke-linecap="round" stroke-linejoin="round" d="M18 6.75v3m-1.5-1.5h3" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z" />
         </svg>
     `;
 
@@ -1296,7 +1295,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
                 <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow bg-muted">
                     ${personalAgentIcon}
                 </div>
-                <span class="${CLASSES.assistantModelName}" style="font-size: 0.7rem;">personal agent</span>
+                <span class="${CLASSES.assistantModelName}" style="font-size: 0.7rem;">Steward Agent</span>
                 <span class="${CLASSES.assistantTime}" style="font-size: 0.7rem;">${formatTime(message.timestamp)}</span>
             </div>
         `
