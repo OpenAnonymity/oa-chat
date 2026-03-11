@@ -4395,7 +4395,10 @@ class ChatApp {
                 console.log('[Memory Approval] Using approved payload override:', this._lastApiContent);
                 this.pendingMemoryContext = memoryContext;
                 await this.applyMemoryContextToUserMessage(userMessage, memoryContext);
-                retrievalMessage.content = `Memory approved. Added ${result.files.length} item${result.files.length === 1 ? '' : 's'} to the request.`;
+                const approvedMemoryCount = Array.isArray(memoryContext?.memories) ? memoryContext.memories.length : 0;
+                retrievalMessage.content = approvedMemoryCount > 0
+                    ? `Memory approved. Added ${approvedMemoryCount} item${approvedMemoryCount === 1 ? '' : 's'} to the request.`
+                    : 'Memory approved. Sending the edited query without retrieved memory context.';
                 retrievalMessage.memoryApprovalPrompt = {
                     status: 'approved',
                     linkedUserMessageId: userMessage.id

@@ -2204,38 +2204,9 @@ export default class ChatArea {
         const hasMemory = context && context.memories && context.memories.length > 0;
         const memoryEntries = hasMemory
             ? context.memories.map((memory, idx) => {
-                const tags = Array.from(new Set(
-                    (Array.isArray(memory?.keywords) ? memory.keywords : [])
-                        .filter(tag => typeof tag === 'string' && tag.trim().length > 0)
-                        .map(tag => tag.trim().toLowerCase())
-                ));
-                const relevantTags = Array.from(new Set(
-                    (Array.isArray(memory?.relevantTags) ? memory.relevantTags : [])
-                        .filter(tag => typeof tag === 'string' && tag.trim().length > 0)
-                        .map(tag => tag.trim().toLowerCase())
-                ));
-                const primaryTag = (typeof memory?.primaryRelevantTag === 'string' && memory.primaryRelevantTag.trim().length > 0)
-                    ? memory.primaryRelevantTag.trim().toLowerCase()
-                    : (relevantTags[0] || tags[0] || 'untagged');
-                return { memory, idx, tags, relevantTags, primaryTag };
+                return { memory, idx };
             })
             : [];
-        const contextTags = Array.from(new Set(memoryEntries.flatMap(entry => entry.relevantTags)));
-        const groupedContextMap = new Map();
-        memoryEntries.forEach((entry) => {
-            if (!groupedContextMap.has(entry.primaryTag)) {
-                groupedContextMap.set(entry.primaryTag, []);
-            }
-            groupedContextMap.get(entry.primaryTag).push(entry);
-        });
-        const groupedContext = Array.from(groupedContextMap.entries()).map(([tag, entries]) => ({ tag, entries }));
-
-        if (hasMemory && groupedContext.length === 0 && memoryEntries.length > 0) {
-            groupedContext.push({
-                tag: 'untagged',
-                entries: memoryEntries
-            });
-        }
 
         let fullPrompt = '';
 
@@ -2276,40 +2247,22 @@ export default class ChatArea {
                                 </svg>
                                 Retrieved Context (${context.memories.length} item${context.memories.length === 1 ? '' : 's'})
                             </div>
-                            <div class="full-prompt-tag-caption">Related Tags Retrieved</div>
-                            <div class="full-prompt-tags">
-                                ${contextTags.length > 0
-                                    ? contextTags.map(tag => `<span class="full-prompt-tag">${this.escapeHtml(tag)}</span>`).join('')
-                                    : '<span class="full-prompt-tags-empty">No context tags</span>'
-                                }
-                            </div>
-                            <div class="full-prompt-tag-groups">
-                                ${groupedContext.map((group) => `
-                                    <div class="full-prompt-tag-group">
-                                        <div class="full-prompt-tag-group-title">#${this.escapeHtml(group.tag)}</div>
-                                        ${group.entries.map((entry) => {
-                                            const m = entry.memory;
-                                            const content = m.fullContent || m.displayContent || m.content || m.summary || '';
-                                            return `
-                                                <div class="full-prompt-memory-item">
-                                                    <div class="full-prompt-memory-title-row">
-                                                        <div class="full-prompt-memory-title-text">${entry.idx + 1}. ${this.escapeHtml(m.title || 'Untitled')}</div>
-                                                        <button type="button" class="full-prompt-memory-toggle-btn" aria-expanded="false">
-                                                            Expand
-                                                        </button>
-                                                    </div>
-                                                    <div class="full-prompt-memory-tags">
-                                                        ${(entry.relevantTags.length > 0 ? entry.relevantTags : entry.tags).length > 0
-                                                            ? (entry.relevantTags.length > 0 ? entry.relevantTags : entry.tags).map(tag => `<span class="full-prompt-memory-tag">${this.escapeHtml(tag)}</span>`).join('')
-                                                            : '<span class="full-prompt-memory-tags-empty">No tags</span>'
-                                                        }
-                                                    </div>
-                                                    <div class="full-prompt-memory-content is-collapsed">${this.escapeHtml(content)}</div>
-                                                </div>
-                                            `;
-                                        }).join('')}
-                                    </div>
-                                `).join('')}
+                            <div class="full-prompt-memory-list">
+                                ${memoryEntries.map((entry) => {
+                                    const m = entry.memory;
+                                    const content = m.fullContent || m.displayContent || m.content || m.summary || '';
+                                    return `
+                                        <div class="full-prompt-memory-item">
+                                            <div class="full-prompt-memory-title-row">
+                                                <div class="full-prompt-memory-title-text">${entry.idx + 1}. ${this.escapeHtml(m.title || 'Untitled')}</div>
+                                                <button type="button" class="full-prompt-memory-toggle-btn" aria-expanded="false">
+                                                    Expand
+                                                </button>
+                                            </div>
+                                            <div class="full-prompt-memory-content is-collapsed">${this.escapeHtml(content)}</div>
+                                        </div>
+                                    `;
+                                }).join('')}
                             </div>
                         </div>
                     ` : ''}

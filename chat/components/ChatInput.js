@@ -1898,4 +1898,335 @@ export default class ChatInput {
             dismissToast?.();
         }
     }
+
+    /**
+     * Show editable full prompt preview modal for pending memory context.
+     * @param {Object|null} draft
+     */
+    showFullPromptPreview(draft = null) {
+        if (!this.app.pendingMemoryContext || !Array.isArray(this.app.pendingMemoryContext.memories) || this.app.pendingMemoryContext.memories.length === 0) {
+            return;
+        }
+
+        const onApply = typeof draft?.onApply === 'function' ? draft.onApply : null;
+        const persistToInput = draft?.persistToInput !== false;
+        let userQueryDraft = typeof draft?.userQuery === 'string'
+            ? draft.userQuery
+            : (this.app.elements.messageInput.value || '');
+        const hasExistingOverride = typeof this.app._lastApiContent === 'string'
+            && this.app._lastApiContent.trim().length > 0;
+        let rawOverrideEnabled = typeof draft?.rawOverrideEnabled === 'boolean'
+            ? draft.rawOverrideEnabled
+            : hasExistingOverride;
+        let rawOverrideDraft = typeof draft?.rawOverrideDraft === 'string'
+            ? draft.rawOverrideDraft
+            : (hasExistingOverride ? this.app._lastApiContent : '');
+
+        const getCurrentMemories = () => this.app.pendingMemoryContext?.memories || [];
+        const buildAssembledContext = () => {
+            const memories = getCurrentMemories();
+            if (memories.length === 0) {
+                return null;
+            }
+            return memories.map((memory, idx) => {
+                const content = memory.fullContent || memory.displayContent || memory.content || memory.summary || '';
+                return `--- Retrieved Context ${idx + 1}: ${memory.title || 'Untitled'} ---\n${content}`;
+            }).join('\n\n');
+        };
+        const buildDefaultPayload = (queryText) => {
+            const assembledContext = buildAssembledContext();
+            if (!assembledContext) {
+                return queryText.trim();
+            }
+            return `${assembledContext}\n\n--- User Query ---\n${queryText.trim()}`;
+        };
+        const getEffectivePayload = () => {
+            if (rawOverrideEnabled && rawOverrideDraft.trim()) {
+                return rawOverrideDraft;
+            }
+            return buildDefaultPayload(userQueryDraft);
+        };
+        const renderMemoryList = () => {
+            const memories = getCurrentMemories();
+            if (memories.length === 0) {
+                return '<div class="full-prompt-memory-empty">No retrieved context items remain.</div>';
+            }
+            return memories.map((memory, idx) => {
+                const content = memory.fullContent || memory.displayContent || memory.content || memory.summary || '';
+                return `
+                    <div class="full-prompt-memory-item" data-memory-index="${idx}">
+                        <div class="full-prompt-memory-title-row">
+                            <div class="full-prompt-memory-title-text">${idx + 1}. ${this.app.escapeHtml(memory.title || 'Untitled')}</div>
+                            <div class="full-prompt-memory-actions">
+                                <button type="button" class="full-prompt-memory-toggle-btn" aria-expanded="false">
+                                    Expand
+                                </button>
+                                <button type="button" class="full-prompt-delete-btn" data-memory-index="${idx}" aria-label="Delete context item ${idx + 1}">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor" class="w-4 h-4">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="full-prompt-memory-content is-collapsed">${this.app.escapeHtml(content)}</div>
+                    </div>
+                `;
+            }).join('');
+        };
+
+        const modal = document.createElement('div');
+        modal.className = 'full-prompt-preview-modal';
+        modal.innerHTML = `
+            <div class="full-prompt-preview-content">
+                <div class="full-prompt-preview-header">
+                    <div class="full-prompt-preview-title">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                        </svg>
+                        Full Prompt Preview
+                    </div>
+                    <button class="full-prompt-preview-close" id="close-prompt-preview-input">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+                <div class="full-prompt-preview-body">
+                    <div class="full-prompt-section">
+                        <div class="full-prompt-section-title">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
+                            </svg>
+                            Retrieved Context (<span id="full-prompt-context-count">${getCurrentMemories().length} item${getCurrentMemories().length === 1 ? '' : 's'}</span>)
+                        </div>
+                        <div class="full-prompt-section-subtle">Delete any item here to remove it from the final query.</div>
+                        <div class="full-prompt-memory-list" id="full-prompt-memory-list">
+                            ${renderMemoryList()}
+                        </div>
+                    </div>
+                    <div class="full-prompt-section">
+                        <div class="full-prompt-section-title">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
+                            </svg>
+                            Edit Query
+                        </div>
+                        <div class="full-prompt-section-subtle">Adjust the outgoing user query before approval.</div>
+                        <textarea class="full-prompt-section-editable full-prompt-user-message-edit" id="full-prompt-user-query">${this.app.escapeHtml(userQueryDraft)}</textarea>
+                    </div>
+                    <div class="full-prompt-section">
+                        <div class="full-prompt-section-title">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0 0 21 18V6a2.25 2.25 0 0 0-2.25-2.25H5.25A2.25 2.25 0 0 0 3 6v12a2.25 2.25 0 0 0 2.25 2.25z" />
+                            </svg>
+                            Final Prompt Preview
+                        </div>
+                        <div class="full-prompt-section-content full-prompt-final-preview" id="full-prompt-final-preview">${this.app.escapeHtml(getEffectivePayload())}</div>
+                    </div>
+                    <div class="full-prompt-section">
+                        <div class="full-prompt-section-title">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 0h10.5A2.25 2.25 0 0 1 19.5 12.75v6A2.25 2.25 0 0 1 17.25 21h-10.5A2.25 2.25 0 0 1 4.5 18.75v-6A2.25 2.25 0 0 1 6.75 10.5Z" />
+                            </svg>
+                            Advanced Mode
+                        </div>
+                        <label class="full-prompt-raw-toggle-row">
+                            <input type="checkbox" id="full-prompt-raw-toggle" ${rawOverrideEnabled ? 'checked' : ''}>
+                            <span>Edit final prompt manually</span>
+                        </label>
+                        <div id="full-prompt-advanced-warning" class="full-prompt-advanced-warning ${rawOverrideEnabled ? '' : 'hidden'}">
+                            Manual edits override the structured query preview until advanced mode is disabled.
+                        </div>
+                        <textarea class="full-prompt-section-editable full-prompt-raw-edit ${rawOverrideEnabled ? '' : 'hidden'}" id="full-prompt-raw-textarea">${this.app.escapeHtml(rawOverrideDraft)}</textarea>
+                    </div>
+                </div>
+                <div class="full-prompt-preview-footer">
+                    <div class="full-prompt-hint">
+                        <kbd class="inline-flex items-center justify-center rounded border border-border bg-muted px-2 py-1 text-xs font-mono">Esc</kbd>
+                        <span>to close</span>
+                    </div>
+                    <div class="full-prompt-footer-actions">
+                        <button class="full-prompt-copy-btn" id="copy-full-prompt-input">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
+                            </svg>
+                            Copy
+                        </button>
+                        <button class="full-prompt-use-btn" id="use-edited-prompt-btn">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                            </svg>
+                            Apply
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+
+        const closeBtn = modal.querySelector('#close-prompt-preview-input');
+        const copyBtn = modal.querySelector('#copy-full-prompt-input');
+        const useBtn = modal.querySelector('#use-edited-prompt-btn');
+        const userQueryTextarea = modal.querySelector('#full-prompt-user-query');
+        const finalPreviewEl = modal.querySelector('#full-prompt-final-preview');
+        const rawToggle = modal.querySelector('#full-prompt-raw-toggle');
+        const rawTextarea = modal.querySelector('#full-prompt-raw-textarea');
+        const advancedWarning = modal.querySelector('#full-prompt-advanced-warning');
+        const memoryListEl = modal.querySelector('#full-prompt-memory-list');
+        const memoryCountEl = modal.querySelector('#full-prompt-context-count');
+
+        const bindMemoryListButtons = () => {
+            modal.querySelectorAll('.full-prompt-memory-toggle-btn').forEach((btn) => {
+                btn.addEventListener('click', () => {
+                    const memoryItem = btn.closest('.full-prompt-memory-item');
+                    const memoryContent = memoryItem?.querySelector('.full-prompt-memory-content');
+                    if (!memoryContent) {
+                        return;
+                    }
+                    const isCollapsed = memoryContent.classList.toggle('is-collapsed');
+                    btn.textContent = isCollapsed ? 'Expand' : 'Collapse';
+                    btn.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
+                });
+            });
+            modal.querySelectorAll('.full-prompt-delete-btn').forEach((btn) => {
+                btn.addEventListener('click', () => {
+                    const memoryIndex = Number.parseInt(btn.dataset.memoryIndex || '', 10);
+                    if (Number.isNaN(memoryIndex) || !this.app.pendingMemoryContext) {
+                        return;
+                    }
+                    this.app.pendingMemoryContext.memories.splice(memoryIndex, 1);
+                    if (Array.isArray(this.app.pendingMemoryContext.sessionIds)) {
+                        this.app.pendingMemoryContext.sessionIds.splice(memoryIndex, 1);
+                    }
+                    this.app.pendingMemoryContext.assembledContext = buildAssembledContext();
+                    rawOverrideEnabled = false;
+                    rawOverrideDraft = '';
+                    if (rawToggle) {
+                        rawToggle.checked = false;
+                    }
+                    if (rawTextarea) {
+                        rawTextarea.value = '';
+                    }
+                    updateMemoryListUI();
+                    updateRawModeUI();
+                });
+            });
+        };
+        const updateMemoryListUI = () => {
+            if (memoryListEl) {
+                memoryListEl.innerHTML = renderMemoryList();
+            }
+            if (memoryCountEl) {
+                const count = getCurrentMemories().length;
+                memoryCountEl.textContent = `${count} item${count === 1 ? '' : 's'}`;
+            }
+            bindMemoryListButtons();
+            updateFinalPreview();
+        };
+        const updateFinalPreview = () => {
+            if (finalPreviewEl) {
+                finalPreviewEl.textContent = getEffectivePayload();
+            }
+        };
+        const updateRawModeUI = () => {
+            if (!rawTextarea || !userQueryTextarea) {
+                return;
+            }
+            rawTextarea.classList.toggle('hidden', !rawOverrideEnabled);
+            advancedWarning?.classList.toggle('hidden', !rawOverrideEnabled);
+            userQueryTextarea.readOnly = rawOverrideEnabled;
+            userQueryTextarea.classList.toggle('full-prompt-structured-disabled', rawOverrideEnabled);
+            updateFinalPreview();
+        };
+
+        let isClosed = false;
+        const closeModal = () => {
+            if (isClosed) {
+                return;
+            }
+            isClosed = true;
+            document.removeEventListener('keydown', handleKeydown);
+            modal.remove();
+        };
+        const handleKeydown = (e) => {
+            if (e.key === 'Escape') {
+                closeModal();
+            }
+        };
+
+        closeBtn?.addEventListener('click', closeModal);
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                closeModal();
+            }
+        });
+        copyBtn?.addEventListener('click', async () => {
+            try {
+                await navigator.clipboard.writeText(getEffectivePayload());
+                copyBtn.innerHTML = `
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                    </svg>
+                    Copied!
+                `;
+                setTimeout(() => {
+                    copyBtn.innerHTML = `
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
+                        </svg>
+                        Copy
+                    `;
+                }, 2000);
+            } catch (error) {
+                console.error('Failed to copy full prompt preview:', error);
+            }
+        });
+        userQueryTextarea?.addEventListener('input', () => {
+            userQueryDraft = userQueryTextarea.value;
+            updateFinalPreview();
+        });
+        rawToggle?.addEventListener('change', () => {
+            rawOverrideEnabled = !!rawToggle.checked;
+            if (rawOverrideEnabled && !rawOverrideDraft.trim()) {
+                rawOverrideDraft = buildDefaultPayload(userQueryDraft);
+                if (rawTextarea) {
+                    rawTextarea.value = rawOverrideDraft;
+                }
+            }
+            updateRawModeUI();
+        });
+        rawTextarea?.addEventListener('input', () => {
+            rawOverrideDraft = rawTextarea.value;
+            updateFinalPreview();
+        });
+        useBtn?.addEventListener('click', () => {
+            const appliedRawOverride = rawOverrideEnabled && rawOverrideDraft.trim()
+                ? rawOverrideDraft
+                : null;
+
+            if (persistToInput && userQueryTextarea) {
+                this.app.elements.messageInput.value = userQueryTextarea.value;
+                this.app.elements.messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+            if (persistToInput) {
+                this.app._lastApiContent = appliedRawOverride;
+            }
+            onApply?.({
+                userQuery: userQueryTextarea?.value || userQueryDraft,
+                rawOverrideEnabled,
+                rawOverrideDraft,
+                effectivePayload: getEffectivePayload(),
+                memoryContext: {
+                    ...this.app.pendingMemoryContext,
+                    assembledContext: buildAssembledContext()
+                }
+            });
+            closeModal();
+        });
+
+        bindMemoryListButtons();
+        updateRawModeUI();
+        document.addEventListener('keydown', handleKeydown);
+    }
 }
