@@ -21,6 +21,23 @@ function inferDownloadName(language, code) {
     return 'artifact.txt';
 }
 
+function inferMimeType(language, code) {
+    const lang = (language || '').toLowerCase();
+    if (lang === 'html' || lang === 'htm' || /^\s*<!doctype html/i.test(code) || /^\s*<html[\s>]/i.test(code)) {
+        return 'text/html';
+    }
+    if (lang === 'svg' || /^\s*<svg[\s>]/i.test(code)) {
+        return 'image/svg+xml';
+    }
+    if (lang === 'json') {
+        return 'application/json';
+    }
+    if (lang === 'ics' || /BEGIN:VCALENDAR/i.test(code || '')) {
+        return 'text/calendar';
+    }
+    return 'text/plain';
+}
+
 function isHtmlBlock(language, code) {
     const lang = (language || '').toLowerCase();
     return lang === 'html' || lang === 'htm' || /^\s*<!doctype html/i.test(code) || /^\s*<html[\s>]/i.test(code);
@@ -69,6 +86,24 @@ function groupBy(items, key) {
     return map;
 }
 
+function shouldPersistRun(run) {
+    if (!run) return false;
+    if (run.metadata?.source === 'code-block' && run.toolFamily === 'artifact') {
+        return false;
+    }
+    return true;
+}
+
+function shouldEmbedArtifacts(run) {
+    if (!run) return false;
+    return run.metadata?.outputMode === 'embed' ||
+        (run.metadata?.source === 'model' && run.toolFamily === 'artifact');
+}
+
+function shouldRenderRunCard(run) {
+    return shouldPersistRun(run) && !shouldEmbedArtifacts(run);
+}
+
 export default class ChatToolController {
     constructor(app) {
         this.app = app;
@@ -95,7 +130,16 @@ export default class ChatToolController {
             artifactStore: new ChatArtifactStoreAdapter(chatDB)
         });
 
-        this.unsubscribeRuntime = this.runtime.subscribe((event) => {
+        this.unsubscribeRuntime = this.runtime.subscribe(async (event) => {
+            if (event?.type === 'tool.run.started' && shouldPersistRun(event.run)) {
+                await this.attachRunPartToMessage(event.run.messageId, event.run);
+            }
+            if (event?.type === 'tool.run.completed' && shouldPersistRun(event.run)) {
+                await this.attachRunArtifactsToMessage(event.run.messageId, event.run, event.artifacts || []);
+            }
+            if (event?.type === 'tool.run.failed' && shouldPersistRun(event.run)) {
+                await this.attachRunPartToMessage(event.run.messageId, event.run);
+            }
             const messageId = event?.run?.messageId || event?.messageId;
             if (messageId) {
                 this.scheduleMessageRefresh(messageId);
@@ -128,12 +172,24 @@ export default class ChatToolController {
                 toolName: 'html.render',
                 effect: 'open'
             });
+            actions.push({
+                actionId: 'download-html',
+                label: 'Download',
+                toolName: 'download.file',
+                effect: 'download'
+            });
         } else if (isSvgBlock(language, code) && this.toolMap.has('svg.render')) {
             actions.push({
                 actionId: 'preview-svg',
                 label: 'Preview',
                 toolName: 'svg.render',
                 effect: 'open'
+            });
+            actions.push({
+                actionId: 'download-svg',
+                label: 'Download',
+                toolName: 'download.file',
+                effect: 'download'
             });
         }
 
@@ -179,7 +235,8 @@ export default class ChatToolController {
                     content: code,
                     title: 'HTML Preview'
                 },
-                effect: 'open'
+                effect: 'open',
+                persist: false
             };
         case 'preview-svg':
             return {
@@ -190,18 +247,22 @@ export default class ChatToolController {
                     content: code,
                     title: 'SVG Preview'
                 },
-                effect: 'open'
+                effect: 'open',
+                persist: false
             };
+        case 'download-html':
+        case 'download-svg':
         case 'download-file':
             return {
                 toolName: 'download.file',
                 input: {
                     name: sanitizeFilename(inferDownloadName(language, code), 'artifact.txt'),
-                    mimeType: isCalendarBlock(language, code) ? 'text/calendar' : 'text/plain',
+                    mimeType: inferMimeType(language, code),
                     content: code,
                     kind: lang || 'file'
                 },
-                effect: 'download'
+                effect: 'download',
+                persist: false
             };
         case 'run-python':
             return {
@@ -210,7 +271,8 @@ export default class ChatToolController {
                     language: lang || 'python',
                     command: code
                 },
-                effect: 'none'
+                effect: 'none',
+                persist: true
             };
         case 'run-shell':
             return {
@@ -219,7 +281,8 @@ export default class ChatToolController {
                     language: lang || 'bash',
                     command: code
                 },
-                effect: 'none'
+                effect: 'none',
+                persist: true
             };
         default:
             throw new Error(`Unsupported manual tool action: ${actionId}`);
@@ -233,7 +296,29 @@ export default class ChatToolController {
         }
 
         const manual = this.buildManualToolInput({ actionId, language, code });
-        const { run, done } = await this.runtime.startManualToolRun({
+        if (manual.persist === false) {
+            const result = await this.runtime.runEphemeralTool({
+                sessionId: session.id,
+                messageId,
+                toolName: manual.toolName,
+                input: manual.input,
+                metadata: {
+                    source: 'code-block',
+                    actionId,
+                    language: language || '',
+                    outputMode: 'inline-action'
+                }
+            });
+
+            if (manual.effect === 'open' && result.artifacts[0]) {
+                this.app.chatArea?.showArtifactViewer?.(result.artifacts[0]);
+            } else if (manual.effect === 'download' && result.artifacts[0]) {
+                await this.downloadArtifactContent(result.artifacts[0]);
+            }
+            return result;
+        }
+
+        const { done } = await this.runtime.startManualToolRun({
             sessionId: session.id,
             messageId,
             toolName: manual.toolName,
@@ -241,29 +326,18 @@ export default class ChatToolController {
             metadata: {
                 source: 'code-block',
                 actionId,
-                language: language || ''
+                language: language || '',
+                outputMode: 'execution-run'
             }
         });
 
-        await this.attachRunPartToMessage(messageId, run);
-        this.scheduleMessageRefresh(messageId);
-
-        try {
-            const result = await done;
-            await this.attachRunArtifactsToMessage(messageId, result.run, result.artifacts);
-
-            if (manual.effect === 'open' && result.artifacts[0]) {
-                await this.openArtifact(result.artifacts[0].id);
-            } else if (manual.effect === 'download' && result.artifacts[0]) {
-                await this.downloadArtifact(result.artifacts[0].id);
-            }
-
-            this.scheduleMessageRefresh(messageId);
-            return result;
-        } catch (error) {
-            this.scheduleMessageRefresh(messageId);
-            throw error;
+        const result = await done;
+        if (manual.effect === 'open' && result.artifacts[0]) {
+            await this.openArtifact(result.artifacts[0].id);
+        } else if (manual.effect === 'download' && result.artifacts[0]) {
+            await this.downloadArtifact(result.artifacts[0].id);
         }
+        return result;
     }
 
     async rerunExecution(runId) {
@@ -272,7 +346,7 @@ export default class ChatToolController {
             throw new Error('Run not found.');
         }
 
-        const { run: newRun, done } = await this.runtime.startManualToolRun({
+        const { done } = await this.runtime.startManualToolRun({
             sessionId: run.sessionId,
             messageId: run.messageId,
             toolName: run.toolName,
@@ -283,18 +357,28 @@ export default class ChatToolController {
             }
         });
 
-        await this.attachRunPartToMessage(run.messageId, newRun);
-        this.scheduleMessageRefresh(run.messageId);
+        return done;
+    }
 
-        try {
-            const result = await done;
-            await this.attachRunArtifactsToMessage(run.messageId, result.run, result.artifacts);
-            this.scheduleMessageRefresh(run.messageId);
-            return result;
-        } catch (error) {
-            this.scheduleMessageRefresh(run.messageId);
-            throw error;
+    async *streamAssistantTurn(request) {
+        if (!this.runtime) {
+            throw new Error('Tool runtime is not initialized.');
         }
+
+        for await (const event of this.runtime.streamTurn({
+            modelAdapter: this.modelAdapter,
+            request
+        })) {
+            yield event;
+        }
+    }
+
+    shouldEmbedArtifacts(run) {
+        return shouldEmbedArtifacts(run);
+    }
+
+    shouldRenderRunCard(run) {
+        return shouldRenderRunCard(run);
     }
 
     async attachRunPartToMessage(messageId, run) {
@@ -360,9 +444,15 @@ export default class ChatToolController {
                 return (a.createdAt || 0) - (b.createdAt || 0);
             });
 
+            const executionRuns = messageRuns.filter(run => shouldRenderRunCard(run));
+            const embeddedArtifacts = messageRuns
+                .filter(run => shouldEmbedArtifacts(run))
+                .flatMap(run => run.artifacts || []);
+
             return {
                 ...message,
-                executionRuns: messageRuns
+                executionRuns,
+                embeddedArtifacts
             };
         });
     }
@@ -396,17 +486,7 @@ export default class ChatToolController {
         return chatDB.getArtifact(artifactId);
     }
 
-    async openArtifact(artifactId) {
-        const artifact = await this.getArtifact(artifactId);
-        if (!artifact) {
-            throw new Error('Artifact not found.');
-        }
-        this.app.chatArea?.showArtifactViewer?.(artifact);
-        return artifact;
-    }
-
-    async downloadArtifact(artifactId) {
-        const artifact = await this.getArtifact(artifactId);
+    async downloadArtifactContent(artifact) {
         if (!artifact) {
             throw new Error('Artifact not found.');
         }
@@ -421,6 +501,20 @@ export default class ChatToolController {
         document.body.removeChild(anchor);
         setTimeout(() => URL.revokeObjectURL(url), 1000);
         return artifact;
+    }
+
+    async openArtifact(artifactId) {
+        const artifact = await this.getArtifact(artifactId);
+        if (!artifact) {
+            throw new Error('Artifact not found.');
+        }
+        this.app.chatArea?.showArtifactViewer?.(artifact);
+        return artifact;
+    }
+
+    async downloadArtifact(artifactId) {
+        const artifact = await this.getArtifact(artifactId);
+        return this.downloadArtifactContent(artifact);
     }
 
     dispose() {

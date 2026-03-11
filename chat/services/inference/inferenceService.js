@@ -146,6 +146,31 @@ const inferenceService = {
             reasoningEffort
         );
     },
+    supportsStructuredToolCalls(session) {
+        const backend = getBackendForSession(session);
+        return typeof backend.supportsStructuredToolCalls === 'function'
+            ? backend.supportsStructuredToolCalls(session)
+            : Boolean(backend.streamStructuredTurn);
+    },
+    streamStructuredTurn({ messages, modelId, session, tools, searchEnabled, abortController, onEvent, reasoningEnabled, reasoningEffort }) {
+        const backend = getBackendForSession(session);
+        if (typeof backend.streamStructuredTurn !== 'function') {
+            throw new Error(`${backend.label} does not support structured tool calling.`);
+        }
+
+        const token = backend.getAccessToken(session);
+        return backend.streamStructuredTurn({
+            messages,
+            modelId,
+            token,
+            tools,
+            searchEnabled,
+            abortController,
+            onEvent,
+            reasoningEnabled,
+            reasoningEffort
+        });
+    },
     buildSharedAccessPayload(session) {
         const backend = getBackendForSession(session);
         const accessInfo = backend.getAccessInfo(session);

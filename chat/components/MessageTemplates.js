@@ -1205,6 +1205,100 @@ function buildExecutionRuns(message, formatTime) {
     `;
 }
 
+function buildSandboxedHtmlArtifactDocument(content = '') {
+    const csp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; media-src data: blob:; style-src 'unsafe-inline'; font-src data:; script-src 'unsafe-inline'; connect-src 'none'; child-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; navigate-to 'none'">`;
+    const charset = '<meta charset="utf-8">';
+
+    if (/<head[\s>]/i.test(content)) {
+        return content.replace(/<head(\s[^>]*)?>/i, (match) => `${match}${charset}${csp}`);
+    }
+    if (/<html[\s>]/i.test(content)) {
+        return content.replace(/<html(\s[^>]*)?>/i, (match) => `${match}<head>${charset}${csp}</head>`);
+    }
+    return `<!doctype html><html><head>${charset}${csp}</head><body>${content}</body></html>`;
+}
+
+function buildArtifactActionButtons(artifact) {
+    const openButton = canOpenArtifact(artifact) ? `
+        <button
+            class="execution-artifact-open-btn"
+            data-artifact-id="${escapeHtmlAttribute(artifact.id)}"
+            data-tooltip="Open artifact"
+            data-tooltip-position="top">
+            Open
+        </button>
+    ` : '';
+    const downloadButton = artifact.download !== false ? `
+        <button
+            class="execution-artifact-download-btn"
+            data-artifact-id="${escapeHtmlAttribute(artifact.id)}"
+            data-tooltip="Download artifact"
+            data-tooltip-position="top">
+            Download
+        </button>
+    ` : '';
+
+    return `${openButton}${downloadButton}`;
+}
+
+function buildEmbeddedArtifacts(message) {
+    const artifacts = Array.isArray(message.embeddedArtifacts) ? message.embeddedArtifacts : [];
+    if (artifacts.length === 0) return '';
+
+    const artifactBlocks = artifacts.map((artifact) => {
+        const actions = buildArtifactActionButtons(artifact);
+        const header = `
+            <div class="embedded-artifact-header">
+                <div class="embedded-artifact-meta">
+                    <span class="embedded-artifact-title">${escapeHtml(artifact.name || 'Artifact')}</span>
+                    <span class="embedded-artifact-kind">${escapeHtml((artifact.kind || artifact.mimeType || 'file').toString())}</span>
+                </div>
+                <div class="embedded-artifact-actions">
+                    ${actions}
+                </div>
+            </div>
+        `;
+
+        if (artifact.kind === 'html' || artifact.mimeType === 'text/html') {
+            return `
+                <div class="embedded-artifact-block embedded-artifact-html">
+                    ${header}
+                    <iframe
+                        class="embedded-artifact-frame"
+                        sandbox="allow-scripts"
+                        referrerpolicy="no-referrer"
+                        srcdoc="${escapeHtmlAttribute(buildSandboxedHtmlArtifactDocument(artifact.content || ''))}">
+                    </iframe>
+                </div>
+            `;
+        }
+
+        if (artifact.kind === 'svg' || artifact.mimeType === 'image/svg+xml') {
+            return `
+                <div class="embedded-artifact-block embedded-artifact-svg">
+                    ${header}
+                    <img
+                        class="embedded-artifact-image"
+                        alt="${escapeHtmlAttribute(artifact.name || 'SVG artifact')}"
+                        src="data:image/svg+xml;charset=utf-8,${encodeURIComponent(artifact.content || '')}" />
+                </div>
+            `;
+        }
+
+        return `
+            <div class="embedded-artifact-block embedded-artifact-file">
+                ${header}
+            </div>
+        `;
+    }).join('');
+
+    return `
+        <div class="embedded-artifact-list">
+            ${artifactBlocks}
+        </div>
+    `;
+}
+
 /**
  * Builds HTML for an assistant message bubble.
  * @param {Object} message - Message object
@@ -1293,13 +1387,14 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
             ${generatedImagesHtml}
         </div>
     ` : '';
+    const embeddedArtifactsHtml = buildEmbeddedArtifacts(message);
     const executionRunsHtml = buildExecutionRuns(message, formatTime);
 
     // Check if message is complete but has no user-visible output (no text, no reasoning, no images).
     // Reasoning-only responses can happen when generation is manually interrupted.
     const hasReasoningOutput = typeof message.reasoning === 'string' && message.reasoning.trim().length > 0;
-    const hasNoOutput = !processedContent && !hasReasoningOutput && (!message.images || message.images.length === 0);
-    const hasRenderableAssistantOutput = !!processedContent || !!generatedImagesHtml || !!thumbnailsBubble || !!executionRunsHtml;
+    const hasNoOutput = !processedContent && !hasReasoningOutput && (!message.images || message.images.length === 0) && !embeddedArtifactsHtml && !executionRunsHtml;
+    const hasRenderableAssistantOutput = !!processedContent || !!generatedImagesHtml || !!thumbnailsBubble || !!embeddedArtifactsHtml || !!executionRunsHtml;
     const hideAssistantActionsDuringReasoning = !!message.streamingReasoning && !hasRenderableAssistantOutput;
     // Message is complete if:
     // - Not actively streaming reasoning
@@ -1377,6 +1472,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
                 ${thumbnailsBubble}
                 ${textBubble}
                 ${imageBubble}
+                ${embeddedArtifactsHtml}
                 ${executionRunsHtml}
                 ${assistantActionsRow}
                 ${citationsBubble}

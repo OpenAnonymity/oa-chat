@@ -29,6 +29,7 @@ const openRouterBackend = {
     },
     fetchModels: () => openRouterAPI.fetchModels(),
     getDisplayName: (modelId, fallback) => openRouterAPI.getDisplayName(modelId, fallback),
+    supportsStructuredToolCalls: () => true,
     sendCompletion: (messages, modelId, token) => openRouterAPI.sendCompletion(messages, modelId, token),
     streamCompletion: (messages, modelId, token, onChunk, onTokenUpdate, files, searchEnabled, abortController, onStreamOpen, onReasoningChunk, reasoningEnabled, reasoningEffort) =>
         openRouterAPI.streamCompletion(
@@ -45,6 +46,18 @@ const openRouterBackend = {
             reasoningEnabled,
             reasoningEffort
         ),
+    streamStructuredTurn: ({ messages, modelId, token, tools, searchEnabled, abortController, onEvent, reasoningEnabled, reasoningEffort }) =>
+        openRouterAPI.streamStructuredTurn({
+            messages,
+            modelId,
+            apiKey: token,
+            tools,
+            searchEnabled,
+            abortController,
+            onEvent,
+            reasoningEnabled,
+            reasoningEffort
+        }),
     getAccessInfo(session) {
         if (!session) return null;
         return {

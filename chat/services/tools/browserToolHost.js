@@ -31,31 +31,78 @@ export default class BrowserToolHost {
         return [
             {
                 name: 'artifact.create',
+                skillName: 'artifact_create',
                 title: 'Create Artifact',
                 description: 'Create a downloadable artifact.',
                 family: 'artifact',
-                approvalPolicy: 'never'
+                approvalPolicy: 'never',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        name: { type: 'string', description: 'Filename for the artifact.' },
+                        mimeType: { type: 'string', description: 'MIME type for the artifact.' },
+                        kind: { type: 'string', description: 'Artifact kind such as file, text, json, html, or svg.' },
+                        content: { type: 'string', description: 'Artifact contents.' },
+                        title: { type: 'string', description: 'Optional UI title for the artifact.' }
+                    },
+                    required: ['name', 'content'],
+                    additionalProperties: false
+                }
             },
             {
                 name: 'html.render',
+                skillName: 'html_render',
                 title: 'Preview HTML',
-                description: 'Create a sandboxed HTML preview artifact.',
+                description: 'Render an interactive HTML page in a sandboxed preview and make it downloadable.',
                 family: 'artifact',
-                approvalPolicy: 'never'
+                approvalPolicy: 'never',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        name: { type: 'string', description: 'Filename for the HTML artifact.' },
+                        title: { type: 'string', description: 'Short label for the rendered page.' },
+                        content: { type: 'string', description: 'Full HTML document or HTML body to render.' }
+                    },
+                    required: ['content'],
+                    additionalProperties: false
+                }
             },
             {
                 name: 'svg.render',
+                skillName: 'svg_render',
                 title: 'Preview SVG',
                 description: 'Create an SVG preview artifact.',
                 family: 'artifact',
-                approvalPolicy: 'never'
+                approvalPolicy: 'never',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        name: { type: 'string', description: 'Filename for the SVG artifact.' },
+                        title: { type: 'string', description: 'Short label for the SVG preview.' },
+                        content: { type: 'string', description: 'Full SVG markup.' }
+                    },
+                    required: ['content'],
+                    additionalProperties: false
+                }
             },
             {
                 name: 'download.file',
+                skillName: 'download_file',
                 title: 'Download File',
                 description: 'Create a downloadable file artifact.',
                 family: 'artifact',
-                approvalPolicy: 'never'
+                approvalPolicy: 'never',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        name: { type: 'string', description: 'Filename for the file.' },
+                        mimeType: { type: 'string', description: 'MIME type for the file.' },
+                        kind: { type: 'string', description: 'Short file category.' },
+                        content: { type: 'string', description: 'File contents.' }
+                    },
+                    required: ['name', 'content'],
+                    additionalProperties: false
+                }
             }
         ];
     }

@@ -188,6 +188,43 @@ class OpenRouterAPI {
         return providerMap[provider] || provider.charAt(0).toUpperCase() + provider.slice(1);
     }
 
+    formatStructuredMessage(message) {
+        if (!message || typeof message !== 'object') {
+            return { role: 'user', content: '' };
+        }
+
+        if (message.role === 'assistant' && Array.isArray(message.toolCalls) && message.toolCalls.length > 0) {
+            return {
+                role: 'assistant',
+                content: message.content || '',
+                tool_calls: message.toolCalls.map((toolCall) => ({
+                    id: toolCall.id,
+                    type: toolCall.type || 'function',
+                    function: {
+                        name: toolCall.function?.name || toolCall.name || '',
+                        arguments: toolCall.function?.arguments || toolCall.arguments || '{}'
+                    }
+                }))
+            };
+        }
+
+        if (message.role === 'tool') {
+            return {
+                role: 'tool',
+                tool_call_id: message.toolCallId || message.tool_call_id || null,
+                name: message.name || null,
+                content: typeof message.content === 'string'
+                    ? message.content
+                    : JSON.stringify(message.content ?? '')
+            };
+        }
+
+        return {
+            role: message.role,
+            content: message.content
+        };
+    }
+
     isReasoningDetailImage(detail) {
         if (!detail || !detail.data) {
             return false;
@@ -958,6 +995,312 @@ class OpenRouterAPI {
                     },
                     error: error.message,
                     isAborted: error.isCancelled === true // Flag user-initiated cancellation
+                });
+            }
+
+            throw error;
+        }
+    }
+
+    async streamStructuredTurn({
+        messages,
+        modelId,
+        apiKey,
+        tools = [],
+        searchEnabled = false,
+        abortController = null,
+        onEvent = null,
+        reasoningEnabled = true,
+        reasoningEffort = DEFAULT_REASONING_EFFORT
+    }) {
+        const key = apiKey || this.getApiKey();
+        if (!key) {
+            throw new Error('No API key available. Please obtain an API key first.');
+        }
+
+        let effectiveModelId = modelId;
+        if (searchEnabled && !modelId.includes(':online')) {
+            effectiveModelId = `${modelId}:online`;
+        }
+
+        const normalizedReasoningEffort = normalizeReasoningEffort(reasoningEffort);
+        const reasoningPayload = reasoningEnabled
+            ? { effort: normalizedReasoningEffort }
+            : null;
+
+        const url = `${this.baseUrl}/chat/completions`;
+        const headers = {
+            'Authorization': `Bearer ${key}`,
+            'Content-Type': 'application/json'
+        };
+
+        let totalTokens = 0;
+        let promptTokens = 0;
+        let completionTokens = 0;
+        let modelUsed = effectiveModelId;
+        let accumulatedContent = '';
+        let accumulatedReasoning = '';
+        let finishReason = null;
+        const toolCallsByIndex = new Map();
+
+        const emit = (event) => {
+            if (typeof onEvent === 'function') {
+                onEvent(event);
+            }
+        };
+
+        const createToolCallId = () => {
+            if (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function') {
+                return globalThis.crypto.randomUUID();
+            }
+            return `call_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+        };
+
+        const mergeToolCall = (index, toolCallDelta) => {
+            const existing = toolCallsByIndex.get(index) || {
+                id: toolCallDelta.id || createToolCallId(),
+                type: toolCallDelta.type || 'function',
+                function: {
+                    name: '',
+                    arguments: ''
+                }
+            };
+
+            if (toolCallDelta.id) {
+                existing.id = toolCallDelta.id;
+            }
+            if (toolCallDelta.type) {
+                existing.type = toolCallDelta.type;
+            }
+            if (toolCallDelta.function?.name) {
+                existing.function.name += toolCallDelta.function.name;
+            }
+            if (toolCallDelta.function?.arguments) {
+                existing.function.arguments += toolCallDelta.function.arguments;
+            }
+
+            toolCallsByIndex.set(index, existing);
+        };
+
+        try {
+            const systemPrompt = getSystemPrompt(effectiveModelId);
+            const messagesWithSystem = systemPrompt
+                ? [{ role: 'system', content: systemPrompt }, ...messages]
+                : messages;
+
+            const requestBody = {
+                model: effectiveModelId,
+                messages: messagesWithSystem.map(msg => this.formatStructuredMessage(msg)),
+                stream: true,
+                stream_options: { include_usage: true }
+            };
+
+            if (reasoningPayload) {
+                requestBody.reasoning = reasoningPayload;
+            }
+
+            if (Array.isArray(tools) && tools.length > 0) {
+                requestBody.tools = tools;
+                requestBody.tool_choice = 'auto';
+            }
+
+            const response = await networkProxy.fetchWithRetry(
+                url,
+                {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify(requestBody)
+                },
+                {
+                    context: 'Inference stream',
+                    maxAttempts: 3,
+                    timeoutMs: 0,
+                    signal: abortController?.signal
+                }
+            );
+
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                const errorMessage = errorData.error?.message || `HTTP error! status: ${response.status}`;
+                const error = new Error(errorMessage);
+                error.status = response.status;
+                error.data = errorData;
+                throw error;
+            }
+
+            emit({ type: 'assistant.stream.open' });
+
+            if (window.networkLogger) {
+                window.networkLogger.logRequest({
+                    type: 'openrouter',
+                    method: 'POST',
+                    url,
+                    status: response.status,
+                    request: {
+                        headers: window.networkLogger.sanitizeHeaders(headers),
+                        body: {
+                            model: effectiveModelId,
+                            messages: `${messages.length} messages`,
+                            stream: true,
+                            reasoning: reasoningPayload,
+                            tools: Array.isArray(tools) ? tools.map(tool => tool?.function?.name).filter(Boolean) : []
+                        }
+                    },
+                    response: { streaming: true, structured: true }
+                });
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+
+                for (const line of lines) {
+                    if (!line.trim() || line.startsWith(':')) continue;
+                    if (!line.startsWith('data: ')) continue;
+
+                    const data = line.slice(6);
+                    if (data === '[DONE]') continue;
+
+                    try {
+                        const parsed = JSON.parse(data);
+
+                        if (parsed.error) {
+                            const errorMessage = parsed.error.message || 'Stream error occurred';
+                            const error = new Error(errorMessage);
+                            error.code = parsed.error.code;
+                            throw error;
+                        }
+
+                        if (parsed.type === 'response.reasoning.delta' ||
+                            parsed.reasoning_delta ||
+                            parsed.choices?.[0]?.delta?.reasoning) {
+                            const reasoningDelta = parsed.delta ||
+                                parsed.reasoning_delta ||
+                                parsed.choices?.[0]?.delta?.reasoning ||
+                                '';
+                            if (reasoningDelta) {
+                                accumulatedReasoning += reasoningDelta;
+                                emit({ type: 'reasoning.delta', delta: reasoningDelta });
+                            }
+                        }
+
+                        if (parsed.type === 'response.output_text.delta') {
+                            const textDelta = parsed.delta || '';
+                            if (textDelta) {
+                                accumulatedContent += textDelta;
+                                emit({ type: 'assistant.delta', delta: textDelta });
+                            }
+                            continue;
+                        }
+
+                        const choice = parsed.choices?.[0];
+                        const delta = choice?.delta || null;
+                        if (delta?.content) {
+                            accumulatedContent += delta.content;
+                            emit({ type: 'assistant.delta', delta: delta.content });
+                        }
+
+                        if (delta?.images) {
+                            emit({ type: 'assistant.image', images: delta.images });
+                        }
+
+                        if (Array.isArray(delta?.tool_calls)) {
+                            delta.tool_calls.forEach((toolCallDelta) => {
+                                const index = toolCallDelta.index ?? 0;
+                                mergeToolCall(index, toolCallDelta);
+                            });
+                        }
+
+                        const fullToolCalls = choice?.message?.tool_calls;
+                        if (Array.isArray(fullToolCalls)) {
+                            fullToolCalls.forEach((toolCall, index) => {
+                                toolCallsByIndex.set(index, {
+                                    id: toolCall.id || createToolCallId(),
+                                    type: toolCall.type || 'function',
+                                    function: {
+                                        name: toolCall.function?.name || '',
+                                        arguments: toolCall.function?.arguments || '{}'
+                                    }
+                                });
+                            });
+                        }
+
+                        finishReason = choice?.finish_reason || finishReason;
+
+                        if (parsed.usage) {
+                            totalTokens = parsed.usage.total_tokens || 0;
+                            promptTokens = parsed.usage.prompt_tokens || 0;
+                            completionTokens = parsed.usage.completion_tokens || 0;
+                            emit({
+                                type: 'assistant.usage',
+                                usage: {
+                                    totalTokens,
+                                    promptTokens,
+                                    completionTokens,
+                                    isStreaming: false
+                                }
+                            });
+                        }
+
+                        if (parsed.model) {
+                            modelUsed = parsed.model;
+                        }
+                    } catch (error) {
+                        console.error('Error parsing structured SSE chunk:', error, 'Raw line:', line);
+                    }
+                }
+            }
+
+            const toolCalls = Array.from(toolCallsByIndex.entries())
+                .sort((a, b) => a[0] - b[0])
+                .map(([, toolCall]) => toolCall);
+
+            return {
+                message: {
+                    role: 'assistant',
+                    content: accumulatedContent,
+                    toolCalls
+                },
+                toolCalls,
+                totalTokens,
+                promptTokens,
+                completionTokens,
+                model: modelUsed,
+                reasoning: accumulatedReasoning || null,
+                citations: null,
+                finishReason
+            };
+        } catch (error) {
+            if (error.name === 'AbortError' || abortController?.signal?.aborted) {
+                error.isCancelled = true;
+            }
+
+            if (window.networkLogger) {
+                window.networkLogger.logRequest({
+                    type: 'openrouter',
+                    method: 'POST',
+                    url,
+                    status: error.status || 0,
+                    request: {
+                        headers: window.networkLogger.sanitizeHeaders(headers),
+                        body: {
+                            model: effectiveModelId,
+                            messages: `${messages.length} messages`,
+                            stream: true,
+                            reasoning: reasoningPayload,
+                            tools: Array.isArray(tools) ? tools.map(tool => tool?.function?.name).filter(Boolean) : []
+                        }
+                    },
+                    error: error.message,
+                    isAborted: error.isCancelled === true
                 });
             }
 

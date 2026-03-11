@@ -3716,6 +3716,492 @@ class ChatApp {
         return result;
     }
 
+    scrollMessageToTopSoon(messageId) {
+        if (!messageId) return;
+        setTimeout(() => {
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    this.scrollUserMessageToTop(messageId);
+                    setTimeout(() => this.updateScrollButtonVisibility(), 100);
+                });
+            });
+        }, 50);
+    }
+
+    async prepareSessionAssistantRequest(session, { typingId = null, accessReadyMessage = null } = {}) {
+        const hasAccessToken = !!inferenceService.getAccessToken(session);
+        const isAccessExpired = inferenceService.isAccessExpired(session);
+        const accessLabel = inferenceService.getAccessLabel(session);
+
+        if (!hasAccessToken || isAccessExpired) {
+            try {
+                if (this.floatingPanel) {
+                    this.floatingPanel.showMessage(`Acquiring ${accessLabel}...`, 'info');
+                }
+                await this.acquireAndSetAccess(session, {
+                    onGranted: () => {
+                        this.advancePendingStateAfterAccessGranted(session.id, typingId);
+                    }
+                });
+                const successMessage = typeof accessReadyMessage === 'function'
+                    ? accessReadyMessage(accessLabel)
+                    : accessReadyMessage;
+                if (successMessage && this.floatingPanel) {
+                    this.floatingPanel.showMessage(successMessage, 'success', 2000);
+                }
+            } catch (error) {
+                if (typingId) this.removeTypingIndicator(typingId);
+                if (this.floatingPanel) {
+                    this.floatingPanel.showMessage(error.message, 'error', 5000);
+                }
+                await this.addMessage('assistant', `**Error:** ${error.message}`, { isLocalOnly: true });
+                return null;
+            }
+        }
+
+        if (window.networkLogger) {
+            window.networkLogger.setCurrentSession(session.id);
+        }
+
+        let modelNameToUse = this.normalizeModelName(session.model);
+        if (modelNameToUse !== session.model) {
+            session.model = modelNameToUse;
+            await chatDB.saveSession(session);
+        }
+
+        let selectedModelEntry = modelNameToUse
+            ? this.state.models.find(m => m.name === modelNameToUse)
+            : null;
+
+        if (!selectedModelEntry) {
+            const fallbackModel = this.getFallbackModelEntry(session);
+            if (fallbackModel) {
+                selectedModelEntry = fallbackModel;
+                modelNameToUse = this.normalizeModelName(fallbackModel.name);
+                if (session.model !== modelNameToUse) {
+                    session.model = modelNameToUse;
+                    await chatDB.saveSession(session);
+                    this.renderCurrentModel();
+                }
+            }
+        }
+
+        if (!modelNameToUse || !selectedModelEntry) {
+            console.warn('No available models to send message.');
+            await this.addMessage('assistant', 'No models are available right now. Please add a model and try again.', { isLocalOnly: true });
+            return null;
+        }
+
+        return {
+            modelIdForRequest: selectedModelEntry.id,
+            modelNameToUse
+        };
+    }
+
+    getLatestUserScrubberPrompts(messages) {
+        if (!Array.isArray(messages)) {
+            return {
+                originalPrompt: null,
+                redactedPrompt: null
+            };
+        }
+
+        for (let i = messages.length - 1; i >= 0; i--) {
+            if (messages[i]?.role === 'user') {
+                return {
+                    originalPrompt: messages[i].scrubber?.original || null,
+                    redactedPrompt: messages[i].scrubber?.redacted || null
+                };
+            }
+        }
+
+        return {
+            originalPrompt: null,
+            redactedPrompt: null
+        };
+    }
+
+    removeRenderedMessage(messageId) {
+        if (!messageId) return;
+        const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
+        if (messageEl) {
+            messageEl.remove();
+        }
+    }
+
+    async discardStreamingMessage(sessionId, messageId) {
+        if (!messageId) return;
+        await this.deleteMessageWithRuntimeData(messageId);
+        if (this.isViewingSession(sessionId)) {
+            this.removeRenderedMessage(messageId);
+        }
+    }
+
+    async keepPartialAssistantTurn({ session, streamingMessage, streamedContent, streamedReasoning }) {
+        if (!streamingMessage?.id) {
+            return null;
+        }
+
+        const hydratedMessage = await this.toolController.hydrateMessageById(streamingMessage.id);
+        const hasToolOutput = Boolean(hydratedMessage?.executionRuns?.length || hydratedMessage?.embeddedArtifacts?.length);
+        const hasVisibleOutput = Boolean(streamedContent.trim() || streamedReasoning.trim() || hasToolOutput);
+
+        if (!hasVisibleOutput) {
+            await this.discardStreamingMessage(session.id, streamingMessage.id);
+            return null;
+        }
+
+        streamingMessage.content = streamedContent;
+        if (streamingMessage.scrubber) {
+            streamingMessage.scrubber.redactedResponse = streamedContent;
+        }
+        streamingMessage.reasoning = streamedReasoning ? parseReasoningContent(streamedReasoning) : null;
+        streamingMessage.tokenCount = null;
+        streamingMessage.streamingTokens = null;
+        streamingMessage.streamingReasoning = false;
+        streamingMessage.streamingPending = false;
+        streamingMessage.streamingPhase = null;
+        await chatDB.saveMessage(streamingMessage);
+
+        if (this.chatArea && this.isViewingSession(session.id)) {
+            const finalMessage = hydratedMessage || streamingMessage;
+            await this.chatArea.finalizeStreamingMessage(finalMessage);
+            if (streamingMessage.reasoning) {
+                this.chatArea.finalizeReasoningDisplay(streamingMessage.id, streamingMessage.reasoning);
+            }
+            return finalMessage;
+        }
+
+        return hydratedMessage || streamingMessage;
+    }
+
+    async renderAssistantTurnError({
+        session,
+        streamingMessage,
+        userFriendlyMessage,
+        firstChunkReceived,
+        markLocalOnly = false
+    }) {
+        if (firstChunkReceived && streamingMessage) {
+            streamingMessage.content = userFriendlyMessage;
+            streamingMessage.tokenCount = null;
+            streamingMessage.streamingTokens = null;
+            streamingMessage.streamingReasoning = false;
+            streamingMessage.streamingPending = false;
+            streamingMessage.streamingPhase = null;
+            if (markLocalOnly) {
+                streamingMessage.isLocalOnly = true;
+            }
+            await chatDB.saveMessage(streamingMessage);
+
+            if (this.chatArea && this.isViewingSession(session.id)) {
+                const hydratedMessage = await this.toolController.hydrateMessageById(streamingMessage.id);
+                await this.chatArea.finalizeStreamingMessage(hydratedMessage || streamingMessage);
+            }
+            return;
+        }
+
+        if (streamingMessage?.id) {
+            await this.discardStreamingMessage(session.id, streamingMessage.id);
+        }
+
+        if (this.isViewingSession(session.id)) {
+            await this.addMessage('assistant', userFriendlyMessage, { isLocalOnly: true });
+        }
+    }
+
+    isRetryableAssistantError(error) {
+        if (error?.isCancelled) return false;
+        if ([502, 503, 504].includes(error?.status)) return true;
+
+        const errorMessage = error?.message || '';
+        const hasSpecificError = error?.status === 401 ||
+            error?.status === 402 ||
+            errorMessage.includes('proxy') ||
+            errorMessage.includes('Proxy') ||
+            errorMessage.includes('No API key');
+
+        return !hasSpecificError;
+    }
+
+    buildAssistantErrorMessage(error, retryCount = 0) {
+        const errorMessage = error?.message || 'Unknown error';
+
+        if (error?.status === 402) {
+            return `Sorry, I encountered an error while processing your request. Try submitting the query again. **Error**: ${errorMessage}`;
+        }
+        if (error?.status === 401) {
+            return 'Authentication error. Please check the system panel (right side) and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor)!';
+        }
+        if ([502, 503, 504].includes(error?.status)) {
+            return `Gateway error (after ${retryCount} retries). Please take a look at the system panel and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor).`;
+        }
+        if (errorMessage.includes('proxy') || errorMessage.includes('Proxy')) {
+            return 'Proxy error. Please take a look at the system panel and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor).';
+        }
+        if (errorMessage.includes('No API key')) {
+            return 'API key error. Please take a look at the system panel and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor).';
+        }
+
+        const retryNote = retryCount > 0 ? ` (after ${retryCount} retries)` : '';
+        return `⚠️ **Error**${retryNote}: ${errorMessage}`;
+    }
+
+    async streamAssistantTurnOnce({
+        session,
+        modelIdForRequest,
+        modelNameToUse,
+        searchEnabled,
+        abortController,
+        typingId,
+        initialPendingPhase,
+        scrubberOriginalPrompt = null,
+        scrubberRedactedPrompt = null
+    }) {
+        const messages = await chatDB.getSessionMessages(session.id);
+        const filteredMessages = messages.filter(msg => !msg.isLocalOnly);
+        const sanitizedMessages = this.sanitizeMessagesForApi(filteredMessages);
+        const scrubberMetadata = this.createAssistantScrubberMetadata({
+            originalPrompt: scrubberOriginalPrompt,
+            redactedPrompt: scrubberRedactedPrompt,
+            hasScrubberContext: this.hasScrubberContext(filteredMessages)
+        });
+        const processedMessages = this.processMessagesWithFiles(sanitizedMessages, modelIdForRequest);
+
+        const streamingMessageId = this.generateId();
+        const streamingMessage = {
+            id: streamingMessageId,
+            sessionId: session.id,
+            role: 'assistant',
+            content: '',
+            reasoning: '',
+            timestamp: Date.now(),
+            model: modelNameToUse,
+            tokenCount: null,
+            streamingTokens: 0,
+            streamingReasoning: false,
+            streamingPending: true,
+            streamingPhase: this.getSessionStreamingState(session.id).phase || initialPendingPhase,
+            scrubber: scrubberMetadata
+        };
+
+        const turnState = {
+            streamingMessage,
+            firstChunkReceived: false,
+            streamedContent: '',
+            streamedReasoning: ''
+        };
+
+        await chatDB.saveMessage(streamingMessage);
+
+        let lastSaveLength = 0;
+        let streamingTokenCount = 0;
+        let firstContentChunk = true;
+        let reasoningStartTime = null;
+        let reasoningEndTime = null;
+        let tokenData = {
+            totalTokens: 0,
+            promptTokens: 0,
+            completionTokens: 0,
+            model: modelIdForRequest,
+            reasoning: null,
+            citations: null,
+            message: {
+                role: 'assistant',
+                content: '',
+                toolCalls: []
+            }
+        };
+
+        const ensureAssistantMessageVisible = async () => {
+            if (turnState.firstChunkReceived) return;
+            turnState.firstChunkReceived = true;
+            streamingMessage.streamingPending = false;
+            streamingMessage.streamingPhase = null;
+            await chatDB.saveMessage(streamingMessage);
+            if (this.chatArea && this.isViewingSession(session.id)) {
+                await this.chatArea.appendMessage(streamingMessage);
+            }
+        };
+
+        try {
+            for await (const event of this.toolController.streamAssistantTurn({
+                messages: processedMessages,
+                modelId: modelIdForRequest,
+                session,
+                searchEnabled,
+                abortController,
+                reasoningEnabled: this.reasoningEnabled,
+                reasoningEffort: this.reasoningEffort,
+                messageId: streamingMessageId
+            })) {
+                if (event?.type === 'assistant.stream.open') {
+                    this.updateSessionStreamingPhase(session.id, 'stream-open');
+                    streamingMessage.streamingPhase = this.getSessionStreamingState(session.id).phase;
+                    if (typingId) {
+                        this.updateTypingIndicator(typingId, 'stream-open');
+                    }
+                    continue;
+                }
+
+                if (event?.type === 'assistant.usage') {
+                    streamingTokenCount = event.usage?.completionTokens || 0;
+                    continue;
+                }
+
+                if (event?.type === 'reasoning.delta') {
+                    const reasoningChunk = event.delta || '';
+                    if (!reasoningChunk) continue;
+
+                    if (!turnState.firstChunkReceived) {
+                        reasoningStartTime = Date.now();
+                        turnState.streamedReasoning = reasoningChunk;
+                        streamingMessage.reasoning = reasoningChunk;
+                        streamingMessage.streamingReasoning = true;
+                        await ensureAssistantMessageVisible();
+                        await chatDB.saveMessage(streamingMessage);
+                    } else {
+                        turnState.streamedReasoning += reasoningChunk;
+                        streamingMessage.reasoning = turnState.streamedReasoning;
+                    }
+
+                    if (this.chatArea && this.isViewingSession(session.id)) {
+                        this.chatArea.updateStreamingReasoning(streamingMessageId, turnState.streamedReasoning);
+                    }
+                    continue;
+                }
+
+                if (event?.type === 'assistant.delta') {
+                    const chunk = event.delta || '';
+                    if (!chunk) continue;
+
+                    if (!turnState.firstChunkReceived) {
+                        await ensureAssistantMessageVisible();
+                    }
+
+                    turnState.streamedContent += chunk;
+                    streamingMessage.content = turnState.streamedContent;
+                    streamingMessage.streamingTokens = Math.ceil(turnState.streamedContent.length / 4);
+
+                    if (firstContentChunk && reasoningStartTime && turnState.streamedReasoning.length > 0) {
+                        firstContentChunk = false;
+                        reasoningEndTime = Date.now();
+                        if (this.chatArea && this.isViewingSession(session.id)) {
+                            this.chatArea.updateReasoningSubtitleToDuration(
+                                streamingMessageId,
+                                reasoningEndTime - reasoningStartTime
+                            );
+                        }
+                    }
+
+                    if (turnState.streamedContent.length - lastSaveLength >= 100) {
+                        await chatDB.saveMessage(streamingMessage);
+                        lastSaveLength = turnState.streamedContent.length;
+                    }
+
+                    if (this.chatArea && this.isViewingSession(session.id)) {
+                        this.chatArea.updateStreamingMessage(streamingMessageId, turnState.streamedContent);
+                    }
+                    continue;
+                }
+
+                if (event?.type === 'assistant.image') {
+                    const images = event.images || [];
+                    if (images.length === 0) continue;
+
+                    if (!turnState.firstChunkReceived) {
+                        await ensureAssistantMessageVisible();
+                    }
+
+                    if (!streamingMessage.images) streamingMessage.images = [];
+                    this.addImagesWithDedup(streamingMessage.images, images);
+                    await chatDB.saveMessage(streamingMessage);
+
+                    if (this.chatArea && this.isViewingSession(session.id)) {
+                        this.chatArea.updateStreamingImages(streamingMessageId, streamingMessage.images);
+                    }
+                    continue;
+                }
+
+                if (event?.type === 'tool.run.started' || event?.type === 'tool.run.completed' || event?.type === 'tool.run.failed') {
+                    const run = event.run;
+                    if (!run || run.messageId !== streamingMessageId) continue;
+
+                    const hasVisibleToolOutput = this.toolController.shouldRenderRunCard(run) ||
+                        (event.type === 'tool.run.completed' && this.toolController.shouldEmbedArtifacts(run));
+
+                    if (hasVisibleToolOutput && !turnState.firstChunkReceived) {
+                        await ensureAssistantMessageVisible();
+                    }
+
+                    if (hasVisibleToolOutput && this.chatArea && this.isViewingSession(session.id)) {
+                        const hydrated = await this.toolController.hydrateMessageById(streamingMessageId);
+                        if (hydrated) {
+                            this.chatArea.updateMessage(hydrated);
+                        }
+                    }
+                    continue;
+                }
+
+                if (event?.type === 'assistant.completed') {
+                    tokenData = {
+                        ...tokenData,
+                        ...(event.result || {})
+                    };
+                }
+            }
+        } catch (error) {
+            error.turnState = turnState;
+            throw error;
+        }
+
+        streamingMessage.content = turnState.streamedContent;
+        if (streamingMessage.scrubber) {
+            streamingMessage.scrubber.redactedResponse = turnState.streamedContent;
+        }
+
+        const rawReasoning = tokenData.reasoning || turnState.streamedReasoning || null;
+        streamingMessage.reasoning = rawReasoning ? parseReasoningContent(rawReasoning) : null;
+        streamingMessage.tokenCount = tokenData.totalTokens || tokenData.completionTokens || streamingTokenCount;
+        streamingMessage.model = this.normalizeModelName(
+            inferenceService.getDisplayName(tokenData.model || modelIdForRequest, modelNameToUse, session)
+        ) || modelNameToUse;
+        streamingMessage.streamingTokens = null;
+        streamingMessage.streamingReasoning = false;
+        streamingMessage.streamingPending = false;
+        streamingMessage.streamingPhase = null;
+        streamingMessage.citations = tokenData.citations || null;
+
+        if (streamingMessage.reasoning && reasoningStartTime) {
+            streamingMessage.reasoningDuration = (reasoningEndTime || Date.now()) - reasoningStartTime;
+        }
+
+        await chatDB.saveMessage(streamingMessage);
+
+        if (streamingMessage.citations?.length > 0) {
+            this.enrichCitationsAndUpdateUI(streamingMessage);
+        }
+
+        let finalMessage = streamingMessage;
+        if (this.chatArea && this.isViewingSession(session.id)) {
+            const hydratedMessage = await this.toolController.hydrateMessageById(streamingMessageId);
+            finalMessage = hydratedMessage || streamingMessage;
+            await this.chatArea.finalizeStreamingMessage(finalMessage);
+            if (finalMessage.reasoning) {
+                this.chatArea.finalizeReasoningDisplay(streamingMessageId, finalMessage.reasoning, finalMessage.reasoningDuration);
+            }
+        }
+
+        if (streamingMessage.scrubber?.canRestore) {
+            this.preCacheScrubberRestore(streamingMessage);
+        }
+
+        return {
+            finalMessage,
+            turnState
+        };
+    }
+
     /**
      * Regenerates the last assistant response without creating a new user message.
      * Used when the regenerate button is clicked on an assistant message.
@@ -3734,30 +4220,16 @@ class ChatApp {
         const streamingState = this.getSessionStreamingState(session.id);
         if (streamingState.isStreaming) return;
 
-        // Get the last user message to scroll to top
         const messages = await chatDB.getSessionMessages(session.id);
-        const lastUserMessage = messages.reverse().find(m => m.role === 'user');
+        const lastUserMessage = [...messages].reverse().find(m => m.role === 'user');
 
         // Create abort controller for this stream
         const abortController = new AbortController();
         const initialPendingPhase = this.resolvePendingPhaseForSession(session);
         this.setSessionStreamingState(session.id, true, abortController, initialPendingPhase);
 
-        // Pause auto-scroll for streaming (set immediately)
         this.isAutoScrollPaused = true;
-
-        // Scroll last user message to top after a brief delay
-        if (lastUserMessage && lastUserMessage.id) {
-            setTimeout(() => {
-                requestAnimationFrame(() => {
-                    requestAnimationFrame(() => {
-                        this.scrollUserMessageToTop(lastUserMessage.id);
-                        // Check button visibility after scrolling
-                        setTimeout(() => this.updateScrollButtonVisibility(), 100);
-                    });
-                });
-            }, 50);
-        }
+        this.scrollMessageToTopSoon(lastUserMessage?.id);
 
         try {
             const typingModelName = this.normalizeModelName(session.model) || session.model || this.state.pendingModelName || inferenceService.getDefaultModelName(session);
@@ -3765,356 +4237,48 @@ class ChatApp {
                 ? this.showTypingIndicator(typingModelName, initialPendingPhase)
                 : null;
 
-            // Automatically acquire API key if needed
-            const hasAccessToken = !!inferenceService.getAccessToken(session);
-            const isAccessExpired = inferenceService.isAccessExpired(session);
-            const accessLabel = inferenceService.getAccessLabel(session);
-            if (!hasAccessToken || isAccessExpired) {
-                try {
-                    if (this.floatingPanel) {
-                        this.floatingPanel.showMessage(`Acquiring ${accessLabel}...`, 'info');
-                    }
-                    await this.acquireAndSetAccess(session, {
-                        onGranted: () => {
-                            this.advancePendingStateAfterAccessGranted(session.id, typingId);
-                        }
-                    });
-                    if (this.floatingPanel) {
-                        this.floatingPanel.showMessage(`Successfully acquired ${accessLabel}!`, 'success', 2000);
-                    }
-                } catch (error) {
-                    if (typingId) this.removeTypingIndicator(typingId);
-                    if (this.floatingPanel) {
-                        this.floatingPanel.showMessage(error.message, 'error', 5000);
-                    }
-                    await this.addMessage('assistant', `**Error:** ${error.message}`, { isLocalOnly: true });
-                    return;
-                }
-            }
-
-            // Set current session for network logging
-            if (window.networkLogger) {
-                window.networkLogger.setCurrentSession(session.id);
-            }
-
-            let modelNameToUse = this.normalizeModelName(session.model);
-            if (modelNameToUse !== session.model) {
-                session.model = modelNameToUse;
-                await chatDB.saveSession(session);
-            }
-
-            let selectedModelEntry = modelNameToUse
-                ? this.state.models.find(m => m.name === modelNameToUse)
-                : null;
-
-            if (!selectedModelEntry) {
-                const fallbackModel = this.getFallbackModelEntry(session);
-                if (fallbackModel) {
-                    selectedModelEntry = fallbackModel;
-                    modelNameToUse = this.normalizeModelName(fallbackModel.name);
-                    if (session.model !== modelNameToUse) {
-                        session.model = modelNameToUse;
-                        await chatDB.saveSession(session);
-                        this.renderCurrentModel();
-                    }
-                }
-            }
-
-            if (!modelNameToUse || !selectedModelEntry) {
-                console.warn('No available models to send message.');
-                await this.addMessage('assistant', 'No models are available right now. Please add a model and try again.', { isLocalOnly: true });
+            const preparedRequest = await this.prepareSessionAssistantRequest(session, {
+                typingId,
+                accessReadyMessage: (accessLabel) => `Successfully acquired ${accessLabel}!`
+            });
+            if (!preparedRequest) {
+                if (typingId) this.removeTypingIndicator(typingId);
                 return;
             }
 
-            const modelIdForRequest = selectedModelEntry.id;
-
-            let streamingMessage = null;
-            let streamedContent = '';
-            let streamedReasoning = '';
-            let firstChunkReceived = false;
-
             try {
-                // Get AI response from inference backend with streaming
-                const messages = await chatDB.getSessionMessages(session.id);
-                const filteredMessages = messages.filter(msg => !msg.isLocalOnly);
-                const sanitizedMessages = this.sanitizeMessagesForApi(filteredMessages);
-                const hasScrubberContext = this.hasScrubberContext(filteredMessages);
-                let scrubberOriginalPrompt = null;
-                let scrubberRedactedPrompt = null;
-                for (let i = filteredMessages.length - 1; i >= 0; i--) {
-                    if (filteredMessages[i]?.role === 'user') {
-                        scrubberOriginalPrompt = filteredMessages[i].scrubber?.original || null;
-                        scrubberRedactedPrompt = filteredMessages[i].scrubber?.redacted || null;
-                        break;
-                    }
-                }
-                const scrubberMetadata = this.createAssistantScrubberMetadata({
-                    originalPrompt: scrubberOriginalPrompt,
-                    redactedPrompt: scrubberRedactedPrompt,
-                    hasScrubberContext
-                });
-
-                // Process messages to include file content from stored metadata
-                const processedMessages = this.processMessagesWithFiles(sanitizedMessages, modelIdForRequest);
-
-                // Create a placeholder message for streaming
-                const streamingMessageId = this.generateId();
-                let streamingTokenCount = 0;
-
-                streamingMessage = {
-                    id: streamingMessageId,
-                    sessionId: session.id,
-                    role: 'assistant',
-                    content: '',
-                    reasoning: '',
-                    timestamp: Date.now(),
-                    model: modelNameToUse,
-                    tokenCount: null,
-                    streamingTokens: 0,
-                    streamingReasoning: false,
-                    streamingPending: true, // Indicates waiting for first chunk
-                    streamingPhase: this.getSessionStreamingState(session.id).phase || initialPendingPhase,
-                    scrubber: scrubberMetadata
-                };
-
-                // Save placeholder immediately so switching sessions back can find it
-                await chatDB.saveMessage(streamingMessage);
-
-                let lastSaveLength = 0;
-                const SAVE_INTERVAL_CHARS = 100;
-                let reasoningStartTime = null;
-
-                // Stream the response with token tracking
-                const tokenData = await inferenceService.streamCompletion(
-                    processedMessages,
-                    modelIdForRequest,
+                const scrubberPrompts = this.getLatestUserScrubberPrompts(messages.filter(msg => !msg.isLocalOnly));
+                await this.streamAssistantTurnOnce({
                     session,
-                    async (chunk, imageData) => {
-                        // On first chunk (of any kind), remove typing indicator and append message
-                        if (!firstChunkReceived) {
-                            firstChunkReceived = true;
-
-                            // Clear pending flag now that we have actual content
-                            streamingMessage.streamingPending = false;
-                            streamingMessage.streamingPhase = null;
-
-                            // Handle text content
-                            if (chunk) {
-                                streamedContent += chunk;
-                                streamingMessage.content = streamedContent;
-                                streamingMessage.streamingTokens = Math.ceil(streamedContent.length / 4);
-                            }
-
-                            // Handle image data
-                            if (imageData && imageData.images) {
-                                if (!streamingMessage.images) streamingMessage.images = [];
-                                this.addImagesWithDedup(streamingMessage.images, imageData.images);
-                            }
-
-                            // Save message to DB (always) and append to UI (only if viewing this session)
-                            if (chunk || (imageData && imageData.images)) {
-                                await chatDB.saveMessage(streamingMessage);
-                                if (this.chatArea && this.isViewingSession(session.id)) {
-                                    await this.chatArea.appendMessage(streamingMessage);
-                                }
-                            }
-                            return; // Exit after first chunk handling
-                        }
-
-                        // Handle subsequent chunks
-                        if (chunk) streamedContent += chunk;
-
-                        // Handle image data
-                        if (imageData && imageData.images) {
-                            if (!streamingMessage.images) streamingMessage.images = [];
-                            this.addImagesWithDedup(streamingMessage.images, imageData.images);
-                            await chatDB.saveMessage(streamingMessage);
-                            // Only update UI if still viewing the same session
-                            if (this.chatArea && this.isViewingSession(session.id)) {
-                                this.chatArea.updateStreamingImages(streamingMessageId, streamingMessage.images);
-                            }
-                        }
-
-                        if (streamedContent.length - lastSaveLength >= SAVE_INTERVAL_CHARS) {
-                            streamingMessage.content = streamedContent;
-                            streamingMessage.streamingTokens = Math.ceil(streamedContent.length / 4);
-                            await chatDB.saveMessage(streamingMessage);
-                            lastSaveLength = streamedContent.length;
-                        }
-
-                        // Only update UI if still viewing the same session
-                        if (chunk && this.chatArea && this.isViewingSession(session.id)) {
-                            this.chatArea.updateStreamingMessage(streamingMessageId, streamedContent);
-                        }
-                    },
-                    (tokenUpdate) => {
-                        streamingTokenCount = tokenUpdate.completionTokens || 0;
-                    },
-                    [], // No files for regeneration (files are included in processedMessages)
-                    this.searchEnabled, // Use current search toggle state
+                    ...preparedRequest,
+                    searchEnabled: this.searchEnabled,
                     abortController,
-                    async () => {
-                        this.updateSessionStreamingPhase(session.id, 'stream-open');
-                        streamingMessage.streamingPhase = this.getSessionStreamingState(session.id).phase;
-                        if (typingId) {
-                            this.updateTypingIndicator(typingId, 'stream-open');
-                        }
-                    },
-                    async (reasoningChunk) => {
-                        // Handle reasoning trace streaming
-                        if (!firstChunkReceived) {
-                            firstChunkReceived = true;
-                            reasoningStartTime = Date.now();
-                            // Clear pending flag now that we have actual content
-                            streamingMessage.streamingPending = false;
-                            streamingMessage.streamingPhase = null;
-                            streamingMessage.reasoning = reasoningChunk;
-                            streamingMessage.streamingReasoning = true;
-                            streamedReasoning = reasoningChunk;
-                            await chatDB.saveMessage(streamingMessage);
-                            // Only update UI if still viewing the same session
-                            if (this.chatArea && this.isViewingSession(session.id)) {
-                                await this.chatArea.appendMessage(streamingMessage);
-                            }
-                        } else {
-                            streamedReasoning += reasoningChunk;
-                            streamingMessage.reasoning = streamedReasoning;
-                            // Save reasoning frequently so session switch can restore state
-                            await chatDB.saveMessage(streamingMessage);
-                        }
-
-                        // Only update UI if still viewing the same session
-                        if (this.chatArea && this.isViewingSession(session.id)) {
-                            this.chatArea.updateStreamingReasoning(streamingMessageId, streamedReasoning);
-                        }
-                    },
-                    this.reasoningEnabled, // Use current reasoning toggle state
-                    this.reasoningEffort
-                );
-
-                // Save the final message content with token data, reasoning, and citations
-                streamingMessage.content = streamedContent;
-                if (streamingMessage.scrubber) {
-                    streamingMessage.scrubber.redactedResponse = streamedContent;
-                }
-                const rawReasoning = tokenData.reasoning || streamedReasoning || null;
-                // Parse and save the cleaned reasoning
-                streamingMessage.reasoning = rawReasoning ? parseReasoningContent(rawReasoning) : null;
-                streamingMessage.tokenCount = tokenData.totalTokens || tokenData.completionTokens || streamingTokenCount;
-                const streamReportedModel = tokenData.model || modelIdForRequest;
-                const resolvedFinalModelName = this.normalizeModelName(
-                    inferenceService.getDisplayName(streamReportedModel, modelNameToUse, session)
-                ) || modelNameToUse;
-                streamingMessage.model = resolvedFinalModelName;
-                streamingMessage.streamingTokens = null;
-                streamingMessage.streamingReasoning = false;
-                streamingMessage.streamingPending = false;
-                streamingMessage.citations = tokenData.citations || null;
-
-                // Calculate reasoning duration if reasoning was used
-                if (streamingMessage.reasoning && reasoningStartTime) {
-                    const reasoningEndTime = Date.now();
-                    streamingMessage.reasoningDuration = reasoningEndTime - reasoningStartTime;
-                }
-
-                await chatDB.saveMessage(streamingMessage);
-
-                // Fetch metadata for citations asynchronously and update UI
-                if (streamingMessage.citations && streamingMessage.citations.length > 0) {
-                    this.enrichCitationsAndUpdateUI(streamingMessage);
-                }
-
-                // Only update UI if still viewing the same session
-                if (this.chatArea && this.isViewingSession(session.id)) {
-                    // Finalize reasoning display with markdown processing and timing
-                    if (streamingMessage.reasoning) {
-                        this.chatArea.finalizeReasoningDisplay(streamingMessageId, streamingMessage.reasoning, streamingMessage.reasoningDuration);
-                    }
-                    // Re-render message if no content (to show "no response" notice and clean up empty bubbles)
-                    if (!streamingMessage.content && (!streamingMessage.images || streamingMessage.images.length === 0)) {
-                        await this.chatArea.finalizeStreamingMessage(streamingMessage);
-                    }
-                }
-
-                // Pre-cache scrubber restoration in background (if applicable)
-                if (streamingMessage.scrubber?.canRestore) {
-                    this.preCacheScrubberRestore(streamingMessage);
-                }
-
+                    typingId,
+                    initialPendingPhase,
+                    scrubberOriginalPrompt: scrubberPrompts.originalPrompt,
+                    scrubberRedactedPrompt: scrubberPrompts.redactedPrompt
+                });
             } catch (error) {
                 console.error('Error getting AI response:', error);
                 if (typingId) this.removeTypingIndicator(typingId);
+                const turnState = error.turnState || {};
 
                 if (error.isCancelled) {
-                    // If cancelled before first chunk, delete the placeholder message
-                    if (streamingMessage && !firstChunkReceived) {
-                        await this.deleteMessageWithRuntimeData(streamingMessage.id);
-                        // Remove from UI if viewing this session
-                        if (this.isViewingSession(session.id)) {
-                            const messageEl = document.querySelector(`[data-message-id="${streamingMessage.id}"]`);
-                            if (messageEl) {
-                                messageEl.remove();
-                            }
-                        }
-                    }
-                    if (streamingMessage && firstChunkReceived) {
-                        if (streamedContent.trim() || streamedReasoning.trim()) {
-                            streamingMessage.content = streamedContent;
-                            // Parse and save the cleaned reasoning
-                            streamingMessage.reasoning = streamedReasoning ? parseReasoningContent(streamedReasoning) : null;
-                            streamingMessage.tokenCount = null;
-                            streamingMessage.streamingTokens = null;
-                            streamingMessage.streamingReasoning = false;
-                            streamingMessage.streamingPending = false;
-                            await chatDB.saveMessage(streamingMessage);
-                            // Only update UI if still viewing the same session
-                            if (this.chatArea && this.isViewingSession(session.id)) {
-                                await this.chatArea.finalizeStreamingMessage(streamingMessage);
-                                // Finalize reasoning display with markdown processing
-                                if (streamingMessage.reasoning) {
-                                    this.chatArea.finalizeReasoningDisplay(streamingMessage.id, streamingMessage.reasoning);
-                                }
-                            }
-                        } else {
-                            await this.deleteMessageWithRuntimeData(streamingMessage.id);
-                            // Only remove from UI if still viewing the same session
-                            if (this.isViewingSession(session.id)) {
-                                const messageEl = document.querySelector(`[data-message-id="${streamingMessage.id}"]`);
-                                if (messageEl) {
-                                    messageEl.remove();
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    if (firstChunkReceived && streamingMessage) {
-                        streamingMessage.content = 'Sorry, I encountered an error while processing your request.';
-                        streamingMessage.tokenCount = null;
-                        streamingMessage.streamingTokens = null;
-                        streamingMessage.streamingReasoning = false;
-                        streamingMessage.streamingPending = false;
-                        await chatDB.saveMessage(streamingMessage);
-                        // Only update UI if still viewing the same session
-                        if (this.chatArea && this.isViewingSession(session.id)) {
-                            await this.chatArea.finalizeStreamingMessage(streamingMessage);
-                        }
-                    } else {
-                        // Error before first chunk - delete placeholder and show error
-                        if (streamingMessage) {
-                            await this.deleteMessageWithRuntimeData(streamingMessage.id);
-                            // Remove from UI if viewing this session
-                            if (this.isViewingSession(session.id)) {
-                                const messageEl = document.querySelector(`[data-message-id="${streamingMessage.id}"]`);
-                                if (messageEl) {
-                                    messageEl.remove();
-                                }
-                            }
-                        }
-                        if (this.isViewingSession(session.id)) {
-                            await this.addMessage('assistant', 'Sorry, I encountered an error while processing your request.', { isLocalOnly: true });
-                        }
-                    }
+                    await this.keepPartialAssistantTurn({
+                        session,
+                        streamingMessage: turnState.streamingMessage,
+                        streamedContent: turnState.streamedContent || '',
+                        streamedReasoning: turnState.streamedReasoning || ''
+                    });
+                    return;
                 }
+
+                await this.renderAssistantTurnError({
+                    session,
+                    streamingMessage: turnState.streamingMessage,
+                    userFriendlyMessage: 'Sorry, I encountered an error while processing your request.',
+                    firstChunkReceived: Boolean(turnState.firstChunkReceived)
+                });
             }
         } finally {
             this.setSessionStreamingState(session.id, false, null);
@@ -4191,7 +4355,6 @@ class ChatApp {
         const searchEnabled = this.searchEnabled;
 
         try {
-
             let scrubberOriginalPrompt = null;
             let scrubberRedactedPrompt = null;
             if (this.scrubberPending && this.scrubberPending.redacted?.trim() === content) {
@@ -4247,447 +4410,78 @@ class ChatApp {
             this.updateInputState();
             this.resetMessageInputLayout({ resetScroll: true });
 
-            // Auto-scroll remains paused while the response streams
-
-            // Scroll user message to top after a brief delay to ensure rendering
-            if (userMessage && userMessage.id) {
-                // Use setTimeout with RAF to ensure message is fully rendered
-                setTimeout(() => {
-                    requestAnimationFrame(() => {
-                        requestAnimationFrame(() => {
-                            this.scrollUserMessageToTop(userMessage.id);
-                            // Check button visibility after scrolling
-                            setTimeout(() => this.updateScrollButtonVisibility(), 100);
-                        });
-                    });
-                }, 50);
-            }
+            this.scrollMessageToTopSoon(userMessage?.id);
 
             const typingModelName = this.normalizeModelName(session.model) || session.model || this.state.pendingModelName || inferenceService.getDefaultModelName(session);
             let typingId = this.isViewingSession(session.id)
                 ? this.showTypingIndicator(typingModelName, initialPendingPhase)
                 : null;
 
-            // Automatically acquire API key if needed
-            const hasAccessToken = !!inferenceService.getAccessToken(session);
-            const isAccessExpired = inferenceService.isAccessExpired(session);
-            const accessLabel = inferenceService.getAccessLabel(session);
-            if (!hasAccessToken || isAccessExpired) {
-                try {
-                    if (this.floatingPanel) {
-                        this.floatingPanel.showMessage(`Acquiring ${accessLabel}...`, 'info');
-                    }
-                    await this.acquireAndSetAccess(session, {
-                        onGranted: () => {
-                            this.advancePendingStateAfterAccessGranted(session.id, typingId);
-                        }
-                    });
-                    if (this.floatingPanel) {
-                        this.floatingPanel.showMessage(`${accessLabel} ready`, 'success', 2000);
-                    }
-                } catch (error) {
-                    if (typingId) this.removeTypingIndicator(typingId);
-                    if (this.floatingPanel) {
-                        this.floatingPanel.showMessage(error.message, 'error', 5000);
-                    }
-                    await this.addMessage('assistant', `**Error:** ${error.message}`, { isLocalOnly: true });
-                    return; // Return early if key acquisition fails
-                }
+            const preparedRequest = await this.prepareSessionAssistantRequest(session, {
+                typingId,
+                accessReadyMessage: (accessLabel) => `${accessLabel} ready`
+            });
+            if (!preparedRequest) {
+                if (typingId) this.removeTypingIndicator(typingId);
+                return;
             }
 
-            // Set current session for network logging
-            if (window.networkLogger) {
-                window.networkLogger.setCurrentSession(session.id);
-            }
-
-            let modelNameToUse = this.normalizeModelName(session.model);
-            if (modelNameToUse !== session.model) {
-                session.model = modelNameToUse;
-                await chatDB.saveSession(session);
-            }
-
-            let selectedModelEntry = modelNameToUse
-                ? this.state.models.find(m => m.name === modelNameToUse)
-                : null;
-
-            if (!selectedModelEntry) {
-                const fallbackModel = this.getFallbackModelEntry(session);
-                if (fallbackModel) {
-                    selectedModelEntry = fallbackModel;
-                    modelNameToUse = this.normalizeModelName(fallbackModel.name);
-                    if (session.model !== modelNameToUse) {
-                        session.model = modelNameToUse;
-                        await chatDB.saveSession(session);
-                        this.renderCurrentModel();
-                    }
-                }
-            }
-
-            if (!modelNameToUse || !selectedModelEntry) {
-                console.warn('No available models to send message.');
-                await this.addMessage('assistant', 'No models are available right now. Please add a model and try again.', { isLocalOnly: true });
-                return; // Return early
-            }
-
-            const modelIdForRequest = selectedModelEntry.id;
-
-            // Declare variables outside try block so they're accessible in catch
-            let streamingMessage = null;
-            let firstChunkReceived = false;
-            let streamedContent = '';
-            let streamedReasoning = '';
-
-            // Retry configuration for transient errors
             const MAX_RETRIES = 2;
             let retryCount = 0;
 
-            // Helper to check if error is retryable (only before streaming starts)
-            const isRetryableError = (error) => {
-                if (error.isCancelled) return false;
-                // Gateway errors are retryable
-                if ([502, 503, 504].includes(error.status)) return true;
-                // Generic errors (no specific status or unrecognized) are retryable
-                const errorMsg = error.message || '';
-                const hasSpecificError = error.status === 401 || error.status === 402 ||
-                    errorMsg.includes('proxy') || errorMsg.includes('Proxy') ||
-                    errorMsg.includes('No API key');
-                return !hasSpecificError;
-            };
-
             retryLoop: while (retryCount <= MAX_RETRIES) {
-            try {
-                // Get AI response from inference backend with streaming
-                const messages = await chatDB.getSessionMessages(session.id);
-                const filteredMessages = messages.filter(msg => !msg.isLocalOnly);
-                const sanitizedMessages = this.sanitizeMessagesForApi(filteredMessages);
-                const hasScrubberContext = this.hasScrubberContext(filteredMessages);
-                const scrubberMetadata = this.createAssistantScrubberMetadata({
-                    originalPrompt: scrubberOriginalPrompt,
-                    redactedPrompt: scrubberRedactedPrompt,
-                    hasScrubberContext
-                });
-
-                // Process messages to include file content from stored metadata
-                const processedMessages = this.processMessagesWithFiles(sanitizedMessages, modelIdForRequest);
-
-                // Create a placeholder message for streaming
-                const streamingMessageId = this.generateId();
-                streamedContent = '';
-                streamedReasoning = '';
-                let streamingTokenCount = 0;
-
-                // Prepare assistant message object (don't save to DB yet - wait for first chunk)
-                streamingMessage = {
-                    id: streamingMessageId,
-                    sessionId: session.id,
-                    role: 'assistant',
-                    content: '',
-                    reasoning: '',
-                    timestamp: Date.now(),
-                    model: modelNameToUse,
-                    tokenCount: null,
-                    streamingTokens: 0,
-                    streamingReasoning: false,
-                    streamingPending: true,
-                    streamingPhase: this.getSessionStreamingState(session.id).phase || initialPendingPhase,
-                    scrubber: scrubberMetadata
-                };
-
-                // Track progress for periodic saves
-                let lastSaveLength = 0;
-                const SAVE_INTERVAL_CHARS = 100; // Save every 100 characters
-                firstChunkReceived = false;
-                let firstContentChunk = true; // Track when content starts (after reasoning)
-                let reasoningStartTime = null;
-                let reasoningEndTime = null;
-
-                // Stream the response with token tracking
-                const tokenData = await inferenceService.streamCompletion(
-                    processedMessages,
-                    modelIdForRequest,
-                    session,
-                    async (chunk, imageData) => {
-                        // On first chunk (of any kind), remove typing indicator and append message
-                        if (!firstChunkReceived) {
-                            firstChunkReceived = true;
-                            streamingMessage.streamingPending = false;
-                            streamingMessage.streamingPhase = null;
-
-                            // Handle text content
-                            if (chunk) {
-                                streamedContent += chunk;
-                                streamingMessage.content = streamedContent;
-                                streamingMessage.streamingTokens = Math.ceil(streamedContent.length / 4);
-
-                                // If reasoning happened before content, finalize reasoning display now
-                                if (reasoningStartTime && streamedReasoning.length > 0) {
-                                    reasoningEndTime = Date.now();
-                                    const reasoningDuration = reasoningEndTime - reasoningStartTime;
-
-                                    // Update the reasoning subtitle to show duration immediately (only if viewing this session)
-                                    if (this.chatArea && this.isViewingSession(session.id)) {
-                                        this.chatArea.updateReasoningSubtitleToDuration(
-                                            streamingMessageId,
-                                            reasoningDuration
-                                        );
-                                    }
-                                    firstContentChunk = false; // Mark that we've handled the transition
-                                }
-                            }
-
-                            // Handle image data
-                            if (imageData && imageData.images) {
-                                if (!streamingMessage.images) streamingMessage.images = [];
-                                this.addImagesWithDedup(streamingMessage.images, imageData.images);
-                            }
-
-                            // Save message to DB (always) and append to UI (only if viewing this session)
-                            if (chunk || (imageData && imageData.images)) {
-                                await chatDB.saveMessage(streamingMessage);
-                                if (this.chatArea && this.isViewingSession(session.id)) {
-                                    await this.chatArea.appendMessage(streamingMessage);
-                                }
-                            }
-                            return; // Exit after first chunk handling
-                        }
-
-                        // Handle subsequent chunks
-                        if (chunk) {
-                            streamedContent += chunk;
-
-                            // If this is the first content chunk after reasoning, finalize reasoning display
-                            if (firstContentChunk && reasoningStartTime && streamedReasoning.length > 0) {
-                                firstContentChunk = false;
-                                reasoningEndTime = Date.now();
-                                const reasoningDuration = reasoningEndTime - reasoningStartTime;
-
-                                // Update the reasoning subtitle to show duration immediately (only if viewing this session)
-                                if (this.chatArea && this.isViewingSession(session.id)) {
-                                    this.chatArea.updateReasoningSubtitleToDuration(
-                                        streamingMessageId,
-                                        reasoningDuration
-                                    );
-                                }
-                            }
-                        }
-
-                        if (imageData && imageData.images) {
-                            if (!streamingMessage.images) streamingMessage.images = [];
-                            this.addImagesWithDedup(streamingMessage.images, imageData.images);
-                            await chatDB.saveMessage(streamingMessage);
-                            // Only update UI if still viewing the same session
-                            if (this.chatArea && this.isViewingSession(session.id)) {
-                                this.chatArea.updateStreamingImages(streamingMessageId, streamingMessage.images);
-                            }
-                        }
-
-                        // Periodically save partial content
-                        if (chunk && streamedContent.length - lastSaveLength >= SAVE_INTERVAL_CHARS) {
-                            streamingMessage.content = streamedContent;
-                            streamingMessage.streamingTokens = Math.ceil(streamedContent.length / 4);
-                            await chatDB.saveMessage(streamingMessage);
-                            lastSaveLength = streamedContent.length;
-                        }
-
-                        // Update UI with new content (only if viewing this session)
-                        if (chunk && this.chatArea && this.isViewingSession(session.id)) {
-                            this.chatArea.updateStreamingMessage(streamingMessageId, streamedContent);
-                        }
-                    },
-                    (tokenUpdate) => {
-                        streamingTokenCount = tokenUpdate.completionTokens || 0;
-                    },
-                    [], // Files are now included in processedMessages, not passed separately
-                    searchEnabled,
-                    abortController,
-                    async () => {
-                        this.updateSessionStreamingPhase(session.id, 'stream-open');
-                        streamingMessage.streamingPhase = this.getSessionStreamingState(session.id).phase;
-                        if (typingId) {
-                            this.updateTypingIndicator(typingId, 'stream-open');
-                        }
-                    },
-                    async (reasoningChunk) => {
-                        // Handle reasoning trace streaming
-                        if (!firstChunkReceived) {
-                            firstChunkReceived = true;
-                            reasoningStartTime = Date.now();
-                            streamingMessage.streamingPending = false;
-                            streamingMessage.streamingPhase = null;
-                            streamingMessage.reasoning = reasoningChunk;
-                            streamingMessage.streamingReasoning = true;
-                            streamedReasoning = reasoningChunk;
-                            await chatDB.saveMessage(streamingMessage);
-                            // Only update UI if still viewing the same session
-                            if (this.chatArea && this.isViewingSession(session.id)) {
-                                await this.chatArea.appendMessage(streamingMessage);
-                            }
-                        } else {
-                            streamedReasoning += reasoningChunk;
-                            streamingMessage.reasoning = streamedReasoning;
-                        }
-
-                        // Update UI with new reasoning content (only if viewing this session)
-                        if (this.chatArea && this.isViewingSession(session.id)) {
-                            this.chatArea.updateStreamingReasoning(streamingMessageId, streamedReasoning);
-                        }
-                    },
-                    this.reasoningEnabled,
-                    this.reasoningEffort
-                );
-
-                // Save the final message content with token data, reasoning, and citations
-                streamingMessage.content = streamedContent;
-                if (streamingMessage.scrubber) {
-                    streamingMessage.scrubber.redactedResponse = streamedContent;
-                }
-                const rawReasoning = tokenData.reasoning || streamedReasoning || null;
-                // Parse and save the cleaned reasoning
-                streamingMessage.reasoning = rawReasoning ? parseReasoningContent(rawReasoning) : null;
-                streamingMessage.tokenCount = tokenData.completionTokens || streamingTokenCount;
-                const streamReportedModel = tokenData.model || modelIdForRequest;
-                const resolvedFinalModelName = this.normalizeModelName(
-                    inferenceService.getDisplayName(streamReportedModel, modelNameToUse, session)
-                ) || modelNameToUse;
-                streamingMessage.model = resolvedFinalModelName;
-                streamingMessage.streamingTokens = null; // Clear streaming tokens after completion
-                streamingMessage.streamingReasoning = false; // Clear streaming reasoning flag
-                streamingMessage.citations = tokenData.citations || null;
-
-                // Calculate reasoning duration if reasoning was used
-                if (streamingMessage.reasoning && reasoningStartTime) {
-                    // Use already-calculated end time if available, otherwise calculate now
-                    const finalReasoningEndTime = reasoningEndTime || Date.now();
-                    streamingMessage.reasoningDuration = finalReasoningEndTime - reasoningStartTime;
-                }
-
-                await chatDB.saveMessage(streamingMessage);
-
-                // Fetch metadata for citations asynchronously and update UI
-                if (streamingMessage.citations && streamingMessage.citations.length > 0) {
-                    this.enrichCitationsAndUpdateUI(streamingMessage);
-                }
-
-                // Re-render the message to finalize its state (only if viewing this session)
-                if (this.chatArea && this.isViewingSession(session.id)) {
-                    await this.chatArea.finalizeStreamingMessage(streamingMessage);
-                    // Finalize reasoning display with markdown processing and timing
-                    if (streamingMessage.reasoning) {
-                        this.chatArea.finalizeReasoningDisplay(streamingMessage.id, streamingMessage.reasoning, streamingMessage.reasoningDuration);
-                    }
-                }
-
-                // Pre-cache scrubber restoration in background (if applicable)
-                if (streamingMessage.scrubber?.canRestore) {
-                    this.preCacheScrubberRestore(streamingMessage);
-                }
-
-                break retryLoop; // Success - exit retry loop
-
-            } catch (error) {
-                console.error('Error getting AI response:', error);
-                if (typingId) this.removeTypingIndicator(typingId);
-
-                // Check if error was due to cancellation
-                if (error.isCancelled) {
-                    // Keep the partial message if there's content, otherwise remove it
-                    if (streamingMessage && firstChunkReceived) {
-                        if (streamedContent.trim() || streamedReasoning.trim()) {
-                            // Save the partial content with a note
-                            streamingMessage.content = streamedContent;
-                            // Parse and save the cleaned reasoning
-                            streamingMessage.reasoning = streamedReasoning ? parseReasoningContent(streamedReasoning) : null;
-                            streamingMessage.tokenCount = null;
-                            streamingMessage.streamingTokens = null;
-                            streamingMessage.streamingReasoning = false;
-                            await chatDB.saveMessage(streamingMessage);
-                            // Only update UI if still viewing the same session
-                            if (this.chatArea && this.isViewingSession(session.id)) {
-                                await this.chatArea.finalizeStreamingMessage(streamingMessage);
-                                // Finalize reasoning display with markdown processing
-                                if (streamingMessage.reasoning) {
-                                    this.chatArea.finalizeReasoningDisplay(streamingMessage.id, streamingMessage.reasoning);
-                                }
-                            }
-                        } else {
-                            // Remove empty message if no content was generated
-                            await this.deleteMessageWithRuntimeData(streamingMessage.id);
-                            // Only remove from UI if still viewing the same session
-                            if (this.isViewingSession(session.id)) {
-                                const messageEl = document.querySelector(`[data-message-id="${streamingMessage.id}"]`);
-                                if (messageEl) {
-                                    messageEl.remove();
-                                }
-                            }
-                        }
-                    }
-                    // If firstChunkReceived is false, message was never added to UI or DB, nothing to clean up
-                    break retryLoop; // Don't retry cancelled requests
-                }
-
-                // Check if we should retry (only if no content received yet)
-                if (!firstChunkReceived && retryCount < MAX_RETRIES && isRetryableError(error)) {
-                    retryCount++;
-                    console.log(`Retrying request (attempt ${retryCount + 1}/${MAX_RETRIES + 1}) after error:`, error.message);
-                    // Small delay before retry (500ms * attempt number)
-                    await new Promise(r => setTimeout(r, 500 * retryCount));
-                    // Re-show typing indicator for retry
+                try {
+                    await this.streamAssistantTurnOnce({
+                        session,
+                        ...preparedRequest,
+                        searchEnabled,
+                        abortController,
+                        typingId,
+                        initialPendingPhase,
+                        scrubberOriginalPrompt,
+                        scrubberRedactedPrompt
+                    });
+                    break retryLoop;
+                } catch (error) {
+                    console.error('Error getting AI response:', error);
                     if (typingId) this.removeTypingIndicator(typingId);
-                    const retryPendingPhase = this.resolvePendingPhaseForSession(session);
-                    this.updateSessionStreamingPhase(session.id, retryPendingPhase);
-                    typingId = this.isViewingSession(session.id) ? this.showTypingIndicator(modelNameToUse, retryPendingPhase) : null;
-                    continue retryLoop;
-                }
+                    const turnState = error.turnState || {};
 
-                // Non-retryable or exhausted retries - show error to user
-                const errorMessage = error.message;
-
-                // Customize messages for specific error types
-                let userFriendlyMessage = `Sorry, I encountered an error while processing your request. Try re-submitting the query. **Error**: ${errorMessage}`;
-
-                // The following are inference backend HTTP status codes, not OA infra
-                if (error.status === 402) {
-                    // Credit/token limit errors
-                    userFriendlyMessage = `Sorry, I encountered an error while processing your request. Try submitting the query again. **Error**: ${errorMessage}`;
-                } else if (error.status === 401) {
-                    // Authentication errors
-                    userFriendlyMessage = `Authentication error. Please check the system panel (right side) and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor)!`;
-                } else if (error.status === 503 || error.status === 502 || error.status === 504) {
-                    // Service unavailable / gateway errors (after retries exhausted)
-                    userFriendlyMessage = `Gateway error (after ${retryCount} retries). Please take a look at the system panel and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor).`;
-                } else if (errorMessage.includes('proxy') || errorMessage.includes('Proxy')) {
-                    // Proxy/connection errors
-                    userFriendlyMessage = `Proxy error. Please take a look at the system panel and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor).`;
-                } else if (errorMessage.includes('No API key')) {
-                    // No API key errors
-                    userFriendlyMessage = `API key error. Please take a look at the system panel and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor).`;
-                } else {
-                    // Generic fallback (after retries if applicable)
-                    const retryNote = retryCount > 0 ? ` (after ${retryCount} retries)` : '';
-                    userFriendlyMessage = `⚠️ **Error**${retryNote}: ${errorMessage}`;
-                }
-
-                if (firstChunkReceived && streamingMessage) {
-                    // Message was already added to UI, update it with error
-                    streamingMessage.content = userFriendlyMessage;
-                    streamingMessage.tokenCount = null;
-                    streamingMessage.streamingTokens = null;
-                    streamingMessage.streamingReasoning = false;
-                    streamingMessage.streamingPending = false;
-                    streamingMessage.streamingPhase = null;
-                    streamingMessage.isLocalOnly = true;
-                    await chatDB.saveMessage(streamingMessage);
-                    // Only update UI if still viewing the same session
-                    if (this.chatArea && this.isViewingSession(session.id)) {
-                        await this.chatArea.finalizeStreamingMessage(streamingMessage);
+                    if (error.isCancelled) {
+                        await this.keepPartialAssistantTurn({
+                            session,
+                            streamingMessage: turnState.streamingMessage,
+                            streamedContent: turnState.streamedContent || '',
+                            streamedReasoning: turnState.streamedReasoning || ''
+                        });
+                        break retryLoop;
                     }
-                } else if (this.isViewingSession(session.id)) {
-                    if (typingId) this.removeTypingIndicator(typingId);
-                    // Error before first chunk - message never added to UI, add new error message
-                    await this.addMessage('assistant', userFriendlyMessage, { isLocalOnly: true });
+
+                    if (!turnState.firstChunkReceived && retryCount < MAX_RETRIES && this.isRetryableAssistantError(error)) {
+                        if (turnState.streamingMessage?.id) {
+                            await this.discardStreamingMessage(session.id, turnState.streamingMessage.id);
+                        }
+                        retryCount++;
+                        console.log(`Retrying request (attempt ${retryCount + 1}/${MAX_RETRIES + 1}) after error:`, error.message);
+                        await new Promise(r => setTimeout(r, 500 * retryCount));
+                        if (typingId) this.removeTypingIndicator(typingId);
+                        const retryPendingPhase = this.resolvePendingPhaseForSession(session);
+                        this.updateSessionStreamingPhase(session.id, retryPendingPhase);
+                        typingId = this.isViewingSession(session.id)
+                            ? this.showTypingIndicator(preparedRequest.modelNameToUse, retryPendingPhase)
+                            : null;
+                        continue retryLoop;
+                    }
+
+                    await this.renderAssistantTurnError({
+                        session,
+                        streamingMessage: turnState.streamingMessage,
+                        userFriendlyMessage: this.buildAssistantErrorMessage(error, retryCount),
+                        firstChunkReceived: Boolean(turnState.firstChunkReceived),
+                        markLocalOnly: true
+                    });
+                    break retryLoop;
                 }
-                break retryLoop; // Exit after showing error
-            }
             } // End of retryLoop
         } finally {
             // Clear streaming state for this session

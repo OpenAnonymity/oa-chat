@@ -9,6 +9,31 @@ function normalizeArtifactKind(mimeType = '', suggestedKind = '') {
     return 'file';
 }
 
+function getModelToolName(tool = {}) {
+    const candidate = (tool.skillName || tool.name || '').toString().trim();
+    if (!candidate) return '';
+    const normalized = candidate.replace(/[^a-zA-Z0-9_-]/g, '_');
+    return normalized.slice(0, 64);
+}
+
+function parseToolArguments(rawArguments) {
+    if (!rawArguments || !rawArguments.trim()) {
+        return {};
+    }
+    return JSON.parse(rawArguments);
+}
+
+function normalizeToolCalls(toolCalls = []) {
+    return (toolCalls || []).map((toolCall) => ({
+        id: toolCall?.id || generateRuntimeId('call'),
+        type: toolCall?.type || 'function',
+        function: {
+            name: toolCall?.function?.name || toolCall?.name || '',
+            arguments: toolCall?.function?.arguments || toolCall?.arguments || '{}'
+        }
+    })).filter(toolCall => toolCall.function.name);
+}
+
 export class ToolRuntime {
     constructor({ host, runStore, artifactStore, approvalResolver = null } = {}) {
         if (!host) {
@@ -55,11 +80,69 @@ export class ToolRuntime {
 
     async getTool(toolName) {
         const tools = await this.listTools();
-        return tools.find(tool => tool.name === toolName) || null;
+        return tools.find((tool) => tool.name === toolName || getModelToolName(tool) === toolName) || null;
+    }
+
+    async getModelTools() {
+        const tools = await this.listTools();
+        return tools
+            .filter(tool => tool.modelEnabled !== false)
+            .map((tool) => ({
+                type: 'function',
+                function: {
+                    name: getModelToolName(tool),
+                    description: tool.description || tool.title || tool.name,
+                    parameters: shallowClone(tool.inputSchema || {
+                        type: 'object',
+                        properties: {},
+                        additionalProperties: false
+                    })
+                }
+            }));
     }
 
     subscribe(listener) {
         return this.emitter.subscribe(listener);
+    }
+
+    async runEphemeralTool({
+        sessionId = null,
+        messageId = null,
+        toolName,
+        input,
+        metadata = {},
+        context = {}
+    }) {
+        const tool = await this.getTool(toolName);
+        if (!tool) {
+            throw new Error(`Unsupported tool: ${toolName}`);
+        }
+
+        const result = await this.host.runTool({
+            id: generateRuntimeId('call'),
+            runId: null,
+            sessionId,
+            messageId,
+            toolName: tool.name,
+            input: shallowClone(input),
+            metadata: shallowClone(metadata),
+            context: shallowClone(context)
+        });
+
+        const artifacts = this.normalizeArtifacts(result?.artifacts || [], {
+            sessionId,
+            messageId,
+            runId: null
+        });
+
+        return {
+            tool: shallowClone(tool),
+            status: result?.status || 'completed',
+            stdout: typeof result?.stdout === 'string' ? result.stdout : '',
+            stderr: typeof result?.stderr === 'string' ? result.stderr : '',
+            errorMessage: result?.error?.message || null,
+            artifacts
+        };
     }
 
     async startManualToolRun({
@@ -81,8 +164,9 @@ export class ToolRuntime {
             callId: generateRuntimeId('call'),
             sessionId,
             messageId,
-            toolName,
-            toolTitle: tool.title || toolName,
+            toolName: tool.name,
+            toolSkillName: getModelToolName(tool),
+            toolTitle: tool.title || tool.name,
             toolFamily: tool.family || 'generic',
             status: 'requested',
             approvalState: 'approved',
@@ -124,6 +208,7 @@ export class ToolRuntime {
             sessionId: toolCall.sessionId || null,
             messageId: toolCall.messageId || null,
             toolName: tool.name,
+            toolSkillName: getModelToolName(tool),
             toolTitle: tool.title || tool.name,
             toolFamily: tool.family || 'generic',
             status: 'requested',
@@ -167,6 +252,25 @@ export class ToolRuntime {
         return this.executeRun(run, tool);
     }
 
+    normalizeArtifacts(rawArtifacts = [], { sessionId = null, messageId = null, runId = null } = {}) {
+        return (rawArtifacts || []).map((rawArtifact) => ({
+            id: rawArtifact.id || generateRuntimeId('artifact'),
+            sessionId,
+            messageId,
+            runId,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            name: rawArtifact.name || 'artifact',
+            mimeType: rawArtifact.mimeType || 'application/octet-stream',
+            kind: normalizeArtifactKind(rawArtifact.mimeType, rawArtifact.kind),
+            content: rawArtifact.content ?? '',
+            encoding: rawArtifact.encoding || 'utf8',
+            byteSize: rawArtifact.byteSize || String(rawArtifact.content ?? '').length,
+            download: rawArtifact.download !== false,
+            metadata: shallowClone(rawArtifact.metadata || {})
+        }));
+    }
+
     async executeRun(run, tool) {
         run.status = 'running';
         run.startedAt = Date.now();
@@ -186,26 +290,14 @@ export class ToolRuntime {
                 context: shallowClone(run.context)
             });
 
-            const artifacts = [];
-            for (const rawArtifact of (result?.artifacts || [])) {
-                const artifact = {
-                    id: rawArtifact.id || generateRuntimeId('artifact'),
-                    sessionId: run.sessionId,
-                    messageId: run.messageId,
-                    runId: run.id,
-                    createdAt: Date.now(),
-                    updatedAt: Date.now(),
-                    name: rawArtifact.name || 'artifact',
-                    mimeType: rawArtifact.mimeType || 'application/octet-stream',
-                    kind: normalizeArtifactKind(rawArtifact.mimeType, rawArtifact.kind),
-                    content: rawArtifact.content ?? '',
-                    encoding: rawArtifact.encoding || 'utf8',
-                    byteSize: rawArtifact.byteSize || String(rawArtifact.content ?? '').length,
-                    download: rawArtifact.download !== false,
-                    metadata: shallowClone(rawArtifact.metadata || {})
-                };
+            const artifacts = this.normalizeArtifacts(result?.artifacts || [], {
+                sessionId: run.sessionId,
+                messageId: run.messageId,
+                runId: run.id
+            });
+
+            for (const artifact of artifacts) {
                 await this.artifactStore.saveArtifact(artifact);
-                artifacts.push(artifact);
                 this.emit({ type: 'artifact.created', run: shallowClone(run), artifact: shallowClone(artifact) });
             }
 
@@ -219,7 +311,12 @@ export class ToolRuntime {
             run.outputSummary = shallowClone(result?.outputSummary || null);
             await this.runStore.saveRun(run);
 
-            this.emit({ type: 'tool.run.completed', run: shallowClone(run), tool: shallowClone(tool), artifacts: artifacts.map(artifact => shallowClone(artifact)) });
+            this.emit({
+                type: 'tool.run.completed',
+                run: shallowClone(run),
+                tool: shallowClone(tool),
+                artifacts: artifacts.map(artifact => shallowClone(artifact))
+            });
             return { run: shallowClone(run), artifacts: artifacts.map(artifact => shallowClone(artifact)) };
         } catch (error) {
             run.status = 'failed';
@@ -228,9 +325,31 @@ export class ToolRuntime {
             run.completedAt = run.updatedAt;
             run.errorMessage = error.message || 'Tool execution failed.';
             await this.runStore.saveRun(run);
-            this.emit({ type: 'tool.run.failed', run: shallowClone(run), tool: shallowClone(tool), error: { message: run.errorMessage } });
+            this.emit({
+                type: 'tool.run.failed',
+                run: shallowClone(run),
+                tool: shallowClone(tool),
+                error: { message: run.errorMessage }
+            });
             throw error;
         }
+    }
+
+    buildToolResultMessage(run, artifacts = []) {
+        return JSON.stringify({
+            status: run?.status || 'completed',
+            stdout: run?.stdout || '',
+            stderr: run?.stderr || '',
+            error: run?.errorMessage || null,
+            artifacts: (artifacts || []).map((artifact) => ({
+                id: artifact.id,
+                name: artifact.name,
+                mimeType: artifact.mimeType,
+                kind: artifact.kind,
+                download: artifact.download !== false
+            })),
+            outputSummary: shallowClone(run?.outputSummary || null)
+        });
     }
 
     async cancelRun(runId) {
@@ -248,26 +367,98 @@ export class ToolRuntime {
         return true;
     }
 
-    async streamTurn({ modelAdapter, request, approvalResolver = this.approvalResolver } = {}) {
+    async *streamTurn({ modelAdapter, request, approvalResolver = this.approvalResolver, maxRounds = 6 } = {}) {
         if (!modelAdapter || typeof modelAdapter.streamTurn !== 'function') {
             throw new Error('streamTurn requires a modelAdapter with streamTurn().');
         }
 
-        const turnEvents = [];
-        for await (const event of modelAdapter.streamTurn(request)) {
-            turnEvents.push(event);
-            this.emit(event);
+        const modelTools = await this.getModelTools();
+        let workingMessages = Array.isArray(request?.messages)
+            ? request.messages.map(message => shallowClone(message))
+            : [];
 
-            if (event?.type === 'tool.call.requested' && event.toolCall) {
-                const result = await this.executeToolCall(event.toolCall, { approvalResolver });
-                turnEvents.push({ type: 'tool.run.completed', run: result.run, artifacts: result.artifacts });
+        for (let round = 0; round < maxRounds; round += 1) {
+            let assistantResult = null;
+
+            for await (const event of modelAdapter.streamTurn({
+                ...request,
+                messages: workingMessages.map(message => shallowClone(message)),
+                tools: modelTools
+            })) {
+                if (event?.type === 'assistant.completed') {
+                    assistantResult = shallowClone(event.result || null);
+                }
+                this.emit(event);
+                yield event;
+            }
+
+            if (!assistantResult) {
+                const completed = { type: 'turn.completed' };
+                this.emit(completed);
+                yield completed;
+                return;
+            }
+
+            const toolCalls = normalizeToolCalls(
+                assistantResult?.message?.toolCalls || assistantResult?.toolCalls || []
+            );
+
+            if (toolCalls.length === 0) {
+                const completed = { type: 'turn.completed', result: shallowClone(assistantResult) };
+                this.emit(completed);
+                yield completed;
+                return;
+            }
+
+            workingMessages = [
+                ...workingMessages,
+                {
+                    role: 'assistant',
+                    content: assistantResult?.message?.content || '',
+                    toolCalls: toolCalls.map(toolCall => shallowClone(toolCall))
+                }
+            ];
+
+            for (const rawToolCall of toolCalls) {
+                let parsedInput;
+                try {
+                    parsedInput = parseToolArguments(rawToolCall.function.arguments || '{}');
+                } catch (error) {
+                    parsedInput = { raw_arguments: rawToolCall.function.arguments || '' };
+                }
+
+                const resolvedTool = await this.getTool(rawToolCall.function.name);
+                const toolCall = {
+                    id: rawToolCall.id || generateRuntimeId('call'),
+                    sessionId: request?.session?.id || request?.sessionId || null,
+                    messageId: request?.messageId || null,
+                    toolName: rawToolCall.function.name,
+                    input: parsedInput,
+                    metadata: {
+                        source: 'model',
+                        round,
+                        providerToolCallId: rawToolCall.id || null,
+                        outputMode: resolvedTool?.family === 'artifact' ? 'embed' : 'execution-run'
+                    },
+                    context: shallowClone(request?.context || {})
+                };
+
+                const result = await this.executeToolCall(toolCall, { approvalResolver });
+                workingMessages = [
+                    ...workingMessages,
+                    {
+                        role: 'tool',
+                        toolCallId: rawToolCall.id || toolCall.id,
+                        name: rawToolCall.function.name,
+                        content: this.buildToolResultMessage(result.run, result.artifacts)
+                    }
+                ];
             }
         }
 
-        const completed = { type: 'turn.completed' };
-        turnEvents.push(completed);
+        const completed = { type: 'turn.completed', reason: 'max-rounds-exceeded' };
         this.emit(completed);
-        return turnEvents;
+        yield completed;
     }
 
     async handleHostEvent(event) {

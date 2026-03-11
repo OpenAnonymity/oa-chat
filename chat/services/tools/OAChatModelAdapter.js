@@ -62,42 +62,92 @@ export default class OAChatModelAdapter {
         searchEnabled = false,
         abortController = null,
         reasoningEnabled = true,
-        reasoningEffort = null
+        reasoningEffort = null,
+        tools = []
     }) {
         const queue = createAsyncQueue();
 
-        inferenceService.streamCompletion(
-            messages,
-            modelId,
-            session,
-            (chunk, imageData) => {
-                if (chunk) {
-                    queue.push({ type: 'assistant.delta', delta: chunk });
+        const supportsStructuredToolCalling = typeof inferenceService.supportsStructuredToolCalls === 'function'
+            ? inferenceService.supportsStructuredToolCalls(session)
+            : typeof inferenceService.streamStructuredTurn === 'function';
+
+        const supportsStructuredTools = Array.isArray(tools) &&
+            tools.length > 0 &&
+            supportsStructuredToolCalling;
+
+        if (supportsStructuredTools) {
+            inferenceService.streamStructuredTurn({
+                messages,
+                modelId,
+                session,
+                tools,
+                searchEnabled,
+                abortController,
+                reasoningEnabled,
+                reasoningEffort,
+                onEvent: (event) => {
+                    queue.push(event);
                 }
-                if (imageData?.images?.length) {
-                    queue.push({ type: 'assistant.image', images: imageData.images });
-                }
-            },
-            (tokenUpdate) => {
-                queue.push({ type: 'assistant.usage', usage: tokenUpdate });
-            },
-            files,
-            searchEnabled,
-            abortController,
-            async () => {
-                queue.push({ type: 'assistant.stream.open' });
-            },
-            async (reasoningChunk) => {
-                queue.push({ type: 'reasoning.delta', delta: reasoningChunk });
-            },
-            reasoningEnabled,
-            reasoningEffort
-        ).then((result) => {
-            queue.push({ type: 'assistant.completed', result });
-            queue.finish();
-        }).catch((error) => {
-            queue.fail(error);
-        });
+            }).then((result) => {
+                queue.push({
+                    type: 'assistant.completed',
+                    result: {
+                        ...result,
+                        message: {
+                            role: 'assistant',
+                            content: result?.message?.content || '',
+                            toolCalls: result?.message?.toolCalls || result?.toolCalls || []
+                        }
+                    }
+                });
+                queue.finish();
+            }).catch((error) => {
+                queue.fail(error);
+            });
+        } else {
+            inferenceService.streamCompletion(
+                messages,
+                modelId,
+                session,
+                (chunk, imageData) => {
+                    if (chunk) {
+                        queue.push({ type: 'assistant.delta', delta: chunk });
+                    }
+                    if (imageData?.images?.length) {
+                        queue.push({ type: 'assistant.image', images: imageData.images });
+                    }
+                },
+                (tokenUpdate) => {
+                    queue.push({ type: 'assistant.usage', usage: tokenUpdate });
+                },
+                files,
+                searchEnabled,
+                abortController,
+                async () => {
+                    queue.push({ type: 'assistant.stream.open' });
+                },
+                async (reasoningChunk) => {
+                    queue.push({ type: 'reasoning.delta', delta: reasoningChunk });
+                },
+                reasoningEnabled,
+                reasoningEffort
+            ).then((result) => {
+                queue.push({
+                    type: 'assistant.completed',
+                    result: {
+                        ...result,
+                        message: {
+                            role: 'assistant',
+                            content: '',
+                            toolCalls: []
+                        }
+                    }
+                });
+                queue.finish();
+            }).catch((error) => {
+                queue.fail(error);
+            });
+        }
 
         for await (const event of queue.consume()) {
             yield event;

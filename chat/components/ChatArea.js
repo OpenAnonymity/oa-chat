@@ -22,6 +22,31 @@ function buildSandboxedHtmlArtifactDocument(content = '') {
     return `<!doctype html><html><head>${charset}${csp}</head><body>${content}</body></html>`;
 }
 
+function normalizeMessageForRender(message, isSessionStreaming) {
+    if (!message || isSessionStreaming) {
+        return message;
+    }
+
+    const hasStaleStreamingState = Boolean(
+        message.streamingReasoning ||
+        message.streamingPending ||
+        message.streamingPhase ||
+        (message.streamingTokens !== null && message.streamingTokens !== undefined)
+    );
+
+    if (!hasStaleStreamingState) {
+        return message;
+    }
+
+    return {
+        ...message,
+        streamingReasoning: false,
+        streamingTokens: null,
+        streamingPending: false,
+        streamingPhase: null
+    };
+}
+
 export default class ChatArea {
     /**
      * @param {Object} app - Reference to the main ChatApp instance
@@ -607,7 +632,7 @@ export default class ChatArea {
             downloadBtn.className = 'artifact-viewer-download-btn';
             downloadBtn.textContent = 'Download';
             downloadBtn.addEventListener('click', async () => {
-                await this.handleDownloadArtifact(artifact.id);
+                await this.app.toolController?.downloadArtifactContent?.(artifact);
             });
             headerActions.appendChild(downloadBtn);
         }
@@ -867,7 +892,51 @@ export default class ChatArea {
             return;
         }
 
-        if (messages.length === 0) {
+        const isSessionStreaming = this.app.isCurrentSessionStreaming();
+        const streamingPhase = this.app.getCurrentSessionStreamingPhase
+            ? this.app.getCurrentSessionStreamingPhase()
+            : 'waiting';
+
+        const stalePlaceholderIds = [];
+        const visibleMessages = messages.filter((message) => {
+            const hasStreamingMarker = Boolean(
+                message.streamingPending ||
+                message.streamingPhase ||
+                message.streamingReasoning ||
+                (message.streamingTokens !== null && message.streamingTokens !== undefined)
+            );
+            const hasVisibleOutput = Boolean(
+                message.content?.trim() ||
+                message.reasoning?.trim() ||
+                message.images?.length ||
+                message.executionRuns?.length ||
+                message.embeddedArtifacts?.length
+            );
+
+            const isStalePlaceholder = !isSessionStreaming &&
+                message.role === 'assistant' &&
+                hasStreamingMarker &&
+                !hasVisibleOutput;
+
+            if (isStalePlaceholder) {
+                stalePlaceholderIds.push(message.id);
+            }
+
+            return !isStalePlaceholder;
+        });
+
+        if (stalePlaceholderIds.length > 0) {
+            Promise.all(stalePlaceholderIds.map((messageId) => {
+                if (typeof this.app.deleteMessageWithRuntimeData === 'function') {
+                    return this.app.deleteMessageWithRuntimeData(messageId);
+                }
+                return chatDB.deleteMessage(messageId);
+            })).catch((error) => {
+                console.warn('Failed to clean up stale placeholder messages:', error);
+            });
+        }
+
+        if (visibleMessages.length === 0) {
             if (!hasEmptyState) {
                 messagesContainer.innerHTML = buildEmptyState();
             }
@@ -880,12 +949,6 @@ export default class ChatArea {
             processContentWithLatex: this.app.processContentWithLatex.bind(this.app),
             formatTime: this.app.formatTime.bind(this.app)
         };
-
-        // Check if this session is currently streaming
-        const isSessionStreaming = this.app.isCurrentSessionStreaming();
-        const streamingPhase = this.app.getCurrentSessionStreamingPhase
-            ? this.app.getCurrentSessionStreamingPhase()
-            : 'waiting';
 
         // Check if this is an imported (or forked from import) session with new messages added
         // importedFrom = share import (can still receive updates)
@@ -906,7 +969,7 @@ export default class ChatArea {
             console.log(`[ChatArea] Shared session: messageCount=${sharedCount}, currentMessages=${messages.length}, hasNewAfterShare=${hasNewMessagesAfterShare}`);
         }
 
-        let messagesHtml = messages.map((message, index) => {
+        let messagesHtml = visibleMessages.map((message, index) => {
             const options = this.app.getMessageTemplateOptions ? this.app.getMessageTemplateOptions(message.id) : {};
             // Pass session streaming state to template
             options.isSessionStreaming = isSessionStreaming;
@@ -915,10 +978,7 @@ export default class ChatArea {
             // If streamingReasoning/streamingTokens are set AND session is NOT currently streaming,
             // it means streaming was interrupted (e.g., browser closed, network error).
             // Skip normalization if session is actively streaming to preserve the streaming UI state.
-            const shouldNormalize = !isSessionStreaming && (message.streamingReasoning || message.streamingTokens !== null);
-            const normalizedMessage = shouldNormalize
-                ? { ...message, streamingReasoning: false, streamingTokens: null }
-                : message;
+            const normalizedMessage = normalizeMessageForRender(message, isSessionStreaming);
 
             let html = buildMessageHTML(normalizedMessage, helpers, this.app.state.models, session.model, options);
 
@@ -936,18 +996,18 @@ export default class ChatArea {
         }).join('');
 
         // If session is imported but no new messages yet, show indicator at the end
-        if (wasImported && !hasNewMessagesAfterImport && messages.length > 0) {
-            messagesHtml += buildImportedIndicator(messages.length);
+        if (wasImported && !hasNewMessagesAfterImport && visibleMessages.length > 0) {
+            messagesHtml += buildImportedIndicator(visibleMessages.length);
         }
 
         // Show shared indicator at the end only if no new messages after sharing
-        if (session.shareInfo?.shareId && !hasNewMessagesAfterShare && !isSessionStreaming && messages.length > 0) {
+        if (session.shareInfo?.shareId && !hasNewMessagesAfterShare && !isSessionStreaming && visibleMessages.length > 0) {
             messagesHtml += buildSharedIndicator();
         }
 
         // If session is streaming but no assistant message exists yet (message not saved to DB),
         // show a typing indicator so the user knows a response is pending
-        const lastMsg = messages[messages.length - 1];
+        const lastMsg = visibleMessages[visibleMessages.length - 1];
         const needsTypingIndicator = isSessionStreaming && (!lastMsg || lastMsg.role === 'user');
         if (needsTypingIndicator) {
             // Get provider from session model for the typing indicator
@@ -961,7 +1021,7 @@ export default class ChatArea {
         // For streaming sessions, initialize typewriter state from live buffer OR DB content
         // Priority: live buffer > DB (because DB saves may lag behind the live stream)
         if (isSessionStreaming) {
-            const streamingMsg = messages.find(m => m.role === 'assistant' && m.streamingReasoning);
+            const streamingMsg = visibleMessages.find(m => m.role === 'assistant' && m.streamingReasoning);
             if (streamingMsg) {
                 // Check if we have live buffer content for THIS message (more up-to-date than DB)
                 const hasLiveBuffer = this.reasoningBuffer.messageId === streamingMsg.id && this.reasoningBuffer.content;
@@ -1071,18 +1131,20 @@ export default class ChatArea {
         const messageEl = document.querySelector(`[data-message-id="${message.id}"]`);
         if (messageEl) {
             const session = this.app.getCurrentSession();
+            const isSessionStreaming = this.app.isCurrentSessionStreaming();
             const helpers = {
                 processContentWithLatex: this.app.processContentWithLatex.bind(this.app),
                 formatTime: this.app.formatTime.bind(this.app)
             };
             const options = this.app.getMessageTemplateOptions ? this.app.getMessageTemplateOptions(message.id) : {};
-            options.isSessionStreaming = this.app.isCurrentSessionStreaming();
+            options.isSessionStreaming = isSessionStreaming;
             options.pendingPhase = this.app.getCurrentSessionStreamingPhase
                 ? this.app.getCurrentSessionStreamingPhase()
                 : 'waiting';
+            const normalizedMessage = normalizeMessageForRender(message, isSessionStreaming);
 
             // Build new HTML
-            const newHtml = buildMessageHTML(message, helpers, this.app.state.models, session.model, options);
+            const newHtml = buildMessageHTML(normalizedMessage, helpers, this.app.state.models, session.model, options);
 
             // Create temp element to parse HTML
             const tempDiv = document.createElement('div');

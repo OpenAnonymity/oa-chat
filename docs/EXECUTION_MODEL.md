@@ -2,6 +2,15 @@
 
 This document describes the standalone tool runtime now wired into `oa-chat`.
 
+In product terms, these are "skills" exposed to the model. The runtime and code
+still use "tool" in many places because that matches provider APIs such as
+OpenRouter tool calling, but the intended design is:
+
+- the model sees a list of skills/functions
+- the runtime decides how to execute them
+- `oa-chat` renders the result
+- `oa-desktop` or the browser host provides the concrete environment
+
 ## Scope
 
 - Tool execution is modeled as a standalone shared module under
@@ -28,13 +37,27 @@ This document describes the standalone tool runtime now wired into `oa-chat`.
     events without changing the existing chat transport.
   - `chatToolController.js` is the only chat-specific bridge. It translates
     code-block actions into tool runs, persists run/artifact refs onto messages,
-    hydrates execution cards, and opens/downloads artifacts.
+    hydrates execution cards and embedded artifacts, and opens/downloads artifacts.
+  - `chat/app.js` observes runtime events only for message visibility and
+    streaming UI updates. It must not duplicate run/artifact persistence that
+    already lives in `chatToolController.js`.
+- `chat/services/inference/backends/openRouterBackend.js` now exposes structured
+  tool calling through OpenRouter's native tool-calling support rather than
+  inventing a parallel local protocol.
 
 ## Current Product Behavior
 
-- Automatic execution is still structured-tool-call only by design. The app does
-  not heuristically execute plain assistant text.
-- The currently shipped UI path is manual execution from assistant code blocks:
+- Automatic execution is structured-tool-call only by design. The app does not
+  heuristically execute plain assistant text.
+- The OpenRouter path now exposes host skills directly to the model and the
+  standalone runtime performs the model -> skill -> model loop.
+- The currently shipped host/browser skill set is:
+  - `artifact_create`
+  - `html_render`
+  - `svg_render`
+  - `download_file`
+  - plus any desktop-provided skills such as `python_exec` / `bash_exec`
+- The currently shipped manual code-block UI is:
   - HTML -> `html.render`
   - SVG -> `svg.render`
   - ICS/calendar text -> `download.file`
@@ -51,8 +74,16 @@ This document describes the standalone tool runtime now wired into `oa-chat`.
 ## UI Rules
 
 - Non-tool chats must render exactly as before when no execution data exists.
+- Assistant-turn orchestration should stay centralized.
+  `sendMessage()` and `regenerateResponse()` must share the same assistant-turn
+  helper path rather than keeping separate stream-processing state machines.
 - Code-block tool buttons are additive and capability-gated by the active host.
-- Execution cards render inside assistant messages only when runs exist.
+- Manual preview/download actions must stay inline on the code block itself.
+  Do not add redundant post-message "Preview" or "Download" cards for those
+  actions.
+- Automatic artifact skills render as embedded outputs inside the assistant
+  message. Runtime/process skills render execution cards only when stdout/stderr,
+  status, or rerun controls are actually useful.
 - HTML artifact previews render in a sandboxed iframe with opaque origin and a
   restrictive CSP. This allows interactive previews without parent DOM access.
 - Artifact open/download actions are handled in `ChatArea`; no permanent
@@ -69,8 +100,6 @@ This document describes the standalone tool runtime now wired into `oa-chat`.
 
 ## Follow-up Work
 
-- Wire structured backend tool calls into `ToolRuntime.streamTurn()` once a
-  backend exposes them.
 - Add explicit approval UI for auto-invoked tools.
 - Add more artifact families such as Mermaid and richer file viewers.
 - Keep MCP as a host-side adapter only. It should not define the runtime

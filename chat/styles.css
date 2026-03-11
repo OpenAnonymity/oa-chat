@@ -3350,13 +3350,15 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
     }
 
     .execution-artifact-chip,
-    .artifact-viewer-header {
+    .artifact-viewer-header,
+    .embedded-artifact-header {
         flex-direction: column;
         align-items: stretch;
     }
 
     .execution-artifact-chip-actions,
-    .artifact-viewer-header-actions {
+    .artifact-viewer-header-actions,
+    .embedded-artifact-actions {
         width: 100%;
         justify-content: flex-end;
         flex-wrap: wrap;
@@ -3368,6 +3370,10 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
 
     .artifact-viewer-frame {
         min-height: 52vh;
+    }
+
+    .embedded-artifact-frame {
+        min-height: 300px;
     }
 }
 
@@ -3651,6 +3657,75 @@ html {
 .execution-run-stderr,
 .artifact-viewer-text {
     font-family: var(--font-mono), monospace;
+}
+
+.embedded-artifact-list {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.embedded-artifact-block {
+    width: 100%;
+    border: 1px solid hsl(var(--color-border));
+    border-radius: 0.95rem;
+    background: linear-gradient(180deg, hsl(var(--color-card)) 0%, hsl(var(--color-card) / 0.86) 100%);
+    overflow: hidden;
+}
+
+.embedded-artifact-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.75rem 0.9rem;
+    border-bottom: 1px solid hsl(var(--color-border));
+    background-color: hsl(var(--color-muted) / 0.35);
+}
+
+.embedded-artifact-meta {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.12rem;
+}
+
+.embedded-artifact-title {
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: hsl(var(--color-foreground));
+    word-break: break-word;
+}
+
+.embedded-artifact-kind {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: hsl(var(--color-muted-foreground));
+}
+
+.embedded-artifact-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    flex-shrink: 0;
+}
+
+.embedded-artifact-frame {
+    display: block;
+    width: 100%;
+    min-height: 420px;
+    border: 0;
+    background-color: white;
+}
+
+.embedded-artifact-image {
+    display: block;
+    width: 100%;
+    max-height: 460px;
+    object-fit: contain;
+    background-color: white;
 }
 
 /* Extra bottom margin for the last user message (when no response follows)
