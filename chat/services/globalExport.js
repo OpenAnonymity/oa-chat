@@ -7,6 +7,7 @@ import preferencesStore, { PREF_KEYS } from './preferencesStore.js';
 import ticketStore from './ticketStore.js';
 import { chatDB } from '../db.js';
 import { normalizeReasoningEffort } from './reasoningConfig.js';
+import { buildOmfExport } from './omfExporter.js';
 
 const FORMAT_VERSION = '1.0';
 const APP_NAME = 'oa-chat';
@@ -191,7 +192,7 @@ export async function exportChats() {
  * @param {string} suggestedName - Suggested filename
  * @returns {Promise<{ saved: boolean, usedFallback: boolean }>}
  */
-async function saveWithConfirmation(blob, suggestedName) {
+export async function saveWithConfirmation(blob, suggestedName) {
     // Try File System Access API (Chrome, Edge, Opera)
     if (typeof window.showSaveFilePicker === 'function') {
         try {
@@ -343,6 +344,14 @@ export async function exportAllData() {
         const dbPreferences = await collectPreferencesFromIndexedDB();
         const preferences = { ...localPreferences, ...dbPreferences };
 
+        // Collect memories as embedded OMF document
+        let memory = null;
+        try {
+            memory = await buildOmfExport();
+        } catch (err) {
+            console.warn('Failed to collect memories for export:', err);
+        }
+
         // Build export object
         const exportData = {
             formatVersion: FORMAT_VERSION,
@@ -351,7 +360,8 @@ export async function exportAllData() {
             data: {
                 chats,
                 tickets,
-                preferences
+                preferences,
+                memory
             }
         };
 

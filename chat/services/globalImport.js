@@ -7,6 +7,7 @@ import ticketStore from './ticketStore.js';
 import preferencesStore, { PREF_KEYS } from './preferencesStore.js';
 import { chatDB } from '../db.js';
 import { normalizeReasoningEffort } from './reasoningConfig.js';
+import { validateOmf, importOmf } from './omfImporter.js';
 
 const SUPPORTED_FORMAT_VERSIONS = ['1.0'];
 
@@ -286,13 +287,30 @@ export async function importFromFile(file) {
         const ticketResult = await importTickets(data.data.tickets);
         const appliedPreferences = await applyPreferences(data.data.preferences);
 
+        // Import memories if present (embedded OMF document)
+        let memoryResult = { imported: 0, duplicates: 0 };
+        if (data.data.memory) {
+            try {
+                const validation = validateOmf(data.data.memory);
+                if (validation.valid) {
+                    memoryResult = await importOmf(data.data.memory);
+                } else {
+                    console.warn('Skipping memory import — invalid OMF:', validation.error);
+                }
+            } catch (err) {
+                console.warn('Failed to import memories:', err);
+            }
+        }
+
         const summary = {
             importedSessions: chatResult.importedSessions,
             skippedSessions: chatResult.skippedSessions,
             importedMessages: chatResult.importedMessages,
             addedActiveTickets: ticketResult.addedActive,
             addedArchivedTickets: ticketResult.addedArchived,
-            appliedPreferences
+            appliedPreferences,
+            importedMemories: memoryResult.imported,
+            duplicateMemories: memoryResult.duplicates
         };
 
         console.log('✅ Import complete:', summary);
@@ -329,6 +347,10 @@ export function formatImportSummary(summary) {
 
     if (summary.appliedPreferences && summary.appliedPreferences.length > 0) {
         parts.push(`${summary.appliedPreferences.length} preference${summary.appliedPreferences.length !== 1 ? 's' : ''} applied`);
+    }
+
+    if (summary.importedMemories > 0) {
+        parts.push(`${summary.importedMemories} memor${summary.importedMemories !== 1 ? 'ies' : 'y'} imported`);
     }
 
     if (parts.length === 0) {
