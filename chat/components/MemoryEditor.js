@@ -128,8 +128,8 @@ class MemoryEditor {
     _renderModal() {
         return `
             <div role="dialog" aria-modal="true"
-                 class="memory-editor-dialog bg-background border border-border/60 rounded-2xl shadow-2xl w-full max-w-3xl mx-4 overflow-hidden flex flex-col"
-                 style="height: min(88vh, 780px)">
+                 class="memory-editor-dialog border rounded-2xl w-full mx-4 overflow-hidden flex flex-col"
+                 style="max-width: 760px; height: min(88vh, 780px)">
                 ${this._renderHeader()}
                 ${this.backfillState ? this._renderBackfillProgress() : ''}
                 ${this.importState ? this._renderImportProgress() : ''}
@@ -144,25 +144,32 @@ class MemoryEditor {
     }
 
     _renderHeader() {
+        const fileCount = this.files.filter(f => !f.path.endsWith('_index.md')).length;
         return `
-            <div class="flex items-center justify-between px-4 py-3 shrink-0" style="border-bottom: 1px solid hsl(var(--color-border) / 0.5)">
+            <div class="flex items-center justify-between px-3 py-1.5 shrink-0" style="border-bottom: 1px solid var(--mem-divider)">
                 <div class="flex items-center gap-2">
-                    <div class="flex h-7 w-7 items-center justify-center rounded-lg bg-muted/50">
-                        <svg class="w-3.5 h-3.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                    <div class="flex h-6 w-6 items-center justify-center rounded-md" style="background: hsl(var(--color-muted) / 0.3)">
+                        <svg class="w-3 h-3 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
                         </svg>
                     </div>
                     <h2 class="text-sm font-semibold text-foreground">Memory</h2>
+                    ${fileCount > 0 ? `<span class="text-[11px] text-muted-foreground/50">${fileCount} file${fileCount === 1 ? '' : 's'}</span>` : ''}
                 </div>
-                <div class="flex items-center gap-0.5">
-                    <button id="memory-backfill-btn" class="mem-header-btn" title="Process past conversations for memories">Backfill</button>
-                    <button id="memory-export-btn" class="mem-header-btn" title="Export memories as OMF JSON">Export</button>
-                    <button id="memory-import-btn" class="mem-header-btn" title="Import memories from OMF JSON">Import</button>
-                    <input id="memory-import-file" type="file" accept=".json" class="hidden" />
-                    <button id="memory-new-folder-btn" class="mem-header-btn">New Folder</button>
-                    <button id="memory-new-file-btn" class="mem-header-btn">New File</button>
-                    <button id="memory-close-btn" class="text-muted-foreground hover:text-foreground transition-colors p-1.5 rounded-lg hover:bg-muted/50 ml-1" aria-label="Close">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                <div class="flex items-center gap-1.5">
+                    <div class="mem-toolbar-group">
+                        <button id="memory-new-file-btn" class="mem-header-btn" title="Create new memory file">New File</button>
+                        <button id="memory-new-folder-btn" class="mem-header-btn" title="Create new folder">New Folder</button>
+                    </div>
+                    <div class="mem-toolbar-group">
+                        <button id="memory-export-btn" class="mem-header-btn" title="Export memories as OMF JSON">Export</button>
+                        <button id="memory-import-btn" class="mem-header-btn" title="Import memories from OMF JSON">Import</button>
+                        <input id="memory-import-file" type="file" accept=".json" class="hidden" />
+                        <button id="memory-backfill-btn" class="mem-header-btn" title="Process past conversations for memories">Backfill</button>
+                    </div>
+                    <div class="w-px h-4 mx-0.5" style="background: var(--mem-divider)"></div>
+                    <button id="memory-close-btn" class="text-muted-foreground hover:text-foreground transition-colors p-1 rounded-md hover:bg-muted/40" aria-label="Close">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
                         </svg>
                     </button>
@@ -175,43 +182,45 @@ class MemoryEditor {
         const { dirs, rootFiles } = this._getDirectoryStructure();
         const sortedDirs = Object.keys(dirs).sort();
 
-        let html = '';
+        let html = '<div class="px-2.5 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider" style="color: hsl(var(--color-muted-foreground) / 0.4)">Files</div>';
 
         for (const dir of sortedDirs) {
             const isExpanded = this.expandedDirs.has(dir);
             const isRenaming = this.renamingDir === dir;
+            const fileCount = dirs[dir].length;
 
             if (isRenaming) {
                 html += `
-                    <div class="flex items-center gap-1.5 px-2 py-1">
+                    <div class="mem-tree-row" style="padding-left: 8px">
                         <svg class="mem-chevron ${isExpanded ? 'is-expanded' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"></path></svg>
-                        <svg class="w-4 h-4 text-amber-500/60 dark:text-amber-400/50 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"></path></svg>
+                        <svg class="w-3 h-3 text-amber-500/60 dark:text-amber-400/50 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"></path></svg>
                         <input id="memory-rename-dir-input" type="text" value="${this._escapeHtml(this.renamingDirValue)}"
                             class="flex-1 min-w-0 text-[13px] px-1.5 py-0.5 rounded border border-border bg-background text-foreground font-medium focus:outline-none focus:ring-1 focus:ring-ring" />
                     </div>
                 `;
             } else {
                 html += `
-                    <div class="group mem-dir-row flex items-center gap-1 px-2 py-[5px] rounded-md cursor-pointer hover:bg-muted/40 transition-colors" data-dir="${this._escapeHtml(dir)}">
+                    <div class="group mem-tree-row mem-dir-row" data-dir="${this._escapeHtml(dir)}" style="padding-left: 8px">
                         <svg class="mem-chevron ${isExpanded ? 'is-expanded' : ''}" data-dir-chevron="${this._escapeHtml(dir)}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"></path></svg>
-                        <svg class="w-4 h-4 text-amber-500/60 dark:text-amber-400/50 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"></path></svg>
-                        <span class="text-[13px] font-medium text-foreground truncate flex-1">${this._escapeHtml(dir)}</span>
+                        <svg class="w-3 h-3 text-amber-500/60 dark:text-amber-400/50 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"></path></svg>
+                        <span class="mem-tree-label font-medium truncate flex-1">${this._escapeHtml(dir)}</span>
+                        <span class="mem-tree-count">${fileCount}</span>
                         <button class="memory-dir-menu-btn opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-muted/60 text-muted-foreground flex-shrink-0 transition-opacity" data-dir="${this._escapeHtml(dir)}">
-                            <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path d="M10 6a2 2 0 110-4 2 2 0 010 4zm0 6a2 2 0 110-4 2 2 0 010 4zm0 6a2 2 0 110-4 2 2 0 010 4z"></path></svg>
+                            <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M10 6a2 2 0 110-4 2 2 0 010 4zm0 6a2 2 0 110-4 2 2 0 010 4zm0 6a2 2 0 110-4 2 2 0 010 4z"></path></svg>
                         </button>
                     </div>
                 `;
                 // Context menu (hidden by default, shown surgically)
                 const menuOpen = this.openDirMenu === dir;
                 html += `
-                    <div class="mem-dir-context-menu ${menuOpen ? '' : 'hidden'} ml-6 mr-2 mb-0.5 rounded-lg border border-border bg-popover shadow-lg overflow-hidden" data-dir-menu="${this._escapeHtml(dir)}">
-                        <button class="memory-dir-rename-btn w-full text-left text-xs px-3 py-1.5 hover:bg-muted/50 text-foreground transition-colors" data-dir="${this._escapeHtml(dir)}">Rename</button>
-                        <button class="memory-dir-delete-btn w-full text-left text-xs px-3 py-1.5 hover:bg-muted/50 text-red-500 transition-colors" data-dir="${this._escapeHtml(dir)}">Delete</button>
+                    <div class="mem-dir-context-menu ${menuOpen ? '' : 'hidden'} ml-7 mr-2 mb-0.5 rounded-lg border border-border/50 shadow-lg overflow-hidden" style="background: hsl(var(--color-popover) / 0.7); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px)" data-dir-menu="${this._escapeHtml(dir)}">
+                        <button class="memory-dir-rename-btn w-full text-left text-xs px-3 py-1.5 hover:bg-muted/40 text-foreground transition-colors" data-dir="${this._escapeHtml(dir)}">Rename</button>
+                        <button class="memory-dir-delete-btn w-full text-left text-xs px-3 py-1.5 hover:bg-muted/40 text-red-500 transition-colors" data-dir="${this._escapeHtml(dir)}">Delete</button>
                     </div>
                 `;
             }
 
-            // Children container (toggled surgically via hidden class)
+            // Children container with indent guide line (toggled surgically via hidden class)
             html += `<div class="mem-dir-children ${isExpanded ? '' : 'hidden'}" data-dir-children="${this._escapeHtml(dir)}">`;
             for (const file of dirs[dir]) {
                 const fileName = file.path.slice(dir.length + 1);
@@ -232,7 +241,7 @@ class MemoryEditor {
             html += `
                 <div class="px-2 py-1">
                     <input id="memory-new-folder-input" type="text" placeholder="folder-name" value="${this._escapeHtml(this.newFolderName)}"
-                        class="w-full text-xs px-2 py-1.5 rounded border border-border bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring" />
+                        class="w-full text-xs px-2 py-1 rounded border border-border/50 bg-background/50 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-ring" />
                 </div>
             `;
         }
@@ -242,73 +251,92 @@ class MemoryEditor {
             html += `
                 <div class="px-2 py-1">
                     <input id="memory-new-file-input" type="text" placeholder="path/file.md" value="${this._escapeHtml(this.newFilePath)}"
-                        class="w-full text-xs px-2 py-1.5 rounded border border-border bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring" />
+                        class="w-full text-xs px-2 py-1 rounded border border-border/50 bg-background/50 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-ring" />
                 </div>
             `;
         }
 
         if (this.files.length === 0 && !this.isCreatingFile && !this.isCreatingFolder) {
             html = `
-                <div class="flex flex-col items-center justify-center py-10 px-4 text-center gap-2">
-                    <svg class="w-8 h-8 text-muted-foreground/15" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1">
+                <div class="flex flex-col items-center justify-center py-10 px-4 text-center gap-3">
+                    <svg class="w-8 h-8 text-muted-foreground/10" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"></path>
                     </svg>
-                    <span class="text-xs text-muted-foreground/50">No memory files yet</span>
+                    <span class="text-xs text-muted-foreground/40">No memory files yet</span>
+                    <button id="memory-empty-new-file-btn" class="text-xs font-medium transition-colors" style="color: hsl(var(--color-accent-primary) / 0.7)">Create your first file</button>
                 </div>
             `;
         }
 
         return `
-            <div id="memory-sidebar" class="mem-sidebar w-56 flex-shrink-0 overflow-y-auto p-1.5"
-                 style="border-right: 1px solid hsl(var(--color-border) / 0.4); background: hsl(var(--color-card) / 0.5)">
+            <div id="memory-sidebar" class="mem-sidebar w-56 flex-shrink-0 overflow-y-auto p-1.5">
                 ${html}
             </div>
         `;
     }
 
     _renderFileItem(path, displayName, tooltip, isSelected, isNested) {
-        const paddingClass = isNested ? 'pl-7 pr-2' : 'px-2';
-        const selectedClasses = isSelected
-            ? 'mem-file-selected bg-accent text-foreground'
-            : 'text-muted-foreground hover:bg-muted/30 hover:text-foreground';
+        const paddingLeft = isNested ? 24 : 8;
+        const selectedClass = isSelected ? 'is-selected' : '';
         return `
-            <div class="memory-file-item flex items-center gap-1.5 ${paddingClass} py-[5px] rounded-md cursor-pointer text-[13px] truncate transition-colors ${selectedClasses}" data-path="${this._escapeHtml(path)}" title="${this._escapeHtml(tooltip || '')}">
-                <svg class="w-3.5 h-3.5 flex-shrink-0 opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"></path></svg>
-                <span class="truncate">${this._escapeHtml(displayName)}</span>
+            <div class="mem-tree-row mem-tree-file memory-file-item ${selectedClass}" data-path="${this._escapeHtml(path)}" title="${this._escapeHtml(tooltip || '')}" style="padding-left: ${paddingLeft}px">
+                <svg class="w-3 h-3 flex-shrink-0 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"></path></svg>
+                <span class="mem-tree-label truncate">${this._escapeHtml(displayName)}</span>
             </div>
         `;
     }
 
     _renderEditorContent() {
         if (!this.selectedPath) {
+            const { dirs } = this._getDirectoryStructure();
+            const folderCount = Object.keys(dirs).length;
+            const fileCount = this.files.filter(f => !f.path.endsWith('_index.md')).length;
             return `
-                <div class="flex-1 flex flex-col items-center justify-center text-center p-8 gap-2">
-                    <svg class="w-10 h-10 text-muted-foreground/10" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1">
+                <div class="flex-1 flex flex-col items-center justify-center text-center p-8 gap-3">
+                    <svg class="w-10 h-10 text-muted-foreground/8" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="0.8">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"></path>
                     </svg>
-                    <p class="text-sm text-muted-foreground/60">Select a file to view or edit</p>
+                    <p class="text-[13px] text-muted-foreground/40">Select a file to view or edit</p>
+                    ${fileCount > 0 ? `<p class="text-[11px] text-muted-foreground/25">${fileCount} file${fileCount === 1 ? '' : 's'} in ${folderCount} folder${folderCount === 1 ? '' : 's'}</p>` : ''}
+                    <p class="text-[10px] text-muted-foreground/20 mt-2">${navigator.platform?.includes('Mac') ? '\u2318' : 'Ctrl+'}S to save</p>
                 </div>
             `;
         }
 
         const isIndex = this.selectedPath.endsWith('_index.md');
+        const pathBreadcrumb = this._renderBreadcrumb(this.selectedPath);
 
         return `
-            <div class="flex items-center justify-between px-3 py-2 shrink-0" style="border-bottom: 1px solid hsl(var(--color-border) / 0.35); background: hsl(var(--color-muted) / 0.08)">
-                <span class="text-xs text-muted-foreground font-mono truncate">${this._escapeHtml(this.selectedPath)}</span>
+            <div class="flex items-center justify-between px-3 py-1.5 shrink-0" style="border-bottom: 1px solid var(--mem-divider)">
+                ${pathBreadcrumb}
                 <div class="flex items-center gap-1.5 flex-shrink-0">
-                    ${this.isDirty ? '<span class="text-[11px] text-amber-500 font-medium">Unsaved</span>' : ''}
+                    ${this.isDirty ? '<span class="text-[10px] text-amber-500/80 font-medium">Unsaved</span>' : ''}
                     <button id="memory-save-btn" class="mem-header-btn ${this.isDirty ? '' : 'opacity-30 pointer-events-none'}">Save</button>
                     ${!isIndex ? '<button id="memory-delete-btn" class="mem-header-btn mem-header-btn-danger">Delete</button>' : ''}
                 </div>
             </div>
             <textarea id="memory-editor-textarea"
-                class="mem-textarea flex-1 w-full p-4 text-[13px] font-mono bg-transparent text-foreground resize-none focus:outline-none leading-relaxed"
+                class="mem-textarea flex-1 w-full p-4 text-sm bg-transparent text-foreground resize-none focus:outline-none leading-relaxed"
                 spellcheck="false"
                 placeholder="Start typing..."
                 ${isIndex ? 'readonly' : ''}
             >${this._escapeHtml(this.editorContent)}</textarea>
         `;
+    }
+
+    _renderBreadcrumb(path) {
+        const parts = path.split('/');
+        if (parts.length === 1) {
+            return `<span class="text-xs text-foreground/70 font-mono font-medium truncate">${this._escapeHtml(path)}</span>`;
+        }
+        const segments = parts.map((part, i) => {
+            const isLast = i === parts.length - 1;
+            if (isLast) {
+                return `<span class="text-foreground/70 font-medium">${this._escapeHtml(part)}</span>`;
+            }
+            return `<span class="text-muted-foreground/40">${this._escapeHtml(part)}</span><span class="text-muted-foreground/20">/</span>`;
+        });
+        return `<div class="flex items-center gap-0.5 text-xs font-mono truncate">${segments.join('')}</div>`;
     }
 
     // ─── Event Handling ──────────────────────────────────────────
@@ -343,6 +371,9 @@ class MemoryEditor {
             });
         }
         this.overlay.querySelector('#backfill-dismiss-btn')?.addEventListener('click', () => this._dismissBackfill());
+
+        // Empty state CTA
+        this.overlay.querySelector('#memory-empty-new-file-btn')?.addEventListener('click', () => this._startNewFile());
 
         // Sidebar — single delegated listener for all sidebar interactions
         const sidebar = this.overlay.querySelector('#memory-sidebar');
@@ -490,14 +521,12 @@ class MemoryEditor {
         if (!path) return;
 
         // Update sidebar selection classes without re-render
-        this.overlay.querySelectorAll('.memory-file-item.mem-file-selected').forEach(el => {
-            el.classList.remove('mem-file-selected', 'bg-accent', 'text-foreground');
-            el.classList.add('text-muted-foreground', 'hover:bg-muted/30', 'hover:text-foreground');
+        this.overlay.querySelectorAll('.memory-file-item.is-selected').forEach(el => {
+            el.classList.remove('is-selected');
         });
         const newEl = this.overlay.querySelector(`.memory-file-item[data-path="${CSS.escape(path)}"]`);
         if (newEl) {
-            newEl.classList.add('mem-file-selected', 'bg-accent', 'text-foreground');
-            newEl.classList.remove('text-muted-foreground', 'hover:bg-muted/30', 'hover:text-foreground');
+            newEl.classList.add('is-selected');
         }
 
         // Load content
