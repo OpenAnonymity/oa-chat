@@ -4278,7 +4278,7 @@ class ChatApp {
         // Agent trace is the primary UI — no progress text
         const retrievalMessage = await this.addMessage('assistant', '', {
             isLocalOnly: true,
-            model: 'steward agent'
+            model: 'memory agent'
         });
         if (!retrievalMessage) return;
 
