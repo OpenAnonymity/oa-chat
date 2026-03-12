@@ -20,6 +20,10 @@
  */
 export function createRetrievalExecutors(backend) {
     return {
+        list_directory: async ({ dir_path }) => {
+            const { files, dirs } = await backend.ls(dir_path || '');
+            return JSON.stringify({ files, dirs });
+        },
         retrieve_file: async ({ query }) => {
             // Search file contents for the query
             const results = await backend.search(query);

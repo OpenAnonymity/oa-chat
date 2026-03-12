@@ -20,12 +20,26 @@ import { ensureConfidentialKey, invalidateConfidentialKey } from './confidential
 
 const TINFOIL_BACKEND_ID = 'tinfoil';
 const TINFOIL_MODEL = 'kimi-k2-5';
-const MAX_FILES_TO_LOAD = 5;
+const MAX_FILES_TO_LOAD = 8;
 const MAX_TOTAL_CONTEXT_CHARS = 4000;
 const MAX_SNIPPETS = 18;
 const MAX_RECENT_CONTEXT_CHARS = 2000;
 
 const RETRIEVAL_TOOLS = [
+    {
+        type: 'function',
+        function: {
+            name: 'list_directory',
+            description: 'List all files and subdirectories in a directory. Use this to discover all files in a domain (e.g. "health" to see all health condition files).',
+            parameters: {
+                type: 'object',
+                properties: {
+                    dir_path: { type: 'string', description: 'Directory path (e.g. "health", "personal", "work"). Use empty string for root.' }
+                },
+                required: ['dir_path']
+            }
+        }
+    },
     {
         type: 'function',
         function: {
@@ -81,13 +95,19 @@ You have access to a memory filesystem. The index below shows all available file
 Instructions:
 1. Look at the index above. If you can already see relevant file paths, use read_file directly to read them.
 2. Use retrieve_file only when you need to search by keyword (e.g. "cooking", "Stanford") — it searches file contents, not paths.
-3. Read at most ${MAX_FILES_TO_LOAD} files.
-4. When you've found relevant context, call append_mem_to_query with curated excerpts.
-5. If nothing is relevant, call append_mem_to_query with an empty string.
+3. Use list_directory to see ALL files in a directory when the query relates to a broad domain (e.g. list "health" for any medicine/health query).
+4. Read at most ${MAX_FILES_TO_LOAD} files.
+5. When you've found relevant context, call append_mem_to_query with curated excerpts.
+6. If nothing is relevant, call append_mem_to_query with an empty string.
+
+IMPORTANT — Domain-exhaustive retrieval:
+- For health, medicine, or medical queries: read ALL files in health/. Every health condition is potentially relevant to medication, treatment, or wellness questions — even if the file description does not mention "medication" explicitly.
+- For family-related queries: check personal/family.md AND any health files about family members.
+- More generally: when a query touches a domain (health, work, personal), prefer completeness over selectivity within that domain. File descriptions may be incomplete — a file about "narcolepsy" is relevant to a "what medicine should I buy" query even though neither word appears in the other.
 
 When recent conversation context is provided alongside the query, use it to resolve references like "that", "the same", "what we discussed", etc. The conversation shows what the user has been talking about recently.
 
-Be selective — only include content that genuinely helps answer this specific query. Do not include everything you find.`;
+Only include content that genuinely helps answer this specific query. Do not include unrelated files from other domains.`;
 
 
 class AgenticRetrieval {
