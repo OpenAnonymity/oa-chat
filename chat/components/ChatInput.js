@@ -8,6 +8,8 @@ import themeManager from '../services/themeManager.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import { exportAllData, exportChats, exportTickets } from '../services/globalExport.js';
 import { importFromFile, formatImportSummary } from '../services/globalImport.js';
+import { exportMemoriesAsOmf } from '../services/omfExporter.js';
+import { readOmfFile, validateOmf, importOmf } from '../services/omfImporter.js';
 import ticketClient from '../services/ticketClient.js';
 import scrubberService from '../services/scrubberService.js';
 import {
@@ -325,6 +327,11 @@ export default class ChatInput {
                 } else if (action === 'import-tickets') {
                     this.handleImportTickets();
                     return; // Don't close menu until file is selected
+                } else if (action === 'export-memories') {
+                    await this.handleExportMemories();
+                } else if (action === 'import-memories') {
+                    this.handleImportMemories();
+                    return; // Don't close menu until file is selected
                 }
                 this.app.elements.settingsMenu.classList.add('hidden');
             }
@@ -352,6 +359,18 @@ export default class ChatInput {
                     await this.processTicketsImportFile(file);
                 }
                 // Reset input so the same file can be selected again
+                e.target.value = '';
+            });
+        }
+
+        // Memory import file input handler
+        const memoryImportInput = document.getElementById('memory-import-input');
+        if (memoryImportInput) {
+            memoryImportInput.addEventListener('change', async (e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                    await this.processMemoryImportFile(file);
+                }
                 e.target.value = '';
             });
         }
@@ -398,6 +417,9 @@ export default class ChatInput {
 
         // Setup scrubber controls (model picker + shortcut)
         this.setupScrubberControls();
+
+        // Setup escalation auto-approve toggle
+        this.setupEscalationAutoApproveToggle();
 
         // Initialize scrubber hint visibility
         this.updateScrubberHintVisibility();
@@ -1443,6 +1465,33 @@ export default class ChatInput {
         this.scrubberModelSelect = select;
     }
 
+    setupEscalationAutoApproveToggle() {
+        const toggle = document.getElementById('escalation-auto-approve-toggle');
+        if (!toggle) return;
+
+        toggle.addEventListener('click', async () => {
+            this.app.escalationAutoApprove = !this.app.escalationAutoApprove;
+            this.updateEscalationAutoApproveUI();
+            await chatDB.saveSetting('escalationAutoApprove', this.app.escalationAutoApprove);
+        });
+
+        // Set initial state
+        this.updateEscalationAutoApproveUI();
+    }
+
+    updateEscalationAutoApproveUI() {
+        const toggle = document.getElementById('escalation-auto-approve-toggle');
+        if (!toggle) return;
+        const enabled = this.app.escalationAutoApprove;
+        toggle.setAttribute('aria-checked', enabled);
+        const knob = toggle.querySelector('span');
+        if (knob) {
+            knob.style.transform = enabled ? 'translateX(0.75rem)' : 'translateX(0)';
+        }
+        toggle.style.backgroundColor = enabled ? 'rgb(249 115 22)' : '';
+        toggle.style.borderColor = enabled ? 'rgb(249 115 22)' : '';
+    }
+
     async ensureScrubberModelsLoaded() {
         if (this.scrubberModelsReady || !this.scrubberModelSelect) return;
         await this.populateScrubberModels(this.scrubberModelSelect);
@@ -1846,6 +1895,65 @@ export default class ChatInput {
         } catch (error) {
             console.error('Ticket import failed:', error);
             this.app.showToast?.(error.message || 'Failed to import tickets', 'error');
+        } finally {
+            dismissToast?.();
+        }
+    }
+
+    /**
+     * Handles the Export Memories action.
+     * Exports all memories as an OMF JSON file.
+     */
+    async handleExportMemories() {
+        try {
+            const result = await exportMemoriesAsOmf();
+            if (result.saved) {
+                this.app.showToast?.('Memories exported (OMF)', 'success');
+            }
+        } catch (error) {
+            console.error('Memory export failed:', error);
+            this.app.showToast?.('Failed to export memories', 'error');
+        }
+    }
+
+    /**
+     * Handles the Import Memories action.
+     * Opens file picker for an OMF JSON file.
+     */
+    handleImportMemories() {
+        const input = document.getElementById('memory-import-input');
+        if (input) {
+            input.click();
+        }
+        this.app.elements.settingsMenu.classList.add('hidden');
+    }
+
+    /**
+     * Processes the selected OMF memory import file.
+     * @param {File} file - The OMF JSON file
+     */
+    async processMemoryImportFile(file) {
+        const dismissToast = this.app.showLoadingToast?.('Importing memories...');
+        try {
+            const doc = await readOmfFile(file);
+            const validation = validateOmf(doc);
+            if (!validation.valid) {
+                this.app.showToast?.(validation.error, 'error');
+                return;
+            }
+
+            const result = await importOmf(doc);
+            if (result.imported > 0) {
+                this.app.showToast?.(
+                    `Imported ${result.imported} memor${result.imported === 1 ? 'y' : 'ies'} into ${result.filesWritten} file${result.filesWritten === 1 ? '' : 's'}`,
+                    'success'
+                );
+            } else {
+                this.app.showToast?.('No new memories to import (all duplicates)', 'info');
+            }
+        } catch (error) {
+            console.error('Memory import failed:', error);
+            this.app.showToast?.(error.message || 'Failed to import memories', 'error');
         } finally {
             dismissToast?.();
         }
