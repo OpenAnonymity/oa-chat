@@ -1157,6 +1157,24 @@ export default class ChatArea {
     }
 
     /**
+     * Surgically updates the agent trace in the DOM without rebuilding the full message.
+     * Falls back to full updateMessage if DOM elements aren't found.
+     * @param {Object} message - The message object with agentTrace
+     */
+    updateAgentTrace(message) {
+        if (typeof window.updateAgentTraceSurgical === 'function') {
+            const ok = window.updateAgentTraceSurgical(
+                message.id,
+                message.agentTrace || [],
+                message.agentTraceStreaming || false
+            );
+            if (ok) return;
+        }
+        // Fallback to full re-render
+        this.updateMessage(message);
+    }
+
+    /**
      * Removes all messages that come after the specified message ID in the DOM.
      * @param {string} messageId - The reference message ID
      */
@@ -2001,9 +2019,12 @@ export default class ChatArea {
             !existingSubtitle.classList.contains('reasoning-subtitle-streaming') &&
             existingSubtitle.textContent.startsWith('Thought for');
 
-        // If reasoning is finalized, do targeted updates instead of full replacement
-        // This prevents flash by not touching the reasoning trace DOM at all
-        if (isReasoningFinalized) {
+        // If reasoning is finalized AND action buttons are already rendered, do targeted
+        // updates instead of full replacement. This prevents flash by not touching the
+        // reasoning trace DOM at all. If buttons are still in placeholder state (hidden
+        // during streaming), we must do a full re-render to show them.
+        const hasButtonPlaceholder = !!messageEl.querySelector('.assistant-actions-placeholder');
+        if (isReasoningFinalized && !hasButtonPlaceholder) {
             // Just update the content element if it exists
             const contentEl = messageEl.querySelector('.message-content');
             if (contentEl && message.content) {

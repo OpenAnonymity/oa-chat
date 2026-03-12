@@ -117,6 +117,9 @@ function buildAgentTrace(trace, messageId, isStreaming = false) {
         if (lastStep?.type === 'tool_call') {
             const argSnippet = lastStep.args ? Object.values(lastStep.args).filter(v => typeof v === 'string').join(', ') : '';
             subtitle = argSnippet ? `${lastStep.tool}("${argSnippet}")` : lastStep.tool;
+        } else if (lastStep?.type === 'reasoning') {
+            const snippet = lastStep.text.length > 80 ? lastStep.text.slice(-77) + '...' : lastStep.text;
+            subtitle = `Thinking: ${snippet}`;
         } else if (lastStep?.type === 'model_text') {
             subtitle = lastStep.text.length > 120 ? lastStep.text.slice(0, 117) + '...' : lastStep.text;
         } else if (lastStep?.type === 'phase') {
@@ -148,10 +151,15 @@ function buildAgentTrace(trace, messageId, isStreaming = false) {
                 </div>`;
         }
         if (step.type === 'model_text') {
-            const truncated = step.text.length > 200 ? step.text.slice(0, 197) + '...' : step.text;
             return `
                 <div class="agent-step agent-step-model${isLatest ? ' is-latest' : ''}">
-                    <span class="agent-step-model-text">${escapeHtml(truncated)}</span>
+                    <span class="agent-step-model-text">${escapeHtml(step.text)}</span>
+                </div>`;
+        }
+        if (step.type === 'reasoning') {
+            return `
+                <div class="agent-step agent-step-reasoning${isLatest ? ' is-latest' : ''}">
+                    <span class="agent-step-reasoning-text text-muted-foreground/70 italic">${escapeHtml(step.text)}</span>
                 </div>`;
         }
         if (step.type === 'phase') {
@@ -1383,6 +1391,10 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     } else if (hasMemoryApprovedPrompt) {
         memoryApprovalActions = `
             <div class="flex items-center gap-2 w-full -mt-1">
+                <span class="inline-flex items-center gap-1 rounded-lg text-xs font-medium px-3 py-1.5 text-green-600 dark:text-green-400 border border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-900/20">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"></path></svg>
+                    Memory included
+                </span>
                 <button
                     type="button"
                     class="memory-preview-btn inline-flex items-center gap-1 justify-center rounded-lg text-xs transition-colors border border-border text-muted-foreground hover:text-foreground hover:bg-muted/60 px-3 py-1.5"
@@ -1690,6 +1702,98 @@ if (typeof window !== 'undefined') {
     window.MessageTemplates.addInlineCitationMarkers = addInlineCitationMarkers;
     window.MessageTemplates.enhanceInlineLinks = enhanceInlineLinks;
     window.buildMessageHTML = buildMessageHTML; // Make buildMessageHTML globally available
+
+    // Surgical DOM update for agent trace during streaming — avoids full message re-render.
+    // Call this instead of updateMessage() when only the agent trace changed.
+    window.updateAgentTraceSurgical = function(messageId, agentTrace, isStreaming) {
+        const steps = Array.isArray(agentTrace) ? agentTrace : [];
+        const subtitleEl = document.getElementById(`agent-trace-subtitle-${messageId}`);
+        const contentEl = document.getElementById(`agent-trace-content-${messageId}`);
+        if (!subtitleEl || !contentEl) return false; // fallback to full re-render
+
+        // Update subtitle
+        const lastStep = steps[steps.length - 1];
+        let subtitle = 'Searching memory...';
+        if (lastStep) {
+            if (lastStep.type === 'tool_call') {
+                const argSnippet = lastStep.args ? Object.values(lastStep.args).filter(v => typeof v === 'string').join(', ') : '';
+                subtitle = argSnippet ? `${lastStep.tool}("${argSnippet}")` : lastStep.tool;
+            } else if (lastStep.type === 'reasoning') {
+                const snippet = lastStep.text.length > 80 ? lastStep.text.slice(-77) + '...' : lastStep.text;
+                subtitle = `Thinking: ${snippet}`;
+            } else if (lastStep.type === 'model_text') {
+                subtitle = lastStep.text.length > 120 ? lastStep.text.slice(0, 117) + '...' : lastStep.text;
+            } else if (lastStep.type === 'phase') {
+                subtitle = lastStep.label;
+            }
+        }
+        subtitleEl.textContent = subtitle;
+
+        // For reasoning updates to the LAST step, update in-place instead of rebuilding
+        if (lastStep?.type === 'reasoning') {
+            const allStepEls = contentEl.querySelectorAll('.agent-step');
+            const lastStepEl = allStepEls[allStepEls.length - 1];
+            if (lastStepEl?.classList.contains('agent-step-reasoning')) {
+                // Update reasoning text in-place
+                const textEl = lastStepEl.querySelector('.agent-step-reasoning-text');
+                if (textEl) {
+                    textEl.textContent = lastStep.text;
+                    return true;
+                }
+            }
+        }
+
+        // For non-reasoning updates (new tool_call, phase, model_text, or new reasoning block),
+        // rebuild only the content container steps — not the entire message.
+        const MAX_VISIBLE = 3;
+        const overflowEl = document.getElementById(`agent-trace-overflow-${messageId}`);
+
+        const _renderStepHtml = (step, isLatest) => {
+            if (step.type === 'tool_call') {
+                const argsStr = step.args ? Object.entries(step.args)
+                    .map(([k, v]) => `${k}: ${typeof v === 'string' ? `"${v}"` : JSON.stringify(v)}`)
+                    .join(', ') : '';
+                const resultStr = formatToolResult(step.tool, step.result);
+                return `<div class="agent-step${isLatest ? ' is-latest' : ''}"><span class="agent-step-name">${escapeHtml(step.tool)}</span>${argsStr ? `<span class="agent-step-args">(${escapeHtml(argsStr)})</span>` : ''}${resultStr ? ` <span class="agent-step-result">${escapeHtml(resultStr)}</span>` : ''}</div>`;
+            }
+            if (step.type === 'model_text') {
+                return `<div class="agent-step agent-step-model${isLatest ? ' is-latest' : ''}"><span class="agent-step-model-text">${escapeHtml(step.text)}</span></div>`;
+            }
+            if (step.type === 'reasoning') {
+                return `<div class="agent-step agent-step-reasoning${isLatest ? ' is-latest' : ''}"><span class="agent-step-reasoning-text text-muted-foreground/70 italic">${escapeHtml(step.text)}</span></div>`;
+            }
+            if (step.type === 'phase') {
+                return `<div class="agent-step agent-step-phase${isLatest ? ' is-latest' : ''}"><span class="agent-step-phase-label">${escapeHtml(step.label)}</span></div>`;
+            }
+            return '';
+        };
+
+        let html = '';
+        if (steps.length > MAX_VISIBLE) {
+            const overflow = steps.slice(0, steps.length - MAX_VISIBLE);
+            const visible = steps.slice(steps.length - MAX_VISIBLE);
+            const overflowHtml = overflow.map(s => _renderStepHtml(s, false)).join('');
+            if (overflowEl) {
+                overflowEl.innerHTML = overflowHtml;
+                html = visible.map((s, i) => _renderStepHtml(s, i === visible.length - 1 && isStreaming)).join('');
+            } else {
+                html = `<div class="agent-trace-overflow hidden" id="agent-trace-overflow-${messageId}">${overflowHtml}</div>`;
+                html += visible.map((s, i) => _renderStepHtml(s, i === visible.length - 1 && isStreaming)).join('');
+            }
+        } else {
+            html = steps.map((s, i) => _renderStepHtml(s, i === steps.length - 1 && isStreaming)).join('');
+        }
+
+        // Replace only the content children (preserve the container itself)
+        if (overflowEl) {
+            // Remove overflow el before setting innerHTML, then re-add
+            contentEl.innerHTML = html;
+        } else {
+            contentEl.innerHTML = html;
+        }
+
+        return true;
+    };
 
     // Global function to toggle agent trace — show/hide the full content + overflow
     window.toggleAgentTrace = function(messageId) {

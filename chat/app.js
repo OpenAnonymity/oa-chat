@@ -4256,6 +4256,18 @@ class ChatApp {
     }
 
     /**
+     * Save and surgically update only the agent trace DOM — avoids full message re-render.
+     * Falls back to full re-render if surgical update isn't possible.
+     * @param {Object} message
+     */
+    async persistAgentTraceUpdate(message) {
+        chatDB.saveMessage(message).catch(() => {});
+        if (this.chatArea && this.isViewingSession(message.sessionId)) {
+            this.chatArea.updateAgentTrace(message);
+        }
+    }
+
+    /**
      * Attach retrieved memory context to the already-saved user message.
      * @param {Object} userMessage
      * @param {Object} memoryContext
@@ -4305,7 +4317,7 @@ class ChatApp {
                 if (!progress || !progress.stage) return;
                 if (progress.stage === 'init' || progress.stage === 'retrieval') {
                     agentTrace.push({ type: 'phase', label: progress.message || progress.stage });
-                    this.persistLocalAssistantStatus(retrievalMessage).catch(() => {});
+                    this.persistAgentTraceUpdate(retrievalMessage);
                 } else if (progress.stage === 'tool_call') {
                     agentTrace.push({
                         type: 'tool_call',
@@ -4313,10 +4325,19 @@ class ChatApp {
                         args: progress.args || {},
                         result: typeof progress.result === 'string' ? progress.result.slice(0, 500) : ''
                     });
-                    this.persistLocalAssistantStatus(retrievalMessage).catch(() => {});
+                    this.persistAgentTraceUpdate(retrievalMessage);
+                } else if (progress.stage === 'reasoning') {
+                    // Accumulate streaming reasoning chunks into a single entry per block
+                    const lastEntry = agentTrace[agentTrace.length - 1];
+                    if (lastEntry?.type === 'reasoning') {
+                        lastEntry.text += progress.message;
+                    } else {
+                        agentTrace.push({ type: 'reasoning', text: progress.message, iteration: progress.iteration });
+                    }
+                    this.persistAgentTraceUpdate(retrievalMessage);
                 } else if (progress.stage === 'complete') {
                     agentTrace.push({ type: 'phase', label: progress.message || 'Complete' });
-                    this.persistLocalAssistantStatus(retrievalMessage).catch(() => {});
+                    this.persistAgentTraceUpdate(retrievalMessage);
                 }
             }, {
                 conversationText: options.conversationText,
@@ -4326,7 +4347,7 @@ class ChatApp {
                         text,
                         iteration
                     });
-                    this.persistLocalAssistantStatus(retrievalMessage).catch(() => {});
+                    this.persistAgentTraceUpdate(retrievalMessage);
                 }
             });
 
@@ -4398,7 +4419,10 @@ class ChatApp {
                 console.log('[Memory Approval] Using approved payload override:', this._lastApiContent);
                 this.pendingMemoryContext = memoryContext;
                 await this.applyMemoryContextToUserMessage(userMessage, memoryContext);
-                retrievalMessage.content = `Memory approved. Added ${result.files.length} item${result.files.length === 1 ? '' : 's'} to the request.`;
+                retrievalMessage.content = retrievalMessage.content.replace(
+                    /\n\nInclude this memory in the final model request\?$/,
+                    `\n\nMemory approved. Added ${result.files.length} item${result.files.length === 1 ? '' : 's'} to the request.`
+                );
                 retrievalMessage.memoryApprovalPrompt = {
                     status: 'approved',
                     linkedUserMessageId: userMessage.id
