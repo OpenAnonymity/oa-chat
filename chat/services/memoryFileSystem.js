@@ -12,6 +12,7 @@
 import {
     countMemoryBullets,
     extractMemoryTitles,
+    parseMemoryBullets,
 } from './memoryBulletUtils.js';
 
 const DB_NAME = 'oa-memory-fs';
@@ -326,20 +327,36 @@ class MemoryFileSystem {
     _generateL0(content) {
         if (!content) return '';
 
+        // Extract actual fact text from bullets for a richer summary.
+        // Heading titles like "Family Health" are too vague — the index
+        // needs concrete terms so the retrieval LLM can judge relevance.
+        const bullets = parseMemoryBullets(content);
+        if (bullets.length > 0) {
+            const factTexts = bullets
+                .filter(b => b.section !== 'archive')
+                .slice(0, 4)
+                .map(b => b.text.trim())
+                .filter(Boolean);
+            if (factTexts.length > 0) {
+                const joined = factTexts.join('; ');
+                return joined.length > 120 ? joined.slice(0, 117) + '...' : joined;
+            }
+        }
+
         const titles = extractMemoryTitles(content);
         if (titles.length > 0) {
             const joined = titles.join('; ');
-            return joined.length > 100 ? joined.slice(0, 97) + '...' : joined;
+            return joined.length > 120 ? joined.slice(0, 117) + '...' : joined;
         }
 
-        // Fallback: first non-heading, non-empty line, max 100 chars
+        // Fallback: first non-heading, non-empty line, max 120 chars
         const lines = content.split('\n');
         for (const line of lines) {
             const trimmed = line.trim();
             if (!trimmed || trimmed.startsWith('#')) continue;
-            return trimmed.length > 100 ? trimmed.slice(0, 97) + '...' : trimmed;
+            return trimmed.length > 120 ? trimmed.slice(0, 117) + '...' : trimmed;
         }
-        return content.slice(0, 100);
+        return content.slice(0, 120);
     }
 
     async _get(path) {
