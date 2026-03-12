@@ -25,6 +25,13 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
+- 2026-03-12: Inline citation styling must not run as a global regex over rendered HTML.
+  - Replacing `[\d+]` across the full HTML string corrupted code blocks when code contained array indexing like `choices?.[0]`.
+  - The breakage was especially severe because the same pattern appeared inside the code block copy button's `data-code` attribute, which malformed the header DOM and produced bogus code-block titles.
+  - `addInlineCitationMarkers()` now traverses DOM text nodes and skips `pre`, `code`, `a`, `button`, and other non-prose containers so only real prose markers become clickable citations.
+- 2026-03-12: Fenced code block headers should only use the first token from the Markdown info string.
+  - `marked` exposes the full fence info string, not just the language token.
+  - The custom renderer now trims to the first non-whitespace token and escapes it before using it in the visible label or `language-*` class, which avoids titles/classes ballooning when extra fence metadata or malformed text appears.
 - 2026-03-08: Established this file as the canonical handoff log for ongoing web-app
   state. Future agents should read it before UI-heavy work and update it after learning
   something that is not obvious from the code alone.

@@ -745,10 +745,68 @@ function insertRawCitationMarkers(content, citations) {
 function addInlineCitationMarkers(content, messageId) {
     if (!content) return content;
 
-    // Replace citation markers [1], [2], etc. with styled spans
-    return content.replace(/\[(\d+)\]/g, (match, num) => {
-        return `<sup class="inline-citation" data-citation="${num}" data-message-id="${messageId}" title="View source ${num}">[${num}]</sup>`;
+    if (typeof DOMParser === 'undefined' ||
+        typeof NodeFilter === 'undefined' ||
+        typeof Node === 'undefined') {
+        return content;
+    }
+
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(content, 'text/html');
+    const textNodes = [];
+    const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT, {
+        acceptNode(node) {
+            if (!node?.textContent || !/\[\d+\]/.test(node.textContent)) {
+                return NodeFilter.FILTER_REJECT;
+            }
+            const parent = node.parentElement;
+            if (!parent || parent.closest('pre, code, a, button, script, style, textarea')) {
+                return NodeFilter.FILTER_REJECT;
+            }
+            return NodeFilter.FILTER_ACCEPT;
+        }
     });
+
+    let currentNode = walker.nextNode();
+    while (currentNode) {
+        textNodes.push(currentNode);
+        currentNode = walker.nextNode();
+    }
+
+    textNodes.forEach(node => {
+        const text = node.textContent;
+        const fragment = doc.createDocumentFragment();
+        let lastIndex = 0;
+        let hasReplacement = false;
+
+        text.replace(/\[(\d+)\]/g, (match, num, offset) => {
+            if (offset > lastIndex) {
+                fragment.appendChild(doc.createTextNode(text.slice(lastIndex, offset)));
+            }
+
+            const citation = doc.createElement('sup');
+            citation.className = 'inline-citation';
+            citation.dataset.citation = num;
+            citation.dataset.messageId = messageId;
+            citation.title = `View source ${num}`;
+            citation.textContent = match;
+            fragment.appendChild(citation);
+
+            lastIndex = offset + match.length;
+            hasReplacement = true;
+            return match;
+        });
+
+        if (!hasReplacement) return;
+
+        if (lastIndex < text.length) {
+            fragment.appendChild(doc.createTextNode(text.slice(lastIndex)));
+        }
+
+        node.parentNode.replaceChild(fragment, node);
+    });
+
+    return doc.body.innerHTML;
 }
 
 
