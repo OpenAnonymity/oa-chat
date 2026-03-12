@@ -9,6 +9,8 @@ import memoryFileSystem from '../services/memoryFileSystem.js';
 import memoryExtractor from '../services/memoryExtractor.js';
 import { chatDB } from '../db.js';
 import ticketClient from '../services/ticketClient.js';
+import { exportMemoriesAsOmf } from '../services/omfExporter.js';
+import { readOmfFile, validateOmf, previewOmfImport, importOmf } from '../services/omfImporter.js';
 
 class MemoryEditor {
     constructor(app) {
@@ -33,6 +35,12 @@ class MemoryEditor {
         this.openDirMenu = null;
         this.renamingDir = null;
         this.renamingDirValue = '';
+
+        // Import state
+        this.importState = null; // null | 'preview' | 'importing' | 'complete'
+        this.importPreview = null;
+        this.importDoc = null;
+        this.importResult = null;
 
         // Backfill state
         this.backfillState = null;
@@ -124,6 +132,7 @@ class MemoryEditor {
                  style="height: min(88vh, 780px)">
                 ${this._renderHeader()}
                 ${this.backfillState ? this._renderBackfillProgress() : ''}
+                ${this.importState ? this._renderImportProgress() : ''}
                 <div class="flex flex-1 min-h-0">
                     ${this._renderSidebar()}
                     <div id="memory-editor-pane" class="flex-1 flex flex-col min-w-0">
@@ -147,6 +156,9 @@ class MemoryEditor {
                 </div>
                 <div class="flex items-center gap-0.5">
                     <button id="memory-backfill-btn" class="mem-header-btn" title="Process past conversations for memories">Backfill</button>
+                    <button id="memory-export-btn" class="mem-header-btn" title="Export memories as OMF JSON">Export</button>
+                    <button id="memory-import-btn" class="mem-header-btn" title="Import memories from OMF JSON">Import</button>
+                    <input id="memory-import-file" type="file" accept=".json" class="hidden" />
                     <button id="memory-new-folder-btn" class="mem-header-btn">New Folder</button>
                     <button id="memory-new-file-btn" class="mem-header-btn">New File</button>
                     <button id="memory-close-btn" class="text-muted-foreground hover:text-foreground transition-colors p-1.5 rounded-lg hover:bg-muted/50 ml-1" aria-label="Close">
@@ -309,6 +321,17 @@ class MemoryEditor {
         this.overlay.querySelector('#memory-backfill-btn')?.addEventListener('click', () => this._startBackfill());
         this.overlay.querySelector('#memory-new-folder-btn')?.addEventListener('click', () => this._startNewFolder());
         this.overlay.querySelector('#memory-new-file-btn')?.addEventListener('click', () => this._startNewFile());
+
+        // Export / Import buttons
+        this.overlay.querySelector('#memory-export-btn')?.addEventListener('click', () => this._handleExport());
+        this.overlay.querySelector('#memory-import-btn')?.addEventListener('click', () => {
+            this.overlay.querySelector('#memory-import-file')?.click();
+        });
+        this.overlay.querySelector('#memory-import-file')?.addEventListener('change', (e) => this._handleImportFileSelected(e));
+
+        // Import preview buttons
+        this.overlay.querySelector('#import-confirm-btn')?.addEventListener('click', () => this._confirmImport());
+        this.overlay.querySelector('#import-cancel-btn')?.addEventListener('click', () => this._dismissImport());
 
         // Backfill buttons
         this.overlay.querySelector('#backfill-start-btn')?.addEventListener('click', () => this._confirmBackfill());
@@ -841,6 +864,136 @@ class MemoryEditor {
                 }
             }
         }
+    }
+
+    // ─── Export / Import ─────────────────────────────────────────
+
+    async _handleExport() {
+        try {
+            const result = await exportMemoriesAsOmf();
+            if (result.saved) {
+                this.app?.showToast?.('Memories exported (OMF)', 'success');
+            }
+        } catch (err) {
+            console.error('[MemoryEditor] Export error:', err);
+            this.app?.showToast?.('Failed to export memories', 'error');
+        }
+    }
+
+    async _handleImportFileSelected(e) {
+        const file = e.target.files?.[0];
+        // Reset input so re-selecting the same file triggers change
+        e.target.value = '';
+        if (!file) return;
+
+        try {
+            const doc = await readOmfFile(file);
+            const validation = validateOmf(doc);
+            if (!validation.valid) {
+                this.app?.showToast?.(validation.error, 'error');
+                return;
+            }
+
+            this.importDoc = doc;
+            const preview = await previewOmfImport(doc);
+            this.importPreview = preview;
+            this.importState = 'preview';
+            this.render();
+        } catch (err) {
+            console.error('[MemoryEditor] Import parse error:', err);
+            this.app?.showToast?.('Failed to read file. Is it valid JSON?', 'error');
+        }
+    }
+
+    async _confirmImport() {
+        if (!this.importDoc || this.importState !== 'preview') return;
+
+        this.importState = 'importing';
+        this.render();
+
+        try {
+            const includeArchived = this.overlay.querySelector('#import-include-archived')?.checked ?? true;
+            const result = await importOmf(this.importDoc, { includeArchived });
+            this.importResult = result;
+            this.importState = 'complete';
+            await this._loadFileTree();
+            this.render();
+        } catch (err) {
+            console.error('[MemoryEditor] Import error:', err);
+            this.importState = null;
+            this.app?.showToast?.('Import failed: ' + err.message, 'error');
+            this.render();
+        }
+    }
+
+    _dismissImport() {
+        this.importState = null;
+        this.importDoc = null;
+        this.importPreview = null;
+        this.importResult = null;
+        this.render();
+    }
+
+    _renderImportProgress() {
+        if (this.importState === 'preview' && this.importPreview) {
+            const p = this.importPreview;
+            return `
+                <div class="px-4 py-3 bg-muted/20 flex-shrink-0" style="border-bottom: 1px solid hsl(var(--color-border) / 0.4)">
+                    <div class="text-sm text-foreground mb-1.5">
+                        Found <span class="font-semibold">${p.total}</span> memor${p.total === 1 ? 'y' : 'ies'}
+                        — <span class="font-semibold">${p.toImport}</span> new, <span class="font-semibold">${p.duplicates}</span> duplicate${p.duplicates === 1 ? '' : 's'}
+                    </div>
+                    <div class="text-xs text-muted-foreground mb-3">
+                        ${p.newFiles} new file${p.newFiles === 1 ? '' : 's'}, ${p.existingFiles} existing file${p.existingFiles === 1 ? '' : 's'} to merge into.
+                    </div>
+                    <div class="flex items-center justify-between">
+                        <label class="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+                            <input id="import-include-archived" type="checkbox" checked class="rounded border-border" />
+                            Include archived memories
+                        </label>
+                        <div class="flex items-center gap-2">
+                            <button id="import-cancel-btn" class="mem-header-btn">Cancel</button>
+                            <button id="import-confirm-btn" class="px-3 py-1 text-xs font-medium rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-all duration-200">
+                                Import
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        if (this.importState === 'importing') {
+            return `
+                <div class="px-4 py-3 bg-muted/20 flex-shrink-0" style="border-bottom: 1px solid hsl(var(--color-border) / 0.4)">
+                    <div class="text-sm text-foreground">Importing memories...</div>
+                    <div class="w-full h-1 bg-muted rounded-full overflow-hidden mt-2">
+                        <div class="h-full rounded-full animate-pulse" style="width: 100%; background: hsl(var(--color-accent-primary))"></div>
+                    </div>
+                </div>
+            `;
+        }
+
+        if (this.importState === 'complete' && this.importResult) {
+            const r = this.importResult;
+            const hasErrors = r.errors.length > 0;
+            return `
+                <div class="px-4 py-3 bg-muted/20 flex-shrink-0" style="border-bottom: 1px solid hsl(var(--color-border) / 0.4)">
+                    <div class="flex items-center justify-between mb-1">
+                        <span class="text-sm font-medium ${hasErrors ? 'text-amber-500' : 'text-green-500'}">
+                            ${hasErrors ? 'Import completed with errors' : 'Import complete'}
+                        </span>
+                        <button id="import-cancel-btn" class="mem-header-btn">Dismiss</button>
+                    </div>
+                    <div class="text-xs text-muted-foreground">
+                        ${r.imported} imported, ${r.duplicates} duplicate${r.duplicates === 1 ? '' : 's'} skipped, ${r.filesWritten} file${r.filesWritten === 1 ? '' : 's'} written
+                        ${r.skipped > 0 ? `, ${r.skipped} filtered` : ''}
+                        ${hasErrors ? `<span class="text-red-500"> — ${r.errors.length} error${r.errors.length === 1 ? '' : 's'}</span>` : ''}
+                    </div>
+                </div>
+            `;
+        }
+
+        return '';
     }
 
     // ─── Helpers ─────────────────────────────────────────────────
