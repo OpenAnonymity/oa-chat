@@ -2237,15 +2237,23 @@ export default class ChatArea {
             });
         }
 
+        // Build the exact prompt that processMessagesWithFiles sends to the API.
+        // Use assembledContext from the message's memoryContext (DB) or messageMemoryContext (pending draft).
         let fullPrompt = '';
+        const assembledCtx = message.memoryContext?.assembledContext || context?.assembledContext;
 
-        if (hasMemory) {
+        if (assembledCtx) {
+            // Strip trailing "--- User Query ---" section (same as processMessagesWithFiles)
+            const uqIdx = assembledCtx.lastIndexOf('--- User Query ---');
+            const memOnly = uqIdx !== -1 ? assembledCtx.slice(0, uqIdx).trim() : assembledCtx;
+            fullPrompt = `Given the following memory context about the user:\n\`\`\`\n${memOnly}\n\`\`\`\n\nAnswer the following user query:\n\`\`\`\n${message.content}\n\`\`\``;
+        } else if (hasMemory) {
+            // Fallback: rebuild from individual memories if assembledContext isn't available
             const memoryContent = context.memories.map((m, idx) => {
                 const content = m.fullContent || m.displayContent || m.content || m.summary || '';
-                return `--- Retrieved Context ${idx + 1}: ${m.title || 'Untitled'} ---\n${content}`;
+                return `${m.title || 'Untitled'}:\n${content}`;
             }).join('\n\n');
-
-            fullPrompt = `${memoryContent}\n\n--- User Query ---\n${message.content}`;
+            fullPrompt = `Given the following memory context about the user:\n\`\`\`\n${memoryContent}\n\`\`\`\n\nAnswer the following user query:\n\`\`\`\n${message.content}\n\`\`\``;
         } else {
             fullPrompt = message.content;
         }

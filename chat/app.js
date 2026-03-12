@@ -3659,23 +3659,33 @@ class ChatApp {
                 const mediaContent = [];
                 const shouldOverrideLastUserText = isLastUserMessage && !!apiOverrideContent;
 
-                // Add memory context wrapped in code fences so the model treats it as data, not instructions
+                // Add memory context as an instruction to the model.
+                // Strip any trailing "--- User Query ---" section from assembled context
+                // since the user query is added separately.
+                const _stripUserQuery = (ctx) => {
+                    const idx = ctx.lastIndexOf('--- User Query ---');
+                    return idx !== -1 ? ctx.slice(0, idx).trim() : ctx;
+                };
+
                 if (!shouldOverrideLastUserText && msg.memoryContext?.assembledContext) {
                     console.log('[Memory Context] Using assembled context for message:', msg.id);
-                    textContent = `\`\`\`memory-context\n${msg.memoryContext.assembledContext}\n\`\`\`\n\n${textContent}`;
+                    const memOnly = _stripUserQuery(msg.memoryContext.assembledContext);
+                    textContent = `Given the following memory context about the user:\n\`\`\`\n${memOnly}\n\`\`\`\n\nAnswer the following user query:\n\`\`\`\n${textContent}\n\`\`\``;
                 } else if (!shouldOverrideLastUserText && msg.memoryContext && msg.memoryContext.memories && msg.memoryContext.memories.length > 0) {
                     console.log('[Memory Context] Adding individual memories to message:', msg.id);
                     const memoryText = msg.memoryContext.memories.map((m, idx) => {
                         return `--- ${m.title || 'Untitled'} ---\n${m.fullContent || m.content || m.summary || ''}`;
                     }).join('\n\n');
-                    textContent = `\`\`\`memory-context\n${memoryText}\n\`\`\`\n\n${textContent}`;
+                    textContent = `Given the following memory context about the user:\n\`\`\`\n${memoryText}\n\`\`\`\n\nAnswer the following user query:\n\`\`\`\n${textContent}\n\`\`\``;
                 }
 
                 // One-shot override from full prompt editor or @memory enrichment:
-                // this is the exact text payload to send for the last user message.
+                // apiOverrideContent contains the memory context (may include user query section), msg.content has the user query.
                 if (shouldOverrideLastUserText) {
-                    textContent = apiOverrideContent;
-                    console.log('[SendMessage] Final API payload content (override):', textContent);
+                    const originalUserText = msg.content || '';
+                    const memOnly = _stripUserQuery(apiOverrideContent);
+                    textContent = `Given the following memory context about the user:\n\`\`\`\n${memOnly}\n\`\`\`\n\nAnswer the following user query:\n\`\`\`\n${originalUserText}\n\`\`\``;
+                    console.log('[SendMessage] Final API payload content (override with memory context):', textContent);
                 }
 
                 // Only attach image-model outputs to the LAST user message
@@ -4222,7 +4232,8 @@ class ChatApp {
                 messageMemoryContext.setMessageContext(
                     draft.userMessageId,
                     draft.memoryContext.memories || [],
-                    draft.memoryContext.sessionIds || []
+                    draft.memoryContext.sessionIds || [],
+                    draft.memoryContext.assembledContext || null
                 );
             }
             await this.chatArea.showFullPromptPreview(draft.userMessageId);
@@ -4256,7 +4267,8 @@ class ChatApp {
         messageMemoryContext.setMessageContext(
             userMessage.id,
             memoryContext.memories || [],
-            memoryContext.sessionIds || []
+            memoryContext.sessionIds || [],
+            memoryContext.assembledContext || null
         );
         if (this.chatArea && this.isViewingSession(userMessage.sessionId)) {
             this.chatArea.updateMessage(userMessage);

@@ -57,7 +57,7 @@ const RETRIEVAL_TOOLS = [
         type: 'function',
         function: {
             name: 'append_mem_to_query',
-            description: 'Assemble the final memory context to attach to the user query. Call this when done selecting and reading files. The content you provide will be prepended to the user message.',
+            description: 'Assemble the final memory context to attach to the user query. Call this when done selecting and reading files. The content you provide will be used as context for answering the user message.',
             parameters: {
                 type: 'object',
                 properties: {

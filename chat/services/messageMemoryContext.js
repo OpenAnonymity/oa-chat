@@ -15,12 +15,13 @@ export class MessageMemoryContext {
      * @param {Array} memories - Array of memory objects with title, content, etc.
      * @param {Array} sessionIds - Array of session IDs that were retrieved
      */
-    setMessageContext(messageId, memories, sessionIds = []) {
+    setMessageContext(messageId, memories, sessionIds = [], assembledContext = null) {
         if (!messageId) return;
-        
+
         this.messageMemoryMap.set(messageId, {
             memories: memories || [],
             sessionIds: sessionIds || [],
+            assembledContext: assembledContext || null,
             timestamp: Date.now()
         });
 
