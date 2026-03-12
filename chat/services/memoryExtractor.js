@@ -6,10 +6,7 @@
  * memory files.
  */
 import memoryFileSystem from './memoryFileSystem.js';
-import { localInferenceService } from '../../local_inference/index.js';
 import { chatDB } from '../db.js';
-import { TINFOIL_API_KEY } from '../config.js';
-import ticketClient from './ticketClient.js';
 import { runAgenticToolLoop } from './agenticToolLoop.js';
 import { createExtractionExecutors } from './memoryStorageBackend.js';
 import {
@@ -21,11 +18,10 @@ import {
     todayIsoDate
 } from './memoryBulletUtils.js';
 import memoryBulletIndex from './memoryBulletIndex.js';
+import { ensureConfidentialKey, canAcquireConfidentialKey, invalidateConfidentialKey, CONFIDENTIAL_KEY_TICKETS } from './confidentialKeyService.js';
 
-const TINFOIL_BASE_URL = 'https://inference.tinfoil.sh';
 const TINFOIL_BACKEND_ID = 'tinfoil';
 const TINFOIL_MODEL = 'kimi-k2-5';
-const TINFOIL_KEY_TICKETS_REQUIRED = 2;
 const MAX_CONVERSATION_CHARS = 128000;
 
 const EXTRACTION_TOOLS = [
@@ -178,24 +174,20 @@ Rules:
 
 class MemoryExtractor {
     constructor() {
-        this._tinfoilKey = null;
-        this._tinfoilKeyInfo = null;
         this._processingSet = new Set();
     }
 
     /**
-     * Check whether a Tinfoil API key can be acquired (env key, cached key, or enough tickets).
+     * Check whether a confidential model API key can be acquired (env key, cached key, or enough tickets).
      * @returns {boolean}
      */
     canAcquireKey() {
-        if (TINFOIL_API_KEY) return true;
-        if (this._isTinfoilKeyValid()) return true;
-        return ticketClient.getTicketCount() >= TINFOIL_KEY_TICKETS_REQUIRED;
+        return canAcquireConfidentialKey();
     }
 
     /** Number of tickets consumed per session processing. */
     get ticketsPerSession() {
-        return TINFOIL_KEY_TICKETS_REQUIRED;
+        return CONFIDENTIAL_KEY_TICKETS;
     }
 
     /**
@@ -224,9 +216,9 @@ class MemoryExtractor {
 
             const index = await memoryFileSystem.getIndex() || '';
 
-            const apiKey = await this._ensureTinfoilKey();
+            const apiKey = await ensureConfidentialKey('memory-extraction');
             if (!apiKey) {
-                console.log('[MemoryExtractor] No Tinfoil key available, skipping');
+                console.log('[MemoryExtractor] No confidential model key available, skipping');
                 return { status: 'no_key', writeCalls: 0 };
             }
 
@@ -282,8 +274,7 @@ class MemoryExtractor {
         } catch (error) {
             console.error('[MemoryExtractor] Error:', error);
             if (error.message?.includes('401') || error.message?.includes('403')) {
-                this._tinfoilKey = null;
-                this._tinfoilKeyInfo = null;
+                invalidateConfidentialKey();
             }
             return { status: 'error', writeCalls: 0 };
         } finally {
@@ -343,52 +334,6 @@ class MemoryExtractor {
         return renderCompactedMemoryDocument(compacted.active, compacted.archive);
     }
 
-    async _ensureTinfoilKey() {
-        const envKey = TINFOIL_API_KEY;
-        if (envKey) {
-            localInferenceService.configureBackend(TINFOIL_BACKEND_ID, {
-                baseUrl: TINFOIL_BASE_URL,
-                apiKey: envKey
-            });
-            return envKey;
-        }
-
-        if (this._isTinfoilKeyValid()) {
-            return this._tinfoilKey;
-        }
-
-        const ticketCount = ticketClient.getTicketCount();
-        if (ticketCount < TINFOIL_KEY_TICKETS_REQUIRED) {
-            return null;
-        }
-
-        try {
-            const keyData = await ticketClient.requestConfidentialApiKey('memory', TINFOIL_KEY_TICKETS_REQUIRED);
-            this._tinfoilKey = keyData.key;
-            this._tinfoilKeyInfo = keyData;
-
-            localInferenceService.configureBackend(TINFOIL_BACKEND_ID, {
-                baseUrl: TINFOIL_BASE_URL,
-                apiKey: keyData.key
-            });
-
-            console.log('[MemoryExtractor] Acquired Tinfoil key');
-            return keyData.key;
-        } catch (error) {
-            console.warn('[MemoryExtractor] Failed to acquire Tinfoil key:', error);
-            return null;
-        }
-    }
-
-    _isTinfoilKeyValid() {
-        if (!this._tinfoilKey || !this._tinfoilKeyInfo) return false;
-        const expiresAt = this._tinfoilKeyInfo.expiresAt || this._tinfoilKeyInfo.expires_at;
-        if (!expiresAt) return false;
-        const expiry = typeof expiresAt === 'number'
-            ? new Date(expiresAt * 1000)
-            : new Date(expiresAt);
-        return expiry > new Date(Date.now() + 60000);
-    }
 }
 
 const memoryExtractor = new MemoryExtractor();

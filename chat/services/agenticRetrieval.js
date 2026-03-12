@@ -3,12 +3,9 @@
  *
  * Uses tool-calling via the agentic loop to let the LLM search, read,
  * and assemble relevant memory context. Falls back to brute-force text
- * search if no Tinfoil key is available.
+ * search if no confidential model key is available.
  */
 import memoryFileSystem from './memoryFileSystem.js';
-import { localInferenceService } from '../../local_inference/index.js';
-import { TINFOIL_API_KEY } from '../config.js';
-import ticketClient from './ticketClient.js';
 import { runAgenticToolLoop } from './agenticToolLoop.js';
 import { createRetrievalExecutors } from './memoryStorageBackend.js';
 import {
@@ -19,11 +16,10 @@ import {
     tokenizeQuery
 } from './memoryBulletUtils.js';
 import memoryBulletIndex from './memoryBulletIndex.js';
+import { ensureConfidentialKey, invalidateConfidentialKey } from './confidentialKeyService.js';
 
-const TINFOIL_BASE_URL = 'https://inference.tinfoil.sh';
 const TINFOIL_BACKEND_ID = 'tinfoil';
 const TINFOIL_MODEL = 'kimi-k2-5';
-const TINFOIL_KEY_TICKETS_REQUIRED = 2;
 const MAX_FILES_TO_LOAD = 5;
 const MAX_TOTAL_CONTEXT_CHARS = 4000;
 const MAX_SNIPPETS = 18;
@@ -93,8 +89,6 @@ Be selective — only include content that genuinely helps answer this specific 
 
 class AgenticRetrieval {
     constructor() {
-        this._tinfoilKey = null;
-        this._tinfoilKeyInfo = null;
     }
 
     /**
@@ -121,16 +115,16 @@ class AgenticRetrieval {
             }
 
             // Try LLM-driven retrieval first
-            const apiKey = await this._ensureTinfoilKey();
+            const apiKey = await ensureConfidentialKey('memory-retrieval');
 
             let result;
             if (apiKey) {
-                onProgress?.({ stage: 'retrieval', message: 'Selecting relevant memory files with Tinfoil...' });
+                onProgress?.({ stage: 'retrieval', message: 'Selecting relevant memory files with confidential model...' });
                 result = await this._toolCallingRetrieval(query, index, onProgress, conversationText, onModelText);
             } else {
                 // Fallback: brute-force text search
-                console.log('[AgenticRetrieval] No Tinfoil key, falling back to text search');
-                onProgress?.({ stage: 'retrieval', message: 'Tinfoil unavailable, using fallback text search...' });
+                console.log('[AgenticRetrieval] No confidential model key, falling back to text search');
+                onProgress?.({ stage: 'retrieval', message: 'Confidential model unavailable, using fallback text search...' });
                 result = await this._textSearchFallbackWithLoad(query, onProgress, conversationText);
             }
 
@@ -144,8 +138,7 @@ class AgenticRetrieval {
         } catch (error) {
             console.error('[AgenticRetrieval] Error:', error);
             if (error.message?.includes('401') || error.message?.includes('403')) {
-                this._tinfoilKey = null;
-                this._tinfoilKeyInfo = null;
+                invalidateConfidentialKey();
             }
             return null;
         }
@@ -396,52 +389,6 @@ class AgenticRetrieval {
         return !realFiles.some(f => (f.itemCount || 0) > 0);
     }
 
-    async _ensureTinfoilKey() {
-        const envKey = TINFOIL_API_KEY;
-        if (envKey) {
-            localInferenceService.configureBackend(TINFOIL_BACKEND_ID, {
-                baseUrl: TINFOIL_BASE_URL,
-                apiKey: envKey
-            });
-            return envKey;
-        }
-
-        if (this._isTinfoilKeyValid()) {
-            return this._tinfoilKey;
-        }
-
-        const ticketCount = ticketClient.getTicketCount();
-        if (ticketCount < TINFOIL_KEY_TICKETS_REQUIRED) {
-            return null;
-        }
-
-        try {
-            const keyData = await ticketClient.requestConfidentialApiKey('memory-retrieval', TINFOIL_KEY_TICKETS_REQUIRED);
-            this._tinfoilKey = keyData.key;
-            this._tinfoilKeyInfo = keyData;
-
-            localInferenceService.configureBackend(TINFOIL_BACKEND_ID, {
-                baseUrl: TINFOIL_BASE_URL,
-                apiKey: keyData.key
-            });
-
-            console.log('[AgenticRetrieval] Acquired Tinfoil key');
-            return keyData.key;
-        } catch (error) {
-            console.warn('[AgenticRetrieval] Failed to acquire Tinfoil key:', error);
-            return null;
-        }
-    }
-
-    _isTinfoilKeyValid() {
-        if (!this._tinfoilKey || !this._tinfoilKeyInfo) return false;
-        const expiresAt = this._tinfoilKeyInfo.expiresAt || this._tinfoilKeyInfo.expires_at;
-        if (!expiresAt) return false;
-        const expiry = typeof expiresAt === 'number'
-            ? new Date(expiresAt * 1000)
-            : new Date(expiresAt);
-        return expiry > new Date(Date.now() + 60000);
-    }
 }
 
 const agenticRetrieval = new AgenticRetrieval();

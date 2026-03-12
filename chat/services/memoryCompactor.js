@@ -1,14 +1,11 @@
 import memoryFileSystem from './memoryFileSystem.js';
 import { localInferenceService } from '../../local_inference/index.js';
-import { TINFOIL_API_KEY } from '../config.js';
-import ticketClient from './ticketClient.js';
+import { ensureConfidentialKey, invalidateConfidentialKey } from './confidentialKeyService.js';
 import memoryBulletIndex from './memoryBulletIndex.js';
 
 const COMPACT_INTERVAL_MS = 6 * 60 * 60 * 1000;
-const TINFOIL_BASE_URL = 'https://inference.tinfoil.sh';
 const TINFOIL_BACKEND_ID = 'tinfoil';
 const TINFOIL_MODEL = 'kimi-k2-5';
-const TINFOIL_KEY_TICKETS_REQUIRED = 2;
 const MAX_FILE_CHARS = 8000;
 
 const COMPACTION_PROMPT = `You are compacting a markdown memory file into a stable long-term format.
@@ -44,8 +41,6 @@ class MemoryCompactor {
     constructor() {
         this._lastRunAt = 0;
         this._running = false;
-        this._tinfoilKey = null;
-        this._tinfoilKeyInfo = null;
     }
 
     async maybeCompact() {
@@ -80,6 +75,9 @@ class MemoryCompactor {
             }
         } catch (error) {
             console.warn('[MemoryCompactor] Compaction failed:', error);
+            if (error.message?.includes('401') || error.message?.includes('403')) {
+                invalidateConfidentialKey();
+            }
         } finally {
             this._running = false;
         }
@@ -89,9 +87,9 @@ class MemoryCompactor {
         const raw = String(content || '').trim();
         if (!raw) return null;
 
-        const apiKey = await this._ensureTinfoilKey();
+        const apiKey = await ensureConfidentialKey('memory-compaction');
         if (!apiKey) {
-            throw new Error('No Tinfoil key available for memory compaction');
+            throw new Error('No confidential model key available for memory compaction');
         }
 
         const prompt = COMPACTION_PROMPT
@@ -132,42 +130,6 @@ class MemoryCompactor {
         return '';
     }
 
-    async _ensureTinfoilKey() {
-        const envKey = TINFOIL_API_KEY;
-        if (envKey) {
-            localInferenceService.configureBackend(TINFOIL_BACKEND_ID, {
-                baseUrl: TINFOIL_BASE_URL,
-                apiKey: envKey
-            });
-            return envKey;
-        }
-
-        if (this._isTinfoilKeyValid()) return this._tinfoilKey;
-
-        const ticketCount = ticketClient.getTicketCount();
-        if (ticketCount < TINFOIL_KEY_TICKETS_REQUIRED) return null;
-
-        const keyData = await ticketClient.requestConfidentialApiKey('memory-compaction', TINFOIL_KEY_TICKETS_REQUIRED);
-        this._tinfoilKey = keyData.key;
-        this._tinfoilKeyInfo = keyData;
-
-        localInferenceService.configureBackend(TINFOIL_BACKEND_ID, {
-            baseUrl: TINFOIL_BASE_URL,
-            apiKey: keyData.key
-        });
-
-        return keyData.key;
-    }
-
-    _isTinfoilKeyValid() {
-        if (!this._tinfoilKey || !this._tinfoilKeyInfo) return false;
-        const expiresAt = this._tinfoilKeyInfo.expiresAt || this._tinfoilKeyInfo.expires_at;
-        if (!expiresAt) return false;
-        const expiry = typeof expiresAt === 'number'
-            ? new Date(expiresAt * 1000)
-            : new Date(expiresAt);
-        return expiry > new Date(Date.now() + 60000);
-    }
 }
 
 const memoryCompactor = new MemoryCompactor();
