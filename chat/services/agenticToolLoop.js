@@ -3,7 +3,9 @@
  *
  * Sends messages to an LLM with OpenAI-format tool definitions, executes
  * tool calls locally, and loops until the LLM stops calling tools or a
- * terminal tool is invoked.
+ * terminal tool is invoked.  When an onReasoning callback is provided,
+ * uses streaming to surface reasoning tokens in real time; otherwise
+ * uses non-streaming requests for reliable tool call parsing.
  */
 import { localInferenceService } from '../../local_inference/index.js';
 
@@ -27,6 +29,8 @@ const DEFAULT_TEMPERATURE = 0;
  * @param {number} [options.maxOutputTokens] — per-call token limit (default 500)
  * @param {number} [options.temperature] — sampling temperature (default 0)
  * @param {function} [options.onToolCall] — callback(name, args, result) for progress
+ * @param {function} [options.onModelText] — callback(text, iteration) for intermediate text
+ * @param {function} [options.onReasoning] — callback(chunk, iteration) for streaming reasoning tokens
  * @param {AbortSignal} [options.signal] — cancellation signal
  *
  * @returns {Promise<{textResponse: string, terminalToolResult: object|null, messages: Array, iterations: number, toolCallLog: Array}>}
@@ -44,6 +48,7 @@ export async function runAgenticToolLoop(options) {
         temperature = DEFAULT_TEMPERATURE,
         onToolCall = null,
         onModelText = null,
+        onReasoning = null,
         signal = null
     } = options;
 
@@ -53,11 +58,15 @@ export async function runAgenticToolLoop(options) {
     let terminalToolResult = null;
     let iterations = 0;
 
+    // Stream when onReasoning is provided (surfaces reasoning tokens in real time).
+    // Otherwise use non-streaming createResponse for reliable tool call parsing.
+    const useStreaming = !!onReasoning;
+
     for (let i = 0; i < maxIterations; i++) {
         if (signal?.aborted) break;
         iterations++;
 
-        const response = await localInferenceService.createResponse({
+        const requestPayload = {
             model,
             input: messages.map(m => ({
                 role: m.role,
@@ -67,12 +76,38 @@ export async function runAgenticToolLoop(options) {
             })),
             tools,
             max_output_tokens: maxOutputTokens,
-            temperature,
-            stream: false
-        }, { backendId, signal });
+            temperature
+        };
+
+        let response;
+        let iterationText = '';
+
+        if (useStreaming) {
+            // Stream each iteration so we can forward reasoning tokens in real time
+            response = await localInferenceService.streamResponse({
+                ...requestPayload,
+                stream: true
+            }, {
+                backendId,
+                signal,
+                onEvent: (event) => {
+                    if (event.type === 'response.output_text.delta') {
+                        iterationText += event.delta;
+                    }
+                    if (event.type === 'response.reasoning.delta') {
+                        onReasoning(event.delta, iterations);
+                    }
+                }
+            });
+        } else {
+            response = await localInferenceService.createResponse({
+                ...requestPayload,
+                stream: false
+            }, { backendId, signal });
+        }
 
         const responseToolCalls = response.tool_calls || [];
-        const responseText = _extractOutputText(response);
+        const responseText = iterationText || _extractOutputText(response);
 
         console.log(`[AgenticLoop] Iteration ${iterations}: ${responseToolCalls.length} tool call(s)${responseText ? ', text: ' + responseText.slice(0, 100) : ''}`);
 

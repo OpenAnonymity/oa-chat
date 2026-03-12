@@ -144,7 +144,7 @@ class AgenticRetrieval {
         }
     }
 
-    async _toolCallingRetrieval(query, index, onProgress, conversationText, onModelText) {
+    async _toolCallingRetrieval(query, index, onProgress, conversationText, onModelText, onReasoning) {
         const systemPrompt = RETRIEVAL_SYSTEM_PROMPT.replace('{INDEX}', index);
         const toolExecutors = createRetrievalExecutors(memoryFileSystem);
 
@@ -164,7 +164,10 @@ class AgenticRetrieval {
             onToolCall: (name, args, result) => {
                 onProgress?.({ stage: 'tool_call', message: `Tool: ${name}`, tool: name, args, result });
             },
-            onModelText
+            onModelText,
+            onReasoning: (chunk, iteration) => {
+                onProgress?.({ stage: 'reasoning', message: chunk, iteration });
+            }
         });
 
         console.log(`[AgenticRetrieval] Completed in ${iterations} iterations, ${toolCallLog.length} tool calls`);
