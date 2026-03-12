@@ -1248,7 +1248,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     const isPersonalAgent = typeof displayModelName === 'string' && (displayModelName.trim().toLowerCase() === 'personal agent' || displayModelName.trim().toLowerCase() === 'memory agent');
     const personalAgentIcon = `
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" class="w-3.5 h-3.5 text-primary">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
         </svg>
     `;
 
@@ -1360,19 +1360,19 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     let memoryApprovalActions = '';
     if (hasMemoryApprovalPrompt) {
         memoryApprovalActions = `
-            <div class="flex items-center gap-2 w-full -mt-1">
+            <div class="flex items-center gap-1.5 w-full -mt-1 px-2">
                 <button
                     type="button"
-                    class="memory-approval-btn memory-approval-primary inline-flex items-center gap-1.5 justify-center rounded-lg text-xs font-medium transition-colors border px-3 py-1.5"
+                    class="memory-approval-btn memory-approval-primary btn-ghost-hover inline-flex items-center gap-1 justify-center rounded-md text-[10px] font-medium transition-all duration-200 border px-2 py-1 shadow-sm"
                     data-message-id="${message.id}"
                     data-decision="yes"
                 >
-                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"></path></svg>
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"></path></svg>
                     Include memory
                 </button>
                 <button
                     type="button"
-                    class="memory-approval-btn inline-flex items-center justify-center rounded-lg text-xs font-medium transition-colors border border-border px-3 py-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/60"
+                    class="memory-approval-btn btn-ghost-hover inline-flex items-center justify-center rounded-md text-[10px] font-medium transition-all duration-200 border border-border bg-background px-2 py-1 shadow-sm text-muted-foreground hover:text-foreground"
                     data-message-id="${message.id}"
                     data-decision="no"
                 >
@@ -1380,7 +1380,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
                 </button>
                 <button
                     type="button"
-                    class="memory-preview-btn inline-flex items-center gap-1 justify-center rounded-lg text-xs transition-colors text-muted-foreground hover:text-foreground px-2 py-1.5"
+                    class="memory-preview-btn btn-ghost-hover inline-flex items-center gap-1 justify-center rounded-md text-[10px] transition-all duration-200 border border-border bg-background px-2 py-1 shadow-sm text-muted-foreground hover:text-foreground"
                     data-message-id="${message.id}"
                 >
                     <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.64 0 8.577 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.64 0-8.577-3.007-9.963-7.178z"></path><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
@@ -1390,14 +1390,14 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
         `;
     } else if (hasMemoryApprovedPrompt) {
         memoryApprovalActions = `
-            <div class="flex items-center gap-2 w-full -mt-1">
-                <span class="inline-flex items-center gap-1 rounded-lg text-xs font-medium px-3 py-1.5 text-green-600 dark:text-green-400 border border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-900/20">
-                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"></path></svg>
+            <div class="flex items-center gap-1.5 w-full -mt-1 px-2">
+                <span class="inline-flex items-center gap-1 rounded-md text-[10px] font-medium px-2 py-1 text-green-600 dark:text-green-400 border border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-900/20 shadow-sm">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"></path></svg>
                     Memory included
                 </span>
                 <button
                     type="button"
-                    class="memory-preview-btn inline-flex items-center gap-1 justify-center rounded-lg text-xs transition-colors border border-border text-muted-foreground hover:text-foreground hover:bg-muted/60 px-3 py-1.5"
+                    class="memory-preview-btn btn-ghost-hover inline-flex items-center gap-1 justify-center rounded-md text-[10px] transition-all duration-200 border border-border bg-background px-2 py-1 shadow-sm text-muted-foreground hover:text-foreground"
                     data-user-message-id="${message.memoryApprovalPrompt.linkedUserMessageId}"
                 >
                     <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.64 0 8.577 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.64 0-8.577-3.007-9.963-7.178z"></path><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
