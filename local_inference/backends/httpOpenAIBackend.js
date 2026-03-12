@@ -224,6 +224,7 @@ export function createOpenAICompatibleBackend({
             const choice = payload?.choices?.[0]?.message || {};
             const outputText = choice.content || '';
             const toolCalls = Array.isArray(choice.tool_calls) ? choice.tool_calls : [];
+            const reasoning = choice.reasoning || choice.reasoning_content || '';
             const usage = payload?.usage ? {
                 input_tokens: payload.usage.prompt_tokens ?? null,
                 output_tokens: payload.usage.completion_tokens ?? null,
@@ -234,6 +235,9 @@ export function createOpenAICompatibleBackend({
             if (toolCalls.length > 0) {
                 finalResponse.tool_calls = toolCalls;
             }
+            if (reasoning) {
+                finalResponse.reasoning = reasoning;
+            }
             return finalResponse;
         },
         async streamResponse(request, options = {}) {
@@ -241,8 +245,10 @@ export function createOpenAICompatibleBackend({
             const inputText = messages.map(message => message.content).join('\n');
             const responseShell = buildResponseSkeleton(request);
             let outputText = '';
+            let reasoningText = '';
             let usage = null;
             let sequence = 0;
+            const toolCallAccum = new Map();
 
             const outputItem = {
                 id: `item_${responseShell.id}`,
@@ -305,7 +311,10 @@ export function createOpenAICompatibleBackend({
 
             await readSSE(response, (payload) => {
                 if (payload?.choices?.length) {
-                    const delta = payload.choices[0]?.delta?.content || '';
+                    const choice = payload.choices[0];
+
+                    // Content text delta
+                    const delta = choice?.delta?.content || '';
                     if (delta) {
                         outputText += delta;
                         emitEvent({
@@ -318,6 +327,30 @@ export function createOpenAICompatibleBackend({
                             logprobs: null,
                             obfuscation: null
                         });
+                    }
+
+                    // Reasoning delta (kimi-k2-5 sends delta.reasoning)
+                    const reasoningDelta = choice?.delta?.reasoning || choice?.delta?.reasoning_content || '';
+                    if (reasoningDelta) {
+                        reasoningText += reasoningDelta;
+                        emitEvent({
+                            type: 'response.reasoning.delta',
+                            sequence_number: sequence++,
+                            delta: reasoningDelta
+                        });
+                    }
+
+                    // Tool call deltas — accumulate across chunks
+                    const tcDeltas = choice?.delta?.tool_calls;
+                    if (Array.isArray(tcDeltas)) {
+                        for (const tc of tcDeltas) {
+                            const idx = tc.index ?? 0;
+                            const existing = toolCallAccum.get(idx) || { id: '', type: 'function', function: { name: '', arguments: '' } };
+                            if (tc.id) existing.id = tc.id;
+                            if (tc.function?.name) existing.function.name += tc.function.name;
+                            if (tc.function?.arguments) existing.function.arguments += tc.function.arguments;
+                            toolCallAccum.set(idx, existing);
+                        }
                     }
                 }
 
@@ -362,6 +395,11 @@ export function createOpenAICompatibleBackend({
 
             const finalUsage = usage || estimateTokenUsage(inputText, outputText);
             const finalResponse = finalizeResponse(responseShell, outputText, finalUsage, outputItem);
+
+            // Attach assembled tool calls from streaming deltas
+            if (toolCallAccum.size > 0) {
+                finalResponse.tool_calls = [...toolCallAccum.values()];
+            }
 
             emitEvent({
                 type: 'response.completed',
