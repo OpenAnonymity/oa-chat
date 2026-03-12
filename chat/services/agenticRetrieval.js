@@ -23,6 +23,7 @@ const TINFOIL_MODEL = 'kimi-k2-5';
 const MAX_FILES_TO_LOAD = 5;
 const MAX_TOTAL_CONTEXT_CHARS = 4000;
 const MAX_SNIPPETS = 18;
+const MAX_RECENT_CONTEXT_CHARS = 2000;
 
 const RETRIEVAL_TOOLS = [
     {
@@ -83,6 +84,8 @@ Instructions:
 3. Read at most ${MAX_FILES_TO_LOAD} files.
 4. When you've found relevant context, call append_mem_to_query with curated excerpts.
 5. If nothing is relevant, call append_mem_to_query with an empty string.
+
+When recent conversation context is provided alongside the query, use it to resolve references like "that", "the same", "what we discussed", etc. The conversation shows what the user has been talking about recently.
 
 Be selective — only include content that genuinely helps answer this specific query. Do not include everything you find.`;
 
@@ -148,6 +151,13 @@ class AgenticRetrieval {
         const systemPrompt = RETRIEVAL_SYSTEM_PROMPT.replace('{INDEX}', index);
         const toolExecutors = createRetrievalExecutors(memoryFileSystem);
 
+        // Include recent conversation context so the retrieval LLM can resolve
+        // references in follow-up queries (e.g. "tell me more about that")
+        const recentContext = this._buildRecentContext(conversationText);
+        const userContent = recentContext
+            ? `Recent conversation:\n\`\`\`\n${recentContext}\n\`\`\`\n\nCurrent query: ${query}`
+            : query;
+
         const { terminalToolResult, toolCallLog, iterations } = await runAgenticToolLoop({
             model: TINFOIL_MODEL,
             backendId: TINFOIL_BACKEND_ID,
@@ -155,7 +165,7 @@ class AgenticRetrieval {
             toolExecutors,
             messages: [
                 { role: 'system', content: systemPrompt },
-                { role: 'user', content: query }
+                { role: 'user', content: userContent }
             ],
             terminalTool: 'append_mem_to_query',
             maxIterations: 8,
@@ -383,6 +393,28 @@ class AgenticRetrieval {
 
         snippets.sort((a, b) => b.score - a.score);
         return snippets.slice(0, 5);
+    }
+
+    /**
+     * Extract recent conversation context for the retrieval LLM.
+     * Returns the last MAX_RECENT_CONTEXT_CHARS of conversationText,
+     * trimmed at a newline boundary. Returns null for single-turn conversations.
+     */
+    _buildRecentContext(conversationText) {
+        if (!conversationText || conversationText.length < 20) return null;
+        // If the conversation is short enough, use it directly
+        if (conversationText.length <= MAX_RECENT_CONTEXT_CHARS) {
+            // Only include if there are at least 2 turns (user + assistant)
+            const hasMultipleTurns = /\n/.test(conversationText.trim());
+            return hasMultipleTurns ? conversationText : null;
+        }
+        // Take the tail and trim at the nearest newline to avoid cutting mid-message
+        let tail = conversationText.slice(-MAX_RECENT_CONTEXT_CHARS);
+        const firstNewline = tail.indexOf('\n');
+        if (firstNewline > 0 && firstNewline < 200) {
+            tail = tail.slice(firstNewline + 1);
+        }
+        return tail.trim() || null;
     }
 
     async _isTrivialIndex(index) {
