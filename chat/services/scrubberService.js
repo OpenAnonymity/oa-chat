@@ -386,7 +386,7 @@ class ScrubberService {
     }
 
     getModeLabel() {
-        return SCRUBBER_BACKEND_ID === 'tinfoil' ? 'confidential model' : 'local model';
+        return SCRUBBER_BACKEND_ID === 'tinfoil' ? 'confidential model (TEE)' : 'local model';
     }
 
     async fetchModels(force = false) {

@@ -2,11 +2,11 @@ import { createOpenAICompatibleBackend } from './httpOpenAIBackend.js';
 
 const tinfoilBackend = createOpenAICompatibleBackend({
     id: 'tinfoil',
-    label: 'Tinfoil',
+    label: 'Confidential Model (TEE)',
     baseUrl: 'https://inference.tinfoil.sh',
     defaultModelId: 'gpt-oss-120b',
     defaultModelName: 'gpt-oss-120b',
-    providerLabel: 'Tinfoil',
+    providerLabel: 'Confidential Model (TEE)',
     modelsEndpoint: '/v1/models',
     chatEndpoint: '/v1/chat/completions'
 });
