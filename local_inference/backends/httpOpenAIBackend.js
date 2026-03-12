@@ -248,6 +248,7 @@ export function createOpenAICompatibleBackend({
             let reasoningText = '';
             let usage = null;
             let sequence = 0;
+            let finishReason = null;
             const toolCallAccum = new Map();
 
             const outputItem = {
@@ -352,6 +353,11 @@ export function createOpenAICompatibleBackend({
                             toolCallAccum.set(idx, existing);
                         }
                     }
+
+                    // Capture finish_reason for tool call safety check
+                    if (choice.finish_reason) {
+                        finishReason = choice.finish_reason;
+                    }
                 }
 
                 if (payload?.usage) {
@@ -393,12 +399,24 @@ export function createOpenAICompatibleBackend({
                 item: outputItem
             });
 
+            // Safety net: if API indicated tool_calls but streaming didn't capture deltas,
+            // re-request without streaming to get reliable tool calls
+            if (finishReason === 'tool_calls' && toolCallAccum.size === 0) {
+                console.warn('[httpOpenAI] finish_reason=tool_calls but no deltas captured, falling back to non-streaming');
+                return backend.createResponse(request, options);
+            }
+
             const finalUsage = usage || estimateTokenUsage(inputText, outputText);
             const finalResponse = finalizeResponse(responseShell, outputText, finalUsage, outputItem);
 
             // Attach assembled tool calls from streaming deltas
             if (toolCallAccum.size > 0) {
                 finalResponse.tool_calls = [...toolCallAccum.values()];
+            }
+
+            // Attach reasoning text (parallel to createResponse behavior)
+            if (reasoningText) {
+                finalResponse.reasoning = reasoningText;
             }
 
             emitEvent({
