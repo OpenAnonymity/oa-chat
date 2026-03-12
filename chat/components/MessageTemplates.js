@@ -1391,10 +1391,14 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     } else if (hasMemoryApprovedPrompt) {
         memoryApprovalActions = `
             <div class="flex items-center gap-1.5 w-full -mt-1 px-2">
-                <span class="inline-flex items-center gap-1 rounded-md text-[10px] font-medium px-2 py-1 text-green-600 dark:text-green-400 border border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-900/20 shadow-sm">
+                <button
+                    type="button"
+                    class="memory-approval-btn memory-approval-success inline-flex items-center gap-1 justify-center rounded-md text-[10px] font-medium border px-2 py-1 shadow-sm cursor-default"
+                    disabled
+                >
                     <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"></path></svg>
                     Memory included
-                </span>
+                </button>
                 <button
                     type="button"
                     class="memory-preview-btn btn-ghost-hover inline-flex items-center gap-1 justify-center rounded-md text-[10px] transition-all duration-200 border border-border bg-background px-2 py-1 shadow-sm text-muted-foreground hover:text-foreground"

@@ -4000,6 +4000,18 @@ html {
     border-color: hsl(var(--color-accent-primary) / 0.35);
 }
 
+.memory-approval-success {
+    background-color: rgba(73, 137, 102, 0.15);
+    border-color: rgba(73, 137, 102, 0.25);
+    color: #366B4D;
+    opacity: 1;
+}
+.dark .memory-approval-success {
+    background-color: rgba(73, 137, 102, 0.25);
+    border-color: rgba(73, 137, 102, 0.2);
+    color: #6DB88E;
+}
+
 /* ─── Agent Activity Trace (reasoning-trace pattern) ──── */
 
 /* Steps inside the reasoning-content container */
