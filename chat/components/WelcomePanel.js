@@ -51,6 +51,7 @@ class WelcomePanel {
         this.importCloseHandler = null;
         this.themeUnsubscribe = null;
         this.ticketsUpdatedHandler = null;
+        this.accessModeToggleResizeObserver = null;
         this.welcomeAnchorTop = null;
         this.animateOnNextRender = false;
         this.viewportResizeHandler = null;
@@ -144,6 +145,7 @@ class WelcomePanel {
         this.overlay.style.paddingTop = '';
         this.overlay.style.paddingBottom = '';
         this.welcomeAnchorTop = null;
+        this.disconnectAccessModeToggleObserver();
 
         this.themeUnsubscribe?.();
         this.themeUnsubscribe = null;
@@ -425,6 +427,46 @@ class WelcomePanel {
         this.overlay.style.paddingBottom = `${Math.round(this.overlayBasePadding.bottom)}px`;
     }
 
+    disconnectAccessModeToggleObserver() {
+        if (!this.accessModeToggleResizeObserver) return;
+
+        this.accessModeToggleResizeObserver.disconnect();
+        this.accessModeToggleResizeObserver = null;
+    }
+
+    updateAccessModeIndicator(accessModeToggle, activeBtn) {
+        if (!accessModeToggle || !activeBtn) return;
+
+        const modeIndicator = accessModeToggle.querySelector('.encryption-mode-indicator');
+        if (!modeIndicator) return;
+
+        // Use unscaled layout metrics so the indicator stays aligned even when the
+        // dialog is responsively scaled on mobile.
+        const indicatorOffset = Math.max(0, activeBtn.offsetLeft - 2);
+        modeIndicator.style.width = `${activeBtn.offsetWidth}px`;
+        modeIndicator.style.transform = `translateX(${indicatorOffset}px)`;
+    }
+
+    observeAccessModeToggle(accessModeToggle, modeButtons) {
+        this.disconnectAccessModeToggleObserver();
+
+        if (!accessModeToggle || typeof ResizeObserver !== 'function') return;
+
+        const syncIndicator = () => {
+            const activeButton = accessModeToggle.querySelector('.encryption-mode-btn.active');
+            if (activeButton) {
+                this.updateAccessModeIndicator(accessModeToggle, activeButton);
+            }
+        };
+
+        this.accessModeToggleResizeObserver = new ResizeObserver(() => {
+            syncIndicator();
+        });
+
+        this.accessModeToggleResizeObserver.observe(accessModeToggle);
+        modeButtons.forEach((button) => this.accessModeToggleResizeObserver.observe(button));
+    }
+
     // =========================================================================
     // Flow Handlers
     // =========================================================================
@@ -610,6 +652,7 @@ class WelcomePanel {
 
     render() {
         if (!this.overlay) return;
+        this.disconnectAccessModeToggleObserver();
 
         switch (this.step) {
             case 'welcome':
@@ -1146,11 +1189,7 @@ class WelcomePanel {
             const modeIndicator = accessModeToggle.querySelector('.encryption-mode-indicator');
 
             const updateModeIndicator = (activeBtn) => {
-                if (!modeIndicator || !activeBtn) return;
-                const containerRect = accessModeToggle.getBoundingClientRect();
-                const btnRect = activeBtn.getBoundingClientRect();
-                modeIndicator.style.width = `${btnRect.width}px`;
-                modeIndicator.style.transform = `translateX(${btnRect.left - containerRect.left - 2}px)`;
+                this.updateAccessModeIndicator(accessModeToggle, activeBtn);
             };
 
             modeButtons.forEach((btn) => {
@@ -1188,6 +1227,8 @@ class WelcomePanel {
                     inviteInput?.focus();
                 };
             });
+
+            this.observeAccessModeToggle(accessModeToggle, modeButtons);
 
             const activeModeButton = accessModeToggle.querySelector('.encryption-mode-btn.active');
             if (activeModeButton && modeIndicator) {
@@ -1262,6 +1303,7 @@ class WelcomePanel {
         }
         this.themeUnsubscribe?.();
         this.themeUnsubscribe = null;
+        this.disconnectAccessModeToggleObserver();
         this.removeResponsiveScaleListener();
         if (this.ticketsUpdatedHandler) {
             window.removeEventListener('tickets-updated', this.ticketsUpdatedHandler);
