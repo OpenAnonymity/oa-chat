@@ -146,10 +146,10 @@ const inferenceService = {
             reasoningEffort
         );
     },
-    supportsStructuredToolCalls(session) {
+    supportsStructuredToolCalls(session, modelId = null) {
         const backend = getBackendForSession(session);
         return typeof backend.supportsStructuredToolCalls === 'function'
-            ? backend.supportsStructuredToolCalls(session)
+            ? backend.supportsStructuredToolCalls(session, modelId)
             : Boolean(backend.streamStructuredTurn);
     },
     streamStructuredTurn({ messages, modelId, session, tools, searchEnabled, abortController, onEvent, reasoningEnabled, reasoningEffort }) {

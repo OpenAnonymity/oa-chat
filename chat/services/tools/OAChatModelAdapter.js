@@ -49,6 +49,13 @@ function createAsyncQueue() {
     };
 }
 
+function hasStructuredToolFallbackContent(messages = []) {
+    return (messages || []).some((message) => Array.isArray(message?.content) && message.content.some((part) => {
+        if (!part || typeof part !== 'object') return false;
+        return part.type === 'file';
+    }));
+}
+
 export default class OAChatModelAdapter {
     constructor(app) {
         this.app = app;
@@ -68,12 +75,14 @@ export default class OAChatModelAdapter {
         const queue = createAsyncQueue();
 
         const supportsStructuredToolCalling = typeof inferenceService.supportsStructuredToolCalls === 'function'
-            ? inferenceService.supportsStructuredToolCalls(session)
+            ? inferenceService.supportsStructuredToolCalls(session, modelId)
             : typeof inferenceService.streamStructuredTurn === 'function';
 
         const supportsStructuredTools = Array.isArray(tools) &&
             tools.length > 0 &&
-            supportsStructuredToolCalling;
+            supportsStructuredToolCalling &&
+            !searchEnabled &&
+            !hasStructuredToolFallbackContent(messages);
 
         if (supportsStructuredTools) {
             inferenceService.streamStructuredTurn({

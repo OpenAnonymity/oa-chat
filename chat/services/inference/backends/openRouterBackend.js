@@ -29,7 +29,7 @@ const openRouterBackend = {
     },
     fetchModels: () => openRouterAPI.fetchModels(),
     getDisplayName: (modelId, fallback) => openRouterAPI.getDisplayName(modelId, fallback),
-    supportsStructuredToolCalls: () => true,
+    supportsStructuredToolCalls: (session, modelId) => openRouterAPI.modelSupportsStructuredToolCalls(modelId),
     sendCompletion: (messages, modelId, token) => openRouterAPI.sendCompletion(messages, modelId, token),
     streamCompletion: (messages, modelId, token, onChunk, onTokenUpdate, files, searchEnabled, abortController, onStreamOpen, onReasoningChunk, reasoningEnabled, reasoningEffort) =>
         openRouterAPI.streamCompletion(

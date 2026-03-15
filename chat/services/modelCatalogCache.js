@@ -16,6 +16,25 @@ function isValidBackendId(backendId) {
     return typeof backendId === 'string' && backendId.trim().length > 0;
 }
 
+function sanitizeStringList(values) {
+    if (!Array.isArray(values)) {
+        return [];
+    }
+
+    const seen = new Set();
+    const normalized = [];
+
+    values.forEach((value) => {
+        if (typeof value !== 'string') return;
+        const trimmed = value.trim();
+        if (!trimmed || seen.has(trimmed)) return;
+        seen.add(trimmed);
+        normalized.push(trimmed);
+    });
+
+    return normalized;
+}
+
 function sanitizeModel(model) {
     if (!isObject(model)) {
         return null;
@@ -49,6 +68,18 @@ function sanitizeModel(model) {
 
     if (isObject(model.pricing)) {
         normalized.pricing = model.pricing;
+    }
+
+    const supportedParameters = sanitizeStringList(
+        Array.isArray(model.supportedParameters)
+            ? model.supportedParameters
+            : model.supported_parameters
+    );
+    if (supportedParameters.length > 0) {
+        normalized.supportedParameters = supportedParameters;
+        normalized.supportsTools = supportedParameters.includes('tools');
+    } else if (typeof model.supportsTools === 'boolean') {
+        normalized.supportsTools = model.supportsTools;
     }
 
     return normalized;
@@ -132,4 +163,3 @@ export function saveModelCatalog(backendId, models) {
     writeCache(cache);
     return true;
 }
-

@@ -98,6 +98,12 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - Automatic execution should come from native provider tool calling, not from
     heuristics that inspect plain assistant text after the fact.
   - OpenRouter native tool calling is now the automatic path for supported turns.
+  - Automatic tool exposure is gated per selected model from OpenRouter's
+    `supported_parameters`; unknown models default to no automatic tools so a
+    plain chat does not fail just because a host exposes skills.
+  - Compatibility gate: search-enabled turns and turns with file parts still use the
+    legacy streaming path for now, because the structured path does not yet have full
+    citation/file parity. Keep that gate until parity exists.
 - 2026-03-11: Manual code-block execution is now additive to the existing assistant UI.
   - Code blocks show run/preview/download buttons only when the active host exposes the
     matching tool. Web only exposes browser-safe artifact tools; desktop-only tools should

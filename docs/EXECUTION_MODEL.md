@@ -51,6 +51,18 @@ OpenRouter tool calling, but the intended design is:
   heuristically execute plain assistant text.
 - The OpenRouter path now exposes host skills directly to the model and the
   standalone runtime performs the model -> skill -> model loop.
+- OpenRouter tool exposure is now gated per selected model using
+  `supported_parameters` from the cached model catalog. If the selected model
+  is unknown or does not advertise `tools`, automatic skill exposure is
+  disabled and the turn stays on the plain chat path.
+- To avoid regressing legacy chat behavior, the structured tool path is
+  currently gated off for search-enabled turns and turns containing file parts.
+  Those continue to use the existing non-tool streaming path until the
+  structured path reaches feature parity for citations and file handling.
+- OpenRouter's docs describe tool calling as a model capability exposed through
+  `supported_parameters=tools`; they do not document unsupported models
+  silently ignoring the `tools` parameter. The app therefore defaults unknown
+  model capability to "no automatic tools" rather than assuming support.
 - The currently shipped host/browser skill set is:
   - `artifact_create`
   - `html_render`

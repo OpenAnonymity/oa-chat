@@ -155,10 +155,6 @@ export default class ChatToolController {
         return this.tools;
     }
 
-    getModelAdapter() {
-        return this.modelAdapter;
-    }
-
     getCodeBlockActions({ language, code, messageId }) {
         if (!messageId || !this.toolMap.size) {
             return [];
@@ -409,10 +405,7 @@ export default class ChatToolController {
     }
 
     async findMessageById(messageId) {
-        const session = this.app.getCurrentSession();
-        if (!session) return null;
-        const messages = await chatDB.getSessionMessages(session.id);
-        return messages.find(message => message.id === messageId) || null;
+        return chatDB.getMessage(messageId);
     }
 
     async hydrateMessages(messages = []) {

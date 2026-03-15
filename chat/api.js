@@ -44,6 +44,40 @@ class OpenRouterAPI {
         this.displayNameOverrides = { ...defaults.displayNameOverrides };
     }
 
+    normalizeCapabilityLookupModelId(modelId) {
+        if (typeof modelId !== 'string') return '';
+        return modelId.trim().replace(/:online$/, '');
+    }
+
+    getCachedModelEntry(modelId) {
+        const normalizedId = this.normalizeCapabilityLookupModelId(modelId);
+        if (!normalizedId) return null;
+
+        const models = loadModelCatalog(OPENROUTER_BACKEND_ID);
+        if (!Array.isArray(models) || models.length === 0) {
+            return null;
+        }
+
+        return models.find((model) => model?.id === normalizedId) || null;
+    }
+
+    modelSupportsStructuredToolCalls(modelId) {
+        const model = this.getCachedModelEntry(modelId);
+        if (!model) {
+            return false;
+        }
+
+        if (typeof model.supportsTools === 'boolean') {
+            return model.supportsTools;
+        }
+
+        if (Array.isArray(model.supportedParameters)) {
+            return model.supportedParameters.includes('tools');
+        }
+
+        return false;
+    }
+
     // Get API key - only use ticket-based key
     getApiKey() {
         const key = apiKeyStore.getApiKey();
@@ -146,6 +180,9 @@ class OpenRouterAPI {
             // Apply custom display name if one exists
             const defaultName = model.name || model.id;
             const displayName = this.getDisplayName(model.id, defaultName);
+            const supportedParameters = Array.isArray(model.supported_parameters)
+                ? [...new Set(model.supported_parameters.filter(value => typeof value === 'string' && value.trim()))]
+                : [];
 
             return {
                 id: model.id,
@@ -154,7 +191,9 @@ class OpenRouterAPI {
                 categoryPriority: categoryPriority,
                 provider: providerName,
                 context_length: model.context_length,
-                pricing: model.pricing
+                pricing: model.pricing,
+                supportedParameters,
+                supportsTools: supportedParameters.includes('tools')
             };
         }).filter(Boolean);
 
@@ -277,10 +316,10 @@ class OpenRouterAPI {
     // Fallback models if API fails
     getFallbackModels() {
         return [
-            { id: 'openai/gpt-5.2-chat', name: 'OpenAI: GPT-5.2 Instant', category: 'Flagship models', provider: 'OpenAI' },
-            { id: 'openai/gpt-5.1-chat', name: 'OpenAI: GPT-5.1 Instant', category: 'Flagship models', provider: 'OpenAI' },
-            { id: 'anthropic/claude-sonnet-4.5', name: 'Anthropic: Claude Sonnet 4.5', category: 'Flagship models', provider: 'Anthropic' },
-            { id: 'google/gemini-3-pro-preview', name: 'Google: Gemini 3 Pro Preview', category: 'Flagship models', provider: 'Google' },
+            { id: 'openai/gpt-5.2-chat', name: 'OpenAI: GPT-5.2 Instant', category: 'Flagship models', provider: 'OpenAI', supportsTools: false },
+            { id: 'openai/gpt-5.1-chat', name: 'OpenAI: GPT-5.1 Instant', category: 'Flagship models', provider: 'OpenAI', supportsTools: false },
+            { id: 'anthropic/claude-sonnet-4.5', name: 'Anthropic: Claude Sonnet 4.5', category: 'Flagship models', provider: 'Anthropic', supportsTools: false },
+            { id: 'google/gemini-3-pro-preview', name: 'Google: Gemini 3 Pro Preview', category: 'Flagship models', provider: 'Google', supportsTools: false },
         ];
     }
 

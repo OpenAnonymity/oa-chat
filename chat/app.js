@@ -3837,6 +3837,20 @@ class ChatApp {
         }
     }
 
+    async saveMessagePreservingRuntimeParts(message) {
+        if (!message?.id) {
+            return;
+        }
+
+        const persistedMessage = await chatDB.getMessage(message.id);
+        const persistedParts = Array.isArray(persistedMessage?.parts) ? persistedMessage.parts : [];
+        if (persistedParts.length > 0) {
+            message.parts = persistedParts.map((part) => ({ ...part }));
+        }
+
+        await chatDB.saveMessage(message);
+    }
+
     async keepPartialAssistantTurn({ session, streamingMessage, streamedContent, streamedReasoning }) {
         if (!streamingMessage?.id) {
             return null;
@@ -3861,7 +3875,7 @@ class ChatApp {
         streamingMessage.streamingReasoning = false;
         streamingMessage.streamingPending = false;
         streamingMessage.streamingPhase = null;
-        await chatDB.saveMessage(streamingMessage);
+        await this.saveMessagePreservingRuntimeParts(streamingMessage);
 
         if (this.chatArea && this.isViewingSession(session.id)) {
             const finalMessage = hydratedMessage || streamingMessage;
@@ -3892,7 +3906,7 @@ class ChatApp {
             if (markLocalOnly) {
                 streamingMessage.isLocalOnly = true;
             }
-            await chatDB.saveMessage(streamingMessage);
+            await this.saveMessagePreservingRuntimeParts(streamingMessage);
 
             if (this.chatArea && this.isViewingSession(session.id)) {
                 const hydratedMessage = await this.toolController.hydrateMessageById(streamingMessage.id);
@@ -3992,7 +4006,7 @@ class ChatApp {
             streamedReasoning: ''
         };
 
-        await chatDB.saveMessage(streamingMessage);
+        await this.saveMessagePreservingRuntimeParts(streamingMessage);
 
         let lastSaveLength = 0;
         let streamingTokenCount = 0;
@@ -4018,7 +4032,7 @@ class ChatApp {
             turnState.firstChunkReceived = true;
             streamingMessage.streamingPending = false;
             streamingMessage.streamingPhase = null;
-            await chatDB.saveMessage(streamingMessage);
+            await this.saveMessagePreservingRuntimeParts(streamingMessage);
             if (this.chatArea && this.isViewingSession(session.id)) {
                 await this.chatArea.appendMessage(streamingMessage);
             }
@@ -4059,7 +4073,7 @@ class ChatApp {
                         streamingMessage.reasoning = reasoningChunk;
                         streamingMessage.streamingReasoning = true;
                         await ensureAssistantMessageVisible();
-                        await chatDB.saveMessage(streamingMessage);
+                        await this.saveMessagePreservingRuntimeParts(streamingMessage);
                     } else {
                         turnState.streamedReasoning += reasoningChunk;
                         streamingMessage.reasoning = turnState.streamedReasoning;
@@ -4095,7 +4109,7 @@ class ChatApp {
                     }
 
                     if (turnState.streamedContent.length - lastSaveLength >= 100) {
-                        await chatDB.saveMessage(streamingMessage);
+                        await this.saveMessagePreservingRuntimeParts(streamingMessage);
                         lastSaveLength = turnState.streamedContent.length;
                     }
 
@@ -4115,7 +4129,7 @@ class ChatApp {
 
                     if (!streamingMessage.images) streamingMessage.images = [];
                     this.addImagesWithDedup(streamingMessage.images, images);
-                    await chatDB.saveMessage(streamingMessage);
+                    await this.saveMessagePreservingRuntimeParts(streamingMessage);
 
                     if (this.chatArea && this.isViewingSession(session.id)) {
                         this.chatArea.updateStreamingImages(streamingMessageId, streamingMessage.images);
@@ -4176,7 +4190,7 @@ class ChatApp {
             streamingMessage.reasoningDuration = (reasoningEndTime || Date.now()) - reasoningStartTime;
         }
 
-        await chatDB.saveMessage(streamingMessage);
+        await this.saveMessagePreservingRuntimeParts(streamingMessage);
 
         if (streamingMessage.citations?.length > 0) {
             this.enrichCitationsAndUpdateUI(streamingMessage);

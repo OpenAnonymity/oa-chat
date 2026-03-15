@@ -568,6 +568,17 @@ class ChatDatabase {
         });
     }
 
+    async getMessage(messageId) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['messages'], 'readonly');
+            const store = transaction.objectStore('messages');
+            const request = store.get(messageId);
+
+            request.onsuccess = () => resolve(request.result || null);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
     async deleteSessionMessages(sessionId) {
         return new Promise((resolve, reject) => {
             const transaction = this.db.transaction(['messages'], 'readwrite');
