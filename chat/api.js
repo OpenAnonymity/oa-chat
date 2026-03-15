@@ -6,6 +6,12 @@
 // user identity binding -- OpenRouter sees inference traffic from an anonymous
 // ephemeral key with no way to identify the user behind it.
 import networkProxy from './services/networkProxy.js';
+import {
+    cancelAndroidNativeInferenceJob,
+    isAndroidNativeInferenceAvailable,
+    pollAndroidNativeInferenceJob,
+    startAndroidNativeInferenceJob
+} from './services/androidNativeInferenceTransport.js';
 import { getDefaultModelConfig } from './services/modelConfig.js';
 import { resolveModelDisplayName } from './services/modelNames.js';
 import apiKeyStore from './services/apiKeyStore.js';
@@ -558,6 +564,291 @@ class OpenRouterAPI {
             return citationMap.size > 0 ? Array.from(citationMap.values()).sort((a, b) => a.index - b.index) : [];
         };
 
+        const logStreamingRequest = (status, transport = 'web') => {
+            if (!window.networkLogger) return;
+
+            const logBody = {
+                model: modelId,
+                messages: messages.length + ' messages',
+                stream: true,
+                reasoning: reasoningPayload
+            };
+
+            window.networkLogger.logRequest({
+                type: 'openrouter',
+                method: 'POST',
+                url: url,
+                status,
+                request: {
+                    headers: window.networkLogger.sanitizeHeaders(headers),
+                    body: logBody
+                },
+                response: {
+                    streaming: true,
+                    transport
+                }
+            });
+        };
+
+        const processSseLine = (line) => {
+            // Skip empty lines
+            if (line.trim() === '') return;
+
+            // Handle SSE comments (OpenRouter processing indicators)
+            if (line.startsWith(':')) {
+                // These are SSE comments, we can optionally use them for UI feedback
+                // For example: ": OPENROUTER PROCESSING"
+                console.debug('SSE comment:', line);
+                return;
+            }
+
+            if (!line.startsWith('data: ')) {
+                return;
+            }
+
+            const data = line.slice(6);
+            if (data === '[DONE]') return;
+
+            try {
+                const parsed = JSON.parse(data);
+
+                // Check for annotations in various possible locations in the response
+                // All formats use addAnnotations() which deduplicates by normalized URL
+
+                // Format 1: Direct annotations array
+                if (parsed.annotations && Array.isArray(parsed.annotations)) {
+                    addAnnotations(parsed.annotations);
+                }
+
+                // Format 2: In choices[0].message.annotations (chat completions format)
+                if (parsed.choices?.[0]?.message?.annotations && Array.isArray(parsed.choices[0].message.annotations)) {
+                    addAnnotations(parsed.choices[0].message.annotations);
+                }
+
+                // Format 3: In choices[0].message.content[] (if content is array with annotations)
+                const messageContent = parsed.choices?.[0]?.message?.content;
+                if (Array.isArray(messageContent)) {
+                    messageContent.forEach(item => {
+                        if (item.annotations && Array.isArray(item.annotations)) {
+                            addAnnotations(item.annotations);
+                        }
+                    });
+                }
+
+                // Format 4: /responses API format - check output[].content[].annotations[]
+                if (parsed.output && Array.isArray(parsed.output)) {
+                    parsed.output.forEach(output => {
+                        if (output.content && Array.isArray(output.content)) {
+                            output.content.forEach(contentItem => {
+                                if (contentItem.annotations && Array.isArray(contentItem.annotations)) {
+                                    addAnnotations(contentItem.annotations);
+                                }
+                            });
+                        }
+                    });
+                }
+
+                // Format 5: response.completed event format
+                if (parsed.type === 'response.completed' && parsed.response) {
+                    const output = parsed.response.output;
+                    if (output && Array.isArray(output)) {
+                        output.forEach(outputItem => {
+                            if (outputItem.content && Array.isArray(outputItem.content)) {
+                                outputItem.content.forEach(contentItem => {
+                                    if (contentItem.annotations && Array.isArray(contentItem.annotations)) {
+                                        addAnnotations(contentItem.annotations);
+                                    }
+                                });
+                            }
+                        });
+                    }
+                }
+
+                // Check for reasoning in various possible formats
+                // OpenRouter might send reasoning in different ways
+                if (parsed.type === 'response.reasoning.delta' ||
+                    parsed.reasoning_delta ||
+                    (parsed.choices?.[0]?.delta?.reasoning)) {
+
+                    const reasoningContent = parsed.delta ||
+                                           parsed.reasoning_delta ||
+                                           parsed.choices?.[0]?.delta?.reasoning || '';
+
+                    if (reasoningContent && onReasoningChunk) {
+                        hasReceivedFirstToken = true;
+                        accumulatedReasoning += reasoningContent;
+
+                        // Buffer reasoning chunks to reduce UI updates
+                        reasoningBuffer += reasoningContent;
+
+                        // Clear existing timer
+                        if (reasoningBufferTimer) {
+                            clearTimeout(reasoningBufferTimer);
+                        }
+
+                        // Flush buffer if it's large enough or on newline
+                        if (reasoningBuffer.length >= REASONING_BUFFER_SIZE ||
+                            reasoningContent.includes('\n')) {
+                            flushReasoningBuffer();
+                        } else {
+                            // Otherwise, set a timer to flush after delay
+                            reasoningBufferTimer = setTimeout(flushReasoningBuffer, REASONING_BUFFER_DELAY);
+                        }
+
+                        // Update token count for reasoning (estimated)
+                        estimatedReasoningTokens = Math.ceil(accumulatedReasoning.length / 4);
+                        if (onTokenUpdate) {
+                            onTokenUpdate({
+                                completionTokens: estimatedReasoningTokens,
+                                isStreaming: true
+                            });
+                        }
+                    }
+
+                    // Skip normal content processing if this was a reasoning event
+                    if (parsed.type === 'response.reasoning.delta') return;
+                }
+
+                // Check for mid-stream errors
+                if (parsed.error) {
+                    const errorMessage = parsed.error.message || 'Stream error occurred';
+                    const error = new Error(errorMessage);
+                    error.code = parsed.error.code;
+                    error.isStreamError = true;
+                    error.hasReceivedTokens = hasReceivedFirstToken;
+
+                    // Check if this is a terminal error
+                    if (parsed.choices?.[0]?.finish_reason === 'error') {
+                        throw error;
+                    }
+                }
+
+                // Handle message content delta events from reasoning API (if using separate endpoint)
+                if (parsed.type === 'response.output_text.delta') {
+                    const contentDelta = parsed.delta || '';
+                    if (contentDelta) {
+                        hasReceivedFirstToken = true;
+                        accumulatedContent += contentDelta;
+                        onChunk(contentDelta);
+
+                        // Add reasoning tokens to content tokens for cumulative display
+                        const estimatedContentTokens = Math.ceil(accumulatedContent.length / 4);
+                        completionTokens = estimatedReasoningTokens + estimatedContentTokens;
+                        if (onTokenUpdate) {
+                            onTokenUpdate({
+                                completionTokens,
+                                isStreaming: true
+                            });
+                        }
+                    }
+                    return;
+                }
+
+                const delta = parsed.choices?.[0]?.delta;
+                const content = delta?.content;
+
+                if (content) {
+                    hasReceivedFirstToken = true;
+                    accumulatedContent += content;
+                    onChunk(content);
+
+                    // Add reasoning tokens to content tokens for cumulative display
+                    const estimatedContentTokens = Math.ceil(accumulatedContent.length / 4);
+                    completionTokens = estimatedReasoningTokens + estimatedContentTokens;
+                    if (onTokenUpdate) {
+                        onTokenUpdate({
+                            completionTokens,
+                            isStreaming: true
+                        });
+                    }
+                }
+
+                // Check for images in the delta (standard OpenRouter format)
+                if (delta?.images) {
+                    hasReceivedFirstToken = true;
+                    onChunk(null, { images: delta.images });
+                }
+
+                // Check for image data in reasoning_details (only treat recognised image payloads)
+                if (delta?.reasoning_details) {
+                    const imageDetails = delta.reasoning_details.filter(detail => this.isReasoningDetailImage(detail));
+                    if (imageDetails.length > 0) {
+                        hasReceivedFirstToken = true;
+                        const images = imageDetails.map(detail => ({
+                            type: 'image_url',
+                            image_url: { url: this.buildImageUrlFromReasoningDetail(detail) }
+                        }));
+                        onChunk(null, { images });
+                    }
+                }
+
+                // Check for finish reason
+                const finishReason = parsed.choices?.[0]?.finish_reason;
+                if (finishReason && finishReason !== 'stop') {
+                    console.warn('Stream finished with reason:', finishReason);
+                }
+
+                // Check for usage info in the stream
+                if (parsed.usage) {
+                    totalTokens = parsed.usage.total_tokens || 0;
+                    promptTokens = parsed.usage.prompt_tokens || 0;
+                    completionTokens = parsed.usage.completion_tokens || 0;
+
+
+                    // Update token count with final accurate values
+                    if (onTokenUpdate) {
+                        onTokenUpdate({
+                            totalTokens,
+                            promptTokens,
+                            completionTokens,
+                            isStreaming: false
+                        });
+                    }
+                }
+
+                // Check for model info
+                if (parsed.model) {
+                    modelUsed = parsed.model;
+                }
+            } catch (e) {
+                console.error('Error parsing SSE chunk:', e, 'Raw line:', line);
+                // Continue processing other chunks
+            }
+        };
+
+        const finalizeStreamResult = () => {
+            // Flush any remaining reasoning buffer
+            flushReasoningBuffer();
+
+            // Parse citations - prefer annotations over content parsing
+            if (searchEnabled) {
+                const annotationsList = Array.from(annotationsMap.values());
+                if (annotationsList.length > 0) {
+                    // Use citations from annotations (already deduplicated during collection)
+                    console.log('Processing annotations for citations:', annotationsList.length, 'unique annotations');
+                    citations = parseCitationsFromAnnotations(annotationsList);
+                    console.log('Parsed citations:', citations.length, 'citations');
+                } else if (accumulatedContent) {
+                    // Fallback to parsing from content
+                    console.log('No annotations found, attempting to parse citations from content');
+                    citations = parseCitations(accumulatedContent);
+                    if (citations.length > 0) {
+                        console.log('Parsed citations from content:', citations.length);
+                    }
+                }
+            }
+
+            // Return token usage data, reasoning content, and citations
+            return {
+                totalTokens,
+                promptTokens,
+                completionTokens,
+                model: modelUsed,
+                reasoning: accumulatedReasoning || null,
+                citations: citations.length > 0 ? citations : null
+            };
+        };
+
         try {
             // Prepend system prompt if it exists
             const systemPrompt = getSystemPrompt(effectiveModelId);
@@ -609,6 +900,84 @@ class OpenRouterAPI {
                 headers: headers,
                 body: JSON.stringify(requestBody)
             };
+            if (isAndroidNativeInferenceAvailable()) {
+                const nativeRequest = {
+                    url,
+                    method: 'POST',
+                    headers,
+                    body: fetchOptions.body,
+                    debugMock: key === 'oa-debug-stream',
+                };
+                const { jobId } = startAndroidNativeInferenceJob(nativeRequest);
+                let afterSequence = 0;
+                let streamOpened = false;
+                let terminal = false;
+                const cancelFromAbort = () => {
+                    try {
+                        cancelAndroidNativeInferenceJob(jobId);
+                    } catch (cancelError) {
+                        console.warn('Failed to cancel Android native inference job:', cancelError);
+                    }
+                };
+
+                abortController?.signal?.addEventListener('abort', cancelFromAbort, { once: true });
+
+                try {
+                    while (!terminal) {
+                        const { events } = pollAndroidNativeInferenceJob(jobId, afterSequence);
+                        if (events.length === 0) {
+                            await new Promise(resolve => setTimeout(resolve, 75));
+                            continue;
+                        }
+
+                        for (const event of events) {
+                            afterSequence = Math.max(afterSequence, Number(event.sequence || 0));
+
+                            if (event.type === 'stream-open') {
+                                if (!streamOpened) {
+                                    streamOpened = true;
+                                    if (typeof onStreamOpen === 'function') {
+                                        await onStreamOpen();
+                                    }
+                                    logStreamingRequest(event.status || 200, 'android-native');
+                                }
+                                continue;
+                            }
+
+                            if (event.type === 'sse-line' && typeof event.line === 'string') {
+                                processSseLine(event.line);
+                                continue;
+                            }
+
+                            if (event.type === 'completed') {
+                                terminal = true;
+                                continue;
+                            }
+
+                            if (event.type === 'cancelled') {
+                                const error = new DOMException(event.message || 'The operation was aborted.', 'AbortError');
+                                error.isCancelled = true;
+                                throw error;
+                            }
+
+                            if (event.type === 'failed') {
+                                const error = new Error(event.message || 'Stream error occurred');
+                                if (event.status) {
+                                    error.status = event.status;
+                                }
+                                if (event.code) {
+                                    error.code = event.code;
+                                }
+                                throw error;
+                            }
+                        }
+                    }
+                } finally {
+                    abortController?.signal?.removeEventListener('abort', cancelFromAbort);
+                }
+
+                return finalizeStreamResult();
+            }
 
             // Retry only the initial connection, not mid-stream
             // Once streaming starts, errors should surface to user
@@ -638,27 +1007,7 @@ class OpenRouterAPI {
                 await onStreamOpen();
             }
 
-            // Log the streaming request
-            if (window.networkLogger) {
-                const logBody = {
-                    model: modelId,
-                    messages: messages.length + ' messages',
-                    stream: true,
-                    reasoning: reasoningPayload
-                };
-
-                window.networkLogger.logRequest({
-                    type: 'openrouter',
-                    method: 'POST',
-                    url: url,
-                    status: response.status,
-                    request: {
-                        headers: window.networkLogger.sanitizeHeaders(headers),
-                        body: logBody
-                    },
-                    response: { streaming: true }
-                });
-            }
+            logStreamingRequest(response.status, 'web');
 
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
@@ -673,260 +1022,11 @@ class OpenRouterAPI {
                 buffer = lines.pop() || '';
 
                 for (const line of lines) {
-                    // Skip empty lines
-                    if (line.trim() === '') continue;
-
-                    // Handle SSE comments (OpenRouter processing indicators)
-                    if (line.startsWith(':')) {
-                        // These are SSE comments, we can optionally use them for UI feedback
-                        // For example: ": OPENROUTER PROCESSING"
-                        console.debug('SSE comment:', line);
-                        continue;
-                    }
-
-                    if (line.startsWith('data: ')) {
-                        const data = line.slice(6);
-                        if (data === '[DONE]') continue;
-
-                        try {
-                            const parsed = JSON.parse(data);
-
-                            // Check for annotations in various possible locations in the response
-                            // All formats use addAnnotations() which deduplicates by normalized URL
-
-                            // Format 1: Direct annotations array
-                            if (parsed.annotations && Array.isArray(parsed.annotations)) {
-                                addAnnotations(parsed.annotations);
-                            }
-
-                            // Format 2: In choices[0].message.annotations (chat completions format)
-                            if (parsed.choices?.[0]?.message?.annotations && Array.isArray(parsed.choices[0].message.annotations)) {
-                                addAnnotations(parsed.choices[0].message.annotations);
-                            }
-
-                            // Format 3: In choices[0].message.content[] (if content is array with annotations)
-                            const messageContent = parsed.choices?.[0]?.message?.content;
-                            if (Array.isArray(messageContent)) {
-                                messageContent.forEach(item => {
-                                    if (item.annotations && Array.isArray(item.annotations)) {
-                                        addAnnotations(item.annotations);
-                                    }
-                                });
-                            }
-
-                            // Format 4: /responses API format - check output[].content[].annotations[]
-                            if (parsed.output && Array.isArray(parsed.output)) {
-                                parsed.output.forEach(output => {
-                                    if (output.content && Array.isArray(output.content)) {
-                                        output.content.forEach(contentItem => {
-                                            if (contentItem.annotations && Array.isArray(contentItem.annotations)) {
-                                                addAnnotations(contentItem.annotations);
-                                            }
-                                        });
-                                    }
-                                });
-                            }
-
-                            // Format 5: response.completed event format
-                            if (parsed.type === 'response.completed' && parsed.response) {
-                                const output = parsed.response.output;
-                                if (output && Array.isArray(output)) {
-                                    output.forEach(outputItem => {
-                                        if (outputItem.content && Array.isArray(outputItem.content)) {
-                                            outputItem.content.forEach(contentItem => {
-                                                if (contentItem.annotations && Array.isArray(contentItem.annotations)) {
-                                                    addAnnotations(contentItem.annotations);
-                                                }
-                                            });
-                                        }
-                                    });
-                                }
-                            }
-
-                            // Check for reasoning in various possible formats
-                            // OpenRouter might send reasoning in different ways
-                            if (parsed.type === 'response.reasoning.delta' ||
-                                parsed.reasoning_delta ||
-                                (parsed.choices?.[0]?.delta?.reasoning)) {
-
-                                const reasoningContent = parsed.delta ||
-                                                       parsed.reasoning_delta ||
-                                                       parsed.choices?.[0]?.delta?.reasoning || '';
-
-                                if (reasoningContent && onReasoningChunk) {
-                                    hasReceivedFirstToken = true;
-                                    accumulatedReasoning += reasoningContent;
-
-                                    // Buffer reasoning chunks to reduce UI updates
-                                    reasoningBuffer += reasoningContent;
-
-                                    // Clear existing timer
-                                    if (reasoningBufferTimer) {
-                                        clearTimeout(reasoningBufferTimer);
-                                    }
-
-                                    // Flush buffer if it's large enough or on newline
-                                    if (reasoningBuffer.length >= REASONING_BUFFER_SIZE ||
-                                        reasoningContent.includes('\n')) {
-                                        flushReasoningBuffer();
-                                    } else {
-                                        // Otherwise, set a timer to flush after delay
-                                        reasoningBufferTimer = setTimeout(flushReasoningBuffer, REASONING_BUFFER_DELAY);
-                                    }
-
-                                    // Update token count for reasoning (estimated)
-                                    estimatedReasoningTokens = Math.ceil(accumulatedReasoning.length / 4);
-                                    if (onTokenUpdate) {
-                                        onTokenUpdate({
-                                            completionTokens: estimatedReasoningTokens,
-                                            isStreaming: true
-                                        });
-                                    }
-                                }
-
-                                // Skip normal content processing if this was a reasoning event
-                                if (parsed.type === 'response.reasoning.delta') continue;
-                            }
-
-                            // Check for mid-stream errors
-                            if (parsed.error) {
-                                const errorMessage = parsed.error.message || 'Stream error occurred';
-                                const error = new Error(errorMessage);
-                                error.code = parsed.error.code;
-                                error.isStreamError = true;
-                                error.hasReceivedTokens = hasReceivedFirstToken;
-
-                                // Check if this is a terminal error
-                                if (parsed.choices?.[0]?.finish_reason === 'error') {
-                                    throw error;
-                                }
-                            }
-
-                            // Handle message content delta events from reasoning API (if using separate endpoint)
-                            if (parsed.type === 'response.output_text.delta') {
-                                const contentDelta = parsed.delta || '';
-                                if (contentDelta) {
-                                    hasReceivedFirstToken = true;
-                                    accumulatedContent += contentDelta;
-                                    onChunk(contentDelta);
-
-                                    // Add reasoning tokens to content tokens for cumulative display
-                                    const estimatedContentTokens = Math.ceil(accumulatedContent.length / 4);
-                                    completionTokens = estimatedReasoningTokens + estimatedContentTokens;
-                                    if (onTokenUpdate) {
-                                        onTokenUpdate({
-                                            completionTokens,
-                                            isStreaming: true
-                                        });
-                                    }
-                                }
-                                continue;
-                            }
-
-                            const delta = parsed.choices?.[0]?.delta;
-                            const content = delta?.content;
-
-                            if (content) {
-                                hasReceivedFirstToken = true;
-                                accumulatedContent += content;
-                                onChunk(content);
-
-                                // Add reasoning tokens to content tokens for cumulative display
-                                const estimatedContentTokens = Math.ceil(accumulatedContent.length / 4);
-                                completionTokens = estimatedReasoningTokens + estimatedContentTokens;
-                                if (onTokenUpdate) {
-                                    onTokenUpdate({
-                                        completionTokens,
-                                        isStreaming: true
-                                    });
-                                }
-                            }
-
-                            // Check for images in the delta (standard OpenRouter format)
-                            if (delta?.images) {
-                                hasReceivedFirstToken = true;
-                                onChunk(null, { images: delta.images });
-                            }
-
-                            // Check for image data in reasoning_details (only treat recognised image payloads)
-                            if (delta?.reasoning_details) {
-                                const imageDetails = delta.reasoning_details.filter(detail => this.isReasoningDetailImage(detail));
-                                if (imageDetails.length > 0) {
-                                    hasReceivedFirstToken = true;
-                                    const images = imageDetails.map(detail => ({
-                                        type: 'image_url',
-                                        image_url: { url: this.buildImageUrlFromReasoningDetail(detail) }
-                                    }));
-                                    onChunk(null, { images });
-                                }
-                            }
-
-                            // Check for finish reason
-                            const finishReason = parsed.choices?.[0]?.finish_reason;
-                            if (finishReason && finishReason !== 'stop') {
-                                console.warn('Stream finished with reason:', finishReason);
-                            }
-
-                            // Check for usage info in the stream
-                            if (parsed.usage) {
-                                totalTokens = parsed.usage.total_tokens || 0;
-                                promptTokens = parsed.usage.prompt_tokens || 0;
-                                completionTokens = parsed.usage.completion_tokens || 0;
-
-
-                                // Update token count with final accurate values
-                                if (onTokenUpdate) {
-                                    onTokenUpdate({
-                                        totalTokens,
-                                        promptTokens,
-                                        completionTokens,
-                                        isStreaming: false
-                                    });
-                                }
-                            }
-
-                            // Check for model info
-                            if (parsed.model) {
-                                modelUsed = parsed.model;
-                            }
-                        } catch (e) {
-                            console.error('Error parsing SSE chunk:', e, 'Raw line:', line);
-                            // Continue processing other chunks
-                        }
-                    }
+                    processSseLine(line);
                 }
             }
 
-            // Flush any remaining reasoning buffer
-            flushReasoningBuffer();
-
-            // Parse citations - prefer annotations over content parsing
-            if (searchEnabled) {
-                const annotationsList = Array.from(annotationsMap.values());
-                if (annotationsList.length > 0) {
-                    // Use citations from annotations (already deduplicated during collection)
-                    console.log('Processing annotations for citations:', annotationsList.length, 'unique annotations');
-                    citations = parseCitationsFromAnnotations(annotationsList);
-                    console.log('Parsed citations:', citations.length, 'citations');
-                } else if (accumulatedContent) {
-                    // Fallback to parsing from content
-                    console.log('No annotations found, attempting to parse citations from content');
-                    citations = parseCitations(accumulatedContent);
-                    if (citations.length > 0) {
-                        console.log('Parsed citations from content:', citations.length);
-                    }
-                }
-            }
-
-            // Return token usage data, reasoning content, and citations
-            return {
-                totalTokens,
-                promptTokens,
-                completionTokens,
-                model: modelUsed,
-                reasoning: accumulatedReasoning || null,
-                citations: citations.length > 0 ? citations : null
-            };
+            return finalizeStreamResult();
         } catch (error) {
             // Flush any remaining reasoning buffer before handling error
             flushReasoningBuffer();

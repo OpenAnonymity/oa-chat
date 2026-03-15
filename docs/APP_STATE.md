@@ -104,3 +104,17 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     against stale shared CSS.
   - If users report "the pending UI looks wrong only in one browser" after deploy, inspect
     the built `index.html` first and confirm the versioned asset refs are present.
+- 2026-03-14: Android background-streaming support now lives at the transport seam in
+  `chat/api.js`, not in the chat controller.
+  - `oa-chat` still builds the OpenRouter request body and still parses SSE lines into
+    reasoning/content/image/token updates.
+  - On Android WebView only, `chat/services/androidNativeInferenceTransport.js` can hand the
+    live HTTP/SSE call to native code and poll buffered raw SSE lines back into the existing
+    parser.
+  - This keeps pending/reasoning/content UI behavior aligned with web/desktop because the
+    parser and message-update path remain in JS.
+- 2026-03-14: Launcher resume matters for Android background streams.
+  - The native transport alone is not enough if the Android shell force-reloads the page on
+    launcher re-entry.
+  - `MainActivity` now preserves the current page when a `singleTask` launcher intent has no
+    deep-link URL, so the in-flight JS promise/state survive Home -> launcher reopen.
