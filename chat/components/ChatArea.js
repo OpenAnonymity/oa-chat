@@ -30,6 +30,9 @@ export default class ChatArea {
         this.reasoningAutoScrollPaused = false;
         // Pending animation frame for debounced auto-grow
         this.pendingAutoGrowFrame = null;
+        // Pointer-down copy is used for streaming code blocks because token updates
+        // can replace the DOM before a normal click event fires.
+        this.streamingCodeCopyPointerWindowMs = 1200;
         // Render generation counter - used to cancel stale renders during rapid session switching
         this.renderGeneration = 0;
         this.setupEventListeners();
@@ -41,6 +44,22 @@ export default class ChatArea {
      */
     setupEventListeners() {
         const messagesContainer = this.app.elements.messagesContainer;
+
+        messagesContainer.addEventListener('pointerdown', (e) => {
+            const codeBlockCopyBtn = e.target.closest('.code-block-copy-btn');
+            if (!codeBlockCopyBtn) return;
+            if (typeof e.button === 'number' && e.button !== 0) return;
+
+            const messageEl = codeBlockCopyBtn.closest('[data-message-id]');
+            const messageId = messageEl?.dataset.messageId;
+            if (!messageId || !this.isMessageStreamingInDOM(messageId)) {
+                return;
+            }
+
+            e.preventDefault();
+            this.handleCopyCodeBlock(codeBlockCopyBtn);
+            codeBlockCopyBtn.dataset.pointerCopyHandledAt = String(Date.now());
+        });
 
         // Event delegation for message action buttons
         messagesContainer.addEventListener('click', async (e) => {
@@ -82,6 +101,13 @@ export default class ChatArea {
             // Code block copy button
             const codeBlockCopyBtn = e.target.closest('.code-block-copy-btn');
             if (codeBlockCopyBtn) {
+                const pointerCopyHandledAt = Number(codeBlockCopyBtn.dataset.pointerCopyHandledAt || 0);
+                if (pointerCopyHandledAt &&
+                    (Date.now() - pointerCopyHandledAt) < this.streamingCodeCopyPointerWindowMs) {
+                    delete codeBlockCopyBtn.dataset.pointerCopyHandledAt;
+                    e.preventDefault();
+                    return;
+                }
                 e.preventDefault();
                 this.handleCopyCodeBlock(codeBlockCopyBtn);
                 return;
@@ -245,9 +271,26 @@ export default class ChatArea {
 
         const contentEl = messageEl.querySelector('.message-content');
         if (contentEl) {
-            return contentEl.innerText || contentEl.textContent;
+            const contentClone = contentEl.cloneNode(true);
+            contentClone.querySelectorAll('.code-block-copy-btn').forEach(el => el.remove());
+            return contentClone.innerText || contentClone.textContent;
         }
         return null;
+    }
+
+    /**
+     * Checks whether a message is actively streaming in the current DOM.
+     * @param {string} messageId - The message ID
+     * @returns {boolean} True when the DOM is still in a streaming state
+     */
+    isMessageStreamingInDOM(messageId) {
+        const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
+        if (!messageEl) return false;
+
+        return !!(
+            messageEl.querySelector('.message-content.streaming, .reasoning-content.streaming') ||
+            messageEl.querySelector('.pending-response-label')
+        );
     }
 
     /**
@@ -267,6 +310,91 @@ export default class ChatArea {
         return null;
     }
 
+    isStreamingCodeBlockNode(node) {
+        return node?.nodeType === Node.ELEMENT_NODE &&
+            node.classList.contains('code-block-wrapper');
+    }
+
+    areStreamingNodesEquivalent(currentNode, nextNode) {
+        if (!currentNode || !nextNode || currentNode.nodeType !== nextNode.nodeType) {
+            return false;
+        }
+
+        if (currentNode.nodeType === Node.TEXT_NODE) {
+            return currentNode.textContent === nextNode.textContent;
+        }
+
+        return currentNode.outerHTML === nextNode.outerHTML;
+    }
+
+    syncStreamingCodeBlock(currentNode, nextNode) {
+        const currentLang = currentNode.querySelector('.code-block-lang');
+        const nextLang = nextNode.querySelector('.code-block-lang');
+        if (currentLang && nextLang) {
+            currentLang.textContent = nextLang.textContent;
+        }
+
+        const currentCopyBtn = currentNode.querySelector('.code-block-copy-btn');
+        const nextCopyBtn = nextNode.querySelector('.code-block-copy-btn');
+        if (currentCopyBtn && nextCopyBtn) {
+            currentCopyBtn.dataset.code = nextCopyBtn.dataset.code || '';
+
+            const isShowingCopyFeedback = currentCopyBtn.dataset.copyFeedbackActive === 'true';
+            if (!isShowingCopyFeedback) {
+                const currentText = currentCopyBtn.querySelector('.copy-text');
+                const nextText = nextCopyBtn.querySelector('.copy-text');
+                if (currentText && nextText) {
+                    currentText.textContent = nextText.textContent;
+                }
+
+                const currentIcon = currentCopyBtn.querySelector('.copy-icon');
+                const nextIcon = nextCopyBtn.querySelector('.copy-icon');
+                if (currentIcon && nextIcon) {
+                    currentIcon.innerHTML = nextIcon.innerHTML;
+                }
+            }
+        }
+
+        const currentCode = currentNode.querySelector('pre code');
+        const nextCode = nextNode.querySelector('pre code');
+        if (currentCode && nextCode) {
+            currentCode.className = nextCode.className;
+            currentCode.innerHTML = nextCode.innerHTML;
+        }
+    }
+
+    patchStreamingContent(contentEl, processedContent) {
+        const tempContainer = document.createElement('div');
+        tempContainer.innerHTML = processedContent;
+        const nextChildren = Array.from(tempContainer.childNodes);
+
+        for (let index = 0; index < nextChildren.length; index++) {
+            const nextNode = nextChildren[index];
+            const currentNode = contentEl.childNodes[index];
+
+            if (!currentNode) {
+                contentEl.appendChild(nextNode);
+                continue;
+            }
+
+            if (this.isStreamingCodeBlockNode(currentNode) && this.isStreamingCodeBlockNode(nextNode)) {
+                this.syncStreamingCodeBlock(currentNode, nextNode);
+                continue;
+            }
+
+            if (this.areStreamingNodesEquivalent(currentNode, nextNode)) {
+                continue;
+            }
+
+            contentEl.insertBefore(nextNode, currentNode);
+            currentNode.remove();
+        }
+
+        while (contentEl.childNodes.length > nextChildren.length) {
+            contentEl.lastChild?.remove();
+        }
+    }
+
     /**
      * Handles copying the content of a message.
      * Prioritizes Safari-safe raw DOM data when enabled, else DB-first.
@@ -275,6 +403,26 @@ export default class ChatArea {
     async handleCopyMessage(messageId) {
         const session = this.app.getCurrentSession();
         if (!session) return;
+
+        const isLiveStreamingMessage = this.isMessageStreamingInDOM(messageId);
+
+        // During streaming, the DOM can be ahead of the latest IndexedDB save.
+        // Prefer the live DOM snapshot so copy matches what the user can see.
+        if (isLiveStreamingMessage) {
+            const rawContent = this.getMessageRawFromDOM(messageId);
+            if (rawContent && rawContent.trim()) {
+                this.copyToClipboard(rawContent);
+                this.showCopySuccess(messageId);
+                return;
+            }
+
+            const domContent = this.getMessageTextFromDOM(messageId);
+            if (domContent && domContent.trim()) {
+                this.copyToClipboard(domContent);
+                this.showCopySuccess(messageId);
+                return;
+            }
+        }
 
         if (RAW_CLIPBOARD_ATTRIBUTE_ENABLED) {
             // Try raw content from DOM data attributes (sync, preserves Safari user activation).
@@ -432,7 +580,15 @@ export default class ChatArea {
         const textEl = btn.querySelector('.copy-text');
         if (!svg) return;
 
+        const messageEl = btn.closest('[data-message-id]');
+        const messageId = messageEl?.dataset.messageId || null;
+        const isStreamingMessage = messageId ? this.isMessageStreamingInDOM(messageId) : false;
+
         this.copyToClipboard(decodedCode);
+        btn.dataset.copyFeedbackActive = 'true';
+        if (isStreamingMessage && typeof this.app.showToast === 'function') {
+            this.app.showToast('Code copied', 'success');
+        }
 
         // Animate button to show success
         const originalSvgContent = svg.innerHTML;
@@ -443,6 +599,7 @@ export default class ChatArea {
         setTimeout(() => {
             svg.innerHTML = originalSvgContent;
             if (textEl) textEl.textContent = originalText;
+            delete btn.dataset.copyFeedbackActive;
         }, 2000);
     }
 
@@ -454,9 +611,9 @@ export default class ChatArea {
         const session = this.app.getCurrentSession();
         if (!session) return;
 
-        // Check if currently streaming
         if (this.app.isCurrentSessionStreaming()) {
-            return;
+            const stopped = await this.app.stopCurrentSessionStreamingAndWait();
+            if (!stopped) return;
         }
 
         const messages = await chatDB.getSessionMessages(session.id);
@@ -501,7 +658,10 @@ export default class ChatArea {
         const session = this.app.getCurrentSession();
         if (!session) return;
 
-        if (this.app.isCurrentSessionStreaming()) return;
+        if (this.app.isCurrentSessionStreaming()) {
+            const stopped = await this.app.stopCurrentSessionStreamingAndWait();
+            if (!stopped) return;
+        }
 
         const messages = await chatDB.getSessionMessages(session.id);
         const messageIndex = messages.findIndex(m => m.id === messageId);
@@ -1012,7 +1172,7 @@ export default class ChatArea {
             // Enhance inline links into styled buttons during streaming
             processedContent = window.MessageTemplates.enhanceInlineLinks(processedContent, messageId);
 
-            contentEl.innerHTML = processedContent;
+            this.patchStreamingContent(contentEl, processedContent);
             // Re-render LaTeX for the updated content
             renderMathInElement(contentEl, {
                 delimiters: [

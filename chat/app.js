@@ -3271,6 +3271,37 @@ class ChatApp {
     }
 
     /**
+     * Interrupts the current session stream and waits for cleanup to finish.
+     * Timeline-mutating actions use this so they can safely restart generation.
+     * @param {Object} options
+     * @param {number} options.timeoutMs - Max wait time before giving up
+     * @returns {Promise<boolean>} True if streaming is stopped or was already idle
+     */
+    async stopCurrentSessionStreamingAndWait(options = {}) {
+        const { timeoutMs = 10000 } = options;
+        const session = this.getCurrentSession();
+        if (!session) return true;
+
+        const state = this.getSessionStreamingState(session.id);
+        if (!state.isStreaming) {
+            return true;
+        }
+
+        this.stopCurrentSessionStreaming();
+
+        const startTime = Date.now();
+        while (this.getSessionStreamingState(session.id).isStreaming) {
+            if ((Date.now() - startTime) >= timeoutMs) {
+                this.showToast('Unable to stop the current response', 'error');
+                return false;
+            }
+            await new Promise(resolve => setTimeout(resolve, 50));
+        }
+
+        return true;
+    }
+
+    /**
      * Handles new chat request with validation (prevents empty duplicate sessions).
      */
     async handleNewChatRequest(options = {}) {
@@ -4766,17 +4797,47 @@ class ChatApp {
     }
 
     /**
+     * Normalizes a message into a static snapshot for forked sessions.
+     * Forks should capture visible content without carrying active streaming state.
+     * @param {Object} message - Source message
+     * @returns {Object|null} Snapshot message or null if it is only an empty pending placeholder
+     */
+    createForkMessageSnapshot(message) {
+        if (!message) return null;
+
+        const snapshot = { ...message };
+        if (snapshot.role !== 'assistant') {
+            return snapshot;
+        }
+
+        const hasText = typeof snapshot.content === 'string' && snapshot.content.trim().length > 0;
+        const hasReasoning = typeof snapshot.reasoning === 'string' && snapshot.reasoning.trim().length > 0;
+        const hasImages = Array.isArray(snapshot.images) && snapshot.images.length > 0;
+
+        // Ignore empty pending placeholders; they have no user-visible content yet.
+        if (snapshot.streamingPending && !hasText && !hasReasoning && !hasImages) {
+            return null;
+        }
+
+        if (snapshot.streamingReasoning && hasReasoning) {
+            snapshot.reasoning = parseReasoningContent(snapshot.reasoning);
+        }
+
+        snapshot.streamingPending = false;
+        snapshot.streamingPhase = null;
+        snapshot.streamingReasoning = false;
+        snapshot.streamingTokens = null;
+
+        return snapshot;
+    }
+
+    /**
      * Enters edit mode for a user message
      * @param {string} messageId - Message ID to edit
      */
     async enterEditMode(messageId) {
         const session = this.getCurrentSession();
         if (!session) return;
-
-        // Prevent editing if streaming
-        if (this.isCurrentSessionStreaming()) {
-            return;
-        }
 
         const messages = await chatDB.getSessionMessages(session.id);
         const message = messages.find(m => m.id === messageId);
@@ -4818,16 +4879,21 @@ class ChatApp {
         const session = this.getCurrentSession();
         if (!session) return;
 
-        if (session.importedFrom) {
-            await this.markImportedSessionAsForked(session);
-            this.updateUrlWithSession(session.id);
-        }
-
         const textarea = document.querySelector(`.edit-prompt-textarea[data-message-id="${messageId}"]`);
         if (!textarea) return;
 
         const newContent = textarea.value.trim();
         if (!newContent) return;
+
+        if (this.isCurrentSessionStreaming()) {
+            const stopped = await this.stopCurrentSessionStreamingAndWait();
+            if (!stopped) return;
+        }
+
+        if (session.importedFrom) {
+            await this.markImportedSessionAsForked(session);
+            this.updateUrlWithSession(session.id);
+        }
 
         const messages = await chatDB.getSessionMessages(session.id);
         const messageIndex = messages.findIndex(m => m.id === messageId);
@@ -4899,18 +4965,16 @@ class ChatApp {
         const session = this.getCurrentSession();
         if (!session) return;
 
-        // Prevent forking if streaming
-        if (this.isCurrentSessionStreaming()) {
-            return;
-        }
-
         const messages = await chatDB.getSessionMessages(session.id);
         const messageIndex = messages.findIndex(m => m.id === messageId);
 
         if (messageIndex === -1) return;
 
         // Copy messages up to and including the fork point
-        const messagesToCopy = messages.slice(0, messageIndex + 1);
+        const messagesToCopy = messages
+            .slice(0, messageIndex + 1)
+            .map(message => this.createForkMessageSnapshot(message))
+            .filter(Boolean);
 
         // Create new session with same model and access context
         const newSessionId = this.generateId();
@@ -4982,7 +5046,8 @@ class ChatApp {
                 response: {
                     sourceSessionId: session.id,
                     messagesCopied: messagesToCopy.length,
-                    sharedAccess: !!accessInfo?.token
+                    sharedAccess: !!accessInfo?.token,
+                    sourceWasStreaming: this.getSessionStreamingState(session.id).isStreaming
                 }
             });
         }
