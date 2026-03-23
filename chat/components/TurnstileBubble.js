@@ -46,6 +46,7 @@ class TurnstileBubble {
         this._widgetContainer = null;
         this._scriptEl = null;
         this._dismissTimer = null;
+        this._visible = false;
 
         // Listeners
         this._resizeHandler = null;
@@ -171,6 +172,7 @@ class TurnstileBubble {
         this._token = null;
         this._anchor = null;
         this._needsInteraction = false;
+        this._visible = false;
         this._backdrop?.remove();
         this._backdrop = null;
         this._bubble?.remove();
@@ -242,11 +244,15 @@ class TurnstileBubble {
         backdrop.addEventListener('click', () => this._dismiss());
         this._backdrop = backdrop;
 
-        // Bubble
+        // Bubble — starts offscreen with opacity:0 and pointer-events:none
+        // instead of display:none so the container retains layout dimensions.
+        // Turnstile needs a layoutable container to render its iframe (600010).
         const bubble = document.createElement('div');
         bubble.className = 'turnstile-bubble';
         bubble.style.cssText = [
-            'display:none', 'position:fixed', 'z-index:10000',
+            'position:fixed', 'z-index:10000',
+            'left:-9999px', 'top:-9999px',
+            'opacity:0', 'pointer-events:none',
             `border-radius:${BUBBLE_RADIUS}px`,
             `padding:${BUBBLE_PADDING}px`,
             'background:hsl(var(--color-background) / 0.85)',
@@ -255,7 +261,6 @@ class TurnstileBubble {
             'border:1px solid hsl(var(--color-border))',
             'box-shadow:0 8px 32px rgba(0,0,0,0.18), 0 2px 8px rgba(0,0,0,0.08)',
             'font-family:inherit', 'font-size:12px',
-            'opacity:0',
         ].join(';');
         this._bubble = bubble;
 
@@ -354,18 +359,15 @@ class TurnstileBubble {
             clearTimeout(this._dismissTimer);
             this._dismissTimer = null;
         }
-        const alreadyVisible = this._bubble.style.display === 'block'
-            && this._backdrop.style.display === 'block';
-        if (alreadyVisible) {
+        if (this._visible) {
             this._position();
             this._addPositionListeners();
             return;
         }
+        this._visible = true;
         this._backdrop.style.display = 'block';
-        // Make visible but keep transparent for positioning
-        this._bubble.style.display = 'block';
+        this._bubble.style.pointerEvents = 'auto';
         this._bubble.style.opacity = '0';
-        this._bubble.style.transform = 'none';
         // Position after layout, then animate in
         requestAnimationFrame(() => {
             this._position();
@@ -381,15 +383,21 @@ class TurnstileBubble {
 
     _dismiss() {
         if (!this._bubble || !this._backdrop) return;
+        this._visible = false;
         this._removePositionListeners();
         this._resolvePending(null);
         this._bubble.style.opacity = '0';
+        this._bubble.style.pointerEvents = 'none';
         if (this._dismissTimer) {
             clearTimeout(this._dismissTimer);
         }
         this._dismissTimer = setTimeout(() => {
-            if (this._bubble) this._bubble.style.display = 'none';
             if (this._backdrop) this._backdrop.style.display = 'none';
+            // Move bubble offscreen when fully faded
+            if (this._bubble) {
+                this._bubble.style.left = '-9999px';
+                this._bubble.style.top = '-9999px';
+            }
             this._dismissTimer = null;
         }, 150);
     }
