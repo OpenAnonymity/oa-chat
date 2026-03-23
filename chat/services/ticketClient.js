@@ -359,10 +359,13 @@ class TicketClient {
     // -> N blinded tickets. However, blind signatures still prevent the org from
     // linking specific redeemed finalized tickets back to this email, because blinded
     // requests are cryptographically unlinkable to finalized tickets.
-    async requestFreeAccess(email) {
+    async requestFreeAccess(email, { cfTurnstileResponse } = {}) {
         const freeAccessUrl = `${ORG_API_BASE}/chat/free_access`;
         const requestHeaders = { 'Content-Type': 'application/json' };
         const requestBody = { email };
+        if (cfTurnstileResponse) {
+            requestBody.cf_turnstile_response = cfTurnstileResponse;
+        }
 
         let response;
         let data;

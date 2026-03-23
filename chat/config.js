@@ -26,6 +26,10 @@ export const PROXY_URL = 'wss://oa-1.refraction.network/?secret=1f45ceecf768790c
 // Base URL for shared chat links
 export const SHARE_BASE_URL = 'https://chat.openanonymity.ai';
 
+// Cloudflare Turnstile -- browser verification for free access requests.
+// Public site key only; the secret key lives server-side.
+export const TURNSTILE_SITE_KEY = '0x4AAAAAACumDp8HcWWXKNzk';
+
 // Retry up to this fraction of available tickets when tickets are already-used
 export const TICKET_RETRY_RATIO = 0.5;
 

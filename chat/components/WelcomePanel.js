@@ -7,6 +7,7 @@ import ticketClient from '../services/ticketClient.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import themeManager from '../services/themeManager.js';
 import SmoothProgress from '../services/smoothProgress.js';
+import TurnstileBubble from './TurnstileBubble.js';
 
 // localStorage key for synchronous pre-hydration check (matches preferencesStore snapshot)
 const STORAGE_KEY_DISMISSED = 'oa-welcome-dismissed';
@@ -44,6 +45,8 @@ class WelcomePanel {
         this.canUseEmailForFreeAccess = false;
         this.allowManualClose = false;
         this.pendingEmailRedemption = null; // { expectedTickets:number|null }
+        this.turnstileBubble = null;
+        this.turnstileInitPromise = null;
 
         // UI state
         this.returnFocusEl = null;
@@ -132,6 +135,7 @@ class WelcomePanel {
     close() {
         if (!this.isOpen || !this.overlay) return;
         this.isOpen = false;
+        this.destroyTurnstileBubble();
         this.smoothProgress.stop();
         if (this._emailSuccessTimer) {
             clearTimeout(this._emailSuccessTimer);
@@ -229,6 +233,7 @@ class WelcomePanel {
                         this.redeemProgress = null;
                         this.redeemError = null;
                         this.smoothProgress.stop();
+                        this.destroyTurnstileBubble();
                         this.render();
                     }, 400);
                 }
@@ -473,9 +478,12 @@ class WelcomePanel {
 
     async handleInviteSubmit(e) {
         if (e) e.preventDefault();
+        if (this.isRedeeming) return;
 
         this.ensureValidAccessMode();
         const isEmailSubmission = this.isPreviewMode();
+        let turnstileToken = null;
+        let submittedEmail = null;
 
         if (isEmailSubmission) {
             if (!this.canUseEmailForFreeAccess) {
@@ -493,6 +501,27 @@ class WelcomePanel {
 
             if (!this.isEmailInput(emailValue)) {
                 this.redeemError = 'Please enter a valid email format (xxx@xxx.xxx).';
+                this.render();
+                return;
+            }
+            submittedEmail = emailValue;
+
+            // Lock the form before async Turnstile work to prevent double-submit
+            this.isRedeeming = true;
+            this.render();
+
+            // Warm Turnstile once the user has started a preview email, but keep
+            // the interactive challenge gated on the actual submit action.
+            try {
+                await this.ensureTurnstileBubbleReady();
+                turnstileToken = await this.turnstileBubble.requestToken();
+            } catch (_) {
+                // Script load failure or other init error
+            }
+            if (!turnstileToken) {
+                this.turnstileBubble?.resetToken();
+                this.isRedeeming = false;
+                this.redeemError = 'Verification failed — please try again.';
                 this.render();
                 return;
             }
@@ -524,7 +553,9 @@ class WelcomePanel {
 
         try {
             if (isEmailSubmission) {
-                const freeAccessResult = await ticketClient.requestFreeAccess(this.previewEmail.trim());
+                const freeAccessResult = await ticketClient.requestFreeAccess(submittedEmail, {
+                    cfTurnstileResponse: turnstileToken,
+                });
 
                 const accessCode = typeof freeAccessResult.accessCode === 'string'
                     ? freeAccessResult.accessCode.trim()
@@ -587,6 +618,7 @@ class WelcomePanel {
             });
 
             this.smoothProgress.stop();
+            this.destroyTurnstileBubble();
             this.ticketsRedeemed = result.tickets_issued;
             this.step = 'success';
             this.isRedeeming = false;
@@ -598,6 +630,7 @@ class WelcomePanel {
         } catch (error) {
             console.error('Welcome panel invite error:', error);
             this.smoothProgress.stop();
+            this.turnstileBubble?.resetToken();
             if (isEmailSubmission) {
                 try {
                     await preferencesStore.savePreference(PREF_KEYS.freeAccessRequested, false);
@@ -606,7 +639,7 @@ class WelcomePanel {
                 } catch (saveError) {
                     console.warn('Failed to persist free access requested state:', saveError);
                 }
-                this.redeemError = FREE_ACCESS_UNAVAILABLE_HINT;
+                this.redeemError = error?.message || FREE_ACCESS_UNAVAILABLE_HINT;
             }
             this.step = 'welcome';
             this.isRedeeming = false;
@@ -676,14 +709,72 @@ class WelcomePanel {
             this.resetWelcomeDialogAnchor();
         }
         this.attachEventListeners();
+        this.reanchorTurnstileBubble();
         this.applyWelcomeDialogScale();
         requestAnimationFrame(() => this.applyWelcomeDialogScale());
+    }
+
+    /** Re-anchor an existing Turnstile bubble to the freshly-rendered input bar. */
+    reanchorTurnstileBubble() {
+        if (!this.turnstileBubble) return;
+        const inputBar = this.overlay?.querySelector('.invite-input-wrapper');
+        if (inputBar) this.turnstileBubble.setAnchor(inputBar);
+    }
+
+    async ensureTurnstileBubbleReady() {
+        if (this.turnstileInitPromise) {
+            await this.turnstileInitPromise;
+            return this.turnstileBubble;
+        }
+
+        if (this.turnstileBubble && !this.turnstileBubble.hasInitFailed()) {
+            return this.turnstileBubble;
+        }
+
+        this.destroyTurnstileBubble();
+        this.turnstileBubble = new TurnstileBubble();
+        this.reanchorTurnstileBubble();
+
+        this.turnstileInitPromise = this.turnstileBubble.init()
+            .then(() => {
+                this.turnstileInitPromise = null;
+                return this.turnstileBubble;
+            })
+            .catch((error) => {
+                this.turnstileInitPromise = null;
+                throw error;
+            });
+
+        await this.turnstileInitPromise;
+        return this.turnstileBubble;
+    }
+
+    primeTurnstileBubble() {
+        if (!this.isPreviewMode()) return;
+        if (!this.canUseEmailForFreeAccess) return;
+        if (!this.previewEmail.trim()) return;
+        if (this.turnstileInitPromise) return;
+        if (this.turnstileBubble) {
+            if (this.turnstileBubble.hasInitFailed()) return;
+            return;
+        }
+
+        this.ensureTurnstileBubbleReady().catch(() => {
+            // Warmup is best-effort; the submit path retries and surfaces failures.
+        });
+    }
+
+    destroyTurnstileBubble() {
+        this.turnstileBubble?.destroy();
+        this.turnstileBubble = null;
+        this.turnstileInitPromise = null;
     }
 
     renderWelcomeStep() {
         this.ensureValidAccessMode();
         const hasError = !!this.redeemError;
         const isPreviewMode = this.isPreviewMode();
+        const controlsDisabled = this.isRedeeming;
         const inputPlaceholder = isPreviewMode ? 'Email address' : 'Invite code';
         const inputMaxLength = isPreviewMode ? 254 : 24;
         const inputValue = this.getCurrentAccessValue();
@@ -910,20 +1001,22 @@ class WelcomePanel {
                     <div id="welcome-access-mode-toggle" class="encryption-mode-toggle" role="radiogroup" aria-label="Welcome access mode">
                         <button
                             type="button"
-                            class="encryption-mode-btn ${isPreviewMode ? 'active' : ''}"
+                            class="encryption-mode-btn ${isPreviewMode ? 'active' : ''} ${controlsDisabled ? 'opacity-60 cursor-not-allowed' : ''}"
                             data-access-mode="preview"
+                            ${controlsDisabled ? 'disabled' : ''}
                         >Free Preview</button>
                         <button
                             type="button"
-                            class="encryption-mode-btn ${!isPreviewMode ? 'active' : ''}"
+                            class="encryption-mode-btn ${!isPreviewMode ? 'active' : ''} ${controlsDisabled ? 'opacity-60 cursor-not-allowed' : ''}"
                             data-access-mode="beta"
+                            ${controlsDisabled ? 'disabled' : ''}
                         >Invite Code</button>
                         <div class="encryption-mode-indicator"></div>
                     </div>
                 </div>
 
                 <form id="invite-form" class="w-full">
-                    <div class="invite-input-wrapper invite-input-glass flex items-center w-full h-10 border rounded-lg transition-all ${hasError ? 'input-error' : ''}">
+                    <div class="invite-input-wrapper invite-input-glass flex items-center w-full h-10 border rounded-lg transition-all ${hasError ? 'input-error' : ''} ${controlsDisabled ? 'opacity-70' : ''}">
                         <input
                             id="invite-code-input"
                             type="text"
@@ -935,11 +1028,13 @@ class WelcomePanel {
                             autocorrect="off"
                             autocapitalize="off"
                             spellcheck="false"
+                            ${controlsDisabled ? 'disabled' : ''}
                         />
                         <button
                             type="submit"
                             class="flex-shrink-0 w-8 h-8 m-1 rounded-md bg-blue-600 text-white hover:bg-blue-700 transition-colors flex items-center justify-center disabled:opacity-50"
                             aria-label="${isPreviewMode ? 'Request free preview' : 'Redeem invite code'}"
+                            ${controlsDisabled ? 'disabled' : ''}
                         >
                             <svg class="w-4 h-4" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
@@ -962,7 +1057,9 @@ class WelcomePanel {
                         href="https://openanonymity.ai/beta"
                         target="_blank"
                         rel="noopener noreferrer"
-                        class="welcome-btn-glass btn-ghost-hover flex-1 h-10 px-3 rounded-lg text-sm border border-border text-foreground shadow-sm transition-colors flex items-center justify-center gap-1.5"
+                        class="welcome-btn-glass btn-ghost-hover flex-1 h-10 px-3 rounded-lg text-sm border border-border text-foreground shadow-sm transition-colors flex items-center justify-center gap-1.5 ${controlsDisabled ? 'pointer-events-none opacity-60' : ''}"
+                        aria-disabled="${controlsDisabled}"
+                        tabindex="${controlsDisabled ? '-1' : '0'}"
                     >
                         <svg class="w-4 h-4 flex-shrink-0" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"></path>
@@ -972,6 +1069,7 @@ class WelcomePanel {
                     <button
                         id="import-data-btn"
                         class="welcome-btn-blue-glass flex-1 h-10 px-3 rounded-lg text-sm text-white transition-colors flex items-center justify-center gap-1.5"
+                        ${controlsDisabled ? 'disabled' : ''}
                     >
                         <svg class="w-4 h-4 flex-shrink-0" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
@@ -1194,6 +1292,7 @@ class WelcomePanel {
 
             modeButtons.forEach((btn) => {
                 btn.onclick = () => {
+                    if (this.isRedeeming) return;
                     const mode = btn.dataset.accessMode;
                     if (!mode || mode === this.accessMode) return;
 
@@ -1224,6 +1323,15 @@ class WelcomePanel {
                     }
                     this.updateInlineInviteFeedback();
 
+                    // Destroy Turnstile when leaving preview mode so no
+                    // third-party code lingers while the user enters an invite code.
+                    // Re-init is lazy — warmup restarts when the preview email is edited.
+                    if (!this.isPreviewMode()) {
+                        this.destroyTurnstileBubble();
+                    } else if (this.previewEmail.trim()) {
+                        this.primeTurnstileBubble();
+                    }
+
                     inviteInput?.focus();
                 };
             });
@@ -1250,6 +1358,7 @@ class WelcomePanel {
         const inviteInput = document.getElementById('invite-code-input');
         if (inviteInput) {
             inviteInput.oninput = (e) => {
+                if (this.isRedeeming) return;
                 this.setCurrentAccessValue(e.target.value);
                 // Clear error when user starts typing
                 if (this.redeemError) {
@@ -1257,13 +1366,15 @@ class WelcomePanel {
                     const wrapper = inviteInput.closest('.invite-input-wrapper');
                     if (wrapper) wrapper.classList.remove('input-error');
                     this.updateInlineInviteFeedback();
+                    this.primeTurnstileBubble();
                     return;
                 }
 
                 this.updateInlineInviteFeedback();
+                this.primeTurnstileBubble();
             };
             // Focus the input when on welcome step
-            if (this.step === 'welcome') {
+            if (this.step === 'welcome' && !this.isRedeeming) {
                 setTimeout(() => inviteInput.focus(), 100);
             }
         }
@@ -1296,6 +1407,7 @@ class WelcomePanel {
     }
 
     destroy() {
+        this.destroyTurnstileBubble();
         this.smoothProgress.stop();
         if (this._emailSuccessTimer) {
             clearTimeout(this._emailSuccessTimer);
