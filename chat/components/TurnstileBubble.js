@@ -18,9 +18,12 @@
 
 import { TURNSTILE_SITE_KEY } from '../config.js';
 
-const SCRIPT_URL = 'https://challenges.cloudflare.com/turnstile/v0/api.js';
 const SCRIPT_LOAD_TIMEOUT_MS = 10000;
-const SCRIPT_POLL_INTERVAL_MS = 200;
+// Unique global callback name for the ?onload= parameter.
+// Cloudflare fires this only when the API is fully bootstrapped and ready
+// to accept render() calls — polling for window.turnstile is unreliable
+// because the stub object appears before the API is actually ready (600010).
+const ONLOAD_CALLBACK = '__oa_turnstileReady';
 
 // Bubble geometry
 const BUBBLE_GAP = 8;
@@ -186,30 +189,37 @@ class TurnstileBubble {
     // =========================================================================
 
     _ensureTurnstileScript() {
-        if (typeof window.turnstile !== 'undefined') return Promise.resolve();
+        // If the onload callback already fired, the API is ready.
+        if (window[ONLOAD_CALLBACK] === true) return Promise.resolve();
 
         return new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                delete window[ONLOAD_CALLBACK];
+                reject(new Error('Turnstile script failed to load'));
+            }, SCRIPT_LOAD_TIMEOUT_MS);
+
+            // If another instance already injected the script, just wait for
+            // the shared onload callback.  Otherwise inject it now.
             if (!document.querySelector(`script[src*="challenges.cloudflare.com/turnstile"]`)) {
                 const script = document.createElement('script');
-                script.src = SCRIPT_URL;
+                script.src = `https://challenges.cloudflare.com/turnstile/v0/api.js?onload=${ONLOAD_CALLBACK}&render=explicit`;
                 script.async = true;
                 script.defer = true;
                 document.head.appendChild(script);
                 this._scriptEl = script;
             }
 
-            const timeout = setTimeout(() => {
-                clearInterval(poll);
-                reject(new Error('Turnstile script failed to load'));
-            }, SCRIPT_LOAD_TIMEOUT_MS);
-
-            const poll = setInterval(() => {
-                if (typeof window.turnstile !== 'undefined') {
-                    clearInterval(poll);
-                    clearTimeout(timeout);
-                    resolve();
-                }
-            }, SCRIPT_POLL_INTERVAL_MS);
+            // Cloudflare calls window[ONLOAD_CALLBACK]() when the API is
+            // fully bootstrapped.  We replace the function with `true` so
+            // future callers can resolve synchronously above.
+            const prev = window[ONLOAD_CALLBACK];
+            window[ONLOAD_CALLBACK] = () => {
+                clearTimeout(timeout);
+                window[ONLOAD_CALLBACK] = true;
+                // If a previous instance also registered a callback, call it.
+                if (typeof prev === 'function') prev();
+                resolve();
+            };
         });
     }
 
