@@ -48,6 +48,12 @@ class WelcomePanel {
         this.turnstileBubble = null;
         this.turnstileInitPromise = null;
 
+        // Email code popup state
+        this._emailPopupBackdrop = null;
+        this._emailPopupBubble = null;
+        this._emailPopupError = null;
+        this._emailPopupSubmitting = false;
+
         // UI state
         this.returnFocusEl = null;
         this.escapeHandler = null;
@@ -136,6 +142,7 @@ class WelcomePanel {
         if (!this.isOpen || !this.overlay) return;
         this.isOpen = false;
         this.destroyTurnstileBubble();
+        this._dismissEmailCodePopup();
         this.smoothProgress.stop();
         if (this._emailSuccessTimer) {
             clearTimeout(this._emailSuccessTimer);
@@ -541,14 +548,13 @@ class WelcomePanel {
             }
         }
 
-        this.step = 'redeeming';
+        if (!isEmailSubmission) {
+            this.step = 'redeeming';
+            this.redeemProgress = { message: 'Starting...', percent: 0 };
+            this.smoothProgress.start();
+        }
         this.isRedeeming = true;
         this.redeemError = null;
-        this.redeemProgress = isEmailSubmission
-            ? { message: 'Requesting free access...', percent: 20 }
-            : { message: 'Starting...', percent: 0 };
-        this.smoothProgress.start();
-        if (isEmailSubmission) this.smoothProgress.set(20);
         this.render();
 
         try {
@@ -557,54 +563,23 @@ class WelcomePanel {
                     cfTurnstileResponse: turnstileToken,
                 });
 
-                const accessCode = typeof freeAccessResult.accessCode === 'string'
-                    ? freeAccessResult.accessCode.trim()
-                    : '';
-
-                if (accessCode) {
-                    await preferencesStore.savePreference(PREF_KEYS.freeAccessRequested, true);
-                    this.freeAccessRequested = true;
-                    this.freeAccessAvailable = false;
-                    this.freeAccessAvailability = {
-                        available: false,
-                        reasonCode: 'FREE_ACCESS_ALREADY_REQUESTED',
-                        retryAfterSeconds: null,
-                        issuanceEnabled: null
-                    };
-                    this.canUseEmailForFreeAccess = false;
-
-                const ingested = this.app?.ingestTicketCode?.(accessCode, {
-                    autoRedeem: true,
-                    source: 'free_access'
-                });
-
-                if (!ingested) {
-                    this.isRedeeming = false;
-                    this.step = 'welcome';
-                    this.redeemError = 'Free access code issued, but automatic redemption failed. Please redeem it in the ticket panel.';
-                    this.render();
-                    return;
-                }
-
-                this.pendingEmailRedemption = {
-                    expectedTickets: Number.isFinite(freeAccessResult.ticketsGranted) && freeAccessResult.ticketsGranted > 0
-                        ? freeAccessResult.ticketsGranted
-                        : null
+                // The API sends the code to the user's email instead of returning it directly.
+                // Show a popup for the user to enter the code from their inbox.
+                await preferencesStore.savePreference(PREF_KEYS.freeAccessRequested, true);
+                this.freeAccessRequested = true;
+                this.freeAccessAvailable = false;
+                this.freeAccessAvailability = {
+                    available: false,
+                    reasonCode: 'FREE_ACCESS_ALREADY_REQUESTED',
+                    retryAfterSeconds: null,
+                    issuanceEnabled: null
                 };
-                this.redeemProgress = { message: 'Redeeming tickets...', percent: 60 };
-                this.smoothProgress.set(60);
-                this.render();
-                return;
-            }
+                this.canUseEmailForFreeAccess = false;
 
-                await preferencesStore.savePreference(PREF_KEYS.freeAccessRequested, false);
-                this.freeAccessRequested = false;
-                await this.refreshFreeAccessEligibility({ renderIfOpen: false });
-
-                this.step = 'welcome';
+                this.destroyTurnstileBubble();
                 this.isRedeeming = false;
-                this.redeemError = FREE_ACCESS_UNAVAILABLE_HINT;
                 this.render();
+                this._showEmailCodePopup();
                 return;
             }
 
@@ -677,6 +652,198 @@ class WelcomePanel {
 
         input.addEventListener('change', this.importCloseHandler, true);
         input.click();
+    }
+
+    // =========================================================================
+    // Email Code Popup
+    // =========================================================================
+
+    _showEmailCodePopup(errorMessage) {
+        this._dismissEmailCodePopup();
+        this._emailPopupError = errorMessage || null;
+        this._emailPopupSubmitting = false;
+
+        // Backdrop
+        const backdrop = document.createElement('div');
+        backdrop.style.cssText = [
+            'position:fixed', 'inset:0', 'z-index:9999',
+            'background:rgba(0,0,0,0.18)',
+            'backdrop-filter:blur(2px)', '-webkit-backdrop-filter:blur(2px)',
+        ].join(';');
+        this._emailPopupBackdrop = backdrop;
+
+        // Bubble
+        const bubble = document.createElement('div');
+        bubble.style.cssText = [
+            'position:fixed', 'z-index:10000',
+            'left:50%', 'top:50%',
+            'transform:translate(-50%,-50%)',
+            'border-radius:12px',
+            'padding:20px',
+            'width:340px', 'max-width:calc(100vw - 32px)',
+            'background:hsl(var(--color-background) / 0.85)',
+            'backdrop-filter:blur(20px) saturate(1.2)',
+            '-webkit-backdrop-filter:blur(20px) saturate(1.2)',
+            'border:1px solid hsl(var(--color-border))',
+            'box-shadow:0 8px 32px rgba(0,0,0,0.18), 0 2px 8px rgba(0,0,0,0.08)',
+            'font-family:inherit',
+            'opacity:0', 'transition:opacity 0.15s ease-out',
+        ].join(';');
+        this._emailPopupBubble = bubble;
+
+        // Content
+        const errorHtml = this._emailPopupError
+            ? `<p id="email-popup-error" class="text-xs text-red-500" style="margin-top:6px">${this.escapeHtml(this._emailPopupError)}</p>`
+            : '';
+
+        bubble.innerHTML = `
+            <p class="text-sm font-medium text-foreground" style="margin-bottom:4px">Check your email</p>
+            <p class="text-xs text-muted-foreground" style="margin-bottom:12px;line-height:1.4">An invite code has been sent to your email. Enter it below to get your tickets.</p>
+            <form id="email-popup-form">
+                <div class="invite-input-wrapper invite-input-glass flex items-center w-full h-10 border rounded-lg transition-all ${this._emailPopupError ? 'input-error' : ''}">
+                    <input
+                        id="email-popup-code-input"
+                        type="text"
+                        maxlength="24"
+                        placeholder="Invite code"
+                        class="flex-1 h-full px-3 text-sm bg-transparent text-foreground placeholder:text-muted-foreground/50 focus:outline-none"
+                        autocomplete="off"
+                        autocorrect="off"
+                        autocapitalize="off"
+                        spellcheck="false"
+                    />
+                    <button
+                        type="submit"
+                        class="flex-shrink-0 w-8 h-8 m-1 rounded-md bg-blue-600 text-white hover:bg-blue-700 transition-colors flex items-center justify-center disabled:opacity-50"
+                        aria-label="Redeem code"
+                    >
+                        <svg class="w-4 h-4" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
+                        </svg>
+                    </button>
+                </div>
+                ${errorHtml}
+            </form>
+        `;
+
+        document.body.appendChild(backdrop);
+        document.body.appendChild(bubble);
+
+        // Animate in
+        requestAnimationFrame(() => {
+            bubble.style.opacity = '1';
+        });
+
+        // Focus input
+        const input = bubble.querySelector('#email-popup-code-input');
+        setTimeout(() => input?.focus(), 100);
+
+        // Handle input clearing errors
+        input.oninput = () => {
+            if (this._emailPopupError) {
+                this._emailPopupError = null;
+                const errorEl = bubble.querySelector('#email-popup-error');
+                if (errorEl) errorEl.remove();
+                const wrapper = input.closest('.invite-input-wrapper');
+                if (wrapper) wrapper.classList.remove('input-error');
+            }
+        };
+
+        // Handle form submit
+        const form = bubble.querySelector('#email-popup-form');
+        form.onsubmit = (e) => {
+            e.preventDefault();
+            this._handleEmailCodePopupSubmit();
+        };
+    }
+
+    async _handleEmailCodePopupSubmit() {
+        if (this._emailPopupSubmitting) return;
+        const input = this._emailPopupBubble?.querySelector('#email-popup-code-input');
+        if (!input) return;
+
+        const rawCode = input.value.trim();
+        if (!rawCode) {
+            this._showEmailCodePopupError('Please enter the invite code');
+            return;
+        }
+
+        const code = rawCode.replace(/[\s-]+/g, '');
+        if (code.length !== 24) {
+            this._showEmailCodePopupError('Please enter a valid 24-character invite code');
+            return;
+        }
+
+        // Disable form while submitting
+        this._emailPopupSubmitting = true;
+        input.disabled = true;
+        const submitBtn = this._emailPopupBubble?.querySelector('button[type="submit"]');
+        if (submitBtn) submitBtn.disabled = true;
+
+        // Close popup and start the redeeming flow
+        this._dismissEmailCodePopup();
+
+        this.step = 'redeeming';
+        this.isRedeeming = true;
+        this.redeemError = null;
+        this.redeemProgress = { message: 'Starting...', percent: 0 };
+        this.smoothProgress.start();
+        this.render();
+
+        try {
+            const result = await ticketClient.alphaRegister(code, (message, percent) => {
+                this.smoothProgress.set(percent);
+                this.redeemProgress = { message, percent };
+                const msgEl = document.querySelector('[data-smooth-progress-msg="welcome"]');
+                if (msgEl) msgEl.textContent = message;
+            });
+
+            this.smoothProgress.stop();
+            this.ticketsRedeemed = result.tickets_issued;
+            this.step = 'success';
+            this.isRedeeming = false;
+            this.render();
+
+            window.dispatchEvent(new CustomEvent('tickets-updated'));
+        } catch (error) {
+            console.error('Email code popup redemption error:', error);
+            this.smoothProgress.stop();
+            this.step = 'welcome';
+            this.isRedeeming = false;
+            this.render();
+
+            // Re-show popup with error
+            this._showEmailCodePopup(error.message || 'Failed to redeem code. Please try again.');
+        }
+    }
+
+    _showEmailCodePopupError(message) {
+        this._emailPopupError = message;
+        if (!this._emailPopupBubble) return;
+
+        const input = this._emailPopupBubble.querySelector('#email-popup-code-input');
+        const wrapper = input?.closest('.invite-input-wrapper');
+        if (wrapper) wrapper.classList.add('input-error');
+
+        let errorEl = this._emailPopupBubble.querySelector('#email-popup-error');
+        if (!errorEl) {
+            errorEl = document.createElement('p');
+            errorEl.id = 'email-popup-error';
+            errorEl.className = 'text-xs text-red-500';
+            errorEl.style.marginTop = '6px';
+            const form = this._emailPopupBubble.querySelector('#email-popup-form');
+            form?.appendChild(errorEl);
+        }
+        errorEl.textContent = message;
+    }
+
+    _dismissEmailCodePopup() {
+        this._emailPopupSubmitting = false;
+        this._emailPopupError = null;
+        this._emailPopupBackdrop?.remove();
+        this._emailPopupBackdrop = null;
+        this._emailPopupBubble?.remove();
+        this._emailPopupBubble = null;
     }
 
     // =========================================================================
@@ -1036,9 +1203,11 @@ class WelcomePanel {
                             aria-label="${isPreviewMode ? 'Request free preview' : 'Redeem invite code'}"
                             ${controlsDisabled ? 'disabled' : ''}
                         >
-                            <svg class="w-4 h-4" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                            ${controlsDisabled && isPreviewMode
+                                ? '<div class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>'
+                                : `<svg class="w-4 h-4" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
-                            </svg>
+                            </svg>`}
                         </button>
                     </div>
                     <p id="invite-feedback-text" class="text-xs leading-4 mt-1.5 ${feedbackClass} ${feedbackHtml ? '' : 'hidden'}">${feedbackHtml}</p>
@@ -1408,6 +1577,7 @@ class WelcomePanel {
 
     destroy() {
         this.destroyTurnstileBubble();
+        this._dismissEmailCodePopup();
         this.smoothProgress.stop();
         if (this._emailSuccessTimer) {
             clearTimeout(this._emailSuccessTimer);
