@@ -44,7 +44,6 @@ class WelcomePanel {
         this.freeAccessAvailability = null;
         this.canUseEmailForFreeAccess = false;
         this.allowManualClose = false;
-        this.pendingEmailRedemption = null; // { expectedTickets:number|null }
         this.turnstileBubble = null;
         this.turnstileInitPromise = null;
 
@@ -104,7 +103,6 @@ class WelcomePanel {
         this.ticketsRedeemed = 0;
         this.welcomeAnchorTop = null;
         this.animateOnNextRender = true;
-        this.pendingEmailRedemption = null;
 
         this.render();
         this.overlay.classList.remove('hidden');
@@ -125,6 +123,11 @@ class WelcomePanel {
     handleCloseAttempt() {
         // Don't allow closing during active redemption
         if (this.isRedeeming) return;
+        // If the email code popup is open, dismiss it instead of closing the panel
+        if (this._emailPopupBubble) {
+            this._dismissEmailCodePopupToWelcome();
+            return;
+        }
         if (!this.allowManualClose) return;
         this.close();
     }
@@ -144,10 +147,6 @@ class WelcomePanel {
         this.destroyTurnstileBubble();
         this._dismissEmailCodePopup();
         this.smoothProgress.stop();
-        if (this._emailSuccessTimer) {
-            clearTimeout(this._emailSuccessTimer);
-            this._emailSuccessTimer = null;
-        }
 
         this.overlay.classList.add('hidden');
         this.overlay.innerHTML = '';
@@ -187,6 +186,14 @@ class WelcomePanel {
         return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
     }
 
+    /** Normalize and validate a raw invite code string. Returns the cleaned code or null. */
+    parseInviteCode(raw) {
+        const trimmed = (raw || '').trim();
+        if (!trimmed) return null;
+        const code = trimmed.replace(/[\s-]+/g, '');
+        return code.length === 24 ? code : null;
+    }
+
     isPreviewMode() {
         return this.accessMode === 'preview';
     }
@@ -218,32 +225,6 @@ class WelcomePanel {
             if (this.step === 'welcome') {
                 this.render();
                 return;
-            }
-
-            // Preview access redemption happens through the ticket panel redemption pipeline.
-            // Once tickets arrive, show the same success step as invite-code redemption.
-            if (this.step === 'redeeming' && this.pendingEmailRedemption) {
-                const ticketCount = ticketClient.getTicketCount();
-                if (ticketCount > 0) {
-                    const expectedTickets = this.pendingEmailRedemption.expectedTickets;
-                    this.ticketsRedeemed = Number.isFinite(expectedTickets) && expectedTickets > 0
-                        ? expectedTickets
-                        : ticketCount;
-                    this.smoothProgress.set(100);
-                    // Brief delay so user sees bar finish before success step
-                    this._emailSuccessTimer = setTimeout(() => {
-                        this._emailSuccessTimer = null;
-                        if (!this.isOpen) return;
-                        this.pendingEmailRedemption = null;
-                        this.step = 'success';
-                        this.isRedeeming = false;
-                        this.redeemProgress = null;
-                        this.redeemError = null;
-                        this.smoothProgress.stop();
-                        this.destroyTurnstileBubble();
-                        this.render();
-                    }, 400);
-                }
             }
         };
 
@@ -533,16 +514,10 @@ class WelcomePanel {
                 return;
             }
         } else {
-            const rawInviteCode = this.inviteCode.trim();
-            if (!rawInviteCode) {
-                this.redeemError = 'Please enter an invite code';
-                this.render();
-                return;
-            }
-
-            const inviteCode = rawInviteCode.replace(/[\s-]+/g, '');
-            if (inviteCode.length !== 24) {
-                this.redeemError = 'Please enter a valid 24-character invite code';
+            if (!this.parseInviteCode(this.inviteCode)) {
+                this.redeemError = !this.inviteCode.trim()
+                    ? 'Please enter an invite code'
+                    : 'Please enter a valid 24-character invite code';
                 this.render();
                 return;
             }
@@ -583,7 +558,7 @@ class WelcomePanel {
                 return;
             }
 
-            const result = await ticketClient.alphaRegister(this.inviteCode.trim().replace(/[\s-]+/g, ''), (message, percent) => {
+            const result = await ticketClient.alphaRegister(this.parseInviteCode(this.inviteCode), (message, percent) => {
                 this.smoothProgress.set(percent);
                 this.redeemProgress = { message, percent };
                 // Update message text directly to avoid innerHTML replacement
@@ -697,7 +672,14 @@ class WelcomePanel {
             : '';
 
         bubble.innerHTML = `
-            <p class="text-sm font-medium text-foreground" style="margin-bottom:4px">Check your email</p>
+            <div class="flex items-center justify-between" style="margin-bottom:4px">
+                <p class="text-sm font-medium text-foreground">Check your email</p>
+                <button id="email-popup-close-btn" class="text-muted-foreground hover:text-foreground transition-colors p-1 rounded-lg hover:bg-accent" style="margin:-4px -4px 0 0" aria-label="Close">
+                    <svg class="w-3.5 h-3.5" width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
             <p class="text-xs text-muted-foreground" style="margin-bottom:12px;line-height:1.4">An invite code has been sent to your email. Enter it below to get your tickets.</p>
             <form id="email-popup-form">
                 <div class="invite-input-wrapper invite-input-glass flex items-center w-full h-10 border rounded-lg transition-all ${this._emailPopupError ? 'input-error' : ''}">
@@ -755,6 +737,11 @@ class WelcomePanel {
             e.preventDefault();
             this._handleEmailCodePopupSubmit();
         };
+
+        // Close button and backdrop dismiss to invite-code tab
+        const closeBtn = bubble.querySelector('#email-popup-close-btn');
+        if (closeBtn) closeBtn.onclick = () => this._dismissEmailCodePopupToWelcome();
+        backdrop.onclick = () => this._dismissEmailCodePopupToWelcome();
     }
 
     async _handleEmailCodePopupSubmit() {
@@ -762,15 +749,11 @@ class WelcomePanel {
         const input = this._emailPopupBubble?.querySelector('#email-popup-code-input');
         if (!input) return;
 
-        const rawCode = input.value.trim();
-        if (!rawCode) {
-            this._showEmailCodePopupError('Please enter the invite code');
-            return;
-        }
-
-        const code = rawCode.replace(/[\s-]+/g, '');
-        if (code.length !== 24) {
-            this._showEmailCodePopupError('Please enter a valid 24-character invite code');
+        const code = this.parseInviteCode(input.value);
+        if (!code) {
+            this._showEmailCodePopupError(!input.value.trim()
+                ? 'Please enter the invite code'
+                : 'Please enter a valid 24-character invite code');
             return;
         }
 
@@ -837,6 +820,7 @@ class WelcomePanel {
         errorEl.textContent = message;
     }
 
+    /** Remove popup DOM without touching panel state (used during transitions). */
     _dismissEmailCodePopup() {
         this._emailPopupSubmitting = false;
         this._emailPopupError = null;
@@ -844,6 +828,15 @@ class WelcomePanel {
         this._emailPopupBackdrop = null;
         this._emailPopupBubble?.remove();
         this._emailPopupBubble = null;
+    }
+
+    /** Close popup and fall back to the welcome panel's invite-code tab. */
+    _dismissEmailCodePopupToWelcome() {
+        this._dismissEmailCodePopup();
+        this.accessMode = 'beta';
+        this.inviteCode = '';
+        this.redeemError = null;
+        this.render();
     }
 
     // =========================================================================
@@ -1579,10 +1572,6 @@ class WelcomePanel {
         this.destroyTurnstileBubble();
         this._dismissEmailCodePopup();
         this.smoothProgress.stop();
-        if (this._emailSuccessTimer) {
-            clearTimeout(this._emailSuccessTimer);
-            this._emailSuccessTimer = null;
-        }
         this.themeUnsubscribe?.();
         this.themeUnsubscribe = null;
         this.disconnectAccessModeToggleObserver();
