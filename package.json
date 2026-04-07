@@ -9,7 +9,7 @@
     "url": "https://github.com/OpenAnonymity/oa-fastchat.git"
   },
   "private": true,
-  "license": "AGPL-3.0-or-later",
+  "license": "MIT",
   "devDependencies": {
     "esbuild": "^0.27.2",
     "terser": "^5.31.0",

@@ -78,4 +78,4 @@ For the detailed privacy model, see [docs/PRIVACY_MODEL.md](docs/PRIVACY_MODEL.m
 - Debug logging is enabled on localhost and disabled in production builds (see `DEBUG` flag in `chat/config.js`).
 
 ### License
-This project is licensed under the GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later). See [LICENSE](LICENSE).
+This project is licensed under the [MIT License](LICENSE).
