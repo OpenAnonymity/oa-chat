@@ -89,19 +89,15 @@ const build = async () => {
 
     // Ensure chat/nanomem is a real directory so esbuild can resolve imports.
     // In dev it's a symlink; in CI the symlink target may not survive filtering.
-    // Only copy browser-safe files; skip node-only code (index.js, tinfoil, vendor).
     const chatNanomem = path.join(srcDir, 'nanomem');
     await fs.rm(chatNanomem, { recursive: true, force: true });
     await fs.cp(nanomemDir, chatNanomem, {
         recursive: true,
         filter: (src) => {
             const rel = path.relative(nanomemDir, src);
+            if (!rel) return true;
             if (rel === 'node_modules' || rel.startsWith('node_modules/')) return false;
-            if (rel === '.git' || rel.startsWith('.git/') || rel.startsWith('.git')) return false;
-            if (rel === 'src/index.js') return false;
-            if (rel === 'src/llm/tinfoil.js') return false;
-            if (rel === 'src/vendor' || rel.startsWith('src/vendor/')) return false;
-            if (rel === 'vendor' || rel.startsWith('vendor/')) return false;
+            if (rel === '.git' || rel.startsWith('.git')) return false;
             return true;
         }
     });
