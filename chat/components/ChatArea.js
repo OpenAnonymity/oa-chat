@@ -35,6 +35,8 @@ export default class ChatArea {
         this.streamingCodeCopyPointerWindowMs = 1200;
         // Render generation counter - used to cancel stale renders during rapid session switching
         this.renderGeneration = 0;
+        this.memoryPromptModal = null;
+        this.memoryPromptModalKeyHandler = null;
         this.setupEventListeners();
     }
 
@@ -131,6 +133,22 @@ export default class ChatArea {
             if (regenerateBtn) {
                 const messageId = regenerateBtn.dataset.messageId;
                 await this.handleRegenerateMessage(messageId);
+                return;
+            }
+
+            const memoryApprovalBtn = e.target.closest('.memory-approval-btn');
+            if (memoryApprovalBtn) {
+                const messageId = memoryApprovalBtn.dataset.messageId;
+                const decision = memoryApprovalBtn.dataset.decision;
+                await this.app.handleMemoryApprovalDecision(messageId, decision);
+                return;
+            }
+
+            const memoryPreviewBtn = e.target.closest('.memory-preview-btn');
+            if (memoryPreviewBtn) {
+                const messageId = memoryPreviewBtn.dataset.messageId;
+                const userMessageId = memoryPreviewBtn.dataset.userMessageId;
+                await this.handleMemoryPromptPreview(messageId, userMessageId);
                 return;
             }
 
@@ -650,6 +668,258 @@ export default class ChatArea {
         await this.app.toggleScrubberRestore(messageId);
     }
 
+    async handleMemoryPromptPreview(messageId, userMessageId = null) {
+        const session = this.app.getCurrentSession();
+        if (!session) return;
+
+        const messages = await chatDB.getSessionMessages(session.id);
+        let message = messageId
+            ? messages.find((entry) => entry.id === messageId)
+            : null;
+
+        if (!message && userMessageId) {
+            message = messages.find((entry) => entry?.ciPromptDraft?.linkedUserMessageId === userMessageId);
+        }
+
+        if (!message?.ciPromptDraft) return;
+        await this.showCiPromptEditor(message.id, message.ciPromptDraft);
+    }
+
+    renderTaggedPromptEditable(text) {
+        let html = this.escapeHtml(text || '');
+        html = html.replace(
+            /\[\[user_data\]\]([\s\S]*?)\[\[\/user_data\]\]/g,
+            '<mark class="user-data-highlight">$1</mark>'
+        );
+        html = html.replace(/\[\[user_data\]\]/g, '');
+        html = html.replace(/\[\[\/user_data\]\]/g, '');
+        html = html.replace(/\n/g, '<br>');
+        return html;
+    }
+
+    extractTaggedPromptText(container) {
+        let text = '';
+        const walk = (node) => {
+            if (node.nodeType === Node.TEXT_NODE) {
+                text += node.textContent;
+                return;
+            }
+            if (node.nodeType !== Node.ELEMENT_NODE) {
+                return;
+            }
+
+            const tag = node.tagName;
+            if (tag === 'BR') {
+                text += '\n';
+                return;
+            }
+            if (tag === 'MARK' && node.classList.contains('user-data-highlight')) {
+                text += '[[user_data]]';
+                for (const child of node.childNodes) {
+                    walk(child);
+                }
+                text += '[[/user_data]]';
+                return;
+            }
+            if (tag === 'DIV' || tag === 'P') {
+                if (text.length > 0 && !text.endsWith('\n')) {
+                    text += '\n';
+                }
+                for (const child of node.childNodes) {
+                    walk(child);
+                }
+                return;
+            }
+            for (const child of node.childNodes) {
+                walk(child);
+            }
+        };
+
+        for (const child of container.childNodes) {
+            walk(child);
+        }
+        return text;
+    }
+
+    async showTaggedPromptEditor({
+        title = 'Prompt',
+        modelName = 'frontier model',
+        fullPrompt = '',
+        isReadOnly = false,
+        onSave = null
+    } = {}) {
+        const currentPrompt = typeof fullPrompt === 'string' ? fullPrompt : '';
+        const hasUserDataTags = /\[\[user_data\]\]/.test(currentPrompt);
+        const userDataBadge = hasUserDataTags
+            ? `<span class="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground/60">
+                <span class="inline-block rounded-sm flex-shrink-0 user-data-highlight" style="width:14px;height:8px"></span>
+                = your data
+               </span>`
+            : '';
+        const subtitle = `${title} to ${modelName || 'frontier model'}`;
+
+        const modal = document.createElement('div');
+        modal.className = 'escalation-prompt-overlay';
+        modal.innerHTML = `
+            <div role="dialog" aria-modal="true"
+                 class="memory-editor-dialog w-full max-w-2xl mx-4 overflow-hidden flex flex-col rounded-2xl"
+                 style="max-height: min(85vh, 780px)">
+                <div class="flex items-center justify-between px-4 py-3 shrink-0" style="border-bottom: 1px solid hsl(var(--color-border) / 0.5)">
+                    <div class="flex items-center gap-2">
+                        <div class="flex h-7 w-7 items-center justify-center rounded-lg bg-muted/50">
+                            <svg class="w-3.5 h-3.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
+                            </svg>
+                        </div>
+                        <h2 class="text-sm font-semibold text-foreground">${this.escapeHtml(title)}</h2>
+                    </div>
+                    <button id="close-tagged-prompt-editor" class="text-muted-foreground hover:text-foreground transition-colors p-1.5 rounded-lg hover:bg-muted/50 ml-1" aria-label="Close">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+                <div class="flex items-center justify-between px-3 py-2 shrink-0" style="border-bottom: 1px solid hsl(var(--color-border) / 0.35); background: hsl(var(--color-muted) / 0.08)">
+                    <div class="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <svg class="w-3.5 h-3.5 flex-shrink-0 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" />
+                        </svg>
+                        <span>${this.escapeHtml(subtitle)}</span>
+                        <span class="text-muted-foreground/40">— ${isReadOnly ? 'sent' : 'editable'}</span>
+                    </div>
+                    <div class="flex items-center gap-1.5 flex-shrink-0">
+                        ${userDataBadge}
+                        <span id="tagged-prompt-save-indicator" class="text-[10px] text-muted-foreground/40"></span>
+                    </div>
+                </div>
+                <div id="tagged-prompt-editable"
+                     class="escalation-prompt-editable${isReadOnly ? ' read-only' : ''}"
+                     contenteditable="${isReadOnly ? 'false' : 'true'}" role="textbox" aria-multiline="true"
+                     spellcheck="false">${this.renderTaggedPromptEditable(currentPrompt)}</div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        const editable = modal.querySelector('#tagged-prompt-editable');
+        const closeBtn = modal.querySelector('#close-tagged-prompt-editor');
+        const saveIndicator = modal.querySelector('#tagged-prompt-save-indicator');
+
+        if (!isReadOnly && editable) {
+            editable.addEventListener('paste', (event) => {
+                event.preventDefault();
+                const text = event.clipboardData?.getData('text/plain') || '';
+                document.execCommand('insertText', false, text);
+            });
+
+            editable.addEventListener('keydown', (event) => {
+                if (event.key === 'Escape') return;
+                event.stopPropagation();
+                if (event.key === 'Enter' && !event.shiftKey) {
+                    event.preventDefault();
+                    document.execCommand('insertLineBreak');
+                }
+            });
+        }
+
+        let hasEdits = false;
+        let saveTimer = null;
+
+        const saveEdits = async () => {
+            if (isReadOnly || !hasEdits || typeof onSave !== 'function' || !editable) return;
+            const edited = this.extractTaggedPromptText(editable);
+            await onSave(edited);
+            if (saveIndicator) {
+                saveIndicator.textContent = 'saved';
+                setTimeout(() => {
+                    saveIndicator.textContent = '';
+                }, 1200);
+            }
+            hasEdits = false;
+        };
+
+        if (!isReadOnly && editable && typeof onSave === 'function') {
+            editable.addEventListener('input', () => {
+                hasEdits = true;
+                clearTimeout(saveTimer);
+                saveTimer = setTimeout(() => {
+                    saveEdits().catch((error) => {
+                        console.warn('[ChatArea] Failed to save tagged prompt edits:', error);
+                    });
+                }, 500);
+            });
+        }
+
+        const closeModal = async () => {
+            clearTimeout(saveTimer);
+            if (hasEdits) {
+                await saveEdits();
+            }
+            modal.remove();
+            document.removeEventListener('keydown', handleKeydown);
+        };
+
+        closeBtn.addEventListener('click', () => {
+            closeModal().catch((error) => {
+                console.warn('[ChatArea] Failed to close tagged prompt editor:', error);
+            });
+        });
+        modal.addEventListener('click', (event) => {
+            if (event.target === modal) {
+                closeModal().catch((error) => {
+                    console.warn('[ChatArea] Failed to close tagged prompt editor:', error);
+                });
+            }
+        });
+
+        const handleKeydown = (event) => {
+            if (event.key === 'Escape') {
+                closeModal().catch((error) => {
+                    console.warn('[ChatArea] Failed to close tagged prompt editor:', error);
+                });
+            }
+        };
+        document.addEventListener('keydown', handleKeydown);
+
+        if (isReadOnly) {
+            closeBtn.focus();
+        } else {
+            editable.focus();
+        }
+    }
+
+    async showCiPromptEditor(messageId, draftOverride = null) {
+        const session = this.app.getCurrentSession();
+        if (!session) return;
+
+        const messages = await chatDB.getSessionMessages(session.id);
+        const message = messages.find((entry) => entry.id === messageId);
+        const draft = draftOverride || message?.ciPromptDraft;
+        if (!message?.ciPromptDraft || !draft) return;
+
+        const draftStatus = draft.status || 'pending';
+        const isReadOnly = draftStatus !== 'pending';
+        const modelName = draft.model
+            || this.app.normalizeModelName(session.model)
+            || session.model
+            || this.app.state.pendingModelName
+            || 'frontier model';
+
+        await this.showTaggedPromptEditor({
+            title: 'Full Prompt',
+            modelName,
+            fullPrompt: draft.editedFullPrompt || draft.fullPrompt || '',
+            isReadOnly,
+            onSave: isReadOnly ? null : async (editedPrompt) => {
+                message.ciPromptDraft = {
+                    ...message.ciPromptDraft,
+                    editedFullPrompt: editedPrompt
+                };
+                await chatDB.saveMessage(message);
+            }
+        });
+    }
+
     /**
      * Resends a user message - deletes any responses after it and regenerates
      * @param {string} messageId - User message ID to resend
@@ -995,6 +1265,12 @@ export default class ChatArea {
                 // Re-setup listeners if needed (delegated listeners cover most)
             }
         }
+    }
+
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text || '';
+        return div.innerHTML;
     }
 
     /**

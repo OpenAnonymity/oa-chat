@@ -716,6 +716,505 @@ html.switching-theme *::after {
     animation: pendingResponseShimmer 1.9s ease-in-out infinite alternate !important;
 }
 
+.reasoning-trace:has(.agent-trace-content.hidden) {
+    margin-bottom: -0.25rem;
+}
+
+.reasoning-trace:has(.agent-trace-content:not(.hidden)) {
+    margin-bottom: 0.5rem;
+}
+
+.agent-trace-content .agent-step {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    padding: 0.15rem 0;
+    margin-left: 0;
+    line-height: 1.5;
+    font-size: 0.68rem;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+}
+
+.agent-trace-content .agent-step-tool.is-latest .agent-step-name,
+.agent-trace-content .agent-step-phase.is-latest .agent-step-phase-label {
+    background-image: linear-gradient(
+        90deg,
+        hsl(var(--color-muted-foreground) / var(--shimmer-min-opacity)) 0%,
+        currentColor 50%,
+        hsl(var(--color-muted-foreground) / var(--shimmer-min-opacity)) 100%
+    );
+    background-size: var(--shimmer-gradient-size) 100%;
+    background-repeat: repeat;
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+    animation: reasoningShimmer var(--shimmer-duration) ease-in-out infinite;
+}
+
+.agent-step-name,
+.agent-step-args,
+.agent-step-result {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+}
+
+.agent-step-name {
+    color: hsl(var(--color-accent-primary) / 0.85);
+    font-weight: 600;
+    flex-shrink: 0;
+}
+
+.agent-step-args {
+    color: hsl(var(--color-muted-foreground) / 0.52);
+    min-width: 0;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    overflow-wrap: anywhere;
+}
+
+.agent-step-result {
+    color: hsl(var(--color-muted-foreground) / 0.42);
+    min-width: 0;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    overflow-wrap: anywhere;
+}
+
+.agent-step-result.is-pending {
+    color: hsl(var(--color-muted-foreground) / 0.5);
+    font-style: italic;
+}
+
+.agent-step-phase-label,
+.agent-step-thinking-text {
+    font-size: 0.68rem;
+    color: hsl(var(--color-muted-foreground) / 0.62);
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+.agent-step-thinking {
+    white-space: normal;
+}
+
+.memory-approval-primary {
+    background-color: hsl(var(--color-accent-primary) / 0.1);
+    border-color: hsl(var(--color-accent-primary) / 0.25);
+    color: hsl(var(--color-accent-primary));
+}
+
+.memory-approval-primary:hover {
+    background-color: hsl(var(--color-accent-primary) / 0.18);
+    border-color: hsl(var(--color-accent-primary) / 0.4);
+}
+
+.dark .memory-approval-primary {
+    background-color: hsl(var(--color-accent-primary) / 0.15);
+    border-color: hsl(var(--color-accent-primary) / 0.2);
+    color: hsl(var(--color-accent-primary) / 0.85);
+}
+
+.dark .memory-approval-primary:hover {
+    background-color: hsl(var(--color-accent-primary) / 0.22);
+    border-color: hsl(var(--color-accent-primary) / 0.35);
+}
+
+.memory-approval-secondary {
+    background-color: hsl(var(--color-accent-primary) / 0.04);
+    border-color: hsl(var(--color-accent-primary) / 0.14);
+    color: hsl(var(--color-accent-primary) / 0.78);
+}
+
+.memory-approval-secondary:hover {
+    background-color: hsl(var(--color-accent-primary) / 0.1);
+    border-color: hsl(var(--color-accent-primary) / 0.24);
+}
+
+.dark .memory-approval-secondary {
+    background-color: hsl(var(--color-accent-primary) / 0.1);
+    border-color: hsl(var(--color-accent-primary) / 0.18);
+    color: hsl(var(--color-accent-primary) / 0.82);
+}
+
+.dark .memory-approval-secondary:hover {
+    background-color: hsl(var(--color-accent-primary) / 0.16);
+    border-color: hsl(var(--color-accent-primary) / 0.28);
+}
+
+.memory-approval-success {
+    background-color: rgba(73, 137, 102, 0.15);
+    border-color: rgba(73, 137, 102, 0.25);
+    color: #366B4D;
+}
+
+.dark .memory-approval-success {
+    background-color: rgba(73, 137, 102, 0.25);
+    border-color: rgba(73, 137, 102, 0.2);
+    color: #6DB88E;
+}
+
+.memory-editor-dialog {
+    animation: memEditorIn 0.2s ease-out;
+    background: hsl(var(--color-background) / 0.4);
+    backdrop-filter: saturate(140%) blur(28px);
+    -webkit-backdrop-filter: saturate(140%) blur(28px);
+    border-color: hsl(var(--color-border) / 0.5);
+    box-shadow: 0 25px 60px -12px rgba(0, 0, 0, 0.12);
+    --mem-divider: rgba(0, 0, 0, 0.15);
+}
+
+.dark .memory-editor-dialog {
+    background: hsl(var(--color-card) / 0.38);
+    border-color: hsl(var(--color-border) / 0.35);
+    box-shadow: 0 25px 60px -12px rgba(0, 0, 0, 0.4);
+    --mem-divider: hsl(var(--color-border) / 0.5);
+}
+
+#memory-editor-modal {
+    background: rgba(0, 0, 0, 0.15);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+}
+
+.dark #memory-editor-modal {
+    background: rgba(0, 0, 0, 0.45);
+}
+
+@keyframes memEditorIn {
+    from {
+        opacity: 0;
+        transform: scale(0.97) translateY(-8px);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+.escalation-prompt-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    background: rgba(0, 0, 0, 0.15);
+}
+
+.dark .escalation-prompt-overlay {
+    background: rgba(0, 0, 0, 0.45);
+}
+
+.mem-toolbar-group {
+    display: flex;
+    align-items: center;
+    gap: 1px;
+    background: hsl(var(--color-muted) / 0.2);
+    border-radius: 0.375rem;
+    padding: 2px;
+}
+
+.mem-header-btn {
+    font-size: 0.65rem;
+    font-weight: 500;
+    padding: 0.2rem 0.5rem;
+    border-radius: 0.3rem;
+    color: hsl(var(--color-muted-foreground));
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    transition: all 0.12s ease;
+    white-space: nowrap;
+}
+
+.mem-header-btn:hover {
+    color: hsl(var(--color-foreground));
+    background: hsl(var(--color-muted) / 0.5);
+}
+
+.mem-header-btn-danger {
+    color: hsl(var(--color-destructive));
+}
+
+.mem-header-btn-danger:hover {
+    color: hsl(var(--color-destructive));
+    background: hsl(var(--color-destructive) / 0.1);
+}
+
+.mem-sidebar {
+    border-right: 1px solid var(--mem-divider);
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--color-border) / 0.3) transparent;
+}
+
+.mem-sidebar::-webkit-scrollbar {
+    width: 4px;
+}
+
+.mem-sidebar::-webkit-scrollbar-thumb {
+    background: hsl(var(--color-border) / 0.3);
+    border-radius: 4px;
+}
+
+.mem-sidebar::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.mem-tree-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    height: 26px;
+    min-height: 26px;
+    padding-right: 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.1s ease;
+    font-size: 12px;
+    border-left: 2px solid transparent;
+    overflow: hidden;
+    min-width: 0;
+}
+
+.mem-tree-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+
+.mem-tree-row:hover {
+    background: hsl(var(--color-muted) / 0.25);
+}
+
+.mem-tree-row.is-selected {
+    background: hsl(var(--color-accent) / 0.6);
+    border-left-color: hsl(var(--color-accent-primary));
+}
+
+.mem-tree-row.is-selected .mem-tree-label {
+    color: hsl(var(--color-foreground));
+}
+
+.mem-tree-file .mem-tree-label {
+    color: hsl(var(--color-foreground) / 0.65);
+    transition: color 0.1s ease;
+}
+
+.mem-tree-row:hover .mem-tree-label {
+    color: hsl(var(--color-foreground));
+}
+
+.mem-tree-count {
+    font-size: 10px;
+    color: hsl(var(--color-muted-foreground) / 0.35);
+    margin-left: auto;
+    flex-shrink: 0;
+    padding-right: 2px;
+}
+
+.mem-dir-children {
+    position: relative;
+}
+
+.mem-dir-children::before {
+    content: '';
+    position: absolute;
+    left: 17px;
+    top: 0;
+    bottom: 6px;
+    width: 1px;
+    background: hsl(var(--color-border) / 0.12);
+    pointer-events: none;
+}
+
+.mem-chevron {
+    width: 10px;
+    height: 10px;
+    flex-shrink: 0;
+    color: hsl(var(--color-muted-foreground) / 0.4);
+    transition: transform 0.15s ease;
+}
+
+.mem-chevron.is-expanded {
+    transform: rotate(90deg);
+}
+
+.mem-dir-context-menu.hidden {
+    display: none;
+}
+
+.mem-textarea {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--color-border) / 0.3) transparent;
+}
+
+.mem-textarea::-webkit-scrollbar {
+    width: 4px;
+}
+
+.mem-textarea::-webkit-scrollbar-thumb {
+    background: hsl(var(--color-border) / 0.3);
+    border-radius: 4px;
+}
+
+.mem-textarea::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+/* Memory editor markdown preview */
+.mem-preview {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--color-border) / 0.3) transparent;
+}
+
+.mem-preview::-webkit-scrollbar {
+    width: 4px;
+}
+
+.mem-preview::-webkit-scrollbar-thumb {
+    background: hsl(var(--color-border) / 0.3);
+    border-radius: 4px;
+}
+
+.mem-preview::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+/* Compact prose overrides for memory panel */
+.mem-preview.prose h1 {
+    font-size: 1.125rem;
+    margin-top: 0.75rem;
+    margin-bottom: 0.5rem;
+    padding-bottom: 0.25rem;
+    border-bottom: 1px solid hsl(var(--color-border) / 0.3);
+}
+
+.mem-preview.prose h2 {
+    font-size: 1rem;
+    margin-top: 0.75rem;
+    margin-bottom: 0.5rem;
+}
+
+.mem-preview.prose h3 {
+    font-size: 0.9375rem;
+    margin-top: 0.5rem;
+    margin-bottom: 0.375rem;
+}
+
+.mem-preview.prose p {
+    margin-bottom: 0.5rem;
+}
+
+.mem-preview.prose ul,
+.mem-preview.prose ol {
+    margin-bottom: 0.5rem;
+}
+
+/* Memory item metadata formatting */
+.mem-preview .mem-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 2px;
+}
+
+.mem-preview .mem-topic {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 9999px;
+    font-size: 0.6875rem;
+    line-height: 1.4;
+    background: hsl(var(--color-border) / 0.15);
+    color: hsl(var(--color-foreground) / 0.5);
+}
+
+.mem-preview .mem-confidence-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+}
+
+.mem-preview .mem-confidence-label {
+    font-size: 0.6875rem;
+    color: hsl(var(--color-foreground) / 0.35);
+}
+
+.mem-preview .mem-confidence {
+    display: inline-flex;
+    align-items: center;
+}
+
+.mem-preview .mem-confidence svg {
+    width: 0.85rem;
+    height: 0.85rem;
+    color: hsl(var(--color-foreground) / 0.55);
+    position: relative;
+    top: -1px;
+}
+
+.mem-preview .mem-confidence .effort-muted {
+    opacity: 0.25;
+}
+
+.mem-preview .mem-date {
+    font-size: 0.6875rem;
+    color: hsl(var(--color-foreground) / 0.35);
+}
+
+.escalation-prompt-editable {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1rem;
+    font-size: 13px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    line-height: 1.625;
+    word-wrap: break-word;
+    color: hsl(var(--color-foreground));
+    outline: none;
+    min-height: 120px;
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--color-border) / 0.3) transparent;
+}
+
+.escalation-prompt-editable::-webkit-scrollbar {
+    width: 4px;
+}
+
+.escalation-prompt-editable::-webkit-scrollbar-thumb {
+    background: hsl(var(--color-border) / 0.3);
+    border-radius: 4px;
+}
+
+.escalation-prompt-editable::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.escalation-prompt-editable.read-only {
+    opacity: 0.8;
+    cursor: default;
+    user-select: text;
+}
+
+.user-data-highlight {
+    background: rgb(220 252 231);
+    color: rgb(21 128 61);
+    border-radius: 2px;
+    padding: 0 2px;
+}
+
+:root.dark .user-data-highlight {
+    background: rgb(20 83 45 / 0.3);
+    color: rgb(74 222 128);
+}
+
 /* Remove extra margins and whitespace from markdown elements in reasoning */
 .reasoning-content > *:first-child {
     margin-top: 0;
@@ -3165,6 +3664,22 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
     background-color: #3b82f6; /* bg-blue-500 */
 }
 
+.switch-toggle.switch-toggle-sm {
+    width: 1.75rem;
+    height: 16px;
+}
+
+.switch-toggle.switch-toggle-sm .switch-toggle-indicator {
+    top: 2px;
+    left: 2px;
+    width: 12px;
+    height: 12px;
+}
+
+.switch-toggle.switch-toggle-sm.switch-active .switch-toggle-indicator {
+    transform: translateX(12px);
+}
+
 /* Search toggle active state */
 /* Search toggle uses accent-primary */
 #search-toggle.search-active {
@@ -3183,6 +3698,68 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
 
 .dark #search-toggle.search-active:hover {
     background-color: hsl(var(--color-accent-primary) / 0.25) !important;
+}
+
+.chat-mode-toggle-container {
+    display: flex;
+    position: relative;
+    background: hsl(var(--color-muted) / 0.6);
+    border-radius: 0.5rem;
+    padding: 2px;
+    gap: 1px;
+    height: 28px;
+}
+
+.chat-mode-toggle-indicator {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: calc(50% - 1.5px);
+    height: calc(100% - 4px);
+    background: hsl(var(--color-background) / 0.92);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-radius: 0.375rem;
+    box-shadow: 0 1px 3px hsl(0 0% 0% / 0.1), 0 1px 2px hsl(0 0% 0% / 0.06);
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    pointer-events: none;
+}
+
+.dark .chat-mode-toggle-indicator {
+    background: hsl(0 0% 22% / 0.96);
+    box-shadow: 0 1px 2px hsl(0 0% 0% / 0.18);
+}
+
+.chat-mode-toggle-container[data-mode="chat"] .chat-mode-toggle-indicator {
+    transform: translateX(0);
+}
+
+.chat-mode-toggle-container[data-mode="memory"] .chat-mode-toggle-indicator {
+    transform: translateX(calc(100% + 1px));
+}
+
+.chat-mode-toggle-btn {
+    flex: 1;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    padding: 0 0.45rem;
+    border-radius: 0.375rem;
+    color: hsl(var(--color-muted-foreground));
+    transition: color 0.2s ease;
+    cursor: pointer;
+    background: transparent;
+    border: none;
+}
+
+.chat-mode-toggle-btn:hover {
+    color: hsl(var(--color-foreground));
+}
+
+.chat-mode-toggle-btn[aria-checked="true"] {
+    color: hsl(var(--color-foreground));
 }
 
 /* Image modal animation */

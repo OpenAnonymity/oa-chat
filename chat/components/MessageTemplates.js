@@ -11,6 +11,7 @@ import { getStandardizedModelDisplayName } from '../services/modelConfig.js';
 
 // In-memory cache for reasoning trace expanded state (persists across session switches)
 const reasoningExpandedState = new Set();
+const agentTraceExpandedState = new Set();
 
 // Welcome screen configuration
 const WELCOME_SHOW_LOGO = false;  // Set to true to show the logo icon
@@ -113,6 +114,132 @@ function buildPendingIndicatorContent(phase = 'requesting-key') {
     return `
         <div class="pending-response-line">
             <span class="pending-response-label${shimmerClass}">${escapeHtml(label)}</span>
+        </div>
+    `;
+}
+
+function formatAgentTraceResult(result) {
+    if (!result) return '';
+    if (result === '[terminal]') return 'done';
+
+    try {
+        const parsed = JSON.parse(result);
+        if (parsed?.error) return `error: ${parsed.error}`;
+        if (Array.isArray(parsed)) return `${parsed.length} items`;
+        if (Array.isArray(parsed?.files)) return `${parsed.files.length} files`;
+        if (typeof parsed?.content === 'string') return parsed.content.length > 72
+            ? `${parsed.content.slice(0, 69)}...`
+            : parsed.content;
+        if (typeof parsed === 'object' && parsed) {
+            const summary = JSON.stringify(parsed);
+            return summary.length > 72 ? `${summary.slice(0, 69)}...` : summary;
+        }
+    } catch {
+        // Fall through to plain-string formatting.
+    }
+
+    return result.length > 72 ? `${result.slice(0, 69)}...` : result;
+}
+
+function buildAgentTrace(trace, messageId, isStreaming = false) {
+    const steps = Array.isArray(trace) ? trace : [];
+    if (steps.length === 0 && !isStreaming) return '';
+
+    const contentId = `agent-trace-content-${messageId}`;
+    const toggleId = `agent-trace-toggle-${messageId}`;
+    const isExpanded = agentTraceExpandedState.has(messageId) || isStreaming;
+    if (isExpanded && !agentTraceExpandedState.has(messageId)) {
+        agentTraceExpandedState.add(messageId);
+    }
+
+    const toolCount = steps.filter((step) => step?.type === 'tool_call').length;
+    const lastStep = steps[steps.length - 1];
+    const activeToolStep = isStreaming
+        ? [...steps].reverse().find((step) => step?.type === 'tool_call' && step.state === 'started' && step.tool)
+        : null;
+    let subtitle = toolCount > 0
+        ? `${toolCount} tool${toolCount === 1 ? '' : 's'} used`
+        : 'Memory review ready';
+
+    if (isStreaming) {
+        if (activeToolStep?.tool) {
+            subtitle = `Running ${activeToolStep.tool}...`;
+        } else if (lastStep?.type === 'phase' && lastStep.label) {
+            subtitle = lastStep.label;
+        } else if (lastStep?.type === 'reasoning') {
+            subtitle = 'Thinking...';
+        } else if (lastStep?.type === 'model_text') {
+            subtitle = 'Drafting prompt...';
+        } else {
+            subtitle = 'Reading memory...';
+        }
+    }
+
+    const stepHtml = steps.map((step, index) => {
+        const isLatest = index === steps.length - 1 && isStreaming;
+        if (step?.type === 'tool_call') {
+            const isRunning = step.state === 'started';
+            const argsStr = step.args
+                ? Object.entries(step.args)
+                    .map(([key, value]) => `${key}: ${typeof value === 'string' ? `"${value}"` : JSON.stringify(value)}`)
+                    .join(', ')
+                : '';
+            const resultStr = isRunning
+                ? ''
+                : formatAgentTraceResult(step.result || '');
+            return `
+                <div class="agent-step agent-step-tool${isLatest ? ' is-latest' : ''}${isRunning ? ' is-running' : ''}">
+                    <span class="agent-step-name">${escapeHtml(step.tool || 'tool')}</span>
+                    ${argsStr ? `<span class="agent-step-args">(${escapeHtml(argsStr)})</span>` : ''}
+                    ${resultStr ? `<span class="agent-step-result">${escapeHtml(resultStr)}</span>` : ''}
+                </div>
+            `;
+        }
+        if (step?.type === 'reasoning') {
+            const text = typeof step.text === 'string' ? step.text.trim() : '';
+            if (!text) return '';
+            return `
+                <div class="agent-step agent-step-thinking${isLatest ? ' is-latest' : ''}">
+                    <span class="agent-step-thinking-text">${escapeHtml(text)}</span>
+                </div>
+            `;
+        }
+        if (step?.type === 'model_text') {
+            const text = typeof step.text === 'string' ? step.text.trim() : '';
+            if (!text) return '';
+            return `
+                <div class="agent-step agent-step-thinking${isLatest ? ' is-latest' : ''}">
+                    <span class="agent-step-thinking-text">${escapeHtml(text)}</span>
+                </div>
+            `;
+        }
+        const label = typeof step?.label === 'string' ? step.label.trim() : '';
+        if (!label) return '';
+        return `
+            <div class="agent-step agent-step-phase${isLatest ? ' is-latest' : ''}">
+                <span class="agent-step-phase-label">${escapeHtml(label)}</span>
+            </div>
+        `;
+    }).join('');
+
+    return `
+        <div class="reasoning-trace w-full">
+            <button
+                class="reasoning-toggle ${isStreaming ? 'flex w-full' : 'inline-flex'} items-center gap-2 px-2 py-1 text-left hover:bg-slate-2 rounded transition-colors"
+                id="${toggleId}"
+                onclick="window.toggleAgentTrace('${messageId}')"
+            >
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5 text-muted-foreground flex-shrink-0">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z" />
+                </svg>
+                <span class="text-xs text-muted-foreground ${isStreaming ? 'flex-1 truncate reasoning-subtitle-streaming' : ''}">${escapeHtml(subtitle)}</span>
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5 text-muted-foreground reasoning-chevron transition-transform flex-shrink-0" ${isExpanded ? 'style="transform: rotate(180deg)"' : ''}>
+                    <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+                </svg>
+            </button>
+            <div class="agent-trace-content reasoning-content text-xs text-muted-foreground overflow-auto ${isExpanded ? '' : 'hidden'}" id="${contentId}">
+                ${stepHtml}
+            </div>
         </div>
     `;
 }
@@ -1145,6 +1272,14 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
     // Use short model name for display (without provider prefix)
     const displayModelName = extractShortModelName(modelName);
+    const lowerModelName = typeof displayModelName === 'string' ? displayModelName.trim().toLowerCase() : '';
+    const isMemoryAgent = lowerModelName === 'memory agent';
+    const assistantTimeClass = isMemoryAgent ? 'text-xs text-muted-foreground' : CLASSES.assistantTime;
+    const memoryAgentIcon = `
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" class="w-3.5 h-3.5 text-primary">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
+        </svg>
+    `;
 
     // If message is pending (waiting for first chunk), show header with typing indicator
     if (message.streamingPending) {
@@ -1157,7 +1292,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
                             ${iconData.html}
                         </div>
                         <span class="${CLASSES.assistantModelName}" style="font-size: 0.7rem;">${displayModelName}</span>
-                        <span class="${CLASSES.assistantTime}" style="font-size: 0.7rem;">${formatTime(message.timestamp)}</span>
+                        <span class="${assistantTimeClass}" style="font-size: 0.7rem;">${formatTime(message.timestamp)}</span>
                     </div>
                     <div class="px-2 py-1">
                         ${buildPendingIndicatorContent(pendingPhase)}
@@ -1176,6 +1311,10 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
         processContentWithLatex,
         message.reasoningDuration
     );
+    const hasAgentTrace = message.agentTraceStreaming || (Array.isArray(message.agentTrace) && message.agentTrace.length > 0);
+    const agentTraceBubble = hasAgentTrace
+        ? buildAgentTrace(message.agentTrace || [], message.id, message.agentTraceStreaming || false)
+        : '';
 
     // Build text bubble if there's content
     let processedContent = message.content;
@@ -1219,7 +1358,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     // Check if message is complete but has no user-visible output (no text, no reasoning, no images).
     // Reasoning-only responses can happen when generation is manually interrupted.
     const hasReasoningOutput = typeof message.reasoning === 'string' && message.reasoning.trim().length > 0;
-    const hasNoOutput = !processedContent && !hasReasoningOutput && (!message.images || message.images.length === 0);
+    const hasNoOutput = !processedContent && !hasReasoningOutput && (!message.images || message.images.length === 0) && !hasAgentTrace;
     const hasRenderableAssistantOutput = !!processedContent || !!generatedImagesHtml || !!thumbnailsBubble;
     const hideAssistantActionsDuringReasoning = !!message.streamingReasoning && !hasRenderableAssistantOutput;
     // Message is complete if:
@@ -1236,6 +1375,74 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     // Build citations section if there are citations
     const citationsBubble = buildCitationsSection(message.citations, message.id);
     const citationsToggle = buildCitationsToggleButton(message.citations, message.id);
+    const hasCiPromptDraft = !!message.ciPromptDraft;
+    const memoryPromptStatus = message.memoryApprovalPrompt?.status;
+    const hasMemoryApprovalPrompt = hasCiPromptDraft && memoryPromptStatus === 'pending';
+    const hasMemoryApprovedPrompt = hasCiPromptDraft && memoryPromptStatus === 'approved';
+    const isMemoryStatusMessage = isMemoryAgent || Boolean(message.isLocalOnly && (hasAgentTrace || hasCiPromptDraft));
+    let memoryApprovalActions = '';
+    if (hasMemoryApprovalPrompt) {
+        memoryApprovalActions = `
+            <div class="flex items-center flex-wrap gap-1.5 w-full -mt-1 px-2">
+                <button
+                    type="button"
+                    class="memory-approval-btn memory-approval-primary btn-ghost-hover inline-flex items-center gap-1 justify-center rounded-md text-[10px] font-medium transition-all duration-200 border px-2 py-1 shadow-sm"
+                    data-message-id="${message.id}"
+                    data-decision="yes"
+                >
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"></path></svg>
+                    Include memory
+                </button>
+                <button
+                    type="button"
+                    class="memory-approval-btn memory-approval-secondary btn-ghost-hover inline-flex items-center gap-1 justify-center rounded-md text-[10px] font-medium transition-all duration-200 border px-2 py-1 shadow-sm"
+                    data-message-id="${message.id}"
+                    data-decision="always"
+                >
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M16.5 6.75h2.25A2.25 2.25 0 0121 9v8.25a2.25 2.25 0 01-2.25 2.25H9A2.25 2.25 0 016.75 17.25V15m9.75-8.25V4.5A2.25 2.25 0 0014.25 2.25H5.25A2.25 2.25 0 003 4.5v9.75a2.25 2.25 0 002.25 2.25H7.5m4.5-6 1.5 1.5 3-3"></path></svg>
+                    Always include
+                </button>
+                <button
+                    type="button"
+                    class="memory-approval-btn btn-ghost-hover inline-flex items-center justify-center rounded-md text-[10px] font-medium transition-all duration-200 border border-border bg-background px-2 py-1 shadow-sm text-muted-foreground hover:text-foreground"
+                    data-message-id="${message.id}"
+                    data-decision="no"
+                >
+                    Skip
+                </button>
+                <button
+                    type="button"
+                    class="memory-preview-btn btn-ghost-hover inline-flex items-center gap-1 justify-center rounded-md text-[10px] transition-all duration-200 border border-border bg-background px-2 py-1 shadow-sm text-muted-foreground hover:text-foreground"
+                    data-message-id="${message.id}"
+                >
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.64 0 8.577 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.64 0-8.577-3.007-9.963-7.178z"></path><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                    View prompt
+                </button>
+            </div>
+        `;
+    } else if (hasMemoryApprovedPrompt) {
+        const approvedLabel = message.memoryApprovalPrompt?.autoIncluded ? 'Always include on' : 'Prompt included';
+        memoryApprovalActions = `
+            <div class="flex items-center flex-wrap gap-1.5 w-full -mt-1 px-2">
+                <button
+                    type="button"
+                    class="memory-approval-btn memory-approval-success inline-flex items-center gap-1 justify-center rounded-md text-[10px] font-medium border px-2 py-1 shadow-sm cursor-default"
+                    disabled
+                >
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"></path></svg>
+                    ${approvedLabel}
+                </button>
+                <button
+                    type="button"
+                    class="memory-preview-btn btn-ghost-hover inline-flex items-center gap-1 justify-center rounded-md text-[10px] transition-all duration-200 border border-border bg-background px-2 py-1 shadow-sm text-muted-foreground hover:text-foreground"
+                    data-message-id="${message.id}"
+                >
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.64 0 8.577 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.64 0-8.577-3.007-9.963-7.178z"></path><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                    View prompt
+                </button>
+            </div>
+        `;
+    }
     const canRestoreScrubber = message.scrubber?.canRestore || message.scrubber?.redactedPrompt;
     const scrubberToggleButton = canRestoreScrubber ? `
         <button
@@ -1247,9 +1454,14 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
             </svg>
         </button>
     ` : '';
-    const assistantActionsRow = hideAssistantActionsDuringReasoning ? `
+    const shouldShowMemoryStatusSpacer = hideAssistantActionsDuringReasoning && !isMemoryStatusMessage;
+    const assistantActionsRow = (shouldShowMemoryStatusSpacer || isMemoryStatusMessage) ? (
+        isMemoryStatusMessage
+            ? ''
+            : `
         <div class="assistant-actions-anchor assistant-actions-placeholder w-full -mt-1" aria-hidden="true"></div>
-    ` : `
+    `
+    ) : `
         <div class="assistant-actions-anchor assistant-actions-row flex items-center justify-between gap-2 w-full -mt-1">
             <div class="flex items-center gap-1">
                 <button
@@ -1286,18 +1498,30 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     return `
         <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}"${getRawContentAttribute(message.content)}>
             <div class="${CLASSES.assistantGroup}">
+                ${isMemoryAgent ? `
+                <div class="${CLASSES.assistantHeader}">
+                    <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow bg-muted">
+                        ${memoryAgentIcon}
+                    </div>
+                    <span class="${CLASSES.assistantModelName}" style="font-size: 0.7rem;">Memory Agent</span>
+                    <span class="${assistantTimeClass}" style="font-size: 0.7rem;">${formatTime(message.timestamp)}</span>
+                </div>
+                ` : `
                 <div class="${CLASSES.assistantHeader}">
                     <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow ${bgClass}">
                         ${iconData.html}
                     </div>
                     <span class="${CLASSES.assistantModelName}" style="font-size: 0.7rem;">${displayModelName}</span>
-                    <span class="${CLASSES.assistantTime}" style="font-size: 0.7rem;">${formatTime(message.timestamp)}</span>
+                    <span class="${assistantTimeClass}" style="font-size: 0.7rem;">${formatTime(message.timestamp)}</span>
                     ${tokenDisplay}
                 </div>
+                `}
                 ${reasoningBubble}
+                ${agentTraceBubble}
                 ${thumbnailsBubble}
                 ${textBubble}
                 ${imageBubble}
+                ${memoryApprovalActions}
                 ${assistantActionsRow}
                 ${citationsBubble}
             </div>
@@ -1535,6 +1759,24 @@ if (typeof window !== 'undefined') {
             // Update scroll button visibility after content change
             if (window.app && window.app.updateScrollButtonVisibility) {
                 window.app.updateScrollButtonVisibility();
+            }
+        }
+    };
+
+    window.toggleAgentTrace = function(messageId) {
+        const contentEl = document.getElementById(`agent-trace-content-${messageId}`);
+        const chevronEl = document.querySelector(`#agent-trace-toggle-${messageId} .reasoning-chevron`);
+
+        if (contentEl && chevronEl) {
+            const isHidden = contentEl.classList.contains('hidden');
+            if (isHidden) {
+                contentEl.classList.remove('hidden');
+                chevronEl.style.transform = 'rotate(180deg)';
+                agentTraceExpandedState.add(messageId);
+            } else {
+                contentEl.classList.add('hidden');
+                chevronEl.style.transform = '';
+                agentTraceExpandedState.delete(messageId);
             }
         }
     };

@@ -59,6 +59,7 @@ export default class ChatInput {
         };
         this.scrubberModelsReady = false;
         this.scrubberModelSelect = null;
+        this.memoryAgentModelSelect = null;
         // Store undone scrubber state for redo functionality
         this.scrubberUndoState = null;
     }
@@ -237,6 +238,18 @@ export default class ChatInput {
             await chatDB.saveSetting('searchEnabled', this.app.searchEnabled);
         });
 
+        if (this.app.elements.memoryToggle) {
+            this.app.elements.memoryToggle.addEventListener('click', async (e) => {
+                const button = e.target.closest('.chat-mode-toggle-btn');
+                if (!button) return;
+
+                const nextMode = button.dataset.modeOption === 'memory' ? 'memory' : 'chat';
+                this.app.memoryMode = nextMode === 'memory';
+                this.updateMemoryToggleUI();
+                await chatDB.saveSetting('memoryMode', this.app.memoryMode);
+            });
+        }
+
         // Reasoning effort control (extended-thinking toggle removed from UI;
         // reasoning is kept enabled in app state for backward-compatible behavior)
         const reasoningEffortToggle = document.getElementById('reasoning-effort-toggle');
@@ -280,6 +293,7 @@ export default class ChatInput {
                 menu.style.maxWidth = `${SETTINGS_MENU_WIDTH_PX}px`;
 
                 this.ensureScrubberModelsLoaded();
+                this.refreshMemorySettingsUI();
             } else {
                 menu.classList.add('hidden');
                 btn.classList.remove('tooltip-disabled');
@@ -311,6 +325,11 @@ export default class ChatInput {
                 } else if (action === 'import-tickets') {
                     this.handleImportTickets();
                     return; // Don't close menu until file is selected
+                } else if (action === 'export-memory') {
+                    await this.handleExportMemory();
+                } else if (action === 'import-memory') {
+                    this.handleImportMemory();
+                    return; // Don't close menu until file is selected
                 }
                 this.app.elements.settingsMenu.classList.add('hidden');
             }
@@ -338,6 +357,17 @@ export default class ChatInput {
                     await this.processTicketsImportFile(file);
                 }
                 // Reset input so the same file can be selected again
+                e.target.value = '';
+            });
+        }
+
+        const memoryImportInput = document.getElementById('memory-import-input');
+        if (memoryImportInput) {
+            memoryImportInput.addEventListener('change', async (e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                    await this.processMemoryImportFile(file);
+                }
                 e.target.value = '';
             });
         }
@@ -384,6 +414,8 @@ export default class ChatInput {
 
         // Setup scrubber controls (model picker + shortcut)
         this.setupScrubberControls();
+        this.setupMemoryAutoIncludeToggle();
+        this.refreshMemorySettingsUI();
 
         // Initialize scrubber hint visibility
         this.updateScrubberHintVisibility();
@@ -1415,49 +1447,117 @@ export default class ChatInput {
     }
 
     async setupScrubberControls() {
-        const select = document.getElementById('scrubber-model-select');
-        if (!select) return;
+        const scrubberSelect = document.getElementById('scrubber-model-select');
+        if (scrubberSelect) {
+            scrubberSelect.addEventListener('click', (event) => event.stopPropagation());
+            scrubberSelect.addEventListener('change', async (event) => {
+                const modelId = event.target.value;
+                if (modelId) {
+                    await scrubberService.setSelectedModel(modelId);
+                    this.refreshMemorySettingsUI();
+                }
+            });
+        }
+        this.scrubberModelSelect = scrubberSelect;
 
-        select.addEventListener('click', (event) => event.stopPropagation());
-        select.addEventListener('change', async (event) => {
-            const modelId = event.target.value;
-            if (modelId) {
-                await scrubberService.setSelectedModel(modelId);
-            }
-        });
-        this.scrubberModelSelect = select;
+        const memoryAgentSelect = document.getElementById('memory-agent-model-select');
+        if (memoryAgentSelect) {
+            memoryAgentSelect.addEventListener('click', (event) => event.stopPropagation());
+            memoryAgentSelect.addEventListener('change', async (event) => {
+                const modelId = event.target.value;
+                if (modelId) {
+                    await this.app.setMemoryAgentModel(modelId);
+                    this.refreshMemorySettingsUI();
+                }
+            });
+        }
+        this.memoryAgentModelSelect = memoryAgentSelect;
     }
 
     async ensureScrubberModelsLoaded() {
-        if (this.scrubberModelsReady || !this.scrubberModelSelect) return;
-        await this.populateScrubberModels(this.scrubberModelSelect);
-        this.scrubberModelsReady = true;
+        if (this.scrubberModelsReady) {
+            this.refreshMemorySettingsUI();
+            return;
+        }
+
+        const selects = [this.scrubberModelSelect, this.memoryAgentModelSelect].filter(Boolean);
+        if (!selects.length) return;
+
+        try {
+            const models = await scrubberService.fetchModels();
+            this.populateConfidentialModels(this.scrubberModelSelect, models, scrubberService.getSelectedModel());
+            this.populateConfidentialModels(this.memoryAgentModelSelect, models, this.app.memoryAgentModel);
+            this.scrubberModelsReady = true;
+        } catch (error) {
+            console.error('Failed to load confidential models:', error);
+            this.setModelSelectError(this.scrubberModelSelect);
+            this.setModelSelectError(this.memoryAgentModelSelect);
+        }
+        this.refreshMemorySettingsUI();
     }
 
-    async populateScrubberModels(selectEl) {
-        selectEl.innerHTML = '<option value="" disabled selected>Loading models…</option>';
-        try {
-            // Model list is public - no session/key required
-            const models = await scrubberService.fetchModels();
-            const selected = scrubberService.getSelectedModel();
-            const options = models.map(model => {
-                const value = model.id || model.name;
-                let label = model.name || model.id;
-                // Add "slow" label for slow models
-                if (scrubberService.isSlowModel(value)) {
-                    label += ' (slow)';
-                }
-                return `<option value="${value}">${label}</option>`;
-            }).join('');
-            let html = options || '<option value="" disabled>No models available</option>';
-            if (selected && !models.find(model => (model.id || model.name) === selected)) {
-                html = `<option value="${selected}">${selected}</option>` + html;
+    populateConfidentialModels(selectEl, models, selected) {
+        if (!selectEl) return;
+        const options = models.map(model => {
+            const value = model.id || model.name;
+            let label = model.name || model.id;
+            if (scrubberService.isSlowModel(value)) {
+                label += ' (slow)';
             }
-            selectEl.innerHTML = html;
-            if (selected) selectEl.value = selected;
-        } catch (error) {
-            console.error('Failed to load scrubber models:', error);
-            selectEl.innerHTML = '<option value="" disabled>Failed to load models</option>';
+            return `<option value="${value}">${label}</option>`;
+        }).join('');
+        let html = options || '<option value="" disabled>No models available</option>';
+        if (selected && !models.find(model => (model.id || model.name) === selected)) {
+            html = `<option value="${selected}">${selected}</option>${html}`;
+        }
+        selectEl.innerHTML = html;
+        if (selected) {
+            selectEl.value = selected;
+        }
+    }
+
+    setModelSelectError(selectEl) {
+        if (!selectEl) return;
+        selectEl.innerHTML = '<option value="" disabled>Failed to load models</option>';
+    }
+
+    setupMemoryAutoIncludeToggle() {
+        const toggle = document.getElementById('memory-auto-include-toggle');
+        if (!toggle) return;
+
+        toggle.addEventListener('click', async (event) => {
+            event.stopPropagation();
+            const nextValue = !this.app.memoryAutoInclude;
+            await this.app.setMemoryAutoInclude(nextValue);
+            this.refreshMemorySettingsUI();
+        });
+    }
+
+    updateSwitchToggleUI(toggle, enabled, enabledTitle, disabledTitle) {
+        if (!toggle) return;
+        toggle.setAttribute('aria-checked', enabled ? 'true' : 'false');
+        toggle.classList.toggle('switch-active', enabled);
+        toggle.classList.toggle('switch-inactive', !enabled);
+        toggle.title = enabled ? enabledTitle : disabledTitle;
+    }
+
+    refreshMemorySettingsUI() {
+        this.updateSwitchToggleUI(
+            document.getElementById('memory-auto-include-toggle'),
+            this.app.memoryAutoInclude,
+            'Always include memory is on',
+            'Always include memory is off'
+        );
+
+        if (this.scrubberModelSelect) {
+            const selectedScrubberModel = scrubberService.getSelectedModel();
+            if (selectedScrubberModel) {
+                this.scrubberModelSelect.value = selectedScrubberModel;
+            }
+        }
+
+        if (this.memoryAgentModelSelect && this.app.memoryAgentModel) {
+            this.memoryAgentModelSelect.value = this.app.memoryAgentModel;
         }
     }
 
@@ -1580,6 +1680,27 @@ export default class ChatInput {
         const toggle = this.app.elements.searchToggle;
         toggle.setAttribute('aria-pressed', this.app.searchEnabled);
         toggle.classList.toggle('search-active', this.app.searchEnabled);
+    }
+
+    updateMemoryToggleUI() {
+        const container = this.app.elements.memoryToggle;
+        if (!container) return;
+
+        const mode = this.app.memoryMode ? 'memory' : 'chat';
+        const isFirstRender = container.style.visibility === 'hidden';
+        if (isFirstRender) {
+            const indicator = container.querySelector('.chat-mode-toggle-indicator');
+            if (indicator) indicator.style.transition = 'none';
+            container.dataset.mode = mode;
+            container.style.visibility = '';
+            if (indicator) requestAnimationFrame(() => { indicator.style.transition = ''; });
+        } else {
+            container.dataset.mode = mode;
+        }
+
+        container.querySelectorAll('.chat-mode-toggle-btn').forEach((button) => {
+            button.setAttribute('aria-checked', String(button.dataset.modeOption === mode));
+        });
     }
 
     /**
@@ -1789,6 +1910,22 @@ export default class ChatInput {
         this.app.elements.settingsMenu.classList.add('hidden');
     }
 
+    async handleExportMemory() {
+        if (!this.app.memoryEditor?.exportMemories) {
+            this.app.showToast?.('Memory export unavailable', 'error');
+            return;
+        }
+        await this.app.memoryEditor.exportMemories();
+    }
+
+    handleImportMemory() {
+        const input = document.getElementById('memory-import-input');
+        if (input) {
+            input.click();
+        }
+        this.app.elements.settingsMenu.classList.add('hidden');
+    }
+
     /**
      * Processes the selected tickets import file.
      * @param {File} file - The tickets JSON file
@@ -1868,6 +2005,18 @@ export default class ChatInput {
             this.app.showToast?.('Failed to import data', 'error');
         } finally {
             dismissToast?.();
+        }
+    }
+
+    async processMemoryImportFile(file) {
+        try {
+            if (!this.app.memoryEditor?.importMemoryFile) {
+                throw new Error('Memory editor is not available.');
+            }
+            await this.app.memoryEditor.importMemoryFile(file);
+        } catch (error) {
+            console.error('Memory import failed:', error);
+            this.app.showToast?.(error.message || 'Failed to import memory', 'error');
         }
     }
 }

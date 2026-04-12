@@ -543,12 +543,18 @@
                                                         <button data-action="import-tickets" class="flex-1 px-2 py-1 text-[11px] text-popover-foreground hover-highlight rounded transition-colors border border-border text-center">Import</button>
                                                     </div>
                                                     <div class="px-3 py-1 flex items-center gap-2">
+                                                        <span class="text-xs text-muted-foreground w-12 shrink-0">Memory</span>
+                                                        <button data-action="export-memory" class="flex-1 px-2 py-1 text-[11px] text-popover-foreground hover-highlight rounded transition-colors border border-border text-center">Export</button>
+                                                        <button data-action="import-memory" class="flex-1 px-2 py-1 text-[11px] text-popover-foreground hover-highlight rounded transition-colors border border-border text-center">Import</button>
+                                                    </div>
+                                                    <div class="px-3 py-1 flex items-center gap-2">
                                                         <span class="text-xs text-muted-foreground w-12 shrink-0">ChatGPT</span>
                                                         <button data-action="import-history" class="flex-1 px-2 py-1 text-[11px] text-popover-foreground hover-highlight rounded transition-colors border border-border text-center">Import from ChatGPT</button>
                                                     </div>
                                                     <!-- Hidden file inputs -->
                                                     <input type="file" id="global-import-input" accept="application/json,.json" class="hidden" />
                                                     <input type="file" id="tickets-import-input" accept="application/json,.json" class="hidden" />
+                                                    <input type="file" id="memory-import-input" accept=".json,application/json" class="hidden" />
                                                 </div>
 
                                                 <!-- Scrubber Section -->
@@ -559,6 +565,18 @@
                                                         <select id="scrubber-model-select" class="flex-1 min-w-0 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-popover-foreground focus:outline-none focus:ring-1 focus:ring-ring truncate">
                                                             <option value="" disabled selected>Loading…</option>
                                                         </select>
+                                                    </div>
+                                                    <div class="px-3 py-1 flex items-center gap-2">
+                                                        <span class="text-xs text-muted-foreground w-12 shrink-0">Memory</span>
+                                                        <select id="memory-agent-model-select" class="flex-1 min-w-0 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-popover-foreground focus:outline-none focus:ring-1 focus:ring-ring truncate">
+                                                            <option value="" disabled selected>Loading…</option>
+                                                        </select>
+                                                    </div>
+                                                    <div class="px-3 py-1.5 flex items-center justify-between gap-2">
+                                                        <span class="text-xs text-muted-foreground">Always include memory</span>
+                                                        <button id="memory-auto-include-toggle" type="button" role="switch" aria-checked="false" class="switch-toggle switch-toggle-sm switch-inactive" data-tooltip="Automatically include memory-agent prompts without per-message approval" data-tooltip-position="left">
+                                                            <span class="switch-toggle-indicator"></span>
+                                                        </button>
                                                     </div>
                                                 </div>
 
@@ -676,6 +694,19 @@
                                                 <path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 0 0 8.716-6.747M12 21a9.004 9.004 0 0 1-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 0 1 7.843 4.582M12 3a8.997 8.997 0 0 0-7.843 4.582m15.686 0A11.953 11.953 0 0 1 12 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0 1 21 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0 1 12 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 0 1 3 12c0-1.605.42-3.113 1.157-4.418" />
                                             </svg>
                                         </button>
+                                        <div id="chat-mode-toggle" class="chat-mode-toggle-container ml-2" role="radiogroup" aria-label="Chat mode" data-mode="chat" style="visibility: hidden;">
+                                            <div class="chat-mode-toggle-indicator"></div>
+                                            <button type="button" class="chat-mode-toggle-btn" data-mode-option="chat" aria-checked="true" data-tooltip="Chat" data-tooltip-position="top">
+                                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.76c0 1.6 1.123 2.994 2.707 3.227 1.087.16 2.185.283 3.293.369V21l4.076-4.076a1.526 1.526 0 0 1 1.037-.443 48.282 48.282 0 0 0 5.68-.494c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z" />
+                                                </svg>
+                                            </button>
+                                            <button type="button" class="chat-mode-toggle-btn" data-mode-option="memory" aria-checked="false" data-tooltip="Memory" data-tooltip-position="top">
+                                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
+                                                </svg>
+                                            </button>
+                                        </div>
                                     </div>
 
                                     <button
@@ -755,6 +786,9 @@
 
     <!-- Account Modal -->
     <div id="account-modal" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"></div>
+
+    <!-- Memory Editor Modal -->
+    <div id="memory-editor-modal" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"></div>
 
     <!-- Welcome Panel Modal -->
     <div id="welcome-panel" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"></div>
