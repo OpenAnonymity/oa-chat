@@ -93,6 +93,21 @@ async function collectPreferencesFromIndexedDB() {
             preferences.searchEnabled = searchEnabled;
         }
 
+        const memoryMode = await chatDB.getSetting('memoryMode');
+        if (memoryMode !== undefined) {
+            preferences.memoryMode = memoryMode;
+        }
+
+        const memoryAutoInclude = await chatDB.getSetting('memoryAutoInclude');
+        if (memoryAutoInclude !== undefined) {
+            preferences.memoryAutoInclude = memoryAutoInclude;
+        }
+
+        const memoryAgentModel = await chatDB.getSetting('memoryAgentModel');
+        if (memoryAgentModel !== undefined) {
+            preferences.memoryAgentModel = memoryAgentModel;
+        }
+
         const reasoningEnabled = await chatDB.getSetting('reasoningEnabled');
         if (reasoningEnabled !== undefined) {
             preferences.reasoningEnabled = reasoningEnabled;
@@ -191,7 +206,7 @@ export async function exportChats() {
  * @param {string} suggestedName - Suggested filename
  * @returns {Promise<{ saved: boolean, usedFallback: boolean }>}
  */
-async function saveWithConfirmation(blob, suggestedName) {
+export async function saveWithConfirmation(blob, suggestedName) {
     // Try File System Access API (Chrome, Edge, Opera)
     if (typeof window.showSaveFilePicker === 'function') {
         try {

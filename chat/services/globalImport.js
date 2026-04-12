@@ -243,6 +243,21 @@ async function applyPreferences(preferences) {
             applied.push('searchEnabled');
         }
 
+        if ('memoryMode' in preferences) {
+            await chatDB.saveSetting('memoryMode', preferences.memoryMode === true);
+            applied.push('memoryMode');
+        }
+
+        if ('memoryAutoInclude' in preferences) {
+            await chatDB.saveSetting('memoryAutoInclude', preferences.memoryAutoInclude === true);
+            applied.push('memoryAutoInclude');
+        }
+
+        if ('memoryAgentModel' in preferences) {
+            await chatDB.saveSetting('memoryAgentModel', preferences.memoryAgentModel);
+            applied.push('memoryAgentModel');
+        }
+
         if ('reasoningEnabled' in preferences) {
             await chatDB.saveSetting('reasoningEnabled', preferences.reasoningEnabled);
             applied.push('reasoningEnabled');
