@@ -5,7 +5,7 @@ export const ALLOWED_CONFIDENTIAL_MODELS = new Set([
     DEFAULT_MEMORY_AGENT_MODEL,
     DEFAULT_SCRUBBER_MODEL,
     'gpt-oss-safeguard-120b',
-    'llama3-3-70b',
+    'kimi-k2-5',
     'gemma4-31b'
 ]);
 
