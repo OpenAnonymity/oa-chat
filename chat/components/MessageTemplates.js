@@ -76,6 +76,18 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+function renderTaggedPromptInline(text) {
+    let html = escapeHtml(text || '');
+    html = html.replace(
+        /\[\[user_data\]\]([\s\S]*?)\[\[\/user_data\]\]/g,
+        '<mark class="user-data-highlight">$1</mark>'
+    );
+    html = html.replace(/\[\[user_data\]\]/g, '');
+    html = html.replace(/\[\[\/user_data\]\]/g, '');
+    html = html.replace(/\n/g, '<br>');
+    return html;
+}
+
 function escapeHtmlAttribute(text) {
     return String(text)
         .replace(/&/g, '&amp;')
@@ -1318,7 +1330,26 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
 
     // Build text bubble if there's content
     let processedContent = message.content;
-    if (processedContent) {
+    const ciFullPrompt = message.ciPromptDraft?.fullPrompt || message.ciPromptDraft?.editedFullPrompt;
+    const hasCiPromptForPreview = ciFullPrompt && !!message.ciPromptDraft && (
+        (message.memoryApprovalPrompt?.status === 'pending') ||
+        (message.memoryApprovalPrompt?.status === 'approved')
+    );
+    if (hasCiPromptForPreview) {
+        // Show file list + full crafted prompt with user_data tags rendered inline
+        const memFiles = message.ciPromptDraft?.memoryFiles || [];
+        const fileListHtml = memFiles.length
+            ? `<p class="mem-prompt-files text-muted-foreground">Retrieved ${memFiles.length} memory file${memFiles.length === 1 ? '' : 's'}: ${memFiles.map(f => `<code class="mem-prompt-file">${escapeHtml(f)}</code>`).join(', ')}</p>`
+            : '';
+        processedContent = `<div class="mem-prompt-preview leading-relaxed">
+            ${fileListHtml}
+            <div class="mem-prompt-header-row mb-2">
+                <p class="mem-prompt-header text-muted-foreground">Augmented query <span class="mem-prompt-header-detail">(query with minimal data from your memory)</span></p>
+                <span class="mem-prompt-legend"><span class="mem-prompt-legend-swatch"></span> personal data</span>
+            </div>
+            <div class="mem-prompt-box">${renderTaggedPromptInline(ciFullPrompt)}</div>
+        </div>`;
+    } else if (processedContent) {
         // First insert raw citation markers [1], [2] at correct positions (before HTML processing)
         if (message.citations && message.citations.length > 0) {
             processedContent = insertRawCitationMarkers(processedContent, message.citations);
@@ -1390,7 +1421,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
                     data-message-id="${message.id}"
                     data-decision="yes"
                 >
-                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"></path></svg>
+                    <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"></path></svg>
                     Include memory
                 </button>
                 <button
@@ -1399,7 +1430,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
                     data-message-id="${message.id}"
                     data-decision="always"
                 >
-                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M16.5 6.75h2.25A2.25 2.25 0 0121 9v8.25a2.25 2.25 0 01-2.25 2.25H9A2.25 2.25 0 016.75 17.25V15m9.75-8.25V4.5A2.25 2.25 0 0014.25 2.25H5.25A2.25 2.25 0 003 4.5v9.75a2.25 2.25 0 002.25 2.25H7.5m4.5-6 1.5 1.5 3-3"></path></svg>
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M1.5 14l4 4 8-9.5"></path><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 14l4 4 8-9.5"></path></svg>
                     Always include
                 </button>
                 <button
@@ -1416,7 +1447,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
                     data-message-id="${message.id}"
                 >
                     <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.64 0 8.577 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.64 0-8.577-3.007-9.963-7.178z"></path><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
-                    View prompt
+                    Edit prompt
                 </button>
             </div>
         `;
@@ -1438,7 +1469,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
                     data-message-id="${message.id}"
                 >
                     <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.64 0 8.577 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.64 0-8.577-3.007-9.963-7.178z"></path><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
-                    View prompt
+                    Edit prompt
                 </button>
             </div>
         `;

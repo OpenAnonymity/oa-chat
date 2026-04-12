@@ -1203,16 +1203,83 @@ html.switching-theme *::after {
     user-select: text;
 }
 
+.mem-prompt-preview {
+    max-height: 300px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--color-border) / 0.3) transparent;
+}
+
+.mem-prompt-header-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.mem-prompt-header {
+    font-weight: 600;
+    font-size: 0.8125rem;
+}
+
+.mem-prompt-header-detail {
+    font-weight: 400;
+    opacity: 0.6;
+}
+
+.mem-prompt-legend {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.6875rem;
+    color: hsl(var(--color-foreground) / 0.4);
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.mem-prompt-legend-swatch {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    background: rgba(73, 137, 102, 0.15);
+    border: 1px solid rgba(73, 137, 102, 0.3);
+}
+
+:root.dark .mem-prompt-legend-swatch {
+    background: rgba(73, 137, 102, 0.25);
+    border-color: rgba(73, 137, 102, 0.4);
+}
+
+.mem-prompt-files {
+    font-size: 0.6875rem;
+    margin-bottom: 0.5rem;
+}
+
+.mem-prompt-file {
+    font-size: 0.6875rem !important;
+    padding: 1px 4px;
+    border-radius: 3px;
+    background: hsl(var(--color-muted) / 0.6);
+}
+
+.mem-prompt-box {
+    border: 1px solid hsl(var(--color-border) / 0.5);
+    border-radius: 0.5rem;
+    padding: 0.75rem 1rem;
+    background: hsl(var(--color-muted) / 0.25);
+}
+
 .user-data-highlight {
-    background: rgb(220 252 231);
-    color: rgb(21 128 61);
+    background: rgba(73, 137, 102, 0.15);
+    color: #366B4D;
     border-radius: 2px;
     padding: 0 2px;
 }
 
 :root.dark .user-data-highlight {
-    background: rgb(20 83 45 / 0.3);
-    color: rgb(74 222 128);
+    background: rgba(73, 137, 102, 0.25);
+    color: #6DB88E;
 }
 
 /* Remove extra margins and whitespace from markdown elements in reasoning */
