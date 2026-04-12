@@ -120,6 +120,8 @@ When memory mode is enabled and the outgoing user message has text:
    - `files`: the selected memory files used to craft the prompt
    - the root app adapts that into `ciPromptDraft.fullPrompt` plus optional
      `ciPromptDraft.editedFullPrompt`
+   - If the crafter produces no `[[user_data]]` tags, `nanomem` treats that as
+     a no-memory outcome and falls back to the normal send path.
    - The inner prompt-crafter call does not force a `max_tokens` parameter.
    - When the provider supports streaming, that inner crafter call only emits
      coarse live phase updates into the memory-agent trace while `augment_query`
