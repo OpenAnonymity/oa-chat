@@ -87,19 +87,11 @@ const build = async () => {
         }
     }
 
-    // Ensure chat/nanomem is a real directory (not just a symlink) so esbuild
-    // can resolve imports before dist is assembled.
-    const chatNanomemLink = path.join(srcDir, 'nanomem');
-    if (await pathExists(chatNanomemLink)) {
-        const linkStat = await fs.lstat(chatNanomemLink);
-        if (linkStat.isSymbolicLink()) {
-            const target = path.resolve(srcDir, await fs.readlink(chatNanomemLink));
-            if (await pathExists(target)) {
-                await fs.rm(chatNanomemLink);
-                await fs.cp(target, chatNanomemLink, { recursive: true });
-            }
-        }
-    }
+    // Ensure chat/nanomem is a real directory so esbuild can resolve imports.
+    // In dev it's a symlink; in CI the symlink target may not survive filtering.
+    const chatNanomem = path.join(srcDir, 'nanomem');
+    await fs.rm(chatNanomem, { recursive: true, force: true });
+    await fs.cp(nanomemDir, chatNanomem, { recursive: true });
 
     await fs.rm(outDir, { recursive: true, force: true });
     await fs.mkdir(path.join(repoRoot, 'dist'), { recursive: true });
