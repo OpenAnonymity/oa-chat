@@ -16,7 +16,7 @@
     "tailwindcss": "^3.4.17"
   },
   "scripts": {
-    "build": "if [ -f scripts/build.mjs ]; then node scripts/build.mjs; else rm -rf dist && mkdir -p dist && cp -R chat dist/; fi",
+    "build": "git submodule update --init nanomem 2>/dev/null; node scripts/build.mjs",
     "preview": "python3 -m http.server 8080 -d dist",
     "dev": "python3 -m http.server 8080 -d chat",
     "tailwind:build": "tailwindcss -c tailwind.config.js -i chat/tailwind.input.css -o chat/tailwind.generated.css --minify",

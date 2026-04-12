@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs/promises';
+import { execSync } from 'node:child_process';
 import esbuild from 'esbuild';
 import { minify } from 'terser';
 
@@ -13,6 +14,7 @@ const outDir = path.join(repoRoot, 'dist');
 const assetsDir = path.join(outDir, 'assets');
 const vectorDir = path.join(repoRoot, 'vector');
 const localInferenceDir = path.join(repoRoot, 'local_inference');
+const nanomemDir = path.join(repoRoot, 'nanomem');
 
 const pathExists = async (target) => {
     try {
@@ -74,6 +76,17 @@ const collectJsFiles = async (dir) => {
 };
 
 const build = async () => {
+    if (!(await pathExists(path.join(nanomemDir, 'src')))) {
+        try {
+            execSync('git submodule update --init nanomem', { cwd: repoRoot, stdio: 'pipe' });
+        } catch {
+            throw new Error(
+                '[build] nanomem submodule is missing and could not be initialized.\n' +
+                'Run: git submodule update --init nanomem'
+            );
+        }
+    }
+
     await fs.rm(outDir, { recursive: true, force: true });
     await fs.mkdir(path.join(repoRoot, 'dist'), { recursive: true });
     await fs.cp(srcDir, outDir, { recursive: true });
@@ -105,6 +118,21 @@ const build = async () => {
     }
     if (await pathExists(localInferenceDir)) {
         await fs.cp(localInferenceDir, localInferenceOutDir, { recursive: true });
+    }
+
+    const nanomemOutDir = path.join(outDir, 'nanomem');
+    if (await pathExists(nanomemOutDir)) {
+        const nanomemStat = await fs.lstat(nanomemOutDir);
+        if (nanomemStat.isSymbolicLink()) {
+            await fs.rm(nanomemOutDir, { recursive: true, force: true });
+        }
+    }
+    if (await pathExists(nanomemDir)) {
+        await fs.cp(nanomemDir, nanomemOutDir, { recursive: true });
+        const nanomemGitDir = path.join(nanomemOutDir, '.git');
+        if (await pathExists(nanomemGitDir)) {
+            await fs.rm(nanomemGitDir, { recursive: true, force: true });
+        }
     }
 
     const result = await esbuild.build({
