@@ -3567,14 +3567,14 @@ class ChatApp {
     }
 
     triggerPostTurnMemoryExtraction(session) {
-        if (!this.memoryMode || !session?.id) return;
+        if (!session?.id) return;
         this.runPostTurnMemoryExtraction(session).catch((error) => {
             console.warn('[App] Background memory extraction failed:', error);
         });
     }
 
     async runPostTurnMemoryExtraction(session) {
-        if (!this.memoryMode || !session?.id) {
+        if (!session?.id) {
             return { status: 'skipped', writeCalls: 0 };
         }
         if (this.memoryExtractionInFlight.has(session.id)) {
@@ -4543,9 +4543,7 @@ class ChatApp {
                     this.preCacheScrubberRestore(streamingMessage);
                 }
 
-                if (this.memoryMode) {
-                    this.triggerPostTurnMemoryExtraction(session);
-                }
+                this.triggerPostTurnMemoryExtraction(session);
 
             } catch (error) {
                 console.error('Error getting AI response:', error);
@@ -5109,9 +5107,7 @@ class ChatApp {
                     this.preCacheScrubberRestore(streamingMessage);
                 }
 
-                if (this.memoryMode) {
-                    this.triggerPostTurnMemoryExtraction(session);
-                }
+                this.triggerPostTurnMemoryExtraction(session);
 
                 break retryLoop; // Success - exit retry loop
 
