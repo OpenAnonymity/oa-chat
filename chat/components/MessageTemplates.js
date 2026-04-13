@@ -13,6 +13,17 @@ import { getStandardizedModelDisplayName } from '../services/modelConfig.js';
 const reasoningExpandedState = new Set();
 const agentTraceExpandedState = new Set();
 
+const AGENT_TOOL_LABELS = {
+    augment_query:   'Adding context to query',
+    retrieve_file:   'Searching memory',
+    read_file:       'Reading memory file',
+    list_directory:  'Browsing memory',
+    assemble_context:'Assembling answer',
+    create_new_file: 'Creating memory file',
+    append_memory:   'Updating memory',
+    update_memory:   'Rewriting memory file',
+};
+
 // Welcome screen configuration
 const WELCOME_SHOW_LOGO = false;  // Set to true to show the logo icon
 
@@ -159,10 +170,7 @@ function buildAgentTrace(trace, messageId, isStreaming = false) {
 
     const contentId = `agent-trace-content-${messageId}`;
     const toggleId = `agent-trace-toggle-${messageId}`;
-    const isExpanded = agentTraceExpandedState.has(messageId) || isStreaming;
-    if (isExpanded && !agentTraceExpandedState.has(messageId)) {
-        agentTraceExpandedState.add(messageId);
-    }
+    const isExpanded = agentTraceExpandedState.has(messageId);
 
     const toolCount = steps.filter((step) => step?.type === 'tool_call').length;
     const lastStep = steps[steps.length - 1];
@@ -175,7 +183,7 @@ function buildAgentTrace(trace, messageId, isStreaming = false) {
 
     if (isStreaming) {
         if (activeToolStep?.tool) {
-            subtitle = `Running ${activeToolStep.tool}...`;
+            subtitle = `${AGENT_TOOL_LABELS[activeToolStep.tool] || activeToolStep.tool}...`;
         } else if (lastStep?.type === 'phase' && lastStep.label) {
             subtitle = lastStep.label;
         } else if (lastStep?.type === 'reasoning') {
@@ -201,7 +209,7 @@ function buildAgentTrace(trace, messageId, isStreaming = false) {
                 : formatAgentTraceResult(step.result || '');
             return `
                 <div class="agent-step agent-step-tool${isLatest ? ' is-latest' : ''}${isRunning ? ' is-running' : ''}">
-                    <span class="agent-step-name">${escapeHtml(step.tool || 'tool')}</span>
+                    <span class="agent-step-name">${escapeHtml(AGENT_TOOL_LABELS[step.tool] || step.tool || 'tool')}</span>
                     ${argsStr ? `<span class="agent-step-args">(${escapeHtml(argsStr)})</span>` : ''}
                     ${resultStr ? `<span class="agent-step-result">${escapeHtml(resultStr)}</span>` : ''}
                 </div>
@@ -1286,7 +1294,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     const displayModelName = extractShortModelName(modelName);
     const lowerModelName = typeof displayModelName === 'string' ? displayModelName.trim().toLowerCase() : '';
     const isMemoryAgent = lowerModelName === 'memory agent';
-    const assistantTimeClass = isMemoryAgent ? 'text-xs text-muted-foreground' : CLASSES.assistantTime;
+    const assistantTimeClass = CLASSES.assistantTime;
     const memoryAgentIcon = `
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" class="w-3.5 h-3.5 text-primary">
             <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
@@ -1534,7 +1542,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
                     <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow bg-muted">
                         ${memoryAgentIcon}
                     </div>
-                    <span class="${CLASSES.assistantModelName}" style="font-size: 0.7rem;">Memory Agent</span>
+                    <span class="${CLASSES.assistantModelName}" style="font-size: 0.7rem;">Memory Agent <span class="text-muted-foreground" onmouseenter="this.classList.remove('text-muted-foreground')" onmouseleave="this.classList.add('text-muted-foreground')">(<a href="https://www.nvidia.com/en-us/data-center/solutions/confidential-computing/" target="_blank" style="text-decoration: none; color: inherit;">TEE</a>)</span></span>
                     <span class="${assistantTimeClass}" style="font-size: 0.7rem;">${formatTime(message.timestamp)}</span>
                 </div>
                 ` : `

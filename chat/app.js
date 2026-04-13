@@ -3857,7 +3857,7 @@ class ChatApp {
                 : [];
 
             if (!result?.reviewPrompt || !result?.apiPrompt || memoryFiles.length === 0) {
-                retrievalMessage.content = 'No relevant personal context found. Sending without personal context.';
+                retrievalMessage.content = 'No relevant memory found. Sending without context.';
                 retrievalMessage.memoryApprovalPrompt = null;
                 retrievalMessage.ciPromptDraft = null;
                 await this.persistLocalAssistantStatus(retrievalMessage);
