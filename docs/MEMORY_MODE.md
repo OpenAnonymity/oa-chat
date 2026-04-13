@@ -158,10 +158,11 @@ forwarding its details into the final prompt.
   - `memoryAgentModel`: the confidential model used for retrieval and
     backfill/import flows
 - Retrieval state is shown as a local-only assistant message, not a modal wizard.
-- When memory mode is on, successful assistant responses also trigger a non-blocking
-  post-turn extraction pass for the current session through `nanomem.ingest(...)`.
-  This mirrors `memory-chat`'s background extractor behavior, but stays behind the
-  root app's `memoryBridge.js` seam.
+- Successful assistant responses now also trigger a non-blocking post-turn
+  extraction pass for the current session through `nanomem.ingest(...)`,
+  regardless of whether the current mode is chat or memory.
+- This mirrors `memory-chat`'s background extractor behavior, but stays behind
+  the root app's `memoryBridge.js` seam.
 - The local assistant status message is explicitly a `memory agent`:
   - title renders as `Memory Agent`
   - icon is the inline book glyph from `memory-chat`
