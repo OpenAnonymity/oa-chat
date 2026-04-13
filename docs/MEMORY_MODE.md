@@ -50,6 +50,11 @@ Important boundaries:
 - `nanomem` is a tracked git submodule at repo root.
 - `chat/nanomem` is a tracked symlink to `../nanomem` so dev-server imports
   resolve from the browser-visible `chat/` root.
+- Dev now hard-requires that submodule too:
+  - `npm run dev` runs the same `git submodule update --init nanomem` prep
+    before starting the static server
+  - if `nanomem` is missing, dev should fail before serving instead of leaving
+    the browser to hit `GET /nanomem/browser.js 404`
 - Production builds treat `nanomem` as a hard requirement:
   - `npm run build` runs `git submodule update --init nanomem`
   - `scripts/build.mjs` fails early with a clear error if the submodule is still

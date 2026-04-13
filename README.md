@@ -25,6 +25,9 @@ Everything runs in the browser with no server backend. Each session uses a fresh
    npm run dev
    # visit http://localhost:8080
    ```
+   `npm run dev` now initializes the `nanomem` submodule first, so a clone
+   without `--recurse-submodules` fails fast instead of serving a browser-side
+   `GET /nanomem/browser.js 404`.
 
 Production build + preview:
 ```bash

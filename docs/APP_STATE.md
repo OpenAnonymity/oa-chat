@@ -25,6 +25,10 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
+- 2026-04-13: Dev startup now hard-requires the `nanomem` submodule, not just production build.
+  - `npm run dev` now runs the same submodule init step as build before launching `python3 -m http.server -d chat`.
+  - This avoids the misleading browser-side `GET /nanomem/browser.js 404` that happened when `chat/nanomem` still pointed at an uninitialized empty submodule directory.
+  - If a local clone does not include submodule contents, dev should now fail immediately at startup and point the user at submodule setup instead of looking like an asset-path bug.
 - 2026-04-10: Root `oa-chat` now has a browser-only memory mode wired through the `nanomem` submodule.
   - Read [MEMORY_MODE.md](MEMORY_MODE.md) before touching this path.
   - The app-side contract is `chat/app.js -> chat/services/memoryBridge.js -> chat/nanomem/browser.js`; do not import `nanomem/src/...` from app code.
