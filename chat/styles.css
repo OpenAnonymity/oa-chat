@@ -724,6 +724,13 @@ html.switching-theme *::after {
     margin-bottom: 0.5rem;
 }
 
+.agent-trace-content {
+    max-height: 300px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--color-border) / 0.3) transparent;
+}
+
 .agent-trace-content .agent-step {
     display: flex;
     align-items: baseline;
@@ -1204,8 +1211,6 @@ html.switching-theme *::after {
 }
 
 .mem-prompt-preview {
-    max-height: 300px;
-    overflow-y: auto;
     scrollbar-width: thin;
     scrollbar-color: hsl(var(--color-border) / 0.3) transparent;
 }
