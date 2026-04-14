@@ -3679,19 +3679,56 @@ class ChatApp {
     }
 
     async handleMemoryApprovalDecision(messageId, decision) {
+        const alwaysInclude = decision === 'always';
+        const approved = decision === 'yes' || alwaysInclude;
+
+        if (alwaysInclude) {
+            try { await this.setMemoryAutoInclude(true); }
+            catch { this.memoryAutoInclude = true; }
+        }
+
+        // Live flow: resolver exists from active runMemoryAugmentFlow
         const request = this.memoryApprovalRequests.get(messageId);
-        if (!request?.resolve) return;
-        if (decision === 'always') {
-            try {
-                await this.setMemoryAutoInclude(true);
-            } catch (error) {
-                console.warn('Failed to persist always-include memory setting:', error);
-                this.memoryAutoInclude = true;
-            }
-            request.resolve({ approved: true, alwaysInclude: true });
+        if (request?.resolve) {
+            request.resolve({ approved, alwaysInclude });
             return;
         }
-        request.resolve({ approved: decision === 'yes', alwaysInclude: false });
+
+        // Stale flow: page reloaded while approval was pending — resolve directly
+        await this.resolveStaleMemoryApproval(messageId, approved, alwaysInclude);
+    }
+
+    async resolveStaleMemoryApproval(messageId, approved, alwaysInclude) {
+        const session = this.getCurrentSession();
+        if (!session) return;
+
+        const messages = await chatDB.getSessionMessages(session.id);
+        const msg = messages.find(m => m.id === messageId);
+        if (!msg?.ciPromptDraft) return;
+
+        const draft = msg.ciPromptDraft;
+
+        if (approved) {
+            draft.status = 'approved';
+            const rawPrompt = (typeof draft.editedFullPrompt === 'string' && draft.editedFullPrompt.trim())
+                ? draft.editedFullPrompt : draft.fullPrompt;
+            this._lastApiContent = stripMemoryPromptUserData(rawPrompt);
+
+            const files = draft.memoryFiles || [];
+            const fileList = files.map(f => `- \`${f}\``).join('\n');
+            msg.content = alwaysInclude
+                ? `Retrieved ${files.length} memory file${files.length === 1 ? '' : 's'}:\n${fileList}\n\nAlways include is now on. This prompt will be sent with minimized personal context.`
+                : `Retrieved ${files.length} memory file${files.length === 1 ? '' : 's'}:\n${fileList}\n\nApproved prompt will be sent with minimized personal context.`;
+            msg.memoryApprovalPrompt = { status: 'approved', linkedUserMessageId: draft.linkedUserMessageId, autoIncluded: alwaysInclude };
+        } else {
+            draft.status = 'denied';
+            this._lastApiContent = null;
+            msg.content = 'Prompt skipped. Sending without personal context.';
+            msg.memoryApprovalPrompt = null;
+        }
+
+        await this.persistLocalAssistantStatus(msg);
+        await this.regenerateResponse({ skipMemoryAugment: true });
     }
 
     async removeLocalOnlyMessagesAfter(sessionId, messageId) {
@@ -4201,10 +4238,10 @@ class ChatApp {
      * Regenerates the last assistant response without creating a new user message.
      * Used when the regenerate button is clicked on an assistant message.
      */
-    async regenerateResponse() {
+    async regenerateResponse(options = {}) {
         let session = this.getCurrentSession();
         if (!session) return;
-        this._lastApiContent = null;
+        if (!options.skipMemoryAugment) this._lastApiContent = null;
 
         // Any local regeneration on an imported session forks it from upstream updates.
         if (session.importedFrom) {
@@ -4242,7 +4279,7 @@ class ChatApp {
         }
 
         try {
-            if (lastUserMessage) {
+            if (lastUserMessage && !options.skipMemoryAugment) {
                 await this.removeLocalOnlyMessagesAfter(session.id, lastUserMessage.id);
                 const memoryMessages = await chatDB.getSessionMessages(session.id);
                 const conversationText = this.buildConversationText(memoryMessages);

@@ -14,7 +14,7 @@ const reasoningExpandedState = new Set();
 const agentTraceExpandedState = new Set();
 
 const AGENT_TOOL_LABELS = {
-    augment_query:   'Adding context to query',
+    augment_query:   'Adding context to prompt',
     retrieve_file:   'Searching memory',
     read_file:       'Reading memory file',
     list_directory:  'Browsing memory',
@@ -1351,11 +1351,13 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
             : '';
         processedContent = `<div class="mem-prompt-preview leading-relaxed">
             ${fileListHtml}
-            <div class="mem-prompt-header-row mb-2">
-                <p class="mem-prompt-header text-muted-foreground">Augmented query <span class="mem-prompt-header-detail">(query with minimal data from your memory)</span></p>
-                <span class="mem-prompt-legend"><span class="mem-prompt-legend-swatch"></span> personal data</span>
+            <div class="mem-prompt-box">
+                <div class="mem-prompt-header-row">
+                    <span class="mem-prompt-header text-muted-foreground">Revised prompt with added context</span>
+                    <span class="mem-prompt-legend"><span class="mem-prompt-legend-swatch"></span> from private local memory</span>
+                </div>
+                <div class="mem-prompt-body">${renderTaggedPromptInline(ciFullPrompt)}</div>
             </div>
-            <div class="mem-prompt-box">${renderTaggedPromptInline(ciFullPrompt)}</div>
         </div>`;
     } else if (processedContent) {
         // First insert raw citation markers [1], [2] at correct positions (before HTML processing)
@@ -1460,7 +1462,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
             </div>
         `;
     } else if (hasMemoryApprovedPrompt) {
-        const approvedLabel = message.memoryApprovalPrompt?.autoIncluded ? 'Always include on' : 'Prompt included';
+        const approvedLabel = message.memoryApprovalPrompt?.autoIncluded ? 'Always include on' : 'Added context';
         memoryApprovalActions = `
             <div class="flex items-center flex-wrap gap-1.5 w-full -mt-1 px-2">
                 <button
