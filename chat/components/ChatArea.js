@@ -152,6 +152,16 @@ export default class ChatArea {
                 return;
             }
 
+            const memFileLink = e.target.closest('.mem-prompt-file[data-mem-file]');
+            if (memFileLink) {
+                e.preventDefault();
+                const filePath = memFileLink.dataset.memFile;
+                if (filePath && this.app.memoryEditor) {
+                    await this.app.memoryEditor.openToFile(filePath);
+                }
+                return;
+            }
+
             const scrubberBtn = e.target.closest('.scrubber-restore-btn');
             if (scrubberBtn) {
                 const messageId = scrubberBtn.dataset.messageId;

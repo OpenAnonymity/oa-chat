@@ -49,6 +49,14 @@ class MemoryEditor {
         this.backfillProgress = this._getInitialBackfillProgress();
     }
 
+    async openToFile(path) {
+        if (!path) return;
+        const dir = path.indexOf('/') !== -1 ? path.slice(0, path.indexOf('/')) : null;
+        if (dir) this.expandedDirs.add(dir);
+        await this.open();
+        await this._selectFile(path);
+    }
+
     async open() {
         if (this.isOpen || !this.overlay) return;
         this.isOpen = true;

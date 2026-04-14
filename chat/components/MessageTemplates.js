@@ -1347,7 +1347,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
         // Show file list + full crafted prompt with user_data tags rendered inline
         const memFiles = message.ciPromptDraft?.memoryFiles || [];
         const fileListHtml = memFiles.length
-            ? `<p class="mem-prompt-files text-muted-foreground">Retrieved ${memFiles.length} memory file${memFiles.length === 1 ? '' : 's'}: ${memFiles.map(f => `<code class="mem-prompt-file">${escapeHtml(f)}</code>`).join(', ')}</p>`
+            ? `<p class="mem-prompt-files text-muted-foreground">Retrieved ${memFiles.length} memory file${memFiles.length === 1 ? '' : 's'}: ${memFiles.map(f => `<code class="mem-prompt-file" data-mem-file="${escapeHtml(f)}">${escapeHtml(f)}</code>`).join(', ')}</p>`
             : '';
         processedContent = `<div class="mem-prompt-preview leading-relaxed">
             ${fileListHtml}
