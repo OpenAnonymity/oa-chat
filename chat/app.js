@@ -3894,7 +3894,7 @@ class ChatApp {
                 : [];
 
             if (!result?.reviewPrompt || !result?.apiPrompt || memoryFiles.length === 0) {
-                retrievalMessage.content = 'No relevant memory found. Sending without context.';
+                retrievalMessage.content = 'Sending prompt without added context.';
                 retrievalMessage.memoryApprovalPrompt = null;
                 retrievalMessage.ciPromptDraft = null;
                 await this.persistLocalAssistantStatus(retrievalMessage);

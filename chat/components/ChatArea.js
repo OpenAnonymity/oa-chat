@@ -763,7 +763,7 @@ export default class ChatArea {
         const userDataBadge = hasUserDataTags
             ? `<span class="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground/60">
                 <span class="inline-block rounded-sm flex-shrink-0 user-data-highlight" style="width:14px;height:8px"></span>
-                = your data
+                from private local memory
                </span>`
             : '';
         const subtitle = `${title} to ${modelName || 'frontier model'}`;

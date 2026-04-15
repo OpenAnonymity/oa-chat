@@ -243,8 +243,15 @@ export default class ChatInput {
                 const button = e.target.closest('.chat-mode-toggle-btn');
                 if (!button) return;
 
-                const nextMode = button.dataset.modeOption === 'memory' ? 'memory' : 'chat';
-                this.app.memoryMode = nextMode === 'memory';
+                const isMemory = button.dataset.modeOption === 'memory';
+                if (isMemory && this.app.memoryMode && this.app.memoryEditor) {
+                    this.app.memoryEditor.open();
+                    return;
+                }
+                const container = this.app.elements.memoryToggle;
+                container.classList.add('sliding');
+                setTimeout(() => container.classList.remove('sliding'), 250);
+                this.app.memoryMode = isMemory;
                 this.updateMemoryToggleUI();
                 await chatDB.saveSetting('memoryMode', this.app.memoryMode);
             });
