@@ -3821,6 +3821,7 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
 }
 
 .chat-mode-toggle-btn {
+    position: relative;
     flex: 1;
     z-index: 1;
     display: flex;
@@ -3850,12 +3851,64 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
     color: hsl(var(--color-foreground));
 }
 
-.chat-mode-toggle-btn[data-mode-option="memory"][aria-checked="true"]:hover {
-    background: hsl(var(--color-foreground) / 0.08);
+.chat-mode-toggle-container:not(.sliding) .chat-mode-toggle-btn[data-mode-option="memory"][aria-checked="true"]:hover {
+    background-color: hsl(var(--color-hover));
+    box-shadow: inset 0 0 0 1px hsl(var(--color-foreground) / 0.15);
 }
 
-.chat-mode-toggle-btn[data-mode-option="memory"][aria-checked="true"]:active {
-    transform: scale(0.92);
+.chat-mode-html-tooltip {
+    display: none;
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%) translateY(-8px);
+    background-color: hsl(var(--color-popover));
+    color: hsl(var(--color-popover-foreground));
+    border: 1px solid hsl(var(--color-border));
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    white-space: nowrap;
+    z-index: 9999;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    pointer-events: none;
+    align-items: center;
+    gap: 4px;
+}
+
+.chat-mode-html-tooltip::before {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    width: 8px;
+    height: 8px;
+    background-color: hsl(var(--color-popover));
+    border: none;
+    border-bottom: 1px solid hsl(var(--color-border));
+    border-right: 1px solid hsl(var(--color-border));
+    transform: translateX(-50%) translateY(-4px) rotate(45deg);
+    z-index: 10000;
+}
+
+.dark .chat-mode-html-tooltip {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.chat-mode-toggle-btn[data-mode-option="memory"]:hover .chat-mode-html-tooltip {
+    display: inline-flex;
+    animation: tooltipBodyFadeInTop 0.15s ease-out;
+}
+
+.chat-mode-toggle-btn[data-mode-option="memory"]:hover .chat-mode-html-tooltip::before {
+    animation: tooltipArrowFadeInTop 0.15s ease-out;
+}
+
+@media (hover: none), (pointer: coarse) {
+    .chat-mode-toggle-btn[data-mode-option="memory"]:hover .chat-mode-html-tooltip {
+        display: none !important;
+    }
 }
 
 /* Image modal animation */
@@ -3971,18 +4024,18 @@ html {
     margin-bottom: 2.5rem;
 }
 
-/* Custom Tooltip Styles */
+/* Custom Tooltip Styles — speech-bubble shape with outlined arrow
+   Arrow is a rotated square with selective borders, positioned above the body
+   so its background covers the body's border at the junction. */
 [data-tooltip] {
     position: relative;
 }
 
-/* Disable tooltips when explicitly disabled (e.g., when a menu is open over the button) */
 [data-tooltip].tooltip-disabled:hover::after,
 [data-tooltip].tooltip-disabled:hover::before {
     display: none !important;
 }
 
-/* Hide tooltips on touch devices - they require hover which doesn't exist on mobile */
 @media (hover: none), (pointer: coarse) {
     [data-tooltip]:hover::after,
     [data-tooltip]:hover::before {
@@ -3990,11 +4043,11 @@ html {
     }
 }
 
-/* Elevate tooltip parent above input area when hovering to ensure tooltip visibility */
 [data-tooltip]:hover {
-    z-index: 50; /* Above input area (z-20) and scroll button (z-45) */
+    z-index: 50;
 }
 
+/* --- Tooltip body (default: below element) --- */
 [data-tooltip]:hover::after {
     content: attr(data-tooltip);
     position: absolute;
@@ -4012,67 +4065,62 @@ html {
     z-index: 9999;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
     pointer-events: none;
-    animation: tooltipFadeIn 0.15s ease-out;
+    animation: tooltipBodyFadeIn 0.15s ease-out;
 }
 
+/* --- Tooltip arrow (default: points up toward element) --- */
 [data-tooltip]:hover::before {
     content: '';
     position: absolute;
     top: 100%;
     left: 50%;
-    transform: translateX(-50%) translateY(0px);
-    border-width: 4px;
-    border-style: solid;
-    border-color: transparent transparent hsl(var(--color-border)) transparent;
-    z-index: 9999;
+    width: 8px;
+    height: 8px;
+    background-color: hsl(var(--color-popover));
+    border-top: 1px solid hsl(var(--color-border));
+    border-left: 1px solid hsl(var(--color-border));
+    transform: translateX(-50%) translateY(4px) rotate(45deg);
+    z-index: 10000;
     pointer-events: none;
-    animation: tooltipFadeIn 0.15s ease-out;
+    animation: tooltipArrowFadeIn 0.15s ease-out;
 }
 
-/* Cover the border arrow with background color to make it look seamless */
-[data-tooltip]:hover::after {
-    /* Ensure background covers border if needed, but popover usually fine */
+@keyframes tooltipBodyFadeIn {
+    from { opacity: 0; transform: translateX(-50%) translateY(4px); }
+    to   { opacity: 1; transform: translateX(-50%) translateY(8px); }
 }
 
-@keyframes tooltipFadeIn {
-    from {
-        opacity: 0;
-        transform: translateX(-50%) translateY(4px);
-    }
-    to {
-        opacity: 1;
-        transform: translateX(-50%) translateY(8px);
-    }
+@keyframes tooltipArrowFadeIn {
+    from { opacity: 0; transform: translateX(-50%) translateY(0px) rotate(45deg); }
+    to   { opacity: 1; transform: translateX(-50%) translateY(4px) rotate(45deg); }
 }
 
-/* Tooltip position: top (for elements at bottom of screen) */
+/* --- Position: top (elements at bottom of screen) --- */
 [data-tooltip-position="top"]:hover::after {
     top: auto;
     bottom: 100%;
     transform: translateX(-50%) translateY(-8px);
+    animation: tooltipBodyFadeInTop 0.15s ease-out;
 }
 
 [data-tooltip-position="top"]:hover::before {
     top: auto;
     bottom: 100%;
-    transform: translateX(-50%) translateY(0px);
-    border-color: hsl(var(--color-border)) transparent transparent transparent;
+    border: none;
+    border-bottom: 1px solid hsl(var(--color-border));
+    border-right: 1px solid hsl(var(--color-border));
+    transform: translateX(-50%) translateY(-4px) rotate(45deg);
+    animation: tooltipArrowFadeInTop 0.15s ease-out;
 }
 
-@keyframes tooltipFadeInTop {
-    from {
-        opacity: 0;
-        transform: translateX(-50%) translateY(-4px);
-    }
-    to {
-        opacity: 1;
-        transform: translateX(-50%) translateY(-8px);
-    }
+@keyframes tooltipBodyFadeInTop {
+    from { opacity: 0; transform: translateX(-50%) translateY(-4px); }
+    to   { opacity: 1; transform: translateX(-50%) translateY(-8px); }
 }
 
-[data-tooltip-position="top"]:hover::after,
-[data-tooltip-position="top"]:hover::before {
-    animation: tooltipFadeInTop 0.15s ease-out;
+@keyframes tooltipArrowFadeInTop {
+    from { opacity: 0; transform: translateX(-50%) translateY(0px) rotate(45deg); }
+    to   { opacity: 1; transform: translateX(-50%) translateY(-4px) rotate(45deg); }
 }
 
 /* Multiline tooltip support for ephemeral key details */
@@ -4082,39 +4130,41 @@ html {
     max-width: 420px;
     text-align: left;
     line-height: 1.5;
-    /* Override monospace inheritance from parent - use system font for text */
     font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
 }
 
-/* Tooltip position: right-aligned (for right panel elements) */
+/* --- Position: right-aligned (right panel elements) --- */
 [data-tooltip-position="right"]:hover::after {
     left: auto;
     right: 0;
     transform: translateY(8px);
-    animation: tooltipFadeInRight 0.15s ease-out;
+    animation: tooltipBodyFadeInRight 0.15s ease-out;
 }
 
 [data-tooltip-position="right"]:hover::before {
     left: auto;
     right: 12px;
-    transform: translateY(0px);
-    animation: tooltipFadeInRight 0.15s ease-out;
+    transform: translateY(4px) rotate(45deg);
+    animation: tooltipArrowFadeInRight 0.15s ease-out;
 }
 
-@keyframes tooltipFadeInRight {
-    from {
-        opacity: 0;
-        transform: translateY(4px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(8px);
-    }
+@keyframes tooltipBodyFadeInRight {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(8px); }
+}
+
+@keyframes tooltipArrowFadeInRight {
+    from { opacity: 0; transform: translateY(0px) rotate(45deg); }
+    to   { opacity: 1; transform: translateY(4px) rotate(45deg); }
 }
 
 /* Dark mode tooltip adjustment */
 .dark [data-tooltip]:hover::after {
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    background-color: hsl(var(--color-popover));
+}
+
+.dark [data-tooltip]:hover::before {
     background-color: hsl(var(--color-popover));
 }
 
