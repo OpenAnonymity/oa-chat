@@ -8,10 +8,18 @@ import { getProviderIcon } from '../services/providerIcons.js';
 import { extractDomain } from '../services/urlMetadata.js';
 import { getFileIconSvg } from '../services/fileUtils.js';
 import { getStandardizedModelDisplayName } from '../services/modelConfig.js';
+import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 
 // In-memory cache for reasoning trace expanded state (persists across session switches)
 const reasoningExpandedState = new Set();
-const agentTraceExpandedState = new Set();
+
+// Agent trace default expanded state, backed by preferencesStore
+let agentTraceDefaultExpanded = false;
+preferencesStore.getPreference(PREF_KEYS.agentTraceExpanded, { defaultValue: false })
+    .then(v => { agentTraceDefaultExpanded = !!v; });
+preferencesStore.onChange((key, value) => {
+    if (key === PREF_KEYS.agentTraceExpanded) agentTraceDefaultExpanded = !!value;
+});
 
 const AGENT_TOOL_LABELS = {
     augment_query:   'Adding context to prompt',
@@ -170,7 +178,7 @@ function buildAgentTrace(trace, messageId, isStreaming = false) {
 
     const contentId = `agent-trace-content-${messageId}`;
     const toggleId = `agent-trace-toggle-${messageId}`;
-    const isExpanded = agentTraceExpandedState.has(messageId);
+    const isExpanded = agentTraceDefaultExpanded;
 
     const toolCount = steps.filter((step) => step?.type === 'tool_call').length;
     const lastStep = steps[steps.length - 1];
@@ -191,7 +199,7 @@ function buildAgentTrace(trace, messageId, isStreaming = false) {
         } else if (lastStep?.type === 'model_text') {
             subtitle = 'Drafting prompt...';
         } else {
-            subtitle = 'Reading memory...';
+            subtitle = 'Thinking...';
         }
     }
 
@@ -1813,12 +1821,11 @@ if (typeof window !== 'undefined') {
             if (isHidden) {
                 contentEl.classList.remove('hidden');
                 chevronEl.style.transform = 'rotate(180deg)';
-                agentTraceExpandedState.add(messageId);
             } else {
                 contentEl.classList.add('hidden');
                 chevronEl.style.transform = '';
-                agentTraceExpandedState.delete(messageId);
             }
+            preferencesStore.savePreference(PREF_KEYS.agentTraceExpanded, isHidden);
         }
     };
 }

@@ -19,7 +19,8 @@ const PREF_KEYS = {
     sharePasswordMode: 'pref-share-password-mode',
     shareExpiryTtl: 'pref-share-expiry-ttl',
     shareCustomExpiryValue: 'pref-share-custom-expiry-value',
-    shareCustomExpiryUnit: 'pref-share-custom-expiry-unit'
+    shareCustomExpiryUnit: 'pref-share-custom-expiry-unit',
+    agentTraceExpanded: 'pref-agent-trace-expanded'
 };
 
 const LOCAL_STORAGE_KEYS = {
@@ -60,7 +61,8 @@ const DEFAULT_PREFERENCES = {
     [PREF_KEYS.sharePasswordMode]: 'pin',
     [PREF_KEYS.shareExpiryTtl]: 604800,
     [PREF_KEYS.shareCustomExpiryValue]: 1,
-    [PREF_KEYS.shareCustomExpiryUnit]: '86400'
+    [PREF_KEYS.shareCustomExpiryUnit]: '86400',
+    [PREF_KEYS.agentTraceExpanded]: false
 };
 
 const PREF_SNAPSHOT_KEYS = new Set([
