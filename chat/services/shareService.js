@@ -255,17 +255,36 @@ export function buildSharePayload(session, messages, opts = {}) {
             searchEnabled: session.searchEnabled,
             inferenceBackend: session.inferenceBackend || inferenceService.getDefaultBackendId()
         },
-        messages: messages.map(m => ({
-            role: m.role,
-            content: m.content,
-            timestamp: m.timestamp,
-            model: m.model,
-            files: m.files,
-            images: m.images,
-            reasoning: m.reasoning,
-            reasoningDuration: m.reasoningDuration,
-            tokenCount: m.tokenCount
-        }))
+        messages: messages.map(m => {
+            const msg = {
+                role: m.role,
+                content: m.content,
+                timestamp: m.timestamp,
+                model: m.model,
+                files: m.files,
+                images: m.images,
+                reasoning: m.reasoning,
+                reasoningDuration: m.reasoningDuration,
+                tokenCount: m.tokenCount
+            };
+
+            // Preserve memory agent fields for proper rendering in shared view
+            if (m.isLocalOnly) msg.isLocalOnly = true;
+            if (Array.isArray(m.agentTrace) && m.agentTrace.length > 0) {
+                msg.agentTrace = m.agentTrace;
+            }
+            if (m.ciPromptDraft) {
+                msg.ciPromptDraft = m.ciPromptDraft;
+                // Normalize pending approval to approved for shared context
+                // (recipients can't interact with approval UI)
+                const status = m.memoryApprovalPrompt?.status;
+                if (status === 'approved' || status === 'pending') {
+                    msg.memoryApprovalPrompt = { status: 'approved' };
+                }
+            }
+
+            return msg;
+        })
     };
 
     // Include shared access payload (legacy sharedApiKey preserved for compatibility)
