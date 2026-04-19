@@ -92,14 +92,7 @@ class MemoryEditor {
 
     close() {
         if (!this.isOpen || !this.overlay) return;
-        if (this._isBackfillActive()) {
-            if (this.backfillState === 'running') {
-                this._requestBackfillStop('Stopping backfill. Close again once it finishes.');
-            } else {
-                this.app?.showToast?.('Backfill is stopping. Close again once it finishes.', 'info');
-            }
-            return;
-        }
+        const keepBackfillRunning = this._isBackfillActive();
         this.isOpen = false;
         this.overlay.classList.add('hidden');
         this.overlay.innerHTML = '';
@@ -111,9 +104,11 @@ class MemoryEditor {
         this.importPreview = null;
         this.importDoc = null;
         this.importResult = null;
-        this.backfillState = null;
-        this.backfillProgress = this._getInitialBackfillProgress();
-        this.backfillAbortController = null;
+        if (!keepBackfillRunning) {
+            this.backfillState = null;
+            this.backfillProgress = this._getInitialBackfillProgress();
+            this.backfillAbortController = null;
+        }
 
         if (this.escapeHandler) {
             document.removeEventListener('keydown', this.escapeHandler);
@@ -123,6 +118,10 @@ class MemoryEditor {
             this.returnFocusEl.focus();
         }
         this.returnFocusEl = null;
+
+        if (keepBackfillRunning) {
+            this.app?.showToast?.('Backfill continues in background.', 'info', 3000);
+        }
     }
 
     async _loadFileTree() {
@@ -1016,9 +1015,9 @@ class MemoryEditor {
 
         const activeSession = this.app?.getCurrentSession?.() || null;
         const keySession = activeSession || { memoryKey: null, memoryKeyInfo: null };
-        const hadMemoryKey = !!keySession.memoryKey;
         let shouldRefreshFiles = false;
         const completedSessionSavePromises = [];
+        const BACKFILL_AUTH_RETRY_LIMIT = 1;
         const persistCompletedCandidate = (candidate) => {
             if (!candidate || candidate.didPersistBackfillProgress) {
                 return;
@@ -1032,18 +1031,37 @@ class MemoryEditor {
             });
             completedSessionSavePromises.push(savePromise);
         };
-
-        try {
-            const memoryKey = await ensureMemoryKey(keySession, ticketClient);
-            if (activeSession && keySession.memoryKey && (!hadMemoryKey || keySession.memoryKey !== memoryKey)) {
-                await chatDB.saveSession(activeSession);
-            }
-
-            if (!memoryKey) {
-                this.app?.showToast?.('Backfill needs 2 available inference tickets for confidential memory import.', 'info');
+        const persistActiveSessionIfChanged = async (previousKey) => {
+            if (!activeSession) {
                 return;
             }
+            if (keySession.memoryKey !== previousKey) {
+                await chatDB.saveSession(activeSession);
+            }
+        };
+        const invalidateActiveMemoryKey = async () => {
+            invalidateMemoryKey(keySession);
+            if (activeSession) {
+                await chatDB.saveSession(activeSession);
+            }
+        };
+        const updateBackfillProgressForResult = (candidate, itemResult) => {
+            this.backfillProgress.processed += 1;
+            this.backfillProgress.currentLabel = candidate?.input?.title || '';
+            if (itemResult?.status === 'processed') {
+                this.backfillProgress.imported += 1;
+            } else if (itemResult?.status === 'skipped') {
+                this.backfillProgress.skipped += 1;
+            } else if (itemResult?.status === 'error') {
+                this.backfillProgress.errors += 1;
+            }
+            if (itemResult?.status !== 'error') {
+                persistCompletedCandidate(candidate);
+            }
+            this._syncBackfillButton();
+        };
 
+        try {
             const candidates = await this._collectBackfillCandidates();
             if (candidates.length === 0) {
                 this.app?.showToast?.('All local chats are already backfilled.', 'success');
@@ -1062,77 +1080,109 @@ class MemoryEditor {
             };
             this._syncBackfillButton();
 
-            const result = await importMemoryData({
-                input: candidates.map((candidate) => candidate.input),
-                apiKey: memoryKey,
-                model: this.app?.memoryAgentModel,
-                options: {
-                    format: 'normalized',
-                    signal: this.backfillAbortController.signal,
-                    onProgress: (event) => {
-                        if (event.stage === 'item_start') {
-                            this.backfillProgress.currentLabel = event.itemTitle || '';
-                            this._syncBackfillButton();
-                            return;
-                        }
-                        if (event.stage === 'item_complete') {
-                            this.backfillProgress.processed = event.itemIndex || this.backfillProgress.processed;
-                            this.backfillProgress.currentLabel = event.itemTitle || '';
-                            if (event.itemStatus === 'processed') {
-                                this.backfillProgress.imported += 1;
-                            } else if (event.itemStatus === 'skipped') {
-                                this.backfillProgress.skipped += 1;
-                            } else if (event.itemStatus === 'error') {
-                                this.backfillProgress.errors += 1;
-                            }
-                            if (event.itemStatus !== 'error') {
-                                persistCompletedCandidate(candidates[(event.itemIndex || 1) - 1] || null);
-                            }
-                            this._syncBackfillButton();
-                        }
-                    }
+            let stopReason = null;
+
+            for (const candidate of candidates) {
+                if (this.backfillAbortController.signal.aborted) {
+                    stopReason = 'aborted';
+                    break;
                 }
-            });
+                this.backfillProgress.currentLabel = candidate?.input?.title || '';
+                this._syncBackfillButton();
 
-            shouldRefreshFiles = result.imported > 0;
+                let authRetryCount = 0;
+                let itemFinished = false;
 
-            for (let index = 0; index < result.results.length; index += 1) {
-                const itemResult = result.results[index];
-                const candidate = candidates[index];
-                if (!candidate || itemResult.status === 'error') continue;
-                persistCompletedCandidate(candidate);
+                while (!itemFinished) {
+                    const previousKey = keySession.memoryKey || null;
+                    const memoryKey = await ensureMemoryKey(keySession, ticketClient);
+                    await persistActiveSessionIfChanged(previousKey);
+
+                    if (!memoryKey) {
+                        stopReason = (authRetryCount > 0 || this.backfillProgress.processed > 0)
+                            ? 'key_expired_no_tickets'
+                            : 'insufficient_tickets';
+                        break;
+                    }
+
+                    const result = await importMemoryData({
+                        input: candidate.input,
+                        apiKey: memoryKey,
+                        model: this.app?.memoryAgentModel,
+                        options: {
+                            format: 'normalized',
+                            signal: this.backfillAbortController.signal
+                        }
+                    });
+
+                    if (result.aborted) {
+                        stopReason = 'aborted';
+                        break;
+                    }
+
+                    if (result.authError) {
+                        await invalidateActiveMemoryKey();
+                        authRetryCount += 1;
+                        if (authRetryCount > BACKFILL_AUTH_RETRY_LIMIT) {
+                            stopReason = 'auth_refresh_failed';
+                            break;
+                        }
+                        continue;
+                    }
+
+                    const itemResult = result.results[0] || {
+                        title: candidate?.input?.title || null,
+                        updatedAt: candidate?.input?.updatedAt || null,
+                        status: 'skipped',
+                        writeCalls: 0
+                    };
+                    if (itemResult.status === 'processed') {
+                        shouldRefreshFiles = true;
+                    }
+                    updateBackfillProgressForResult(candidate, itemResult);
+                    itemFinished = true;
+                }
+
+                if (stopReason) {
+                    break;
+                }
             }
+
             await Promise.allSettled(completedSessionSavePromises);
 
-            if (result.authError) {
-                invalidateMemoryKey(keySession);
-                if (activeSession) {
-                    await chatDB.saveSession(activeSession);
-                }
+            if (stopReason === 'insufficient_tickets') {
+                this.app?.showToast?.('Backfill needs 2 available inference tickets for confidential memory import.', 'info');
+            } else if (stopReason === 'key_expired_no_tickets') {
                 this.app?.showToast?.(
-                    `Backfill stopped after ${result.results.length} chat${result.results.length === 1 ? '' : 's'}: confidential memory key expired.`,
+                    'Backfill stopped: no tickets left to renew the confidential key.',
                     'error',
                     5000
                 );
-            } else if (result.aborted) {
-                if (result.results.length > 0) {
+            } else if (stopReason === 'auth_refresh_failed') {
+                this.app?.showToast?.(
+                    'Backfill stopped: failed to refresh the confidential key.',
+                    'error',
+                    5000
+                );
+            } else if (stopReason === 'aborted') {
+                if (this.backfillProgress.processed > 0) {
                     this.app?.showToast?.(
-                        `Backfill stopped after ${result.results.length} chat${result.results.length === 1 ? '' : 's'}. Click Backfill again to continue.`,
+                        `Backfill stopped after ${this.backfillProgress.processed} chat${this.backfillProgress.processed === 1 ? '' : 's'}. Click Backfill again to continue.`,
                         'info',
                         5000
                     );
                 } else {
                     this.app?.showToast?.('Backfill stopped. Click Backfill again to continue.', 'info', 4000);
                 }
-            } else if (result.errors > 0) {
+            } else if (this.backfillProgress.errors > 0) {
                 this.app?.showToast?.(
-                    `Backfill finished: ${result.imported} imported, ${result.skipped} skipped, ${result.errors} error${result.errors === 1 ? '' : 's'}.`,
+                    `Backfill finished: ${this.backfillProgress.imported} imported, ${this.backfillProgress.skipped} skipped, ${this.backfillProgress.errors} error${this.backfillProgress.errors === 1 ? '' : 's'}.`,
                     'info',
                     5000
                 );
             } else {
                 this.app?.showToast?.(
-                    `Backfill finished: ${result.imported} chat${result.imported === 1 ? '' : 's'} imported into memory.`,
+                    `Backfill finished: ${this.backfillProgress.imported} chat${this.backfillProgress.imported === 1 ? '' : 's'} imported into memory.`,
                     'success',
                     4000
                 );
@@ -1152,8 +1202,10 @@ class MemoryEditor {
             this.backfillProgress = this._getInitialBackfillProgress();
             if (shouldRefreshFiles) {
                 await this._loadFileTree();
-                this.render();
-            } else {
+                if (this.isOpen) {
+                    this.render();
+                }
+            } else if (this.isOpen) {
                 this._syncBackfillButton();
             }
         }

@@ -213,12 +213,18 @@ forwarding its details into the final prompt.
   - transient confidential-model transport failures are retried inside `nanomem`
     before the chat is marked failed
   - the header `Backfill` button turns into a stop control while import is running
+  - closing the memory panel no longer stops that run; backfill continues in the
+    background and the panel can be reopened later to inspect/stop it
   - stopping the run only leaves the currently interrupted chat unmarked; chats
     that already completed still keep their `memoryProcessedAt` marker, so the
     user can resume later and continue from the remaining eligible chats
   - root now persists `memoryProcessedAt` as each item completes, not only at the
     end of the whole run, so restarting backfill immediately skips chats that
     already finished before the stop
+  - root now redeems confidential memory keys item-by-item as needed during the
+    run. If a key expires mid-backfill and enough tickets remain, the app
+    invalidates that key, requests a fresh one, and retries the same chat once
+    before giving up
   - exhausted failures still leave that chat eligible for the next backfill run
     because `memoryProcessedAt` is only written after a non-error result
 - Live post-turn extraction uses the same normalized message filtering as backfill:
