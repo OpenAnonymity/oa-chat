@@ -47,6 +47,7 @@ class MemoryEditor {
 
         this.backfillState = null;
         this.backfillProgress = this._getInitialBackfillProgress();
+        this.backfillAbortController = null;
     }
 
     async openToFile(path) {
@@ -91,8 +92,12 @@ class MemoryEditor {
 
     close() {
         if (!this.isOpen || !this.overlay) return;
-        if (this.backfillState === 'running') {
-            this.app?.showToast?.('Backfill is still running.', 'info');
+        if (this._isBackfillActive()) {
+            if (this.backfillState === 'running') {
+                this._requestBackfillStop('Stopping backfill. Close again once it finishes.');
+            } else {
+                this.app?.showToast?.('Backfill is stopping. Close again once it finishes.', 'info');
+            }
             return;
         }
         this.isOpen = false;
@@ -108,6 +113,7 @@ class MemoryEditor {
         this.importResult = null;
         this.backfillState = null;
         this.backfillProgress = this._getInitialBackfillProgress();
+        this.backfillAbortController = null;
 
         if (this.escapeHandler) {
             document.removeEventListener('keydown', this.escapeHandler);
@@ -172,13 +178,7 @@ class MemoryEditor {
 
     _renderHeader() {
         const fileCount = this.files.length;
-        const isBackfillRunning = this.backfillState === 'running';
-        const backfillLabel = isBackfillRunning && this.backfillProgress.total > 0
-            ? `${Math.min(this.backfillProgress.processed, this.backfillProgress.total)}/${this.backfillProgress.total}`
-            : 'Backfill';
-        const backfillTitle = isBackfillRunning
-            ? `Backfilling ${this.backfillProgress.currentLabel || 'local chats'}`
-            : 'Process local chats into memory with nanomem import';
+        const backfillButtonState = this._getBackfillButtonState();
         return `
             <div class="flex items-center justify-between px-3 py-1.5 shrink-0" style="border-bottom: 1px solid var(--mem-divider)">
                 <div class="flex items-center gap-2">
@@ -199,7 +199,7 @@ class MemoryEditor {
                         <button id="memory-export-btn" class="mem-header-btn" title="Export memories as OMF JSON">Export</button>
                         <button id="memory-import-btn" class="mem-header-btn" title="Import memories from OMF JSON">Import</button>
                         <input id="memory-import-file" type="file" accept=".json" class="hidden" />
-                        <button id="memory-backfill-btn" class="mem-header-btn" title="${this._escapeHtml(backfillTitle)}" ${isBackfillRunning ? 'disabled aria-busy="true"' : ''}>${this._escapeHtml(backfillLabel)}</button>
+                        <button id="memory-backfill-btn" class="mem-header-btn" title="${this._escapeHtml(backfillButtonState.title)}" ${backfillButtonState.disabled ? 'disabled' : ''} ${backfillButtonState.busy ? 'aria-busy="true"' : ''}>${this._escapeHtml(backfillButtonState.label)}</button>
                     </div>
                     <div class="w-px h-4 mx-0.5" style="background: var(--mem-divider)"></div>
                     <button id="memory-close-btn" class="text-muted-foreground hover:text-foreground transition-colors p-1 rounded-md hover:bg-muted/40" aria-label="Close">
@@ -456,9 +456,7 @@ class MemoryEditor {
             void this._confirmImport();
         });
         this.overlay.querySelector('#import-cancel-btn')?.addEventListener('click', () => this._dismissImport());
-        this.overlay.querySelector('#memory-backfill-btn')?.addEventListener('click', () => {
-            void this._startBackfill();
-        });
+        this.overlay.querySelector('#memory-backfill-btn')?.addEventListener('click', () => this._handleBackfillButtonClick());
 
         const sidebar = this.overlay.querySelector('#memory-sidebar');
         if (sidebar) {
@@ -955,8 +953,64 @@ class MemoryEditor {
         };
     }
 
-    async _startBackfill() {
+    _isBackfillActive() {
+        return this.backfillState === 'running' || this.backfillState === 'stopping';
+    }
+
+    _getBackfillButtonState() {
+        const total = Math.max(0, Number(this.backfillProgress.total || 0));
+        const processed = Math.min(Math.max(0, Number(this.backfillProgress.processed || 0)), total);
+        const currentLabel = this.backfillProgress.currentLabel || 'local chats';
+
+        if (this.backfillState === 'stopping') {
+            return {
+                label: 'Stopping...',
+                title: `Stopping backfill after current in-flight work. ${processed}/${total} processed. Current: ${currentLabel}`,
+                disabled: true,
+                busy: true
+            };
+        }
+
         if (this.backfillState === 'running') {
+            return {
+                label: total > 0 ? `Stop ${processed}/${total}` : 'Stop',
+                title: `Stop backfill. ${processed}/${total} processed. Current: ${currentLabel}`,
+                disabled: false,
+                busy: true
+            };
+        }
+
+        return {
+            label: 'Backfill',
+            title: 'Process local chats into memory with nanomem import',
+            disabled: false,
+            busy: false
+        };
+    }
+
+    _handleBackfillButtonClick() {
+        if (this.backfillState === 'running') {
+            this._requestBackfillStop();
+            return;
+        }
+        if (this.backfillState === 'stopping') {
+            return;
+        }
+        void this._startBackfill();
+    }
+
+    _requestBackfillStop(toastMessage = 'Stopping backfill...') {
+        if (this.backfillState !== 'running') {
+            return;
+        }
+        this.backfillState = 'stopping';
+        this.backfillAbortController?.abort();
+        this._syncBackfillButton();
+        this.app?.showToast?.(toastMessage, 'info', 4000);
+    }
+
+    async _startBackfill() {
+        if (this._isBackfillActive()) {
             return;
         }
 
@@ -964,6 +1018,20 @@ class MemoryEditor {
         const keySession = activeSession || { memoryKey: null, memoryKeyInfo: null };
         const hadMemoryKey = !!keySession.memoryKey;
         let shouldRefreshFiles = false;
+        const completedSessionSavePromises = [];
+        const persistCompletedCandidate = (candidate) => {
+            if (!candidate || candidate.didPersistBackfillProgress) {
+                return;
+            }
+            candidate.didPersistBackfillProgress = true;
+            candidate.session.memoryProcessedAt = Date.now();
+            const savePromise = chatDB.saveSession(candidate.session).catch((error) => {
+                candidate.didPersistBackfillProgress = false;
+                console.error('[MemoryEditor] Failed to save backfill progress:', error);
+                throw error;
+            });
+            completedSessionSavePromises.push(savePromise);
+        };
 
         try {
             const memoryKey = await ensureMemoryKey(keySession, ticketClient);
@@ -982,6 +1050,7 @@ class MemoryEditor {
                 return;
             }
 
+            this.backfillAbortController = new AbortController();
             this.backfillState = 'running';
             this.backfillProgress = {
                 total: candidates.length,
@@ -999,6 +1068,7 @@ class MemoryEditor {
                 model: this.app?.memoryAgentModel,
                 options: {
                     format: 'normalized',
+                    signal: this.backfillAbortController.signal,
                     onProgress: (event) => {
                         if (event.stage === 'item_start') {
                             this.backfillProgress.currentLabel = event.itemTitle || '';
@@ -1015,6 +1085,9 @@ class MemoryEditor {
                             } else if (event.itemStatus === 'error') {
                                 this.backfillProgress.errors += 1;
                             }
+                            if (event.itemStatus !== 'error') {
+                                persistCompletedCandidate(candidates[(event.itemIndex || 1) - 1] || null);
+                            }
                             this._syncBackfillButton();
                         }
                     }
@@ -1026,11 +1099,10 @@ class MemoryEditor {
             for (let index = 0; index < result.results.length; index += 1) {
                 const itemResult = result.results[index];
                 const candidate = candidates[index];
-                if (!candidate) continue;
-                if (itemResult.status === 'error') continue;
-                candidate.session.memoryProcessedAt = Date.now();
-                await chatDB.saveSession(candidate.session);
+                if (!candidate || itemResult.status === 'error') continue;
+                persistCompletedCandidate(candidate);
             }
+            await Promise.allSettled(completedSessionSavePromises);
 
             if (result.authError) {
                 invalidateMemoryKey(keySession);
@@ -1042,6 +1114,16 @@ class MemoryEditor {
                     'error',
                     5000
                 );
+            } else if (result.aborted) {
+                if (result.results.length > 0) {
+                    this.app?.showToast?.(
+                        `Backfill stopped after ${result.results.length} chat${result.results.length === 1 ? '' : 's'}. Click Backfill again to continue.`,
+                        'info',
+                        5000
+                    );
+                } else {
+                    this.app?.showToast?.('Backfill stopped. Click Backfill again to continue.', 'info', 4000);
+                }
             } else if (result.errors > 0) {
                 this.app?.showToast?.(
                     `Backfill finished: ${result.imported} imported, ${result.skipped} skipped, ${result.errors} error${result.errors === 1 ? '' : 's'}.`,
@@ -1065,6 +1147,7 @@ class MemoryEditor {
             }
             this.app?.showToast?.(error?.message || 'Failed to backfill chats into memory.', 'error');
         } finally {
+            this.backfillAbortController = null;
             this.backfillState = null;
             this.backfillProgress = this._getInitialBackfillProgress();
             if (shouldRefreshFiles) {
@@ -1081,8 +1164,8 @@ class MemoryEditor {
         const sortedSessions = [...sessions].sort((a, b) => {
             const left = Number(a?.updatedAt || a?.createdAt || 0);
             const right = Number(b?.updatedAt || b?.createdAt || 0);
-            if (left !== right) return left - right;
-            return String(a?.id || '').localeCompare(String(b?.id || ''));
+            if (left !== right) return right - left;
+            return String(b?.id || '').localeCompare(String(a?.id || ''));
         });
 
         /** @type {Array<{ session: any, input: { title: string | null, messages: Array<{ role: 'user' | 'assistant', content: string }>, updatedAt: number | null, mode: 'conversation' } }>} */
@@ -1127,20 +1210,21 @@ class MemoryEditor {
         const button = this.overlay.querySelector('#memory-backfill-btn');
         if (!button) return;
 
-        if (this.backfillState === 'running') {
-            const total = this.backfillProgress.total || 0;
-            const processed = Math.min(this.backfillProgress.processed, total);
-            button.textContent = total > 0 ? `${processed}/${total}` : '...';
-            button.title = `Backfilling ${this.backfillProgress.currentLabel || 'local chats'}`;
+        const backfillButtonState = this._getBackfillButtonState();
+        button.textContent = backfillButtonState.label;
+        button.title = backfillButtonState.title;
+
+        if (backfillButtonState.disabled) {
             button.setAttribute('disabled', 'disabled');
-            button.setAttribute('aria-busy', 'true');
-            return;
+        } else {
+            button.removeAttribute('disabled');
         }
 
-        button.textContent = 'Backfill';
-        button.title = 'Process local chats into memory with nanomem import';
-        button.removeAttribute('disabled');
-        button.removeAttribute('aria-busy');
+        if (backfillButtonState.busy) {
+            button.setAttribute('aria-busy', 'true');
+        } else {
+            button.removeAttribute('aria-busy');
+        }
     }
 
     _escapeHtml(text) {

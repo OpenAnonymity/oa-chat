@@ -203,6 +203,7 @@ forwarding its details into the final prompt.
     through `memoryBank.previewOmfImport()` / `memoryBank.importOmf()`
 - `Backfill` now means local-chat ingestion, not raw memory-file import:
   - it scans local IndexedDB chat sessions
+  - processes the newest eligible chats first (`updatedAt` / `createdAt` descending)
   - skips sessions whose `updatedAt` is not newer than `memoryProcessedAt`
   - skips the currently streaming session
   - excludes local-only `memory agent` status messages from the import input
@@ -211,6 +212,13 @@ forwarding its details into the final prompt.
     2 available inference tickets
   - transient confidential-model transport failures are retried inside `nanomem`
     before the chat is marked failed
+  - the header `Backfill` button turns into a stop control while import is running
+  - stopping the run only leaves the currently interrupted chat unmarked; chats
+    that already completed still keep their `memoryProcessedAt` marker, so the
+    user can resume later and continue from the remaining eligible chats
+  - root now persists `memoryProcessedAt` as each item completes, not only at the
+    end of the whole run, so restarting backfill immediately skips chats that
+    already finished before the stop
   - exhausted failures still leave that chat eligible for the next backfill run
     because `memoryProcessedAt` is only written after a non-error result
 - Live post-turn extraction uses the same normalized message filtering as backfill:
@@ -221,9 +229,10 @@ forwarding its details into the final prompt.
 
 - Retrieval cancellation is still partial:
   - the app aborts approval waiting and post-retrieval continuation
-  - `nanomem`'s OpenAI-compatible fetch path still does not forward `AbortSignal`
-    into `fetch`, so an in-flight confidential retrieval request itself is not
-    cancelled yet
-- Root backfill is intentionally simpler than `memory-chat`'s old extractor path:
-  - there is no cancel button yet
-  - progress is only reflected through the `Backfill` button state + toast summary
+  - the lower `nanomem` OpenAI-compatible client now accepts `AbortSignal`, but
+    the root app's augment-query retrieval path is not yet threading that signal
+    through to `memoryBridge.augmentQuery(...)`, so an in-flight confidential
+    retrieval request itself is still not cancelled yet
+- Root backfill is still intentionally simpler than `memory-chat`'s old extractor path:
+  - progress is only reflected through the `Backfill` / stop button state + toast summary
+  - there is still no separate queue modal or per-item retry UI
