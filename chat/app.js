@@ -3244,6 +3244,51 @@ class ChatApp {
         }
     }
 
+    isAccessCreditExhaustedError(error) {
+        if (error?.status !== 402) return false;
+        const details = [
+            error.message,
+            error.data?.error?.message,
+            error.data?.detail,
+            error.data?.message
+        ].filter(Boolean).join(' ').toLowerCase();
+
+        return details.includes('credit') ||
+            details.includes('can only afford') ||
+            details.includes('more credits') ||
+            details.includes('max_tokens');
+    }
+
+    async refreshAccessAfterCreditExhaustion(session, { typingId = null } = {}) {
+        if (!session) throw new Error('No active session found.');
+
+        const accessLabel = inferenceService.getAccessLabel(session);
+        this.showToast('Exhausted current ephemeral key, requesting a new key', 'success');
+
+        inferenceService.clearAccessInfo(session);
+        await chatDB.saveSession(session);
+        this.updateSessionStreamingPhase(session.id, 'requesting-key');
+        if (typingId) {
+            this.updateTypingIndicator(typingId, 'requesting-key');
+        }
+        if (this.rightPanel) {
+            this.rightPanel.onSessionChange(session);
+        }
+        if (this.floatingPanel) {
+            this.floatingPanel.showMessage(`Refreshing ${accessLabel}...`, 'info');
+        }
+
+        await this.acquireAndSetAccess(session, {
+            onGranted: () => {
+                this.advancePendingStateAfterAccessGranted(session.id, typingId);
+            }
+        });
+
+        if (this.floatingPanel) {
+            this.floatingPanel.showMessage(`${accessLabel} refreshed`, 'success', 2000);
+        }
+    }
+
     setSessionStreamingState(sessionId, isStreaming, abortController = null, phase = 'requesting-key') {
         const existingState = this.getSessionStreamingState(sessionId);
         const normalizedPhase = this.normalizePendingPhase(phase);
@@ -4902,6 +4947,7 @@ class ChatApp {
             // Retry configuration for transient errors
             const MAX_RETRIES = 2;
             let retryCount = 0;
+            let accessRefreshAttempted = false;
 
             // Helper to check if error is retryable (only before streaming starts)
             const isRetryableError = (error) => {
@@ -5189,6 +5235,23 @@ class ChatApp {
                     break retryLoop; // Don't retry cancelled requests
                 }
 
+                let terminalError = error;
+
+                if (!firstChunkReceived && !accessRefreshAttempted && this.isAccessCreditExhaustedError(error)) {
+                    accessRefreshAttempted = true;
+                    const refreshPendingPhase = 'requesting-key';
+                    this.updateSessionStreamingPhase(session.id, refreshPendingPhase);
+                    typingId = this.isViewingSession(session.id) ? this.showTypingIndicator(modelNameToUse, refreshPendingPhase) : null;
+
+                    try {
+                        await this.refreshAccessAfterCreditExhaustion(session, { typingId });
+                        continue retryLoop;
+                    } catch (refreshError) {
+                        console.error('Failed to refresh exhausted ephemeral key:', refreshError);
+                        terminalError = refreshError;
+                    }
+                }
+
                 // Check if we should retry (only if no content received yet)
                 if (!firstChunkReceived && retryCount < MAX_RETRIES && isRetryableError(error)) {
                     retryCount++;
@@ -5204,19 +5267,19 @@ class ChatApp {
                 }
 
                 // Non-retryable or exhausted retries - show error to user
-                const errorMessage = error.message;
+                const errorMessage = terminalError.message;
 
                 // Customize messages for specific error types
                 let userFriendlyMessage = `Sorry, I encountered an error while processing your request. Try re-submitting the query. **Error**: ${errorMessage}`;
 
                 // The following are inference backend HTTP status codes, not OA infra
-                if (error.status === 402) {
+                if (terminalError.status === 402) {
                     // Credit/token limit errors
                     userFriendlyMessage = `Sorry, I encountered an error while processing your request. Try submitting the query again. **Error**: ${errorMessage}`;
-                } else if (error.status === 401) {
+                } else if (terminalError.status === 401) {
                     // Authentication errors
                     userFriendlyMessage = `Authentication error. Please check the system panel (right side) and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor)!`;
-                } else if (error.status === 503 || error.status === 502 || error.status === 504) {
+                } else if (terminalError.status === 503 || terminalError.status === 502 || terminalError.status === 504) {
                     // Service unavailable / gateway errors (after retries exhausted)
                     userFriendlyMessage = `Gateway error (after ${retryCount} retries). Please take a look at the system panel and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor).`;
                 } else if (errorMessage.includes('proxy') || errorMessage.includes('Proxy')) {
