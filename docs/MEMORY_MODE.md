@@ -145,10 +145,21 @@ When memory mode is enabled and the outgoing user message has text:
 If retrieval finds nothing, tickets are unavailable, or retrieval fails, the app
 falls back to a normal send without memory context.
 
-Important scope rule: the memory agent in the chat send loop is read-only. It
-does not write back to memory after each turn. Memory writing/extraction is only
-triggered by explicit actions like `Backfill`, `Import`, or manual edits in the
-memory panel.
+Important scope rule: the `augment_query` memory agent in the chat send loop is
+read-only. It never writes during the retrieval/approval path before a model
+request is sent. Memory writes happen through separate ingestion/storage paths.
+
+Current write paths in root `oa-chat`:
+
+- Live post-turn extraction runs after successful `sendMessage()` and
+  `regenerateResponse()` completions, normalizes the full current session, and
+  calls `memoryBridge.ingestMessages(...)`. This is not gated by the global
+  chat-vs-memory mode toggle.
+- Manual `Backfill` scans IndexedDB sessions newest-first and imports eligible
+  conversations through `nanomem.importData(...)`, skipping sessions whose
+  `updatedAt` is not newer than `session.memoryProcessedAt`.
+- OMF import and memory-panel edits write directly to storage. They are explicit
+  storage mutations, not chat-session extraction.
 
 Important minimization rule: the crafter is allowed to ignore retrieved memory
 that is not actually needed. Reading a file does not automatically justify
@@ -168,6 +179,9 @@ forwarding its details into the final prompt.
   regardless of whether the current mode is chat or memory.
 - This mirrors `memory-chat`'s background extractor behavior, but stays behind
   the root app's `memoryBridge.js` seam.
+- Live post-turn extraction reprocesses the whole normalized session each time.
+  `memoryProcessedAt` is still updated on success, but that timestamp is only
+  used by manual backfill; live dedupe is only the per-session in-flight guard.
 - The local assistant status message is explicitly a `memory agent`:
   - title renders as `Memory Agent`
   - icon is the inline book glyph from `memory-chat`
@@ -233,6 +247,11 @@ forwarding its details into the final prompt.
 
 ## Known Gaps
 
+- Pre-ingestion granularity is still coarse. Root live extraction triggers after
+  successful assistant completions, while `nanomem` has no semantic pre-gate, no
+  ingest-side decision/progress event, and reports a no-write tool loop as
+  `status: 'processed'` with `writeCalls: 0`. Keep semantic "is this worth
+  remembering?" policy in `nanomem`; keep session/UI dedupe in root `oa-chat`.
 - Retrieval cancellation is still partial:
   - the app aborts approval waiting and post-retrieval continuation
   - the lower `nanomem` OpenAI-compatible client now accepts `AbortSignal`, but
