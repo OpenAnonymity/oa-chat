@@ -3509,12 +3509,15 @@ class ChatApp {
     }
 
     async updateSessionTitle(sessionId, title, options = {}) {
-        const { titleSource = 'manual', titleGenerationPending = false } = options;
+        const { titleSource = 'manual', titleGenerationPending = false, titleSearchText = null } = options;
         const session = this.state.sessions.find(s => s.id === sessionId);
         if (session) {
             session.title = title;
             session.titleSource = titleSource;
             session.titleGenerationPending = Boolean(titleGenerationPending);
+            if (typeof titleSearchText === 'string') {
+                session.titleSearchText = titleSearchText;
+            }
             session.updatedAt = Date.now();
             await chatDB.saveSession(session);
             this.renderSessions();
@@ -3528,6 +3531,13 @@ class ChatApp {
         if (!text) return 'New Chat';
         return text.substring(0, SESSION_TITLE_FALLBACK_LENGTH) +
             (text.length > SESSION_TITLE_FALLBACK_LENGTH ? '...' : '');
+    }
+
+    buildSessionTitleSearchText(content) {
+        return this.getMessageTextContent(content)
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 1000);
     }
 
     cleanGeneratedSessionTitle(title) {
@@ -3549,10 +3559,22 @@ class ChatApp {
         return cleaned;
     }
 
+    async clearSessionTitleGenerationPending(sessionId) {
+        const session = this.state.sessionsById.get(sessionId) || this.state.sessions.find(s => s.id === sessionId);
+        if (!session?.titleGenerationPending || session.titleSource === 'manual') return;
+        session.titleGenerationPending = false;
+        session.updatedAt = Date.now();
+        await chatDB.saveSession(session);
+        this.renderSessions();
+    }
+
     async generateSessionTitleIfNeeded(sessionId, userMessageId) {
         const session = this.state.sessionsById.get(sessionId) || this.state.sessions.find(s => s.id === sessionId);
         if (!session || session.titleSource === 'manual' || session.titleSource === 'generated' || !session.titleGenerationPending) return;
-        if (!inferenceService.getAccessToken(session) || inferenceService.isAccessExpired(session)) return;
+        if (!inferenceService.getAccessToken(session) || inferenceService.isAccessExpired(session)) {
+            await this.clearSessionTitleGenerationPending(session.id);
+            return;
+        }
 
         const messages = await chatDB.getSessionMessages(session.id);
         const firstUserMessage = messages.find(message => message.role === 'user' && !message.isLocalOnly);
@@ -3560,9 +3582,7 @@ class ChatApp {
 
         const prompt = this.getMessageTextContent(firstUserMessage.content).trim();
         if (!prompt) {
-            session.titleGenerationPending = false;
-            await chatDB.saveSession(session);
-            this.renderSessions();
+            await this.clearSessionTitleGenerationPending(session.id);
             return;
         }
 
@@ -3573,12 +3593,7 @@ class ChatApp {
             const generated = await inferenceService.generateSessionTitle(session, prompt, { timeoutMs: 10000 });
             const title = this.cleanGeneratedSessionTitle(generated);
             if (!title) {
-                const latestSession = this.state.sessionsById.get(sessionId) || this.state.sessions.find(s => s.id === sessionId);
-                if (latestSession?.titleGenerationPending && latestSession.titleSource !== 'manual') {
-                    latestSession.titleGenerationPending = false;
-                    await chatDB.saveSession(latestSession);
-                    this.renderSessions();
-                }
+                await this.clearSessionTitleGenerationPending(sessionId);
                 return;
             }
 
@@ -3598,13 +3613,7 @@ class ChatApp {
             this.renderSessions();
         } catch (error) {
             console.debug('Session title generation skipped:', error);
-            const latestSession = this.state.sessionsById.get(sessionId) || this.state.sessions.find(s => s.id === sessionId);
-            if (latestSession?.titleGenerationPending && latestSession.titleSource !== 'manual') {
-                latestSession.titleGenerationPending = false;
-                latestSession.updatedAt = Date.now();
-                await chatDB.saveSession(latestSession);
-                this.renderSessions();
-            }
+            await this.clearSessionTitleGenerationPending(sessionId);
         }
     }
 
@@ -3652,7 +3661,8 @@ class ChatApp {
                 const title = this.buildLocalSessionTitle(content);
                 await this.updateSessionTitle(session.id, title, {
                     titleSource: 'local',
-                    titleGenerationPending: Boolean(this.getMessageTextContent(content).trim())
+                    titleGenerationPending: Boolean(this.getMessageTextContent(content).trim()),
+                    titleSearchText: this.buildSessionTitleSearchText(content)
                 });
             }
         }
@@ -4466,6 +4476,9 @@ class ChatApp {
                     if (this.floatingPanel) {
                         this.floatingPanel.showMessage(error.message, 'error', 5000);
                     }
+                    if (lastUserMessage?.id) {
+                        await this.clearSessionTitleGenerationPending(session.id);
+                    }
                     await this.addMessage('assistant', `**Error:** ${error.message}`, { isLocalOnly: true });
                     return;
                 }
@@ -4997,6 +5010,9 @@ class ChatApp {
                     if (typingId) this.removeTypingIndicator(typingId);
                     if (this.floatingPanel) {
                         this.floatingPanel.showMessage(error.message, 'error', 5000);
+                    }
+                    if (userMessage?.id) {
+                        await this.clearSessionTitleGenerationPending(session.id);
                     }
                     await this.addMessage('assistant', `**Error:** ${error.message}`, { isLocalOnly: true });
                     return; // Return early if key acquisition fails
@@ -5668,6 +5684,7 @@ class ChatApp {
             session.title = title;
             session.titleSource = 'local';
             session.titleGenerationPending = Boolean(this.getMessageTextContent(newContent).trim());
+            session.titleSearchText = this.buildSessionTitleSearchText(newContent);
             delete session.titleGeneratedAt;
         }
 
@@ -5731,10 +5748,15 @@ class ChatApp {
         const title = firstUserMessage
             ? this.buildLocalSessionTitle(firstUserMessage.content)
             : 'Forked Chat';
+        const titleSearchText = firstUserMessage
+            ? this.buildSessionTitleSearchText(firstUserMessage.content)
+            : '';
 
         const newSession = {
             id: newSessionId,
             title: `${title} (fork)`,
+            titleSource: 'local',
+            titleSearchText,
             createdAt: Date.now(),
             updatedAt: Date.now(),
             model: session.model,
@@ -6173,8 +6195,7 @@ class ChatApp {
         this.state.sessionSearchPending = true;
 
         const results = await chatDB.searchSessions(session => {
-            const title = (session.title || '').toLowerCase();
-            return this.fuzzyMatch(query, title);
+            return this.sessionMatchesSearchQuery(session, query);
         }, SESSION_SEARCH_LIMIT);
 
         if (requestId !== this.sessionSearchRequestId) {
@@ -6199,8 +6220,7 @@ class ChatApp {
 
         const query = this.sessionSearchQuery.toLowerCase();
         const inMemory = this.state.sessions.filter(session => {
-            const title = (session.title || '').toLowerCase();
-            return this.fuzzyMatch(query, title);
+            return this.sessionMatchesSearchQuery(session, query);
         });
 
         if (this.state.sessionSearchResults && this.state.sessionSearchResultsQuery === query) {
@@ -6208,6 +6228,19 @@ class ChatApp {
         }
 
         return inMemory;
+    }
+
+    sessionMatchesSearchQuery(session, query) {
+        if (!session || !query) return false;
+        const fields = [
+            session.title,
+            session.titleSource !== 'manual' ? session.titleSearchText : ''
+        ];
+
+        return fields.some(field => {
+            const text = (field || '').toLowerCase();
+            return text && this.fuzzyMatch(query, text);
+        });
     }
 
     /**
