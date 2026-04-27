@@ -19,6 +19,8 @@ import { loadModelCatalog, saveModelCatalog } from './services/modelCatalogCache
 import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort } from './services/reasoningConfig.js';
 
 const OPENROUTER_BACKEND_ID = 'openrouter';
+const TITLE_SUMMARY_MODEL_ID = 'google/gemini-3.1-flash-lite-preview';
+const TITLE_SUMMARY_MAX_INPUT_CHARS = 4000;
 
 // System prompt to prepend to all conversations
 // Modify this function to change the default AI behavior
@@ -226,6 +228,25 @@ class OpenRouterAPI {
         return `data:${type};base64,${detail.data}`;
     }
 
+    extractTextContent(content) {
+        if (typeof content === 'string') return content;
+        if (Array.isArray(content)) {
+            return content
+                .map(part => {
+                    if (!part) return '';
+                    if (typeof part === 'string') return part;
+                    if (typeof part.text === 'string') return part.text;
+                    if (typeof part.content === 'string') return part.content;
+                    return '';
+                })
+                .filter(Boolean)
+                .join(' ');
+        }
+        if (content && typeof content.text === 'string') return content.text;
+        if (content && typeof content.content === 'string') return content.content;
+        return '';
+    }
+
     // Get model-specific max_tokens (disabled - let OpenRouter use API key credits)
     // getMaxTokensForModel(modelId) {
     //     const baseModelId = typeof modelId === 'string' ? modelId.split(':')[0] : '';
@@ -338,6 +359,95 @@ class OpenRouterAPI {
 
             return `Error: ${error.message}. Using simulated response instead: This is a fallback response since the API call failed.`;
         }
+    }
+
+    async generateSessionTitle(prompt, apiKey, options = {}) {
+        const url = `${this.baseUrl}/chat/completions`;
+        const key = apiKey || this.getApiKey();
+
+        if (!key) {
+            throw new Error('No API key available. Please obtain an API key first.');
+        }
+
+        const normalizedPrompt = this.extractTextContent(prompt)
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, TITLE_SUMMARY_MAX_INPUT_CHARS);
+
+        if (!normalizedPrompt) {
+            return '';
+        }
+
+        const headers = {
+            'Authorization': `Bearer ${key}`,
+            'Content-Type': 'application/json'
+        };
+
+        const body = {
+            model: TITLE_SUMMARY_MODEL_ID,
+            messages: [
+                {
+                    role: 'system',
+                    content: [
+                        'Generate a concise chat title from the user message.',
+                        'Return only the title.',
+                        'Use 3 to 7 words.',
+                        'No quotation marks, trailing punctuation, or prefixes like "Title:".'
+                    ].join(' ')
+                },
+                {
+                    role: 'user',
+                    content: normalizedPrompt
+                }
+            ],
+            temperature: 0.2,
+            max_tokens: 24,
+            reasoning: { effort: 'minimal' }
+        };
+
+        const { response, data, text } = await networkProxy.fetchWithRetryJson(
+            url,
+            {
+                method: 'POST',
+                headers,
+                body: JSON.stringify(body)
+            },
+            {
+                context: 'Session title generation',
+                maxAttempts: 2,
+                timeoutMs: options.timeoutMs || 10000,
+                signal: options.signal
+            }
+        );
+
+        if (window.networkLogger) {
+            window.networkLogger.logRequest({
+                type: 'openrouter',
+                method: 'POST',
+                url,
+                status: response.status,
+                request: {
+                    headers: window.networkLogger.sanitizeHeaders(headers),
+                    body: {
+                        model: TITLE_SUMMARY_MODEL_ID,
+                        messages: 'title generation',
+                        max_tokens: body.max_tokens,
+                        temperature: body.temperature
+                    }
+                },
+                response: response.ok ? { titleGeneration: true } : data || text
+            });
+        }
+
+        if (!response.ok) {
+            const errorMessage = data?.error?.message || data?.message || `HTTP error! status: ${response.status}`;
+            const error = new Error(errorMessage);
+            error.status = response.status;
+            error.data = data;
+            throw error;
+        }
+
+        return data?.choices?.[0]?.message?.content || '';
     }
 
     // Stream chat completion with support for multimodal content, web search, and reasoning traces

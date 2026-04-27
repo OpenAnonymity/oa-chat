@@ -116,7 +116,14 @@ export default class Sidebar {
      */
     buildSessionHTML(session) {
         const isActive = session.id === this.app.state.currentSessionId;
-        const titleClass = session.title === 'New Chat' ? 'italic text-muted-foreground' : '';
+        const titleClasses = [];
+        if (session.title === 'New Chat') {
+            titleClasses.push('italic', 'text-muted-foreground');
+        }
+        if (session.titleGenerationPending && session.titleSource === 'local') {
+            titleClasses.push('session-title-generating');
+        }
+        const titleClass = titleClasses.join(' ');
         const isShared = !!session.shareInfo?.shareId;
         // Show imported indicator for pure imports and forked imports (not local forks)
         // forkedFrom alone (without importedMessageCount) indicates a LOCAL fork, not an import

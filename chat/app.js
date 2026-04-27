@@ -50,6 +50,8 @@ const SESSION_SCROLL_LOAD_THRESHOLD = 160;
 const SESSION_SEARCH_DEBOUNCE = 180;  // ms wait before triggering search
 const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const UPDATE_CHECK_INITIAL_DELAY_MS = 45 * 1000;
+const SESSION_TITLE_MAX_LENGTH = 60;
+const SESSION_TITLE_FALLBACK_LENGTH = 50;
 
 // Layout constants for toolbar overlay prediction
 const SIDEBAR_WIDTH = 220;      // Default sidebar width = minimum width
@@ -3506,13 +3508,103 @@ class ChatApp {
         });
     }
 
-    async updateSessionTitle(sessionId, title) {
+    async updateSessionTitle(sessionId, title, options = {}) {
+        const { titleSource = 'manual', titleGenerationPending = false } = options;
         const session = this.state.sessions.find(s => s.id === sessionId);
         if (session) {
             session.title = title;
+            session.titleSource = titleSource;
+            session.titleGenerationPending = Boolean(titleGenerationPending);
             session.updatedAt = Date.now();
             await chatDB.saveSession(session);
             this.renderSessions();
+        }
+    }
+
+    buildLocalSessionTitle(content) {
+        const text = this.getMessageTextContent(content)
+            .replace(/\s+/g, ' ')
+            .trim();
+        if (!text) return 'New Chat';
+        return text.substring(0, SESSION_TITLE_FALLBACK_LENGTH) +
+            (text.length > SESSION_TITLE_FALLBACK_LENGTH ? '...' : '');
+    }
+
+    cleanGeneratedSessionTitle(title) {
+        if (typeof title !== 'string') return '';
+        let cleaned = title
+            .replace(/\s+/g, ' ')
+            .replace(/^title\s*:\s*/i, '')
+            .trim();
+
+        cleaned = cleaned.replace(/^["'“”‘’`]+|["'“”‘’`]+$/g, '').trim();
+        cleaned = cleaned.replace(/[.!?;:]+$/g, '').trim();
+        if (!cleaned) return '';
+
+        if (cleaned.length > SESSION_TITLE_MAX_LENGTH) {
+            cleaned = cleaned.slice(0, SESSION_TITLE_MAX_LENGTH).trimEnd();
+            cleaned = cleaned.replace(/\s+\S*$/, '').trim() || cleaned;
+        }
+
+        return cleaned;
+    }
+
+    async generateSessionTitleIfNeeded(sessionId, userMessageId) {
+        const session = this.state.sessionsById.get(sessionId) || this.state.sessions.find(s => s.id === sessionId);
+        if (!session || session.titleSource === 'manual' || session.titleSource === 'generated' || !session.titleGenerationPending) return;
+        if (!inferenceService.getAccessToken(session) || inferenceService.isAccessExpired(session)) return;
+
+        const messages = await chatDB.getSessionMessages(session.id);
+        const firstUserMessage = messages.find(message => message.role === 'user' && !message.isLocalOnly);
+        if (!firstUserMessage || firstUserMessage.id !== userMessageId) return;
+
+        const prompt = this.getMessageTextContent(firstUserMessage.content).trim();
+        if (!prompt) {
+            session.titleGenerationPending = false;
+            await chatDB.saveSession(session);
+            this.renderSessions();
+            return;
+        }
+
+        const expectedTitle = session.title;
+        const expectedSource = session.titleSource || 'local';
+
+        try {
+            const generated = await inferenceService.generateSessionTitle(session, prompt, { timeoutMs: 10000 });
+            const title = this.cleanGeneratedSessionTitle(generated);
+            if (!title) {
+                const latestSession = this.state.sessionsById.get(sessionId) || this.state.sessions.find(s => s.id === sessionId);
+                if (latestSession?.titleGenerationPending && latestSession.titleSource !== 'manual') {
+                    latestSession.titleGenerationPending = false;
+                    await chatDB.saveSession(latestSession);
+                    this.renderSessions();
+                }
+                return;
+            }
+
+            const latestSession = this.state.sessionsById.get(sessionId) || this.state.sessions.find(s => s.id === sessionId);
+            if (!latestSession) return;
+            const latestSource = latestSession.titleSource || 'local';
+            if (latestSource !== expectedSource || latestSession.title !== expectedTitle) {
+                return;
+            }
+
+            latestSession.title = title;
+            latestSession.titleSource = 'generated';
+            latestSession.titleGenerationPending = false;
+            latestSession.titleGeneratedAt = Date.now();
+            latestSession.updatedAt = Date.now();
+            await chatDB.saveSession(latestSession);
+            this.renderSessions();
+        } catch (error) {
+            console.debug('Session title generation skipped:', error);
+            const latestSession = this.state.sessionsById.get(sessionId) || this.state.sessions.find(s => s.id === sessionId);
+            if (latestSession?.titleGenerationPending && latestSession.titleSource !== 'manual') {
+                latestSession.titleGenerationPending = false;
+                latestSession.updatedAt = Date.now();
+                await chatDB.saveSession(latestSession);
+                this.renderSessions();
+            }
         }
     }
 
@@ -3557,8 +3649,11 @@ class ChatApp {
         if (role === 'user') {
             const messages = await chatDB.getSessionMessages(session.id);
             if (messages.length === 1) {
-                const title = content.substring(0, 50) + (content.length > 50 ? '...' : '');
-                await this.updateSessionTitle(session.id, title);
+                const title = this.buildLocalSessionTitle(content);
+                await this.updateSessionTitle(session.id, title, {
+                    titleSource: 'local',
+                    titleGenerationPending: Boolean(this.getMessageTextContent(content).trim())
+                });
             }
         }
 
@@ -4376,6 +4471,12 @@ class ChatApp {
                 }
             }
 
+            if (lastUserMessage?.id) {
+                this.generateSessionTitleIfNeeded(session.id, lastUserMessage.id).catch(error => {
+                    console.debug('Session title generation failed:', error);
+                });
+            }
+
             // Set current session for network logging
             if (window.networkLogger) {
                 window.networkLogger.setCurrentSession(session.id);
@@ -4900,6 +5001,12 @@ class ChatApp {
                     await this.addMessage('assistant', `**Error:** ${error.message}`, { isLocalOnly: true });
                     return; // Return early if key acquisition fails
                 }
+            }
+
+            if (userMessage?.id) {
+                this.generateSessionTitleIfNeeded(session.id, userMessage.id).catch(error => {
+                    console.debug('Session title generation failed:', error);
+                });
             }
 
             // Set current session for network logging
@@ -5557,8 +5664,11 @@ class ChatApp {
 
         // Update session title if this was the first message
         if (messageIndex === 0) {
-            const title = newContent.substring(0, 50) + (newContent.length > 50 ? '...' : '');
+            const title = this.buildLocalSessionTitle(newContent);
             session.title = title;
+            session.titleSource = 'local';
+            session.titleGenerationPending = Boolean(this.getMessageTextContent(newContent).trim());
+            delete session.titleGeneratedAt;
         }
 
         await chatDB.saveSession(session);
@@ -5619,7 +5729,7 @@ class ChatApp {
         const newSessionId = this.generateId();
         const firstUserMessage = messagesToCopy.find(m => m.role === 'user');
         const title = firstUserMessage
-            ? firstUserMessage.content.substring(0, 50) + (firstUserMessage.content.length > 50 ? '...' : '')
+            ? this.buildLocalSessionTitle(firstUserMessage.content)
             : 'Forked Chat';
 
         const newSession = {

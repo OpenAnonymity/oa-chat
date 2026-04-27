@@ -95,6 +95,13 @@ const inferenceService = {
         const backend = getBackendForSession(session);
         return backend.getDisplayName ? backend.getDisplayName(modelId, fallback) : fallback;
     },
+    async generateSessionTitle(session, prompt, options = {}) {
+        const backend = getBackendForSession(session);
+        if (typeof backend.generateSessionTitle !== 'function') return '';
+        const token = backend.getAccessToken(session);
+        if (!token) return '';
+        return backend.generateSessionTitle(prompt, token, options);
+    },
     getAccessInfo(session) {
         return getBackendForSession(session).getAccessInfo(session);
     },
