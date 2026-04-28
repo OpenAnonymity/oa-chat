@@ -814,24 +814,37 @@ class ChatApp {
      */
     scrollUserMessageToTop(messageId) {
         const chatArea = this.elements.chatArea;
+        const messagesContainer = document.getElementById('messages-container');
         const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
+        if (!chatArea || !messagesContainer || !messageEl) return;
 
-        console.log('[Scroll To Top]', { messageId, chatArea: !!chatArea, messageEl: !!messageEl });
+        // Reset any spacer from a previous call so we can measure the natural
+        // layout.
+        messagesContainer.style.minHeight = '';
 
-        if (!chatArea || !messageEl) {
-            console.warn('[Scroll To Top] Failed - missing elements');
+        const chatHeight = chatArea.clientHeight;
+        const designLocation = chatHeight * 0.3; // 30% from the top
+        const messageTop = messageEl.offsetTop - chatArea.offsetTop;
+
+        // Rule 1: if the previous conversation did NOT fill the top 30%
+        // (i.e. the new user message naturally lands within the top 30%),
+        // do nothing. Just leave the message where it lands.
+        if (messageTop <= designLocation) {
             return;
         }
 
-        const padding = 20;
-        const messageTop = messageEl.offsetTop - chatArea.offsetTop - padding;
+        // Rule 2: previous conversation filled the top 30%. Scroll the new
+        // user message to sit exactly at the design location. Add minHeight
+        // to the messages container so the scroll target is reachable, then
+        // do a single instant scroll. No further adjustment is performed —
+        // even when the response below grows, this position is left alone.
+        const desiredScrollTop = messageTop - designLocation;
+        const requiredHeight = desiredScrollTop + chatHeight;
+        if (messagesContainer.offsetHeight < requiredHeight) {
+            messagesContainer.style.minHeight = `${requiredHeight}px`;
+        }
 
-        console.log('[Scroll To Top] Scrolling to:', messageTop);
-
-        chatArea.scrollTo({
-            top: messageTop,
-            behavior: 'smooth'
-        });
+        chatArea.scrollTo({ top: desiredScrollTop, behavior: 'instant' });
     }
 
     /**
@@ -1023,7 +1036,16 @@ class ChatApp {
         const isAtBottom = hiddenDistance <= 4;
 
         if (isAtBottom) {
-            this.isAutoScrollPaused = false;
+            // While the design-location spacer is active (scrollUserMessageToTop
+            // applied a minHeight to make the scroll target reachable), do NOT
+            // unset isAutoScrollPaused. Reaching the "bottom" of the artificial
+            // scroll area shouldn't re-enable auto-scroll, which would let the
+            // ResizeObserver's scrollToBottom() follow textarea growth and
+            // pull the user message away from the design location.
+            const messagesContainer = this.elements.messagesContainer;
+            if (!messagesContainer || !messagesContainer.style.minHeight) {
+                this.isAutoScrollPaused = false;
+            }
             this.hideScrollToBottomButton();
             return;
         }
@@ -3122,6 +3144,13 @@ class ChatApp {
     async switchSession(sessionId) {
         if (!sessionId || sessionId === this.state.currentSessionId) {
             return;
+        }
+
+        // Drop any minHeight spacer left over from positioning in the previous
+        // session so the new session does not inherit unrelated whitespace.
+        const messagesContainer = document.getElementById('messages-container');
+        if (messagesContainer) {
+            messagesContainer.style.minHeight = '';
         }
 
         const previousSessionId = this.state.currentSessionId;
