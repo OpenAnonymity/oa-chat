@@ -551,6 +551,9 @@ class ChatHistoryImportModal {
                 importedAt: Date.now(),
                 importedMessageCount: messages.length
             };
+            if (typeof this.app.applySessionConversationSearchText === 'function') {
+                this.app.applySessionConversationSearchText(session, messages);
+            }
 
             try {
                 if (typeof chatDB.saveSessionWithMessages === 'function') {

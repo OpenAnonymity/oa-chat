@@ -48,6 +48,8 @@ const SESSION_PAGE_SIZE = 80;
 const SESSION_SEARCH_LIMIT = 300;
 const SESSION_SCROLL_LOAD_THRESHOLD = 160;
 const SESSION_SEARCH_DEBOUNCE = 180;  // ms wait before triggering search
+const SESSION_CONTENT_SEARCH_MAX_CHARS = 12000;
+const SESSION_CONTENT_SEARCH_MESSAGE_MAX_CHARS = 2000;
 const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const UPDATE_CHECK_INITIAL_DELAY_MS = 45 * 1000;
 const SESSION_TITLE_MAX_LENGTH = 60;
@@ -2165,6 +2167,7 @@ class ChatApp {
             existingSession.lastImportedAt = existingSession.updatedAt;
             existingSession.importedMessageCount = payload.messages.length;
             existingSession.importedCiphertext = encryptedData.ciphertext;
+            this.applySessionConversationSearchText(existingSession, messages);
 
             // Verify and apply shared access if present
             const sharedAccess = this.getSharedAccessFromPayload(payload);
@@ -2305,17 +2308,19 @@ class ChatApp {
                 () => this.generateId()
             );
 
-            // Save session to DB
-            this.state.sessions.unshift(session);
-            this.state.sessionsById.set(session.id, session);
-            await chatDB.saveSession(session);
-
             // Save messages with new session ID
             const messages = shareService.createMessagesFromPayload(
                 payload.messages,
                 session.id,
                 () => this.generateId()
             );
+            this.applySessionConversationSearchText(session, messages);
+
+            // Save session to DB
+            this.state.sessions.unshift(session);
+            this.state.sessionsById.set(session.id, session);
+            await chatDB.saveSession(session);
+
             for (const message of messages) {
                 await chatDB.saveMessage(message);
             }
@@ -3540,6 +3545,85 @@ class ChatApp {
             .slice(0, 1000);
     }
 
+    normalizeSessionSearchText(content) {
+        return this.getMessageTextContent(content)
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    getSearchableMessageText(message) {
+        if (!message || message.isLocalOnly) return '';
+        if (message.role !== 'user' && message.role !== 'assistant') return '';
+        return this.normalizeSessionSearchText(message.content);
+    }
+
+    buildSessionConversationSearchText(messages) {
+        if (!Array.isArray(messages)) return '';
+
+        const segments = messages
+            .map(message => this.getSearchableMessageText(message))
+            .filter(Boolean)
+            .map(text => text.slice(0, SESSION_CONTENT_SEARCH_MESSAGE_MAX_CHARS));
+
+        if (!segments.length) return '';
+
+        const firstSegment = segments[0].slice(0, SESSION_CONTENT_SEARCH_MAX_CHARS);
+        if (segments.length === 1 || firstSegment.length >= SESSION_CONTENT_SEARCH_MAX_CHARS) {
+            return firstSegment;
+        }
+
+        const recentSegments = [];
+        let remaining = SESSION_CONTENT_SEARCH_MAX_CHARS - firstSegment.length - 1;
+
+        for (let i = segments.length - 1; i >= 1 && remaining > 0; i -= 1) {
+            const segment = segments[i];
+            const separatorCost = recentSegments.length ? 1 : 0;
+            const available = remaining - separatorCost;
+            if (available <= 0) break;
+
+            if (segment.length <= available) {
+                recentSegments.unshift(segment);
+                remaining -= segment.length + separatorCost;
+                continue;
+            }
+
+            recentSegments.unshift(segment.slice(segment.length - available));
+            remaining = 0;
+        }
+
+        return [firstSegment, ...recentSegments].filter(Boolean).join('\n').slice(0, SESSION_CONTENT_SEARCH_MAX_CHARS);
+    }
+
+    buildSessionSearchIndexFields(messages) {
+        return {
+            conversationSearchText: this.buildSessionConversationSearchText(messages),
+            conversationSearchIndexedAt: Date.now()
+        };
+    }
+
+    applySessionConversationSearchText(session, messages) {
+        if (!session) return null;
+        const fields = this.buildSessionSearchIndexFields(messages);
+        Object.assign(session, fields);
+        const loadedSession = this.state.sessionsById.get(session.id);
+        if (loadedSession && loadedSession !== session) {
+            Object.assign(loadedSession, fields);
+        }
+        return fields;
+    }
+
+    async refreshSessionConversationSearchText(session, messages = null, options = {}) {
+        if (!session?.id) return null;
+        const sourceMessages = Array.isArray(messages)
+            ? messages
+            : await chatDB.getSessionMessages(session.id);
+        const fields = this.applySessionConversationSearchText(session, sourceMessages);
+        if (options.persist && typeof chatDB.updateSessionSearchIndex === 'function') {
+            await chatDB.updateSessionSearchIndex(session.id, fields);
+        }
+        return fields;
+    }
+
     cleanGeneratedSessionTitle(title) {
         if (typeof title !== 'string') return '';
         let cleaned = title
@@ -3652,11 +3736,12 @@ class ChatApp {
 
         // Update session's updatedAt timestamp
         session.updatedAt = Date.now();
+        const messages = await chatDB.getSessionMessages(session.id);
+        this.applySessionConversationSearchText(session, messages);
         await chatDB.saveSession(session);
 
         // Auto-generate title from first user message
         if (role === 'user') {
-            const messages = await chatDB.getSessionMessages(session.id);
             if (messages.length === 1) {
                 const title = this.buildLocalSessionTitle(content);
                 await this.updateSessionTitle(session.id, title, {
@@ -4716,6 +4801,7 @@ class ChatApp {
                 }
 
                 await chatDB.saveMessage(streamingMessage);
+                await this.refreshSessionConversationSearchText(session, null, { persist: true });
 
                 // Fetch metadata for citations asynchronously and update UI
                 if (streamingMessage.citations && streamingMessage.citations.length > 0) {
@@ -5293,6 +5379,7 @@ class ChatApp {
                 }
 
                 await chatDB.saveMessage(streamingMessage);
+                await this.refreshSessionConversationSearchText(session, null, { persist: true });
 
                 // Fetch metadata for citations asynchronously and update UI
                 if (streamingMessage.citations && streamingMessage.citations.length > 0) {
@@ -5688,6 +5775,9 @@ class ChatApp {
             delete session.titleGeneratedAt;
         }
 
+        const remainingMessages = messages.slice(0, messageIndex + 1);
+        remainingMessages[messageIndex] = message;
+        this.applySessionConversationSearchText(session, remainingMessages);
         await chatDB.saveSession(session);
 
         // Clear edit mode
@@ -5767,6 +5857,7 @@ class ChatApp {
             searchEnabled: this.searchEnabled,
             forkedFrom: session.id
         };
+        this.applySessionConversationSearchText(newSession, messagesToCopy);
 
         const accessInfo = inferenceService.getAccessInfo(session);
         if (accessInfo?.token) {
@@ -6175,6 +6266,7 @@ class ChatApp {
     async updateSessionSearchResults() {
         const rawQuery = this.sessionSearchQuery.trim();
         if (!rawQuery) {
+            this.sessionSearchRequestId += 1;
             this.state.sessionSearchResults = null;
             this.state.sessionSearchResultsQuery = '';
             this.state.sessionSearchPending = false;
@@ -6182,7 +6274,8 @@ class ChatApp {
             return;
         }
 
-        if (typeof chatDB.searchSessions !== 'function') {
+        if (typeof chatDB.getAllSessions !== 'function') {
+            this.sessionSearchRequestId += 1;
             this.state.sessionSearchResults = null;
             this.state.sessionSearchResultsQuery = '';
             this.state.sessionSearchPending = false;
@@ -6194,9 +6287,39 @@ class ChatApp {
         const requestId = ++this.sessionSearchRequestId;
         this.state.sessionSearchPending = true;
 
-        const results = await chatDB.searchSessions(session => {
-            return this.sessionMatchesSearchQuery(session, query);
-        }, SESSION_SEARCH_LIMIT);
+        const results = [];
+        try {
+            const allSessions = await chatDB.getAllSessions();
+            allSessions.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
+
+            for (const session of allSessions) {
+                if (requestId !== this.sessionSearchRequestId) {
+                    return;
+                }
+
+                let sessionToMatch = session;
+                let matches = this.sessionMatchesSearchQuery(sessionToMatch, query);
+                if (!matches && typeof sessionToMatch.conversationSearchText !== 'string') {
+                    try {
+                        await this.refreshSessionConversationSearchText(sessionToMatch, null, { persist: true });
+                        matches = this.sessionMatchesSearchQuery(sessionToMatch, query);
+                    } catch (error) {
+                        console.warn('Failed to index session for sidebar search:', error);
+                    }
+                }
+
+                if (matches) {
+                    const loadedSession = this.state.sessionsById.get(sessionToMatch.id);
+                    sessionToMatch = loadedSession || sessionToMatch;
+                    results.push(sessionToMatch);
+                    if (results.length >= SESSION_SEARCH_LIMIT) {
+                        break;
+                    }
+                }
+            }
+        } catch (error) {
+            console.warn('Session search failed:', error);
+        }
 
         if (requestId !== this.sessionSearchRequestId) {
             return;
@@ -6210,7 +6333,7 @@ class ChatApp {
     }
 
     /**
-     * Filters sessions based on search query using fuzzy subsequence matching.
+     * Filters sessions based on the sidebar search query.
      * @returns {Array} Filtered sessions array
      */
     getFilteredSessions() {
@@ -6232,36 +6355,47 @@ class ChatApp {
 
     sessionMatchesSearchQuery(session, query) {
         if (!session || !query) return false;
-        const fields = [
-            session.title,
-            session.titleSource !== 'manual' ? session.titleSearchText : ''
-        ];
-
-        return fields.some(field => {
-            const text = (field || '').toLowerCase();
-            return text && this.fuzzyMatch(query, text);
-        });
+        return this.searchFieldMatches(query, session.title) ||
+            this.searchFieldMatches(query, session.titleSource !== 'manual' ? session.titleSearchText : '') ||
+            this.searchFieldMatches(query, session.conversationSearchText);
     }
 
-    /**
-     * Performs fuzzy subsequence matching.
-     * Returns true if all characters in query appear in text in order.
-     * @param {string} query - Search query
-     * @param {string} text - Text to search in
-     * @returns {boolean} True if match found
-     */
-    fuzzyMatch(query, text) {
-        let queryIndex = 0;
-        let textIndex = 0;
+    normalizeSearchQueryText(value) {
+        return String(value || '')
+            .toLowerCase()
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
 
-        while (queryIndex < query.length && textIndex < text.length) {
-            if (query[queryIndex] === text[textIndex]) {
-                queryIndex++;
-            }
-            textIndex++;
+    searchFieldMatches(query, field) {
+        const normalizedQuery = this.normalizeSearchQueryText(query);
+        const normalizedText = this.normalizeSearchQueryText(field);
+        if (!normalizedQuery || !normalizedText) return false;
+
+        if (normalizedText.includes(normalizedQuery)) {
+            return true;
         }
 
-        return queryIndex === query.length;
+        const queryTerms = normalizedQuery.split(' ').filter(Boolean);
+        if (queryTerms.length > 1) {
+            return queryTerms.every(term => this.searchTermMatchesText(term, normalizedText));
+        }
+
+        const [term] = queryTerms;
+        if (this.searchTermMatchesText(term, normalizedText)) {
+            return true;
+        }
+        return false;
+    }
+
+    searchTermMatchesText(term, text) {
+        if (!term || !text) return false;
+        const words = text.match(/[a-z0-9]+/g) || [];
+        return words.some(word => {
+            if (word === term) return true;
+            if (term.length >= 3 && word.includes(term)) return true;
+            return term.length >= 2 && word.startsWith(term);
+        });
     }
 
     /**

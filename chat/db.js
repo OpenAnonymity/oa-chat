@@ -288,6 +288,31 @@ class ChatDatabase {
         });
     }
 
+    async updateSessionSearchIndex(sessionId, fields) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['sessions'], 'readwrite');
+            const store = transaction.objectStore('sessions');
+            const request = store.get(sessionId);
+
+            request.onsuccess = () => {
+                const session = request.result;
+                if (!session) {
+                    resolve(null);
+                    return;
+                }
+
+                const updatedSession = {
+                    ...session,
+                    ...fields
+                };
+                const putRequest = store.put(updatedSession);
+                putRequest.onsuccess = () => resolve(updatedSession);
+                putRequest.onerror = () => reject(putRequest.error);
+            };
+            request.onerror = () => reject(request.error);
+        });
+    }
+
     async getSession(sessionId) {
         return new Promise((resolve, reject) => {
             const transaction = this.db.transaction(['sessions'], 'readonly');
