@@ -42,7 +42,7 @@ function setCompatFlag() {
 class ChatDatabase {
     constructor() {
         this.dbName = 'oa-fastchat'; // Intentional: preserve existing IndexedDB data across app rename to oa-chat
-        this.version = 4;
+        this.version = 5;
         this.db = null;
         this.compatMode = false;
         this.initInFlight = null;
@@ -175,6 +175,11 @@ class ChatDatabase {
                     const logsStore = db.createObjectStore('networkLogs', { keyPath: 'id' });
                     logsStore.createIndex('timestamp', 'timestamp', { unique: false });
                     logsStore.createIndex('sessionId', 'sessionId', { unique: false });
+                }
+
+                if (!db.objectStoreNames.contains('systemPromptPresets')) {
+                    const presetsStore = db.createObjectStore('systemPromptPresets', { keyPath: 'id' });
+                    presetsStore.createIndex('updatedAt', 'updatedAt', { unique: false });
                 }
             };
 
@@ -577,6 +582,49 @@ class ChatDatabase {
                 this.emitStorageEvent('messages-updated', { messageId });
                 resolve();
             };
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    // System prompt presets
+    async getAllSystemPromptPresets() {
+        return new Promise((resolve, reject) => {
+            if (!this.db.objectStoreNames.contains('systemPromptPresets')) {
+                resolve([]);
+                return;
+            }
+            const transaction = this.db.transaction(['systemPromptPresets'], 'readonly');
+            const store = transaction.objectStore('systemPromptPresets');
+            const request = store.getAll();
+            request.onsuccess = () => resolve(request.result || []);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async saveSystemPromptPreset(preset) {
+        return new Promise((resolve, reject) => {
+            if (!this.db.objectStoreNames.contains('systemPromptPresets')) {
+                reject(new Error('System prompt presets store not available'));
+                return;
+            }
+            const transaction = this.db.transaction(['systemPromptPresets'], 'readwrite');
+            const store = transaction.objectStore('systemPromptPresets');
+            const request = store.put(preset);
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async deleteSystemPromptPreset(presetId) {
+        return new Promise((resolve, reject) => {
+            if (!this.db.objectStoreNames.contains('systemPromptPresets')) {
+                resolve();
+                return;
+            }
+            const transaction = this.db.transaction(['systemPromptPresets'], 'readwrite');
+            const store = transaction.objectStore('systemPromptPresets');
+            const request = store.delete(presetId);
+            request.onsuccess = () => resolve();
             request.onerror = () => reject(request.error);
         });
     }

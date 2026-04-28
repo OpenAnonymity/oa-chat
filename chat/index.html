@@ -391,6 +391,13 @@
 
                     <!-- Right toolbar buttons -->
                     <div class="flex items-center gap-1">
+                        <!-- Help Button (always visible, opens intro + shortcuts modal) -->
+                        <button id="help-btn" class="inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-9 w-9 cursor-pointer select-none" aria-label="Help" aria-haspopup="dialog" aria-controls="help-modal" title="Help (?)">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z" />
+                            </svg>
+                        </button>
+
                         <!-- Share Button (hidden by default, shown when session is active and not imported) -->
                         <button id="share-btn" class="hidden items-center gap-1.5 px-2.5 py-1.5 rounded-md hover-highlight cursor-pointer select-none text-sm">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
@@ -502,6 +509,13 @@
                                                 <span class="opacity-60">⌘</span>
                                                 <span class="opacity-60">K</span>
                                             </div>
+                                        </button>
+                                        <!-- System prompt picker -->
+                                        <button id="system-prompt-picker-btn" type="button" class="btn-ghost-hover inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors focus-visible:outline-none border border-input bg-background hover:text-accent-foreground h-7 px-2 gap-1.5 text-foreground min-w-0" data-tooltip="System prompt" data-tooltip-position="top">
+                                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                                                <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m4.5 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                                            </svg>
+                                            <span class="system-prompt-picker-label truncate max-w-[10rem]">Default</span>
                                         </button>
                                         <!-- File Upload Button -->
                                         <span class="inline-flex relative">
@@ -763,6 +777,94 @@
     </div>
 
     <!-- Delete History Confirmation Modal -->
+    <!-- System Prompt Picker Modal (chooser) -->
+    <div id="system-prompt-picker-modal" class="hidden fixed inset-0 w-full h-full bg-black/50 flex items-center justify-center z-50">
+        <div role="dialog" aria-modal="true" tabindex="-1" class="cursor-default relative w-full max-w-lg border border-border bg-background shadow-lg rounded-lg overflow-hidden flex flex-col m-4">
+            <div class="flex items-center justify-between border-b border-border px-3 py-2.5">
+                <span class="text-sm font-medium text-foreground">System Prompt</span>
+                <button id="system-prompt-picker-close" class="text-muted-foreground hover:text-foreground transition-colors p-1" aria-label="Close">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+            <div class="overflow-y-auto p-2 max-h-[60vh]">
+                <div id="system-prompt-picker-list" class="space-y-1"></div>
+                <div class="my-1 border-t border-border"></div>
+                <button id="system-prompt-manage-btn" type="button" class="w-full text-left flex items-center gap-2 px-3 py-2 text-sm rounded-md hover-highlight text-muted-foreground">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M10.343 3.94c.09-.542.56-.94 1.11-.94h1.093c.55 0 1.02.398 1.11.94l.149.894c.07.424.384.764.78.93.398.164.855.142 1.205-.108l.737-.527a1.125 1.125 0 011.45.12l.773.774c.39.389.44 1.002.12 1.45l-.527.737c-.25.35-.272.806-.107 1.204.165.397.505.71.93.78l.893.15c.543.09.94.56.94 1.109v1.094c0 .55-.397 1.02-.94 1.11l-.893.149c-.425.07-.765.383-.93.78-.165.398-.143.854.107 1.204l.527.738c.32.447.269 1.06-.12 1.45l-.774.773a1.125 1.125 0 01-1.449.12l-.738-.527c-.35-.25-.806-.272-1.203-.107-.397.165-.71.505-.781.929l-.149.894c-.09.542-.56.94-1.11.94h-1.094c-.55 0-1.019-.398-1.11-.94l-.148-.894c-.071-.424-.384-.764-.781-.93-.398-.164-.854-.142-1.204.108l-.738.527c-.447.32-1.06.269-1.45-.12l-.773-.774a1.125 1.125 0 01-.12-1.45l.527-.737c.25-.35.273-.806.108-1.204-.165-.397-.505-.71-.93-.78l-.894-.15c-.542-.09-.94-.56-.94-1.109v-1.094c0-.55.398-1.02.94-1.11l.894-.149c.424-.07.764-.383.93-.78.165-.398.143-.854-.107-1.204l-.527-.738a1.125 1.125 0 01.12-1.45l.773-.773a1.125 1.125 0 011.45-.12l.737.527c.35.25.807.272 1.204.107.397-.165.71-.505.78-.929l.15-.894z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                    Manage prompts...
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- System Prompt Editor Modal -->
+    <div id="system-prompt-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div role="dialog" aria-modal="true" aria-labelledby="system-prompt-modal-title"
+             class="memory-editor-dialog border rounded-2xl w-full mx-4 overflow-hidden flex flex-col"
+             style="max-width: 760px; height: min(88vh, 780px)">
+            <!-- Header -->
+            <div class="flex items-center justify-between px-3 py-1.5 shrink-0" style="border-bottom: 1px solid var(--mem-divider)">
+                <div class="flex items-center gap-2">
+                    <div class="flex h-6 w-6 items-center justify-center rounded-md" style="background: hsl(var(--color-muted) / 0.3)">
+                        <svg class="w-3 h-3 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m4.5 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                        </svg>
+                    </div>
+                    <h2 id="system-prompt-modal-title" class="text-sm font-semibold text-foreground">System Prompts</h2>
+                    <span id="system-prompt-count" class="text-[11px] text-muted-foreground/50"></span>
+                </div>
+                <div class="flex items-center gap-1.5">
+                    <div class="mem-toolbar-group">
+                        <button id="system-prompt-new-btn" class="mem-header-btn" title="Create new system prompt">New Prompt</button>
+                    </div>
+                    <div id="system-prompt-actions" class="mem-toolbar-group hidden">
+                        <button id="system-prompt-save-btn" class="mem-header-btn">Save</button>
+                        <button id="system-prompt-delete-btn" class="mem-header-btn mem-header-btn-danger">Delete</button>
+                    </div>
+                    <div class="w-px h-4 mx-0.5" style="background: var(--mem-divider)"></div>
+                    <button id="system-prompt-modal-close" class="text-muted-foreground hover:text-foreground transition-colors p-1 rounded-md hover:bg-muted/40" aria-label="Close">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Body: sidebar + editor pane -->
+            <div class="flex flex-1 min-h-0">
+                <!-- Sidebar: preset list -->
+                <div id="system-prompt-list" class="mem-sidebar w-56 flex-shrink-0 overflow-y-auto p-1.5"></div>
+
+                <!-- Editor pane -->
+                <div class="flex-1 flex flex-col min-w-0">
+                    <!-- Empty state -->
+                    <div id="system-prompt-empty" class="flex-1 flex items-center justify-center text-muted-foreground/50 text-sm italic">
+                        Select a prompt on the left, or click "New Prompt" to create one.
+                    </div>
+
+                    <!-- Editor -->
+                    <div id="system-prompt-editor" class="hidden flex-1 flex flex-col min-h-0">
+                        <!-- Subheader: name input + save status -->
+                        <div class="flex items-center justify-between px-3 py-1.5 shrink-0" style="border-bottom: 1px solid var(--mem-divider)">
+                            <input id="system-prompt-name-input" type="text" placeholder="Preset name"
+                                class="flex-1 min-w-0 text-xs font-mono font-medium text-foreground/70 bg-transparent placeholder:text-muted-foreground/40 focus:outline-none truncate" />
+                            <span id="system-prompt-save-status" class="text-[10px] text-amber-500/80 font-medium ml-2"></span>
+                        </div>
+                        <!-- Content textarea -->
+                        <textarea id="system-prompt-content-input" placeholder="Enter the system prompt content..."
+                            class="mem-textarea flex-1 w-full p-4 text-sm bg-transparent text-foreground resize-none focus:outline-none leading-relaxed"
+                            spellcheck="false"></textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div id="delete-history-modal" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"></div>
     <template id="delete-history-modal-template">
         <div role="dialog" aria-modal="true" aria-labelledby="delete-history-title" class="w-full max-w-md rounded-2xl border border-border bg-background shadow-2xl">

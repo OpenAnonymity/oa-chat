@@ -118,7 +118,8 @@ class ChatApp {
             models: [],
             modelsLoading: false,
             modelsVersion: 0,
-            pendingModelName: null // Model selected before session is created (display name)
+            pendingModelName: null, // Model selected before session is created (display name)
+            systemPromptPresets: [] // User-defined system prompt presets, loaded from IndexedDB
         };
 
         this.elements = {
@@ -160,6 +161,24 @@ class ChatApp {
             fileCountBadge: document.getElementById('file-count-badge'),
             deleteHistoryBtn: document.getElementById('delete-history-btn'),
             toggleArchivedBtn: document.getElementById('toggle-archived-btn'),
+            systemPromptPickerBtn: document.getElementById('system-prompt-picker-btn'),
+            systemPromptPickerModal: document.getElementById('system-prompt-picker-modal'),
+            systemPromptPickerClose: document.getElementById('system-prompt-picker-close'),
+            systemPromptPickerList: document.getElementById('system-prompt-picker-list'),
+            systemPromptManageBtn: document.getElementById('system-prompt-manage-btn'),
+            systemPromptModal: document.getElementById('system-prompt-modal'),
+            systemPromptModalClose: document.getElementById('system-prompt-modal-close'),
+            systemPromptList: document.getElementById('system-prompt-list'),
+            systemPromptNewBtn: document.getElementById('system-prompt-new-btn'),
+            systemPromptEmpty: document.getElementById('system-prompt-empty'),
+            systemPromptEditor: document.getElementById('system-prompt-editor'),
+            systemPromptNameInput: document.getElementById('system-prompt-name-input'),
+            systemPromptContentInput: document.getElementById('system-prompt-content-input'),
+            systemPromptSaveBtn: document.getElementById('system-prompt-save-btn'),
+            systemPromptDeleteBtn: document.getElementById('system-prompt-delete-btn'),
+            systemPromptSaveStatus: document.getElementById('system-prompt-save-status'),
+            systemPromptActions: document.getElementById('system-prompt-actions'),
+            systemPromptCount: document.getElementById('system-prompt-count'),
             deleteHistoryModal: document.getElementById('delete-history-modal'),
             deleteHistoryConfirmBtn: null,
             deleteHistoryCancelBtn: null,
@@ -1434,6 +1453,14 @@ class ChatApp {
             this.showToast('Chat storage is running in compatibility mode. Close other tabs and reload to finish the upgrade.', 'error');
         }
 
+        // Load user-defined system prompt presets from IndexedDB (best-effort).
+        try {
+            this.state.systemPromptPresets = await chatDB.getAllSystemPromptPresets();
+        } catch (error) {
+            console.warn('Failed to load system prompt presets:', error);
+            this.state.systemPromptPresets = [];
+        }
+
         window.addEventListener('oa-db-versionchange', () => {
             this.showToast('Chat storage updated in another tab. Reload to continue.', 'error');
         });
@@ -1592,6 +1619,7 @@ class ChatApp {
         // Render local data immediately (session from sessionStorage + model/settings from DB).
         this.renderMessages();
         this.renderCurrentModel();
+        this.renderCurrentSystemPrompt();
         this.chatInput.updateSearchToggleUI();
         this.chatInput.updateMemoryToggleUI();
         this.chatInput.refreshMemorySettingsUI();
@@ -4314,6 +4342,15 @@ class ChatApp {
             ? this._lastApiContent
             : null;
 
+        // Prepend the current session's system prompt preset (if any) as a
+        // system message. The hardcoded default in api.js is always also sent;
+        // presets are additive instructions on top of the default.
+        const session = this.getCurrentSession();
+        const preset = this.getActiveSystemPromptPreset(session);
+        if (preset && typeof preset.content === 'string' && preset.content.trim()) {
+            result.push({ role: 'system', content: preset.content.trim() });
+        }
+
         // Helper: detect image-generating models (same pattern as modelTiers.js)
         const isImageModel = (modelId) => modelId && /image/i.test(modelId);
 
@@ -5626,6 +5663,88 @@ class ChatApp {
     }
 
     /**
+     * Returns the active system prompt preset for a session, or null if the
+     * session has no preset selected. Used to prepend the preset's content as
+     * a system message before sending to the inference backend. The default
+     * hardcoded prompt in api.js is always sent regardless — presets are
+     * additive.
+     * @param {Object} session
+     * @returns {Object | null} preset object { id, name, content, ... } or null
+     */
+    getActiveSystemPromptPreset(session) {
+        if (!session || !session.systemPromptId) return null;
+        const preset = this.state.systemPromptPresets.find(p => p.id === session.systemPromptId);
+        return preset || null;
+    }
+
+    /**
+     * Sets which preset (or none) the current session uses.
+     * @param {string} sessionId
+     * @param {string|null} presetId
+     */
+    async setSessionSystemPrompt(sessionId, presetId) {
+        const session = this.state.sessionsById.get(sessionId)
+            || this.state.sessions.find(s => s.id === sessionId);
+        if (!session) return;
+        session.systemPromptId = presetId || null;
+        await chatDB.saveSession(session);
+        this.renderCurrentSystemPrompt();
+    }
+
+    /**
+     * Creates or updates a preset, persists, and refreshes the in-memory list.
+     */
+    async saveSystemPromptPreset(preset) {
+        if (!preset || !preset.id) {
+            preset = preset || {};
+            preset.id = preset.id || this.generateId();
+            preset.createdAt = preset.createdAt || Date.now();
+        }
+        preset.updatedAt = Date.now();
+        await chatDB.saveSystemPromptPreset(preset);
+        const idx = this.state.systemPromptPresets.findIndex(p => p.id === preset.id);
+        if (idx >= 0) {
+            this.state.systemPromptPresets[idx] = preset;
+        } else {
+            this.state.systemPromptPresets.push(preset);
+        }
+        this.renderCurrentSystemPrompt();
+        return preset;
+    }
+
+    /**
+     * Deletes a preset. Any session pointing at this preset has its
+     * systemPromptId cleared (best-effort — only sessions in memory are
+     * touched; offline sessions will lazily clear on next load).
+     */
+    async deleteSystemPromptPreset(presetId) {
+        await chatDB.deleteSystemPromptPreset(presetId);
+        this.state.systemPromptPresets = this.state.systemPromptPresets.filter(p => p.id !== presetId);
+        for (const session of this.state.sessions) {
+            if (session.systemPromptId === presetId) {
+                session.systemPromptId = null;
+                await chatDB.saveSession(session);
+            }
+        }
+        this.renderCurrentSystemPrompt();
+    }
+
+    /**
+     * Refreshes the system-prompt picker label for the current session.
+     */
+    renderCurrentSystemPrompt() {
+        const btn = this.elements.systemPromptPickerBtn;
+        if (!btn) return;
+        const session = this.getCurrentSession();
+        const preset = this.getActiveSystemPromptPreset(session);
+        const labelEl = btn.querySelector('.system-prompt-picker-label');
+        if (labelEl) {
+            labelEl.textContent = preset ? preset.name : 'Default';
+        }
+        btn.classList.toggle('has-preset', !!preset);
+    }
+
+    /**
      * Reflects the current showArchived state on the toggle button.
      */
     updateArchivedToggleUI() {
@@ -6066,6 +6185,289 @@ class ChatApp {
             }
             this.isDeletingAllChats = false;
         }
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // System prompt UI: picker dropdown + editor modal
+    // ────────────────────────────────────────────────────────────────────
+
+    setupSystemPromptControls() {
+        const {
+            systemPromptPickerBtn,
+            systemPromptPickerModal,
+            systemPromptPickerClose,
+            systemPromptPickerList,
+            systemPromptManageBtn,
+            systemPromptModal,
+            systemPromptModalClose,
+            systemPromptNewBtn,
+            systemPromptSaveBtn,
+            systemPromptDeleteBtn,
+        } = this.elements;
+        if (!systemPromptPickerBtn || !systemPromptPickerModal || !systemPromptModal) return;
+
+        // Picker button opens the chooser modal.
+        systemPromptPickerBtn.addEventListener('click', () => {
+            this.openSystemPromptPicker();
+        });
+
+        // Picker modal: close button + backdrop click.
+        if (systemPromptPickerClose) {
+            systemPromptPickerClose.addEventListener('click', () => this.closeSystemPromptPicker());
+        }
+        systemPromptPickerModal.addEventListener('click', (e) => {
+            if (e.target === systemPromptPickerModal) this.closeSystemPromptPicker();
+        });
+
+        // Picker list: select preset.
+        if (systemPromptPickerList) {
+            systemPromptPickerList.addEventListener('click', async (e) => {
+                const item = e.target.closest('[data-preset-id]');
+                if (!item) return;
+                const id = item.dataset.presetId;
+                const session = this.getCurrentSession();
+                if (session) {
+                    await this.setSessionSystemPrompt(session.id, id || null);
+                }
+                this.closeSystemPromptPicker();
+            });
+        }
+
+        // "Manage prompts..." → close picker, open editor.
+        if (systemPromptManageBtn) {
+            systemPromptManageBtn.addEventListener('click', () => {
+                this.closeSystemPromptPicker();
+                this.openSystemPromptModal();
+            });
+        }
+
+        // Editor modal: close.
+        if (systemPromptModalClose) {
+            systemPromptModalClose.addEventListener('click', () => this.closeSystemPromptModal());
+        }
+        systemPromptModal.addEventListener('click', (e) => {
+            if (e.target === systemPromptModal) this.closeSystemPromptModal();
+        });
+
+        // Modal: New / Save / Delete.
+        if (systemPromptNewBtn) {
+            systemPromptNewBtn.addEventListener('click', () => this.startNewSystemPrompt());
+        }
+        if (systemPromptSaveBtn) {
+            systemPromptSaveBtn.addEventListener('click', () => this.handleSaveSystemPrompt());
+        }
+        if (systemPromptDeleteBtn) {
+            systemPromptDeleteBtn.addEventListener('click', () => this.handleDeleteSystemPrompt());
+        }
+
+        // Modal: list click handler (delegated).
+        if (this.elements.systemPromptList) {
+            this.elements.systemPromptList.addEventListener('click', (e) => {
+                const item = e.target.closest('[data-preset-id]');
+                if (!item) return;
+                const id = item.dataset.presetId;
+                this.selectSystemPromptForEdit(id);
+            });
+        }
+
+        // Render initial state for the picker label.
+        this.renderCurrentSystemPrompt();
+    }
+
+    openSystemPromptPicker() {
+        const modal = this.elements.systemPromptPickerModal;
+        if (!modal) return;
+        this.renderSystemPromptPickerList();
+        modal.classList.remove('hidden');
+    }
+
+    closeSystemPromptPicker() {
+        const modal = this.elements.systemPromptPickerModal;
+        if (!modal) return;
+        modal.classList.add('hidden');
+    }
+
+    renderSystemPromptPickerList() {
+        const list = this.elements.systemPromptPickerList;
+        if (!list) return;
+        const session = this.getCurrentSession();
+        const currentId = session?.systemPromptId || null;
+        const presets = this.state.systemPromptPresets || [];
+
+        const itemHtml = (id, name, description, isActive) => `
+            <button type="button" class="w-full text-left flex items-start gap-3 px-3 py-2.5 text-sm rounded-md transition-colors ${isActive ? 'bg-card' : 'hover-highlight'}" data-preset-id="${id || ''}">
+                <span class="flex-shrink-0 w-4 inline-flex justify-center pt-0.5 text-primary">${isActive ? '✓' : ''}</span>
+                <span class="flex-1 min-w-0">
+                    <span class="block truncate font-medium ${isActive ? 'text-foreground' : 'text-foreground'}">${this.escapeHtml(name)}</span>
+                    ${description ? `<span class="block truncate text-xs text-muted-foreground mt-0.5">${this.escapeHtml(description)}</span>` : ''}
+                </span>
+            </button>
+        `;
+
+        const items = [
+            itemHtml('', 'Default', 'Built-in instructions only', currentId === null),
+            ...presets.map(p => itemHtml(p.id, p.name || 'Untitled', this.getPresetPreview(p), currentId === p.id))
+        ].join('');
+
+        list.innerHTML = items;
+    }
+
+    getPresetPreview(preset) {
+        const text = (preset?.content || '').trim();
+        if (!text) return '';
+        const oneLine = text.replace(/\s+/g, ' ');
+        return oneLine.length > 100 ? oneLine.slice(0, 100) + '...' : oneLine;
+    }
+
+    openSystemPromptModal() {
+        const modal = this.elements.systemPromptModal;
+        if (!modal) return;
+        modal.classList.remove('hidden');
+        this._editingPromptId = null;
+        this._editingPromptDirty = false;
+        this.renderSystemPromptList();
+        this.showSystemPromptEditorEmpty();
+        this.updateSystemPromptCount();
+        this.attachSystemPromptDirtyTracking();
+    }
+
+    closeSystemPromptModal() {
+        const modal = this.elements.systemPromptModal;
+        if (!modal) return;
+        modal.classList.add('hidden');
+        this._editingPromptId = null;
+        this._editingPromptDirty = false;
+    }
+
+    updateSystemPromptCount() {
+        const el = this.elements.systemPromptCount;
+        if (!el) return;
+        const count = (this.state.systemPromptPresets || []).length;
+        el.textContent = count > 0 ? `${count} preset${count === 1 ? '' : 's'}` : '';
+    }
+
+    attachSystemPromptDirtyTracking() {
+        // Run once per modal open. Use a flag so we don't double-bind.
+        if (this._systemPromptDirtyHooked) return;
+        this._systemPromptDirtyHooked = true;
+        const markDirty = () => {
+            if (!this.elements.systemPromptEditor) return;
+            if (this.elements.systemPromptEditor.classList.contains('hidden')) return;
+            this._editingPromptDirty = true;
+            if (this.elements.systemPromptSaveStatus) {
+                this.elements.systemPromptSaveStatus.textContent = 'Unsaved';
+            }
+        };
+        if (this.elements.systemPromptNameInput) {
+            this.elements.systemPromptNameInput.addEventListener('input', markDirty);
+        }
+        if (this.elements.systemPromptContentInput) {
+            this.elements.systemPromptContentInput.addEventListener('input', markDirty);
+        }
+    }
+
+    renderSystemPromptList() {
+        const list = this.elements.systemPromptList;
+        if (!list) return;
+        const presets = this.state.systemPromptPresets || [];
+        const editingId = this._editingPromptId;
+
+        let html = '<div class="px-2.5 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider" style="color: hsl(var(--color-muted-foreground) / 0.4)">Presets</div>';
+
+        if (presets.length === 0) {
+            html += `<div class="px-2.5 py-2 text-[11px] text-muted-foreground/40 italic">No presets yet.</div>`;
+        } else {
+            html += presets.map(p => {
+                const isSelected = editingId === p.id;
+                return `
+                    <div class="mem-tree-row${isSelected ? ' is-selected' : ''}" data-preset-id="${p.id}" style="padding-left: 8px">
+                        <svg class="w-3 h-3 text-muted-foreground/60 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m4.5 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                        </svg>
+                        <span class="mem-tree-label truncate flex-1">${this.escapeHtml(p.name || 'Untitled')}</span>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        list.innerHTML = html;
+    }
+
+    showSystemPromptEditorEmpty() {
+        if (this.elements.systemPromptEmpty) this.elements.systemPromptEmpty.classList.remove('hidden');
+        if (this.elements.systemPromptEditor) this.elements.systemPromptEditor.classList.add('hidden');
+        if (this.elements.systemPromptActions) this.elements.systemPromptActions.classList.add('hidden');
+    }
+
+    showSystemPromptEditor() {
+        if (this.elements.systemPromptEmpty) this.elements.systemPromptEmpty.classList.add('hidden');
+        if (this.elements.systemPromptEditor) this.elements.systemPromptEditor.classList.remove('hidden');
+        if (this.elements.systemPromptActions) this.elements.systemPromptActions.classList.remove('hidden');
+    }
+
+    startNewSystemPrompt() {
+        this._editingPromptId = null;
+        this._editingPromptDirty = true; // a brand-new preset is implicitly unsaved
+        if (this.elements.systemPromptNameInput) this.elements.systemPromptNameInput.value = '';
+        if (this.elements.systemPromptContentInput) this.elements.systemPromptContentInput.value = '';
+        if (this.elements.systemPromptDeleteBtn) this.elements.systemPromptDeleteBtn.classList.add('hidden');
+        if (this.elements.systemPromptSaveStatus) this.elements.systemPromptSaveStatus.textContent = 'Unsaved';
+        this.showSystemPromptEditor();
+        this.renderSystemPromptList();
+        if (this.elements.systemPromptNameInput) this.elements.systemPromptNameInput.focus();
+    }
+
+    selectSystemPromptForEdit(presetId) {
+        const preset = this.state.systemPromptPresets.find(p => p.id === presetId);
+        if (!preset) return;
+        this._editingPromptId = preset.id;
+        this._editingPromptDirty = false;
+        if (this.elements.systemPromptNameInput) this.elements.systemPromptNameInput.value = preset.name || '';
+        if (this.elements.systemPromptContentInput) this.elements.systemPromptContentInput.value = preset.content || '';
+        if (this.elements.systemPromptDeleteBtn) this.elements.systemPromptDeleteBtn.classList.remove('hidden');
+        if (this.elements.systemPromptSaveStatus) this.elements.systemPromptSaveStatus.textContent = '';
+        this.showSystemPromptEditor();
+        this.renderSystemPromptList();
+    }
+
+    async handleSaveSystemPrompt() {
+        const name = (this.elements.systemPromptNameInput?.value || '').trim();
+        const content = (this.elements.systemPromptContentInput?.value || '').trim();
+        if (!name) {
+            this.elements.systemPromptNameInput?.focus();
+            return;
+        }
+        const existing = this._editingPromptId
+            ? this.state.systemPromptPresets.find(p => p.id === this._editingPromptId)
+            : null;
+        const preset = existing
+            ? { ...existing, name, content }
+            : { id: this.generateId(), name, content, createdAt: Date.now() };
+        const saved = await this.saveSystemPromptPreset(preset);
+        this._editingPromptId = saved.id;
+        this._editingPromptDirty = false;
+        if (this.elements.systemPromptDeleteBtn) this.elements.systemPromptDeleteBtn.classList.remove('hidden');
+        if (this.elements.systemPromptSaveStatus) {
+            this.elements.systemPromptSaveStatus.textContent = 'Saved';
+            setTimeout(() => {
+                if (this._editingPromptDirty) return;
+                if (this.elements.systemPromptSaveStatus) this.elements.systemPromptSaveStatus.textContent = '';
+            }, 1500);
+        }
+        this.renderSystemPromptList();
+        this.updateSystemPromptCount();
+    }
+
+    async handleDeleteSystemPrompt() {
+        if (!this._editingPromptId) return;
+        const preset = this.state.systemPromptPresets.find(p => p.id === this._editingPromptId);
+        await this.deleteSystemPromptPreset(this._editingPromptId);
+        this._editingPromptId = null;
+        this._editingPromptDirty = false;
+        this.renderSystemPromptList();
+        this.showSystemPromptEditorEmpty();
+        this.updateSystemPromptCount();
+        this.showToast?.(`Preset "${preset?.name || 'Untitled'}" deleted`, 'success');
     }
 
     setupDeleteHistoryControls() {
@@ -6604,6 +7006,9 @@ class ChatApp {
             });
             this.updateArchivedToggleUI();
         }
+
+        // System prompt picker + modal
+        this.setupSystemPromptControls();
 
         // New chat button
         this.elements.newChatBtn.addEventListener('click', () => {
