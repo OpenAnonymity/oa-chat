@@ -4034,10 +4034,13 @@ class ChatApp {
                 : [];
 
             if (!result?.reviewPrompt || !result?.apiPrompt || memoryFiles.length === 0) {
-                retrievalMessage.content = 'Sending prompt without added context.';
-                retrievalMessage.memoryApprovalPrompt = null;
-                retrievalMessage.ciPromptDraft = null;
-                await this.persistLocalAssistantStatus(retrievalMessage);
+                await chatDB.deleteMessage(retrievalMessage.id);
+                if (this.chatArea && this.isViewingSession(retrievalMessage.sessionId)) {
+                    const messageEl = document.querySelector(`[data-message-id="${retrievalMessage.id}"]`);
+                    if (messageEl) {
+                        messageEl.remove();
+                    }
+                }
                 return null;
             }
 
