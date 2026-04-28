@@ -130,8 +130,21 @@ export default class Sidebar {
         const isImported = !!(session.importedFrom || session.importedSource ||
             (session.forkedFrom && (session.importedMessageCount || 0) > 0));
         const shareLabel = isShared ? 'Update Share' : 'Share';
+        const isPinned = !!session.pinned;
+        const isArchived = !!session.archived;
+        const pinLabel = isPinned ? 'Unpin' : 'Pin';
+        const archiveLabel = isArchived ? 'Unarchive' : 'Archive';
 
-        // Build indicator icons
+        // Pin indicator renders BEFORE the title (left of it).
+        const pinIndicatorHtml = isPinned
+            ? `<span class="text-primary flex-shrink-0 mr-1.5" title="Pinned">
+                <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z"/>
+                </svg>
+            </span>`
+            : '';
+
+        // Trailing indicators (shared / imported) render AFTER the title.
         let indicatorHtml = '';
         if (isShared) {
             // Arrow up from box (opposite of import's arrow down to box)
@@ -154,6 +167,7 @@ export default class Sidebar {
             <div class="group relative flex h-9 items-center rounded-lg ${isActive ? 'chat-session active' : 'hover-highlight'} transition-colors pl-3 chat-session" data-session-id="${session.id}">
                 <a class="flex flex-1 items-center justify-between h-full min-w-0 text-foreground hover:text-foreground cursor-pointer">
                     <div class="flex min-w-0 flex-1 items-center">
+                        ${pinIndicatorHtml}
                         <input class="session-title-input w-full cursor-pointer truncate bg-transparent text-sm leading-5 focus:outline-none text-foreground ${titleClass}" placeholder="Untitled Chat" readonly data-session-id="${this.escapeHtmlAttribute(session.id)}" value="${this.escapeHtmlAttribute(session.title)}">
                         ${indicatorHtml}
                     </div>
@@ -166,6 +180,8 @@ export default class Sidebar {
                     </button>
                     <div class="session-menu hidden absolute right-0 top-10 z-[100] rounded-lg border border-border bg-popover shadow-lg p-1 min-w-[140px]" data-session-id="${session.id}">
                         <button class="rename-session-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">Rename</button>
+                        <button class="pin-session-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">${pinLabel}</button>
+                        <button class="archive-session-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">${archiveLabel}</button>
                         <button class="copy-link-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">Copy Link</button>
                         <button class="share-session-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">${shareLabel}</button>
                         ${isShared ? `<button class="delete-share-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">Delete Share</button>` : ''}
@@ -203,6 +219,24 @@ export default class Sidebar {
                 const sessionId = deleteAction.dataset.sessionId;
                 this.closeAllMenus();
                 this.app.deleteSession(sessionId);
+                return;
+            }
+
+            const pinAction = e.target.closest('.pin-session-action');
+            if (pinAction) {
+                e.stopPropagation();
+                const sessionId = pinAction.dataset.sessionId;
+                this.closeAllMenus();
+                await this.app.togglePinSession(sessionId);
+                return;
+            }
+
+            const archiveAction = e.target.closest('.archive-session-action');
+            if (archiveAction) {
+                e.stopPropagation();
+                const sessionId = archiveAction.dataset.sessionId;
+                this.closeAllMenus();
+                await this.app.toggleArchiveSession(sessionId);
                 return;
             }
 
@@ -529,6 +563,14 @@ export default class Sidebar {
     groupSessionsByDate(sessions) {
         const grouped = {};
         sessions.forEach(session => {
+            // Pinned sessions get their own group at the top regardless of
+            // their date. Skipped when viewing the archived list — pinning is
+            // not meaningful for archived sessions.
+            if (session.pinned && !this.app.showArchived) {
+                if (!grouped['Pinned']) grouped['Pinned'] = [];
+                grouped['Pinned'].push(session);
+                return;
+            }
             const timestamp = session.updatedAt || session.createdAt;
             const group = this.getSessionDateGroup(timestamp);
             if (!grouped[group]) {
@@ -549,7 +591,7 @@ export default class Sidebar {
         if (!list) return;
 
         const grouped = this.groupSessionsByDate(sessionsToRender);
-        const groupOrder = ['Today', 'Yesterday', 'Previous 7 Days', 'Previous 30 Days', 'Older'];
+        const groupOrder = ['Pinned', 'Today', 'Yesterday', 'Previous 7 Days', 'Previous 30 Days', 'Older'];
 
         const html = groupOrder.map(groupName => {
             const sessions = grouped[groupName];
@@ -573,7 +615,7 @@ export default class Sidebar {
 
     prepareVirtualItems(sessionsToRender) {
         const grouped = this.groupSessionsByDate(sessionsToRender);
-        const groupOrder = ['Today', 'Yesterday', 'Previous 7 Days', 'Previous 30 Days', 'Older'];
+        const groupOrder = ['Pinned', 'Today', 'Yesterday', 'Previous 7 Days', 'Previous 30 Days', 'Older'];
         const items = [];
 
         groupOrder.forEach(groupName => {
@@ -770,7 +812,7 @@ export default class Sidebar {
     getSessionsInDisplayOrder() {
         const sessionsToRender = this.app.getFilteredSessions();
         const grouped = this.groupSessionsByDate(sessionsToRender);
-        const groupOrder = ['Today', 'Yesterday', 'Previous 7 Days', 'Previous 30 Days', 'Older'];
+        const groupOrder = ['Pinned', 'Today', 'Yesterday', 'Previous 7 Days', 'Previous 30 Days', 'Older'];
 
         const orderedSessions = [];
         groupOrder.forEach(groupName => {

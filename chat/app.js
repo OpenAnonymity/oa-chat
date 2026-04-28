@@ -159,6 +159,7 @@ class ChatApp {
             filePreviewsContainer: document.getElementById('file-previews-container'),
             fileCountBadge: document.getElementById('file-count-badge'),
             deleteHistoryBtn: document.getElementById('delete-history-btn'),
+            toggleArchivedBtn: document.getElementById('toggle-archived-btn'),
             deleteHistoryModal: document.getElementById('delete-history-modal'),
             deleteHistoryConfirmBtn: null,
             deleteHistoryCancelBtn: null,
@@ -174,6 +175,9 @@ class ChatApp {
         this.sessionSearchQuery = '';
         this.sessionSearchDebounce = null;
         this.sessionSearchRequestId = 0;
+        // When true, the sidebar shows only archived sessions instead of the
+        // active list. Toggled via the "Archived chats" button in the sidebar.
+        this.showArchived = false;
         this.uploadedFiles = [];
         this.fileUndoStack = []; // Track file paste operations for undo
         this.filePreviewRenderVersion = 0; // Guard async preview renders against stale overwrites
@@ -5564,6 +5568,77 @@ class ChatApp {
     }
 
     /**
+     * Toggles the pinned state of a session. Pinned sessions render in a
+     * "Pinned" group at the top of the sidebar regardless of date.
+     * @param {string} sessionId
+     */
+    async togglePinSession(sessionId) {
+        const session = this.state.sessionsById.get(sessionId)
+            || this.state.sessions.find(s => s.id === sessionId);
+        if (!session) return;
+        session.pinned = !session.pinned;
+        await chatDB.saveSession(session);
+        this.renderSessions();
+    }
+
+    /**
+     * Toggles the archived state of a session. Archived sessions are hidden
+     * from the main list; the user can view them via the "Archived chats"
+     * toggle in the sidebar header.
+     * @param {string} sessionId
+     */
+    async toggleArchiveSession(sessionId) {
+        const session = this.state.sessionsById.get(sessionId)
+            || this.state.sessions.find(s => s.id === sessionId);
+        if (!session) return;
+        const wasCurrent = this.state.currentSessionId === sessionId;
+        session.archived = !session.archived;
+        // Archiving a session also unpins it; an archived session shouldn't
+        // sit at the top of someone's list.
+        if (session.archived) session.pinned = false;
+        await chatDB.saveSession(session);
+
+        // If we just archived the current session and we're not in archived
+        // view, switch to another session so the user isn't stuck looking at
+        // a session that's no longer in their list.
+        if (session.archived && wasCurrent && !this.showArchived) {
+            const next = this.state.sessions.find(s => s.id !== sessionId && !s.archived);
+            if (next) {
+                await this.switchSession(next.id);
+            } else {
+                await this.createSession();
+            }
+        }
+
+        this.renderSessions();
+    }
+
+    /**
+     * Switches the sidebar between the normal (active) and archived views.
+     * @param {boolean} value
+     */
+    setShowArchived(value) {
+        const next = value === true;
+        if (this.showArchived === next) return;
+        this.showArchived = next;
+        this.renderSessions();
+        this.updateArchivedToggleUI();
+    }
+
+    /**
+     * Reflects the current showArchived state on the toggle button.
+     */
+    updateArchivedToggleUI() {
+        const btn = this.elements.toggleArchivedBtn;
+        if (!btn) return;
+        btn.setAttribute('aria-pressed', this.showArchived ? 'true' : 'false');
+        const label = btn.querySelector('.archived-toggle-label');
+        if (label) {
+            label.textContent = this.showArchived ? 'Active chats' : 'Archived';
+        }
+    }
+
+    /**
      * Returns template options for rendering a specific message
      * @param {string} messageId - Message ID
      * @returns {Object} Template options
@@ -6225,18 +6300,28 @@ class ChatApp {
      * @returns {Array} Filtered sessions array
      */
     getFilteredSessions() {
+        // Filter by archived state: in normal mode hide archived; in archived
+        // view show only archived. Pin state is orthogonal — pinned sessions
+        // stay visible in normal mode and grouping (Sidebar) renders them in
+        // a "Pinned" group at the top.
+        const archivedFilter = this.showArchived
+            ? (s) => s && s.archived === true
+            : (s) => !s || s.archived !== true;
+
         if (!this.sessionSearchQuery.trim()) {
-            return this.state.sessions;
+            return this.state.sessions.filter(archivedFilter);
         }
 
         const query = this.sessionSearchQuery.toLowerCase();
         const inMemory = this.state.sessions.filter(session => {
+            if (!archivedFilter(session)) return false;
             const title = (session.title || '').toLowerCase();
             return this.fuzzyMatch(query, title);
         });
 
         if (this.state.sessionSearchResults && this.state.sessionSearchResultsQuery === query) {
-            return this.mergeSessionLists(inMemory, this.state.sessionSearchResults);
+            const merged = this.mergeSessionLists(inMemory, this.state.sessionSearchResults);
+            return merged.filter(archivedFilter);
         }
 
         return inMemory;
@@ -6510,6 +6595,15 @@ class ChatApp {
         }
 
         this.setupDeleteHistoryControls();
+
+        // Archived chats toggle
+        if (this.elements.toggleArchivedBtn) {
+            this.elements.toggleArchivedBtn.addEventListener('click', () => {
+                this.setShowArchived(!this.showArchived);
+                this.updateArchivedToggleUI();
+            });
+            this.updateArchivedToggleUI();
+        }
 
         // New chat button
         this.elements.newChatBtn.addEventListener('click', () => {

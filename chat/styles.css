@@ -128,6 +128,33 @@ body {
     touch-action: pan-y;
 }
 
+/* Sidebar archived-chats toggle button */
+.archived-toggle-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    height: 2.25rem;
+    padding: 0 0.75rem;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    color: hsl(var(--color-muted-foreground));
+    background-color: transparent;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: background-color 0.15s, color 0.15s, border-color 0.15s;
+    flex-shrink: 0;
+}
+.archived-toggle-btn:hover {
+    background-color: hsl(var(--color-muted) / 0.5);
+    color: hsl(var(--color-foreground));
+}
+.archived-toggle-btn[aria-pressed="true"] {
+    background-color: hsl(var(--color-card));
+    border-color: hsl(var(--color-border));
+    color: hsl(var(--color-foreground));
+}
+
 code, pre, kbd, .font-mono {
     font-family: var(--font-mono);
 }
