@@ -65,6 +65,202 @@ export default class ChatInput {
     }
 
     /**
+     * Available slash commands — typing "/" at the start of an empty input
+     * surfaces this menu. Each entry has a `key` (the command name shown
+     * after the slash), `desc` (human-readable description), an optional
+     * `state` getter for live state hints (e.g. current memory mode), and
+     * an `action` async function that runs when the user picks it.
+     */
+    getSlashCommands() {
+        const app = this.app;
+        return [
+            {
+                key: 'model', desc: 'Choose a model',
+                state: () => (app.getCurrentSession()?.model || app.state.pendingModelName || ''),
+                action: async () => document.getElementById('model-picker-btn')?.click()
+            },
+            {
+                key: 'prompt', desc: 'Choose system prompt preset',
+                state: () => {
+                    const p = app.getActiveSystemPromptPreset?.(app.getCurrentSession());
+                    return p?.name || 'Default';
+                },
+                action: async () => app.openSystemPromptPicker?.()
+            },
+            {
+                key: 'search', desc: 'Toggle web search',
+                state: () => (app.searchEnabled ? 'on' : 'off'),
+                action: async () => app.elements.searchToggle?.click()
+            },
+            {
+                key: 'memory', desc: 'Toggle memory mode',
+                state: () => (app.memoryMode ? 'on' : 'off'),
+                action: async () => {
+                    const target = app.elements.memoryToggle?.querySelector(
+                        app.memoryMode ? '[data-mode-option="chat"]' : '[data-mode-option="memory"]'
+                    );
+                    target?.click();
+                }
+            },
+            {
+                key: 'memory-edit', desc: 'Open memory editor',
+                action: async () => app.memoryEditor?.open?.()
+            },
+            {
+                key: 'files', desc: 'Attach files',
+                action: async () => document.getElementById('file-upload-input')?.click()
+            },
+            {
+                key: 'reasoning', desc: 'Cycle reasoning effort',
+                state: () => app.reasoningEffort || '',
+                action: async () => {
+                    const order = ['low', 'medium', 'high'];
+                    const next = order[(order.indexOf(app.reasoningEffort) + 1) % order.length];
+                    app.reasoningEffort = next;
+                    this.updateReasoningEffortUI?.();
+                    await chatDB.saveSetting('reasoningEffort', next);
+                }
+            },
+            {
+                key: 'new', desc: 'New chat',
+                action: async () => app.handleNewChatRequest?.()
+            },
+            {
+                key: 'pin', desc: 'Pin current chat',
+                action: async () => {
+                    const s = app.getCurrentSession();
+                    if (s) await app.togglePinSession?.(s.id);
+                }
+            },
+            {
+                key: 'archive', desc: 'Archive current chat',
+                action: async () => {
+                    const s = app.getCurrentSession();
+                    if (s) await app.toggleArchiveSession?.(s.id);
+                }
+            }
+        ];
+    }
+
+    setupSlashCommands() {
+        const popup = document.getElementById('slash-command-popup');
+        const input = this.app.elements.messageInput;
+        if (!popup || !input) return;
+
+        const state = { active: 0, filtered: [], open: false };
+        this._slashState = state;
+
+        const render = () => {
+            popup.innerHTML = state.filtered.map((cmd, i) => {
+                const stateHint = typeof cmd.state === 'function' ? cmd.state() : '';
+                const stateHtml = stateHint
+                    ? `<span class="slash-cmd-state">${this.app.escapeHtml(String(stateHint))}</span>`
+                    : '';
+                return `
+                    <div class="slash-command-item${i === state.active ? ' active' : ''}" role="option" data-index="${i}" aria-selected="${i === state.active}">
+                        <span class="slash-cmd-name">/${cmd.key}</span>
+                        <span class="slash-cmd-desc">${this.app.escapeHtml(cmd.desc)}</span>
+                        ${stateHtml}
+                    </div>
+                `;
+            }).join('');
+        };
+
+        const open = () => {
+            popup.classList.remove('hidden');
+            state.open = true;
+        };
+
+        const close = () => {
+            popup.classList.add('hidden');
+            state.open = false;
+            state.filtered = [];
+        };
+
+        const refresh = () => {
+            const value = input.value;
+            // Only show when the input STARTS with "/" — keeps slash inside
+            // a longer message from triggering the popup.
+            if (!value.startsWith('/')) {
+                close();
+                return;
+            }
+            const query = value.slice(1).toLowerCase();
+            const all = this.getSlashCommands();
+            state.filtered = query
+                ? all.filter(c => c.key.toLowerCase().includes(query) || c.desc.toLowerCase().includes(query))
+                : all;
+            if (state.filtered.length === 0) {
+                close();
+                return;
+            }
+            state.active = Math.min(state.active, state.filtered.length - 1);
+            render();
+            open();
+        };
+
+        const execute = async (cmd) => {
+            if (!cmd) return;
+            // Clear the slash query so the next user message is fresh.
+            input.value = '';
+            input.dispatchEvent(new Event('input'));
+            close();
+            try {
+                await cmd.action();
+            } catch (err) {
+                console.warn(`Slash command /${cmd.key} failed:`, err);
+            }
+            // Do NOT refocus the textarea here — many commands open a modal
+            // that needs to keep keyboard focus (e.g. model picker, system
+            // prompt picker). Stealing focus back to the textarea breaks
+            // their Enter/Esc handling. Modals manage their own focus.
+        };
+
+        // Update on every input change.
+        input.addEventListener('input', refresh);
+
+        // Keyboard navigation when popup is open.
+        input.addEventListener('keydown', (e) => {
+            if (!state.open) return;
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                state.active = (state.active + 1) % state.filtered.length;
+                render();
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                state.active = (state.active - 1 + state.filtered.length) % state.filtered.length;
+                render();
+            } else if (e.key === 'Enter' || e.key === 'Tab') {
+                e.preventDefault();
+                e.stopPropagation();
+                execute(state.filtered[state.active]);
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                close();
+            }
+        }, true /* capture so we run before the send-on-Enter handler */);
+
+        // Click handlers on popup items. mousedown to fire before input.blur
+        // takes the popup out from under the cursor.
+        popup.addEventListener('mousedown', (e) => {
+            const item = e.target.closest('.slash-command-item');
+            if (!item) return;
+            e.preventDefault();
+            const idx = Number(item.dataset.index);
+            if (Number.isInteger(idx)) {
+                execute(state.filtered[idx]);
+            }
+        });
+
+        // Close when input loses focus (after a tick to allow click selection).
+        input.addEventListener('blur', () => {
+            setTimeout(() => {
+                if (!popup.contains(document.activeElement)) close();
+            }, 100);
+        });
+    }
+
+    /**
      * Sets up all event listeners for the input area controls.
      */
     setupEventListeners() {
@@ -423,6 +619,9 @@ export default class ChatInput {
         this.setupScrubberControls();
         this.setupMemoryAutoIncludeToggle();
         this.refreshMemorySettingsUI();
+
+        // Slash command popup (/, /model, /memory, ...)
+        this.setupSlashCommands();
 
         // Initialize scrubber hint visibility
         this.updateScrubberHintVisibility();

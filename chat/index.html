@@ -391,10 +391,17 @@
 
                     <!-- Right toolbar buttons -->
                     <div class="flex items-center gap-1">
-                        <!-- Help Button (always visible, opens intro + shortcuts modal) -->
-                        <button id="help-btn" class="inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-9 w-9 cursor-pointer select-none" aria-label="Help" aria-haspopup="dialog" aria-controls="help-modal" title="Help (?)">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z" />
+                        <!-- About Button (always visible, opens intro modal) -->
+                        <button id="about-btn" class="inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-10 w-10 cursor-pointer select-none" aria-label="About oa-chat" aria-haspopup="dialog" aria-controls="about-modal" title="About oa-chat">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />
+                            </svg>
+                        </button>
+
+                        <!-- Keyboard Shortcuts Button (always visible, opens shortcuts modal — also bound to ?) -->
+                        <button id="shortcuts-btn" class="inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-10 w-10 cursor-pointer select-none" aria-label="Keyboard shortcuts" aria-haspopup="dialog" aria-controls="shortcuts-modal" title="Keyboard shortcuts (?)">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="m6.75 7.5 3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0 0 21 18V6a2.25 2.25 0 0 0-2.25-2.25H5.25A2.25 2.25 0 0 0 3 6v12a2.25 2.25 0 0 0 2.25 2.25Z" />
                             </svg>
                         </button>
 
@@ -451,6 +458,9 @@
 
                                 <!-- File Previews Container -->
                                 <div id="file-previews-container" class="hidden mb-3 flex flex-wrap gap-3"></div>
+
+                                <!-- Slash command popup (above the textarea) -->
+                                <div id="slash-command-popup" class="slash-command-popup hidden" role="listbox" aria-label="Commands"></div>
 
                                 <!-- Textarea Container -->
                                 <div class="relative w-full flex flex-col">
@@ -902,6 +912,12 @@
 
     <!-- Memory Editor Modal -->
     <div id="memory-editor-modal" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"></div>
+
+    <!-- About Modal (oa-chat intro / how-it-works / features / learn-more) -->
+    <div id="about-modal" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"></div>
+
+    <!-- Keyboard Shortcuts Modal (customizable global shortcuts + read-only contextual cheat sheet) -->
+    <div id="shortcuts-modal" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"></div>
 
     <!-- Welcome Panel Modal -->
     <div id="welcome-panel" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"></div>

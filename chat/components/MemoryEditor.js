@@ -139,6 +139,9 @@ class MemoryEditor {
             .filter((file) => !file.path.endsWith('_tree.md'))
             .map((file) => ({ path: file.path, l0: file.l0 || file.oneLiner || '' }))
             .sort((a, b) => a.path.localeCompare(b.path));
+        // Mirror tree changes into the right-panel Memory section so highlighted
+        // files / new files appear without needing a session switch.
+        this.app?.rightPanel?.refreshMemorySection?.({ reloadFiles: true })?.catch?.(() => {});
     }
 
     _getDirectoryStructure() {

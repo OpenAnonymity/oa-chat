@@ -8,9 +8,12 @@ import ModelPicker from './components/ModelPicker.js';
 import ChatHistoryImportModal from './components/ChatHistoryImportModal.js';
 import AccountModal from './components/AccountModal.js';
 import MemoryEditor from './components/MemoryEditor.js';
+import AboutModal from './components/AboutModal.js';
+import ShortcutsModal from './components/ShortcutsModal.js';
 import WelcomePanel from './components/WelcomePanel.js';
 import ThanksPanel from './components/ThanksPanel.js';
 import { buildTypingIndicator } from './components/MessageTemplates.js';
+import shortcutManager from './services/shortcutManager.js';
 import themeManager from './services/themeManager.js';
 import preferencesStore, { PREF_KEYS } from './services/preferencesStore.js';
 import storageManager from './services/storageManager.js';
@@ -145,6 +148,8 @@ class ChatApp {
             showRightPanelBtn: document.getElementById('show-right-panel-btn'),
             shareBtn: document.getElementById('share-btn'),
             shareBtnText: document.getElementById('share-btn-text'),
+            aboutBtn: document.getElementById('about-btn'),
+            shortcutsBtn: document.getElementById('shortcuts-btn'),
             wideModeBtn: document.getElementById('wide-mode-btn'),
             sidebar: document.getElementById('sidebar'),
             hideSidebarBtn: document.getElementById('hide-sidebar-btn'),
@@ -1425,6 +1430,8 @@ class ChatApp {
         this.chatHistoryImportModal = new ChatHistoryImportModal(this);
         this.accountModal = new AccountModal(this);
         this.memoryEditor = new MemoryEditor(this);
+        this.aboutModal = new AboutModal(this);
+        this.shortcutsModal = new ShortcutsModal(this);
         this.welcomePanel = new WelcomePanel(this);
         this.thanksPanel = new ThanksPanel(this);
         this.rightPanel = new RightPanel(this);
@@ -3808,6 +3815,8 @@ class ChatApp {
             if (result?.status !== 'error') {
                 session.memoryProcessedAt = Date.now();
                 await chatDB.saveSession(session);
+                // Memory tree may have new/modified files after extraction.
+                this.rightPanel?.refreshMemorySection?.({ reloadFiles: true })?.catch?.(() => {});
             }
 
             return result || { status: 'processed', writeCalls: 0 };
@@ -4121,6 +4130,8 @@ class ChatApp {
                 status: 'pending'
             };
             await this.persistLocalAssistantStatus(retrievalMessage);
+            // Used-files set for the current session just changed.
+            this.rightPanel?.refreshMemorySection?.()?.catch?.(() => {});
 
             if (this.memoryAutoInclude) {
                 const draft = retrievalMessage.ciPromptDraft;
@@ -5689,6 +5700,7 @@ class ChatApp {
         session.systemPromptId = presetId || null;
         await chatDB.saveSession(session);
         this.renderCurrentSystemPrompt();
+        this.rightPanel?.refreshSystemPromptSection?.();
     }
 
     /**
@@ -5709,6 +5721,7 @@ class ChatApp {
             this.state.systemPromptPresets.push(preset);
         }
         this.renderCurrentSystemPrompt();
+        this.rightPanel?.refreshSystemPromptSection?.();
         return preset;
     }
 
@@ -5727,6 +5740,7 @@ class ChatApp {
             }
         }
         this.renderCurrentSystemPrompt();
+        this.rightPanel?.refreshSystemPromptSection?.();
     }
 
     /**
@@ -6219,6 +6233,31 @@ class ChatApp {
             if (e.target === systemPromptPickerModal) this.closeSystemPromptPicker();
         });
 
+        // Picker modal: keyboard navigation — ↑/↓ moves cursor, Enter selects
+        // and exits, Esc exits without selecting. Listener lives on `document`
+        // (matches the model picker's Esc handler) so it works regardless of
+        // where focus currently is — for example, when /prompt opened the
+        // picker from the chat input, focus may not have settled inside the
+        // modal yet.
+        document.addEventListener('keydown', (e) => {
+            if (!this.isSystemPromptPickerOpen()) return;
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                this.moveSystemPromptPickerCursor(1);
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                this.moveSystemPromptPickerCursor(-1);
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                e.stopPropagation();
+                this.selectSystemPromptPickerCursor();
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                e.stopPropagation();
+                this.closeSystemPromptPicker();
+            }
+        }, true /* capture so we run before the textarea's send-on-Enter */);
+
         // Picker list: select preset.
         if (systemPromptPickerList) {
             systemPromptPickerList.addEventListener('click', async (e) => {
@@ -6270,6 +6309,32 @@ class ChatApp {
             });
         }
 
+        // Keyboard shortcuts inside the editor modal.
+        // - Escape  : close the modal (no save)
+        // - Enter   : in the name input, save and close
+        // - Cmd/Ctrl+Enter : in the content textarea, save and close
+        const handleEditorKeydown = (e) => {
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                this.closeSystemPromptModal();
+                return;
+            }
+            if (e.key === 'Enter') {
+                const target = e.target;
+                if (target === this.elements.systemPromptNameInput) {
+                    e.preventDefault();
+                    this.handleSaveSystemPromptAndClose();
+                    return;
+                }
+                if (target === this.elements.systemPromptContentInput && (e.metaKey || e.ctrlKey)) {
+                    e.preventDefault();
+                    this.handleSaveSystemPromptAndClose();
+                    return;
+                }
+            }
+        };
+        systemPromptModal.addEventListener('keydown', handleEditorKeydown);
+
         // Render initial state for the picker label.
         this.renderCurrentSystemPrompt();
     }
@@ -6277,14 +6342,62 @@ class ChatApp {
     openSystemPromptPicker() {
         const modal = this.elements.systemPromptPickerModal;
         if (!modal) return;
+        // Start the keyboard cursor on the currently active preset (or "Default").
+        const session = this.getCurrentSession();
+        const currentId = session?.systemPromptId || null;
+        const presets = this.state.systemPromptPresets || [];
+        const ids = ['', ...presets.map(p => p.id)];
+        const idx = ids.indexOf(currentId === null ? '' : currentId);
+        this._pickerActiveIndex = idx >= 0 ? idx : 0;
         this.renderSystemPromptPickerList();
         modal.classList.remove('hidden');
+        // Focus the modal so it captures keyboard events.
+        const dialog = modal.querySelector('[role="dialog"]');
+        if (dialog) dialog.focus();
     }
 
     closeSystemPromptPicker() {
         const modal = this.elements.systemPromptPickerModal;
         if (!modal) return;
         modal.classList.add('hidden');
+        // Mirror the model picker: hand focus back to the chat input on the
+        // next frame so the user can keep typing without an extra click.
+        requestAnimationFrame(() => {
+            if (this.elements.messageInput) {
+                this.elements.messageInput.focus();
+            }
+        });
+    }
+
+    isSystemPromptPickerOpen() {
+        const modal = this.elements.systemPromptPickerModal;
+        return !!modal && !modal.classList.contains('hidden');
+    }
+
+    /** Returns the array of preset IDs the picker can navigate, in render order. */
+    getSystemPromptPickerIds() {
+        const presets = this.state.systemPromptPresets || [];
+        return ['', ...presets.map(p => p.id)];
+    }
+
+    moveSystemPromptPickerCursor(delta) {
+        const ids = this.getSystemPromptPickerIds();
+        if (ids.length === 0) return;
+        const max = ids.length - 1;
+        const cur = typeof this._pickerActiveIndex === 'number' ? this._pickerActiveIndex : 0;
+        this._pickerActiveIndex = Math.max(0, Math.min(max, cur + delta));
+        this.renderSystemPromptPickerList();
+    }
+
+    async selectSystemPromptPickerCursor() {
+        const ids = this.getSystemPromptPickerIds();
+        const idx = typeof this._pickerActiveIndex === 'number' ? this._pickerActiveIndex : 0;
+        if (idx < 0 || idx >= ids.length) return;
+        const session = this.getCurrentSession();
+        if (session) {
+            await this.setSessionSystemPrompt(session.id, ids[idx] || null);
+        }
+        this.closeSystemPromptPicker();
     }
 
     renderSystemPromptPickerList() {
@@ -6293,23 +6406,35 @@ class ChatApp {
         const session = this.getCurrentSession();
         const currentId = session?.systemPromptId || null;
         const presets = this.state.systemPromptPresets || [];
+        const cursor = typeof this._pickerActiveIndex === 'number' ? this._pickerActiveIndex : 0;
 
-        const itemHtml = (id, name, description, isActive) => `
-            <button type="button" class="w-full text-left flex items-start gap-3 px-3 py-2.5 text-sm rounded-md transition-colors ${isActive ? 'bg-card' : 'hover-highlight'}" data-preset-id="${id || ''}">
+        const itemHtml = (id, name, description, isActive, index) => {
+            const isHighlighted = index === cursor;
+            // Highlighted (keyboard) gets bg-card; active (session-current) gets the ✓.
+            const bgClass = isHighlighted ? 'bg-card' : (isActive ? 'bg-muted/30' : 'hover-highlight');
+            return `
+            <button type="button" class="w-full text-left flex items-start gap-3 px-3 py-2.5 text-sm rounded-md transition-colors ${bgClass}" data-preset-id="${id || ''}" data-picker-index="${index}">
                 <span class="flex-shrink-0 w-4 inline-flex justify-center pt-0.5 text-primary">${isActive ? '✓' : ''}</span>
                 <span class="flex-1 min-w-0">
-                    <span class="block truncate font-medium ${isActive ? 'text-foreground' : 'text-foreground'}">${this.escapeHtml(name)}</span>
+                    <span class="block truncate font-medium text-foreground">${this.escapeHtml(name)}</span>
                     ${description ? `<span class="block truncate text-xs text-muted-foreground mt-0.5">${this.escapeHtml(description)}</span>` : ''}
                 </span>
             </button>
-        `;
+            `;
+        };
 
         const items = [
-            itemHtml('', 'Default', 'Built-in instructions only', currentId === null),
-            ...presets.map(p => itemHtml(p.id, p.name || 'Untitled', this.getPresetPreview(p), currentId === p.id))
+            itemHtml('', 'Default', 'Built-in instructions only', currentId === null, 0),
+            ...presets.map((p, i) => itemHtml(p.id, p.name || 'Untitled', this.getPresetPreview(p), currentId === p.id, i + 1))
         ].join('');
 
         list.innerHTML = items;
+
+        // Scroll the highlighted item into view if needed.
+        const active = list.querySelector(`[data-picker-index="${cursor}"]`);
+        if (active && typeof active.scrollIntoView === 'function') {
+            active.scrollIntoView({ block: 'nearest' });
+        }
     }
 
     getPresetPreview(preset) {
@@ -6456,6 +6581,16 @@ class ChatApp {
         }
         this.renderSystemPromptList();
         this.updateSystemPromptCount();
+    }
+
+    async handleSaveSystemPromptAndClose() {
+        const name = (this.elements.systemPromptNameInput?.value || '').trim();
+        if (!name) {
+            this.elements.systemPromptNameInput?.focus();
+            return;
+        }
+        await this.handleSaveSystemPrompt();
+        this.closeSystemPromptModal();
     }
 
     async handleDeleteSystemPrompt() {

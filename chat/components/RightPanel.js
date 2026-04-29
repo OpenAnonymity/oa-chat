@@ -17,6 +17,7 @@ import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import { chatDB } from '../db.js';
 import { SHARE_BASE_URL } from '../config.js';
 import SmoothProgress from '../services/smoothProgress.js';
+import memoryFileSystem from '../services/memoryInstances.js';
 
 // Layout constant for toolbar overlay prediction
 const RIGHT_PANEL_WIDTH = 288; // 18rem = 288px
@@ -110,6 +111,12 @@ class RightPanel {
         this.panelFadeCleanupTimer = null;
         this.panelFadeAnimation = null;
         this.hasMounted = false;
+
+        // Memory + System Prompt sections (P1 #8)
+        this.memoryFiles = [];
+        this.memoryUsedFiles = new Set(); // file paths referenced by current session's memory bubbles
+        this.memoryTreeExpandedDirs = new Set(); // collapsed by default; auto-expand dirs containing used files
+        this.memoryFilesLoaded = false;
 
         this.initializeState();
         this.setupEventListeners();
@@ -224,6 +231,9 @@ class RightPanel {
         this.currentSession = session;
         this.loadSessionData();
         this.updateStatusIndicator();
+        // Refresh memory + system prompt sections (used-files & active preset are session-scoped)
+        this.refreshMemorySection().catch(() => {});
+        this.refreshSystemPromptSection();
     }
 
     loadNextTicket() {
@@ -2677,6 +2687,289 @@ class RightPanel {
         }).join('');
     }
 
+    // ----- Memory + System Prompt sections (#8) -----
+
+    async loadMemorySectionData() {
+        try {
+            await memoryFileSystem.init();
+            const all = await memoryFileSystem.exportAll();
+            this.memoryFiles = (all || [])
+                .filter((file) => file?.path && !file.path.endsWith('_tree.md'))
+                .map((file) => ({ path: file.path, l0: file.l0 || file.oneLiner || '' }))
+                .sort((a, b) => a.path.localeCompare(b.path));
+            this.memoryFilesLoaded = true;
+        } catch (error) {
+            console.warn('[RightPanel] Failed to load memory tree:', error);
+            this.memoryFiles = [];
+            this.memoryFilesLoaded = false;
+        }
+    }
+
+    _serializeUsedFiles(set) {
+        return [...(set || [])].sort().join('|');
+    }
+
+    _applyDerivedExpansion() {
+        const next = new Set();
+        for (const path of this.memoryUsedFiles) {
+            const slashIdx = path.indexOf('/');
+            if (slashIdx !== -1) {
+                next.add(path.slice(0, slashIdx));
+            }
+        }
+        this.memoryTreeExpandedDirs = next;
+    }
+
+    async computeUsedMemoryFiles() {
+        const prevSignature = this._serializeUsedFiles(this.memoryUsedFiles);
+        const usedFiles = new Set();
+        const session = this.currentSession;
+        if (session?.id) {
+            try {
+                const messages = await chatDB.getSessionMessages(session.id);
+                // Highlight only the *latest* retrieval's files — not the cumulative
+                // union across the session. New send → previous retrieval drops out
+                // unless its files also show up in the new one.
+                let latestFiles = null;
+                for (const message of messages) {
+                    const files = message?.ciPromptDraft?.memoryFiles;
+                    if (Array.isArray(files) && files.length > 0) {
+                        latestFiles = files;
+                    }
+                }
+                if (latestFiles) {
+                    for (const f of latestFiles) {
+                        if (typeof f === 'string' && f) usedFiles.add(f);
+                    }
+                }
+            } catch (error) {
+                console.warn('[RightPanel] Failed to load used memory files:', error);
+            }
+        }
+        this.memoryUsedFiles = usedFiles;
+
+        // Only re-derive folder expansion when the highlighted set actually changes
+        // (session switch, new retrieval). Plain re-renders triggered by user folder
+        // toggles must NOT overwrite the user's manual click.
+        const nextSignature = this._serializeUsedFiles(this.memoryUsedFiles);
+        if (nextSignature !== prevSignature) {
+            this._applyDerivedExpansion();
+        }
+    }
+
+    getDirectoryStructureForRightPanel() {
+        const dirs = {};
+        const rootFiles = [];
+        for (const file of this.memoryFiles) {
+            const slashIdx = file.path.indexOf('/');
+            if (slashIdx === -1) {
+                rootFiles.push(file);
+            } else {
+                const dir = file.path.slice(0, slashIdx);
+                if (!dirs[dir]) dirs[dir] = [];
+                dirs[dir].push(file);
+            }
+        }
+        return { dirs, rootFiles };
+    }
+
+    renderMemorySectionHTML() {
+        const used = this.memoryUsedFiles;
+        const { dirs, rootFiles } = this.getDirectoryStructureForRightPanel();
+        const dirNames = Object.keys(dirs).sort();
+
+        if (this.memoryFiles.length === 0) {
+            const empty = this.memoryFilesLoaded
+                ? 'No memory files yet'
+                : 'Loading memory…';
+            return `<div class="px-3 py-3 text-[11px] text-muted-foreground/60 italic">${this.escapeHtml(empty)}</div>`;
+        }
+
+        const renderFileRow = (file, indent) => {
+            const isUsed = used.has(file.path);
+            const usedClass = isUsed ? ' rp-mem-row-used' : '';
+            return `
+                <div class="rp-mem-row rp-mem-file-row${usedClass}" role="button" tabindex="0"
+                     data-mem-file-path="${this.escapeHtmlAttribute(file.path)}"
+                     title="${this.escapeHtmlAttribute(file.path)}"
+                     style="padding-left: ${indent}px">
+                    <svg class="rp-mem-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m4.5 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                    </svg>
+                    <span class="rp-mem-label truncate">${this.escapeHtml(this.getFileBaseName(file.path))}</span>
+                    ${isUsed ? '<span class="rp-mem-used-dot" title="Used in this message"></span>' : ''}
+                </div>
+            `;
+        };
+
+        let html = '';
+
+        for (const dir of dirNames) {
+            const isExpanded = this.memoryTreeExpandedDirs.has(dir);
+            const dirHasUsed = dirs[dir].some((f) => used.has(f.path));
+            const dirHighlightClass = dirHasUsed ? ' rp-mem-row-dir-used' : '';
+            html += `
+                <div class="rp-mem-row rp-mem-dir-row${dirHighlightClass}" role="button" tabindex="0"
+                     data-mem-dir="${this.escapeHtmlAttribute(dir)}"
+                     style="padding-left: 4px">
+                    <svg class="rp-mem-chevron${isExpanded ? ' rp-mem-chevron-open' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"></path>
+                    </svg>
+                    <svg class="rp-mem-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
+                    </svg>
+                    <span class="rp-mem-label truncate">${this.escapeHtml(dir)}</span>
+                </div>
+            `;
+            if (isExpanded) {
+                for (const file of dirs[dir]) {
+                    html += renderFileRow(file, 22);
+                }
+            }
+        }
+
+        for (const file of rootFiles) {
+            html += renderFileRow(file, 6);
+        }
+
+        return html;
+    }
+
+    renderSystemPromptSectionHTML() {
+        const presets = this.app?.state?.systemPromptPresets || [];
+        const activeId = this.currentSession?.systemPromptId || null;
+
+        const rows = [];
+
+        const defaultActive = !activeId;
+        rows.push(`
+            <div class="rp-mem-row rp-prompt-row${defaultActive ? ' rp-mem-row-used' : ''}" role="button" tabindex="0"
+                 data-prompt-id="__default__"
+                 title="Default (no preset)">
+                <svg class="rp-mem-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
+                </svg>
+                <span class="rp-mem-label truncate">Default</span>
+                ${defaultActive ? '<span class="rp-mem-used-dot" title="Active for this session"></span>' : ''}
+            </div>
+        `);
+
+        if (presets.length === 0) {
+            rows.push(`<div class="px-3 py-2 text-[11px] text-muted-foreground/50 italic">No saved presets</div>`);
+        } else {
+            for (const preset of presets) {
+                const isActive = preset.id === activeId;
+                rows.push(`
+                    <div class="rp-mem-row rp-prompt-row${isActive ? ' rp-mem-row-used' : ''}" role="button" tabindex="0"
+                         data-prompt-id="${this.escapeHtmlAttribute(preset.id)}"
+                         title="${this.escapeHtmlAttribute(preset.name || 'Untitled')}">
+                        <svg class="rp-mem-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m4.5 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                        </svg>
+                        <span class="rp-mem-label truncate">${this.escapeHtml(preset.name || 'Untitled')}</span>
+                        ${isActive ? '<span class="rp-mem-used-dot" title="Active for this session"></span>' : ''}
+                    </div>
+                `);
+            }
+        }
+
+        return rows.join('');
+    }
+
+    getFileBaseName(path) {
+        const slashIdx = path.lastIndexOf('/');
+        return slashIdx === -1 ? path : path.slice(slashIdx + 1);
+    }
+
+    async refreshMemorySection({ reloadFiles = false } = {}) {
+        if (reloadFiles || !this.memoryFilesLoaded) {
+            await this.loadMemorySectionData();
+        }
+        await this.computeUsedMemoryFiles();
+        const container = document.getElementById('rp-memory-tree');
+        if (container) {
+            container.innerHTML = this.renderMemorySectionHTML();
+        }
+    }
+
+    refreshSystemPromptSection() {
+        const container = document.getElementById('rp-system-prompt-list');
+        if (container) {
+            container.innerHTML = this.renderSystemPromptSectionHTML();
+        }
+    }
+
+    attachMemoryAndPromptSectionListeners() {
+        const memoryTree = document.getElementById('rp-memory-tree');
+        if (memoryTree && !memoryTree.dataset.rpListenerBound) {
+            memoryTree.dataset.rpListenerBound = '1';
+            memoryTree.addEventListener('click', async (e) => {
+                const fileRow = e.target.closest('[data-mem-file-path]');
+                if (fileRow) {
+                    e.preventDefault();
+                    const path = fileRow.dataset.memFilePath;
+                    if (path && this.app?.memoryEditor?.openToFile) {
+                        await this.app.memoryEditor.openToFile(path);
+                    }
+                    return;
+                }
+                const dirRow = e.target.closest('[data-mem-dir]');
+                if (dirRow) {
+                    e.preventDefault();
+                    const dir = dirRow.dataset.memDir;
+                    if (this.memoryTreeExpandedDirs.has(dir)) {
+                        this.memoryTreeExpandedDirs.delete(dir);
+                    } else {
+                        this.memoryTreeExpandedDirs.add(dir);
+                    }
+                    this.refreshMemorySection().catch(() => {});
+                }
+            });
+        }
+
+        const promptList = document.getElementById('rp-system-prompt-list');
+        if (promptList && !promptList.dataset.rpListenerBound) {
+            promptList.dataset.rpListenerBound = '1';
+            promptList.addEventListener('click', async (e) => {
+                const row = e.target.closest('[data-prompt-id]');
+                if (!row) return;
+                e.preventDefault();
+                const id = row.dataset.promptId;
+                if (typeof this.app.openSystemPromptModal === 'function') {
+                    this.app.openSystemPromptModal();
+                    if (id !== '__default__' && typeof this.app.selectSystemPromptForEdit === 'function') {
+                        // Defer to next frame so the modal is in the DOM before selection.
+                        requestAnimationFrame(() => {
+                            this.app.selectSystemPromptForEdit(id);
+                        });
+                    }
+                }
+            });
+        }
+
+        const memoryHeaderBtn = document.getElementById('rp-memory-open-editor');
+        if (memoryHeaderBtn && !memoryHeaderBtn.dataset.rpListenerBound) {
+            memoryHeaderBtn.dataset.rpListenerBound = '1';
+            memoryHeaderBtn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                if (this.app?.memoryEditor?.open) {
+                    await this.app.memoryEditor.open();
+                }
+            });
+        }
+
+        const promptHeaderBtn = document.getElementById('rp-system-prompt-open-editor');
+        if (promptHeaderBtn && !promptHeaderBtn.dataset.rpListenerBound) {
+            promptHeaderBtn.dataset.rpListenerBound = '1';
+            promptHeaderBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                if (typeof this.app.openSystemPromptModal === 'function') {
+                    this.app.openSystemPromptModal();
+                }
+            });
+        }
+    }
+
     render() {
         const panel = document.getElementById('right-panel-content');
         if (!panel) return;
@@ -2704,6 +2997,46 @@ class RightPanel {
                 ${this.generateTopSectionHTML()}
             </div>
             <!-- End of Top Section -->
+
+            <!-- Memory Section (#8) -->
+            <div class="rp-section border-t border-border flex flex-col bg-background" style="flex: 0 0 18%; min-height: 90px;">
+                <div class="px-3 py-2 border-b border-border bg-muted/10 flex items-center justify-between">
+                    <div class="flex items-center gap-1.5">
+                        <svg class="w-3.5 h-3.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
+                        </svg>
+                        <h3 class="text-xs font-medium text-foreground">Memory</h3>
+                    </div>
+                    <button id="rp-memory-open-editor" class="inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-6 w-6" title="Open memory editor">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+                        </svg>
+                    </button>
+                </div>
+                <div id="rp-memory-tree" class="flex-1 overflow-y-auto py-1 text-xs">
+                    ${this.renderMemorySectionHTML()}
+                </div>
+            </div>
+
+            <!-- System Prompt Section (#8) -->
+            <div class="rp-section border-t border-border flex flex-col bg-background" style="flex: 0 0 12%; min-height: 70px;">
+                <div class="px-3 py-2 border-b border-border bg-muted/10 flex items-center justify-between">
+                    <div class="flex items-center gap-1.5">
+                        <svg class="w-3.5 h-3.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.008v.008H3.75V6.75zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zM3.75 12h.008v.008H3.75V12zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm-.375 5.25h.008v.008H3.75v-.008zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" />
+                        </svg>
+                        <h3 class="text-xs font-medium text-foreground">System Prompt</h3>
+                    </div>
+                    <button id="rp-system-prompt-open-editor" class="inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-6 w-6" title="Manage prompts">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+                        </svg>
+                    </button>
+                </div>
+                <div id="rp-system-prompt-list" class="flex-1 overflow-y-auto py-1 text-xs">
+                    ${this.renderSystemPromptSectionHTML()}
+                </div>
+            </div>
 
             <!-- Activity Timeline (scrollable) -->
             <div class="border-t border-border flex flex-col bg-background flex-1 min-h-0">
@@ -2754,11 +3087,17 @@ class RightPanel {
 
         // Activity log expand/collapse - handled by attachLogRowHandlers
         this.attachLogRowHandlers();
+
+        // Memory + System Prompt sections (#8)
+        this.attachMemoryAndPromptSectionListeners();
     }
 
     mount() {
         // Initial render
         this.render();
+
+        // Kick off memory file load + first refresh (async; render() already painted a "Loading…" placeholder)
+        this.refreshMemorySection({ reloadFiles: true }).catch(() => {});
 
         // Set initial visibility
         this.updatePanelVisibility();
