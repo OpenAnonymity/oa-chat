@@ -6681,20 +6681,66 @@ class ChatApp {
         const requestId = ++this.sessionSearchRequestId;
         this.state.sessionSearchPending = true;
 
-        const results = await chatDB.searchSessions(session => {
+        // Stage 1: title fuzzy search (fast). Render results immediately.
+        const titleResults = await chatDB.searchSessions(session => {
             const title = (session.title || '').toLowerCase();
             return this.fuzzyMatch(query, title);
         }, SESSION_SEARCH_LIMIT);
 
-        if (requestId !== this.sessionSearchRequestId) {
-            return;
+        if (requestId !== this.sessionSearchRequestId) return;
+
+        this.state.sessionSearchResults = titleResults;
+        this.state.sessionSearchResultsQuery = query;
+        // Keep `pending = true` so the footer still shows "Searching..." for
+        // the second stage. We render once now so title hits show up fast.
+        this.cacheSessions(titleResults);
+        this.renderSessions();
+
+        // Stage 2: deep content search across messages — runs after title
+        // results are rendered. New session matches stream in by extending
+        // sessionSearchResults and re-rendering periodically. Cancellable via
+        // requestId if the user types something else.
+        if (typeof chatDB.searchMessageContentStreaming === 'function') {
+            const haveIds = new Set(titleResults.map(s => s.id));
+            try {
+                await chatDB.searchMessageContentStreaming(query, {
+                    limit: SESSION_SEARCH_LIMIT,
+                    skipSessionIds: haveIds,
+                    isCancelled: () => requestId !== this.sessionSearchRequestId,
+                    onSessionMatched: async (sessionId) => {
+                        if (requestId !== this.sessionSearchRequestId) return;
+                        if (haveIds.has(sessionId)) return;
+                        haveIds.add(sessionId);
+                        const session = await chatDB.getSession(sessionId);
+                        if (!session) return;
+                        if (requestId !== this.sessionSearchRequestId) return;
+                        // Append (don't dedupe by id since we tracked haveIds).
+                        const next = (this.state.sessionSearchResults || []).concat([session]);
+                        this.state.sessionSearchResults = next;
+                        this.cacheSessions([session]);
+                        this.scheduleSearchRerender();
+                    }
+                });
+            } catch (error) {
+                console.warn('Deep content search failed:', error);
+            }
         }
 
-        this.state.sessionSearchResults = results;
-        this.state.sessionSearchResultsQuery = query;
+        if (requestId !== this.sessionSearchRequestId) return;
         this.state.sessionSearchPending = false;
-        this.cacheSessions(results);
         this.renderSessions();
+    }
+
+    /**
+     * Coalesces multiple incoming match notifications into one render call
+     * per animation frame so a flood of matches doesn't thrash the sidebar.
+     */
+    scheduleSearchRerender() {
+        if (this._searchRerenderRaf) return;
+        this._searchRerenderRaf = requestAnimationFrame(() => {
+            this._searchRerenderRaf = null;
+            this.renderSessions();
+        });
     }
 
     /**
@@ -7041,6 +7087,20 @@ class ChatApp {
             });
         }
 
+        // About button — opens the oa-chat intro modal.
+        if (this.elements.aboutBtn) {
+            this.elements.aboutBtn.addEventListener('click', () => {
+                this.aboutModal?.toggle();
+            });
+        }
+
+        // Keyboard shortcuts button — opens the shortcuts/customize modal.
+        if (this.elements.shortcutsBtn) {
+            this.elements.shortcutsBtn.addEventListener('click', () => {
+                this.shortcutsModal?.toggle();
+            });
+        }
+
         // Sidebar toggle buttons
         if (this.elements.hideSidebarBtn) {
             this.elements.hideSidebarBtn.addEventListener('click', () => {
@@ -7133,43 +7193,61 @@ class ChatApp {
             });
         }
 
-        // Keyboard shortcuts
+        // Keyboard shortcuts.
+        //
+        // Customizable global bindings flow through `shortcutManager` so the
+        // ShortcutsModal can rebind them without touching this code. To skip
+        // rebinding for a binding without a `mod` modifier, we drop out when
+        // the user is currently typing in an input/textarea/contentEditable
+        // — otherwise a plain `?` or `/` would fire mid-message.
+        const isTypingTarget = (t) => !!(t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable));
+        const shortcutCanFireWhileTyping = (actionId) => {
+            const b = shortcutManager.get(actionId);
+            return !!(b && (b.modifiers.includes('mod') || b.modifiers.includes('alt')));
+        };
+        const matchAction = (e, actionId) => {
+            if (!shortcutManager.matches(e, actionId)) return false;
+            if (!shortcutCanFireWhileTyping(actionId) && isTypingTarget(e.target)) return false;
+            return true;
+        };
+
         document.addEventListener('keydown', (e) => {
-            // Cmd/Ctrl + / for new chat
-            if ((e.metaKey || e.ctrlKey) && e.key === '/') {
+            if (matchAction(e, 'newChat')) {
                 e.preventDefault();
                 this.handleNewChatRequest();
             }
 
-            // Cmd/Ctrl + K for model picker
-            if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+            if (matchAction(e, 'modelPicker')) {
                 e.preventDefault();
-                if (this.modelPicker) {
-                    this.modelPicker.toggle();
-                }
+                this.modelPicker?.toggle();
             }
 
-            // Cmd/Ctrl + Shift + M for memory editor
-            if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'm' || e.key === 'M')) {
+            if (matchAction(e, 'memoryEditor')) {
                 e.preventDefault();
                 if (this.memoryEditor) {
                     this.memoryEditor.isOpen ? this.memoryEditor.close() : this.memoryEditor.open();
                 }
             }
 
-            // Cmd/Ctrl + Shift + F for search focus
-            if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'f' || e.key === 'F')) {
+            if (matchAction(e, 'searchFocus')) {
                 e.preventDefault();
                 this.elements.searchRoomsInput?.focus();
             }
 
-            // Cmd/Ctrl + Z for undo - handle file paste undo if there are file operations
+            if (matchAction(e, 'shortcuts')) {
+                e.preventDefault();
+                this.shortcutsModal?.toggle();
+            }
+
+            // Cmd/Ctrl + Z for undo — file-paste undo only fires when there's
+            // something on the file stack; otherwise native text undo runs.
+            // Not customizable: the binding is implicitly the platform's
+            // standard undo combo and we don't want to fight that convention.
             if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === 'z') {
                 if (this.fileUndoStack.length > 0) {
                     e.preventDefault();
                     this.undoFilePaste();
                 }
-                // If no file undo available, let native text undo work
             }
 
             // Cmd/Ctrl + Shift + Backspace for clear chat (temporarily disabled)

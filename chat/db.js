@@ -360,6 +360,85 @@ class ChatDatabase {
         });
     }
 
+    /**
+     * Walks the messages object store and notifies for each session whose
+     * messages contain the query (case-insensitive substring match). Streams
+     * matches via `onSessionMatched(sessionId)` so the caller can update its
+     * UI as results come in instead of waiting for the whole scan to finish.
+     *
+     * Cancellable via the `isCancelled()` callback — the cursor stops on the
+     * next message when it returns true.
+     *
+     * @param {string} query
+     * @param {object} options
+     * @param {(sessionId: string) => void | Promise<void>} options.onSessionMatched
+     * @param {Set<string>} [options.skipSessionIds] sessions to skip (e.g. already matched by title)
+     * @param {() => boolean} [options.isCancelled]
+     * @param {number} [options.limit]
+     */
+    async searchMessageContentStreaming(query, options = {}) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['messages'], 'readonly');
+            const store = transaction.objectStore('messages');
+            const request = store.openCursor();
+            const matched = new Set();
+            const skip = options.skipSessionIds instanceof Set ? options.skipSessionIds : new Set();
+            const limit = typeof options.limit === 'number' ? options.limit : 200;
+            const isCancelled = typeof options.isCancelled === 'function' ? options.isCancelled : () => false;
+            const onMatch = typeof options.onSessionMatched === 'function' ? options.onSessionMatched : null;
+            const needle = String(query || '').toLowerCase();
+            let done = false;
+
+            // Mirror app-side text extraction so we match what the user sees.
+            const extractText = (content) => {
+                if (typeof content === 'string') return content;
+                if (Array.isArray(content)) {
+                    return content.map((part) => {
+                        if (!part) return '';
+                        if (typeof part.text === 'string') return part.text;
+                        if (typeof part.content === 'string') return part.content;
+                        return '';
+                    }).filter(Boolean).join('');
+                }
+                if (content && typeof content.text === 'string') return content.text;
+                return '';
+            };
+
+            request.onsuccess = (event) => {
+                if (done) return;
+                if (isCancelled()) {
+                    done = true;
+                    resolve(matched);
+                    return;
+                }
+                const cursor = event.target.result;
+                if (!cursor) {
+                    done = true;
+                    resolve(matched);
+                    return;
+                }
+                const message = cursor.value;
+                const sid = message?.sessionId;
+                if (sid && !matched.has(sid) && !skip.has(sid)) {
+                    const text = extractText(message.content).toLowerCase();
+                    if (text && text.includes(needle)) {
+                        matched.add(sid);
+                        if (onMatch) {
+                            try { onMatch(sid); } catch (err) { console.warn('onSessionMatched threw:', err); }
+                        }
+                        if (matched.size >= limit) {
+                            done = true;
+                            resolve(matched);
+                            return;
+                        }
+                    }
+                }
+                cursor.continue();
+            };
+            request.onerror = () => reject(request.error);
+        });
+    }
+
     async searchSessions(matchFn, limit = 200) {
         return new Promise((resolve, reject) => {
             const transaction = this.db.transaction(['sessions'], 'readonly');
