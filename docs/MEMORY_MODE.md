@@ -195,8 +195,10 @@ forwarding its details into the final prompt.
   - `Include memory`
   - `Always include` (turns on auto-include and approves the current prompt)
   - `Skip`
-  - `View prompt`
-- Approved prompts stay previewable from the local status message.
+  - `Edit prompt`
+- Approved prompts stay previewable directly in the local status message. The approved
+  state intentionally omits a separate prompt button because the revised prompt is
+  already visible and no longer editable.
 - When auto-include is on, memory retrieval still renders the local `memory agent`
   summary message, but it immediately marks the prompt approved and continues the
   send flow without waiting on the buttons.
