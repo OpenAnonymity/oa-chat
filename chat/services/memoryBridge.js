@@ -87,6 +87,30 @@ export async function augmentQuery({ query, conversationText, apiKey, model, onP
     return memoryBank.augmentQuery(query, conversationText);
 }
 
+export async function retrieveAdaptive({ query, alreadyRetrievedContext, conversationText, apiKey, model, onProgress, onModelText }) {
+    const memoryBank = createConfidentialMemoryBank({
+        apiKey,
+        model,
+        onProgress,
+        onModelText
+    });
+
+    await memoryBank.init();
+    return memoryBank.retrieveAdaptive(query, alreadyRetrievedContext, conversationText);
+}
+
+export async function augmentQueryAdaptive({ query, alreadyRetrievedContext, conversationText, apiKey, model, onProgress, onModelText }) {
+    const memoryBank = createConfidentialMemoryBank({
+        apiKey,
+        model,
+        onProgress,
+        onModelText
+    });
+
+    await memoryBank.init();
+    return memoryBank.augmentQueryAdaptive(query, alreadyRetrievedContext, conversationText);
+}
+
 export async function importData({ input, apiKey, model, options }) {
     const memoryBank = createConfidentialMemoryBank({
         apiKey,

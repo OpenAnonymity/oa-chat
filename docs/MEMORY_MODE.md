@@ -107,6 +107,20 @@ When memory mode is enabled and the outgoing user message has text:
      passes, but it now trims by conversation turns rather than a raw tail slice.
    - Long assistant replies are clipped first so earlier user turns are less likely to
      disappear from the retrieval context.
+   - After a memory prompt is approved or auto-included, root stores the delivered
+     `[[user_data]]` context on the session in `session.memoryRetrievedContext`.
+     Later memory-mode turns call `nanomem.augmentQueryAdaptive(...)` with that
+     previously delivered context, so follow-ups can reuse what is already in the
+     chat, retrieve only missing memory, and keep prompt crafting inside `nanomem`.
+   - Denied/skipped memory prompts are not added to `memoryRetrievedContext`.
+   - If adaptive retrieval returns `skipped: true` because previously retrieved
+     context already covers the follow-up, root does not create another memory
+     prompt, but it sets a one-shot API override from the already-approved
+     context so the frontier model still receives it. Skips for `No new relevant
+     memory found` / `No new memory context needed` send the plain prompt.
+   - Adaptive turns that need more information receive a review prompt from
+     `nanomem` built from only the newly retrieved context and show the number of
+     newly retrieved memory files.
 3. The local status message shows tool/phase trace and a summary of retrieved
    files.
    - Tool rows now appear immediately when the LLM emits the tool call, and the
@@ -138,9 +152,11 @@ When memory mode is enabled and the outgoing user message has text:
      retries that crafter step up to 3 total attempts before failing.
 6. The user explicitly approves or skips the prompt in-chat.
 7. If approved, the app stores the one-shot override in `_lastApiContent`.
-8. `processMessagesWithFiles()` swaps only the last user message payload with
+8. If the approved prompt contains new memory context, the app appends that
+   context to `session.memoryRetrievedContext` for later adaptive retrieval.
+9. `processMessagesWithFiles()` swaps only the last user message payload with
    that override for the real frontier-model request.
-9. The override is cleared after the send/regenerate flow finishes.
+10. The override is cleared after the send/regenerate flow finishes.
 
 If retrieval finds nothing, tickets are unavailable, or retrieval fails, the app
 falls back to a normal send without memory context.

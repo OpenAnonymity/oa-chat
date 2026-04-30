@@ -26,6 +26,7 @@ import ticketClient from './services/ticketClient.js';
 import scrubberService from './services/scrubberService.js';
 import {
     augmentQuery as runMemoryAugmentQuery,
+    augmentQueryAdaptive as runMemoryAugmentQueryAdaptive,
     ensureMemoryKey,
     ingestMessages as ingestMemoryMessages,
     invalidateMemoryKey,
@@ -50,6 +51,9 @@ const SESSION_SCROLL_LOAD_THRESHOLD = 160;
 const SESSION_SEARCH_DEBOUNCE = 180;  // ms wait before triggering search
 const SESSION_CONTENT_SEARCH_MAX_CHARS = 12000;
 const SESSION_CONTENT_SEARCH_MESSAGE_MAX_CHARS = 2000;
+const MEMORY_CONTEXT_MAX_ENTRIES = 16;
+const MEMORY_CONTEXT_MAX_CHARS = 12000;
+const MEMORY_CONTEXT_PROMPT_MAX_CHARS = 9000;
 const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const UPDATE_CHECK_INITIAL_DELAY_MS = 45 * 1000;
 const SESSION_TITLE_MAX_LENGTH = 60;
@@ -3074,6 +3078,7 @@ class ChatApp {
             expiresAt: null,
             memoryKey: null,
             memoryKeyInfo: null,
+            memoryRetrievedContext: { version: 1, entries: [] },
             scrubberKey: null,
             scrubberKeyInfo: null,
             searchEnabled: this.searchEnabled
@@ -3948,12 +3953,23 @@ class ChatApp {
             const rawPrompt = (typeof draft.editedFullPrompt === 'string' && draft.editedFullPrompt.trim())
                 ? draft.editedFullPrompt : draft.fullPrompt;
             this._lastApiContent = stripMemoryPromptUserData(rawPrompt);
+            await this.recordApprovedMemoryContext(session, draft);
 
             const files = draft.memoryFiles || [];
             const fileList = files.map(f => `- \`${f}\``).join('\n');
-            msg.content = alwaysInclude
-                ? `Retrieved ${files.length} memory file${files.length === 1 ? '' : 's'}:\n${fileList}\n\nAlways include is now on. This prompt will be sent with minimized personal context.`
-                : `Retrieved ${files.length} memory file${files.length === 1 ? '' : 's'}:\n${fileList}\n\nApproved prompt will be sent with minimized personal context.`;
+            if (draft.reusedPriorContext || typeof draft.newMemoryFileCount === 'number') {
+                msg.content = this.buildMemoryContextSummary({
+                    fileCount: draft.newMemoryFileCount || 0,
+                    reused: draft.reusedPriorContext === true,
+                    hasNewContext: draft.hasNewContext === true,
+                    pending: false,
+                    alwaysInclude
+                });
+            } else {
+                msg.content = alwaysInclude
+                    ? `Retrieved ${files.length} memory file${files.length === 1 ? '' : 's'}:\n${fileList}\n\nAlways include is now on. This prompt will be sent with minimized personal context.`
+                    : `Retrieved ${files.length} memory file${files.length === 1 ? '' : 's'}:\n${fileList}\n\nApproved prompt will be sent with minimized personal context.`;
+            }
             msg.memoryApprovalPrompt = { status: 'approved', linkedUserMessageId: draft.linkedUserMessageId, autoIncluded: alwaysInclude };
         } else {
             draft.status = 'denied';
@@ -3985,6 +4001,136 @@ class ChatApp {
                 messageEl.remove();
             }
         }
+    }
+
+    normalizeMemoryContextText(text, maxChars = MEMORY_CONTEXT_MAX_CHARS) {
+        const normalized = String(text || '')
+            .replace(/\r\n/g, '\n')
+            .replace(/[ \t]+\n/g, '\n')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+        if (!normalized) return '';
+        if (normalized.length <= maxChars) return normalized;
+        return normalized.slice(0, maxChars).trimEnd() + '\n...(truncated)';
+    }
+
+    extractMemoryUserDataContext(reviewPrompt, fallbackText = '') {
+        const prompt = String(reviewPrompt || '');
+        const matches = [...prompt.matchAll(/\[\[user_data\]\]([\s\S]*?)\[\[\/user_data\]\]/g)]
+            .map((match) => this.normalizeMemoryContextText(match[1], MEMORY_CONTEXT_PROMPT_MAX_CHARS))
+            .filter(Boolean);
+        if (matches.length > 0) {
+            return this.normalizeMemoryContextText(matches.join('\n\n'), MEMORY_CONTEXT_PROMPT_MAX_CHARS);
+        }
+        return this.normalizeMemoryContextText(fallbackText, MEMORY_CONTEXT_PROMPT_MAX_CHARS);
+    }
+
+    getMemoryContextEntries(session) {
+        const entries = session?.memoryRetrievedContext?.entries;
+        if (!Array.isArray(entries)) return [];
+        return entries
+            .filter((entry) => typeof entry?.context === 'string' && entry.context.trim())
+            .map((entry) => ({
+                query: typeof entry.query === 'string' ? entry.query.trim() : '',
+                context: this.normalizeMemoryContextText(entry.context, MEMORY_CONTEXT_PROMPT_MAX_CHARS),
+                paths: Array.isArray(entry.paths)
+                    ? entry.paths.filter((path) => typeof path === 'string' && path.trim())
+                    : [],
+                linkedUserMessageId: typeof entry.linkedUserMessageId === 'string' ? entry.linkedUserMessageId : null,
+                createdAt: typeof entry.createdAt === 'number' ? entry.createdAt : 0
+            }))
+            .filter((entry) => entry.context);
+    }
+
+    buildPreviouslyRetrievedMemoryContext(session) {
+        const entries = this.getMemoryContextEntries(session);
+        if (entries.length === 0) return '';
+
+        const selected = [];
+        let usedChars = 0;
+        for (let i = entries.length - 1; i >= 0; i -= 1) {
+            const entry = entries[i];
+            const heading = entry.query ? `Previously retrieved for: ${entry.query}` : 'Previously retrieved memory';
+            const block = `${heading}\n${entry.context}`;
+            const separatorCost = selected.length ? 2 : 0;
+            if (usedChars + block.length + separatorCost > MEMORY_CONTEXT_MAX_CHARS) {
+                if (selected.length > 0) break;
+                selected.unshift(block.slice(0, MEMORY_CONTEXT_MAX_CHARS).trimEnd() + '\n...(truncated)');
+                break;
+            }
+            selected.unshift(block);
+            usedChars += block.length + separatorCost;
+        }
+
+        return selected.join('\n\n');
+    }
+
+    shouldReusePriorMemoryContext(result) {
+        if (result?.skipped !== true) return false;
+        const reason = String(result.skipReason || '').toLowerCase();
+        if (!reason) return false;
+        return /\b(already|covered|sufficient|existing|retrieved context)\b/.test(reason);
+    }
+
+    buildReusedMemoryApiPrompt(query, previouslyRetrievedContext) {
+        const cleanQuery = this.normalizeMemoryContextText(query, MEMORY_CONTEXT_PROMPT_MAX_CHARS);
+        const cleanContext = this.normalizeMemoryContextText(previouslyRetrievedContext, MEMORY_CONTEXT_PROMPT_MAX_CHARS);
+        if (!cleanQuery || !cleanContext) return '';
+
+        return `${cleanQuery}\n\nRelevant previously approved personal context for this chat:\n[[user_data]]\n${cleanContext}\n[[/user_data]]`;
+    }
+
+    buildMemoryContextSummary({ fileCount = 0, reused = false, hasNewContext = false, pending = true, alwaysInclude = false, autoIncluded = false }) {
+        if (reused && !hasNewContext) {
+            if (!pending) {
+                if (autoIncluded) return 'Reused memory already retrieved earlier in this chat.\n\nPrompt automatically included with minimized personal context.';
+                if (alwaysInclude) return 'Reused memory already retrieved earlier in this chat.\n\nAlways include is now on. This prompt will be sent with minimized personal context.';
+                return 'Reused memory already retrieved earlier in this chat.\n\nApproved prompt will be sent with minimized personal context.';
+            }
+            return 'Reused memory already retrieved earlier in this chat.\n\nReview the prompt before sending.';
+        }
+
+        const retrieved = fileCount > 0
+            ? `Retrieved ${fileCount} new memory file${fileCount === 1 ? '' : 's'}`
+            : 'Retrieved new memory context';
+        const prefix = reused ? `${retrieved} and reused earlier context.` : `${retrieved}.`;
+
+        if (!pending) {
+            if (autoIncluded) return `${prefix}\n\nPrompt automatically included with minimized personal context.`;
+            if (alwaysInclude) return `${prefix}\n\nAlways include is now on. This prompt will be sent with minimized personal context.`;
+            return `${prefix}\n\nApproved prompt will be sent with minimized personal context.`;
+        }
+        return `${prefix}\n\nReview the prompt before sending.`;
+    }
+
+    async recordApprovedMemoryContext(session, draft) {
+        if (!session || !draft) return;
+        const sourceEntry = draft.memoryContextEntry || null;
+        if (!sourceEntry) return;
+
+        const usedEditedPrompt = typeof draft.editedFullPrompt === 'string' && draft.editedFullPrompt.trim();
+        const approvedPrompt = usedEditedPrompt ? draft.editedFullPrompt : draft.fullPrompt;
+        const approvedContext = this.extractMemoryUserDataContext(approvedPrompt, usedEditedPrompt ? '' : sourceEntry.context);
+        if (!approvedContext) return;
+
+        const existingEntries = this.getMemoryContextEntries(session)
+            .filter((entry) => entry.linkedUserMessageId !== sourceEntry.linkedUserMessageId);
+        const nextEntry = {
+            query: typeof sourceEntry.query === 'string' ? sourceEntry.query.slice(0, 1000) : '',
+            context: approvedContext,
+            paths: Array.isArray(sourceEntry.paths)
+                ? [...new Set(sourceEntry.paths.filter((path) => typeof path === 'string' && path.trim()))]
+                : [],
+            linkedUserMessageId: sourceEntry.linkedUserMessageId || draft.linkedUserMessageId || null,
+            createdAt: Date.now()
+        };
+
+        const nextEntries = [...existingEntries, nextEntry].slice(-MEMORY_CONTEXT_MAX_ENTRIES);
+        session.memoryRetrievedContext = {
+            version: 1,
+            entries: nextEntries
+        };
+        await chatDB.saveSession(session);
     }
 
     async runMemoryAugmentFlow(query, userMessage, session, options = {}) {
@@ -4072,6 +4218,30 @@ class ChatApp {
                 this.chatArea.updateMessage(retrievalMessage);
             }
         };
+        const handleMemoryProgress = (progress) => {
+            if (!progress?.stage) return;
+            if (progress.stage === 'tool_call') {
+                upsertToolTraceEntry(progress);
+            } else if (progress.stage === 'reasoning') {
+                const delta = typeof progress.message === 'string' ? progress.message : '';
+                const lastEntry = agentTrace[agentTrace.length - 1];
+                if (lastEntry?.type === 'reasoning') {
+                    lastEntry.text += delta;
+                } else {
+                    agentTrace.push({ type: 'reasoning', text: delta });
+                }
+            } else {
+                agentTrace.push({
+                    type: 'phase',
+                    label: progress.message || progress.stage
+                });
+            }
+            scheduleTraceRefresh();
+        };
+        const handleMemoryModelText = (text, iteration) => {
+            agentTrace.push({ type: 'model_text', text, iteration });
+            scheduleTraceRefresh();
+        };
 
         try {
             const hadMemoryKey = !!session.memoryKey;
@@ -4088,36 +4258,26 @@ class ChatApp {
                 return null;
             }
 
-            const result = await runMemoryAugmentQuery({
-                query,
-                conversationText,
-                apiKey: memoryKey,
-                model: this.memoryAgentModel,
-                onProgress: (progress) => {
-                    if (!progress?.stage) return;
-                    if (progress.stage === 'tool_call') {
-                        upsertToolTraceEntry(progress);
-                    } else if (progress.stage === 'reasoning') {
-                        const delta = typeof progress.message === 'string' ? progress.message : '';
-                        const lastEntry = agentTrace[agentTrace.length - 1];
-                        if (lastEntry?.type === 'reasoning') {
-                            lastEntry.text += delta;
-                        } else {
-                            agentTrace.push({ type: 'reasoning', text: delta });
-                        }
-                    } else {
-                        agentTrace.push({
-                            type: 'phase',
-                            label: progress.message || progress.stage
-                        });
-                    }
-                    scheduleTraceRefresh();
-                },
-                onModelText: (text, iteration) => {
-                    agentTrace.push({ type: 'model_text', text, iteration });
-                    scheduleTraceRefresh();
-                }
-            });
+            const previouslyRetrievedContext = this.buildPreviouslyRetrievedMemoryContext(session);
+            const hasPriorMemoryContext = !!previouslyRetrievedContext;
+            const result = hasPriorMemoryContext
+                ? await runMemoryAugmentQueryAdaptive({
+                    query,
+                    alreadyRetrievedContext: previouslyRetrievedContext,
+                    conversationText,
+                    apiKey: memoryKey,
+                    model: this.memoryAgentModel,
+                    onProgress: handleMemoryProgress,
+                    onModelText: handleMemoryModelText
+                })
+                : await runMemoryAugmentQuery({
+                    query,
+                    conversationText,
+                    apiKey: memoryKey,
+                    model: this.memoryAgentModel,
+                    onProgress: handleMemoryProgress,
+                    onModelText: handleMemoryModelText
+                });
 
             await flushTraceRefresh();
             this.throwIfAborted(signal);
@@ -4127,27 +4287,66 @@ class ChatApp {
             const memoryFiles = Array.isArray(result?.files)
                 ? result.files.filter((file) => typeof file?.path === 'string' && typeof file?.content === 'string' && file.content.trim())
                 : [];
+            const newMemoryFilePaths = [...new Set([
+                ...memoryFiles.map((file) => file.path),
+                ...(Array.isArray(result?.paths) ? result.paths.filter((path) => typeof path === 'string' && path.trim()) : [])
+            ])];
+            const fullPrompt = typeof result?.reviewPrompt === 'string' ? result.reviewPrompt : '';
+            const apiPrompt = typeof result?.apiPrompt === 'string' ? result.apiPrompt : '';
+            const memoryFilePaths = newMemoryFilePaths;
+            let memoryContextEntry = null;
+            let hasNewContext = false;
 
-            if (!result?.reviewPrompt || !result?.apiPrompt || memoryFiles.length === 0) {
-                retrievalMessage.content = 'Sending prompt without added context.';
+            if (fullPrompt && apiPrompt) {
+                const storedContext = this.extractMemoryUserDataContext(result.reviewPrompt, result.assembledContext);
+                if (storedContext) {
+                    hasNewContext = true;
+                    memoryContextEntry = {
+                        query,
+                        context: storedContext,
+                        paths: newMemoryFilePaths,
+                        linkedUserMessageId: userMessage.id
+                    };
+                }
+            }
+
+            if (!fullPrompt || !apiPrompt) {
+                const shouldReusePriorContext = hasPriorMemoryContext && this.shouldReusePriorMemoryContext(result);
+                const reusedPrompt = shouldReusePriorContext
+                    ? this.buildReusedMemoryApiPrompt(query, previouslyRetrievedContext)
+                    : '';
+                if (reusedPrompt) {
+                    this._lastApiContent = stripMemoryPromptUserData(reusedPrompt);
+                    retrievalMessage.content = 'Reused memory already retrieved earlier in this chat.\n\nSending with previously approved minimized personal context.';
+                } else {
+                    retrievalMessage.content = 'Sending prompt without added context.';
+                }
                 retrievalMessage.memoryApprovalPrompt = null;
                 retrievalMessage.ciPromptDraft = null;
                 await this.persistLocalAssistantStatus(retrievalMessage);
                 return null;
             }
 
-            const fileList = memoryFiles.map((file) => `- \`${file.path}\``).join('\n');
-            retrievalMessage.content = `Retrieved ${memoryFiles.length} memory file${memoryFiles.length === 1 ? '' : 's'}:\n${fileList}\n\nReview the prompt before sending.`;
+            retrievalMessage.content = this.buildMemoryContextSummary({
+                fileCount: newMemoryFilePaths.length,
+                reused: hasPriorMemoryContext,
+                hasNewContext,
+                pending: true
+            });
             retrievalMessage.memoryApprovalPrompt = {
                 status: 'pending',
                 linkedUserMessageId: userMessage.id
             };
             retrievalMessage.ciPromptDraft = {
-                fullPrompt: result.reviewPrompt,
+                fullPrompt,
                 editedFullPrompt: null,
-                apiPrompt: result.apiPrompt,
+                apiPrompt,
                 model: this.normalizeModelName(session.model) || session.model || this.state.pendingModelName || inferenceService.getDefaultModelName(session),
-                memoryFiles: memoryFiles.map((file) => file.path),
+                memoryFiles: memoryFilePaths,
+                memoryContextEntry,
+                reusedPriorContext: hasPriorMemoryContext,
+                hasNewContext,
+                newMemoryFileCount: newMemoryFilePaths.length,
                 linkedUserMessageId: userMessage.id,
                 status: 'pending'
             };
@@ -4158,7 +4357,14 @@ class ChatApp {
                 draft.status = 'approved';
                 draft.model = this.normalizeModelName(session.model) || session.model || draft.model;
                 this._lastApiContent = stripMemoryPromptUserData(draft.fullPrompt);
-                retrievalMessage.content = `Retrieved ${memoryFiles.length} memory file${memoryFiles.length === 1 ? '' : 's'}:\n${fileList}\n\nPrompt automatically included with minimized personal context.`;
+                await this.recordApprovedMemoryContext(session, draft);
+                retrievalMessage.content = this.buildMemoryContextSummary({
+                    fileCount: draft.newMemoryFileCount || 0,
+                    reused: draft.reusedPriorContext === true,
+                    hasNewContext: draft.hasNewContext === true,
+                    pending: false,
+                    autoIncluded: true
+                });
                 retrievalMessage.memoryApprovalPrompt = {
                     status: 'approved',
                     linkedUserMessageId: userMessage.id,
@@ -4187,9 +4393,14 @@ class ChatApp {
                     ? draft.editedFullPrompt
                     : draft.fullPrompt;
                 this._lastApiContent = stripMemoryPromptUserData(rawPrompt);
-                retrievalMessage.content = alwaysInclude
-                    ? `Retrieved ${memoryFiles.length} memory file${memoryFiles.length === 1 ? '' : 's'}:\n${fileList}\n\nAlways include is now on. This prompt will be sent with minimized personal context.`
-                    : `Retrieved ${memoryFiles.length} memory file${memoryFiles.length === 1 ? '' : 's'}:\n${fileList}\n\nApproved prompt will be sent with minimized personal context.`;
+                await this.recordApprovedMemoryContext(session, draft);
+                retrievalMessage.content = this.buildMemoryContextSummary({
+                    fileCount: draft.newMemoryFileCount || 0,
+                    reused: draft.reusedPriorContext === true,
+                    hasNewContext: draft.hasNewContext === true,
+                    pending: false,
+                    alwaysInclude
+                });
                 retrievalMessage.memoryApprovalPrompt = {
                     status: 'approved',
                     linkedUserMessageId: userMessage.id,
