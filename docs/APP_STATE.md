@@ -25,6 +25,24 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
+- 2026-05-04: Sidebar filtering now combines text search, starred-only, quick
+  updated-time ranges, and an exact local-date picker.
+  - Star state is stored directly on session records as `session.starred` with
+    optional `starredAt`; toggling it does not change `updatedAt`, so starring a
+    chat does not reorder history.
+  - The filter popover lives at the right edge of the sidebar search field. The
+    shortcut hint is shifted left to make room for the filter button.
+  - Session rows show a separate star affordance on hover/focus so users can
+    discover starring without opening the overflow menu. Starred sessions keep
+    that star visible. The adjacent overflow menu remains compact.
+  - The popover is intentionally compact: a single `Starred only` toggle, one
+    `Updated` select, and one exact-date input. Avoid expanding quick ranges
+    into a grid of buttons; it makes the sidebar feel like a panel instead of a
+    small filter menu.
+  - When search, starred-only, or date filtering is active, the sidebar scans
+    all session records from IndexedDB so older chats outside the paged sidebar
+    are still eligible. Message loading is still avoided unless a text query
+    needs lazy `conversationSearchText` backfill.
 - 2026-04-30: Memory mode now uses `nanomem.augmentQueryAdaptive(...)` for multi-turn follow-ups.
   - New sessions initialize `session.memoryRetrievedContext = { version: 1, entries: [] }`.
   - A memory context entry is appended only after the user approves the memory prompt or auto-include sends it. Denied/skipped prompts are not reusable context.

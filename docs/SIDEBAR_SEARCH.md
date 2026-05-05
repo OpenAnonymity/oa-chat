@@ -17,6 +17,16 @@ The app does not load every message for every keystroke. It searches session
 records first, and only lazily builds `conversationSearchText` for older
 sessions that do not have it yet.
 
+Sidebar filters also operate at the session-record level:
+
+- `session.starred`: toggled from the star button on each sidebar row.
+- `session.updatedAt` / `session.createdAt`: used for quick date filters and
+  the exact-date picker.
+
+Star and date filters do not load messages. When any sidebar criterion is
+active, the app scans session records from IndexedDB so older sessions outside
+the currently paged sidebar are still included.
+
 ## Cap Policy
 
 The index size is controlled by constants in `chat/app.js`:
@@ -48,6 +58,10 @@ Search uses literal/token matching, not arbitrary fuzzy subsequence matching.
 Do not reintroduce broad subsequence matching for conversation content. It
 causes false positives such as `meaning` matching scattered characters across
 `means. In ... GPU`.
+
+Star/date filters are applied before text matching. Lazy
+`conversationSearchText` backfill only runs for sessions that already pass those
+session-level filters and only when a text query is present.
 
 ## Efficiency Tradeoff
 

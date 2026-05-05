@@ -319,17 +319,51 @@
                         <div class="relative shrink-0">
                             <input
                                 id="search-rooms"
-                                class="input-focus-clean appearance-none px-3 py-2 pr-16 text-sm text-foreground transition duration-150 ease-in-out rounded-lg placeholder:text-muted-foreground shadow-sm h-9 w-full border bg-background border-border focus:bg-background"
+                                class="input-focus-clean appearance-none px-3 py-2 pr-24 text-sm text-foreground transition duration-150 ease-in-out rounded-lg placeholder:text-muted-foreground shadow-sm h-9 w-full border bg-background border-border focus:bg-background"
                                 autocomplete="off"
                                 autocorrect="off"
                                 autocapitalize="off"
                                 spellcheck="false"
                                 placeholder="Search chats..."
                                 value="">
-                            <div class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5 pointer-events-none text-muted-foreground text-xs">
+                            <div class="sidebar-search-shortcut">
                                 <span class="opacity-60">⌘</span>
                                 <span class="opacity-60">⇧</span>
                                 <span class="opacity-60">F</span>
+                            </div>
+                            <button
+                                id="sidebar-filter-btn"
+                                class="sidebar-filter-btn text-muted-foreground transition-colors hover-highlight hover:text-foreground"
+                                type="button"
+                                aria-label="Filter chats"
+                                aria-haspopup="menu"
+                                aria-expanded="false">
+                                <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <path d="M3 5h18" />
+                                    <path d="M6 12h12" />
+                                    <path d="M10 19h4" />
+                                </svg>
+                            </button>
+                            <div id="sidebar-filter-menu" class="sidebar-filter-menu hidden" role="menu" aria-label="Chat filters">
+                                <button class="sidebar-filter-toggle-row" type="button" data-session-star-filter-toggle aria-pressed="false">
+                                    <span>Starred only</span>
+                                    <span class="sidebar-filter-check" aria-hidden="true"></span>
+                                </button>
+                                <label class="sidebar-filter-field">
+                                    <span>Updated</span>
+                                    <select id="sidebar-filter-range" autocomplete="off">
+                                        <option value="all">Any time</option>
+                                        <option value="today">Today</option>
+                                        <option value="yesterday">Yesterday</option>
+                                        <option value="7d">Past 7 days</option>
+                                        <option value="30d">Past 30 days</option>
+                                    </select>
+                                </label>
+                                <label class="sidebar-filter-field">
+                                    <span>Date</span>
+                                    <input id="sidebar-filter-date" type="date" autocomplete="off">
+                                </label>
+                                <button id="clear-sidebar-filters" class="sidebar-filter-clear" type="button">Clear filters</button>
                             </div>
                         </div>
 
@@ -823,12 +857,12 @@
 
     <!-- Prerender landing content early (skip if restoring a session) -->
     <!-- BUNDLE:PRELUDE -->
-    <script type="module" src="prelude.js"></script>
+    <script type="module" src="prelude.js?v=dev"></script>
     <!-- /BUNDLE:PRELUDE -->
 
     <!-- Single entry point - app bootstraps -->
     <!-- BUNDLE:APP -->
-    <script type="module" src="app.js"></script>
+    <script type="module" src="app.js?v=dev"></script>
     <!-- /BUNDLE:APP -->
 </body>
 </html>

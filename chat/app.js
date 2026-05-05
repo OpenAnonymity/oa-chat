@@ -119,6 +119,7 @@ class ChatApp {
             isLoadingSessions: false,
             sessionSearchResults: null,
             sessionSearchResultsQuery: '',
+            sessionSearchResultsKey: '',
             sessionSearchPending: false,
             currentSessionId: null,
             models: [],
@@ -131,6 +132,11 @@ class ChatApp {
             newChatBtn: document.getElementById('new-chat-btn'),
             sessionsList: document.getElementById('sessions-list'),
             searchRoomsInput: document.getElementById('search-rooms'),
+            sidebarFilterBtn: document.getElementById('sidebar-filter-btn'),
+            sidebarFilterMenu: document.getElementById('sidebar-filter-menu'),
+            sidebarFilterRangeSelect: document.getElementById('sidebar-filter-range'),
+            sidebarFilterDateInput: document.getElementById('sidebar-filter-date'),
+            clearSidebarFiltersBtn: document.getElementById('clear-sidebar-filters'),
             chatArea: document.getElementById('chat-area'),
             messagesContainer: document.getElementById('messages-container'),
             messageInput: document.getElementById('message-input'),
@@ -180,6 +186,12 @@ class ChatApp {
         this.sessionSearchQuery = '';
         this.sessionSearchDebounce = null;
         this.sessionSearchRequestId = 0;
+        this.sessionFilters = {
+            starredOnly: false,
+            dateMode: 'all',
+            customDate: ''
+        };
+        this.sidebarFilterControlsAttached = false;
         this.uploadedFiles = [];
         this.fileUndoStack = []; // Track file paste operations for undo
         this.filePreviewRenderVersion = 0; // Guard async preview renders against stale overwrites
@@ -1390,6 +1402,7 @@ class ChatApp {
         this.thanksPanel = new ThanksPanel(this);
         this.rightPanel = new RightPanel(this);
         this.rightPanel.mount();
+        this.setupSidebarFilterControls();
 
         // Render core shell immediately so non-sidebar UI is never blank on startup.
         this.chatArea.renderEmptyStateImmediate();
@@ -6386,7 +6399,7 @@ class ChatApp {
 
     async loadMoreSessions() {
         if (this.state.isLoadingSessions || !this.state.hasMoreSessions) return;
-        if (this.sessionSearchQuery.trim()) return;
+        if (this.hasActiveSessionListCriteria()) return;
 
         this.state.isLoadingSessions = true;
         try {
@@ -6420,10 +6433,15 @@ class ChatApp {
         this.state.hasMoreSessions = true;
         this.state.sessionSearchResults = null;
         this.state.sessionSearchResultsQuery = '';
+        this.state.sessionSearchResultsKey = '';
         this.state.sessionSearchPending = false;
         await this.loadInitialSessions();
         await this.ensureSessionLoaded(this.state.currentSessionId);
-        this.renderSessions();
+        if (this.hasActiveSessionListCriteria()) {
+            await this.updateSessionSearchResults();
+        } else {
+            this.renderSessions();
+        }
     }
 
     handleStorageEvent(type, payload) {
@@ -6474,12 +6492,224 @@ class ChatApp {
         return merged;
     }
 
+    getNormalizedSessionSearchQuery() {
+        return this.sessionSearchQuery.trim().toLowerCase();
+    }
+
+    hasActiveSessionFilters() {
+        return Boolean(
+            this.sessionFilters.starredOnly ||
+            this.sessionFilters.dateMode !== 'all' ||
+            this.sessionFilters.customDate
+        );
+    }
+
+    hasActiveSessionListCriteria() {
+        return Boolean(this.getNormalizedSessionSearchQuery() || this.hasActiveSessionFilters());
+    }
+
+    getSessionResultsKey() {
+        return JSON.stringify({
+            query: this.getNormalizedSessionSearchQuery(),
+            starredOnly: this.sessionFilters.starredOnly,
+            dateMode: this.sessionFilters.dateMode,
+            customDate: this.sessionFilters.customDate || ''
+        });
+    }
+
+    getSessionTimestamp(session) {
+        return Number(session?.updatedAt || session?.createdAt || 0);
+    }
+
+    getLocalDateKey(timestamp) {
+        const date = new Date(Number.isFinite(timestamp) ? timestamp : Date.now());
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    }
+
+    getStartOfLocalDay(date = new Date()) {
+        return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+    }
+
+    sessionMatchesDateFilter(session) {
+        const timestamp = this.getSessionTimestamp(session);
+        if (!timestamp) return false;
+
+        const mode = this.sessionFilters.dateMode;
+        if (this.sessionFilters.customDate) {
+            return this.getLocalDateKey(timestamp) === this.sessionFilters.customDate;
+        }
+        if (mode === 'all') return true;
+
+        const todayStart = this.getStartOfLocalDay();
+        const sessionDayStart = this.getStartOfLocalDay(new Date(timestamp));
+        const dayMs = 24 * 60 * 60 * 1000;
+
+        if (mode === 'today') {
+            return sessionDayStart === todayStart;
+        }
+        if (mode === 'yesterday') {
+            return sessionDayStart === todayStart - dayMs;
+        }
+        if (mode === '7d') {
+            return sessionDayStart >= todayStart - (6 * dayMs);
+        }
+        if (mode === '30d') {
+            return sessionDayStart >= todayStart - (29 * dayMs);
+        }
+        return true;
+    }
+
+    sessionMatchesSidebarFilters(session) {
+        if (!session) return false;
+        if (this.sessionFilters.starredOnly && !session.starred) return false;
+        return this.sessionMatchesDateFilter(session);
+    }
+
+    getSessionListEmptyText() {
+        if (!this.hasActiveSessionListCriteria()) {
+            return 'No chats yet';
+        }
+        if (this.sessionFilters.starredOnly && !this.getNormalizedSessionSearchQuery() &&
+            this.sessionFilters.dateMode === 'all' && !this.sessionFilters.customDate) {
+            return 'No starred chats';
+        }
+        return 'No matching chats';
+    }
+
+    resetSessionSearchResults() {
+        this.state.sessionSearchResults = null;
+        this.state.sessionSearchResultsQuery = '';
+        this.state.sessionSearchResultsKey = '';
+        this.state.sessionSearchPending = false;
+    }
+
+    async toggleSessionStar(sessionId) {
+        if (!sessionId) return;
+        await this.ensureSessionLoaded(sessionId);
+        const session = this.state.sessionsById.get(sessionId) || this.state.sessions.find(s => s.id === sessionId);
+        if (!session) return;
+
+        const nextStarred = !session.starred;
+        session.starred = nextStarred;
+        if (nextStarred) {
+            session.starredAt = Date.now();
+        } else {
+            delete session.starredAt;
+        }
+
+        await chatDB.saveSession(session);
+        this.resetSessionSearchResults();
+        this.renderSessions();
+        if (this.hasActiveSessionListCriteria()) {
+            void this.updateSessionSearchResults();
+        }
+    }
+
+    isValidSessionDateInput(value) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return false;
+        const date = new Date(`${value}T00:00:00`);
+        return !Number.isNaN(date.getTime()) && this.getLocalDateKey(date.getTime()) === value;
+    }
+
+    applySessionFilterChange(nextFilters = {}) {
+        const current = this.sessionFilters;
+        this.sessionFilters = {
+            starredOnly: Boolean(nextFilters.starredOnly ?? current.starredOnly),
+            dateMode: nextFilters.dateMode ?? current.dateMode,
+            customDate: nextFilters.customDate ?? current.customDate
+        };
+
+        if (this.sessionFilters.dateMode !== 'custom' && nextFilters.customDate === undefined) {
+            this.sessionFilters.customDate = '';
+        }
+        if (this.sessionFilters.customDate) {
+            this.sessionFilters.dateMode = 'custom';
+        }
+
+        this.resetSessionSearchResults();
+        this.renderSessions();
+        this.updateSidebarFilterUI();
+        if (this.sidebar) {
+            this.sidebar.scrollToTop();
+        }
+        void this.updateSessionSearchResults();
+    }
+
+    clearSidebarFilters() {
+        this.applySessionFilterChange({
+            starredOnly: false,
+            dateMode: 'all',
+            customDate: ''
+        });
+    }
+
+    updateSidebarFilterUI() {
+        const btn = this.elements.sidebarFilterBtn;
+        const menu = this.elements.sidebarFilterMenu;
+        const rangeSelect = this.elements.sidebarFilterRangeSelect;
+        const dateInput = this.elements.sidebarFilterDateInput;
+        const filtersActive = this.hasActiveSessionFilters();
+
+        if (btn) {
+            btn.dataset.active = filtersActive ? 'true' : 'false';
+            btn.setAttribute('aria-expanded', menu && !menu.classList.contains('hidden') ? 'true' : 'false');
+        }
+        if (!menu) return;
+
+        const starToggle = menu.querySelector('[data-session-star-filter-toggle]');
+        if (starToggle) {
+            starToggle.classList.toggle('active', this.sessionFilters.starredOnly);
+            starToggle.setAttribute('aria-pressed', this.sessionFilters.starredOnly ? 'true' : 'false');
+        }
+        if (rangeSelect && rangeSelect.value !== this.sessionFilters.dateMode) {
+            rangeSelect.value = this.sessionFilters.customDate ? 'all' : this.sessionFilters.dateMode;
+        }
+        if (dateInput && dateInput.value !== this.sessionFilters.customDate) {
+            dateInput.value = this.sessionFilters.customDate || '';
+        }
+        const clearBtn = this.elements.clearSidebarFiltersBtn;
+        if (clearBtn) {
+            clearBtn.disabled = !filtersActive;
+            clearBtn.classList.toggle('opacity-50', !filtersActive);
+        }
+    }
+
+    openSidebarFilterMenu() {
+        const menu = this.elements.sidebarFilterMenu;
+        if (!menu) return;
+        menu.classList.remove('hidden');
+        this.updateSidebarFilterUI();
+    }
+
+    closeSidebarFilterMenu() {
+        const menu = this.elements.sidebarFilterMenu;
+        if (!menu) return;
+        menu.classList.add('hidden');
+        this.updateSidebarFilterUI();
+    }
+
+    toggleSidebarFilterMenu() {
+        const menu = this.elements.sidebarFilterMenu;
+        if (!menu) return;
+        if (menu.classList.contains('hidden')) {
+            this.openSidebarFilterMenu();
+        } else {
+            this.closeSidebarFilterMenu();
+        }
+    }
+
     async updateSessionSearchResults() {
         const rawQuery = this.sessionSearchQuery.trim();
-        if (!rawQuery) {
+        const hasCriteria = this.hasActiveSessionListCriteria();
+        const resultsKey = this.getSessionResultsKey();
+        if (!hasCriteria) {
             this.sessionSearchRequestId += 1;
             this.state.sessionSearchResults = null;
             this.state.sessionSearchResultsQuery = '';
+            this.state.sessionSearchResultsKey = '';
             this.state.sessionSearchPending = false;
             this.renderSessions();
             return;
@@ -6489,6 +6719,7 @@ class ChatApp {
             this.sessionSearchRequestId += 1;
             this.state.sessionSearchResults = null;
             this.state.sessionSearchResultsQuery = '';
+            this.state.sessionSearchResultsKey = '';
             this.state.sessionSearchPending = false;
             this.renderSessions();
             return;
@@ -6497,6 +6728,7 @@ class ChatApp {
         const query = rawQuery.toLowerCase();
         const requestId = ++this.sessionSearchRequestId;
         this.state.sessionSearchPending = true;
+        this.renderSessions();
 
         const results = [];
         try {
@@ -6509,8 +6741,12 @@ class ChatApp {
                 }
 
                 let sessionToMatch = session;
-                let matches = this.sessionMatchesSearchQuery(sessionToMatch, query);
-                if (!matches && typeof sessionToMatch.conversationSearchText !== 'string') {
+                const filterMatches = this.sessionMatchesSidebarFilters(sessionToMatch);
+                let matches = filterMatches;
+                if (filterMatches && query) {
+                    matches = this.sessionMatchesSearchQuery(sessionToMatch, query);
+                }
+                if (filterMatches && !matches && query && typeof sessionToMatch.conversationSearchText !== 'string') {
                     try {
                         await this.refreshSessionConversationSearchText(sessionToMatch, null, { persist: true });
                         matches = this.sessionMatchesSearchQuery(sessionToMatch, query);
@@ -6523,7 +6759,7 @@ class ChatApp {
                     const loadedSession = this.state.sessionsById.get(sessionToMatch.id);
                     sessionToMatch = loadedSession || sessionToMatch;
                     results.push(sessionToMatch);
-                    if (results.length >= SESSION_SEARCH_LIMIT) {
+                    if (query && results.length >= SESSION_SEARCH_LIMIT) {
                         break;
                     }
                 }
@@ -6538,6 +6774,7 @@ class ChatApp {
 
         this.state.sessionSearchResults = results;
         this.state.sessionSearchResultsQuery = query;
+        this.state.sessionSearchResultsKey = resultsKey;
         this.state.sessionSearchPending = false;
         this.cacheSessions(results);
         this.renderSessions();
@@ -6548,16 +6785,17 @@ class ChatApp {
      * @returns {Array} Filtered sessions array
      */
     getFilteredSessions() {
-        if (!this.sessionSearchQuery.trim()) {
+        if (!this.hasActiveSessionListCriteria()) {
             return this.state.sessions;
         }
 
-        const query = this.sessionSearchQuery.toLowerCase();
+        const query = this.getNormalizedSessionSearchQuery();
         const inMemory = this.state.sessions.filter(session => {
-            return this.sessionMatchesSearchQuery(session, query);
+            if (!this.sessionMatchesSidebarFilters(session)) return false;
+            return !query || this.sessionMatchesSearchQuery(session, query);
         });
 
-        if (this.state.sessionSearchResults && this.state.sessionSearchResultsQuery === query) {
+        if (this.state.sessionSearchResults && this.state.sessionSearchResultsKey === this.getSessionResultsKey()) {
             return this.mergeSessionLists(inMemory, this.state.sessionSearchResults);
         }
 
@@ -6843,6 +7081,77 @@ class ChatApp {
         return window.innerWidth <= 768;
     }
 
+    setupSidebarFilterControls() {
+        if (this.sidebarFilterControlsAttached) return;
+        this.sidebarFilterControlsAttached = true;
+
+        if (this.elements.sidebarFilterBtn) {
+            this.elements.sidebarFilterBtn.addEventListener('click', (event) => {
+                event.stopPropagation();
+                this.toggleSidebarFilterMenu();
+            });
+        }
+
+        if (this.elements.sidebarFilterMenu) {
+            this.elements.sidebarFilterMenu.addEventListener('click', (event) => {
+                event.stopPropagation();
+
+                const starToggle = event.target.closest('[data-session-star-filter-toggle]');
+                if (starToggle) {
+                    this.applySessionFilterChange({
+                        starredOnly: !this.sessionFilters.starredOnly
+                    });
+                    return;
+                }
+
+                if (event.target.closest('#clear-sidebar-filters')) {
+                    this.clearSidebarFilters();
+                }
+            });
+        }
+
+        if (this.elements.sidebarFilterRangeSelect) {
+            this.elements.sidebarFilterRangeSelect.addEventListener('click', (event) => {
+                event.stopPropagation();
+            });
+            this.elements.sidebarFilterRangeSelect.addEventListener('change', (event) => {
+                this.applySessionFilterChange({
+                    dateMode: event.target.value || 'all',
+                    customDate: ''
+                });
+            });
+        }
+
+        if (this.elements.sidebarFilterDateInput) {
+            this.elements.sidebarFilterDateInput.addEventListener('click', (event) => {
+                event.stopPropagation();
+            });
+            this.elements.sidebarFilterDateInput.addEventListener('change', (event) => {
+                const value = event.target.value;
+                const isValidDate = this.isValidSessionDateInput(value);
+                this.applySessionFilterChange({
+                    dateMode: value && isValidDate ? 'custom' : 'all',
+                    customDate: isValidDate ? value : ''
+                });
+            });
+        }
+
+        document.addEventListener('click', (event) => {
+            const menu = this.elements.sidebarFilterMenu;
+            const button = this.elements.sidebarFilterBtn;
+            if (!menu || menu.classList.contains('hidden')) return;
+            if (menu.contains(event.target) || button?.contains(event.target)) return;
+            this.closeSidebarFilterMenu();
+        });
+
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') {
+                this.closeSidebarFilterMenu();
+            }
+        });
+        this.updateSidebarFilterUI();
+    }
+
     /**
      * Sets up all event listeners. Delegates component-specific listeners to respective components.
      */
@@ -6948,12 +7257,14 @@ class ChatApp {
             });
         }
 
+        this.setupSidebarFilterControls();
+
         if (this.elements.sessionsScrollArea) {
             this.elements.sessionsScrollArea.addEventListener('scroll', () => {
                 if (this.sidebar) {
                     this.sidebar.handleScroll();
                 }
-                if (this.sessionSearchQuery.trim()) return;
+                if (this.hasActiveSessionListCriteria()) return;
                 const { scrollTop, scrollHeight, clientHeight } = this.elements.sessionsScrollArea;
                 if (scrollHeight - scrollTop - clientHeight < SESSION_SCROLL_LOAD_THRESHOLD) {
                     this.loadMoreSessions();
