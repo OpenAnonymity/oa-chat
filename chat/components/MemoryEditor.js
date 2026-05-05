@@ -413,9 +413,15 @@ class MemoryEditor {
                     tags.push(`<span class="mem-confidence-group"><span class="mem-confidence-label">confidence:</span>${this._renderConfidenceBars(meta.confidence)}</span>`);
                 }
                 if (meta.updated_at) {
-                    const d = new Date(meta.updated_at + 'T00:00:00');
-                    const formatted = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-                    tags.push(`<span class="mem-date">${formatted}</span>`);
+                    const raw = meta.updated_at;
+                    const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(raw);
+                    const d = new Date(isDateOnly ? `${raw}T00:00:00` : raw);
+                    if (!Number.isNaN(d.getTime())) {
+                        const formatted = isDateOnly
+                            ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                            : d.toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+                        tags.push(`<span class="mem-date">${formatted}</span>`);
+                    }
                 }
                 if (tags.length) {
                     result += `<span class="mem-meta">${tags.join('')}</span>`;
