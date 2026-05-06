@@ -1397,7 +1397,7 @@ export default class ChatArea {
      * Uses requestAnimationFrame to ensure rendering is complete.
      */
     scrollToBottom(force = false) {
-        if (!force && this.app.isAutoScrollPaused) {
+        if (!this.app.shouldAutoScrollChat(force)) {
             return;
         }
         requestAnimationFrame(() => {
@@ -1468,6 +1468,7 @@ export default class ChatArea {
                 ],
                 throwOnError: false
             });
+            this.app.updateActivePromptScrollSpacer();
         }
     }
 
@@ -1709,6 +1710,7 @@ export default class ChatArea {
         }
 
         // Update scroll button visibility
+        this.app.updateActivePromptScrollSpacer();
         this.app.updateScrollButtonVisibility();
     }
 
@@ -1965,6 +1967,7 @@ export default class ChatArea {
         }
 
         // Update scroll button visibility based on content overflow
+        this.app.updateActivePromptScrollSpacer();
         this.app.updateScrollButtonVisibility();
     }
 
@@ -2015,6 +2018,7 @@ export default class ChatArea {
                     });
                 }
                 // Update scroll button visibility (no auto-scroll for appended messages)
+                this.app.updateActivePromptScrollSpacer();
                 this.app.updateScrollButtonVisibility();
                 if (this.app.messageNavigation) {
                     this.app.messageNavigation.update();
@@ -2043,6 +2047,7 @@ export default class ChatArea {
                         throwOnError: false
                     });
                 }
+                this.app.updateActivePromptScrollSpacer();
                 this.app.updateScrollButtonVisibility();
                 if (this.app.messageNavigation) {
                     this.app.messageNavigation.update();
@@ -2079,6 +2084,7 @@ export default class ChatArea {
         }
 
         // Update scroll button visibility (no auto-scroll for appended messages)
+        this.app.updateActivePromptScrollSpacer();
         this.app.updateScrollButtonVisibility();
 
         // Update message navigation

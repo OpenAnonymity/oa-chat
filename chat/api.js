@@ -1141,12 +1141,24 @@ class OpenRouterAPI {
             // Flush any remaining reasoning buffer before handling error
             flushReasoningBuffer();
 
-            // Handle abort errors
-            if (error.name === 'AbortError' || abortController?.signal?.aborted) {
-                error.isCancelled = true;
+            let streamError = error;
+            if (!(streamError instanceof Error)) {
+                const originalError = streamError;
+                const message = typeof originalError === 'string'
+                    ? originalError
+                    : (originalError?.message || String(originalError || 'Stream error occurred'));
+                streamError = new Error(message);
+                if (originalError && typeof originalError === 'object') {
+                    Object.assign(streamError, originalError);
+                }
             }
 
-            console.error('Error streaming completion:', error);
+            // Handle abort errors
+            if (streamError.name === 'AbortError' || abortController?.signal?.aborted) {
+                streamError.isCancelled = true;
+            }
+
+            console.error('Error streaming completion:', streamError);
 
             // Log failed request
             if (window.networkLogger) {
@@ -1161,17 +1173,17 @@ class OpenRouterAPI {
                     type: 'openrouter',
                     method: 'POST',
                     url: url,
-                    status: error.status || 0,
+                    status: streamError.status || 0,
                     request: {
                         headers: window.networkLogger.sanitizeHeaders(headers),
                         body: logBody
                     },
-                    error: error.message,
-                    isAborted: error.isCancelled === true // Flag user-initiated cancellation
+                    error: streamError.message,
+                    isAborted: streamError.isCancelled === true // Flag user-initiated cancellation
                 });
             }
 
-            throw error;
+            throw streamError;
         }
     }
 

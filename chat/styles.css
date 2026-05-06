@@ -2395,11 +2395,22 @@ textarea:focus {
     background-color: hsl(var(--color-background));
 }
 
+#chat-area.prompt-slide-active {
+    overflow-anchor: none;
+}
+
 /* Wide mode - increases message container max-width */
 #messages-container {
     --messages-max-width: 44rem;
     max-width: var(--messages-max-width);
     transition: max-width 0.2s ease;
+}
+
+.prompt-scroll-spacer {
+    width: 100%;
+    flex: 0 0 auto;
+    pointer-events: none;
+    overflow-anchor: none;
 }
 
 html.wide-mode #messages-container {

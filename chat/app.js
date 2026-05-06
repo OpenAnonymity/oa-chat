@@ -208,6 +208,7 @@ class ChatApp {
         this.sessionChatbarStates = new Map(); // Track in-tab chatbar drafts per session
         this.chatScrollSaveFrame = null;
         this.isAutoScrollPaused = false; // Track if auto-scroll is paused during streaming
+        this.activePromptScroll = null; // Tracks the current sent prompt's temporary scroll runway
         this.scrollToBottomButton = null; // Reference to the floating scroll-to-bottom button
         this.scrollButtonCheckInterval = null; // Interval for checking button visibility during streaming
         this.scrubberService = scrubberService;
@@ -650,7 +651,7 @@ class ChatApp {
         const chatArea = this.elements.chatArea;
         if (!chatArea) return;
 
-        if (!force && this.isAutoScrollPaused) {
+        if (!this.shouldAutoScrollChat(force)) {
             return;
         }
 
@@ -676,6 +677,12 @@ class ChatApp {
                 });
             });
         });
+    }
+
+    shouldAutoScrollChat(force = false) {
+        if (force) return true;
+        if (this.isPromptSlideUpEffectActive()) return false;
+        return !this.isAutoScrollPaused;
     }
 
     /**
@@ -708,6 +715,113 @@ class ChatApp {
 
         const maxScrollTop = Math.max(0, chatArea.scrollHeight - chatArea.clientHeight);
         this.setChatAreaScrollTopInstant(maxScrollTop);
+    }
+
+    /**
+     * Starts the post-send prompt positioning effect. The sent prompt is placed
+     * around 25% from the top of the chat viewport while streaming remains
+     * paused so long responses do not pull the viewport downward.
+     * @param {string} messageId
+     */
+    startPromptSlideUpEffect(messageId) {
+        const sessionId = this.state.currentSessionId;
+        if (!sessionId || !messageId) return;
+
+        this.clearPromptSlideUpEffect();
+        this.activePromptScroll = {
+            sessionId,
+            messageId,
+            spacerEl: null
+        };
+        this.elements.chatArea?.classList.add('prompt-slide-active');
+
+        setTimeout(() => {
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    this.updateActivePromptScrollSpacer({ scroll: true, behavior: 'smooth' });
+                });
+            });
+        }, 50);
+    }
+
+    clearPromptSlideUpEffect() {
+        if (this.activePromptScroll?.spacerEl?.isConnected) {
+            this.activePromptScroll.spacerEl.remove();
+        }
+        this.elements.chatArea?.classList.remove('prompt-slide-active');
+        this.activePromptScroll = null;
+    }
+
+    isPromptSlideUpEffectActive() {
+        return Boolean(
+            this.activePromptScroll &&
+            this.activePromptScroll.sessionId === this.state.currentSessionId
+        );
+    }
+
+    ensureActivePromptSpacer() {
+        if (!this.isPromptSlideUpEffectActive()) return null;
+
+        const messagesContainer = this.elements.messagesContainer;
+        if (!messagesContainer) return null;
+
+        let spacer = this.activePromptScroll.spacerEl;
+        if (!spacer || !spacer.isConnected) {
+            spacer = document.createElement('div');
+            spacer.className = 'prompt-scroll-spacer';
+            spacer.setAttribute('aria-hidden', 'true');
+            this.activePromptScroll.spacerEl = spacer;
+        }
+
+        if (spacer.parentElement !== messagesContainer || messagesContainer.lastElementChild !== spacer) {
+            messagesContainer.appendChild(spacer);
+        }
+
+        return spacer;
+    }
+
+    /**
+     * Maintains just enough temporary bottom runway to keep the active prompt
+     * at the target viewport position. As assistant output grows, the spacer
+     * shrinks to zero without auto-scrolling the chat area.
+     */
+    updateActivePromptScrollSpacer({ scroll = false, behavior = 'auto' } = {}) {
+        if (!this.isPromptSlideUpEffectActive()) return;
+
+        const chatArea = this.elements.chatArea;
+        const messageId = this.activePromptScroll.messageId;
+        const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
+        const spacer = this.ensureActivePromptSpacer();
+
+        if (!chatArea || !messageEl || !spacer) return;
+
+        const spacerHeight = spacer.getBoundingClientRect().height;
+        const areaRect = chatArea.getBoundingClientRect();
+        const messageRect = messageEl.getBoundingClientRect();
+        const promptTop = chatArea.scrollTop + messageRect.top - areaRect.top;
+        const targetOffset = Math.round(chatArea.clientHeight * 0.25);
+        const desiredScrollTop = Math.max(0, promptTop - targetOffset);
+        const contentEndWithoutSpacer = chatArea.scrollHeight - spacerHeight;
+        const requiredScrollHeight = desiredScrollTop + chatArea.clientHeight;
+        const nextSpacerHeight = Math.max(0, Math.ceil(requiredScrollHeight - contentEndWithoutSpacer));
+
+        spacer.style.height = `${nextSpacerHeight}px`;
+        spacer.hidden = nextSpacerHeight <= 0;
+
+        if (scroll) {
+            requestAnimationFrame(() => {
+                const maxScrollTop = Math.max(0, chatArea.scrollHeight - chatArea.clientHeight);
+                const targetTop = Math.min(desiredScrollTop, maxScrollTop);
+                chatArea.scrollTo({
+                    top: targetTop,
+                    behavior
+                });
+                setTimeout(() => {
+                    this.saveCurrentSessionScrollPosition();
+                    this.updateScrollButtonVisibility();
+                }, behavior === 'smooth' ? 350 : 0);
+            });
+        }
     }
 
     /**
@@ -827,32 +941,6 @@ class ChatApp {
     }
 
     /**
-     * Scrolls a user message to the top of the chat area
-     * @param {string} messageId - The message ID to scroll to top
-     */
-    scrollUserMessageToTop(messageId) {
-        const chatArea = this.elements.chatArea;
-        const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
-
-        console.log('[Scroll To Top]', { messageId, chatArea: !!chatArea, messageEl: !!messageEl });
-
-        if (!chatArea || !messageEl) {
-            console.warn('[Scroll To Top] Failed - missing elements');
-            return;
-        }
-
-        const padding = 20;
-        const messageTop = messageEl.offsetTop - chatArea.offsetTop - padding;
-
-        console.log('[Scroll To Top] Scrolling to:', messageTop);
-
-        chatArea.scrollTo({
-            top: messageTop,
-            behavior: 'smooth'
-        });
-    }
-
-    /**
      * Creates the scroll-to-bottom button element
      */
     createScrollToBottomButton() {
@@ -874,6 +962,7 @@ class ChatApp {
         button.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
+            this.clearPromptSlideUpEffect();
             this.isAutoScrollPaused = false;
             this._scrollButtonClickPending = true;
             this.hideScrollToBottomButton();
@@ -1029,18 +1118,34 @@ class ChatApp {
         // Don't re-show button while scroll-to-bottom click is still processing
         if (this._scrollButtonClickPending) return;
 
+        if (this.isPromptSlideUpEffectActive() && this.isCurrentSessionStreaming()) {
+            this.hideScrollToBottomButton();
+            return;
+        }
+
         const inputContainer = document.querySelector('.absolute.bottom-0.left-0.right-0');
-        const lastMessage = this.elements.messagesContainer ? this.elements.messagesContainer.lastElementChild : null;
+        const spacer = this.activePromptScroll?.spacerEl?.isConnected
+            ? this.activePromptScroll.spacerEl
+            : null;
+        let lastMessage = this.elements.messagesContainer ? this.elements.messagesContainer.lastElementChild : null;
+        if (lastMessage === spacer) {
+            lastMessage = spacer.previousElementSibling;
+        }
 
         if (!inputContainer || !lastMessage) {
             this.hideScrollToBottomButton();
             return;
         }
 
-        const hiddenDistance = chatArea.scrollHeight - chatArea.scrollTop - chatArea.clientHeight;
+        const spacerHeight = spacer && !spacer.hidden ? spacer.getBoundingClientRect().height : 0;
+        const effectiveScrollHeight = chatArea.scrollHeight - spacerHeight;
+        const hiddenDistance = Math.max(0, effectiveScrollHeight - chatArea.scrollTop - chatArea.clientHeight);
         const isAtBottom = hiddenDistance <= 4;
 
         if (isAtBottom) {
+            if (this.isPromptSlideUpEffectActive() && !this.isCurrentSessionStreaming()) {
+                this.clearPromptSlideUpEffect();
+            }
             this.isAutoScrollPaused = false;
             this.hideScrollToBottomButton();
             return;
@@ -1049,7 +1154,8 @@ class ChatApp {
         const inputTop = inputContainer.getBoundingClientRect().top;
         const lastMessageBottom = lastMessage.getBoundingClientRect().bottom;
         const overlapsInput = lastMessageBottom > inputTop - 8;
-        const shouldShow = overlapsInput || hiddenDistance > 12;
+        const realHiddenDistance = Math.max(0, lastMessageBottom - chatArea.getBoundingClientRect().bottom);
+        const shouldShow = overlapsInput || (spacer ? realHiddenDistance > 12 : hiddenDistance > 12);
 
         if (shouldShow) {
             this.showScrollToBottomButton();
@@ -3156,6 +3262,7 @@ class ChatApp {
         }
 
         this.saveCurrentSessionScrollPosition();
+        this.clearPromptSlideUpEffect();
         if (previousSessionId) {
             this.saveChatbarStateForSession(previousSessionId);
         }
@@ -4712,7 +4819,7 @@ class ChatApp {
         const streamingState = this.getSessionStreamingState(session.id);
         if (streamingState.isStreaming) return;
 
-        // Get the last user message to scroll to top
+        // Get the last user message to anchor during regeneration
         const messages = await chatDB.getSessionMessages(session.id);
         const lastUserMessage = [...messages].reverse().find(m => m.role === 'user');
 
@@ -4724,17 +4831,9 @@ class ChatApp {
         // Pause auto-scroll for streaming (set immediately)
         this.isAutoScrollPaused = true;
 
-        // Scroll last user message to top after a brief delay
+        // Reposition the prompt while the regenerated response streams.
         if (lastUserMessage && lastUserMessage.id) {
-            setTimeout(() => {
-                requestAnimationFrame(() => {
-                    requestAnimationFrame(() => {
-                        this.scrollUserMessageToTop(lastUserMessage.id);
-                        // Check button visibility after scrolling
-                        setTimeout(() => this.updateScrollButtonVisibility(), 100);
-                    });
-                });
-            }, 50);
+            this.startPromptSlideUpEffect(lastUserMessage.id);
         }
 
         try {
@@ -5259,20 +5358,9 @@ class ChatApp {
             this.updateInputState();
             this.resetMessageInputLayout({ resetScroll: true });
 
-            // Auto-scroll remains paused while the response streams
-
-            // Scroll user message to top after a brief delay to ensure rendering
+            // Auto-scroll remains paused while the response streams.
             if (userMessage && userMessage.id) {
-                // Use setTimeout with RAF to ensure message is fully rendered
-                setTimeout(() => {
-                    requestAnimationFrame(() => {
-                        requestAnimationFrame(() => {
-                            this.scrollUserMessageToTop(userMessage.id);
-                            // Check button visibility after scrolling
-                            setTimeout(() => this.updateScrollButtonVisibility(), 100);
-                        });
-                    });
-                }, 50);
+                this.startPromptSlideUpEffect(userMessage.id);
             }
 
             if (this.memoryMode && content && userMessage) {
@@ -5776,7 +5864,8 @@ class ChatApp {
         const timestamp = Date.now();
         const typingHtml = buildTypingIndicator(id, providerName, modelName, timestamp, phase);
         this.elements.messagesContainer.insertAdjacentHTML('beforeend', typingHtml);
-        if (!this.isAutoScrollPaused) {
+        this.updateActivePromptScrollSpacer();
+        if (this.shouldAutoScrollChat()) {
             this.scrollToBottom(true);
         }
         return id;

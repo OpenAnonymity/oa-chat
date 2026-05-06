@@ -25,6 +25,29 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
+- 2026-05-06: Sending or regenerating a prompt now starts a prompt slide-up effect.
+  - `ChatApp.startPromptSlideUpEffect(...)` anchors the active user prompt at roughly 25%
+    from the top of `#chat-area`, then keeps `isAutoScrollPaused` true while the response
+    streams so long model output does not pull the viewport down.
+  - The effect uses a DOM-only `.prompt-scroll-spacer` at the end of `#messages-container`.
+    `ChatArea` streaming/append hooks call `updateActivePromptScrollSpacer()` so the spacer
+    shrinks as assistant content appears; once output is tall enough, the spacer is hidden.
+  - Explicit bottom-following should go through `ChatApp.shouldAutoScrollChat(...)`.
+    A live prompt slide-up effect always returns false for non-forced auto-scroll.
+    `#chat-area.prompt-slide-active` and `.prompt-scroll-spacer` use `overflow-anchor: none`
+    so browser scroll anchoring does not nudge the viewport as the spacer shrinks near the
+    bottom of the screen.
+  - While the active prompt-slide response is streaming, `updateScrollButtonVisibility()`
+    suppresses the scroll-to-bottom button. That button otherwise appears exactly when the
+    streamed assistant output reaches the fixed input box and can cause a one-time visual
+    flicker at the bottom edge.
+  - Once streaming is over, reaching the real bottom or clicking the scroll-to-bottom button
+    clears the prompt-slide state so later non-forced bottom-follow behavior can resume.
+  - Do not persist this spacer in IndexedDB or message records. It is only a viewport runway
+    for the current tab and should be cleared when switching sessions.
+  - Stream cancellation must preserve any chunks already received. `chat/api.js` normalizes
+    non-Error abort throws before setting `isCancelled`; otherwise a thrown abort string can
+    become a generic TypeError and make `ChatApp` replace the partial assistant output.
 - 2026-05-04: Sidebar filtering now combines text search, starred-only, quick
   updated-time ranges, and an exact local-date picker.
   - Star state is stored directly on session records as `session.starred` with
