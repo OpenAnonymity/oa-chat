@@ -25,6 +25,17 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
+- 2026-05-06: The frontend architecture refactor has started with tested domain
+  seams.
+  - See [FRONTEND_ARCHITECTURE.md](FRONTEND_ARCHITECTURE.md) for the target
+    component map and progress tracker.
+  - `chat/app.js` now delegates message API payload shaping, session search/title
+    helpers, model-selection helpers, and streaming pending-phase normalization
+    to pure modules under `chat/domain/`.
+  - `npm test` runs unit tests through `scripts/run-unit-tests.mjs`, which
+    bundles browser-style ES modules with esbuild and executes Node's built-in
+    test runner. This avoids adding a framework test dependency while the app is
+    still HTML-first.
 - 2026-05-06: Sending or regenerating a prompt now starts a prompt slide-up effect.
   - `ChatApp.startPromptSlideUpEffect(...)` anchors the active user prompt at roughly 25%
     from the top of `#chat-area`, then keeps `isAutoScrollPaused` true while the response

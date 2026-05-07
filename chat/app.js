@@ -43,6 +43,26 @@ import { generateUlid21 } from './services/ulid.js';
 import { chatDB } from './db.js';
 import { DEFAULT_MEMORY_AGENT_MODEL, isAllowedConfidentialModel } from './services/confidentialModelConfig.js';
 import { normalizeMessagesForMemory } from './services/memoryMessageNormalization.js';
+import {
+    buildLocalSessionTitle as buildLocalSessionTitleText,
+    buildSessionTitleSearchText as buildSessionTitleSearchTextValue,
+    normalizeSessionSearchText as normalizeSessionSearchTextValue,
+    getSearchableMessageText as getSearchableMessageTextValue,
+    buildSessionConversationSearchText as buildSessionConversationSearchTextValue,
+    buildSessionSearchIndexFields as buildSessionSearchIndexFieldsValue,
+    cleanGeneratedSessionTitle as cleanGeneratedSessionTitleText
+} from './domain/sessionSearch.js';
+import {
+    getMessageTextContent as getMessageTextContentValue,
+    processMessagesForApi
+} from './domain/messageContent.js';
+import { normalizePendingPhase as normalizeStreamingPendingPhase } from './domain/streamingState.js';
+import {
+    filterDisabledModels as filterDisabledModelsValue,
+    getFallbackModelEntry as getFallbackModelEntryValue,
+    normalizeModelName as normalizeModelNameValue,
+    upgradeDefaultModelPreference as upgradeDefaultModelPreferenceValue
+} from './domain/modelSelection.js';
 
 const DEFAULT_MODEL_NAME = inferenceService.getDefaultModelName();
 const SESSION_PAGE_SIZE = 80;
@@ -66,20 +86,6 @@ const TOOLBAR_PREDICTION_GRACE_MS = 350; // Grace period to respect predicted st
 
 // Used to upgrade users who were implicitly on the prior default.
 const PREVIOUS_DEFAULT_MODEL_NAME = 'OpenAI: GPT-5.1 Instant';
-
-// Legacy/alternate display names that may exist in persisted settings/sessions.
-// Map them to the canonical display names used by the current UI.
-const MODEL_NAME_ALIASES = new Map([
-    // GPT-5.2 Instant (chat)
-    ['OpenAI: GPT-5.2 Chat', 'OpenAI: GPT-5.2 Instant'],
-    ['GPT-5.2 Chat', 'OpenAI: GPT-5.2 Instant'],
-    // GPT-5.1 Instant (chat)
-    ['OpenAI: GPT-5.1 Chat', 'OpenAI: GPT-5.1 Instant'],
-    ['GPT-5.1 Chat', 'OpenAI: GPT-5.1 Instant'],
-    // GPT-5 Instant (chat)
-    ['OpenAI: GPT-5 Chat', 'OpenAI: GPT-5 Instant'],
-    ['GPT-5 Chat', 'OpenAI: GPT-5 Instant'],
-]);
 
 function generateSessionId() {
     return generateUlid21();
@@ -275,30 +281,14 @@ class ChatApp {
     }
 
     filterDisabledModels(models) {
-        if (!Array.isArray(models) || models.length === 0) {
-            return [];
-        }
-
-        const disabledSet = this.getDisabledModelSet();
-        if (disabledSet.size === 0) {
-            return [...models];
-        }
-
-        return models.filter(model => model && !disabledSet.has(model.id));
+        return filterDisabledModelsValue(models, this.getDisabledModelSet());
     }
 
     getFallbackModelEntry(session) {
-        if (!Array.isArray(this.state.models) || this.state.models.length === 0) {
-            return null;
-        }
-
-        const defaultModelId = inferenceService.getDefaultModelId(session);
-        const defaultModel = this.state.models.find(m => m.id === defaultModelId);
-        if (defaultModel) {
-            return defaultModel;
-        }
-
-        return this.state.models[0] || null;
+        return getFallbackModelEntryValue(
+            this.state.models,
+            inferenceService.getDefaultModelId(session)
+        );
     }
 
     applyDisabledModelFilter() {
@@ -3127,27 +3117,10 @@ class ChatApp {
      * @returns {string|null}
      */
     normalizeModelName(modelIdOrName) {
-        if (!modelIdOrName) {
-            return modelIdOrName;
-        }
-
-        const standardized = getStandardizedModelDisplayName(modelIdOrName);
-        if (standardized) {
-            return standardized;
-        }
-
-        // If model ID, get display name from backend overrides
-        if (modelIdOrName.includes('/')) {
-            const displayName = inferenceService.getDisplayName(modelIdOrName, modelIdOrName, this.getCurrentSession());
-            const standardizedDisplayName = getStandardizedModelDisplayName(displayName);
-            return standardizedDisplayName || displayName;
-        }
-
-        if (MODEL_NAME_ALIASES.has(modelIdOrName)) {
-            return MODEL_NAME_ALIASES.get(modelIdOrName);
-        }
-
-        return modelIdOrName;
+        return normalizeModelNameValue(modelIdOrName, {
+            getStandardizedModelDisplayName,
+            getDisplayName: (modelId, fallback) => inferenceService.getDisplayName(modelId, fallback, this.getCurrentSession())
+        });
     }
 
     /**
@@ -3157,11 +3130,11 @@ class ChatApp {
      * @returns {string|null}
      */
     upgradeDefaultModelPreference(normalizedModelName) {
-        if (!normalizedModelName) return normalizedModelName;
-        if (normalizedModelName === PREVIOUS_DEFAULT_MODEL_NAME) {
-            return DEFAULT_MODEL_NAME;
-        }
-        return normalizedModelName;
+        return upgradeDefaultModelPreferenceValue(
+            normalizedModelName,
+            PREVIOUS_DEFAULT_MODEL_NAME,
+            DEFAULT_MODEL_NAME
+        );
     }
 
     /**
@@ -3364,9 +3337,7 @@ class ChatApp {
      * @param {AbortController} abortController - Abort controller for the stream
      */
     normalizePendingPhase(phase) {
-        return phase === 'requesting-key' || phase === 'waiting'
-            ? 'requesting-key'
-            : 'waiting-response';
+        return normalizeStreamingPendingPhase(phase);
     }
 
     advancePendingStateAfterAccessGranted(sessionId, typingId = null) {
@@ -3655,75 +3626,35 @@ class ChatApp {
     }
 
     buildLocalSessionTitle(content) {
-        const text = this.getMessageTextContent(content)
-            .replace(/\s+/g, ' ')
-            .trim();
-        if (!text) return 'New Chat';
-        return text.substring(0, SESSION_TITLE_FALLBACK_LENGTH) +
-            (text.length > SESSION_TITLE_FALLBACK_LENGTH ? '...' : '');
+        return buildLocalSessionTitleText(content, {
+            fallbackLength: SESSION_TITLE_FALLBACK_LENGTH
+        });
     }
 
     buildSessionTitleSearchText(content) {
-        return this.getMessageTextContent(content)
-            .replace(/\s+/g, ' ')
-            .trim()
-            .slice(0, 1000);
+        return buildSessionTitleSearchTextValue(content);
     }
 
     normalizeSessionSearchText(content) {
-        return this.getMessageTextContent(content)
-            .replace(/\s+/g, ' ')
-            .trim();
+        return normalizeSessionSearchTextValue(content);
     }
 
     getSearchableMessageText(message) {
-        if (!message || message.isLocalOnly) return '';
-        if (message.role !== 'user' && message.role !== 'assistant') return '';
-        return this.normalizeSessionSearchText(message.content);
+        return getSearchableMessageTextValue(message);
     }
 
     buildSessionConversationSearchText(messages) {
-        if (!Array.isArray(messages)) return '';
-
-        const segments = messages
-            .map(message => this.getSearchableMessageText(message))
-            .filter(Boolean)
-            .map(text => text.slice(0, SESSION_CONTENT_SEARCH_MESSAGE_MAX_CHARS));
-
-        if (!segments.length) return '';
-
-        const firstSegment = segments[0].slice(0, SESSION_CONTENT_SEARCH_MAX_CHARS);
-        if (segments.length === 1 || firstSegment.length >= SESSION_CONTENT_SEARCH_MAX_CHARS) {
-            return firstSegment;
-        }
-
-        const recentSegments = [];
-        let remaining = SESSION_CONTENT_SEARCH_MAX_CHARS - firstSegment.length - 1;
-
-        for (let i = segments.length - 1; i >= 1 && remaining > 0; i -= 1) {
-            const segment = segments[i];
-            const separatorCost = recentSegments.length ? 1 : 0;
-            const available = remaining - separatorCost;
-            if (available <= 0) break;
-
-            if (segment.length <= available) {
-                recentSegments.unshift(segment);
-                remaining -= segment.length + separatorCost;
-                continue;
-            }
-
-            recentSegments.unshift(segment.slice(segment.length - available));
-            remaining = 0;
-        }
-
-        return [firstSegment, ...recentSegments].filter(Boolean).join('\n').slice(0, SESSION_CONTENT_SEARCH_MAX_CHARS);
+        return buildSessionConversationSearchTextValue(messages, {
+            maxChars: SESSION_CONTENT_SEARCH_MAX_CHARS,
+            maxMessageChars: SESSION_CONTENT_SEARCH_MESSAGE_MAX_CHARS
+        });
     }
 
     buildSessionSearchIndexFields(messages) {
-        return {
-            conversationSearchText: this.buildSessionConversationSearchText(messages),
-            conversationSearchIndexedAt: Date.now()
-        };
+        return buildSessionSearchIndexFieldsValue(messages, {
+            maxChars: SESSION_CONTENT_SEARCH_MAX_CHARS,
+            maxMessageChars: SESSION_CONTENT_SEARCH_MESSAGE_MAX_CHARS
+        });
     }
 
     applySessionConversationSearchText(session, messages) {
@@ -3750,22 +3681,9 @@ class ChatApp {
     }
 
     cleanGeneratedSessionTitle(title) {
-        if (typeof title !== 'string') return '';
-        let cleaned = title
-            .replace(/\s+/g, ' ')
-            .replace(/^title\s*:\s*/i, '')
-            .trim();
-
-        cleaned = cleaned.replace(/^["'“”‘’`]+|["'“”‘’`]+$/g, '').trim();
-        cleaned = cleaned.replace(/[.!?;:]+$/g, '').trim();
-        if (!cleaned) return '';
-
-        if (cleaned.length > SESSION_TITLE_MAX_LENGTH) {
-            cleaned = cleaned.slice(0, SESSION_TITLE_MAX_LENGTH).trimEnd();
-            cleaned = cleaned.replace(/\s+\S*$/, '').trim() || cleaned;
-        }
-
-        return cleaned;
+        return cleanGeneratedSessionTitleText(title, {
+            maxLength: SESSION_TITLE_MAX_LENGTH
+        });
     }
 
     async clearSessionTitleGenerationPending(sessionId) {
@@ -4603,20 +4521,7 @@ class ChatApp {
     }
 
     getMessageTextContent(content) {
-        if (typeof content === 'string') return content;
-        if (Array.isArray(content)) {
-            return content
-                .map(part => {
-                    if (!part) return '';
-                    if (typeof part.text === 'string') return part.text;
-                    if (typeof part.content === 'string') return part.content;
-                    return '';
-                })
-                .filter(Boolean)
-                .join('');
-        }
-        if (content && typeof content.text === 'string') return content.text;
-        return '';
+        return getMessageTextContentValue(content);
     }
 
     getScrubberMessageContent(message, mode) {
@@ -4697,107 +4602,15 @@ class ChatApp {
      * @returns {Array} Processed messages with multimodal content
      */
     processMessagesWithFiles(messages, currentModelId) {
-        const MAX_ATTACHED_IMAGES = 2; // Limit to avoid huge requests
-        const filteredMessages = messages.filter(msg => !msg.isLocalOnly);
-        const result = [];
         const apiOverrideContent = (typeof this._lastApiContent === 'string' && this._lastApiContent.trim().length > 0)
             ? this._lastApiContent
             : null;
-
-        // Helper: detect image-generating models (same pattern as modelTiers.js)
-        const isImageModel = (modelId) => modelId && /image/i.test(modelId);
-
-        // If current model is an image model, skip the attachment hack entirely
-        // Image models handle their own generated images natively
-        const shouldAttachImages = !isImageModel(currentModelId);
-
-        // Collect images ONLY from assistant messages generated by image models
-        let imagesToAttach = [];
-        if (shouldAttachImages) {
-            for (const msg of filteredMessages) {
-                if (msg.role === 'assistant' && msg.images?.length > 0 && isImageModel(msg.model)) {
-                    imagesToAttach.push(...msg.images);
-                }
+        return processMessagesForApi(messages, currentModelId, {
+            apiOverrideContent,
+            onTextFileDecodeError: (error, file) => {
+                console.error('Failed to decode text file:', file.name, error);
             }
-            imagesToAttach = imagesToAttach.slice(-MAX_ATTACHED_IMAGES);
-        }
-
-        // Build result, attaching images only to the LAST user message (if any)
-        const lastUserIndex = filteredMessages.map(m => m.role).lastIndexOf('user');
-
-        for (let i = 0; i < filteredMessages.length; i++) {
-            const msg = filteredMessages[i];
-            const isLastUserMessage = (i === lastUserIndex);
-
-            // For assistant messages: keep text only
-            if (msg.role === 'assistant') {
-                result.push({
-                    role: 'assistant',
-                    content: msg.content || (msg.images?.length ? '[Generated image]' : '')
-                });
-                continue;
-            }
-
-            // For user messages
-            if (msg.role === 'user') {
-                let textContent = msg.content || '';
-                const mediaContent = [];
-                const shouldOverrideLastUserText = isLastUserMessage && !!apiOverrideContent;
-
-                if (shouldOverrideLastUserText) {
-                    textContent = apiOverrideContent;
-                }
-
-                // Only attach image-model outputs to the LAST user message
-                if (isLastUserMessage && imagesToAttach.length > 0) {
-                    mediaContent.push(...imagesToAttach);
-                }
-
-                // Process user's attached files (handled for every user message)
-                if (msg.files && msg.files.length > 0) {
-                    msg.files.forEach(file => {
-                        const isText = file.detectedType === 'text';
-                        if (isText) {
-                            try {
-                                const base64Data = file.dataUrl.split(',')[1];
-                                const decodedContent = atob(base64Data);
-                                textContent += `\n\n--- File: ${file.name} ---\n${decodedContent}`;
-                            } catch (e) {
-                                console.error('Failed to decode text file:', file.name, e);
-                                textContent += `\n\n--- File: ${file.name} ---\n[Error reading file content]`;
-                            }
-                        } else if (file.type.startsWith('image/') || file.detectedType === 'image') {
-                            mediaContent.push({
-                                type: 'image_url',
-                                image_url: { url: file.dataUrl }
-                            });
-                        } else {
-                            // For PDFs and audio files
-                            mediaContent.push({
-                                type: 'file',
-                                file: { filename: file.name, file_data: file.dataUrl }
-                            });
-                        }
-                    });
-                }
-
-                // Build content - use multimodal format only if there's media
-                if (mediaContent.length > 0) {
-                    result.push({
-                        role: 'user',
-                        content: [{ type: 'text', text: textContent }, ...mediaContent]
-                    });
-                } else {
-                    result.push({ role: 'user', content: textContent });
-                }
-                continue;
-            }
-
-            // Other roles (system, etc.)
-            result.push({ role: msg.role, content: msg.content });
-        }
-
-        return result;
+        });
     }
 
     /**
