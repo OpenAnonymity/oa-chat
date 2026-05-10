@@ -63,6 +63,12 @@ import {
     normalizeModelName as normalizeModelNameValue,
     upgradeDefaultModelPreference as upgradeDefaultModelPreferenceValue
 } from './domain/modelSelection.js';
+import {
+    acquireSessionAccess,
+    buildVerifierSubmitKeyProof as buildVerifierSubmitKeyProofValue,
+    isAccessCreditExhaustedError as isAccessCreditExhaustedErrorValue,
+    persistVerifierSubmitKeyProof as persistVerifierSubmitKeyProofValue
+} from './application/accessController.js';
 
 const DEFAULT_MODEL_NAME = inferenceService.getDefaultModelName();
 const SESSION_PAGE_SIZE = 80;
@@ -3348,18 +3354,7 @@ class ChatApp {
     }
 
     isAccessCreditExhaustedError(error) {
-        if (error?.status !== 402) return false;
-        const details = [
-            error.message,
-            error.data?.error?.message,
-            error.data?.detail,
-            error.data?.message
-        ].filter(Boolean).join(' ').toLowerCase();
-
-        return details.includes('credit') ||
-            details.includes('can only afford') ||
-            details.includes('more credits') ||
-            details.includes('max_tokens');
+        return isAccessCreditExhaustedErrorValue(error);
     }
 
     async refreshAccessAfterCreditExhaustion(session, { typingId = null } = {}) {
@@ -5128,17 +5123,21 @@ class ChatApp {
             const metadata = {};
             if (hasFiles) {
                 // Store file data for preview rendering and include detected file type
-                const { getFileType } = await import('./services/fileUtils.js');
+                const { getFileType, extractDocxText } = await import('./services/fileUtils.js');
                 const fileData = await Promise.all(currentFiles.map(async (file) => {
                     const dataUrl = await this.createImagePreview(file);
                     const detectedType = await getFileType(file);
-                    return {
+                    const metadata = {
                         name: file.name,
                         type: file.type,
                         size: file.size,
                         dataUrl: dataUrl,
-                        detectedType: detectedType  // Store the detected type (image, pdf, audio, text)
+                        detectedType: detectedType  // Store the detected type (image, pdf, docx, audio, text)
                     };
+                    if (detectedType === 'docx') {
+                        metadata.extractedText = await extractDocxText(file);
+                    }
+                    return metadata;
                 }));
                 metadata.files = fileData;
             }
@@ -7782,9 +7781,13 @@ Your API key has been cleared. A new key from a different station will be obtain
                 `;
             } else {
                 // For non-images, determine file type and use the appropriate SVG icon
-                const isPdf = file.type === 'application/pdf';
-                const isAudio = file.type.startsWith('audio/');
-                const isText = file.type.startsWith('text/') ||
+                const { getFileType } = await import('./services/fileUtils.js');
+                const detectedType = await getFileType(file);
+                const isPdf = detectedType === 'pdf' || file.type === 'application/pdf';
+                const isDocx = detectedType === 'docx';
+                const isAudio = detectedType === 'audio' || file.type.startsWith('audio/');
+                const isText = detectedType === 'text' ||
+                              file.type.startsWith('text/') ||
                               file.type.includes('json') ||
                               file.type.includes('javascript') ||
                               file.type.includes('xml') ||
@@ -7796,6 +7799,7 @@ Your API key has been cleared. A new key from a different station will be obtain
 
                 let fileTypeForIcon = null;
                 if (isPdf) fileTypeForIcon = 'pdf';
+                else if (isDocx) fileTypeForIcon = 'docx';
                 else if (isAudio) fileTypeForIcon = 'audio';
                 else if (isText) fileTypeForIcon = 'text';
 
@@ -7876,149 +7880,47 @@ Your API key has been cleared. A new key from a different station will be obtain
      * Stored on session.apiKeyInfo so it survives page refreshes.
      */
     buildVerifierSubmitKeyProof(verifyResult, accessInfo = null) {
-        const detail = verifyResult?.detail || verifyResult?.data?.detail || null;
-        const verifierResponse = verifyResult?.data || null;
-        const stationId = accessInfo?.stationId || accessInfo?.station_id || accessInfo?.station_name || null;
-        const keyHashFromOrg = accessInfo?.keyHash || accessInfo?.key_hash || null;
-        const keyHashFromVerifier = verifierResponse?.key_hash || null;
-
-        return {
-            recordedAt: new Date().toISOString(),
-            status: verifyResult?.status || 'unknown',
-            detail,
-            stationId,
-            keyHashFromOrg,
-            keyHashFromVerifier,
-            verifierResponse,
-            retryable: typeof verifierResponse?.retryable === 'boolean' ? verifierResponse.retryable : null,
-            error: verifyResult?.error?.message || null,
-            bannedStation: verifyResult?.bannedStation || null
-        };
+        return buildVerifierSubmitKeyProofValue(verifyResult, accessInfo);
     }
 
     /**
      * Persist verifier submit_key proof into the active session access record.
      */
     persistVerifierSubmitKeyProof(session, verifyResult) {
-        if (!session?.apiKeyInfo || !verifyResult) return;
-        session.apiKeyInfo.verifierSubmitKeyProof = this.buildVerifierSubmitKeyProof(verifyResult, session.apiKeyInfo);
+        persistVerifierSubmitKeyProofValue(session, verifyResult);
     }
 
     async acquireAndSetAccess(session, options = {}) {
-        if (!session) throw new Error("No active session found.");
-        const { onGranted } = options;
-
-        const backend = inferenceService.getBackendForSession(session);
-        const availableTickets = ticketClient.getTicketCount();
-        if (availableTickets === 0) {
-            throw new Error("You have no inference tickets left. Please redeem an invite code for more tickets at the System Panel (right) or request invite code at [here](https://openanonymity.ai/beta/).");
-        }
-
-        // Determine model ID from session model name
-        const modelName = session.model || inferenceService.getDefaultModelName(session);
-        const modelEntry = this.state.models.find(m => m.name === modelName) || this.getFallbackModelEntry(session);
-        if (!modelEntry) {
-            throw new Error('No enabled models are currently available. Please try again later.');
-        }
-        const modelId = modelEntry.id;
-
-        // Calculate ticket cost based on model tier and reasoning state
-        const ticketsRequired = getTicketCost(modelId, this.reasoningEnabled);
-
-        // Check if user has enough tickets
-        if (availableTickets < ticketsRequired) {
-            throw new Error(`Not enough tickets for this model. Need ${ticketsRequired}, but only ${availableTickets} available.`);
-        }
-
-        // Set current session for network logging
-        if (window.networkLogger) {
-            window.networkLogger.setCurrentSession(session.id);
-        }
-
-        // Retry loop for spent tickets (they get auto-archived on failure)
-        let result;
-        let retries = 0;
-        const maxRetries = Math.min(availableTickets, ticketsRequired + 10);
-
-        while (retries < maxRetries) {
-            try {
-                result = await inferenceService.requestAccess(session, {
-                    ticketsRequired
-                });
-                break;  // Success
-            } catch (error) {
-                if (error.code === 'TICKET_USED') {
-                    retries++;
-                    this.showToast(`Ticket already used, trying next available`);
-                    continue;
+        return acquireSessionAccess({
+            session,
+            models: this.state.models,
+            reasoningEnabled: this.reasoningEnabled,
+            inferenceService,
+            ticketClient,
+            chatDB,
+            getTicketCost,
+            getFallbackModelEntry: (targetSession) => this.getFallbackModelEntry(targetSession),
+            onTicketUsed: () => {
+                this.showToast('Ticket already used, trying next available');
+            },
+            onNetworkSession: (sessionId) => {
+                if (window.networkLogger) {
+                    window.networkLogger.setCurrentSession(sessionId);
                 }
+            },
+            onGranted: options.onGranted,
+            onAccessRequestError: (error) => {
                 console.error('Failed to automatically acquire API access:', error);
-                throw error;  // Non-retryable error
-            }
-        }
-
-        if (!result) {
-            throw new Error('All available tickets were already spent');
-        }
-
-        if (typeof onGranted === 'function') {
-            try {
-                await onGranted(result);
-            } catch (error) {
-                console.warn('Pending-state update after access grant failed:', error);
-            }
-        }
-
-        inferenceService.setAccessInfo(session, result);
-
-        // Verify key with verifier
-        const verifier = inferenceService.getVerificationAdapter(session);
-        if (verifier?.supports) {
-            const accessInfo = inferenceService.getAccessInfo(session);
-            const verifyResult = await inferenceService.verifyAccess(session, accessInfo?.info);
-            this.persistVerifierSubmitKeyProof(session, verifyResult);
-
-            if (verifyResult?.status === 'unverified') {
-                const detail = verifyResult?.detail || verifyResult?.data?.detail;
-                if (detail === 'key_near_expiry') {
-                    console.warn('⚠️ Key expires too soon to verify, continuing without verification');
-                } else if (detail === 'ownership_check_error') {
-                    console.warn('⚠️ Ownership verification temporarily unavailable, continuing without verification');
-                } else {
-                    console.warn('⚠️ Key verification unverified, continuing without verification');
+            },
+            onVerificationWarning: (...args) => {
+                console.warn(...args);
+            },
+            onSessionChanged: (changedSession) => {
+                if (this.rightPanel) {
+                    this.rightPanel.onSessionChange(changedSession);
                 }
             }
-
-            if (verifyResult?.status === 'rejected') {
-                // Verification failed - clear the API key and throw
-                inferenceService.clearAccessInfo(session);
-                await chatDB.saveSession(session);
-
-                const errorMsg = verifyResult.error?.message || 'Verification failed';
-                if (verifyResult.bannedStation) {
-                    const bs = verifyResult.bannedStation;
-                    throw new Error(`Station ${bs.stationId} is banned: ${bs.reason || 'Unknown reason'}`);
-                }
-                throw new Error(`Key verification failed: ${errorMsg}`);
-            }
-
-            // Set current station for verifier tracking
-            inferenceService.setCurrentAccess(session, accessInfo?.info);
-        }
-
-        // Clear apiKeyShared flag - new key hasn't been shared yet
-        if (session.shareInfo?.apiKeyShared) {
-            session.shareInfo.apiKeyShared = false;
-        }
-
-        await chatDB.saveSession(session);
-
-        // Update the UI components
-        if (this.rightPanel) {
-            this.rightPanel.onSessionChange(session);
-        }
-
-        return inferenceService.getAccessToken(session);
+        });
     }
 
     /**

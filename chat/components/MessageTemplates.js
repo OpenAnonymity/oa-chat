@@ -444,11 +444,14 @@ function buildFileAttachments(files) {
                 >
             `;
         } else {
-            const isPdf = file.type === 'application/pdf';
-            const isAudio = file.type.startsWith('audio/');
+            const detectedType = file.detectedType || '';
+            const isPdf = detectedType === 'pdf' || file.type === 'application/pdf';
+            const isDocx = detectedType === 'docx' || /\.docx$/i.test(file.name || '');
+            const isAudio = detectedType === 'audio' || file.type.startsWith('audio/');
 
             // Check if file is text-based by MIME type or common code file extensions
-            const isText = file.type.startsWith('text/') ||
+            const isText = detectedType === 'text' ||
+                          file.type.startsWith('text/') ||
                           file.type.includes('json') ||
                           file.type.includes('javascript') ||
                           file.type.includes('xml') ||
@@ -460,6 +463,7 @@ function buildFileAttachments(files) {
 
             let fileTypeForIcon = null;
             if (isPdf) fileTypeForIcon = 'pdf';
+            else if (isDocx) fileTypeForIcon = 'docx';
             else if (isAudio) fileTypeForIcon = 'audio';
             else if (isText) fileTypeForIcon = 'text';
 

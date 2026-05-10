@@ -32,10 +32,24 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - `chat/app.js` now delegates message API payload shaping, session search/title
     helpers, model-selection helpers, and streaming pending-phase normalization
     to pure modules under `chat/domain/`.
+  - Access acquisition now goes through `chat/application/accessController.js`;
+    keep UI notifications as injected callbacks so ticket redemption and verifier
+    behavior remain testable without DOM dependencies.
   - `npm test` runs unit tests through `scripts/run-unit-tests.mjs`, which
     bundles browser-style ES modules with esbuild and executes Node's built-in
     test runner. This avoids adding a framework test dependency while the app is
     still HTML-first.
+- 2026-05-06: `.docx` attachments are supported by local text extraction.
+  - `chat/services/fileUtils.js` reads the DOCX ZIP in the browser, inflates
+    `word/document.xml` plus headers/footers/notes, and extracts plain text from
+    WordprocessingML before inference. The original document still stays in the
+    stored attachment `dataUrl` for preview/download.
+  - `chat/app.js` persists `file.extractedText` on the user-message file metadata
+    for DOCX uploads. `chat/domain/messageContent.js` uses that cached text for
+    normal sends, reloads, and regeneration; it does not send the DOCX binary as
+    an OpenRouter file part.
+  - DOCX parsing requires browser `DecompressionStream('deflate-raw')`; upload
+    validation rejects unreadable documents before they enter the draft.
 - 2026-05-06: Sending or regenerating a prompt now starts a prompt slide-up effect.
   - `ChatApp.startPromptSlideUpEffect(...)` anchors the active user prompt at roughly 25%
     from the top of `#chat-area`, then keeps `isAutoScrollPaused` true while the response

@@ -60,11 +60,16 @@ flowchart TB
     choice, display-name alias normalization, and old-default preference upgrades.
   - Unit coverage locks the current alias and fallback behavior before future
     model-picker/controller work.
+- 2026-05-06: Access acquisition moved behind `chat/application/accessController.js`.
+  - The controller owns ticket-count checks, ticket redemption retry on spent
+    tickets, verifier submit-key proof persistence, verifier rejection handling,
+    `apiKeyShared` clearing, and final session persistence.
+  - `ChatApp` supplies UI/logging callbacks, so right-panel updates and pending
+    phase changes stay in the frontend layer while ticketing/verifier behavior is
+    covered by mocked unit tests.
 
 ## Next Slices
 
-- Extract access refresh/acquisition orchestration from `sendMessage()` and
-  `regenerateResponse()` into an application-level access controller.
 - Extract the duplicated streaming lifecycle in `sendMessage()` /
   `regenerateResponse()` into a `chatTurnController`.
 - Start passing narrow action/selector objects to `ModelPicker` and `Sidebar`

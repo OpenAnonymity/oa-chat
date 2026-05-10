@@ -11,7 +11,7 @@ Everything runs in the browser with no server backend. Each session uses a fresh
 - **Streaming UX**: Incremental token updates with reliable auto-scroll.
 - **Markdown + LaTeX**: Rendered with Marked and KaTeX (self-hosted vendor assets).
 - **Model picker**: Fuzzy search, pinned models, and per-session selection.
-- **Multimodal**: Images, PDFs, and audio attachments.
+- **Multimodal**: Images, PDFs, Word documents (`.docx`), and audio attachments.
 - **Right panel**: Ticket registration, access issuance/expiry, and an activity timeline (logs are memory-only per tab).
 
 ### Quick start

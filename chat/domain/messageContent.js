@@ -87,10 +87,12 @@ export function processMessagesForApi(messages, currentModelId, options = {}) {
             if (Array.isArray(msg.files) && msg.files.length > 0) {
                 msg.files.forEach(file => {
                     const isText = file.detectedType === 'text';
-                    if (isText) {
+                    const isDocx = file.detectedType === 'docx';
+                    if (isText || isDocx) {
                         try {
-                            const base64Data = file.dataUrl.split(',')[1];
-                            const decodedContent = decodeTextFile(base64Data);
+                            const decodedContent = isDocx
+                                ? (file.extractedText || '[Word document text unavailable. Please re-attach this file.]')
+                                : decodeTextFile(file.dataUrl.split(',')[1]);
                             textContent += `\n\n--- File: ${file.name} ---\n${decodedContent}`;
                         } catch (error) {
                             if (typeof onTextFileDecodeError === 'function') {

@@ -86,6 +86,13 @@ test('processMessagesForApi converts uploaded text, image, and generic files', (
                     detectedType: 'pdf',
                     type: 'application/pdf',
                     dataUrl: 'data:application/pdf;base64,xyz'
+                },
+                {
+                    name: 'brief.docx',
+                    detectedType: 'docx',
+                    type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                    dataUrl: 'data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,ignored',
+                    extractedText: 'DOCX body text'
                 }
             ]
         }
@@ -95,7 +102,7 @@ test('processMessagesForApi converts uploaded text, image, and generic files', (
         {
             role: 'user',
             content: [
-                { type: 'text', text: 'read these\n\n--- File: note.txt ---\nhello' },
+                { type: 'text', text: 'read these\n\n--- File: note.txt ---\nhello\n\n--- File: brief.docx ---\nDOCX body text' },
                 { type: 'image_url', image_url: { url: 'data:image/png;base64,abc' } },
                 { type: 'file', file: { filename: 'paper.pdf', file_data: 'data:application/pdf;base64,xyz' } }
             ]
