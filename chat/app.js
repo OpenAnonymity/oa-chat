@@ -1,16 +1,4 @@
 // Main application logic
-import RightPanel from './components/RightPanel.js';
-import MessageNavigation from './components/MessageNavigation.js';
-import Sidebar from './components/Sidebar.js';
-import ChatArea from './components/ChatArea.js';
-import ChatInput from './components/ChatInput.js';
-import ModelPicker from './components/ModelPicker.js';
-import ChatHistoryImportModal from './components/ChatHistoryImportModal.js';
-import AccountModal from './components/AccountModal.js';
-import MemoryEditor from './components/MemoryEditor.js';
-import WelcomePanel from './components/WelcomePanel.js';
-import ThanksPanel from './components/ThanksPanel.js';
-import { buildTypingIndicator } from './components/MessageTemplates.js';
 import themeManager from './services/themeManager.js';
 import preferencesStore, { PREF_KEYS } from './services/preferencesStore.js';
 import storageManager from './services/storageManager.js';
@@ -34,7 +22,6 @@ import {
     stripMemoryPromptUserData
 } from './services/memoryBridge.js';
 import shareService from './services/shareService.js';
-import shareModals from './components/ShareModals.js';
 import { getTicketCost, initModelTiers } from './services/modelTiers.js';
 import { initPinnedModels, onPinnedModelsUpdate, getDisabledModels, getStandardizedModelDisplayName } from './services/modelConfig.js';
 import accountService from './services/accountService.js';
@@ -69,6 +56,7 @@ import {
     isAccessCreditExhaustedError as isAccessCreditExhaustedErrorValue,
     persistVerifierSubmitKeyProof as persistVerifierSubmitKeyProofValue
 } from './application/accessController.js';
+import VanillaChatUi from './ui/vanilla/VanillaChatUi.js';
 
 const DEFAULT_MODEL_NAME = inferenceService.getDefaultModelName();
 const SESSION_PAGE_SIZE = 80;
@@ -210,6 +198,7 @@ class ChatApp {
         this.rightPanel = null;
         this.floatingPanel = null;
         this.messageNavigation = null;
+        this.ui = null;
         this.sidebar = null;
         this.chatArea = null;
         this.chatInput = null;
@@ -1493,17 +1482,8 @@ class ChatApp {
         const dbReady = chatDB.init();
 
         // Initialize UI components immediately (sync, fast) - shows loading states
-        this.sidebar = new Sidebar(this);
-        this.chatArea = new ChatArea(this);
-        this.chatInput = new ChatInput(this);
-        this.modelPicker = new ModelPicker(this);
-        this.chatHistoryImportModal = new ChatHistoryImportModal(this);
-        this.accountModal = new AccountModal(this);
-        this.memoryEditor = new MemoryEditor(this);
-        this.welcomePanel = new WelcomePanel(this);
-        this.thanksPanel = new ThanksPanel(this);
-        this.rightPanel = new RightPanel(this);
-        this.rightPanel.mount();
+        this.ui = new VanillaChatUi(this);
+        Object.assign(this, this.ui.mountShell());
         this.setupSidebarFilterControls();
 
         // Render core shell immediately so non-sidebar UI is never blank on startup.
@@ -1574,7 +1554,7 @@ class ChatApp {
         ];
 
         // Initialize message navigation
-        this.messageNavigation = new MessageNavigation(this);
+        this.messageNavigation = this.ui.mountMessageNavigation();
 
         // Initialize model tiers and model availability (loads cache, fetches fresh data in background)
         initModelTiers();
@@ -2008,7 +1988,7 @@ class ChatApp {
      * @returns {Promise<boolean>} True if user wants fresh import, false for their copy
      */
     showForkedSessionPrompt(forkedSession) {
-        return shareModals.showForkedPrompt(forkedSession);
+        return this.ui.shareModals.showForkedPrompt(forkedSession);
     }
 
     /**
@@ -2055,7 +2035,7 @@ class ChatApp {
      * @returns {Promise<boolean>} True if user wants to fetch latest, false for local copy
      */
     showImportUpdatePrompt(existingSession) {
-        return shareModals.showUpdatePrompt(existingSession);
+        return this.ui.shareModals.showUpdatePrompt(existingSession);
     }
 
     /**
@@ -2099,7 +2079,7 @@ class ChatApp {
      * @returns {Promise<string|null>} Password or null if cancelled
      */
     showImportPasswordPrompt(message) {
-        return shareModals.showImportPasswordPrompt(message);
+        return this.ui.shareModals.showImportPasswordPrompt(message);
     }
 
     /**
@@ -2157,7 +2137,7 @@ class ChatApp {
         const validation = inferenceService.validateSharedAccess(sharedAccess, backendId);
         if (!validation.ok) {
             console.warn('⚠️ Shared access missing signature fields, cannot verify');
-            const choice = await shareModals.showSharedKeyVerificationFailedPrompt({
+            const choice = await this.ui.shareModals.showSharedKeyVerificationFailedPrompt({
                 error: 'Shared key is missing cryptographic signatures (legacy share format)',
                 stationId: sharedAccess.stationId,
                 isBanned: false,
@@ -2214,7 +2194,7 @@ class ChatApp {
             const isBanned = !!verifyResult.bannedStation;
             const banReason = verifyResult.bannedStation?.reason;
 
-            const choice = await shareModals.showSharedKeyVerificationFailedPrompt({
+            const choice = await this.ui.shareModals.showSharedKeyVerificationFailedPrompt({
                 error: verifyResult.error?.message || 'Verification failed',
                 stationId: sharedAccess.stationId,
                 isBanned,
@@ -2570,7 +2550,7 @@ class ChatApp {
         if (!session) return;
 
         const messages = await chatDB.getSessionMessages(session.id);
-        shareModals.showManagementModal(session, messages, {
+        this.ui.shareModals.showManagementModal(session, messages, {
             onShare: async (settings) => {
                 // Fork if imported
                 if (session.importedFrom) {
@@ -5674,7 +5654,7 @@ class ChatApp {
         const providerName = model ? model.provider : 'OpenAI';
         const id = 'typing-' + Date.now();
         const timestamp = Date.now();
-        const typingHtml = buildTypingIndicator(id, providerName, modelName, timestamp, phase);
+        const typingHtml = this.ui.buildTypingIndicator(id, providerName, modelName, timestamp, phase);
         this.elements.messagesContainer.insertAdjacentHTML('beforeend', typingHtml);
         this.updateActivePromptScrollSpacer();
         if (this.shouldAutoScrollChat()) {
@@ -7339,7 +7319,7 @@ class ChatApp {
                 !e.altKey &&
                 e.key.length === 1 &&
                 this.elements.modelPickerModal.classList.contains('hidden') &&
-                !shareModals.currentModal) {
+                !this.ui.shareModals.currentModal) {
                 this.elements.messageInput.focus();
             }
         });

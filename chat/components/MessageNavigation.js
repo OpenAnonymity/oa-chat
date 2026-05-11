@@ -1,5 +1,3 @@
-import { chatDB } from '../db.js';
-
 // Message Navigation Component
 export default class MessageNavigation {
     constructor(app) {
@@ -91,7 +89,7 @@ export default class MessageNavigation {
         }
 
         // Get messages from database
-        const messages = await chatDB.getSessionMessages(session.id);
+        const messages = await this.app.data.getSessionMessages(session.id);
 
         // Filter to only assistant messages for navigation
         this.messages = messages.filter(m => m.role === 'assistant');

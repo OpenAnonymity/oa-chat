@@ -25,6 +25,30 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
+- 2026-05-10: The first UI-facing app interface seam is in place.
+  - `chat/ui/appInterface.js` exposes component-specific facades for
+    `ModelPicker` and `Sidebar`.
+  - `chat/ui/vanilla/VanillaChatUi.js` now owns concrete component construction;
+    `chat/app.js` should not import files from `chat/components/` directly.
+  - `ModelPicker` now selects models through `ui.actions.selectModel(...)`
+    instead of importing `chatDB`, so UI rewrites can call the same action
+    without inheriting persistence details.
+  - `Sidebar` still renders the current DOM, but it now receives a sidebar-only
+    interface instead of the whole `ChatApp` object.
+- 2026-05-10: The vanilla shell now has explicit persistence and backend ports.
+  - `app.data` is supplied by `chat/ui/appInterface.js` and is the only path
+    shell components should use for message/session/settings persistence.
+    `ChatArea`, `ChatInput`, `MessageNavigation`, `RightPanel`,
+    `MemoryEditor`, and `ChatHistoryImportModal` no longer import `chatDB`.
+  - `app.services` groups ticket, network logger, proxy, and inference gateways
+    for the vanilla shell. `RightPanel`, `WelcomePanel`, `ThanksPanel`,
+    `ChatInput`, and `MemoryEditor` should call the injected services instead
+    of importing those gateways directly.
+  - The architecture tests in `test/architecture/uiBoundary.test.js` enforce
+    the current boundary: `app.js` cannot construct concrete components,
+    domain/application modules cannot import UI, shell components cannot import
+    `chatDB`, and gateway-heavy shell components cannot import ticket/proxy/
+    inference/logger modules directly.
 - 2026-05-06: The frontend architecture refactor has started with tested domain
   seams.
   - See [FRONTEND_ARCHITECTURE.md](FRONTEND_ARCHITECTURE.md) for the target

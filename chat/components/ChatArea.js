@@ -7,7 +7,6 @@
 import { buildMessageHTML, buildEmptyState, buildSharedIndicator, buildImportedIndicator, buildTypingIndicator, RAW_CLIPBOARD_ATTRIBUTE_ENABLED } from './MessageTemplates.js';
 import { exportChats, exportTickets } from '../services/globalExport.js';
 import { parseStreamingReasoningContent, parseReasoningContent } from '../services/reasoningParser.js';
-import { chatDB } from '../db.js';
 
 export default class ChatArea {
     /**
@@ -471,7 +470,7 @@ export default class ChatArea {
         }
 
         // Default path (non-Safari): DB-first to preserve raw markdown/LaTeX.
-        const messages = await chatDB.getSessionMessages(session.id);
+        const messages = await this.app.data.getSessionMessages(session.id);
         const message = messages.find(m => m.id === messageId);
 
         if (message && message.content && message.content.trim()) {
@@ -571,11 +570,11 @@ export default class ChatArea {
         if (messageId) {
             const session = this.app.getCurrentSession();
             if (session) {
-                const messages = await chatDB.getSessionMessages(session.id);
+                const messages = await this.app.data.getSessionMessages(session.id);
                 const message = messages.find(m => m.id === messageId);
                 if (message?.scrubber) {
                     message.scrubber.isCollapsed = !isCollapsed; // New state after toggle
-                    await chatDB.saveMessage(message);
+                    await this.app.data.saveMessage(message);
                 }
             }
         }
@@ -644,7 +643,7 @@ export default class ChatArea {
             if (!stopped) return;
         }
 
-        const messages = await chatDB.getSessionMessages(session.id);
+        const messages = await this.app.data.getSessionMessages(session.id);
         const messageIndex = messages.findIndex(m => m.id === messageId);
 
         if (messageIndex === -1 || messages[messageIndex].role !== 'assistant') {
@@ -660,7 +659,7 @@ export default class ChatArea {
         // Delete the assistant message and all messages after it
         const messagesToDelete = messages.slice(messageIndex);
         for (const msg of messagesToDelete) {
-            await chatDB.deleteMessage(msg.id);
+            await this.app.data.deleteMessage(msg.id);
         }
 
         // Re-render messages to remove deleted messages from UI
@@ -682,7 +681,7 @@ export default class ChatArea {
         const session = this.app.getCurrentSession();
         if (!session) return;
 
-        const messages = await chatDB.getSessionMessages(session.id);
+        const messages = await this.app.data.getSessionMessages(session.id);
         let message = messageId
             ? messages.find((entry) => entry.id === messageId)
             : null;
@@ -902,7 +901,7 @@ export default class ChatArea {
         const session = this.app.getCurrentSession();
         if (!session) return;
 
-        const messages = await chatDB.getSessionMessages(session.id);
+        const messages = await this.app.data.getSessionMessages(session.id);
         const message = messages.find((entry) => entry.id === messageId);
         const draft = draftOverride || message?.ciPromptDraft;
         if (!message?.ciPromptDraft || !draft) return;
@@ -925,7 +924,7 @@ export default class ChatArea {
                     ...message.ciPromptDraft,
                     editedFullPrompt: editedPrompt
                 };
-                await chatDB.saveMessage(message);
+                await this.app.data.saveMessage(message);
             }
         });
     }
@@ -943,7 +942,7 @@ export default class ChatArea {
             if (!stopped) return;
         }
 
-        const messages = await chatDB.getSessionMessages(session.id);
+        const messages = await this.app.data.getSessionMessages(session.id);
         const messageIndex = messages.findIndex(m => m.id === messageId);
 
         if (messageIndex === -1 || messages[messageIndex].role !== 'user') return;
@@ -951,7 +950,7 @@ export default class ChatArea {
         // Delete all messages after this user message
         const messagesToDelete = messages.slice(messageIndex + 1);
         for (const msg of messagesToDelete) {
-            await chatDB.deleteMessage(msg.id);
+            await this.app.data.deleteMessage(msg.id);
         }
 
         await this.render();
@@ -966,7 +965,7 @@ export default class ChatArea {
         const session = this.app.getCurrentSession();
         if (!session) return;
 
-        const messages = await chatDB.getSessionMessages(session.id);
+        const messages = await this.app.data.getSessionMessages(session.id);
         const message = messages.find(m => m.id === messageId);
         if (!message || message.role !== 'user' || !message.scrubber) return;
 
@@ -981,7 +980,7 @@ export default class ChatArea {
         }
 
         // Save to database
-        await chatDB.saveMessage(message);
+        await this.app.data.saveMessage(message);
 
         // Re-render just this message - collapsed state is persisted in message.scrubber.isCollapsed
         // and will be automatically applied by the template
@@ -1040,7 +1039,7 @@ export default class ChatArea {
         }
 
         // Load messages from IndexedDB
-        const messages = await chatDB.getSessionMessages(session.id);
+        const messages = await this.app.data.getSessionMessages(session.id);
 
         // Check if this render is stale (a newer render was triggered while we were loading messages)
         if (currentGeneration !== this.renderGeneration) {

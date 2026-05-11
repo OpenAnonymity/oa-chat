@@ -5,8 +5,6 @@
  * staying backed by the root app's nanomem storage adapter.
  */
 import memoryFileSystem from '../services/memoryInstances.js';
-import ticketClient from '../services/ticketClient.js';
-import { chatDB } from '../db.js';
 import { exportMemoriesAsOmf } from '../services/omfExporter.js';
 import { readOmfFile, validateOmf, previewOmfImport, importOmf } from '../services/omfImporter.js';
 import { normalizeMessagesForMemory } from '../services/memoryMessageNormalization.js';
@@ -1030,7 +1028,7 @@ class MemoryEditor {
             }
             candidate.didPersistBackfillProgress = true;
             candidate.session.memoryProcessedAt = Date.now();
-            const savePromise = chatDB.saveSession(candidate.session).catch((error) => {
+            const savePromise = this.app.data.saveSession(candidate.session).catch((error) => {
                 candidate.didPersistBackfillProgress = false;
                 console.error('[MemoryEditor] Failed to save backfill progress:', error);
                 throw error;
@@ -1042,13 +1040,13 @@ class MemoryEditor {
                 return;
             }
             if (keySession.memoryKey !== previousKey) {
-                await chatDB.saveSession(activeSession);
+                await this.app.data.saveSession(activeSession);
             }
         };
         const invalidateActiveMemoryKey = async () => {
             invalidateMemoryKey(keySession);
             if (activeSession) {
-                await chatDB.saveSession(activeSession);
+                await this.app.data.saveSession(activeSession);
             }
         };
         const updateBackfillProgressForResult = (candidate, itemResult) => {
@@ -1101,7 +1099,7 @@ class MemoryEditor {
 
                 while (!itemFinished) {
                     const previousKey = keySession.memoryKey || null;
-                    const memoryKey = await ensureMemoryKey(keySession, ticketClient);
+                    const memoryKey = await ensureMemoryKey(keySession, this.app.services.tickets);
                     await persistActiveSessionIfChanged(previousKey);
 
                     if (!memoryKey) {
@@ -1198,7 +1196,7 @@ class MemoryEditor {
             if (isMemoryAuthError(error)) {
                 invalidateMemoryKey(keySession);
                 if (activeSession) {
-                    await chatDB.saveSession(activeSession);
+                    await this.app.data.saveSession(activeSession);
                 }
             }
             this.app?.showToast?.(error?.message || 'Failed to backfill chats into memory.', 'error');
@@ -1218,7 +1216,7 @@ class MemoryEditor {
     }
 
     async _collectBackfillCandidates() {
-        const sessions = await chatDB.getAllSessions();
+        const sessions = await this.app.data.getAllSessions();
         const sortedSessions = [...sessions].sort((a, b) => {
             const left = Number(a?.updatedAt || a?.createdAt || 0);
             const right = Number(b?.updatedAt || b?.createdAt || 0);
@@ -1236,7 +1234,7 @@ class MemoryEditor {
                 continue;
             }
 
-            const messages = await chatDB.getSessionMessages(session.id);
+            const messages = await this.app.data.getSessionMessages(session.id);
             candidates.push({
                 session,
                 input: {

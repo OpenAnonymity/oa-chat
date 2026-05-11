@@ -8,7 +8,6 @@ import themeManager from '../services/themeManager.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import { exportAllData, exportChats, exportTickets } from '../services/globalExport.js';
 import { importFromFile, formatImportSummary } from '../services/globalImport.js';
-import ticketClient from '../services/ticketClient.js';
 import scrubberService from '../services/scrubberService.js';
 import {
     renderEditableDiff,
@@ -18,7 +17,6 @@ import {
     getEditableDiffSelectionState
 } from '../services/editableDiffRenderer.js';
 import { normalizeReasoningEffort } from '../services/reasoningConfig.js';
-import { chatDB } from '../db.js';
 
 const MESSAGE_INPUT_MAX_HEIGHT_PX = 300;
 const MESSAGE_INPUT_PREVIEW_EXPANDED_MIN_HEIGHT_PX = 384;
@@ -235,7 +233,7 @@ export default class ChatInput {
             this.updateSearchToggleUI();
             this.app.updateInputState();
             // Persist search state globally
-            await chatDB.saveSetting('searchEnabled', this.app.searchEnabled);
+            await this.app.data.saveSetting('searchEnabled', this.app.searchEnabled);
         });
 
         if (this.app.elements.memoryToggle) {
@@ -253,7 +251,7 @@ export default class ChatInput {
                 setTimeout(() => container.classList.remove('sliding'), 250);
                 this.app.memoryMode = isMemory;
                 this.updateMemoryToggleUI();
-                await chatDB.saveSetting('memoryMode', this.app.memoryMode);
+                await this.app.data.saveSetting('memoryMode', this.app.memoryMode);
             });
         }
 
@@ -269,7 +267,7 @@ export default class ChatInput {
                 const nextEffort = normalizeReasoningEffort(btn.dataset.reasoningEffort);
                 this.app.reasoningEffort = nextEffort;
                 this.updateReasoningEffortUI();
-                await chatDB.saveSetting('reasoningEffort', nextEffort);
+                await this.app.data.saveSetting('reasoningEffort', nextEffort);
             });
         }
 
@@ -383,7 +381,7 @@ export default class ChatInput {
         // this.app.elements.clearChatBtn.addEventListener('click', async () => {
         //     const session = this.app.getCurrentSession();
         //     if (session) {
-        //         await chatDB.deleteSessionMessages(session.id);
+        //         await this.app.data.deleteSessionMessages(session.id);
         //         this.app.renderMessages();
         //         this.app.elements.settingsMenu.classList.add('hidden');
         //     }
@@ -1811,7 +1809,7 @@ export default class ChatInput {
             return;
         }
 
-        const messages = await chatDB.getSessionMessages(session.id);
+        const messages = await this.app.data.getSessionMessages(session.id);
         const assistantMessages = messages.filter(m => m.role === 'assistant');
 
         if (assistantMessages.length === 0) {
@@ -1943,7 +1941,7 @@ export default class ChatInput {
             const text = await file.text();
             const payload = JSON.parse(text);
 
-            const result = await ticketClient.importTickets(payload);
+            const result = await this.app.services.tickets.importTickets(payload);
             const addedActive = result.addedActive || 0;
             const addedArchived = result.addedArchived || 0;
             const totalAdded = addedActive + addedArchived;

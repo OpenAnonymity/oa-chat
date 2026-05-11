@@ -10,7 +10,6 @@
 import { getProviderIcon } from '../services/providerIcons.js';
 import { getDefaultModelConfig, onPinnedModelsUpdate } from '../services/modelConfig.js';
 import { getTicketCost, onModelTiersUpdate } from '../services/modelTiers.js';
-import { chatDB } from '../db.js';
 
 export default class ModelPicker {
     /**
@@ -381,27 +380,7 @@ export default class ModelPicker {
      * @param {string} modelName - Display name chosen by the user
      */
     async selectModel(modelName) {
-        const normalizedModelName = this.app.normalizeModelName
-            ? this.app.normalizeModelName(modelName)
-            : modelName;
-        const session = this.app.getCurrentSession();
-
-        // Always save as selected model for future sessions
-        await chatDB.saveSetting('selectedModel', normalizedModelName);
-
-        if (!session) {
-            // No session exists - store as pending model
-            // Will be used when session is created (e.g., when first message is sent)
-            this.app.state.pendingModelName = normalizedModelName;
-            this.app.renderCurrentModel();
-            this.close(); // close() handles input focus
-            return;
-        }
-
-        // Update existing session
-        session.model = normalizedModelName;
-        await chatDB.saveSession(session);
-        this.app.renderCurrentModel();
+        await this.app.actions.selectModel(modelName);
         this.close(); // close() handles input focus
     }
 

@@ -11,15 +11,17 @@ rendering and backend/persistence services.
 flowchart TB
     Browser["index.html / prelude.js"] --> Runtime["app runtime"]
     Runtime --> Store["app state + actions"]
-    Runtime --> UI["vanilla UI adapter"]
+    Runtime --> UI["chat/ui/vanilla/VanillaChatUi"]
 
     UI --> Components["components/*"]
+    UI --> Ports["ui/appInterface\nselectors, actions, data, services"]
     UI --> UiEffects["ui controllers\nkeyboard, scroll, layout, toasts"]
     UI --> Store
 
     Store --> Controllers["application controllers\nsessions, turns, memory, access, files"]
     Controllers --> Domain["domain helpers\nmessage shaping, search, models, streaming state"]
     Controllers --> Repos["repositories / gateways"]
+    Ports --> Repos
 
     Repos --> DB["IndexedDB chatDB"]
     Repos --> Inference["inferenceService"]
@@ -38,6 +40,13 @@ flowchart TB
 - `chat/components/` and future framework adapters should consume narrow action
   and selector objects. They should not receive the full app controller once the
   compatibility facade is retired.
+- `chat/app.js` must not import concrete files under `chat/components/`. The
+  vanilla adapter owns concrete component construction; this is covered by an
+  architecture test.
+- Current shell components must use injected `app.data` and `app.services`
+  ports for persistence and backend gateways. This keeps the vanilla DOM UI
+  replaceable without making a new UI import IndexedDB, ticket, proxy, or
+  inference modules directly.
 - `chat/services/inference/`, `ticketClient`, `verifier`, and `memoryBridge`
   remain the privacy-sensitive backend seams. Do not bypass them from UI code.
 
@@ -67,10 +76,50 @@ flowchart TB
   - `ChatApp` supplies UI/logging callbacks, so right-panel updates and pending
     phase changes stay in the frontend layer while ticketing/verifier behavior is
     covered by mocked unit tests.
+- 2026-05-10: First vanilla UI adapter seam added.
+  - `chat/ui/appInterface.js` now builds component-specific interfaces for
+    `ModelPicker` and `Sidebar`, exposing only the elements, state, selectors,
+    and actions those components need.
+  - `ModelPicker` no longer imports `chatDB` directly; model selection goes
+    through an injected action. This is the intended pattern for future UI
+    stacks: UI calls app actions, while persistence/functionality remains behind
+    the app interface.
+  - `Sidebar` now receives a sidebar-only facade instead of the full `ChatApp`
+    instance, which makes replacing the sidebar UI less risky.
+- 2026-05-10: Concrete component construction moved out of `chat/app.js`.
+  - `chat/ui/vanilla/VanillaChatUi.js` is now the single owner of the current
+    no-framework component tree.
+  - `chat/app.js` imports the UI adapter, not individual components. A future UI
+    rewrite can replace this adapter while keeping the same app/application
+    interfaces.
+  - Larger legacy components still use an explicit compatibility facade from
+    `createComponentAppFacade(...)`; that facade is intentionally finite and
+    tested so shrinking it is mechanical.
+- 2026-05-10: Persistence and backend gateways moved behind UI ports for the
+  shell.
+  - `createComponentDataInterface(...)` now exposes the persistence operations
+    needed by the vanilla shell: message/session reads and writes, settings,
+    chat-history import transactions, and imported-session duplicate checks.
+  - `ChatArea`, `ChatInput`, `MessageNavigation`, `RightPanel`,
+    `MemoryEditor`, and `ChatHistoryImportModal` no longer import `chatDB`.
+    They consume `app.data`, which means a framework UI can use mocked or
+    alternative repositories without changing component behavior.
+  - `createComponentServicesInterface(...)` groups backend-facing gateways
+    (`tickets`, `networkLogger`, `networkProxy`, `inference`) for UI injection.
+    `RightPanel`, `WelcomePanel`, `ThanksPanel`, `ChatInput`, and
+    `MemoryEditor` now call those injected services instead of importing the
+    gateways directly.
+  - Architecture tests now enforce that `chat/app.js` does not import concrete
+    components, domain/application layers do not import UI, shell components do
+    not import `chatDB`, and gateway-heavy shell components do not import the
+    ticket/proxy/inference/logger services directly.
 
 ## Next Slices
 
 - Extract the duplicated streaming lifecycle in `sendMessage()` /
   `regenerateResponse()` into a `chatTurnController`.
-- Start passing narrow action/selector objects to `ModelPicker` and `Sidebar`
-  before tackling `ChatInput` and `ChatArea`, which have more UI state.
+- Continue shrinking the compatibility facade into component-specific
+  contracts for `ChatArea`, `ChatInput`, `RightPanel`, and memory/import flows.
+- Move the remaining modal/singleton service lookups (`TLSSecurityModal`,
+  verifier attestation, share/account sync) behind the same injected-services
+  pattern before a full framework rewrite.

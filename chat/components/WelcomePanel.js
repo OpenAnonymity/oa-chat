@@ -3,7 +3,6 @@
  * First-run welcome modal for new users, invite code redemption, and account creation prompt.
  */
 
-import ticketClient from '../services/ticketClient.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import themeManager from '../services/themeManager.js';
 import SmoothProgress from '../services/smoothProgress.js';
@@ -79,7 +78,7 @@ class WelcomePanel {
         // Don't show if dismissed
         if (localStorage.getItem(STORAGE_KEY_DISMISSED) === 'true') return false;
         // Don't show if user already has tickets
-        if (ticketClient.getTicketCount() > 0) return false;
+        if (this.app.services.tickets.getTicketCount() > 0) return false;
         // Don't show if loading a shared conversation
         if (new URLSearchParams(window.location.search).has('s')) return false;
         return true;
@@ -242,8 +241,8 @@ class WelcomePanel {
 
         if (this.freeAccessRequested) {
             const hasAnyTicketHistory =
-                ticketClient.getTicketCount() > 0 ||
-                ticketClient.getArchivedTicketCount() > 0;
+                this.app.services.tickets.getTicketCount() > 0 ||
+                this.app.services.tickets.getArchivedTicketCount() > 0;
 
             if (!hasAnyTicketHistory) {
                 try {
@@ -270,7 +269,7 @@ class WelcomePanel {
             return this.canUseEmailForFreeAccess;
         }
 
-        const availability = await ticketClient.isFreeAccessAvailable();
+        const availability = await this.app.services.tickets.isFreeAccessAvailable();
         this.freeAccessAvailability = availability;
         this.freeAccessAvailable = availability?.available === true;
         const reasonCode = typeof availability?.reasonCode === 'string'
@@ -534,7 +533,7 @@ class WelcomePanel {
 
         try {
             if (isEmailSubmission) {
-                const freeAccessResult = await ticketClient.requestFreeAccess(submittedEmail, {
+                const freeAccessResult = await this.app.services.tickets.requestFreeAccess(submittedEmail, {
                     cfTurnstileResponse: turnstileToken,
                 });
 
@@ -558,7 +557,7 @@ class WelcomePanel {
                 return;
             }
 
-            const result = await ticketClient.alphaRegister(this.parseInviteCode(this.inviteCode), (message, percent) => {
+            const result = await this.app.services.tickets.alphaRegister(this.parseInviteCode(this.inviteCode), (message, percent) => {
                 this.smoothProgress.set(percent);
                 this.redeemProgress = { message, percent };
                 // Update message text directly to avoid innerHTML replacement
@@ -774,7 +773,7 @@ class WelcomePanel {
         this.render();
 
         try {
-            const result = await ticketClient.alphaRegister(code, (message, percent) => {
+            const result = await this.app.services.tickets.alphaRegister(code, (message, percent) => {
                 this.smoothProgress.set(percent);
                 this.redeemProgress = { message, percent };
                 const msgEl = document.querySelector('[data-smooth-progress-msg="welcome"]');
@@ -1310,7 +1309,7 @@ class WelcomePanel {
     }
 
     renderSuccessStep() {
-        const currentTicketCount = ticketClient.getTicketCount();
+        const currentTicketCount = this.app.services.tickets.getTicketCount();
         const availableTickets = Number.isFinite(currentTicketCount) && currentTicketCount >= 0
             ? currentTicketCount
             : this.ticketsRedeemed;
