@@ -94,8 +94,11 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     suppresses the scroll-to-bottom button. That button otherwise appears exactly when the
     streamed assistant output reaches the fixed input box and can cause a one-time visual
     flicker at the bottom edge.
-  - Once streaming is over, reaching the real bottom or clicking the scroll-to-bottom button
-    clears the prompt-slide state so later non-forced bottom-follow behavior can resume.
+  - Once streaming is over, reaching the real scroll-container bottom (including the spacer
+    runway) or clicking the scroll-to-bottom button clears the prompt-slide state so later
+    non-forced bottom-follow behavior can resume. Do not clear the spacer merely because the
+    final assistant content is fully visible; short responses still need the prompt to remain
+    at the 25% position after stream completion.
   - Do not persist this spacer in IndexedDB or message records. It is only a viewport runway
     for the current tab. `sessionPromptScrollAnchors` remembers the active prompt per
     session in memory; switching sessions detaches the DOM spacer, and switching back

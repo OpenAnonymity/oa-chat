@@ -1187,9 +1187,11 @@ class ChatApp {
         const effectiveScrollHeight = chatArea.scrollHeight - spacerHeight;
         const hiddenDistance = Math.max(0, effectiveScrollHeight - chatArea.scrollTop - chatArea.clientHeight);
         const isAtBottom = hiddenDistance <= 4;
+        const realBottomDistance = Math.max(0, chatArea.scrollHeight - chatArea.scrollTop - chatArea.clientHeight);
+        const isAtRealBottom = realBottomDistance <= 4;
 
         if (isAtBottom) {
-            if (this.isPromptSlideUpEffectActive() && !this.isCurrentSessionStreaming()) {
+            if (this.isPromptSlideUpEffectActive() && !this.isCurrentSessionStreaming() && isAtRealBottom) {
                 this.clearPromptSlideUpEffect();
             }
             this.isAutoScrollPaused = false;
@@ -1200,8 +1202,8 @@ class ChatApp {
         const inputTop = inputContainer.getBoundingClientRect().top;
         const lastMessageBottom = lastMessage.getBoundingClientRect().bottom;
         const overlapsInput = lastMessageBottom > inputTop - 8;
-        const realHiddenDistance = Math.max(0, lastMessageBottom - chatArea.getBoundingClientRect().bottom);
-        const shouldShow = overlapsInput || (spacer ? realHiddenDistance > 12 : hiddenDistance > 12);
+        const messageHiddenDistance = Math.max(0, lastMessageBottom - chatArea.getBoundingClientRect().bottom);
+        const shouldShow = overlapsInput || (spacer ? messageHiddenDistance > 12 : hiddenDistance > 12);
 
         if (shouldShow) {
             this.showScrollToBottomButton();
