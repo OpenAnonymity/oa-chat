@@ -209,7 +209,8 @@ class ChatApp {
         this.sessionChatbarStates = new Map(); // Track in-tab chatbar drafts per session
         this.chatScrollSaveFrame = null;
         this.isAutoScrollPaused = false; // Track if auto-scroll is paused during streaming
-        this.activePromptScroll = null; // Tracks the current sent prompt's temporary scroll runway
+        this.activePromptScroll = null; // Tracks the visible prompt's temporary scroll runway
+        this.sessionPromptScrollAnchors = new Map(); // Keeps prompt-slide anchors across session switches
         this.scrollToBottomButton = null; // Reference to the floating scroll-to-bottom button
         this.scrollButtonCheckInterval = null; // Interval for checking button visibility during streaming
         this.scrubberService = scrubberService;
@@ -713,6 +714,7 @@ class ChatApp {
         if (!sessionId || !messageId) return;
 
         this.clearPromptSlideUpEffect();
+        this.sessionPromptScrollAnchors.set(sessionId, { messageId });
         this.activePromptScroll = {
             sessionId,
             messageId,
@@ -729,12 +731,20 @@ class ChatApp {
         }, 50);
     }
 
-    clearPromptSlideUpEffect() {
+    detachPromptSlideUpEffect() {
         if (this.activePromptScroll?.spacerEl?.isConnected) {
             this.activePromptScroll.spacerEl.remove();
         }
         this.elements.chatArea?.classList.remove('prompt-slide-active');
         this.activePromptScroll = null;
+    }
+
+    clearPromptSlideUpEffect() {
+        const sessionId = this.activePromptScroll?.sessionId || this.state.currentSessionId;
+        this.detachPromptSlideUpEffect();
+        if (sessionId) {
+            this.sessionPromptScrollAnchors.delete(sessionId);
+        }
     }
 
     isPromptSlideUpEffectActive() {
@@ -763,6 +773,57 @@ class ChatApp {
         }
 
         return spacer;
+    }
+
+    getPromptSlideUpMessageIdForSession(sessionId, messages = [], { allowStreamingFallback = false } = {}) {
+        if (!sessionId || !Array.isArray(messages)) return null;
+
+        const anchor = this.sessionPromptScrollAnchors.get(sessionId);
+        if (anchor?.messageId && messages.some(message => message.id === anchor.messageId)) {
+            return anchor.messageId;
+        }
+        if (anchor?.messageId) {
+            this.sessionPromptScrollAnchors.delete(sessionId);
+        }
+
+        if (!allowStreamingFallback) return null;
+
+        for (let i = messages.length - 1; i >= 0; i--) {
+            const message = messages[i];
+            if (message?.role === 'user' && !message.isLocalOnly) {
+                this.sessionPromptScrollAnchors.set(sessionId, { messageId: message.id });
+                return message.id;
+            }
+        }
+
+        return null;
+    }
+
+    restorePromptSlideUpEffectForSession(sessionId, messageId, { primeRunway = false } = {}) {
+        if (!sessionId || !messageId || sessionId !== this.state.currentSessionId) return false;
+
+        const alreadyActive = this.activePromptScroll?.sessionId === sessionId &&
+            this.activePromptScroll?.messageId === messageId;
+        if (!alreadyActive) {
+            this.detachPromptSlideUpEffect();
+            this.activePromptScroll = {
+                sessionId,
+                messageId,
+                spacerEl: null
+            };
+        }
+
+        this.sessionPromptScrollAnchors.set(sessionId, { messageId });
+        this.elements.chatArea?.classList.add('prompt-slide-active');
+
+        const spacer = this.ensureActivePromptSpacer();
+        const chatArea = this.elements.chatArea;
+        if (primeRunway && spacer && chatArea) {
+            spacer.hidden = false;
+            spacer.style.height = `${Math.ceil(chatArea.clientHeight * 0.75)}px`;
+        }
+
+        return Boolean(spacer);
     }
 
     /**
@@ -3221,7 +3282,7 @@ class ChatApp {
         }
 
         this.saveCurrentSessionScrollPosition();
-        this.clearPromptSlideUpEffect();
+        this.detachPromptSlideUpEffect();
         if (previousSessionId) {
             this.saveChatbarStateForSession(previousSessionId);
         }
@@ -5712,6 +5773,10 @@ class ChatApp {
             await chatDB.deleteSession(sessionId);
             await chatDB.deleteSessionMessages(sessionId);
             this.sessionScrollPositions.delete(sessionId);
+            this.sessionPromptScrollAnchors.delete(sessionId);
+            if (this.activePromptScroll?.sessionId === sessionId) {
+                this.detachPromptSlideUpEffect();
+            }
             this.clearChatbarStateForSession(sessionId);
 
             // Clear edit state if deleting current session
@@ -6059,6 +6124,8 @@ class ChatApp {
         });
         this.sessionStreamingStates.clear();
         this.sessionScrollPositions.clear();
+        this.sessionPromptScrollAnchors.clear();
+        this.detachPromptSlideUpEffect();
         this.clearAllChatbarStates();
 
         this.state.sessions = [];

@@ -1136,6 +1136,14 @@ export default class ChatArea {
         }
 
         messagesContainer.innerHTML = messagesHtml;
+        const promptSlideMessageId = this.app.getPromptSlideUpMessageIdForSession?.(
+            session.id,
+            messages,
+            { allowStreamingFallback: isSessionStreaming }
+        );
+        const restoredPromptSlide = promptSlideMessageId
+            ? this.app.restorePromptSlideUpEffectForSession?.(session.id, promptSlideMessageId, { primeRunway: true })
+            : false;
 
         // For streaming sessions, initialize typewriter state from live buffer OR DB content
         // Priority: live buffer > DB (because DB saves may lag behind the live stream)
@@ -1203,8 +1211,14 @@ export default class ChatArea {
         // Restore last seen scroll position or snap to bottom
         const restored = this.app.restoreSessionScrollPosition(session.id);
         if (!restored) {
-            this.app.scrollChatAreaToBottomInstant();
-            this.app.saveCurrentSessionScrollPosition();
+            if (restoredPromptSlide) {
+                this.app.updateActivePromptScrollSpacer({ scroll: true, behavior: 'auto' });
+            } else {
+                this.app.scrollChatAreaToBottomInstant();
+                this.app.saveCurrentSessionScrollPosition();
+            }
+        } else if (restoredPromptSlide) {
+            this.app.updateActivePromptScrollSpacer();
         }
 
         // Defer button visibility check to allow DOM to settle after render

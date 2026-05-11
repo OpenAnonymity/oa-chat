@@ -97,7 +97,11 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - Once streaming is over, reaching the real bottom or clicking the scroll-to-bottom button
     clears the prompt-slide state so later non-forced bottom-follow behavior can resume.
   - Do not persist this spacer in IndexedDB or message records. It is only a viewport runway
-    for the current tab and should be cleared when switching sessions.
+    for the current tab. `sessionPromptScrollAnchors` remembers the active prompt per
+    session in memory; switching sessions detaches the DOM spacer, and switching back
+    rehydrates it before scroll restoration so an in-flight or just-finished response does
+    not snap downward. Reaching the real bottom, clicking the scroll-to-bottom button, or
+    sending another prompt forgets the per-session anchor.
   - Stream cancellation must preserve any chunks already received. `chat/api.js` normalizes
     non-Error abort throws before setting `isCancelled`; otherwise a thrown abort string can
     become a generic TypeError and make `ChatApp` replace the partial assistant output.
