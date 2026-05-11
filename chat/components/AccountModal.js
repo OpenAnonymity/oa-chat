@@ -1,6 +1,3 @@
-import accountService from '../services/accountService.js';
-import syncService from '../services/syncService.js';
-
 /**
  * Account Modal Component
  * Modern, clean design matching ShareModals aesthetic
@@ -11,9 +8,11 @@ const MODAL_CLASSES = 'w-full max-w-sm rounded-xl border border-border bg-backgr
 class AccountModal {
     constructor(app) {
         this.app = app;
+        this.accountService = this.app.services.account;
+        this.syncService = this.app.services.sync;
         this.isOpen = false;
         this.overlay = document.getElementById('account-modal');
-        this.accountState = accountService.getState();
+        this.accountState = this.accountService.getState();
 
         // Login flow state
         this.accountInputValue = '';
@@ -37,13 +36,13 @@ class AccountModal {
         this.animationTimeouts = [];
 
         // Sync state
-        this.syncStatus = syncService.getStatus();
+        this.syncStatus = this.syncService.getStatus();
 
         // UI state
         this.returnFocusEl = null;
         this.escapeHandler = null;
 
-        this.accountUnsubscribe = accountService.subscribe(state => {
+        this.accountUnsubscribe = this.accountService.subscribe(state => {
             this.accountState = state;
             this.updateTabIndicator();
             if (this.isOpen && (this.creationStep === 'idle' || this.creationStep === 'complete')) {
@@ -51,8 +50,8 @@ class AccountModal {
             }
         });
 
-        this.syncUnsubscribe = syncService.subscribe(() => {
-            this.syncStatus = syncService.getStatus();
+        this.syncUnsubscribe = this.syncService.subscribe(() => {
+            this.syncStatus = this.syncService.getStatus();
             if (this.isOpen && this.accountState?.accountId) {
                 this.render();
             }
@@ -86,7 +85,7 @@ class AccountModal {
         this.resetCreationFlow();
         this.recoveryStep = 'idle';
         // Clear any stale errors when opening
-        accountService.clearErrors();
+        this.accountService.clearErrors();
         this.render();
         this.overlay.classList.remove('hidden');
 
@@ -181,7 +180,7 @@ class AccountModal {
         this.render();
 
         try {
-            this.generatedAccountId = await accountService.prepareAccount();
+            this.generatedAccountId = await this.accountService.prepareAccount();
             this.isLoadingAccountId = false;
             this.render();
             this.startDigitRevealAnimation();
@@ -221,10 +220,10 @@ class AccountModal {
     }
 
     async handlePasskeyRegistration() {
-        const success = await accountService.registerPasskeyForPreparedAccount();
+        const success = await this.accountService.registerPasskeyForPreparedAccount();
 
         if (success) {
-            this.generatedRecoveryCode = accountService.generateRecoveryForPreparedAccount();
+            this.generatedRecoveryCode = this.accountService.generateRecoveryForPreparedAccount();
             this.creationStep = 'recovery';
             this.recoveryCodeCopied = false;
             this.creationError = null;
@@ -292,7 +291,7 @@ class AccountModal {
         this.render();
 
         try {
-            await accountService.completeAccountRegistration();
+            await this.accountService.completeAccountRegistration();
             this.creationStep = 'complete';
             this.render();
             this.app?.showToast?.('Account created successfully', 'success');
@@ -304,13 +303,13 @@ class AccountModal {
     }
 
     handleCancelCreation() {
-        accountService.cancelPendingAccount();
+        this.accountService.cancelPendingAccount();
         this.resetCreationFlow();
         this.render();
     }
 
     handleStartOver() {
-        accountService.cancelPendingAccount();
+        this.accountService.cancelPendingAccount();
         this.resetCreationFlow();
         this.render();
     }
@@ -321,7 +320,7 @@ class AccountModal {
 
     async handleAccountPasskeyUnlock() {
         const accountId = this.accountState?.accountId || this.accountInputValue?.trim();
-        const success = await accountService.unlockWithPasskey(accountId);
+        const success = await this.accountService.unlockWithPasskey(accountId);
         if (success) this.app?.showToast?.('Account unlocked', 'success');
     }
 
@@ -330,7 +329,7 @@ class AccountModal {
         const recoveryCode = this.recoveryInputValue;
 
         // Clear any previous errors before starting
-        accountService.clearErrors();
+        this.accountService.clearErrors();
 
         // Show "adding passkey" state before prompting
         this.recoveryStep = 'adding_passkey';
@@ -341,7 +340,7 @@ class AccountModal {
 
         try {
             // Step 3: Call recovery (this triggers the passkey prompt)
-            const success = await accountService.unlockWithRecoveryCode(accountId, recoveryCode);
+            const success = await this.accountService.unlockWithRecoveryCode(accountId, recoveryCode);
 
             if (success) {
                 // Step 4: Show success
@@ -381,7 +380,7 @@ class AccountModal {
     }
 
     async handleAccountClear() {
-        await accountService.clearLocalAccount();
+        await this.accountService.clearLocalAccount();
         this.accountInputValue = '';
         this.recoveryInputValue = '';
         this.showRecoveryInput = false;
@@ -622,7 +621,7 @@ class AccountModal {
         // Logged in state - don't show errors here since login was successful
         if (accountId) {
             // Always get fresh status
-            const syncStatus = syncService.getStatus();
+            const syncStatus = this.syncService.getStatus();
             const isSyncing = syncStatus.syncing;
             const lastSync = syncStatus.lastSyncTime;
             const lastResult = syncStatus.lastSyncResult;
@@ -986,9 +985,9 @@ class AccountModal {
     }
 
     async handleSyncNow() {
-        // syncService.sync() will set syncInProgress and notify immediately
+        // this.syncService.sync() will set syncInProgress and notify immediately
         try {
-            const result = await syncService.sync();
+            const result = await this.syncService.sync();
             if (result.success) {
                 this.app?.showToast?.('Synced successfully', 'success');
             } else if (result.error !== 'Sync already in progress') {

@@ -105,7 +105,8 @@ flowchart TB
     They consume `app.data`, which means a framework UI can use mocked or
     alternative repositories without changing component behavior.
   - `createComponentServicesInterface(...)` groups backend-facing gateways
-    (`tickets`, `networkLogger`, `networkProxy`, `inference`) for UI injection.
+    (`tickets`, `networkLogger`, `networkProxy`, `inference`, `verifier`,
+    `share`, `account`, `sync`) for UI injection.
     `RightPanel`, `WelcomePanel`, `ThanksPanel`, `ChatInput`, and
     `MemoryEditor` now call those injected services instead of importing the
     gateways directly.
@@ -113,6 +114,14 @@ flowchart TB
     components, domain/application layers do not import UI, shell components do
     not import `chatDB`, and gateway-heavy shell components do not import the
     ticket/proxy/inference/logger services directly.
+- 2026-05-10: Remaining modal singleton gateway imports were folded into the
+  same service port.
+  - `TLSSecurityModal`, `VerifierAttestationModal`, `ShareModals`, and
+    `AccountModal` now receive gateway services through configuration or
+    `app.services` instead of importing network/proxy/verifier/share/account
+    services directly.
+  - `MessageTemplates` no longer reads `window.inferenceService` for welcome
+    content; the vanilla adapter configures the template service provider.
 
 ## Next Slices
 
@@ -120,6 +129,6 @@ flowchart TB
   `regenerateResponse()` into a `chatTurnController`.
 - Continue shrinking the compatibility facade into component-specific
   contracts for `ChatArea`, `ChatInput`, `RightPanel`, and memory/import flows.
-- Move the remaining modal/singleton service lookups (`TLSSecurityModal`,
-  verifier attestation, share/account sync) behind the same injected-services
-  pattern before a full framework rewrite.
+- Move global browser event wiring and cross-component lifecycle callbacks out
+  of `chat/app.js` and into application/UI controllers so future framework
+  adapters can own rendering without inheriting the legacy controller shape.

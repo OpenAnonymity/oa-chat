@@ -3,8 +3,6 @@
  * Shows VERIFIABLE security information - not just parsed strings
  */
 
-import networkProxy from '../services/networkProxy.js';
-import inferenceService from '../services/inference/inferenceService.js';
 import { ORG_API_BASE } from '../config.js';
 const LIBCURL_ASSET_URL = 'vendor/libcurl/libcurl_full.js';
 const LIBCURL_VERSION = '0.7.1';
@@ -15,6 +13,11 @@ class TLSSecurityModal {
         this.overlay = null;
         this.wasmIntegrity = null; // { localHash, expectedHash, verified, source, error }
         this.isVerifying = false;
+        this.services = null;
+    }
+
+    configureServices(services) {
+        this.services = services;
     }
 
     async open() {
@@ -96,12 +99,12 @@ class TLSSecurityModal {
     }
 
     render() {
-        const status = networkProxy.getStatus();
-        const tlsInfo = networkProxy.getTlsInfo();
+        const status = this.services.networkProxy.getStatus();
+        const tlsInfo = this.services.networkProxy.getTlsInfo();
         const isEncrypted = status.enabled && status.usingProxy;
         const libcurl = window.libcurl;
 
-        const tlsTargetName = inferenceService.getTlsDisplayName();
+        const tlsTargetName = this.services.inference.getTlsDisplayName();
         this.overlay.innerHTML = `
             <div class="tls-modal-content bg-background border border-border rounded-xl shadow-2xl max-w-xl w-full mx-4 animate-in zoom-in-95 overflow-hidden max-h-[90vh] flex flex-col">
                 <!-- Header -->
@@ -301,7 +304,7 @@ class TLSSecurityModal {
     }
 
     renderConnectionInfo(tlsInfo) {
-        const settings = networkProxy.getSettings();
+        const settings = this.services.networkProxy.getSettings();
         const proxyUrl = settings.url;
 
         return `
@@ -333,7 +336,7 @@ class TLSSecurityModal {
             `;
         }
 
-        const settings = networkProxy.getSettings();
+        const settings = this.services.networkProxy.getSettings();
         const proxyUrl = settings.url;
 
         return `

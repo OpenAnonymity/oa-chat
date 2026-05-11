@@ -10,12 +10,16 @@ import MemoryEditor from '../../components/MemoryEditor.js';
 import WelcomePanel from '../../components/WelcomePanel.js';
 import ThanksPanel from '../../components/ThanksPanel.js';
 import shareModals from '../../components/ShareModals.js';
-import { buildTypingIndicator } from '../../components/MessageTemplates.js';
+import { buildTypingIndicator, configureMessageTemplateServices } from '../../components/MessageTemplates.js';
 import { createVanillaUiInterface } from '../appInterface.js';
 import ticketClient from '../../services/ticketClient.js';
 import networkLogger from '../../services/networkLogger.js';
 import networkProxy from '../../services/networkProxy.js';
 import inferenceService from '../../services/inference/inferenceService.js';
+import stationVerifier from '../../services/verifier.js';
+import shareService from '../../services/shareService.js';
+import accountService from '../../services/accountService.js';
+import syncService from '../../services/syncService.js';
 
 export default class VanillaChatUi {
     constructor(app, options = {}) {
@@ -25,10 +29,16 @@ export default class VanillaChatUi {
             networkLoggerImpl: networkLogger,
             networkProxyImpl: networkProxy,
             inferenceServiceImpl: inferenceService,
+            verifierServiceImpl: stationVerifier,
+            shareServiceImpl: shareService,
+            accountServiceImpl: accountService,
+            syncServiceImpl: syncService,
             ...options
         });
         this.components = null;
         this.shareModals = shareModals;
+        this.shareModals.configureServices?.(this.interfaces.componentApp.services);
+        configureMessageTemplateServices(this.interfaces.componentApp.services);
     }
 
     mountShell() {

@@ -4,7 +4,6 @@
  * Following the same pattern as ProxyInfoModal.js and TLSSecurityModal.js
  */
 
-import shareService from '../services/shareService.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 
 // TTL preset options for segmented control
@@ -359,6 +358,15 @@ function buildExpiredPanelHtml(opts) {
 class ShareModals {
     constructor() {
         this.currentModal = null;
+        this.services = null;
+    }
+
+    configureServices(services) {
+        this.services = services;
+    }
+
+    get shareService() {
+        return this.services?.share;
     }
 
     /**
@@ -1306,7 +1314,7 @@ class ShareModals {
 
         // Show "Never" if ttlSeconds is 0, otherwise show the expiry date
         const expiryDate = shareInfo?.ttlSeconds === 0 ? null : (shareInfo?.expiresAt ? new Date(shareInfo.expiresAt).toLocaleString() : null);
-        const shareUrl = isShared ? shareService.buildShareUrl(session.id) : '';
+        const shareUrl = isShared ? this.shareService.buildShareUrl(session.id) : '';
         // API key expiry is at session.expiresAt, not inside apiKeyInfo
         const apiKeyExpiresAt = shareInfo?.apiKeyShared && session.expiresAt
             ? session.expiresAt
@@ -1629,7 +1637,7 @@ class ShareModals {
                 const newShareInfo = session.shareInfo;
                 // Show "Never" if ttlSeconds is 0, otherwise show the expiry date
                 const newExpiryDate = newShareInfo?.ttlSeconds === 0 ? null : (newShareInfo?.expiresAt ? new Date(newShareInfo.expiresAt).toLocaleString() : null);
-                const newShareUrl = shareService.buildShareUrl(session.id);
+                const newShareUrl = this.shareService.buildShareUrl(session.id);
                 // API key expiry is at session.expiresAt, not inside apiKeyInfo
                 const newApiKeyExpiresAt = (apiMetadataCheckbox?.checked && session.expiresAt)
                     ? session.expiresAt

@@ -34,14 +34,17 @@ const AGENT_TOOL_LABELS = {
 
 // Welcome screen configuration
 const WELCOME_SHOW_LOGO = false;  // Set to true to show the logo icon
+let welcomeContentProvider = null;
+
+export function configureMessageTemplateServices(services) {
+    welcomeContentProvider = services?.inference || null;
+}
 
 // Welcome content is managed by inferenceService.js (single source of truth)
 // This getter delegates to inferenceService with a minimal structural fallback
 function getWelcomeContent() {
-    if (typeof window !== 'undefined' &&
-        window.inferenceService &&
-        typeof window.inferenceService.getWelcomeContent === 'function') {
-        return window.inferenceService.getWelcomeContent();
+    if (typeof welcomeContentProvider?.getWelcomeContent === 'function') {
+        return welcomeContentProvider.getWelcomeContent();
     }
     // Fallback used by prelude before app.js initializes inferenceService.
     return {

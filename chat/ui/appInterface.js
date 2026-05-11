@@ -76,7 +76,11 @@ export function createComponentServicesInterface(options = {}) {
         tickets: options.ticketClientImpl || globalThis.ticketClient || null,
         networkLogger: options.networkLoggerImpl || globalThis.networkLogger || null,
         networkProxy: options.networkProxyImpl || globalThis.networkProxy || null,
-        inference: options.inferenceServiceImpl || globalThis.inferenceService || null
+        inference: options.inferenceServiceImpl || globalThis.inferenceService || null,
+        verifier: options.verifierServiceImpl || globalThis.stationVerifier || null,
+        share: options.shareServiceImpl || globalThis.shareService || null,
+        account: options.accountServiceImpl || globalThis.accountService || null,
+        sync: options.syncServiceImpl || globalThis.syncService || null
     };
 }
 

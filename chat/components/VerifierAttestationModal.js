@@ -3,8 +3,6 @@
  * Shows hardware attestation verification for the OA-Verifier enclave
  */
 
-import stationVerifier from '../services/verifier.js';
-import networkLogger from '../services/networkLogger.js';
 import { VERIFIER_URL } from '../config.js';
 
 const OA_VERIFIER_REPO_BLOB_BASE = 'https://github.com/OpenAnonymity/oa-verifier/blob/main';
@@ -20,6 +18,11 @@ class VerifierAttestationModal {
         this.zeroTrustEvidence = null;
         this.context = null;
         this.zeroTrustOpenSteps = new Set();
+        this.services = null;
+    }
+
+    configureServices(services) {
+        this.services = services;
     }
 
     async open(context = null) {
@@ -58,7 +61,7 @@ class VerifierAttestationModal {
     async fetchAndVerifyAttestation() {
         try {
             const [attestation, zeroTrustEvidence] = await Promise.all([
-                stationVerifier.getAttestation(true),
+                this.services.verifier.getAttestation(true),
                 this.collectZeroTrustEvidence()
             ]);
             this.attestation = attestation;
@@ -414,11 +417,11 @@ class VerifierAttestationModal {
             }
         }
 
-        let broadcastData = stationVerifier.getLastBroadcastData();
+        let broadcastData = this.services.verifier.getLastBroadcastData();
         if (!broadcastData && access.stationId) {
             try {
-                await stationVerifier.queryBroadcast();
-                broadcastData = stationVerifier.getLastBroadcastData();
+                await this.services.verifier.queryBroadcast();
+                broadcastData = this.services.verifier.getLastBroadcastData();
             } catch (error) {
                 evidence.broadcastError = error?.message || 'Could not fetch broadcast';
             }
@@ -485,7 +488,7 @@ class VerifierAttestationModal {
     }
 
     extractSubmitKeyOwnershipEvidence(access, evidence) {
-        const allLogs = window.networkLogger?.getAllLogs?.() || networkLogger.getAllLogs?.() || [];
+        const allLogs = this.services.networkLogger?.getAllLogs?.() || [];
         const sessionId = this.context?.session?.id || null;
         const expectedHashPrefix = evidence?.apiKeyHashPrefix16 || null;
         const storedProof = access?.submitKeyProof || null;
@@ -1152,9 +1155,9 @@ class VerifierAttestationModal {
         const localSig = evidence?.localStationSignature || { verified: null, supported: true, error: null };
         const ownership = evidence?.submitKeyOwnership || {};
         const ownershipPassed = ownership?.ownership_passed === true;
-        const verifierOffline = typeof stationVerifier?.isOffline === 'function' &&
-            typeof stationVerifier?.hasEverConnected === 'function'
-            ? (stationVerifier.hasEverConnected() && stationVerifier.isOffline())
+        const verifierOffline = typeof this.services.verifier?.isOffline === 'function' &&
+            typeof this.services.verifier?.hasEverConnected === 'function'
+            ? (this.services.verifier.hasEverConnected() && this.services.verifier.isOffline())
             : false;
         const hideAllLiveEvidence = verifierOffline || Boolean(evidence?.broadcastError);
 

@@ -44,11 +44,15 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     for the vanilla shell. `RightPanel`, `WelcomePanel`, `ThanksPanel`,
     `ChatInput`, and `MemoryEditor` should call the injected services instead
     of importing those gateways directly.
+  - The same service port now also covers verifier attestation, share URLs,
+    account state, and sync. `TLSSecurityModal`, `VerifierAttestationModal`,
+    `ShareModals`, `AccountModal`, and `MessageTemplates` should be configured
+    through the vanilla adapter rather than reading backend modules/globals.
   - The architecture tests in `test/architecture/uiBoundary.test.js` enforce
     the current boundary: `app.js` cannot construct concrete components,
     domain/application modules cannot import UI, shell components cannot import
-    `chatDB`, and gateway-heavy shell components cannot import ticket/proxy/
-    inference/logger modules directly.
+    `chatDB`, and gateway-heavy shell components cannot import backend gateway
+    modules directly.
 - 2026-05-06: The frontend architecture refactor has started with tested domain
   seams.
   - See [FRONTEND_ARCHITECTURE.md](FRONTEND_ARCHITECTURE.md) for the target

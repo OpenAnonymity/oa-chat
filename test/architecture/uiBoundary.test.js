@@ -81,13 +81,17 @@ test('shell components use injected persistence instead of IndexedDB', () => {
 
 test('shell components use injected backend services instead of importing gateways', () => {
     const components = [
+        'chat/components/AccountModal.js',
         'chat/components/ChatInput.js',
         'chat/components/MemoryEditor.js',
+        'chat/components/ShareModals.js',
         'chat/components/RightPanel.js',
+        'chat/components/TLSSecurityModal.js',
         'chat/components/ThanksPanel.js',
+        'chat/components/VerifierAttestationModal.js',
         'chat/components/WelcomePanel.js'
     ];
-    const forbiddenImports = /from ['"].*\.\.\/services\/(ticketClient|networkLogger|networkProxy|inference\/inferenceService)\.js['"]/;
+    const forbiddenImports = /from ['"].*\.\.\/services\/(ticketClient|networkLogger|networkProxy|inference\/inferenceService|verifier|shareService|accountService|syncService)\.js['"]/;
 
     for (const componentPath of components) {
         const source = read(componentPath);
@@ -97,4 +101,13 @@ test('shell components use injected backend services instead of importing gatewa
             `${componentPath} must use app.services, not import backend gateways directly`
         );
     }
+});
+
+test('component templates do not reach through backend globals', () => {
+    const source = read('chat/components/MessageTemplates.js');
+    assert.equal(
+        /window\.(inferenceService|networkLogger|ticketClient|networkProxy)/.test(source),
+        false,
+        'MessageTemplates should receive backend data through configuration, not window globals'
+    );
 });

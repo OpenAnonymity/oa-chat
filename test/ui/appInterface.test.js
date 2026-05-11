@@ -196,13 +196,21 @@ test('component services interface groups backend-facing services for UI injecti
         ticketClientImpl: { name: 'tickets' },
         networkLoggerImpl: { name: 'logger' },
         networkProxyImpl: { name: 'proxy' },
-        inferenceServiceImpl: { name: 'inference' }
+        inferenceServiceImpl: { name: 'inference' },
+        verifierServiceImpl: { name: 'verifier' },
+        shareServiceImpl: { name: 'share' },
+        accountServiceImpl: { name: 'account' },
+        syncServiceImpl: { name: 'sync' }
     });
 
     assert.deepEqual(services.tickets, { name: 'tickets' });
     assert.deepEqual(services.networkLogger, { name: 'logger' });
     assert.deepEqual(services.networkProxy, { name: 'proxy' });
     assert.deepEqual(services.inference, { name: 'inference' });
+    assert.deepEqual(services.verifier, { name: 'verifier' });
+    assert.deepEqual(services.share, { name: 'share' });
+    assert.deepEqual(services.account, { name: 'account' });
+    assert.deepEqual(services.sync, { name: 'sync' });
 });
 
 test('component app facade exposes an explicit compatibility contract', () => {

@@ -22,6 +22,8 @@ const SHOW_UNDERLYING_KEY_DETAILS = true;
 class RightPanel {
     constructor(app) {
         this.app = app; // Reference to main app
+        tlsSecurityModal.configureServices?.(this.app.services);
+        verifierAttestationModal.configureServices?.(this.app.services);
         this.currentSession = null;
 
         // Responsive behavior
