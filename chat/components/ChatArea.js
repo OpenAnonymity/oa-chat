@@ -1048,6 +1048,7 @@ export default class ChatArea {
 
         if (messages.length === 0) {
             if (!hasEmptyState) {
+                this.app.detachStalePromptSlideUpEffect?.();
                 messagesContainer.innerHTML = buildEmptyState();
             }
             this.attachDownloadHandler();
@@ -1135,6 +1136,7 @@ export default class ChatArea {
             messagesHtml += buildTypingIndicator('typing-restore-' + Date.now(), providerName, session.model, Date.now(), streamingPhase);
         }
 
+        this.app.detachStalePromptSlideUpEffect?.();
         messagesContainer.innerHTML = messagesHtml;
         const promptSlideMessageId = this.app.getPromptSlideUpMessageIdForSession?.(
             session.id,
@@ -1883,6 +1885,7 @@ export default class ChatArea {
 
         if (!reasoning) return;
 
+        const promptSlideAnchor = this.app.captureActivePromptScrollAnchor?.({ primeRunway: true });
         const reasoningContentEl = document.getElementById(`reasoning-content-${messageId}`);
         if (reasoningContentEl) {
             // Parse the reasoning content to fix formatting issues from the provider
@@ -1937,6 +1940,8 @@ export default class ChatArea {
             }
             // If already updated, we skip the re-render to avoid redundancy
         }
+
+        this.app.restoreActivePromptScrollAnchor?.(promptSlideAnchor);
     }
 
     /**
@@ -2069,8 +2074,16 @@ export default class ChatArea {
             }
         }
 
-        // Append the message (normal case - no existing element)
-        messagesContainer.insertAdjacentHTML('beforeend', messageHtml);
+        // Append before the prompt-slide spacer when it exists so new prompts do
+        // not briefly drop the viewport before the spacer is retargeted.
+        const promptSpacer = messagesContainer.lastElementChild?.classList?.contains('prompt-scroll-spacer')
+            ? messagesContainer.lastElementChild
+            : null;
+        if (promptSpacer) {
+            promptSpacer.insertAdjacentHTML('beforebegin', messageHtml);
+        } else {
+            messagesContainer.insertAdjacentHTML('beforeend', messageHtml);
+        }
 
         // Render LaTeX only for the new message and add fade-in animation
         const newMessageEl = messagesContainer.querySelector(`[data-message-id="${message.id}"]`);
@@ -2140,6 +2153,8 @@ export default class ChatArea {
         const messageEl = document.querySelector(`[data-message-id="${message.id}"]`);
         if (!messageEl) return;
 
+        const promptSlideAnchor = this.app.captureActivePromptScrollAnchor?.({ primeRunway: true });
+
         // Check if reasoning trace is already finalized (subtitle shows duration, not streaming)
         const existingReasoningTrace = messageEl.querySelector('.reasoning-trace');
         const existingSubtitle = existingReasoningTrace?.querySelector(`#reasoning-subtitle-${message.id}`);
@@ -2195,6 +2210,7 @@ export default class ChatArea {
             if (this.app.messageNavigation) {
                 this.app.messageNavigation.update();
             }
+            this.app.restoreActivePromptScrollAnchor?.(promptSlideAnchor);
             return;
         }
 
@@ -2227,6 +2243,7 @@ export default class ChatArea {
         if (this.app.messageNavigation) {
             this.app.messageNavigation.update();
         }
+        this.app.restoreActivePromptScrollAnchor?.(promptSlideAnchor);
     }
 
     /**

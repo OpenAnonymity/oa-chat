@@ -94,17 +94,32 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     suppresses the scroll-to-bottom button. That button otherwise appears exactly when the
     streamed assistant output reaches the fixed input box and can cause a one-time visual
     flicker at the bottom edge.
-  - Once streaming is over, reaching the real scroll-container bottom (including the spacer
-    runway) or clicking the scroll-to-bottom button clears the prompt-slide state so later
-    non-forced bottom-follow behavior can resume. Do not clear the spacer merely because the
-    final assistant content is fully visible; short responses still need the prompt to remain
-    at the 25% position after stream completion.
+  - Once streaming is over, automatic visibility checks may hide the scroll-to-bottom button,
+    but they must not clear a visible spacer. The minimally sized spacer often makes the
+    anchored prompt technically sit at the scroll container's real bottom; clearing it there
+    drops the prompt back down after stream completion. Only clear automatically when the
+    spacer is already gone/tiny, or clear explicitly from the scroll-to-bottom button/new
+    prompt/session cleanup paths.
+  - Final stream cleanup can replace streaming DOM with shorter final markdown/reasoning DOM.
+    `ChatArea.finalizeStreamingMessage(...)` and `finalizeReasoningDisplay(...)` must wrap
+    those mutations with `captureActivePromptScrollAnchor({ primeRunway: true })` and
+    `restoreActivePromptScrollAnchor(...)`; otherwise the browser can clamp `scrollTop`
+    before the prompt spacer is recomputed and visually drop the prompt at stream end.
   - Do not persist this spacer in IndexedDB or message records. It is only a viewport runway
     for the current tab. `sessionPromptScrollAnchors` remembers the active prompt per
-    session in memory; switching sessions detaches the DOM spacer, and switching back
-    rehydrates it before scroll restoration so an in-flight or just-finished response does
-    not snap downward. Reaching the real bottom, clicking the scroll-to-bottom button, or
-    sending another prompt forgets the per-session anchor.
+    session in memory, and `session.promptSlideAnchorMessageId` persists the anchor message
+    id so refresh can rehydrate the viewport runway. Switching sessions detaches the DOM
+    spacer, and switching back rehydrates it before scroll restoration so an in-flight or
+    just-finished response does not snap downward. Reaching the real bottom or clicking the
+    scroll-to-bottom button clears the per-session anchor; sending another prompt retargets
+    the existing spacer rather than clearing it first.
+  - When appending while a prompt-slide spacer is present, insert new message DOM before the
+    spacer. Appending after the spacer and then retargeting/removing it causes a visible
+    lower-then-slide-up motion on follow-up prompts.
+  - Do not detach the old prompt-slide spacer at the start of `switchSession()`. `ChatArea`
+    may await IndexedDB before replacing messages, and early detach creates a visible flash
+    where the old session drops down. Instead, `ChatArea.render()` calls
+    `detachStalePromptSlideUpEffect()` immediately before writing the new session DOM.
   - Stream cancellation must preserve any chunks already received. `chat/api.js` normalizes
     non-Error abort throws before setting `isCancelled`; otherwise a thrown abort string can
     become a generic TypeError and make `ChatApp` replace the partial assistant output.

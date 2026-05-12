@@ -713,12 +713,17 @@ class ChatApp {
         const sessionId = this.state.currentSessionId;
         if (!sessionId || !messageId) return;
 
-        this.clearPromptSlideUpEffect();
-        this.sessionPromptScrollAnchors.set(sessionId, { messageId });
+        const existingSpacer = this.activePromptScroll?.sessionId === sessionId
+            ? this.activePromptScroll.spacerEl
+            : null;
+        if (this.activePromptScroll && this.activePromptScroll.sessionId !== sessionId) {
+            this.clearPromptSlideUpEffect();
+        }
+        this.setPromptSlideUpAnchor(sessionId, messageId);
         this.activePromptScroll = {
             sessionId,
             messageId,
-            spacerEl: null
+            spacerEl: existingSpacer
         };
         this.elements.chatArea?.classList.add('prompt-slide-active');
 
@@ -739,12 +744,47 @@ class ChatApp {
         this.activePromptScroll = null;
     }
 
+    setPromptSlideUpAnchor(sessionId, messageId) {
+        if (!sessionId || !messageId) return;
+        this.sessionPromptScrollAnchors.set(sessionId, { messageId });
+
+        const session = this.state.sessionsById.get(sessionId) || this.state.sessions.find(s => s.id === sessionId);
+        if (!session) return;
+
+        session.promptSlideAnchorMessageId = messageId;
+        session.promptSlideAnchorUpdatedAt = Date.now();
+        chatDB.saveSession(session).catch(error => {
+            console.debug('Failed to persist prompt slide anchor:', error);
+        });
+    }
+
+    clearPromptSlideUpAnchor(sessionId) {
+        if (!sessionId) return;
+        this.sessionPromptScrollAnchors.delete(sessionId);
+
+        const session = this.state.sessionsById.get(sessionId) || this.state.sessions.find(s => s.id === sessionId);
+        if (!session) return;
+
+        if ('promptSlideAnchorMessageId' in session || 'promptSlideAnchorUpdatedAt' in session) {
+            delete session.promptSlideAnchorMessageId;
+            delete session.promptSlideAnchorUpdatedAt;
+            chatDB.saveSession(session).catch(error => {
+                console.debug('Failed to clear prompt slide anchor:', error);
+            });
+        }
+    }
+
+    detachStalePromptSlideUpEffect() {
+        if (this.activePromptScroll &&
+            this.activePromptScroll.sessionId !== this.state.currentSessionId) {
+            this.detachPromptSlideUpEffect();
+        }
+    }
+
     clearPromptSlideUpEffect() {
         const sessionId = this.activePromptScroll?.sessionId || this.state.currentSessionId;
         this.detachPromptSlideUpEffect();
-        if (sessionId) {
-            this.sessionPromptScrollAnchors.delete(sessionId);
-        }
+        this.clearPromptSlideUpAnchor(sessionId);
     }
 
     isPromptSlideUpEffectActive() {
@@ -783,7 +823,17 @@ class ChatApp {
             return anchor.messageId;
         }
         if (anchor?.messageId) {
-            this.sessionPromptScrollAnchors.delete(sessionId);
+            this.clearPromptSlideUpAnchor(sessionId);
+        }
+
+        const session = this.state.sessionsById.get(sessionId) || this.state.sessions.find(s => s.id === sessionId);
+        const persistedMessageId = session?.promptSlideAnchorMessageId;
+        if (persistedMessageId && messages.some(message => message.id === persistedMessageId)) {
+            this.sessionPromptScrollAnchors.set(sessionId, { messageId: persistedMessageId });
+            return persistedMessageId;
+        }
+        if (persistedMessageId) {
+            this.clearPromptSlideUpAnchor(sessionId);
         }
 
         if (!allowStreamingFallback) return null;
@@ -791,7 +841,7 @@ class ChatApp {
         for (let i = messages.length - 1; i >= 0; i--) {
             const message = messages[i];
             if (message?.role === 'user' && !message.isLocalOnly) {
-                this.sessionPromptScrollAnchors.set(sessionId, { messageId: message.id });
+                this.setPromptSlideUpAnchor(sessionId, message.id);
                 return message.id;
             }
         }
@@ -813,7 +863,7 @@ class ChatApp {
             };
         }
 
-        this.sessionPromptScrollAnchors.set(sessionId, { messageId });
+        this.setPromptSlideUpAnchor(sessionId, messageId);
         this.elements.chatArea?.classList.add('prompt-slide-active');
 
         const spacer = this.ensureActivePromptSpacer();
@@ -824,6 +874,62 @@ class ChatApp {
         }
 
         return Boolean(spacer);
+    }
+
+    captureActivePromptScrollAnchor({ primeRunway = false } = {}) {
+        if (!this.isPromptSlideUpEffectActive()) return null;
+
+        const chatArea = this.elements.chatArea;
+        const messageId = this.activePromptScroll.messageId;
+        const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
+        if (!chatArea || !messageEl) return null;
+
+        const areaRect = chatArea.getBoundingClientRect();
+        const messageRect = messageEl.getBoundingClientRect();
+        const anchor = {
+            sessionId: this.activePromptScroll.sessionId,
+            messageId,
+            offsetTop: messageRect.top - areaRect.top
+        };
+
+        if (primeRunway) {
+            const spacer = this.ensureActivePromptSpacer();
+            if (spacer) {
+                const currentHeight = spacer.hidden ? 0 : spacer.getBoundingClientRect().height;
+                spacer.hidden = false;
+                spacer.style.height = `${Math.ceil(Math.max(currentHeight, chatArea.scrollHeight))}px`;
+            }
+        }
+
+        return anchor;
+    }
+
+    restoreActivePromptScrollAnchor(anchor) {
+        if (!anchor || !this.isPromptSlideUpEffectActive()) return false;
+        if (anchor.sessionId !== this.activePromptScroll.sessionId ||
+            anchor.messageId !== this.activePromptScroll.messageId) {
+            return false;
+        }
+
+        const chatArea = this.elements.chatArea;
+        const messageEl = document.querySelector(`[data-message-id="${anchor.messageId}"]`);
+        if (!chatArea || !messageEl) return false;
+
+        this.updateActivePromptScrollSpacer();
+
+        const areaRect = chatArea.getBoundingClientRect();
+        const messageRect = messageEl.getBoundingClientRect();
+        const currentOffset = messageRect.top - areaRect.top;
+        const delta = currentOffset - anchor.offsetTop;
+
+        if (Math.abs(delta) > 1) {
+            const maxScrollTop = Math.max(0, chatArea.scrollHeight - chatArea.clientHeight);
+            this.setChatAreaScrollTopInstant(Math.min(maxScrollTop, Math.max(0, chatArea.scrollTop + delta)));
+        }
+
+        this.updateActivePromptScrollSpacer();
+        this.saveCurrentSessionScrollPosition();
+        return true;
     }
 
     /**
@@ -1191,7 +1297,10 @@ class ChatApp {
         const isAtRealBottom = realBottomDistance <= 4;
 
         if (isAtBottom) {
-            if (this.isPromptSlideUpEffectActive() && !this.isCurrentSessionStreaming() && isAtRealBottom) {
+            if (this.isPromptSlideUpEffectActive() &&
+                !this.isCurrentSessionStreaming() &&
+                isAtRealBottom &&
+                spacerHeight <= 4) {
                 this.clearPromptSlideUpEffect();
             }
             this.isAutoScrollPaused = false;
@@ -3284,7 +3393,6 @@ class ChatApp {
         }
 
         this.saveCurrentSessionScrollPosition();
-        this.detachPromptSlideUpEffect();
         if (previousSessionId) {
             this.saveChatbarStateForSession(previousSessionId);
         }
