@@ -273,6 +273,9 @@ export function buildSharePayload(session, messages, opts = {}) {
             if (Array.isArray(m.agentTrace) && m.agentTrace.length > 0) {
                 msg.agentTrace = m.agentTrace;
             }
+            if (m.memoryRetrievalAssessment) {
+                msg.memoryRetrievalAssessment = m.memoryRetrievalAssessment;
+            }
             if (m.ciPromptDraft) {
                 msg.ciPromptDraft = m.ciPromptDraft;
                 // Normalize pending approval to approved for shared context

@@ -25,6 +25,41 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
+- 2026-05-18: Pulled `nanomem` to `24871d9` / `v0.1.3-26-g24871d9`.
+  - The latest commit tightens adaptive retrieval: before re-querying memory, it
+    runs a small no-op check to skip only obvious already-covered follow-ups.
+    If the adaptive agent skips with partial/low coverage before trying a
+    targeted retrieval, `nanomem` now falls back to keyword search instead of
+    silently reusing incomplete context.
+  - `augmentQueryAdaptive(...)` now returns retrieval sufficiency metadata more
+    consistently on skipped/no-new-memory paths (`retrievalConfidence`,
+    `coverage`, `missingVariables`, `retrievalReason`). Root already normalizes
+    these into `memoryRetrievalAssessment`, and the revised-prompt header only
+    shows confidence when metadata is explicitly present in the retrieval
+    result.
+  - First-turn `augmentQuery(...)` still crafts prompts through the
+    `augment_query` terminal tool and does not yet forward retrieval confidence
+    into successful prompt results. Keep the UI quiet for that path unless
+    `nanomem` later adds explicit metadata there.
+- 2026-05-17: Pulled `nanomem` to `3510fb2` / package `0.1.3`.
+  - The browser seam remains compatible with root `oa-chat`; `src/browser.js`
+    still exposes `createMemoryBank`, `stripUserDataTags`, OMF helpers, and
+    `augmentQueryAdaptive(...)`. It now also exposes `memoryBank.pruneExpired()`,
+    which root uses for deterministic expired-memory cleanup.
+  - Retrieval keyword search tool calls are now named `search_memory` instead of
+    `retrieve_file`. Keep both labels in `MessageTemplates` so new streaming
+    traces render polished names while older persisted traces remain readable.
+  - Retrieval results may include sufficiency metadata
+    (`retrievalConfidence`, `coverage`, `missingVariables`, `retrievalReason`,
+    `uncertainFacts`). Root normalizes this into `memoryRetrievalAssessment` on
+    local Memory Agent messages and `ciPromptDraft`. The UI only surfaces
+    confidence as a small badge in the revised prompt header when the retrieval
+    result explicitly includes confidence metadata; conservative fallback
+    defaults stay internal. Coverage and missing/uncertain details remain
+    internal metadata.
+  - The Memory panel now understands numeric `confidence=0..1` metadata while
+    preserving legacy `low` / `medium` / `high` bullets, and exposes a
+    deterministic `Clean expired` action backed by `memoryBank.pruneExpired()`.
 - 2026-05-10: The first UI-facing app interface seam is in place.
   - `chat/ui/appInterface.js` exposes component-specific facades for
     `ModelPicker` and `Sidebar`.

@@ -1145,6 +1145,16 @@ html.switching-theme *::after {
     background: hsl(var(--color-muted) / 0.5);
 }
 
+.mem-header-btn:disabled {
+    opacity: 0.42;
+    cursor: not-allowed;
+}
+
+.mem-header-btn:disabled:hover {
+    color: hsl(var(--color-muted-foreground));
+    background: transparent;
+}
+
 .mem-header-btn-danger {
     color: hsl(var(--color-destructive));
 }
@@ -1434,6 +1444,48 @@ html.switching-theme *::after {
 .mem-prompt-header {
     font-weight: 500;
     font-size: 0.6875rem;
+}
+
+.mem-prompt-header-meta {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+
+.mem-prompt-confidence {
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.15rem;
+    padding: 0.05rem 0.4rem;
+    border-radius: 9999px;
+    border: 1px solid hsl(var(--color-border) / 0.45);
+    background: hsl(var(--color-background) / 0.45);
+    color: hsl(var(--color-muted-foreground));
+    font-size: 0.65rem;
+    line-height: 1.2;
+    white-space: nowrap;
+}
+
+.mem-prompt-confidence-high {
+    border-color: rgba(73, 137, 102, 0.25);
+    background: rgba(73, 137, 102, 0.12);
+    color: #3f7f5d;
+}
+
+.dark .mem-prompt-confidence-high {
+    color: #6DB88E;
+}
+
+.mem-prompt-confidence-medium {
+    border-color: rgba(180, 132, 44, 0.25);
+    background: rgba(180, 132, 44, 0.12);
+    color: #8a682c;
+}
+
+.dark .mem-prompt-confidence-medium {
+    color: #d0a24f;
 }
 
 .mem-prompt-legend {

@@ -9,6 +9,7 @@ import { extractDomain } from '../services/urlMetadata.js';
 import { getFileIconSvg } from '../services/fileUtils.js';
 import { getStandardizedModelDisplayName } from '../services/modelConfig.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
+import { renderMemoryConfidenceBadgeHtml } from '../services/memoryRetrievalAssessment.js';
 
 // In-memory cache for reasoning trace expanded state (persists across session switches)
 const reasoningExpandedState = new Set();
@@ -23,6 +24,7 @@ preferencesStore.onChange((key, value) => {
 
 const AGENT_TOOL_LABELS = {
     augment_query:   'Adding context to prompt',
+    search_memory:   'Searching memory',
     retrieve_file:   'Searching memory',
     read_file:       'Reading memory file',
     list_directory:  'Browsing memory',
@@ -1353,6 +1355,9 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
 
     // Build text bubble if there's content
     let processedContent = message.content;
+    const confidenceBadgeHtml = isMemoryAgent
+        ? renderMemoryConfidenceBadgeHtml(message.memoryRetrievalAssessment || message.ciPromptDraft?.memoryRetrievalAssessment)
+        : '';
     const ciFullPrompt = message.ciPromptDraft?.fullPrompt || message.ciPromptDraft?.editedFullPrompt;
     const hasCiPromptForPreview = ciFullPrompt && !!message.ciPromptDraft && (
         (message.memoryApprovalPrompt?.status === 'pending') ||
@@ -1369,7 +1374,10 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
             <div class="mem-prompt-box">
                 <div class="mem-prompt-header-row">
                     <span class="mem-prompt-header text-muted-foreground">Revised prompt with added context</span>
-                    <span class="mem-prompt-legend"><span class="mem-prompt-legend-swatch"></span> from private local memory</span>
+                    <span class="mem-prompt-header-meta">
+                        ${confidenceBadgeHtml}
+                        <span class="mem-prompt-legend"><span class="mem-prompt-legend-swatch"></span> from private local memory</span>
+                    </span>
                 </div>
                 <div class="mem-prompt-body">${renderTaggedPromptInline(ciFullPrompt)}</div>
             </div>

@@ -121,6 +121,28 @@ When memory mode is enabled and the outgoing user message has text:
    - Adaptive turns that need more information receive a review prompt from
      `nanomem` built from only the newly retrieved context and show the number of
      newly retrieved memory files.
+   - `nanomem@24871d9` adds an adaptive no-op precheck for follow-ups that are
+     obviously answerable from previously approved context. Ambiguous,
+     recommendation/planning, or under-covered follow-ups should retrieve; if an
+     adaptive skip is partial/low confidence before a targeted retrieval,
+     `nanomem` falls back to keyword search rather than letting root reuse
+     incomplete context.
+   - Current `nanomem` retrieval emits `search_memory(...)` tool calls for
+     keyword lookup. Keep `retrieve_file` labels only as a legacy trace fallback
+     for older locally stored status messages.
+   - Retrieval and adaptive retrieval may also return sufficiency metadata
+     (`retrievalConfidence`, `coverage`, `missingVariables`, `retrievalReason`,
+     `uncertainFacts`). Root normalizes these into `memoryRetrievalAssessment`
+     on the local Memory Agent message and `ciPromptDraft`. The UI only surfaces
+     confidence as a small badge in the revised prompt header when the retrieval
+     result explicitly includes confidence metadata; fallback defaults stay
+     internal. Coverage and missing/uncertain details remain internal metadata.
+     These fields are informational only and do not change
+     include/skip/auto-include behavior.
+   - First-turn `augmentQuery(...)` successful prompt results still do not carry
+     explicit retrieval confidence from `nanomem`; adaptive results do. Keep the
+     prompt header confidence quiet on first-turn prompts unless that contract
+     changes.
 3. The local status message shows tool/phase trace and a summary of retrieved
    files.
    - Tool rows now appear immediately when the LLM emits the tool call, and the
@@ -203,6 +225,12 @@ forwarding its details into the final prompt.
   - icon is the inline book glyph from `memory-chat`
   - the timestamp is rendered without hover-fade transitions so it does not
     flash during trace refreshes
+  - status copy should stay one line. Prompt details belong in the revised
+    prompt preview, not in the summary text. Current non-preview summaries use
+    compact forms such as `No added memory context. Sending original prompt.`,
+    `Reused earlier memory context. Sending with previously approved minimized
+    personal context.`, and `Memory retrieval unavailable. Sending without
+    personal context.`
 - Prompt preview/edit uses the same tagged prompt editor pattern as `memory-chat`:
   - `[[user_data]]...[[/user_data]]` spans render as highlighted user-data marks
   - edits persist into `ciPromptDraft.editedFullPrompt`
@@ -233,6 +261,10 @@ forwarding its details into the final prompt.
   - `Import` validates the OMF document, shows a preview of new vs duplicate memories,
     offers an `Include archived memories` checkbox, and merges into existing files
     through `memoryBank.previewOmfImport()` / `memoryBank.importOmf()`
+- `Clean expired` is deterministic local maintenance. It calls
+  `memoryBank.pruneExpired()`, archives bullets whose `expires_at` has passed,
+  refreshes the file tree/selected file, and does not require tickets or an LLM
+  key.
 - `Backfill` now means local-chat ingestion, not raw memory-file import:
   - it scans local IndexedDB chat sessions
   - processes the newest eligible chats first (`updatedAt` / `createdAt` descending)

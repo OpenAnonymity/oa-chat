@@ -30,6 +30,7 @@ import { generateUlid21 } from './services/ulid.js';
 import { chatDB } from './db.js';
 import { DEFAULT_MEMORY_AGENT_MODEL, isAllowedConfidentialModel } from './services/confidentialModelConfig.js';
 import { normalizeMessagesForMemory } from './services/memoryMessageNormalization.js';
+import { normalizeMemoryRetrievalAssessment } from './services/memoryRetrievalAssessment.js';
 import {
     buildLocalSessionTitle as buildLocalSessionTitleText,
     buildSessionTitleSearchText as buildSessionTitleSearchTextValue,
@@ -4140,7 +4141,6 @@ class ChatApp {
             await this.recordApprovedMemoryContext(session, draft);
 
             const files = draft.memoryFiles || [];
-            const fileList = files.map(f => `- \`${f}\``).join('\n');
             if (draft.reusedPriorContext || typeof draft.newMemoryFileCount === 'number') {
                 msg.content = this.buildMemoryContextSummary({
                     fileCount: draft.newMemoryFileCount || 0,
@@ -4151,14 +4151,14 @@ class ChatApp {
                 });
             } else {
                 msg.content = alwaysInclude
-                    ? `Retrieved ${files.length} memory file${files.length === 1 ? '' : 's'}:\n${fileList}\n\nAlways include is now on. This prompt will be sent with minimized personal context.`
-                    : `Retrieved ${files.length} memory file${files.length === 1 ? '' : 's'}:\n${fileList}\n\nApproved prompt will be sent with minimized personal context.`;
+                    ? `Retrieved ${files.length} memory file${files.length === 1 ? '' : 's'}. Always include is on. Sending with minimized personal context.`
+                    : `Retrieved ${files.length} memory file${files.length === 1 ? '' : 's'}. Sending the approved prompt with minimized personal context.`;
             }
             msg.memoryApprovalPrompt = { status: 'approved', linkedUserMessageId: draft.linkedUserMessageId, autoIncluded: alwaysInclude };
         } else {
             draft.status = 'denied';
             this._lastApiContent = null;
-            msg.content = 'Prompt skipped. Sending without personal context.';
+            msg.content = 'Memory skipped. Sending without personal context.';
             msg.memoryApprovalPrompt = null;
         }
 
@@ -4267,24 +4267,24 @@ class ChatApp {
     buildMemoryContextSummary({ fileCount = 0, reused = false, hasNewContext = false, pending = true, alwaysInclude = false, autoIncluded = false }) {
         if (reused && !hasNewContext) {
             if (!pending) {
-                if (autoIncluded) return 'Reused memory already retrieved earlier in this chat.\n\nPrompt automatically included with minimized personal context.';
-                if (alwaysInclude) return 'Reused memory already retrieved earlier in this chat.\n\nAlways include is now on. This prompt will be sent with minimized personal context.';
-                return 'Reused memory already retrieved earlier in this chat.\n\nApproved prompt will be sent with minimized personal context.';
+                if (autoIncluded) return 'Reused earlier memory context. Sending automatically with minimized personal context.';
+                if (alwaysInclude) return 'Reused earlier memory context. Always include is on. Sending with minimized personal context.';
+                return 'Reused earlier memory context. Sending the approved prompt with minimized personal context.';
             }
-            return 'Reused memory already retrieved earlier in this chat.\n\nReview the prompt before sending.';
+            return 'Reused earlier memory context. Review the revised prompt before sending.';
         }
 
         const retrieved = fileCount > 0
             ? `Retrieved ${fileCount} new memory file${fileCount === 1 ? '' : 's'}`
             : 'Retrieved new memory context';
-        const prefix = reused ? `${retrieved} and reused earlier context.` : `${retrieved}.`;
+        const prefix = reused ? `${retrieved} and reused earlier context` : retrieved;
 
         if (!pending) {
-            if (autoIncluded) return `${prefix}\n\nPrompt automatically included with minimized personal context.`;
-            if (alwaysInclude) return `${prefix}\n\nAlways include is now on. This prompt will be sent with minimized personal context.`;
-            return `${prefix}\n\nApproved prompt will be sent with minimized personal context.`;
+            if (autoIncluded) return `${prefix}. Sending automatically with minimized personal context.`;
+            if (alwaysInclude) return `${prefix}. Always include is on. Sending with minimized personal context.`;
+            return `${prefix}. Sending the approved prompt with minimized personal context.`;
         }
-        return `${prefix}\n\nReview the prompt before sending.`;
+        return `${prefix}. Review the revised prompt before sending.`;
     }
 
     async recordApprovedMemoryContext(session, draft) {
@@ -4437,7 +4437,7 @@ class ChatApp {
 
             if (!memoryKey) {
                 retrievalMessage.agentTraceStreaming = false;
-                retrievalMessage.content = 'Memory mode needs 2 available inference tickets for confidential retrieval. Sending without personal context.';
+                retrievalMessage.content = 'Memory retrieval needs 2 available inference tickets. Sending without personal context.';
                 await this.persistLocalAssistantStatus(retrievalMessage);
                 return null;
             }
@@ -4462,6 +4462,10 @@ class ChatApp {
                     onProgress: handleMemoryProgress,
                     onModelText: handleMemoryModelText
                 });
+            const memoryRetrievalAssessment = normalizeMemoryRetrievalAssessment(result || {}, {
+                treatConfidenceFieldAsExplicit: true
+            });
+            retrievalMessage.memoryRetrievalAssessment = memoryRetrievalAssessment;
 
             await flushTraceRefresh();
             this.throwIfAborted(signal);
@@ -4501,9 +4505,9 @@ class ChatApp {
                     : '';
                 if (reusedPrompt) {
                     this._lastApiContent = stripMemoryPromptUserData(reusedPrompt);
-                    retrievalMessage.content = 'Reused memory already retrieved earlier in this chat.\n\nSending with previously approved minimized personal context.';
+                    retrievalMessage.content = 'Reused earlier memory context. Sending with previously approved minimized personal context.';
                 } else {
-                    retrievalMessage.content = 'Sending prompt without added context.';
+                    retrievalMessage.content = 'No added memory context. Sending original prompt.';
                 }
                 retrievalMessage.memoryApprovalPrompt = null;
                 retrievalMessage.ciPromptDraft = null;
@@ -4528,6 +4532,7 @@ class ChatApp {
                 model: this.normalizeModelName(session.model) || session.model || this.state.pendingModelName || inferenceService.getDefaultModelName(session),
                 memoryFiles: memoryFilePaths,
                 memoryContextEntry,
+                memoryRetrievalAssessment,
                 reusedPriorContext: hasPriorMemoryContext,
                 hasNewContext,
                 newMemoryFileCount: newMemoryFilePaths.length,
@@ -4593,7 +4598,7 @@ class ChatApp {
             } else {
                 draft.status = 'denied';
                 this._lastApiContent = null;
-                retrievalMessage.content = 'Prompt skipped. Sending without personal context.';
+                retrievalMessage.content = 'Memory skipped. Sending without personal context.';
                 retrievalMessage.memoryApprovalPrompt = null;
             }
 

@@ -25,6 +25,7 @@ const memoryFileSystem = {
     ls: (dirPath) => memoryBank.storage.ls(dirPath),
     getTree: () => memoryBank.storage.getTree(),
     rebuildTree: () => memoryBank.storage.rebuildTree(),
+    pruneExpired: () => memoryBank.pruneExpired(),
     exportAll: async () => {
         const records = await memoryBank.storage.exportAll();
         return records.map((record) => ({

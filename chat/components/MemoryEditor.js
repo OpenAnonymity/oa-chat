@@ -8,6 +8,7 @@ import memoryFileSystem from '../services/memoryInstances.js';
 import { exportMemoriesAsOmf } from '../services/omfExporter.js';
 import { readOmfFile, validateOmf, previewOmfImport, importOmf } from '../services/omfImporter.js';
 import { normalizeMessagesForMemory } from '../services/memoryMessageNormalization.js';
+import { formatMemoryConfidenceLabel, getMemoryConfidenceBarCount } from '../services/memoryConfidence.js';
 import {
     ensureMemoryKey,
     importData as importMemoryData,
@@ -176,6 +177,7 @@ class MemoryEditor {
     _renderHeader() {
         const fileCount = this.files.length;
         const backfillButtonState = this._getBackfillButtonState();
+        const maintenanceDisabled = this._isMemoryMaintenanceDisabled();
         return `
             <div class="flex items-center justify-between px-3 py-1.5 shrink-0" style="border-bottom: 1px solid var(--mem-divider)">
                 <div class="flex items-center gap-2">
@@ -196,6 +198,7 @@ class MemoryEditor {
                         <button id="memory-export-btn" class="mem-header-btn" title="Export memories as OMF JSON">Export</button>
                         <button id="memory-import-btn" class="mem-header-btn" title="Import memories from OMF JSON">Import</button>
                         <input id="memory-import-file" type="file" accept=".json" class="hidden" />
+                        <button id="memory-clean-expired-btn" class="mem-header-btn" title="Archive expired memory bullets" ${maintenanceDisabled ? 'disabled' : ''}>Clean expired</button>
                         <button id="memory-backfill-btn" class="mem-header-btn" title="${this._escapeHtml(backfillButtonState.title)}" ${backfillButtonState.disabled ? 'disabled' : ''} ${backfillButtonState.busy ? 'aria-busy="true"' : ''}>${this._escapeHtml(backfillButtonState.label)}</button>
                     </div>
                     <div class="w-px h-4 mx-0.5" style="background: var(--mem-divider)"></div>
@@ -430,15 +433,15 @@ class MemoryEditor {
     }
 
     _renderConfidenceBars(level) {
-        const levels = { low: 1, medium: 2, high: 3 };
-        const active = levels[level] || 2;
+        const active = getMemoryConfidenceBarCount(level);
+        const label = formatMemoryConfidenceLabel(level);
         const bars = [
             `<path d="M3 16.5V12.5"${active < 1 ? ' class="effort-muted"' : ''} />`,
             `<path d="M7.7 16.5V10"${active < 2 ? ' class="effort-muted"' : ''} />`,
             `<path d="M12.3 16.5V7.5"${active < 3 ? ' class="effort-muted"' : ''} />`,
             `<path d="M17 16.5V5" class="effort-muted" />`,
         ];
-        return `<span class="mem-confidence" title="Confidence: ${level}"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">${bars.join('')}</svg></span>`;
+        return `<span class="mem-confidence" title="Confidence: ${this._escapeHtml(label)}"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">${bars.join('')}</svg></span>`;
     }
 
     _attachEventListeners() {
@@ -454,6 +457,9 @@ class MemoryEditor {
         });
         this.overlay.querySelector('#memory-import-file')?.addEventListener('change', (event) => {
             void this._handleImportFileSelected(event);
+        });
+        this.overlay.querySelector('#memory-clean-expired-btn')?.addEventListener('click', () => {
+            void this._handleCleanExpired();
         });
         this.overlay.querySelector('#import-confirm-btn')?.addEventListener('click', () => {
             void this._confirmImport();
@@ -821,6 +827,41 @@ class MemoryEditor {
         await this._handleExport();
     }
 
+    async _handleCleanExpired() {
+        if (this._isMemoryMaintenanceDisabled()) return;
+        if (this.isDirty) {
+            this.app?.showToast?.('Save or discard memory edits before cleaning expired memories', 'info');
+            return;
+        }
+
+        const selectedPath = this.selectedPath;
+        try {
+            const result = await memoryFileSystem.pruneExpired();
+            await this._loadFileTree();
+            if (selectedPath && this.files.some((file) => file.path === selectedPath)) {
+                this.selectedPath = selectedPath;
+                this.editorContent = await memoryFileSystem.read(selectedPath) || '';
+                this.isDirty = false;
+            } else if (selectedPath) {
+                this.selectedPath = null;
+                this.editorContent = '';
+                this.isDirty = false;
+                this.isEditing = false;
+            }
+
+            const archived = Number(result?.archived || 0);
+            if (archived > 0) {
+                this.app?.showToast?.(`Archived ${archived} expired memor${archived === 1 ? 'y' : 'ies'}`, 'success');
+            } else {
+                this.app?.showToast?.('No expired memories found', 'info');
+            }
+            this.render();
+        } catch (err) {
+            console.error('[MemoryEditor] Clean expired error:', err);
+            this.app?.showToast?.('Failed to clean expired memories', 'error');
+        }
+    }
+
     async _handleImportFileSelected(event) {
         const file = event.target.files?.[0];
         event.target.value = '';
@@ -958,6 +999,10 @@ class MemoryEditor {
 
     _isBackfillActive() {
         return this.backfillState === 'running' || this.backfillState === 'stopping';
+    }
+
+    _isMemoryMaintenanceDisabled() {
+        return this._isBackfillActive() || this.importState === 'importing';
     }
 
     _getBackfillButtonState() {
