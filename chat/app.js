@@ -3983,6 +3983,13 @@ class ChatApp {
         }
     }
 
+    isCancelledError(error, signal = null) {
+        return error?.isCancelled === true
+            || error?.name === 'AbortError'
+            || error?.aborted === true
+            || signal?.aborted === true;
+    }
+
     async persistLocalAssistantStatus(message) {
         if (!message?.id) return;
         await chatDB.saveMessage(message);
@@ -4451,6 +4458,7 @@ class ChatApp {
                     conversationText,
                     apiKey: memoryKey,
                     model: this.memoryAgentModel,
+                    signal,
                     onProgress: handleMemoryProgress,
                     onModelText: handleMemoryModelText
                 })
@@ -4459,6 +4467,7 @@ class ChatApp {
                     conversationText,
                     apiKey: memoryKey,
                     model: this.memoryAgentModel,
+                    signal,
                     onProgress: handleMemoryProgress,
                     onModelText: handleMemoryModelText
                 });
@@ -4615,10 +4624,10 @@ class ChatApp {
                 await chatDB.saveSession(session);
             }
 
-            if (error?.isCancelled) {
+            if (this.isCancelledError(error, signal)) {
                 retrievalMessage.content = 'Memory retrieval cancelled.';
                 await this.persistLocalAssistantStatus(retrievalMessage);
-                throw error;
+                throw this.createCancelledError();
             }
 
             console.error('Memory augment query failed:', error);

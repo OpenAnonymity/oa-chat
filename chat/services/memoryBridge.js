@@ -75,7 +75,7 @@ function createConfidentialMemoryBank({ apiKey, model, onProgress, onModelText, 
     });
 }
 
-export async function augmentQuery({ query, conversationText, apiKey, model, onProgress, onModelText }) {
+export async function augmentQuery({ query, conversationText, apiKey, model, onProgress, onModelText, signal }) {
     const memoryBank = createConfidentialMemoryBank({
         apiKey,
         model,
@@ -84,10 +84,10 @@ export async function augmentQuery({ query, conversationText, apiKey, model, onP
     });
 
     await memoryBank.init();
-    return memoryBank.augmentQuery(query, conversationText);
+    return memoryBank.augmentQuery(query, conversationText, { signal });
 }
 
-export async function retrieveAdaptive({ query, alreadyRetrievedContext, conversationText, apiKey, model, onProgress, onModelText }) {
+export async function retrieveAdaptive({ query, alreadyRetrievedContext, conversationText, apiKey, model, onProgress, onModelText, signal }) {
     const memoryBank = createConfidentialMemoryBank({
         apiKey,
         model,
@@ -96,10 +96,10 @@ export async function retrieveAdaptive({ query, alreadyRetrievedContext, convers
     });
 
     await memoryBank.init();
-    return memoryBank.retrieveAdaptive(query, alreadyRetrievedContext, conversationText);
+    return memoryBank.retrieveAdaptive(query, alreadyRetrievedContext, conversationText, { signal });
 }
 
-export async function augmentQueryAdaptive({ query, alreadyRetrievedContext, conversationText, apiKey, model, onProgress, onModelText }) {
+export async function augmentQueryAdaptive({ query, alreadyRetrievedContext, conversationText, apiKey, model, onProgress, onModelText, signal }) {
     const memoryBank = createConfidentialMemoryBank({
         apiKey,
         model,
@@ -108,7 +108,7 @@ export async function augmentQueryAdaptive({ query, alreadyRetrievedContext, con
     });
 
     await memoryBank.init();
-    return memoryBank.augmentQueryAdaptive(query, alreadyRetrievedContext, conversationText);
+    return memoryBank.augmentQueryAdaptive(query, alreadyRetrievedContext, conversationText, { signal });
 }
 
 export async function importData({ input, apiKey, model, options }) {

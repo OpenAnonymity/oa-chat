@@ -302,12 +302,14 @@ forwarding its details into the final prompt.
   ingest-side decision/progress event, and reports a no-write tool loop as
   `status: 'processed'` with `writeCalls: 0`. Keep semantic "is this worth
   remembering?" policy in `nanomem`; keep session/UI dedupe in root `oa-chat`.
-- Retrieval cancellation is still partial:
-  - the app aborts approval waiting and post-retrieval continuation
-  - the lower `nanomem` OpenAI-compatible client now accepts `AbortSignal`, but
-    the root app's augment-query retrieval path is not yet threading that signal
-    through to `memoryBridge.augmentQuery(...)`, so an in-flight confidential
-    retrieval request itself is still not cancelled yet
+- Retrieval cancellation now uses the active chat stream `AbortController`.
+  - The app passes the input stop signal through `memoryBridge.augmentQuery(...)`
+    / `augmentQueryAdaptive(...)` into `nanomem`.
+  - `nanomem` forwards that `AbortSignal` through retrieval tool loops,
+    adaptive no-op checks, direct answer rendering, and the inner
+    `augment_query` prompt-crafter request/retry sleep.
+  - The status message is updated to `Memory retrieval cancelled.` and the
+    normal frontier-model send is not started after a stop.
 - Root backfill is still intentionally simpler than `memory-chat`'s old extractor path:
   - progress is only reflected through the `Backfill` / stop button state + toast summary
   - there is still no separate queue modal or per-item retry UI

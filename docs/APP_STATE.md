@@ -25,6 +25,16 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
+- 2026-05-18: Memory-mode stop now cancels the active memory retrieval itself.
+  - The input stop button's existing chat-stream `AbortController` is threaded
+    from `ChatApp.runMemoryAugmentFlow(...)` through `chat/services/memoryBridge.js`
+    into `nanomem` `augmentQuery(...)` / `augmentQueryAdaptive(...)`.
+  - `nanomem` now accepts optional `{ signal }` on retrieval/augment entrypoints
+    and forwards it through the tool loop, adaptive no-op check, direct answer
+    rendering, and the inner `augment_query` prompt-crafter request/retry sleep.
+  - Aborted retrieval normalizes back to the app's cancelled-error path, persists
+    `Memory retrieval cancelled.`, and does not continue into the frontier-model
+    send.
 - 2026-05-18: Pulled `nanomem` to `24871d9` / `v0.1.3-26-g24871d9`.
   - The latest commit tightens adaptive retrieval: before re-querying memory, it
     runs a small no-op check to skip only obvious already-covered follow-ups.
