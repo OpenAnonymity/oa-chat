@@ -35,6 +35,14 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - Aborted retrieval normalizes back to the app's cancelled-error path, persists
     `Memory retrieval cancelled.`, and does not continue into the frontier-model
     send.
+- 2026-05-18: Resending a user prompt prunes approved memory context linked to
+  the resent turn and any later user turns before regenerating.
+  - First-turn resend clears `session.memoryRetrievedContext.entries` because
+    there is no earlier approved chat context that should be reused.
+  - Later-turn resend keeps entries from earlier user turns, so adaptive memory
+    can still reuse context the user already approved before the resend point.
+  - The resend action button is blurred and given a stable pressed/busy style
+    before the message list rerenders to avoid a transient white focus flash.
 - 2026-05-18: Pulled `nanomem` to `24871d9` / `v0.1.3-26-g24871d9`.
   - The latest commit tightens adaptive retrieval: before re-querying memory, it
     runs a small no-op check to skip only obvious already-covered follow-ups.

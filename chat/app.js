@@ -4324,6 +4324,38 @@ class ChatApp {
         await chatDB.saveSession(session);
     }
 
+    async pruneMemoryRetrievedContextFromMessage(session, messages, messageIndex) {
+        const entries = session?.memoryRetrievedContext?.entries;
+        if (!session || !Array.isArray(entries) || entries.length === 0 || !Array.isArray(messages)) {
+            return false;
+        }
+
+        const priorUserExists = messages
+            .slice(0, Math.max(0, messageIndex))
+            .some((message) => message?.role === 'user');
+        const affectedUserIds = new Set(
+            messages
+                .slice(Math.max(0, messageIndex))
+                .filter((message) => message?.role === 'user' && typeof message.id === 'string')
+                .map((message) => message.id)
+        );
+
+        const nextEntries = priorUserExists
+            ? entries.filter((entry) => !affectedUserIds.has(entry?.linkedUserMessageId))
+            : [];
+
+        if (nextEntries.length === entries.length) {
+            return false;
+        }
+
+        session.memoryRetrievedContext = {
+            version: 1,
+            entries: nextEntries
+        };
+        await chatDB.saveSession(session);
+        return true;
+    }
+
     async runMemoryAugmentFlow(query, userMessage, session, options = {}) {
         if (!this.memoryMode || !userMessage || !session) return null;
         if (!query || !query.trim()) return null;

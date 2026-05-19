@@ -4240,6 +4240,7 @@ html {
 /* Message action buttons */
 .message-action-btn {
     opacity: 0.6; /* Default visible for assistant */
+    -webkit-tap-highlight-color: transparent;
     transition: opacity 0.2s ease, background-color 0.15s ease, color 0.15s ease;
 }
 
@@ -4273,6 +4274,19 @@ html {
 
 .message-action-btn:focus {
     opacity: 1;
+}
+
+.message-action-btn:active,
+.message-action-btn.is-processing {
+    opacity: 1;
+    background-color: hsl(var(--color-muted) / 0.55);
+    color: hsl(var(--color-foreground));
+    transition-duration: 0s;
+}
+
+.dark .message-action-btn:active,
+.dark .message-action-btn.is-processing {
+    background-color: hsl(var(--color-muted) / 0.35);
 }
 
 .assistant-actions-placeholder {

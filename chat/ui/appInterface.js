@@ -199,6 +199,7 @@ const COMPONENT_APP_KEYS = new Set([
     'modelPicker',
     'normalizeModelName',
     'processContentWithLatex',
+    'pruneMemoryRetrievedContextFromMessage',
     'reasoningEffort',
     'reasoningEnabled',
     'regenerateResponse',

@@ -178,7 +178,7 @@ export default class ChatArea {
             const resendBtn = e.target.closest('.resend-prompt-btn');
             if (resendBtn) {
                 const messageId = resendBtn.dataset.messageId;
-                await this.handleResendMessage(messageId);
+                await this.handleResendMessage(messageId, resendBtn);
                 return;
             }
 
@@ -933,7 +933,7 @@ export default class ChatArea {
      * Resends a user message - deletes any responses after it and regenerates
      * @param {string} messageId - User message ID to resend
      */
-    async handleResendMessage(messageId) {
+    async handleResendMessage(messageId, triggerButton = null) {
         const session = this.app.getCurrentSession();
         if (!session) return;
 
@@ -946,6 +946,16 @@ export default class ChatArea {
         const messageIndex = messages.findIndex(m => m.id === messageId);
 
         if (messageIndex === -1 || messages[messageIndex].role !== 'user') return;
+
+        if (triggerButton) {
+            triggerButton.classList.add('is-processing');
+            triggerButton.setAttribute('aria-busy', 'true');
+            triggerButton.blur();
+        }
+
+        if (typeof this.app.pruneMemoryRetrievedContextFromMessage === 'function') {
+            await this.app.pruneMemoryRetrievedContextFromMessage(session, messages, messageIndex);
+        }
 
         // Delete all messages after this user message
         const messagesToDelete = messages.slice(messageIndex + 1);

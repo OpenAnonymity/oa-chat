@@ -249,6 +249,11 @@ forwarding its details into the final prompt.
 - Regeneration clears prior local-only memory status messages after the last user
   turn before rerunning memory mode, so the chat does not accumulate stale
   retrieval summaries.
+- Resending a user prompt prunes approved memory context linked to that user
+  turn and later user turns before rerunning memory retrieval. On a first-turn
+  resend this clears all reusable session memory context, so the rerun does not
+  show `Reused earlier memory context...` from the same prompt's previous
+  attempt.
 - The memory filesystem panel uses the same modal/tree/editor shell as
   `memory-chat` and opens with `Cmd/Ctrl+Shift+M`.
 - The settings menu also exposes a dedicated `Memory` row under `Data Controls`.
