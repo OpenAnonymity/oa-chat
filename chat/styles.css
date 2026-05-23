@@ -3253,12 +3253,108 @@ html[data-left-sidebar-hidden="true"] #sidebar {
     border-right-width: 0 !important;
 }
 
-#sidebar.sidebar-hidden ~ * #show-sidebar-btn {
+html[data-left-sidebar-hidden="true"]:not([data-left-sidebar-closing="true"]) #show-sidebar-btn {
     display: flex !important;
 }
 
-html[data-left-sidebar-hidden="true"] #show-sidebar-btn {
-    display: flex !important;
+html[data-left-sidebar-closing="true"] #sidebar [data-tooltip]:hover::after,
+html[data-left-sidebar-closing="true"] #sidebar [data-tooltip]:hover::before {
+    display: none !important;
+}
+
+.sidebar-toggle-btn {
+    position: relative;
+}
+
+.sidebar-toggle-tooltip {
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    transform: translateX(-50%) translateY(8px);
+    background-color: hsl(var(--color-popover));
+    color: hsl(var(--color-popover-foreground));
+    border: 1px solid hsl(var(--color-border));
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    line-height: 1;
+    white-space: nowrap;
+    z-index: 9999;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    pointer-events: none;
+    opacity: 0;
+    visibility: hidden;
+}
+
+.sidebar-toggle-tooltip-right {
+    left: auto;
+    right: 0;
+    transform: translateY(8px);
+}
+
+.sidebar-toggle-tooltip::before {
+    content: '';
+    position: absolute;
+    top: -5px;
+    left: 50%;
+    width: 8px;
+    height: 8px;
+    background-color: hsl(var(--color-popover));
+    border-top: 1px solid hsl(var(--color-border));
+    border-left: 1px solid hsl(var(--color-border));
+    transform: translateX(-50%) rotate(45deg);
+    pointer-events: none;
+}
+
+.sidebar-toggle-tooltip-right::before {
+    left: auto;
+    right: 14px;
+    transform: rotate(45deg);
+}
+
+.sidebar-toggle-shortcut {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.125rem;
+    color: hsl(var(--color-muted-foreground));
+    font-size: 0.75rem;
+}
+
+.sidebar-toggle-shortcut span {
+    opacity: 0.6;
+}
+
+@media (hover: hover) and (pointer: fine) {
+    .sidebar-toggle-btn:hover .sidebar-toggle-tooltip,
+    .sidebar-toggle-btn:focus-visible .sidebar-toggle-tooltip {
+        opacity: 1;
+        visibility: visible;
+        animation: tooltipBodyFadeIn 0.15s ease-out;
+    }
+
+    .sidebar-toggle-btn:hover .sidebar-toggle-tooltip-right,
+    .sidebar-toggle-btn:focus-visible .sidebar-toggle-tooltip-right {
+        animation: tooltipBodyFadeInRight 0.15s ease-out;
+    }
+}
+
+.dark .sidebar-toggle-tooltip {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    background-color: hsl(var(--color-popover));
+}
+
+.dark .sidebar-toggle-tooltip::before {
+    background-color: hsl(var(--color-popover));
+}
+
+html[data-left-sidebar-closing="true"] #sidebar .sidebar-toggle-tooltip {
+    opacity: 0 !important;
+    visibility: hidden !important;
+    animation: none !important;
 }
 
 /* Chat Toolbar - fixed at top of main content area */

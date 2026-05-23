@@ -78,6 +78,7 @@ const SESSION_TITLE_FALLBACK_LENGTH = 50;
 const SIDEBAR_WIDTH = 220;      // Default sidebar width = minimum width
 const RIGHT_PANEL_WIDTH = 288;  // 18rem = 288px
 const TOOLBAR_PREDICTION_GRACE_MS = 350; // Grace period to respect predicted state during animations
+const SIDEBAR_CLOSE_DURATION_MS = 220;
 
 // Used to upgrade users who were implicitly on the prior default.
 const PREVIOUS_DEFAULT_MODEL_NAME = 'OpenAI: GPT-5.1 Instant';
@@ -7090,6 +7091,14 @@ class ChatApp {
         }
     }
 
+    setSidebarClosingAttribute(isClosing) {
+        if (isClosing) {
+            document.documentElement.setAttribute('data-left-sidebar-closing', 'true');
+        } else {
+            document.documentElement.removeAttribute('data-left-sidebar-closing');
+        }
+    }
+
     getCurrentSidebarWidth() {
         const sidebar = this.elements.sidebar;
         if (!sidebar) return SIDEBAR_WIDTH;
@@ -7107,12 +7116,33 @@ class ChatApp {
         return SIDEBAR_WIDTH;
     }
 
+    toggleSidebar() {
+        const sidebar = this.elements.sidebar;
+        if (!sidebar) return;
+
+        const isHidden = sidebar.classList.contains('sidebar-hidden')
+            || (this.isMobileView() && !sidebar.classList.contains('mobile-visible'));
+
+        if (isHidden) {
+            this.showSidebar();
+        } else {
+            this.hideSidebar();
+        }
+    }
+
     hideSidebar(options = {}) {
         const shouldPersist = options.persist ?? !this.isMobileView();
         const shouldPredictToolbar = options.predictToolbar !== false;
         const sidebar = this.elements.sidebar;
         const showBtn = this.elements.showSidebarBtn;
         const backdrop = this.elements.mobileSidebarBackdrop;
+
+        clearTimeout(this.sidebarToggleButtonTimer);
+        this.setSidebarClosingAttribute(true);
+        if (showBtn) {
+            showBtn.classList.add('hidden');
+            showBtn.classList.remove('flex');
+        }
 
         if (sidebar) {
             // Use CSS class instead of inline styles
@@ -7121,8 +7151,11 @@ class ChatApp {
         }
         this.setSidebarHiddenAttribute(true);
         if (showBtn) {
-            showBtn.classList.remove('hidden');
-            showBtn.classList.add('flex');
+            this.sidebarToggleButtonTimer = setTimeout(() => {
+                this.setSidebarClosingAttribute(false);
+                showBtn.classList.remove('hidden');
+                showBtn.classList.add('flex');
+            }, SIDEBAR_CLOSE_DURATION_MS);
         }
         if (backdrop) {
             backdrop.classList.remove('visible');
@@ -7148,6 +7181,9 @@ class ChatApp {
         const sidebar = this.elements.sidebar;
         const showBtn = this.elements.showSidebarBtn;
         const backdrop = this.elements.mobileSidebarBackdrop;
+
+        clearTimeout(this.sidebarToggleButtonTimer);
+        this.setSidebarClosingAttribute(false);
 
         if (sidebar) {
             // Use CSS class instead of inline styles
@@ -7409,6 +7445,12 @@ class ChatApp {
                 if (this.modelPicker) {
                     this.modelPicker.toggle();
                 }
+            }
+
+            // Cmd/Ctrl + \ for sidebar collapse/expand
+            if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === '\\' || e.code === 'Backslash')) {
+                e.preventDefault();
+                this.toggleSidebar();
             }
 
             // Cmd/Ctrl + Shift + M for memory editor

@@ -25,6 +25,20 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
+- 2026-05-21: The left chat sidebar can now be toggled with `Cmd/Ctrl+\`.
+  - The shortcut calls the same `showSidebar()` / `hideSidebar()` paths as the
+    toolbar buttons, preserving the existing desktop persistence and mobile
+    overlay behavior.
+  - During the desktop close animation, `data-left-sidebar-closing` keeps the
+    main-toolbar expand button hidden until the sidebar width transition ends.
+  - The collapse and expand sidebar buttons use real tooltip markup, not
+    `[data-tooltip]`, so the shortcut can match the model-picker style with
+    separate muted `⌘` and key glyphs.
+  - The delete-history sidebar icon uses the shared `[data-tooltip]` hover
+    bubble, right-aligned to stay inside the sidebar edge.
+  - While `data-left-sidebar-closing` is set, sidebar hover bubbles are
+    suppressed so a hovered icon does not leave tooltip feedback during the
+    collapse animation.
 - 2026-05-18: Memory-mode stop now cancels the active memory retrieval itself.
   - The input stop button's existing chat-stream `AbortController` is threaded
     from `ChatApp.runMemoryAugmentFlow(...)` through `chat/services/memoryBridge.js`
