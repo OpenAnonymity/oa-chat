@@ -22,6 +22,13 @@ For ongoing web-app work, agents should follow this order:
    `docs/` and add any non-obvious learnings, UI nuances, state coupling, persistence
    details, or follow-up notes to [docs/APP_STATE.md](docs/APP_STATE.md) so future
    agents can pick up the state cleanly.
+4. Before marking a non-trivial coding task as done, validate the final diff with a
+   fresh subagent review. Ask the subagent to review adversarially, treat that review
+   as part of the same turn, fix any findings, rerun the review after material fixes,
+   and do not stop until the fresh review agent approves the final diff. If approval is
+   blocked by residual risk, finish only after that risk is explicitly accepted and
+   reported by the main agent (or by the user when it requires a product/behavior
+   decision).
 
 If no existing doc in `docs/` is a good fit for the new learning, create one and link it
 from [docs/APP_STATE.md](docs/APP_STATE.md).
