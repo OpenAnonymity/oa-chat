@@ -4558,10 +4558,20 @@ html {
 }
 
 .edit-prompt-textarea {
+    appearance: none;
+    border: 0;
     font-size: 0.875rem;
     line-height: 1.5;
     min-height: 80px;
     max-height: 40vh;
+    outline: none;
+    box-shadow: none;
+}
+
+.edit-prompt-textarea:focus {
+    border-color: transparent;
+    box-shadow: none;
+    outline: none;
 }
 
 /* Subtle theme-aware resize handle - sized to be visible with or without scrollbar */
@@ -4608,7 +4618,6 @@ html {
 }
 
 /* Shared focus style for textareas and inputs - clean, subtle, no heavy ring */
-.edit-prompt-textarea:focus,
 .input-focus-clean:focus {
     border-color: hsl(var(--color-ring) / 0.6);
     box-shadow: 0 0 0 1px hsl(var(--color-ring) / 0.4);

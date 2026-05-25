@@ -7713,6 +7713,8 @@ class ChatApp {
                 try {
                     const { getExtensionFromMimeType, validateFile } = await import('./services/fileUtils.js');
                     const filesToUpload = [];
+                    const editTextarea = activeElement?.closest?.('.edit-prompt-textarea');
+                    const editMessageId = editTextarea?.dataset?.messageId || null;
 
                     for (const { blob } of fileBlobsData) {
                         let filename = blob.name;
@@ -7731,11 +7733,15 @@ class ChatApp {
                     }
 
                     if (filesToUpload.length > 0) {
-                        await this.handleFileUpload(filesToUpload);
-                        // Focus input after file upload
-                        requestAnimationFrame(() => {
-                            this.elements.messageInput.focus();
-                        });
+                        if (editMessageId && this.editDrafts.has(editMessageId)) {
+                            await this.handleEditFileUpload(editMessageId, filesToUpload);
+                        } else {
+                            await this.handleFileUpload(filesToUpload);
+                            // Focus input after file upload
+                            requestAnimationFrame(() => {
+                                this.elements.messageInput.focus();
+                            });
+                        }
                     }
                 } catch (error) {
                     console.error('Error handling pasted files:', error);

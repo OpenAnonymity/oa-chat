@@ -33,6 +33,9 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     later turns are truncated and `regenerateResponse()` runs.
   - Empty-text prompts are valid only when at least one attachment remains, matching
     normal send behavior for file-only turns.
+  - Edit attachments render inside the same bordered prompt editor surface as the
+    textarea and controls. Global file paste routes to the active edit textarea's
+    draft instead of the main chat input.
 - 2026-05-25: Forked conversations preserve generated/manual titles.
   - `ChatApp.forkConversation(...)` now asks `chat/domain/sessionSearch.js` for
     fork title fields instead of rebuilding every fork title from the first user

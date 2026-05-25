@@ -581,7 +581,7 @@ function buildEditableFileAttachments(files, messageId) {
         `;
     }).join('');
 
-    return `<div class="edit-attachments-row flex flex-wrap gap-3">${fileCards}</div>`;
+    return `<div class="edit-attachments-row mb-3 flex flex-wrap gap-3">${fileCards}</div>`;
 }
 
 // Threshold for collapsing long user messages (in characters)
@@ -610,66 +610,69 @@ function buildUserMessage(message, options = {}) {
             <div class="${CLASSES.userWrapper}" data-message-id="${safeMessageId}"${getRawContentAttribute(message.content)}>
                 <div class="${CLASSES.userGroup}">
                     <div class="edit-prompt-form w-full">
-                        <textarea
-                            class="edit-prompt-textarea w-full px-4 py-3 border border-border rounded-lg bg-background text-foreground resize-y focus:outline-none shadow-sm"
-                            rows="3"
-                            data-message-id="${safeMessageId}"
-                        >${escapeHtml(editContent)}</textarea>
-                        <div class="mt-3 flex flex-col gap-2">
+                        <div class="edit-prompt-input-card rounded-lg border border-border bg-background p-1.5 shadow-sm">
                             ${editAttachments}
-                            <div class="flex items-center justify-between gap-2">
-                                <div class="flex items-center gap-2 min-w-0">
+                            <div class="relative w-full flex flex-col">
+                                <textarea
+                                    class="edit-prompt-textarea w-full flex-1 min-w-0 bg-transparent text-sm leading-6 text-foreground placeholder:text-muted-foreground resize-y overflow-y-auto overflow-x-hidden focus:outline-none px-3 py-2 border-0"
+                                    rows="3"
+                                    data-message-id="${safeMessageId}"
+                                >${escapeHtml(editContent)}</textarea>
+                            </div>
+                            <div class="flex items-center justify-between gap-2 pt-1.5">
+                                <div class="flex min-w-0 items-center gap-1">
+                                    <button
+                                        id="edit-model-picker-btn"
+                                        class="edit-model-picker-btn btn-ghost-hover inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 border border-input h-7 px-2 gap-1.5 min-w-0"
+                                        data-message-id="${safeMessageId}"
+                                        title="Select model for regeneration"
+                                    >
+                                        <!-- Content will be populated by ChatArea.updateEditModelPickerButton -->
+                                        <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 bg-muted">
+                                            <span class="text-[10px] font-semibold">...</span>
+                                        </div>
+                                        <span class="model-name-container min-w-0 truncate">Loading...</span>
+                                    </button>
                                     <input
                                         type="file"
                                         class="edit-file-input hidden"
                                         data-message-id="${safeMessageId}"
+                                        accept="image/*,.pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,audio/*"
                                         multiple
                                     >
                                     <button
                                         type="button"
-                                        class="edit-add-files-btn btn-ghost-hover inline-flex items-center justify-center gap-1.5 rounded-md text-xs font-medium transition-colors border border-input h-7 px-2"
+                                        class="edit-add-files-btn inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-7 w-7 relative"
                                         data-message-id="${safeMessageId}"
+                                        data-tooltip="Attach files"
+                                        data-tooltip-position="top"
                                     >
-                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" class="w-3.5 h-3.5">
-                                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 0 1-6.364-6.364l10.94-10.94A3 3 0 1 1 19.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 0 0 2.112 2.13" />
                                         </svg>
-                                        <span>Add files</span>
+                                        ${attachmentCount > 0 ? `<span class="absolute -top-1 -right-1 w-4 h-4 bg-green-600 text-white text-[10px] font-bold rounded-full flex items-center justify-center">${attachmentCount}</span>` : ''}
                                     </button>
                                     <span class="text-[11px] text-muted-foreground truncate">${attachmentLabel}</span>
                                 </div>
-                            </div>
-                        </div>
-                        <div class="flex items-center justify-between gap-2 mt-2">
-                            <button
-                                id="edit-model-picker-btn"
-                                class="edit-model-picker-btn btn-ghost-hover inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 border border-input h-7 px-2 gap-1.5"
-                                data-message-id="${safeMessageId}"
-                                title="Select model for regeneration"
-                            >
-                                <!-- Content will be populated by ChatArea.updateEditModelPickerButton -->
-                                <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 bg-muted">
-                                    <span class="text-[10px] font-semibold">...</span>
+                                <div class="flex items-center gap-2">
+                                    <button
+                                        class="cancel-edit-btn group inline-flex items-center justify-center gap-2 rounded-md text-xs font-medium transition-colors hover-highlight text-muted-foreground hover:text-foreground px-3 py-1.5 border border-transparent"
+                                        data-message-id="${safeMessageId}"
+                                    >
+                                        <span>Cancel</span>
+                                        <kbd class="pointer-events-none inline-flex h-4 select-none items-center gap-1 rounded border border-border bg-muted px-1 font-mono text-[10px] font-medium opacity-100">Esc</kbd>
+                                    </button>
+                                    <button
+                                        class="confirm-edit-btn group inline-flex items-center justify-center gap-2 rounded-md text-xs font-medium transition-colors border border-border px-3 py-1.5 shadow-sm"
+                                        data-message-id="${safeMessageId}"
+                                    >
+                                        <span>Save</span>
+                                        <span class="flex items-center gap-0.5 text-muted-foreground pointer-events-none text-xs">
+                                            <span class="opacity-60">⌘</span>
+                                            <span class="opacity-60">↵</span>
+                                        </span>
+                                    </button>
                                 </div>
-                                <span class="model-name-container min-w-0 truncate">Loading...</span>
-                            </button>
-                            <div class="flex items-center gap-2">
-                                <button
-                                    class="cancel-edit-btn group inline-flex items-center justify-center gap-2 rounded-md text-xs font-medium transition-colors hover-highlight text-muted-foreground hover:text-foreground px-3 py-1.5 border border-transparent"
-                                    data-message-id="${safeMessageId}"
-                                >
-                                    <span>Cancel</span>
-                                    <kbd class="pointer-events-none inline-flex h-4 select-none items-center gap-1 rounded border border-border bg-muted px-1 font-mono text-[10px] font-medium opacity-100">Esc</kbd>
-                                </button>
-                                <button
-                                    class="confirm-edit-btn group inline-flex items-center justify-center gap-2 rounded-md text-xs font-medium transition-colors border border-border px-3 py-1.5 shadow-sm"
-                                    data-message-id="${safeMessageId}"
-                                >
-                                    <span>Save</span>
-                                    <span class="flex items-center gap-0.5 text-muted-foreground pointer-events-none text-xs">
-                                        <span class="opacity-60">⌘</span>
-                                        <span class="opacity-60">↵</span>
-                                    </span>
-                                </button>
                             </div>
                         </div>
                     </div>
