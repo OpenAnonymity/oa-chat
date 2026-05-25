@@ -25,6 +25,28 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
+- 2026-05-25: Pulled `nanomem` to `dbdbd4b` on top of latest upstream
+  `origin/main` `9dd3581`.
+  - Upstream added ingestion prompt/version-log cleanup and temporal wording
+    changes. Root still depends on cancellation propagation through
+    `memoryBridge`, so the abort-support patch was carried forward on top of
+    upstream and verified with `test/engine/retrieveAbort.test.js`.
+  - While integrating, `nanomem` version-log mutation paths were adjusted to
+    respect stored bullet `v=` metadata as well as existing `_vlog` entries.
+    This keeps delete/update/corroboration/compaction entries monotonic for
+    memories that already have inline versions but no companion vlog yet.
+  - `_vlog/` audit files are now treated as internal storage: they stay readable
+    through raw storage/export paths but are excluded from the memory tree,
+    search/list surfaces, bullet index, deletion deep scans, and portable
+    text/ZIP exports so the agent does not ingest its own audit log. OMF export
+    in the browser/IndexedDB app still preserves vlogs under
+    `extensions.nanomem.vlogs` for round-trips.
+  - Agent-facing memory tools normalize path strings before internal-path
+    checks and reject `_tree.md` / `_vlog/` paths across read and write tools,
+    including `./_vlog/...` and `work/../_vlog/...` forms.
+  - Storage writes canonicalize internal paths before persisting, so OMF vlog
+    extension keys like `./_vlog/...` are restored as canonical `_vlog/...`
+    records instead of becoming normal memory files.
 - 2026-05-25: User prompt edit mode now has an attachment draft.
   - `ChatApp.editDrafts` keeps edited text plus attachment metadata in memory while
     the inline editor is open; IndexedDB is not updated until the user saves.
