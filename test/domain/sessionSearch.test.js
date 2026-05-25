@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+    buildForkSessionTitleFields,
     buildLocalSessionTitle,
     buildSessionConversationSearchText,
     buildSessionSearchIndexFields,
@@ -16,6 +17,46 @@ test('buildLocalSessionTitle trims whitespace and caps fallback titles', () => {
     assert.equal(
         buildLocalSessionTitle('abcdefghijklmnopqrstuvwxyz', { fallbackLength: 10 }),
         'abcdefghij...'
+    );
+});
+
+test('buildForkSessionTitleFields preserves generated and manual source titles', () => {
+    assert.deepEqual(
+        buildForkSessionTitleFields(
+            { title: 'Generated Summary', titleSource: 'generated' },
+            'This is the first user prompt.'
+        ),
+        {
+            title: 'Generated Summary (fork)',
+            titleSource: 'generated',
+            titleSearchText: 'This is the first user prompt.'
+        }
+    );
+
+    assert.deepEqual(
+        buildForkSessionTitleFields(
+            { title: 'Manual Label', titleSource: 'manual' },
+            'This is the first user prompt.'
+        ),
+        {
+            title: 'Manual Label (fork)',
+            titleSource: 'manual',
+            titleSearchText: ''
+        }
+    );
+});
+
+test('buildForkSessionTitleFields falls back to first prompt for local titles', () => {
+    assert.deepEqual(
+        buildForkSessionTitleFields(
+            { title: 'Old local title', titleSource: 'local' },
+            'This is the first user prompt.'
+        ),
+        {
+            title: 'This is the first user prompt. (fork)',
+            titleSource: 'local',
+            titleSearchText: 'This is the first user prompt.'
+        }
     );
 });
 

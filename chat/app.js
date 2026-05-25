@@ -33,6 +33,7 @@ import { normalizeMessagesForMemory } from './services/memoryMessageNormalizatio
 import { normalizeMemoryRetrievalAssessment } from './services/memoryRetrievalAssessment.js';
 import {
     buildLocalSessionTitle as buildLocalSessionTitleText,
+    buildForkSessionTitleFields as buildForkSessionTitleFieldsValue,
     buildSessionTitleSearchText as buildSessionTitleSearchTextValue,
     normalizeSessionSearchText as normalizeSessionSearchTextValue,
     getSearchableMessageText as getSearchableMessageTextValue,
@@ -3783,6 +3784,10 @@ class ChatApp {
         return buildSessionTitleSearchTextValue(content);
     }
 
+    buildForkSessionTitleFields(sourceSession, firstUserContent) {
+        return buildForkSessionTitleFieldsValue(sourceSession, firstUserContent);
+    }
+
     normalizeSessionSearchText(content) {
         return normalizeSessionSearchTextValue(content);
     }
@@ -6162,18 +6167,14 @@ class ChatApp {
         // Create new session with same model and access context
         const newSessionId = this.generateId();
         const firstUserMessage = messagesToCopy.find(m => m.role === 'user');
-        const title = firstUserMessage
-            ? this.buildLocalSessionTitle(firstUserMessage.content)
-            : 'Forked Chat';
-        const titleSearchText = firstUserMessage
-            ? this.buildSessionTitleSearchText(firstUserMessage.content)
-            : '';
+        const titleFields = this.buildForkSessionTitleFields(session, firstUserMessage?.content);
 
         const newSession = {
             id: newSessionId,
-            title: `${title} (fork)`,
-            titleSource: 'local',
-            titleSearchText,
+            title: titleFields.title,
+            titleSource: titleFields.titleSource,
+            titleGenerationPending: false,
+            titleSearchText: titleFields.titleSearchText,
             createdAt: Date.now(),
             updatedAt: Date.now(),
             model: session.model,

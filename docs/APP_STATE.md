@@ -25,6 +25,15 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
+- 2026-05-25: Forked conversations preserve generated/manual titles.
+  - `ChatApp.forkConversation(...)` now asks `chat/domain/sessionSearch.js` for
+    fork title fields instead of rebuilding every fork title from the first user
+    message.
+  - Source sessions with `titleSource: 'generated'` or `manual` keep that
+    visible title plus ` (fork)`. Local fallback titles still derive from the
+    first copied user prompt.
+  - Forks explicitly set `titleGenerationPending: false`; copied historical
+    messages are saved directly and should not restart async title generation.
 - 2026-05-21: The left chat sidebar can now be toggled with `Cmd/Ctrl+\`.
   - The shortcut calls the same `showSidebar()` / `hideSidebar()` paths as the
     toolbar buttons, preserving the existing desktop persistence and mobile

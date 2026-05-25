@@ -22,6 +22,35 @@ export function buildSessionTitleSearchText(content) {
         .slice(0, 1000);
 }
 
+export function buildForkSessionTitleFields(sourceSession, firstUserContent, options = {}) {
+    const forkSuffix = options.forkSuffix || ' (fork)';
+    const sourceTitle = typeof sourceSession?.title === 'string'
+        ? sourceSession.title.replace(/\s+/g, ' ').trim()
+        : '';
+    const sourceTitleSource = sourceSession?.titleSource || 'local';
+    const titleSearchText = firstUserContent
+        ? buildSessionTitleSearchText(firstUserContent)
+        : '';
+
+    if ((sourceTitleSource === 'generated' || sourceTitleSource === 'manual') && sourceTitle) {
+        return {
+            title: `${sourceTitle}${forkSuffix}`,
+            titleSource: sourceTitleSource,
+            titleSearchText: sourceTitleSource === 'manual' ? '' : titleSearchText
+        };
+    }
+
+    const title = firstUserContent
+        ? buildLocalSessionTitle(firstUserContent)
+        : 'Forked Chat';
+
+    return {
+        title: `${title}${forkSuffix}`,
+        titleSource: 'local',
+        titleSearchText
+    };
+}
+
 export function normalizeSessionSearchText(content) {
     return getMessageTextContent(content)
         .replace(/\s+/g, ' ')
