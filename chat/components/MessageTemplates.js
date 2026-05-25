@@ -422,12 +422,9 @@ function buildFileAttachments(files) {
     if (!files || files.length === 0) return '';
 
     const fileCards = files.map((file, index) => {
-        const fileSizeKB = (file.size / 1024).toFixed(1);
-        const fileSize = file.size > 1024 * 1024
-            ? `${(file.size / (1024 * 1024)).toFixed(1)} MB`
-            : `${fileSizeKB} KB`;
+        const fileSize = formatAttachmentSize(file.size);
 
-        const isImage = file.type.startsWith('image/');
+        const isImage = (file.type || '').startsWith('image/');
         let iconOrPreview = '';
         // Use data attributes for actions so rendering stays HTML-only.
         let attachmentAttrs = '';
@@ -450,19 +447,20 @@ function buildFileAttachments(files) {
             `;
         } else {
             const detectedType = file.detectedType || '';
-            const isPdf = detectedType === 'pdf' || file.type === 'application/pdf';
+            const fileMimeType = file.type || '';
+            const isPdf = detectedType === 'pdf' || fileMimeType === 'application/pdf';
             const isDocx = detectedType === 'docx' || /\.docx$/i.test(file.name || '');
-            const isAudio = detectedType === 'audio' || file.type.startsWith('audio/');
+            const isAudio = detectedType === 'audio' || fileMimeType.startsWith('audio/');
 
             // Check if file is text-based by MIME type or common code file extensions
             const isText = detectedType === 'text' ||
-                          file.type.startsWith('text/') ||
-                          file.type.includes('json') ||
-                          file.type.includes('javascript') ||
-                          file.type.includes('xml') ||
-                          file.type.includes('sh') ||
-                          file.type.includes('yaml') ||
-                          file.type.includes('toml') ||
+                          fileMimeType.startsWith('text/') ||
+                          fileMimeType.includes('json') ||
+                          fileMimeType.includes('javascript') ||
+                          fileMimeType.includes('xml') ||
+                          fileMimeType.includes('sh') ||
+                          fileMimeType.includes('yaml') ||
+                          fileMimeType.includes('toml') ||
                           // Also check by file extension for code files that might have generic MIME types
                           /\.(go|py|js|ts|jsx|tsx|java|c|cpp|h|hpp|cs|rb|php|swift|kt|rs|scala|r|m|mm|sql|sh|bash|zsh|pl|lua|vim|el|clj|ex|exs|erl|hrl|hs|lhs|ml|mli|fs|fsx|fsi|v|sv|svh|vhd|vhdl|tcl|awk|sed|diff|patch|md|markdown|rst|tex|bib|csv|tsv|txt|log|cfg|conf|ini|toml|yaml|yml|xml|html|css|scss|sass|less|json|jsonl|proto|thrift)$/i.test(file.name);
 
@@ -472,7 +470,7 @@ function buildFileAttachments(files) {
             else if (isAudio) fileTypeForIcon = 'audio';
             else if (isText) fileTypeForIcon = 'text';
 
-            iconOrPreview = getFileIconSvg(fileTypeForIcon, file.type, 'w-6 h-6');
+            iconOrPreview = getFileIconSvg(fileTypeForIcon, fileMimeType, 'w-6 h-6');
 
             // For non-images, trigger download by creating a link from dataUrl
             if (file.dataUrl) {
@@ -507,6 +505,85 @@ function buildFileAttachments(files) {
     return `<div class="flex flex-wrap gap-3 mb-2">${fileCards}</div>`;
 }
 
+function formatAttachmentSize(size) {
+    const numericSize = Number(size || 0);
+    if (numericSize <= 0) return '0 KB';
+    return numericSize > 1024 * 1024
+        ? `${(numericSize / (1024 * 1024)).toFixed(1)} MB`
+        : `${(numericSize / 1024).toFixed(1)} KB`;
+}
+
+function buildEditableFileAttachments(files, messageId) {
+    const safeMessageId = escapeHtmlAttribute(messageId);
+    if (!files || files.length === 0) {
+        return '';
+    }
+
+    const fileCards = files.map((file, index) => {
+        const fileMimeType = file.type || '';
+        const detectedType = file.detectedType || '';
+        const isImage = fileMimeType.startsWith('image/') || detectedType === 'image';
+        const isPdf = detectedType === 'pdf' || fileMimeType === 'application/pdf';
+        const isDocx = detectedType === 'docx' || /\.docx$/i.test(file.name || '');
+        const isAudio = detectedType === 'audio' || fileMimeType.startsWith('audio/');
+        const isText = detectedType === 'text' ||
+            fileMimeType.startsWith('text/') ||
+            fileMimeType.includes('json') ||
+            fileMimeType.includes('javascript') ||
+            fileMimeType.includes('xml') ||
+            fileMimeType.includes('yaml') ||
+            fileMimeType.includes('toml');
+
+        let iconOrPreview = '';
+        if (isImage && file.dataUrl) {
+            const safeDataUrl = sanitizeUrl(file.dataUrl, { allowData: true, allowBlob: true, allowMailto: false, allowTel: false, allowHash: false });
+            iconOrPreview = `
+                <img
+                    src="${escapeHtmlAttribute(safeDataUrl || '')}"
+                    class="w-full h-full object-cover"
+                    alt="${escapeHtmlAttribute(file.name || 'Attachment')}"
+                >
+            `;
+        } else {
+            let fileTypeForIcon = null;
+            if (isPdf) fileTypeForIcon = 'pdf';
+            else if (isDocx) fileTypeForIcon = 'docx';
+            else if (isAudio) fileTypeForIcon = 'audio';
+            else if (isText) fileTypeForIcon = 'text';
+            iconOrPreview = getFileIconSvg(fileTypeForIcon, fileMimeType, 'w-6 h-6');
+        }
+
+        return `
+            <div class="group relative flex items-center p-2 gap-3 rounded-xl w-auto max-w-[240px] transition-all select-none overflow-hidden shadow-sm bg-muted/30 border border-border/70">
+                <div class="flex-shrink-0 w-10 h-10 rounded-lg overflow-hidden flex items-center justify-center bg-background border border-border/50 shadow-sm">
+                    ${iconOrPreview}
+                </div>
+                <div class="flex flex-col min-w-0 pr-6">
+                    <span class="text-xs font-medium truncate leading-tight" title="${escapeHtmlAttribute(file.name || 'Attachment')}">
+                        ${escapeHtml(file.name || 'Attachment')}
+                    </span>
+                    <span class="text-[10px] text-muted-foreground truncate">
+                        ${formatAttachmentSize(file.size)}
+                    </span>
+                </div>
+                <button
+                    type="button"
+                    class="remove-edit-attachment-btn absolute top-1.5 right-1.5 p-1 rounded-full text-muted-foreground/70 hover:text-destructive hover:bg-destructive/10 transition-all opacity-100 md:opacity-0 md:group-hover:opacity-100"
+                    data-message-id="${safeMessageId}"
+                    data-attachment-index="${index}"
+                    aria-label="Remove ${escapeHtmlAttribute(file.name || 'attachment')}"
+                >
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-3 h-3">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
+        `;
+    }).join('');
+
+    return `<div class="edit-attachments-row flex flex-wrap gap-3">${fileCards}</div>`;
+}
+
 // Threshold for collapsing long user messages (in characters)
 const USER_MESSAGE_COLLAPSE_THRESHOLD = 560;
 
@@ -523,20 +600,50 @@ function buildUserMessage(message, options = {}) {
 
     // If in edit mode, show the edit form instead of the static message
     if (isEditing) {
+        const editFiles = Array.isArray(options.editFiles) ? options.editFiles : (message.files || []);
+        const editContent = typeof options.editContent === 'string' ? options.editContent : (message.content || '');
+        const editAttachments = buildEditableFileAttachments(editFiles, message.id);
+        const attachmentCount = editFiles.length;
+        const attachmentLabel = `${attachmentCount} attachment${attachmentCount === 1 ? '' : 's'}`;
+        const safeMessageId = escapeHtmlAttribute(message.id);
         return `
-            <div class="${CLASSES.userWrapper}" data-message-id="${message.id}"${getRawContentAttribute(message.content)}>
+            <div class="${CLASSES.userWrapper}" data-message-id="${safeMessageId}"${getRawContentAttribute(message.content)}>
                 <div class="${CLASSES.userGroup}">
                     <div class="edit-prompt-form w-full">
                         <textarea
                             class="edit-prompt-textarea w-full px-4 py-3 border border-border rounded-lg bg-background text-foreground resize-y focus:outline-none shadow-sm"
                             rows="3"
-                            data-message-id="${message.id}"
-                        >${escapeHtml(message.content)}</textarea>
+                            data-message-id="${safeMessageId}"
+                        >${escapeHtml(editContent)}</textarea>
+                        <div class="mt-3 flex flex-col gap-2">
+                            ${editAttachments}
+                            <div class="flex items-center justify-between gap-2">
+                                <div class="flex items-center gap-2 min-w-0">
+                                    <input
+                                        type="file"
+                                        class="edit-file-input hidden"
+                                        data-message-id="${safeMessageId}"
+                                        multiple
+                                    >
+                                    <button
+                                        type="button"
+                                        class="edit-add-files-btn btn-ghost-hover inline-flex items-center justify-center gap-1.5 rounded-md text-xs font-medium transition-colors border border-input h-7 px-2"
+                                        data-message-id="${safeMessageId}"
+                                    >
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" class="w-3.5 h-3.5">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                                        </svg>
+                                        <span>Add files</span>
+                                    </button>
+                                    <span class="text-[11px] text-muted-foreground truncate">${attachmentLabel}</span>
+                                </div>
+                            </div>
+                        </div>
                         <div class="flex items-center justify-between gap-2 mt-2">
                             <button
                                 id="edit-model-picker-btn"
                                 class="edit-model-picker-btn btn-ghost-hover inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 border border-input h-7 px-2 gap-1.5"
-                                data-message-id="${message.id}"
+                                data-message-id="${safeMessageId}"
                                 title="Select model for regeneration"
                             >
                                 <!-- Content will be populated by ChatArea.updateEditModelPickerButton -->
@@ -548,14 +655,14 @@ function buildUserMessage(message, options = {}) {
                             <div class="flex items-center gap-2">
                                 <button
                                     class="cancel-edit-btn group inline-flex items-center justify-center gap-2 rounded-md text-xs font-medium transition-colors hover-highlight text-muted-foreground hover:text-foreground px-3 py-1.5 border border-transparent"
-                                    data-message-id="${message.id}"
+                                    data-message-id="${safeMessageId}"
                                 >
                                     <span>Cancel</span>
                                     <kbd class="pointer-events-none inline-flex h-4 select-none items-center gap-1 rounded border border-border bg-muted px-1 font-mono text-[10px] font-medium opacity-100">Esc</kbd>
                                 </button>
                                 <button
                                     class="confirm-edit-btn group inline-flex items-center justify-center gap-2 rounded-md text-xs font-medium transition-colors border border-border px-3 py-1.5 shadow-sm"
-                                    data-message-id="${message.id}"
+                                    data-message-id="${safeMessageId}"
                                 >
                                     <span>Save</span>
                                     <span class="flex items-center gap-0.5 text-muted-foreground pointer-events-none text-xs">

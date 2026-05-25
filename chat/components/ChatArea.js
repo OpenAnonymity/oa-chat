@@ -64,6 +64,23 @@ export default class ChatArea {
 
         // Event delegation for message action buttons
         messagesContainer.addEventListener('click', async (e) => {
+            const removeEditAttachmentBtn = e.target.closest('.remove-edit-attachment-btn');
+            if (removeEditAttachmentBtn) {
+                e.preventDefault();
+                const messageId = removeEditAttachmentBtn.dataset.messageId;
+                const index = Number(removeEditAttachmentBtn.dataset.attachmentIndex);
+                await this.app.removeEditAttachment?.(messageId, index);
+                return;
+            }
+
+            const addEditFilesBtn = e.target.closest('.edit-add-files-btn');
+            if (addEditFilesBtn) {
+                e.preventDefault();
+                const input = addEditFilesBtn.closest('.edit-prompt-form')?.querySelector('.edit-file-input');
+                input?.click();
+                return;
+            }
+
             // User message show more/less toggle
             const showMoreBtn = e.target.closest('.user-message-show-more');
             if (showMoreBtn) {
@@ -227,7 +244,19 @@ export default class ChatArea {
         messagesContainer.addEventListener('input', (e) => {
             const textarea = e.target.closest('.edit-prompt-textarea');
             if (textarea) {
+                this.app.updateEditDraftContent?.(textarea.dataset.messageId, textarea.value);
                 this.scheduleAutoGrow(textarea);
+            }
+        });
+
+        messagesContainer.addEventListener('change', async (e) => {
+            const input = e.target.closest('.edit-file-input');
+            if (!input) return;
+            const messageId = input.dataset.messageId;
+            const files = Array.from(input.files || []);
+            input.value = '';
+            if (files.length > 0) {
+                await this.app.handleEditFileUpload?.(messageId, files);
             }
         });
 

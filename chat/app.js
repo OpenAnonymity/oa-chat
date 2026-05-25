@@ -245,6 +245,7 @@ class ChatApp {
 
         // Edit mode state
         this.editingMessageId = null; // Track which message is being edited
+        this.editDrafts = new Map(); // messageId -> { content, files } for side-effect-free prompt edits
 
         this.init();
     }
@@ -3402,6 +3403,7 @@ class ChatApp {
 
         // Clear edit state when switching sessions
         this.editingMessageId = null;
+        this.editDrafts.clear();
 
         this.state.currentSessionId = sessionId;
         sessionStorage.setItem(SESSION_STORAGE_KEY, sessionId);
@@ -5325,24 +5327,7 @@ class ChatApp {
             // Add user message with file metadata
             const metadata = {};
             if (hasFiles) {
-                // Store file data for preview rendering and include detected file type
-                const { getFileType, extractDocxText } = await import('./services/fileUtils.js');
-                const fileData = await Promise.all(currentFiles.map(async (file) => {
-                    const dataUrl = await this.createImagePreview(file);
-                    const detectedType = await getFileType(file);
-                    const metadata = {
-                        name: file.name,
-                        type: file.type,
-                        size: file.size,
-                        dataUrl: dataUrl,
-                        detectedType: detectedType  // Store the detected type (image, pdf, docx, audio, text)
-                    };
-                    if (detectedType === 'docx') {
-                        metadata.extractedText = await extractDocxText(file);
-                    }
-                    return metadata;
-                }));
-                metadata.files = fileData;
+                metadata.files = await this.buildMessageFileMetadata(currentFiles);
             }
             if (searchEnabled) {
                 metadata.searchEnabled = true;
@@ -5944,6 +5929,7 @@ class ChatApp {
             // Clear edit state if deleting current session
             if (deletedCurrentSession) {
                 this.editingMessageId = null;
+                this.editDrafts.clear();
             }
 
             // Switch to another session if we deleted the current one
@@ -5972,9 +5958,94 @@ class ChatApp {
      * @returns {Object} Template options
      */
     getMessageTemplateOptions(messageId) {
+        const editDraft = this.editDrafts.get(messageId) || null;
         return {
-            isEditing: this.editingMessageId === messageId
+            isEditing: this.editingMessageId === messageId,
+            editContent: editDraft?.content,
+            editFiles: editDraft?.files
         };
+    }
+
+    cloneMessageFiles(files) {
+        return Array.isArray(files)
+            ? files.map(file => ({ ...file }))
+            : [];
+    }
+
+    async buildMessageFileMetadata(files) {
+        const { getFileType, extractDocxText } = await import('./services/fileUtils.js');
+        return Promise.all(files.map(async (file) => {
+            const dataUrl = await this.createImagePreview(file);
+            const detectedType = await getFileType(file);
+            const metadata = {
+                name: file.name,
+                type: file.type,
+                size: file.size,
+                dataUrl,
+                detectedType
+            };
+            if (detectedType === 'docx') {
+                metadata.extractedText = await extractDocxText(file);
+            }
+            return metadata;
+        }));
+    }
+
+    updateEditDraftContent(messageId, content) {
+        const draft = this.editDrafts.get(messageId);
+        if (!draft) return;
+        draft.content = content;
+    }
+
+    async refreshEditMessage(messageId, { focusTextarea = false } = {}) {
+        const session = this.getCurrentSession();
+        if (!session || !this.chatArea) return;
+        const messages = await chatDB.getSessionMessages(session.id);
+        const message = messages.find(m => m.id === messageId);
+        if (!message) return;
+        this.chatArea.updateMessage(message);
+        this.chatArea.initializeEditForm?.();
+        if (focusTextarea) {
+            requestAnimationFrame(() => {
+                const textarea = document.querySelector(`.edit-prompt-textarea[data-message-id="${messageId}"]`);
+                textarea?.focus();
+            });
+        }
+    }
+
+    async handleEditFileUpload(messageId, files) {
+        const draft = this.editDrafts.get(messageId);
+        if (!draft || !files?.length) return;
+
+        const { validateFile } = await import('./services/fileUtils.js');
+        const validFiles = [];
+        const errors = [];
+
+        for (const file of files) {
+            const validation = await validateFile(file);
+            if (validation.valid) {
+                validFiles.push(file);
+            } else {
+                errors.push(validation.error);
+            }
+        }
+
+        if (validFiles.length > 0) {
+            const fileMetadata = await this.buildMessageFileMetadata(validFiles);
+            draft.files.push(...fileMetadata);
+            await this.refreshEditMessage(messageId, { focusTextarea: true });
+        }
+
+        if (errors.length > 0) {
+            this.showErrorNotification(errors.join('\n\n'));
+        }
+    }
+
+    async removeEditAttachment(messageId, index) {
+        const draft = this.editDrafts.get(messageId);
+        if (!draft || index < 0 || index >= draft.files.length) return;
+        draft.files.splice(index, 1);
+        await this.refreshEditMessage(messageId, { focusTextarea: true });
     }
 
     /**
@@ -6027,6 +6098,11 @@ class ChatApp {
             return;
         }
 
+        this.editDrafts.clear();
+        this.editDrafts.set(messageId, {
+            content: message.content || '',
+            files: this.cloneMessageFiles(message.files)
+        });
         this.editingMessageId = messageId;
         await this.chatArea.render();
 
@@ -6048,6 +6124,7 @@ class ChatApp {
     cancelEditMode(messageId) {
         if (this.editingMessageId === messageId) {
             this.editingMessageId = null;
+            this.editDrafts.delete(messageId);
             this.chatArea.render();
         }
     }
@@ -6064,7 +6141,9 @@ class ChatApp {
         if (!textarea) return;
 
         const newContent = textarea.value.trim();
-        if (!newContent) return;
+        const draft = this.editDrafts.get(messageId);
+        const draftFiles = this.cloneMessageFiles(draft?.files);
+        if (!newContent && draftFiles.length === 0) return;
 
         if (this.isCurrentSessionStreaming()) {
             const stopped = await this.stopCurrentSessionStreamingAndWait();
@@ -6083,8 +6162,9 @@ class ChatApp {
 
         const message = messages[messageIndex];
 
-        // Update the message content
+        // Update the message content and attachment set as one committed edit.
         message.content = newContent;
+        message.files = draftFiles.length > 0 ? draftFiles : null;
         message.timestamp = Date.now();
         await chatDB.saveMessage(message);
 
@@ -6114,6 +6194,7 @@ class ChatApp {
 
         // Clear edit mode
         this.editingMessageId = null;
+        this.editDrafts.delete(messageId);
 
         // Log the edit action
         if (window.networkLogger) {
@@ -6251,6 +6332,7 @@ class ChatApp {
 
         // Clear edit state
         this.editingMessageId = null;
+        this.editDrafts.clear();
 
         this.renderSessions();
         // Scroll sidebar to top to show the new session
@@ -6285,6 +6367,8 @@ class ChatApp {
         this.sessionPromptScrollAnchors.clear();
         this.detachPromptSlideUpEffect();
         this.clearAllChatbarStates();
+        this.editingMessageId = null;
+        this.editDrafts.clear();
 
         this.state.sessions = [];
         this.state.sessionsById = new Map();

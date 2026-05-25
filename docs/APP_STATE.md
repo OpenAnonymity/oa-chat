@@ -25,6 +25,14 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
+- 2026-05-25: User prompt edit mode now has an attachment draft.
+  - `ChatApp.editDrafts` keeps edited text plus attachment metadata in memory while
+    the inline editor is open; IndexedDB is not updated until the user saves.
+  - The edit form can add newly validated files and remove existing attachments.
+    On save, `message.content` and `message.files` are committed together before
+    later turns are truncated and `regenerateResponse()` runs.
+  - Empty-text prompts are valid only when at least one attachment remains, matching
+    normal send behavior for file-only turns.
 - 2026-05-25: Forked conversations preserve generated/manual titles.
   - `ChatApp.forkConversation(...)` now asks `chat/domain/sessionSearch.js` for
     fork title fields instead of rebuilding every fork title from the first user
