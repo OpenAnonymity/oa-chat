@@ -7773,41 +7773,104 @@ class ChatApp {
         if (!overlay) return;
 
         let dragCounter = 0;
+        let activeEditDropCard = null;
+
+        const isFileDrag = (event) => (
+            event.dataTransfer
+            && event.dataTransfer.types
+            && event.dataTransfer.types.includes('Files')
+        );
+
+        const getEditDropCard = (target) => {
+            const hoveredCard = target?.closest?.('.edit-prompt-input-card') || null;
+            if (hoveredCard) return hoveredCard;
+
+            const activeTextarea = document.activeElement?.closest?.('.edit-prompt-textarea') || null;
+            if (activeTextarea) return activeTextarea.closest?.('.edit-prompt-input-card') || null;
+
+            if (this.editingMessageId && this.editDrafts.has(this.editingMessageId)) {
+                const editingTextarea = Array.from(document.querySelectorAll('.edit-prompt-textarea'))
+                    .find(textarea => textarea.dataset.messageId === this.editingMessageId);
+                return editingTextarea?.closest?.('.edit-prompt-input-card') || null;
+            }
+
+            return null;
+        };
+
+        const clearEditDropCard = () => {
+            if (activeEditDropCard) {
+                activeEditDropCard.classList.remove('edit-prompt-drag-active');
+                activeEditDropCard = null;
+            }
+        };
+
+        const updateDragFeedback = (target) => {
+            const editDropCard = getEditDropCard(target);
+            if (editDropCard) {
+                overlay.classList.add('hidden');
+                if (activeEditDropCard && activeEditDropCard !== editDropCard) {
+                    activeEditDropCard.classList.remove('edit-prompt-drag-active');
+                }
+                activeEditDropCard = editDropCard;
+                activeEditDropCard.classList.add('edit-prompt-drag-active');
+                return;
+            }
+
+            clearEditDropCard();
+            overlay.classList.remove('hidden');
+        };
+
+        const clearDragFeedback = () => {
+            overlay.classList.add('hidden');
+            clearEditDropCard();
+        };
 
         window.addEventListener('dragenter', (e) => {
             e.preventDefault();
             // Check if dragging files
-            if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files')) {
+            if (isFileDrag(e)) {
                 dragCounter++;
                 if (dragCounter === 1) {
-                    overlay.classList.remove('hidden');
+                    updateDragFeedback(e.target);
                 }
             }
         });
 
         window.addEventListener('dragleave', (e) => {
             e.preventDefault();
-            if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files')) {
+            if (isFileDrag(e)) {
                 dragCounter--;
                 if (dragCounter <= 0) {
                     dragCounter = 0;
-                    overlay.classList.add('hidden');
+                    clearDragFeedback();
                 }
             }
         });
 
         window.addEventListener('dragover', (e) => {
             e.preventDefault(); // Necessary to allow dropping
+            if (isFileDrag(e)) {
+                updateDragFeedback(e.target);
+            }
         });
 
         window.addEventListener('drop', async (e) => {
             e.preventDefault();
             dragCounter = 0;
-            overlay.classList.add('hidden');
+            const editCard = getEditDropCard(e.target);
+            clearDragFeedback();
 
             if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
                 const files = Array.from(e.dataTransfer.files);
-                await this.handleFileUpload(files);
+                const droppedEditMessageId = editCard?.querySelector?.('.edit-prompt-textarea')?.dataset?.messageId || null;
+                const activeEditMessageId = document.activeElement?.closest?.('.edit-prompt-textarea')?.dataset?.messageId || null;
+                const editMessageId = droppedEditMessageId || activeEditMessageId;
+
+                if (editMessageId && this.editDrafts.has(editMessageId)) {
+                    await this.handleEditFileUpload(editMessageId, files);
+                } else {
+                    await this.handleFileUpload(files);
+                }
             }
         });
     }

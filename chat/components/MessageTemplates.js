@@ -652,7 +652,13 @@ function buildUserMessage(message, options = {}) {
                                         </svg>
                                         ${attachmentCount > 0 ? `<span class="absolute -top-1 -right-1 w-4 h-4 bg-green-600 text-white text-[10px] font-bold rounded-full flex items-center justify-center">${attachmentCount}</span>` : ''}
                                     </button>
-                                    <span class="text-[11px] text-muted-foreground truncate">${attachmentLabel}</span>
+                                    <button
+                                        type="button"
+                                        class="edit-add-files-label min-w-0 truncate bg-transparent px-1 text-left text-[11px] text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none"
+                                        data-message-id="${safeMessageId}"
+                                        data-tooltip="Attach files"
+                                        data-tooltip-position="top"
+                                    >${attachmentLabel}</button>
                                 </div>
                                 <div class="flex items-center gap-2">
                                     <button

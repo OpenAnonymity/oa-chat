@@ -73,7 +73,7 @@ export default class ChatArea {
                 return;
             }
 
-            const addEditFilesBtn = e.target.closest('.edit-add-files-btn');
+            const addEditFilesBtn = e.target.closest('.edit-add-files-btn, .edit-add-files-label');
             if (addEditFilesBtn) {
                 e.preventDefault();
                 const input = addEditFilesBtn.closest('.edit-prompt-form')?.querySelector('.edit-file-input');

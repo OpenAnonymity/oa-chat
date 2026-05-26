@@ -25,6 +25,11 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
+- 2026-05-26: Prompt edit file drag feedback is scoped to the inline editor.
+  - While a prompt edit draft is open, file drags highlight the edit prompt card
+    and keep the bottom composer drop overlay hidden, matching the drop target.
+  - The edit form does not replay its enter animation on attachment add/remove
+    refreshes, avoiding a post-drop flash when the attachment list rerenders.
 - 2026-05-25: Pulled `nanomem` to `dbdbd4b` on top of latest upstream
   `origin/main` `9dd3581`.
   - Upstream added ingestion prompt/version-log cleanup and temporal wording
@@ -58,6 +63,9 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - Edit attachments render inside the same bordered prompt editor surface as the
     textarea and controls. Global file paste routes to the active edit textarea's
     draft instead of the main chat input.
+  - Edit-mode file drop routes to the hovered edit prompt card, falling back to
+    the focused edit textarea. The attachment count label opens the same file
+    picker as the paperclip icon.
 - 2026-05-25: Forked conversations preserve generated/manual titles.
   - `ChatApp.forkConversation(...)` now asks `chat/domain/sessionSearch.js` for
     fork title fields instead of rebuilding every fork title from the first user

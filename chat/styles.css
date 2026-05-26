@@ -4554,7 +4554,17 @@ html {
 
 /* Edit prompt form */
 .edit-prompt-form {
-    animation: fadeIn 0.2s ease-in-out;
+    animation: none;
+}
+
+.edit-prompt-input-card {
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+
+.edit-prompt-input-card.edit-prompt-drag-active {
+    border-color: hsl(var(--color-primary) / 0.45);
+    background-color: hsl(var(--color-primary) / 0.04);
+    box-shadow: 0 0 0 2px hsl(var(--color-primary) / 0.14);
 }
 
 .edit-prompt-textarea {
