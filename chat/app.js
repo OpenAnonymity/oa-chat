@@ -4166,8 +4166,8 @@ class ChatApp {
                 });
             } else {
                 msg.content = alwaysInclude
-                    ? `Retrieved ${files.length} memory file${files.length === 1 ? '' : 's'}. Always include is on. Sending with minimized personal context.`
-                    : `Retrieved ${files.length} memory file${files.length === 1 ? '' : 's'}. Sending the approved prompt with minimized personal context.`;
+                    ? `Retrieved ${files.length} memory file${files.length === 1 ? '' : 's'}. Always include on. Sending now.`
+                    : `Retrieved ${files.length} memory file${files.length === 1 ? '' : 's'}. Sending approved prompt.`;
             }
             msg.memoryApprovalPrompt = { status: 'approved', linkedUserMessageId: draft.linkedUserMessageId, autoIncluded: alwaysInclude };
         } else {
@@ -4282,24 +4282,22 @@ class ChatApp {
     buildMemoryContextSummary({ fileCount = 0, reused = false, hasNewContext = false, pending = true, alwaysInclude = false, autoIncluded = false }) {
         if (reused && !hasNewContext) {
             if (!pending) {
-                if (autoIncluded) return 'Reused earlier memory context. Sending automatically with minimized personal context.';
-                if (alwaysInclude) return 'Reused earlier memory context. Always include is on. Sending with minimized personal context.';
-                return 'Reused earlier memory context. Sending the approved prompt with minimized personal context.';
+                return 'No new retrieval. Using previously approved memory.';
             }
-            return 'Reused earlier memory context. Review the revised prompt before sending.';
+            return 'Using earlier memory. Review before sending.';
         }
 
         const retrieved = fileCount > 0
             ? `Retrieved ${fileCount} new memory file${fileCount === 1 ? '' : 's'}`
-            : 'Retrieved new memory context';
-        const prefix = reused ? `${retrieved} and reused earlier context` : retrieved;
+            : 'Retrieved new memory';
+        const prefix = reused ? `${retrieved} plus earlier memory` : retrieved;
 
         if (!pending) {
-            if (autoIncluded) return `${prefix}. Sending automatically with minimized personal context.`;
-            if (alwaysInclude) return `${prefix}. Always include is on. Sending with minimized personal context.`;
-            return `${prefix}. Sending the approved prompt with minimized personal context.`;
+            if (autoIncluded) return `${prefix}. Sending automatically.`;
+            if (alwaysInclude) return `${prefix}. Always include on. Sending now.`;
+            return `${prefix}. Sending approved prompt.`;
         }
-        return `${prefix}. Review the revised prompt before sending.`;
+        return `${prefix}. Review before sending.`;
     }
 
     async recordApprovedMemoryContext(session, draft) {
@@ -4554,9 +4552,9 @@ class ChatApp {
                     : '';
                 if (reusedPrompt) {
                     this._lastApiContent = stripMemoryPromptUserData(reusedPrompt);
-                    retrievalMessage.content = 'Reused earlier memory context. Sending with previously approved minimized personal context.';
+                    retrievalMessage.content = 'No new retrieval. Using previously approved memory.';
                 } else {
-                    retrievalMessage.content = 'No added memory context. Sending original prompt.';
+                    retrievalMessage.content = 'No added memory. Sending original prompt.';
                 }
                 retrievalMessage.memoryApprovalPrompt = null;
                 retrievalMessage.ciPromptDraft = null;

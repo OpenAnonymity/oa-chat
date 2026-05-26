@@ -227,10 +227,8 @@ forwarding its details into the final prompt.
     flash during trace refreshes
   - status copy should stay one line. Prompt details belong in the revised
     prompt preview, not in the summary text. Current non-preview summaries use
-    compact forms such as `No added memory context. Sending original prompt.`,
-    `Reused earlier memory context. Sending with previously approved minimized
-    personal context.`, and `Memory retrieval unavailable. Sending without
-    personal context.`
+    compact forms such as `No added memory. Sending original prompt.`,
+    `No new retrieval. Using previously approved memory.`, and `Memory retrieval unavailable. Sending without personal context.`
 - Prompt preview/edit uses the same tagged prompt editor pattern as `memory-chat`:
   - `[[user_data]]...[[/user_data]]` spans render as highlighted user-data marks
   - edits persist into `ciPromptDraft.editedFullPrompt`
@@ -252,8 +250,7 @@ forwarding its details into the final prompt.
 - Resending a user prompt prunes approved memory context linked to that user
   turn and later user turns before rerunning memory retrieval. On a first-turn
   resend this clears all reusable session memory context, so the rerun does not
-  show `Reused earlier memory context...` from the same prompt's previous
-  attempt.
+  show an approved-memory reuse status from the same prompt's previous attempt.
 - The memory filesystem panel uses the same modal/tree/editor shell as
   `memory-chat` and opens with `Cmd/Ctrl+Shift+M`.
 - The settings menu also exposes a dedicated `Memory` row under `Data Controls`.

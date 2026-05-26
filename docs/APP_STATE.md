@@ -30,6 +30,12 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     and keep the bottom composer drop overlay hidden, matching the drop target.
   - The edit form does not replay its enter animation on attachment add/remove
     refreshes, avoiding a post-drop flash when the attachment list rerenders.
+- 2026-05-25: Memory-agent status summaries were shortened.
+  - Approved/reused memory sends now use compact copy such as `No new retrieval.
+    Using previously approved memory.` instead of spelling out minimized
+    personal context or generic sending state.
+  - No-memory adaptive sends now say `No added memory. Sending original prompt.`
+    so the status row stays easier to scan.
 - 2026-05-25: Pulled `nanomem` to `dbdbd4b` on top of latest upstream
   `origin/main` `9dd3581`.
   - Upstream added ingestion prompt/version-log cleanup and temporal wording
