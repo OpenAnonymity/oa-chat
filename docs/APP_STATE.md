@@ -192,6 +192,14 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     missing lane keys, the controller checks that enough tickets exist for all
     lanes that need fresh access so it does not partially charge one lane and
     then fail on the other.
+  - If council mode is enabled after a normal single-model turn, the primary
+    lane can seed from the existing `session.apiKey` when the key is valid and
+    the access metadata identifies the same primary model. In that case,
+    opening council only redeems tickets for missing/new lanes such as the
+    secondary model; seeded primary lane access records use
+    `ticketsConsumed: 0`. Newly acquired single-model access records are stamped
+    with `modelId`/`modelName` so council does not seed an old key whose model
+    ownership is ambiguous.
   - A multi-model turn is stored as one assistant message with `message.council`
     metadata. `message.content` is the canonical first completed response, so
     follow-up turns still have a normal assistant context while the second lane

@@ -144,7 +144,7 @@ export default class CouncilController {
             apiKeyInfo: accessInfo.apiKeyInfo || accessInfo.info || accessInfo,
             expiresAt: accessInfo.expiresAt || accessInfo.expires_at || accessInfo.apiKeyInfo?.expiresAt || null,
             modelId: accessInfo.modelId || null,
-            ticketsConsumed: accessInfo.ticketsConsumed || accessInfo.tickets_consumed || accessInfo.ticketsUsed?.length || null,
+            ticketsConsumed: accessInfo.ticketsConsumed ?? accessInfo.tickets_consumed ?? accessInfo.ticketsUsed?.length ?? null,
             updatedAt: Date.now()
         };
         return container[laneId];
@@ -192,6 +192,49 @@ export default class CouncilController {
     needsFreshLaneAccess(session, entry) {
         const laneAccess = this.getLaneAccess(session, entry.laneId);
         return !(laneAccess?.apiKey && laneAccess.modelId === entry.id && !this.isLaneAccessExpired(laneAccess));
+    }
+
+    seedPrimaryLaneAccessFromSession(session, entry) {
+        if (entry?.laneId !== 'primary') return null;
+        const laneAccess = this.getLaneAccess(session, 'primary');
+        if (laneAccess?.apiKey && laneAccess.modelId === entry.id && !this.isLaneAccessExpired(laneAccess)) {
+            return laneAccess;
+        }
+        if (!session?.apiKey || this.inferenceService.isAccessExpired(session)) {
+            return null;
+        }
+        const accessInfo = this.inferenceService.getAccessInfo(session);
+        if (!accessInfo?.token) {
+            return null;
+        }
+        const accessModelId = this.resolveAccessModelId(accessInfo.info || session.apiKeyInfo || null);
+        if (accessModelId !== entry.id) {
+            return null;
+        }
+        return this.setLaneAccess(session, 'primary', {
+            key: accessInfo.token,
+            apiKeyInfo: accessInfo.info || session.apiKeyInfo || null,
+            expiresAt: accessInfo.expiresAt || session.expiresAt || null,
+            modelId: entry.id,
+            ticketsConsumed: 0
+        });
+    }
+
+    resolveAccessModelId(accessInfo) {
+        const modelName = accessInfo?.modelId
+            || accessInfo?.model_id
+            || accessInfo?.requestedModelId
+            || accessInfo?.requested_model_id
+            || accessInfo?.modelName
+            || accessInfo?.model
+            || null;
+        if (!modelName) return null;
+        const normalizedName = this.app.normalizeModelName(modelName) || modelName;
+        const modelEntry = this.app.state.models.find((model) => model.name === modelName)
+            || this.app.state.models.find((model) => model.id === modelName)
+            || this.app.state.models.find((model) => model.name === normalizedName)
+            || this.app.state.models.find((model) => model.id === normalizedName);
+        return modelEntry?.id || null;
     }
 
     async requestLaneAccess(session, entry, typingId) {
@@ -285,6 +328,7 @@ export default class CouncilController {
     }
 
     async ensureLaneAccess(session, entry, typingId) {
+        this.seedPrimaryLaneAccessFromSession(session, entry);
         const laneAccess = this.getLaneAccess(session, entry.laneId);
         if (laneAccess?.apiKey && laneAccess.modelId === entry.id && !this.isLaneAccessExpired(laneAccess)) {
             return laneAccess;
@@ -294,6 +338,7 @@ export default class CouncilController {
 
     async ensureAccessForEntries(session, entries, typingId) {
         const ticketsRequired = Math.max(1, this.calculateCouncilTicketRequirement(entries));
+        entries.forEach((entry) => this.seedPrimaryLaneAccessFromSession(session, entry));
         const freshEntries = entries.filter((entry) => this.needsFreshLaneAccess(session, entry));
         const freshTicketCost = freshEntries.reduce((total, entry) => total + this.getTicketCostForEntry(entry), 0);
         const availableTickets = this.ticketClient.getTicketCount();

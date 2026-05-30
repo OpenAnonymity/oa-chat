@@ -153,6 +153,8 @@ test('acquireSessionAccess requests tickets, verifies access, saves, and clears 
     assert.deepEqual(harness.networkSessions, ['session-1']);
     assert.equal(harness.session.shareInfo.apiKeyShared, false);
     assert.equal(harness.session.currentAccess.key, 'secret-key');
+    assert.equal(harness.session.apiKeyInfo.modelId, 'model-a');
+    assert.equal(harness.session.apiKeyInfo.modelName, 'Model A');
     assert.equal(harness.session.apiKeyInfo.verifierSubmitKeyProof.status, 'verified');
     assert.deepEqual(harness.changed, ['session-1']);
     assert.equal(harness.savedSessions.length, 1);

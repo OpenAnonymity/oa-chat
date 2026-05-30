@@ -142,6 +142,8 @@ export async function acquireSessionAccess(options = {}) {
         }
     }
 
+    result.modelId = result.modelId || modelId;
+    result.modelName = result.modelName || modelName;
     inferenceService.setAccessInfo(session, result);
 
     const verifier = inferenceService.getVerificationAdapter(session);

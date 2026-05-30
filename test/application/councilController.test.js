@@ -8,11 +8,14 @@ function createController({
     reasoningEnabled = false,
     ticketCount = 0,
     chatDB = {},
-    inferenceService = {}
+    inferenceService = {},
+    models = []
 } = {}) {
     const app = {
+        state: { models },
         reasoningEnabled,
         reasoningEffort: 'medium',
+        normalizeModelName: (modelName) => modelName,
         getTicketCost: (modelId) => costs[modelId] ?? 1,
         processMessagesWithFiles: (messages) => messages,
         isAccessCreditExhaustedError: (error) => error?.status === 402
@@ -121,6 +124,155 @@ test('requestLaneAccess passes the lane model cost to the access issuer', async 
     assert.equal(session.councilAccess.secondary.ticketsConsumed, 2);
     assert.equal(session.councilAccess.secondary.modelId, 'anthropic/claude');
     assert.equal(savedSessions.length, 2);
+});
+
+test('ensureAccessForEntries reuses valid single-chat primary access and only charges missing secondary lane', async () => {
+    const validExpiry = new Date(Date.now() + 60_000).toISOString();
+    const controller = createController({
+        ticketCount: 2,
+        models: [
+            { id: 'openai/gpt', name: 'GPT' },
+            { id: 'anthropic/claude', name: 'Claude' }
+        ],
+        costs: {
+            'openai/gpt': 3,
+            'anthropic/claude': 2
+        },
+        inferenceService: {
+            isAccessExpired: () => false,
+            getAccessInfo: (session) => ({
+                token: session.apiKey,
+                info: session.apiKeyInfo,
+                expiresAt: session.expiresAt
+            })
+        }
+    });
+    const session = {
+        id: 'session-1',
+        model: 'GPT',
+        apiKey: 'single-primary-key',
+        apiKeyInfo: { stationId: 'station-a', modelId: 'openai/gpt' },
+        expiresAt: validExpiry,
+        councilAccess: {}
+    };
+    const requests = [];
+    controller.requestLaneAccess = async (targetSession, entry) => {
+        requests.push(entry.laneId);
+        return controller.setLaneAccess(targetSession, entry.laneId, {
+            key: `${entry.laneId}-key`,
+            modelId: entry.id,
+            expiresAt: validExpiry,
+            ticketsConsumed: controller.getTicketCostForEntry(entry)
+        });
+    };
+
+    const ticketsRequired = await controller.ensureAccessForEntries(session, [
+        { laneId: 'primary', id: 'openai/gpt', name: 'GPT' },
+        { laneId: 'secondary', id: 'anthropic/claude', name: 'Claude' }
+    ]);
+
+    assert.equal(ticketsRequired, 5);
+    assert.deepEqual(requests, ['secondary']);
+    assert.equal(session.councilAccess.primary.apiKey, 'single-primary-key');
+    assert.equal(session.councilAccess.primary.modelId, 'openai/gpt');
+    assert.equal(session.councilAccess.primary.ticketsConsumed, 0);
+    assert.equal(session.councilAccess.secondary.apiKey, 'secondary-key');
+});
+
+test('ensureAccessForEntries does not seed primary lane when session access lacks model metadata', async () => {
+    const validExpiry = new Date(Date.now() + 60_000).toISOString();
+    const controller = createController({
+        ticketCount: 5,
+        models: [
+            { id: 'openai/gpt', name: 'GPT' },
+            { id: 'anthropic/claude', name: 'Claude' }
+        ],
+        costs: {
+            'openai/gpt': 3,
+            'anthropic/claude': 2
+        },
+        inferenceService: {
+            isAccessExpired: () => false,
+            getAccessInfo: (session) => ({
+                token: session.apiKey,
+                info: session.apiKeyInfo,
+                expiresAt: session.expiresAt
+            })
+        }
+    });
+    const session = {
+        id: 'session-1',
+        model: 'GPT',
+        apiKey: 'single-key-without-model-metadata',
+        apiKeyInfo: {},
+        expiresAt: validExpiry,
+        councilAccess: {}
+    };
+    const requests = [];
+    controller.requestLaneAccess = async (targetSession, entry) => {
+        requests.push(entry.laneId);
+        return controller.setLaneAccess(targetSession, entry.laneId, {
+            key: `${entry.laneId}-key`,
+            modelId: entry.id,
+            expiresAt: validExpiry
+        });
+    };
+
+    await controller.ensureAccessForEntries(session, [
+        { laneId: 'primary', id: 'openai/gpt', name: 'GPT' },
+        { laneId: 'secondary', id: 'anthropic/claude', name: 'Claude' }
+    ]);
+
+    assert.deepEqual(requests, ['primary', 'secondary']);
+    assert.equal(session.councilAccess.primary.apiKey, 'primary-key');
+});
+
+test('ensureAccessForEntries does not seed primary lane when access model metadata differs', async () => {
+    const validExpiry = new Date(Date.now() + 60_000).toISOString();
+    const controller = createController({
+        ticketCount: 5,
+        models: [
+            { id: 'openai/gpt', name: 'GPT' },
+            { id: 'anthropic/claude', name: 'Claude' }
+        ],
+        costs: {
+            'openai/gpt': 3,
+            'anthropic/claude': 2
+        },
+        inferenceService: {
+            isAccessExpired: () => false,
+            getAccessInfo: (session) => ({
+                token: session.apiKey,
+                info: session.apiKeyInfo,
+                expiresAt: session.expiresAt
+            })
+        }
+    });
+    const session = {
+        id: 'session-1',
+        model: 'GPT',
+        apiKey: 'single-claude-key',
+        apiKeyInfo: { modelId: 'anthropic/claude' },
+        expiresAt: validExpiry,
+        councilAccess: {}
+    };
+    const requests = [];
+    controller.requestLaneAccess = async (targetSession, entry) => {
+        requests.push(entry.laneId);
+        return controller.setLaneAccess(targetSession, entry.laneId, {
+            key: `${entry.laneId}-key`,
+            modelId: entry.id,
+            expiresAt: validExpiry
+        });
+    };
+
+    await controller.ensureAccessForEntries(session, [
+        { laneId: 'primary', id: 'openai/gpt', name: 'GPT' },
+        { laneId: 'secondary', id: 'anthropic/claude', name: 'Claude' }
+    ]);
+
+    assert.deepEqual(requests, ['primary', 'secondary']);
+    assert.equal(session.councilAccess.primary.apiKey, 'primary-key');
 });
 
 test('ensureAccessForEntries refreshes only the lane whose model changed', async () => {
