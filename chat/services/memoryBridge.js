@@ -4,7 +4,7 @@ import { DEFAULT_MEMORY_AGENT_MODEL, isAllowedConfidentialModel } from './confid
 const TINFOIL_BASE_URL = 'https://inference.tinfoil.sh/v1';
 const MEMORY_KEY_GRACE_MS = 60_000;
 
-export const CONFIDENTIAL_KEY_TICKETS = 2;
+export const CONFIDENTIAL_KEY_TICKETS = 1;
 
 function getExpiresAt(keyInfo) {
     if (!keyInfo) return null;

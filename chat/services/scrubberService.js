@@ -10,7 +10,7 @@ import {
 const SCRUBBER_BASE_URL = 'https://inference.tinfoil.sh';
 const SCRUBBER_BACKEND_ID = 'tinfoil';
 const SCRUBBER_MODEL_SETTING_KEY = 'scrubberModel';
-const CONFIDENTIAL_KEY_TICKETS_REQUIRED = 2;
+const CONFIDENTIAL_KEY_TICKETS_REQUIRED = 1;
 
 const REDACT_OUTPUT_TAG = 'scrubbed_prompt';
 const RESTORE_OUTPUT_TAG = 'restored_response';

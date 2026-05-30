@@ -84,7 +84,7 @@ contract the app should rely on.
   - `provider: 'openai'`
 - `nanomem` still supports the SDK-backed Tinfoil transport for other callers,
   but the root app is intentionally not using it right now.
-- The bridge requests confidential keys from `ticketClient.requestConfidentialApiKey(2)`.
+- The bridge requests confidential keys from `ticketClient.requestConfidentialApiKey(1)`.
 - The key is cached on the session as `memoryKey` / `memoryKeyInfo`.
 - The cache uses the same 60-second grace-window pattern as scrubber-key
   expiry checks.
