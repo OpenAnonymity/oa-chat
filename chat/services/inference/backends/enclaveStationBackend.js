@@ -5,8 +5,8 @@ const enclaveStationBackend = {
     accessShortLabel: 'Session',
     accessType: 'session',
     requestName: 'OA-WebApp-Session',
-    defaultModelId: 'openai/gpt-5.2-chat',
-    defaultModelName: 'OpenAI: GPT-5.2 Instant',
+    defaultModelId: 'openai/gpt-5.3-chat',
+    defaultModelName: 'OpenAI: GPT-5.3 Instant',
     tls: {
         captureHosts: [],
         verifyUrl: '',

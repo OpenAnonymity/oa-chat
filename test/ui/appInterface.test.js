@@ -33,6 +33,7 @@ function createMockApp(overrides = {}) {
         reasoningEnabled: true,
         sessionSearchQuery: 'query',
         getCurrentSession: () => session,
+        getDefaultModelName: () => 'Default Model',
         normalizeModelName: (modelName) => `${modelName} normalized`,
         renderCurrentModel: () => calls.push(['renderCurrentModel']),
         getFilteredSessions: () => [{ id: 'session-1' }],
@@ -62,6 +63,7 @@ test('model picker interface exposes only model-picker elements and state select
     assert.equal(ui.state, app.state);
     assert.equal(ui.reasoningEnabled, true);
     assert.equal(ui.getCurrentSession(), null);
+    assert.equal(ui.getDefaultModelName(), 'Default Model');
     assert.equal(ui.normalizeModelName('Model A'), 'Model A normalized');
 });
 

@@ -5,8 +5,8 @@ const providerDirectBackend = {
     accessShortLabel: 'Token',
     accessType: 'token',
     requestName: 'OA-WebApp-Token',
-    defaultModelId: 'openai/gpt-5.2-chat',
-    defaultModelName: 'OpenAI: GPT-5.2 Instant',
+    defaultModelId: 'openai/gpt-5.3-chat',
+    defaultModelName: 'OpenAI: GPT-5.3 Instant',
     tls: {
         captureHosts: [],
         verifyUrl: '',

@@ -1859,7 +1859,7 @@ export function buildMessageHTML(message, helpers, models, sessionModelName, opt
         // Determine provider name and model name
         const defaultModelName = window.app && typeof window.app.getDefaultModelName === 'function'
             ? window.app.getDefaultModelName()
-            : 'OpenAI: GPT-5.2 Instant';
+            : 'OpenAI: GPT-5.3 Instant';
         // For assistant messages, prefer the model stored on the message itself
         const storedModel = message.model || sessionModelName || defaultModelName;
         const isModelId = typeof storedModel === 'string' && storedModel.includes('/');

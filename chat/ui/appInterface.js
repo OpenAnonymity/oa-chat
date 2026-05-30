@@ -103,6 +103,7 @@ export function createModelPickerInterface(app, options = {}) {
             return app.reasoningEnabled;
         },
         getCurrentSession: () => app.getCurrentSession(),
+        getDefaultModelName: () => app.getDefaultModelName(),
         normalizeModelName: (modelName) => app.normalizeModelName(modelName),
         renderCurrentModel: () => app.renderCurrentModel(),
         actions: {

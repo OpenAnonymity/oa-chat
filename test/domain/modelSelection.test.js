@@ -4,6 +4,7 @@ import {
     filterDisabledModels,
     getFallbackModelEntry,
     normalizeModelName,
+    resolveDefaultModelPreferenceUpdate,
     upgradeDefaultModelPreference
 } from '../../chat/domain/modelSelection.js';
 
@@ -19,12 +20,16 @@ test('filterDisabledModels returns a copy and removes disabled ids', () => {
     ]);
 });
 
-test('getFallbackModelEntry prefers the default id and otherwise uses first available model', () => {
+test('getFallbackModelEntry prefers pinned order before default id and first available model', () => {
     const models = [
         { id: 'openai/a', name: 'A' },
         { id: 'openai/b', name: 'B' }
     ];
 
+    assert.deepEqual(
+        getFallbackModelEntry(models, 'openai/a', ['missing', 'openai/b']),
+        { id: 'openai/b', name: 'B' }
+    );
     assert.deepEqual(getFallbackModelEntry(models, 'openai/b'), { id: 'openai/b', name: 'B' });
     assert.deepEqual(getFallbackModelEntry(models, 'missing'), { id: 'openai/a', name: 'A' });
     assert.equal(getFallbackModelEntry([], 'openai/a'), null);
@@ -40,6 +45,7 @@ test('normalizeModelName standardizes known names before aliases', () => {
 });
 
 test('normalizeModelName maps legacy aliases', () => {
+    assert.equal(normalizeModelName('GPT-5.3 Chat'), 'OpenAI: GPT-5.3 Instant');
     assert.equal(normalizeModelName('GPT-5.2 Chat'), 'OpenAI: GPT-5.2 Instant');
     assert.equal(normalizeModelName('Custom Model'), 'Custom Model');
 });
@@ -54,13 +60,67 @@ test('normalizeModelName resolves ids through display-name provider and standard
     );
 });
 
-test('upgradeDefaultModelPreference only upgrades the previous default', () => {
+test('upgradeDefaultModelPreference upgrades configured previous defaults', () => {
     assert.equal(
-        upgradeDefaultModelPreference('OpenAI: GPT-5.1 Instant', 'OpenAI: GPT-5.1 Instant', 'OpenAI: GPT-5.2 Instant'),
-        'OpenAI: GPT-5.2 Instant'
+        upgradeDefaultModelPreference(
+            'OpenAI: GPT-5.2 Instant',
+            ['OpenAI: GPT-5.2 Instant', 'OpenAI: GPT-5.1 Instant'],
+            'OpenAI: GPT-5.3 Instant'
+        ),
+        'OpenAI: GPT-5.3 Instant'
     );
     assert.equal(
-        upgradeDefaultModelPreference('Anthropic: Claude', 'OpenAI: GPT-5.1 Instant', 'OpenAI: GPT-5.2 Instant'),
+        upgradeDefaultModelPreference(
+            'OpenAI: GPT-5.1 Instant',
+            ['OpenAI: GPT-5.2 Instant', 'OpenAI: GPT-5.1 Instant'],
+            'OpenAI: GPT-5.3 Instant'
+        ),
+        'OpenAI: GPT-5.3 Instant'
+    );
+    assert.equal(
+        upgradeDefaultModelPreference('Anthropic: Claude', 'OpenAI: GPT-5.2 Instant', 'OpenAI: GPT-5.3 Instant'),
+        'Anthropic: Claude'
+    );
+});
+
+test('resolveDefaultModelPreferenceUpdate promotes pending old default after config refresh', () => {
+    const update = resolveDefaultModelPreferenceUpdate({
+        storedModelPreference: 'OpenAI: GPT-5.2 Instant',
+        pendingModelName: 'OpenAI: GPT-5.2 Instant',
+        hasCurrentSession: false,
+        upgradeDefaultModelPreference: (modelName) => modelName === 'OpenAI: GPT-5.2 Instant'
+            ? 'OpenAI: GPT-5.3 Instant'
+            : modelName
+    });
+
+    assert.equal(update.shouldSaveStoredPreference, true);
+    assert.equal(update.pendingChanged, true);
+    assert.equal(update.nextPendingModelName, 'OpenAI: GPT-5.3 Instant');
+    assert.equal(update.changed, true);
+});
+
+test('resolveDefaultModelPreferenceUpdate preserves active sessions and custom pending models', () => {
+    const upgradeDefaultModelPreference = (modelName) => modelName === 'OpenAI: GPT-5.2 Instant'
+        ? 'OpenAI: GPT-5.3 Instant'
+        : modelName;
+
+    assert.equal(
+        resolveDefaultModelPreferenceUpdate({
+            storedModelPreference: 'OpenAI: GPT-5.2 Instant',
+            pendingModelName: 'OpenAI: GPT-5.2 Instant',
+            hasCurrentSession: true,
+            upgradeDefaultModelPreference
+        }).pendingChanged,
+        false
+    );
+
+    assert.equal(
+        resolveDefaultModelPreferenceUpdate({
+            storedModelPreference: 'OpenAI: GPT-5.2 Instant',
+            pendingModelName: 'Anthropic: Claude',
+            hasCurrentSession: false,
+            upgradeDefaultModelPreference
+        }).nextPendingModelName,
         'Anthropic: Claude'
     );
 });

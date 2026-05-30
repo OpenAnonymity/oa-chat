@@ -25,6 +25,24 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
+- 2026-05-30: Fresh-chat default model follows the pinned model order.
+  - `modelConfig.getDefaultModelConfig()` now derives `defaultModelId` and
+    `defaultModelName` from the first current pinned model, falling back to the
+    local pinned list only before org availability data is cached or fetched.
+  - Send-time fallback also walks the pinned model IDs in order, so if the top
+    pinned model is unavailable in the loaded catalog the next visible pinned
+    model is selected before falling back to the catalog's first model.
+  - `ModelPicker` refreshes its default label when pinned-model config updates
+    and asks `ChatApp.getDefaultModelName()` for empty-session display, keeping
+    the button aligned with the rendered pinned section after models load.
+  - Stored preferences matching recent default labels (`GPT-5.1/5.2 Instant`)
+    upgrade to the current pinned default; per-session model choices are still
+    left intact.
+  - When fresh pinned-model data arrives after a stale local cache, the
+    availability refresh reruns the stored default preference upgrade and updates
+    the no-session pending model if it was still tracking the old default.
+    Initial model-catalog load also drains pinned updates that arrived while
+    `modelsLoading` was true.
 - 2026-05-26: Prompt edit file drag feedback is scoped to the inline editor.
   - While a prompt edit draft is open, file drags highlight the edit prompt card
     and keep the bottom composer drop overlay hidden, matching the drop target.

@@ -267,6 +267,8 @@ class OpenRouterAPI {
     // Fallback models if API fails
     getFallbackModels() {
         return [
+            { id: 'openai/gpt-5.3-chat', name: 'OpenAI: GPT-5.3 Instant', category: 'Flagship models', provider: 'OpenAI' },
+            { id: 'openai/gpt-5.3', name: 'OpenAI: GPT-5.3 Thinking', category: 'Flagship models', provider: 'OpenAI' },
             { id: 'openai/gpt-5.2-chat', name: 'OpenAI: GPT-5.2 Instant', category: 'Flagship models', provider: 'OpenAI' },
             { id: 'openai/gpt-5.1-chat', name: 'OpenAI: GPT-5.1 Instant', category: 'Flagship models', provider: 'OpenAI' },
             { id: 'anthropic/claude-sonnet-4.5', name: 'Anthropic: Claude Sonnet 4.5', category: 'Flagship models', provider: 'Anthropic' },

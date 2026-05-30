@@ -50,6 +50,7 @@ export default class ModelPicker {
         const defaults = getDefaultModelConfig();
         this.pinnedModels = defaults.pinnedModels;
         this.disabledModels = new Set(defaults.disabledModels || []);
+        this.defaultModelName = defaults.defaultModelName;
         this.modelConfigVersion += 1;
 
         // Re-render if modal is currently visible
@@ -193,8 +194,15 @@ export default class ModelPicker {
         const session = this.app.getCurrentSession();
         const rawModelName = (session && session.model) || this.app.state.pendingModelName || null;
         const modelsLoaded = this.app.state.models && this.app.state.models.length > 0;
+        const defaultModelName = this.getDefaultModelName();
         return rawModelName
-            ? (modelsLoaded && !this.isModelAvailable(rawModelName) ? this.defaultModelName : rawModelName)
+            ? (modelsLoaded && !this.isModelAvailable(rawModelName) ? defaultModelName : rawModelName)
+            : defaultModelName;
+    }
+
+    getDefaultModelName() {
+        return typeof this.app.getDefaultModelName === 'function'
+            ? this.app.getDefaultModelName()
             : this.defaultModelName;
     }
 

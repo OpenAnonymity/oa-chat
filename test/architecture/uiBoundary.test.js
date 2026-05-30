@@ -111,3 +111,20 @@ test('component templates do not reach through backend globals', () => {
         'MessageTemplates should receive backend data through configuration, not window globals'
     );
 });
+
+test('initial model load drains pinned availability refreshes', () => {
+    const source = read('chat/app.js');
+    const initialLoadMatch = source.match(/this\.loadModels\(\)\.then\(async \(\) => \{([\s\S]*?)\}\)\.catch/);
+
+    assert.ok(initialLoadMatch, 'initial model load should use an async completion handler');
+
+    const initialLoadBody = initialLoadMatch[1];
+    assert.ok(
+        initialLoadBody.includes('await this.refreshDefaultModelPreferenceForAvailabilityUpdate();'),
+        'initial model load should rerun default preference upgrade after models are available'
+    );
+    assert.ok(
+        /if \(this\.pendingModelAvailabilityRefresh\) \{[\s\S]*?await this\.refreshModelsForAvailabilityUpdate\(\);/.test(initialLoadBody),
+        'initial model load should drain pinned updates that arrived while models were loading'
+    );
+});

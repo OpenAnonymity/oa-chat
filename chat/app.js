@@ -23,7 +23,7 @@ import {
 } from './services/memoryBridge.js';
 import shareService from './services/shareService.js';
 import { getTicketCost, initModelTiers } from './services/modelTiers.js';
-import { initPinnedModels, onPinnedModelsUpdate, getDisabledModels, getStandardizedModelDisplayName } from './services/modelConfig.js';
+import { initPinnedModels, onPinnedModelsUpdate, getDisabledModels, getPinnedModels, getStandardizedModelDisplayName } from './services/modelConfig.js';
 import accountService from './services/accountService.js';
 import apiKeyStore from './services/apiKeyStore.js';
 import { generateUlid21 } from './services/ulid.js';
@@ -50,6 +50,7 @@ import {
     filterDisabledModels as filterDisabledModelsValue,
     getFallbackModelEntry as getFallbackModelEntryValue,
     normalizeModelName as normalizeModelNameValue,
+    resolveDefaultModelPreferenceUpdate as resolveDefaultModelPreferenceUpdateValue,
     upgradeDefaultModelPreference as upgradeDefaultModelPreferenceValue
 } from './domain/modelSelection.js';
 import {
@@ -60,7 +61,6 @@ import {
 } from './application/accessController.js';
 import VanillaChatUi from './ui/vanilla/VanillaChatUi.js';
 
-const DEFAULT_MODEL_NAME = inferenceService.getDefaultModelName();
 const SESSION_PAGE_SIZE = 80;
 const SESSION_SEARCH_LIMIT = 300;
 const SESSION_SCROLL_LOAD_THRESHOLD = 160;
@@ -82,7 +82,10 @@ const TOOLBAR_PREDICTION_GRACE_MS = 350; // Grace period to respect predicted st
 const SIDEBAR_CLOSE_DURATION_MS = 220;
 
 // Used to upgrade users who were implicitly on the prior default.
-const PREVIOUS_DEFAULT_MODEL_NAME = 'OpenAI: GPT-5.1 Instant';
+const PREVIOUS_DEFAULT_MODEL_NAMES = [
+    'OpenAI: GPT-5.2 Instant',
+    'OpenAI: GPT-5.1 Instant'
+];
 
 function generateSessionId() {
     return generateUlid21();
@@ -285,9 +288,12 @@ class ChatApp {
     }
 
     getFallbackModelEntry(session) {
+        const usePinnedDefaults = !session?.inferenceBackend ||
+            session.inferenceBackend === inferenceService.getDefaultBackendId();
         return getFallbackModelEntryValue(
             this.state.models,
-            inferenceService.getDefaultModelId(session)
+            inferenceService.getDefaultModelId(session),
+            usePinnedDefaults ? getPinnedModels() : []
         );
     }
 
@@ -326,6 +332,7 @@ class ChatApp {
         try {
             await this.loadModels();
             this.applyDisabledModelFilter();
+            await this.refreshDefaultModelPreferenceForAvailabilityUpdate();
             this.renderCurrentModel();
             if (this.modelPicker) {
                 if (!this.elements.modelPickerModal.classList.contains('hidden')) {
@@ -1736,7 +1743,7 @@ class ChatApp {
         initModelTiers();
         initPinnedModels();
         onPinnedModelsUpdate(() => {
-            this.refreshModelsForAvailabilityUpdate();
+            void this.refreshModelsForAvailabilityUpdate();
         });
 
         // Keep slower service startup off the critical render path.
@@ -1892,7 +1899,14 @@ class ChatApp {
 
         // Load models from inference backend in background (non-blocking)
         // Updates model picker with icons once loaded
-        this.loadModels().then(() => {
+        this.loadModels().then(async () => {
+            await this.refreshDefaultModelPreferenceForAvailabilityUpdate();
+            if (this.pendingModelAvailabilityRefresh) {
+                this.pendingModelAvailabilityRefresh = false;
+                await this.refreshModelsForAvailabilityUpdate();
+                return;
+            }
+
             this.renderCurrentModel(); // Re-render button with model icons
             if (this.modelPicker) {
                 // Re-render model list if modal is open, otherwise warm it in idle time.
@@ -3294,9 +3308,30 @@ class ChatApp {
     upgradeDefaultModelPreference(normalizedModelName) {
         return upgradeDefaultModelPreferenceValue(
             normalizedModelName,
-            PREVIOUS_DEFAULT_MODEL_NAME,
-            DEFAULT_MODEL_NAME
+            PREVIOUS_DEFAULT_MODEL_NAMES,
+            this.getDefaultModelName()
         );
+    }
+
+    async refreshDefaultModelPreferenceForAvailabilityUpdate() {
+        const storedModelPreference = await chatDB.getSetting('selectedModel');
+        const update = resolveDefaultModelPreferenceUpdateValue({
+            storedModelPreference,
+            pendingModelName: this.state.pendingModelName,
+            hasCurrentSession: !!this.getCurrentSession(),
+            normalizeModelName: (modelName) => this.normalizeModelName(modelName),
+            upgradeDefaultModelPreference: (modelName) => this.upgradeDefaultModelPreference(modelName)
+        });
+
+        if (update.shouldSaveStoredPreference) {
+            await chatDB.saveSetting('selectedModel', update.upgradedStoredModelPreference);
+        }
+
+        if (update.pendingChanged) {
+            this.state.pendingModelName = update.nextPendingModelName;
+        }
+
+        return update.changed;
     }
 
     /**
