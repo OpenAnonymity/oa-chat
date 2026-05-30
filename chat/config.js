@@ -33,6 +33,11 @@ export const TURNSTILE_SITE_KEY = '0x4AAAAAACumDp8HcWWXKNzk';
 // Retry up to this fraction of available tickets when tickets are already-used
 export const TICKET_RETRY_RATIO = 0.5;
 
+// Council mode is available for explicit session-level opt-in only.
+// New sessions still default to normal chat (`responseMode: 'single'`), so this
+// does not change behavior unless a session is deliberately configured for it.
+export const COUNCIL_MODE_FEATURE_FLAG = true;
+
 // Debug logging -- enabled in development (localhost), disabled in production builds.
 // The build script (scripts/build.mjs) replaces __DEV__ with false at build time.
 const __DEV_DEFAULT__ = typeof window !== 'undefined' &&

@@ -603,6 +603,18 @@
                                                 <!-- Scrubber Section -->
                                                 <div id="scrubber-settings-section" class="mt-2 border-t border-border pt-2">
                                                     <p class="px-3 pb-1 text-xs font-light tracking-wide text-muted-foreground">Privacy</p>
+                                                    <div id="multi-model-toggle-row" class="px-3 py-1.5 flex items-center justify-between gap-2 cursor-pointer rounded-md hover-highlight">
+                                                        <span class="text-xs text-muted-foreground">Multi-model</span>
+                                                        <button id="multi-model-toggle" type="button" role="switch" aria-checked="false" class="switch-toggle switch-toggle-sm switch-inactive" data-tooltip="Ask two models in parallel for verification" data-tooltip-position="left">
+                                                            <span class="switch-toggle-indicator"></span>
+                                                        </button>
+                                                    </div>
+                                                    <div class="px-3 py-1 flex items-center gap-2">
+                                                        <span class="text-xs text-muted-foreground w-12 shrink-0">Second</span>
+                                                        <select id="multi-model-secondary-select" class="flex-1 min-w-0 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-popover-foreground focus:outline-none focus:ring-1 focus:ring-ring truncate">
+                                                            <option value="" disabled selected>Loading…</option>
+                                                        </select>
+                                                    </div>
                                                     <div class="px-3 py-1 flex items-center gap-2">
                                                         <span class="text-xs text-muted-foreground w-12 shrink-0">Scrubber</span>
                                                         <select id="scrubber-model-select" class="flex-1 min-w-0 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-popover-foreground focus:outline-none focus:ring-1 focus:ring-ring truncate">

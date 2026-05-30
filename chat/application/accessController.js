@@ -1,10 +1,11 @@
 export function isAccessCreditExhaustedError(error) {
     if (error?.status !== 402) return false;
+    const responseData = error.data || error.responseData || null;
     const details = [
         error.message,
-        error.data?.error?.message,
-        error.data?.detail,
-        error.data?.message
+        responseData?.error?.message,
+        responseData?.detail,
+        responseData?.message
     ].filter(Boolean).join(' ').toLowerCase();
 
     return details.includes('credit') ||
@@ -64,7 +65,9 @@ export async function acquireSessionAccess(options = {}) {
         onSessionChanged = () => {},
         modelIdOverride = null,
         modelNameOverride = null,
-        signal = null
+        signal = null,
+        ticketsRequiredOverride = null,
+        ticketRequirementLabel = 'this model'
     } = options;
 
     if (!session) throw new Error('No active session found.');
@@ -87,10 +90,13 @@ export async function acquireSessionAccess(options = {}) {
         throw new Error('No enabled models are currently available. Please try again later.');
     }
     const modelId = modelEntry.id;
-    const ticketsRequired = getTicketCost(modelId, reasoningEnabled);
+    const overrideTickets = Number(ticketsRequiredOverride);
+    const ticketsRequired = Number.isFinite(overrideTickets) && overrideTickets > 0
+        ? Math.ceil(overrideTickets)
+        : getTicketCost(modelId, reasoningEnabled);
 
     if (availableTickets < ticketsRequired) {
-        throw new Error(`Not enough tickets for this model. Need ${ticketsRequired}, but only ${availableTickets} available.`);
+        throw new Error(`Not enough tickets for ${ticketRequirementLabel}. Need ${ticketsRequired}, but only ${availableTickets} available.`);
     }
 
     if (signal?.aborted) {

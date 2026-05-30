@@ -74,6 +74,16 @@ import {
     isAccessCreditExhaustedError as isAccessCreditExhaustedErrorValue,
     persistVerifierSubmitKeyProof as persistVerifierSubmitKeyProofValue
 } from './application/accessController.js';
+import CouncilController from './application/councilController.js';
+import { COUNCIL_MODE_FEATURE_FLAG } from './config.js';
+import {
+    RESPONSE_MODE_SINGLE,
+    RESPONSE_MODE_COUNCIL,
+    buildDefaultCouncilConfig,
+    normalizeResponseMode,
+    normalizeCouncilConfig,
+    areCouncilConfigsEqual
+} from './domain/councilConfig.js';
 import VanillaChatUi from './ui/vanilla/VanillaChatUi.js';
 
 const SESSION_PAGE_SIZE = 80;
@@ -209,6 +219,8 @@ class ChatApp {
         this.sessionSearchQuery = '';
         this.sessionSearchDebounce = null;
         this.sessionSearchRequestId = 0;
+        this.dbReadyPromise = Promise.resolve(null);
+        this.eventListenersAttached = false;
         this.sessionFilters = {
             starredOnly: false,
             dateMode: 'all',
@@ -258,8 +270,15 @@ class ChatApp {
         this.storageReloadTimer = null;
         this.pendingModelAvailabilityRefresh = false;
         this.pendingTicketCode = null;
+        this.pendingCouncilConfig = null;
         this.hasInitialLinkContext = this.detectInitialLinkContext();
         this.splitCodeWarningOverlay = null;
+        this.councilController = new CouncilController({
+            app: this,
+            chatDB,
+            inferenceService,
+            ticketClient
+        });
 
         // Link preview state
         this.linkPreviewCard = document.getElementById('link-preview-card');
@@ -1685,6 +1704,7 @@ class ChatApp {
 
         // Start DB init in background - components can show skeleton state
         const dbReady = chatDB.init();
+        this.dbReadyPromise = dbReady;
 
         // Initialize UI components immediately (sync, fast) - shows loading states
         this.ui = new VanillaChatUi(this);
@@ -1696,6 +1716,24 @@ class ChatApp {
         this.renderCurrentModel();
         this.chatInput.updateSearchToggleUI();
         this.chatInput.updateReasoningToggleUI();
+        this.renderDeleteHistoryModalContent();
+        this.setupEventListeners();
+
+        // Start model loading independently so the picker remains usable even
+        // if local storage/session history work is slow.
+        this.loadModels().then(() => {
+            this.renderCurrentModel(); // Re-render button with model icons
+            if (this.modelPicker) {
+                // Re-render model list if modal is open, otherwise warm it in idle time.
+                if (!this.elements.modelPickerModal.classList.contains('hidden')) {
+                    this.modelPicker.renderModels(this.elements.modelSearch?.value || '');
+                } else {
+                    this.modelPicker.warmRender();
+                }
+            }
+        }).catch(error => {
+            console.warn('Background model loading failed:', error);
+        });
 
         // Wait for DB before loading data
         try {
@@ -3262,6 +3300,10 @@ class ChatApp {
                 needsSave = true;
             }
 
+            if (this.normalizeSessionCouncilState(session)) {
+                needsSave = true;
+            }
+
             if (needsSave) {
                 sessionsToSave.push(session);
             }
@@ -3376,6 +3418,10 @@ class ChatApp {
      * @returns {Promise<Object>} The created session
      */
     async createSession(title = 'New Chat') {
+        if (!await this.ensureDatabaseReady()) {
+            return null;
+        }
+
         // Use pending model if available, otherwise fall back to selected model
         const storedModelPreference = await chatDB.getSetting('selectedModel');
         const normalizedSelectedModelName = this.upgradeDefaultModelPreference(
@@ -3391,12 +3437,17 @@ class ChatApp {
         }
         const modelNameForNewSession = pendingModelName || normalizedSelectedModelName || null;
 
+        const pendingCouncilConfig = normalizeCouncilConfig(this.pendingCouncilConfig, modelNameForNewSession);
+        const usePendingCouncilMode = pendingCouncilConfig.enabled === true;
+        this.pendingCouncilConfig = null;
         const session = {
             id: this.generateId(),
             title,
             createdAt: Date.now(),
             updatedAt: Date.now(),
             model: modelNameForNewSession,
+            responseMode: usePendingCouncilMode ? RESPONSE_MODE_COUNCIL : RESPONSE_MODE_SINGLE,
+            councilConfig: usePendingCouncilMode ? pendingCouncilConfig : buildDefaultCouncilConfig(modelNameForNewSession),
             inferenceBackend: inferenceService.getDefaultBackendId(),
             apiKey: null,
             apiKeyInfo: null,
@@ -3538,6 +3589,95 @@ class ChatApp {
         return session;
     }
 
+    normalizeSessionCouncilState(session) {
+        if (!session || typeof session !== 'object') {
+            return false;
+        }
+
+        let needsSave = false;
+        const normalizedResponseMode = normalizeResponseMode(session.responseMode);
+        if (session.responseMode !== normalizedResponseMode) {
+            session.responseMode = normalizedResponseMode;
+            needsSave = true;
+        }
+
+        const fallbackModelName = this.normalizeModelName(session.model) || session.model || null;
+        const normalizedCouncilState = normalizeCouncilConfig(session.councilConfig, fallbackModelName);
+        if (!areCouncilConfigsEqual(session.councilConfig, normalizedCouncilState)) {
+            session.councilConfig = normalizedCouncilState;
+            needsSave = true;
+        }
+
+        return needsSave;
+    }
+
+    isCouncilModeActive(session = this.getCurrentSession()) {
+        if (!COUNCIL_MODE_FEATURE_FLAG || !session) {
+            return false;
+        }
+        const fallbackModelName = this.normalizeModelName(session.model) || session.model || null;
+        const normalizedCouncilState = normalizeCouncilConfig(session.councilConfig, fallbackModelName);
+        return normalizeResponseMode(session.responseMode) === RESPONSE_MODE_COUNCIL
+            && normalizedCouncilState.enabled === true;
+    }
+
+    async setCouncilModeForCurrentSession(options = {}) {
+        const session = this.getCurrentSession();
+        if (!session) return null;
+
+        const fallbackModelName = this.normalizeModelName(session.model)
+            || session.model
+            || inferenceService.getDefaultModelName(session);
+        const requestedEnabled = options.enabled !== undefined
+            ? options.enabled === true
+            : true;
+        const requestedMembers = Array.isArray(options.members)
+            ? options.members
+            : (session.councilConfig?.members || []);
+        const requestedChairman = options.chairmanModel !== undefined
+            ? options.chairmanModel
+            : session.councilConfig?.chairmanModel;
+
+        session.responseMode = requestedEnabled
+            ? RESPONSE_MODE_COUNCIL
+            : RESPONSE_MODE_SINGLE;
+        session.councilConfig = normalizeCouncilConfig(
+            {
+                enabled: requestedEnabled,
+                members: requestedMembers,
+                chairmanModel: requestedChairman
+            },
+            fallbackModelName
+        );
+
+        await chatDB.saveSession(session);
+        this.renderSessions();
+        return session;
+    }
+
+    getPendingCouncilConfig() {
+        return this.pendingCouncilConfig;
+    }
+
+    setPendingCouncilConfig(config) {
+        const fallbackModelName = this.normalizeModelName(this.state.pendingModelName)
+            || this.state.pendingModelName
+            || inferenceService.getDefaultModelName();
+        this.pendingCouncilConfig = normalizeCouncilConfig(config, fallbackModelName);
+        return this.pendingCouncilConfig;
+    }
+
+    async ensureDatabaseReady() {
+        try {
+            await this.dbReadyPromise;
+            return true;
+        } catch (error) {
+            console.error('Database is not ready:', error);
+            this.showToast('Failed to open local chat storage. Close other tabs and reload.', 'error');
+            return false;
+        }
+    }
+
     /**
      * Checks if the user is currently viewing the specified session.
      * Used to gate UI updates for streaming to prevent cross-session pollution.
@@ -3583,6 +3723,10 @@ class ChatApp {
 
     isAccessCreditExhaustedError(error) {
         return isAccessCreditExhaustedErrorValue(error);
+    }
+
+    getTicketCost(modelId, reasoningEnabled = this.reasoningEnabled) {
+        return getTicketCost(modelId, reasoningEnabled);
     }
 
     async refreshAccessAfterCreditExhaustion(session, { typingId = null } = {}) {
@@ -3923,10 +4067,11 @@ class ChatApp {
         this.renderSessions();
     }
 
-    async generateSessionTitleIfNeeded(sessionId, userMessageId) {
+    async generateSessionTitleIfNeeded(sessionId, userMessageId, options = {}) {
         const session = this.state.sessionsById.get(sessionId) || this.state.sessions.find(s => s.id === sessionId);
         if (!session || session.titleSource === 'manual' || session.titleSource === 'generated' || !session.titleGenerationPending) return;
-        if (!inferenceService.getAccessToken(session) || inferenceService.isAccessExpired(session)) {
+        const accessSession = options.accessSession || session;
+        if (!inferenceService.getAccessToken(accessSession) || inferenceService.isAccessExpired(accessSession)) {
             await this.clearSessionTitleGenerationPending(session.id);
             return;
         }
@@ -3945,7 +4090,7 @@ class ChatApp {
         const expectedSource = session.titleSource || 'local';
 
         try {
-            const generated = await inferenceService.generateSessionTitle(session, prompt, { timeoutMs: 10000 });
+            const generated = await inferenceService.generateSessionTitle(accessSession, prompt, { timeoutMs: 10000 });
             const title = this.cleanGeneratedSessionTitle(generated);
             if (!title) {
                 await this.clearSessionTitleGenerationPending(sessionId);
@@ -5212,6 +5357,17 @@ class ChatApp {
                 }
             }
 
+            if (this.isCouncilModeActive(session)) {
+                await this.councilController.runRegenerateTurn({
+                    session,
+                    userMessage: lastUserMessage,
+                    searchEnabled: this.searchEnabled,
+                    abortController,
+                    initialPendingPhase
+                });
+                return;
+            }
+
             const typingModelName = this.normalizeModelName(session.model) || session.model || this.state.pendingModelName || inferenceService.getDefaultModelName(session);
             const typingId = this.isViewingSession(session.id)
                 ? this.showTypingIndicator(typingModelName, initialPendingPhase)
@@ -5608,6 +5764,10 @@ class ChatApp {
      * Handles API key acquisition, model selection, and streaming updates.
      */
     async sendMessage() {
+        if (!await this.ensureDatabaseReady()) {
+            return;
+        }
+
         // Check if there's content to send
         const rawContent = this.elements.messageInput.value || '';
         const content = rawContent.trim();
@@ -5735,6 +5895,19 @@ class ChatApp {
                 if (abortController.signal.aborted) {
                     return;
                 }
+            }
+
+            if (this.isCouncilModeActive(session)) {
+                await this.councilController.runSendTurn({
+                    session,
+                    userMessage,
+                    searchEnabled,
+                    abortController,
+                    initialPendingPhase,
+                    scrubberOriginalPrompt,
+                    scrubberRedactedPrompt
+                });
+                return;
             }
 
             const typingModelName = this.normalizeModelName(session.model) || session.model || this.state.pendingModelName || inferenceService.getDefaultModelName(session);
@@ -7124,6 +7297,7 @@ class ChatApp {
         if (!Array.isArray(sessions)) return;
         sessions.forEach(session => {
             if (session && session.id) {
+                this.normalizeSessionCouncilState(session);
                 this.state.sessionsById.set(session.id, session);
             }
         });
@@ -7132,6 +7306,8 @@ class ChatApp {
     insertSessionIntoList(session) {
         if (!session || !session.id) return;
         if (this.state.sessionsById.has(session.id)) return;
+
+        this.normalizeSessionCouncilState(session);
 
         const updatedAt = session.updatedAt || session.createdAt || 0;
         let insertIndex = this.state.sessions.length;
@@ -7185,6 +7361,7 @@ class ChatApp {
                 this.state.sessionsPageCursor
             );
             const newSessions = sessions.filter(session => !this.state.sessionsById.has(session.id));
+            this.migrateSessionsInBackground(newSessions);
             this.cacheSessions(newSessions);
             this.state.sessions.push(...newSessions);
             this.state.sessionsPageCursor = nextCursor;
@@ -7199,6 +7376,7 @@ class ChatApp {
         if (!sessionId || this.state.sessionsById.has(sessionId)) return;
         const session = await chatDB.getSession(sessionId);
         if (session) {
+            this.migrateSessionsInBackground([session]);
             this.insertSessionIntoList(session);
         }
     }
@@ -7968,6 +8146,11 @@ class ChatApp {
      * Sets up all event listeners. Delegates component-specific listeners to respective components.
      */
     setupEventListeners() {
+        if (this.eventListenersAttached) {
+            return;
+        }
+        this.eventListenersAttached = true;
+
         // Delegate to components for their specific listeners
         if (this.chatInput) {
             this.chatInput.setupEventListeners();
@@ -8987,6 +9170,8 @@ Your API key has been cleared. A new key from a different station will be obtain
                 modelIdOverride: options.modelIdOverride,
                 modelNameOverride: options.modelNameOverride,
                 signal: controller.signal,
+                ticketsRequiredOverride: options.ticketsRequiredOverride,
+                ticketRequirementLabel: options.ticketRequirementLabel,
                 onTicketUsed: () => {
                     this.showToast('Ticket already used, trying next available');
                 },

@@ -160,6 +160,13 @@ export default class ChatArea {
                 return;
             }
 
+            const councilTabBtn = e.target.closest('.council-tab-btn');
+            if (councilTabBtn) {
+                e.preventDefault();
+                this.handleCouncilTabSwitch(councilTabBtn);
+                return;
+            }
+
             const regenerateBtn = e.target.closest('.regenerate-message-btn');
             if (regenerateBtn) {
                 const messageId = regenerateBtn.dataset.messageId;
@@ -865,6 +872,23 @@ export default class ChatArea {
             navigator.clipboard.writeText(text).catch(() => {});
             return true;
         }
+    }
+
+    handleCouncilTabSwitch(button) {
+        const messageEl = button.closest('[data-message-id]');
+        const label = button.dataset.councilTabLabel;
+        if (!messageEl || !label) return;
+
+        messageEl.querySelectorAll('.council-tab-btn').forEach((entry) => {
+            const isActive = entry === button;
+            entry.classList.toggle('council-tab-btn-active', isActive);
+            entry.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        });
+
+        messageEl.querySelectorAll('.council-response-panel').forEach((panel) => {
+            const isActive = panel.dataset.councilPanelLabel === label;
+            panel.classList.toggle('hidden', !isActive);
+        });
     }
 
     /**

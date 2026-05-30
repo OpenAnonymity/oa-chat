@@ -17,6 +17,7 @@ import {
     getEditableDiffSelectionState
 } from '../services/editableDiffRenderer.js';
 import { normalizeReasoningEffort } from '../services/reasoningConfig.js';
+import { RESPONSE_MODE_COUNCIL } from '../domain/councilConfig.js';
 
 const MESSAGE_INPUT_MAX_HEIGHT_PX = 300;
 const MESSAGE_INPUT_PREVIEW_EXPANDED_MIN_HEIGHT_PX = 384;
@@ -58,6 +59,7 @@ export default class ChatInput {
         this.scrubberModelsReady = false;
         this.scrubberModelSelect = null;
         this.memoryAgentModelSelect = null;
+        this.multiModelSecondarySelect = null;
         // Store undone scrubber state for redo functionality
         this.scrubberUndoState = null;
     }
@@ -303,11 +305,70 @@ export default class ChatInput {
 
                 this.ensureScrubberModelsLoaded();
                 this.refreshMemorySettingsUI();
+                this.refreshMultiModelSettingsUI();
             } else {
                 menu.classList.add('hidden');
                 btn.classList.remove('tooltip-disabled');
             }
         });
+
+        const toggleMultiModelMode = async () => {
+            const session = this.app.getCurrentSession();
+            const pendingCouncilConfig = this.app.getPendingCouncilConfig?.();
+            const currentlyEnabled = session
+                ? session.responseMode === RESPONSE_MODE_COUNCIL && session.councilConfig?.enabled === true
+                : pendingCouncilConfig?.enabled === true;
+            const enable = !currentlyEnabled;
+            const members = this.getMultiModelMembersForSelection();
+            if (!session) {
+                this.app.setPendingCouncilConfig?.({
+                    enabled: enable,
+                    members,
+                    chairmanModel: members[0] || null
+                });
+                this.refreshMultiModelSettingsUI();
+                return;
+            }
+            await this.app.setCouncilModeForCurrentSession({
+                enabled: enable,
+                members
+            });
+            this.refreshMultiModelSettingsUI();
+        };
+
+        document.addEventListener('click', async (event) => {
+            if (!event.target.closest('#multi-model-toggle-row, #multi-model-toggle')) return;
+            event.preventDefault();
+            event.stopPropagation();
+            await toggleMultiModelMode();
+        }, true);
+
+        const secondarySelect = document.getElementById('multi-model-secondary-select');
+        if (secondarySelect) {
+            this.multiModelSecondarySelect = secondarySelect;
+            secondarySelect.addEventListener('click', (event) => event.stopPropagation());
+            secondarySelect.addEventListener('change', async (event) => {
+                event.stopPropagation();
+                const session = this.app.getCurrentSession();
+                const members = this.getMultiModelMembersForSelection();
+                if (!session) {
+                    const pendingCouncilConfig = this.app.getPendingCouncilConfig?.();
+                    this.app.setPendingCouncilConfig?.({
+                        enabled: pendingCouncilConfig?.enabled === true,
+                        members,
+                        chairmanModel: members[0] || null
+                    });
+                    this.refreshMultiModelSettingsUI();
+                    return;
+                }
+                const enabled = session.responseMode === RESPONSE_MODE_COUNCIL && session.councilConfig?.enabled === true;
+                await this.app.setCouncilModeForCurrentSession({
+                    enabled,
+                    members
+                });
+                this.refreshMultiModelSettingsUI();
+            });
+        }
 
         // Settings menu actions
         // Stop propagation for all clicks inside the menu to prevent document click handler from closing it
@@ -1807,6 +1868,71 @@ export default class ChatInput {
             button.setAttribute('aria-checked', String(isActive));
             button.disabled = false;
         });
+    }
+
+    getPrimaryModelName() {
+        const session = this.app.getCurrentSession();
+        return this.app.normalizeModelName(session?.model)
+            || session?.model
+            || this.app.state.pendingModelName
+            || '';
+    }
+
+    getMultiModelMembersForSelection() {
+        const primary = this.getPrimaryModelName();
+        const secondary = this.multiModelSecondarySelect?.value || '';
+        return [primary, secondary].filter(Boolean);
+    }
+
+    refreshMultiModelSettingsUI() {
+        const session = this.app.getCurrentSession();
+        const toggle = document.getElementById('multi-model-toggle');
+        const select = document.getElementById('multi-model-secondary-select');
+        if (!toggle || !select) return;
+
+        const pendingCouncilConfig = this.app.getPendingCouncilConfig?.();
+        const isEnabled = session
+            ? session.responseMode === RESPONSE_MODE_COUNCIL && session.councilConfig?.enabled === true
+            : pendingCouncilConfig?.enabled === true;
+        toggle.setAttribute('aria-checked', String(isEnabled));
+        toggle.classList.toggle('switch-active', isEnabled);
+        toggle.classList.toggle('switch-inactive', !isEnabled);
+
+        const primary = this.getPrimaryModelName();
+        const councilMembers = session?.councilConfig?.members || pendingCouncilConfig?.members || [];
+        const selectedSecondary = councilMembers.find((modelName) => modelName && modelName !== primary) || '';
+        const models = Array.isArray(this.app.state.models) ? this.app.state.models : [];
+        const availableModels = models.filter((model) => model?.name && model.name !== primary);
+
+        if (availableModels.length === 0) {
+            select.innerHTML = '<option value="" disabled selected>No second model</option>';
+            select.disabled = true;
+            return;
+        }
+
+        select.disabled = false;
+        select.innerHTML = availableModels.map((model, index) => {
+            const value = model.name;
+            const selected = selectedSecondary
+                ? value === selectedSecondary
+                : index === 0;
+            return `<option value="${this.escapeOptionValue(value)}"${selected ? ' selected' : ''}>${this.escapeOptionText(value)}</option>`;
+        }).join('');
+    }
+
+    escapeOptionValue(value) {
+        return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
+    escapeOptionText(value) {
+        return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
     }
 
     /**

@@ -172,6 +172,42 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     the no-session pending model if it was still tracking the old default.
     Initial model-catalog load also drains pinned updates that arrived while
     `modelsLoading` was true.
+- 2026-05-29: Multi-model response mode is wired as a session-level opt-in.
+  - The settings menu `Privacy` section exposes a `Multi-model` switch and a
+    `Second` model selector. Normal sessions still use single-model chat.
+  - The switch can be set before a session exists; `ChatApp.pendingCouncilConfig`
+    carries that choice into the first created session. Enabled sessions persist
+    `responseMode: 'council'` plus `councilConfig` with up to two member display
+    names. The active session model is the primary lane; the selected second
+    model is the verification lane.
+  - `chat/application/councilController.js` runs the selected models in
+    parallel through `inferenceService.sendCompletionStrict(...)`, preserving
+    the browser-only OpenRouter path and the existing ephemeral access flow.
+  - Council access is lane-scoped under `session.councilAccess.primary` and
+    `session.councilAccess.secondary`. Each lane stores its own ephemeral key,
+    access metadata, expiry, and model id, and each lane redeems tickets for its
+    own selected model instead of sharing the session-level key.
+  - If a lane key expires, changes model, or OpenRouter reports credit
+    exhaustion, only that lane is cleared and refreshed. Before acquiring any
+    missing lane keys, the controller checks that enough tickets exist for all
+    lanes that need fresh access so it does not partially charge one lane and
+    then fail on the other.
+  - A multi-model turn is stored as one assistant message with `message.council`
+    metadata. `message.content` is the canonical first completed response, so
+    follow-up turns still have a normal assistant context while the second lane
+    remains available for comparison.
+  - The current implementation covers Stage 1 "first opinions" only. It does
+    not yet run Karpathy-style peer ranking or chairman synthesis.
+  - `MessageTemplates` renders two council lanes side by side on desktop and
+    stacked on narrow screens; if this grows beyond two lanes, the existing tab
+    fallback remains available. Council messages reuse the normal copy,
+    regenerate, fork, and canonical citation controls.
+  - `CouncilController` receives `chatDB`, `inferenceService`, and
+    `ticketClient` from `ChatApp` instead of importing the service singletons
+    directly. This keeps browser storage/network singleton initialization out
+    of unit tests and lets `test/application/councilController.test.js` lock
+    down mixed lane costs, one-lane 402 retry, model-change invalidation, and
+    insufficient-ticket preflight behavior with small stubs.
 - 2026-05-26: Prompt edit file drag feedback is scoped to the inline editor.
   - While a prompt edit draft is open, file drags highlight the edit prompt card
     and keep the bottom composer drop overlay hidden, matching the drop target.

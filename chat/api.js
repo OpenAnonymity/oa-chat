@@ -44,6 +44,32 @@ Current date: ${new Date().toLocaleDateString()}.
 // Example:
 // const getSystemPrompt = () => `You are a helpful AI assistant.
 
+function hasPdfContent(messages = []) {
+    return messages.some((message) => {
+        if (!Array.isArray(message?.content)) return false;
+        return message.content.some((part) => {
+            const filename = part?.file?.filename || '';
+            const fileData = part?.file?.file_data || '';
+            return part?.type === 'file' && (
+                /\.pdf$/i.test(filename) ||
+                (typeof fileData === 'string' && fileData.startsWith('data:application/pdf'))
+            );
+        });
+    });
+}
+
+function applyPdfFileParserPlugin(body, messages = []) {
+    if (!hasPdfContent(messages)) return;
+    body.plugins = [
+        {
+            id: 'file-parser',
+            pdf: {
+                engine: 'mistral-ocr'
+            }
+        }
+    ];
+}
+
 class OpenRouterAPI {
     constructor() {
         this.baseUrl = 'https://openrouter.ai/api/v1';
@@ -266,7 +292,7 @@ class OpenRouterAPI {
     }
 
     // Send chat completion request
-    async sendCompletion(messages, modelId, apiKey) {
+    async sendCompletionStrict(messages, modelId, apiKey, options = {}) {
         const url = `${this.baseUrl}/chat/completions`;
         const key = apiKey || this.getApiKey();
 
@@ -279,24 +305,48 @@ class OpenRouterAPI {
             'Content-Type': 'application/json'
         };
 
+        const {
+            context = 'Inference completion',
+            maxAttempts = 3,
+            timeoutMs = 0,
+            signal = null,
+            searchEnabled = false,
+            reasoningEnabled = true,
+            reasoningEffort = DEFAULT_REASONING_EFFORT
+        } = options;
+
+        let effectiveModelId = modelId;
+        if (searchEnabled && !modelId.includes(':online')) {
+            effectiveModelId = `${modelId}:online`;
+        }
+
+        const normalizedReasoningEffort = normalizeReasoningEffort(reasoningEffort);
+        const reasoningPayload = reasoningEnabled
+            ? { effort: normalizedReasoningEffort }
+            : null;
+
         // Prepend system prompt if it exists
-        const systemPrompt = getSystemPrompt(modelId);
+        const systemPrompt = getSystemPrompt(effectiveModelId);
         const messagesWithSystem = systemPrompt
             ? [{ role: 'system', content: systemPrompt }, ...messages]
             : messages;
 
         const body = {
-            model: modelId,
+            model: effectiveModelId,
             messages: messagesWithSystem.map(msg => ({
                 role: msg.role,
                 content: msg.content
             }))
         };
+        applyPdfFileParserPlugin(body, messagesWithSystem);
+        if (reasoningPayload) {
+            body.reasoning = reasoningPayload;
+        }
 
+        // POST is idempotent for same input - safe to retry
+        // No timeout - provider manages timeouts; completions can take long
         try {
-            // POST is idempotent for same input - safe to retry
-            // No timeout - provider manages timeouts; completions can take long
-            const { response, data } = await networkProxy.fetchWithRetryJson(
+            const { response, data, text } = await networkProxy.fetchWithRetryJson(
                 url,
                 {
                     method: 'POST',
@@ -304,13 +354,13 @@ class OpenRouterAPI {
                     body: JSON.stringify(body)
                 },
                 {
-                    context: 'Inference completion',
-                    maxAttempts: 3,
-                    timeoutMs: 0  // No timeout - let OpenRouter manage
+                    context,
+                    maxAttempts,
+                    timeoutMs,
+                    signal
                 }
             );
 
-            // Log successful request
             if (window.networkLogger) {
                 window.networkLogger.logRequest({
                     type: 'openrouter',
@@ -326,20 +376,35 @@ class OpenRouterAPI {
             }
 
             if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
+                const error = new Error(`HTTP error! status: ${response.status}`);
+                error.status = response.status;
+                error.responseText = text || '';
+                error.data = data;
+                error.responseData = data;
+                throw error;
             }
 
-            return data.choices[0]?.message?.content || 'No response received';
+            const content = data?.choices?.[0]?.message?.content;
+            if (typeof content !== 'string') {
+                const error = new Error('Invalid completion response');
+                error.responseData = data;
+                throw error;
+            }
+
+            return {
+                content,
+                data,
+                response
+            };
         } catch (error) {
             console.error('Error sending completion:', error);
 
-            // Log failed request
             if (window.networkLogger) {
                 window.networkLogger.logRequest({
                     type: 'openrouter',
                     method: 'POST',
                     url: url,
-                    status: 0,
+                    status: Number.isFinite(error?.status) ? error.status : 0,
                     request: {
                         headers: window.networkLogger.sanitizeHeaders(headers),
                         body: body
@@ -348,6 +413,15 @@ class OpenRouterAPI {
                 });
             }
 
+            throw error;
+        }
+    }
+
+    async sendCompletion(messages, modelId, apiKey) {
+        try {
+            const result = await this.sendCompletionStrict(messages, modelId, apiKey);
+            return result.content;
+        } catch (error) {
             return `Error: ${error.message}. Using simulated response instead: This is a fallback response since the API call failed.`;
         }
     }
@@ -979,14 +1053,7 @@ class OpenRouterAPI {
             // Add PDF plugin configuration if PDFs are present
             // Default to mistral-ocr as per OpenRouter documentation
             if (hasPdfFiles) {
-                requestBody.plugins = [
-                    {
-                        id: 'file-parser',
-                        pdf: {
-                            engine: 'mistral-ocr'
-                        }
-                    }
-                ];
+                applyPdfFileParserPlugin(requestBody, processedMessages);
             }
 
             // Add reasoning parameter if enabled (OpenRouter unified reasoning API)
