@@ -4251,7 +4251,6 @@ class ChatApp {
     triggerPostTurnMemoryExtraction(session) {
         if (!this.memoryFeatureEnabled) return;
         if (!session?.id) return;
-        if (this.isCouncilModeActive(session)) return;
         this.runPostTurnMemoryExtraction(session).catch((error) => {
             console.warn('[App] Background memory extraction failed:', error);
         });

@@ -877,6 +877,9 @@ export default class CouncilController {
             if (assistantMessage.citations && assistantMessage.citations.length > 0) {
                 this.app.enrichCitationsAndUpdateUI(assistantMessage);
             }
+            if (completed.length > 0) {
+                this.app.triggerPostTurnMemoryExtraction(session);
+            }
         } catch (error) {
             if (typingId) this.app.removeTypingIndicator(typingId);
             if (isAbortError(error)) return;

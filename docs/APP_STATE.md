@@ -238,9 +238,10 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     not run memory augmentation while the visible session is in Parallel or
     Council mode. Clicking Memory from a Parallel/Council session now switches
     modes instead of just opening the memory editor because Memory was already
-    true in global settings. Post-turn memory extraction is also skipped for
-    Parallel/Council sessions so a two-lane Parallel turn does not redeem an
-    extra confidential memory key after the visible model requests finish.
+    true in global settings. Post-turn background memory extraction still runs
+    after successful Parallel/Council responses, so a separate confidential
+    memory key redemption can appear after the visible model requests finish;
+    that is memory ingestion, not a hidden response lane.
   - If Parallel or Council is enabled after a normal single-model turn, the primary
     lane can seed from the existing `session.apiKey` when the key is valid and
     the access metadata identifies the same primary model. In that case,

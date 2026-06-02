@@ -774,10 +774,29 @@ test('runMultiModelTurn skips synthesis in parallel output mode', async () => {
     assert.equal(synthesisCalls, 0);
 });
 
-test('runMultiModelTurn does not trigger post-turn memory extraction in parallel output mode', async () => {
+test('runMultiModelTurn triggers post-turn memory extraction in parallel output mode', async () => {
     const { controller, session, userMessage, memoryExtractionCalls } = createRunTurnHarness({
         councilConfig: { outputMode: 'parallel' },
         sendLaneCompletion: async ({ entry }) => ({ content: `${entry.name} first response` })
+    });
+
+    await controller.runMultiModelTurn({
+        session,
+        userMessage,
+        searchEnabled: false,
+        abortController: new AbortController(),
+        initialPendingPhase: 'requesting-key'
+    });
+
+    assert.deepEqual(memoryExtractionCalls, ['session-1']);
+});
+
+test('runMultiModelTurn skips post-turn memory extraction when every lane fails', async () => {
+    const { controller, session, userMessage, memoryExtractionCalls } = createRunTurnHarness({
+        councilConfig: { outputMode: 'parallel' },
+        sendLaneCompletion: async () => {
+            throw new Error('lane failed');
+        }
     });
 
     await controller.runMultiModelTurn({
