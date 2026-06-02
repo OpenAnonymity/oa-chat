@@ -12,6 +12,7 @@ import { getStandardizedModelDisplayName } from '../services/modelConfig.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import { renderMemoryConfidenceBadgeHtml } from '../services/memoryRetrievalAssessment.js';
 import { normalizeMemoryRetrievalFailureReason } from '../services/memoryRetrievalError.js';
+import { getCouncilDisplayState } from '../domain/councilDisplay.js';
 
 // In-memory cache for reasoning trace expanded state (persists across session switches)
 const reasoningExpandedState = new Set();
@@ -1455,6 +1456,121 @@ function buildCouncilStage1EntryBody(entry, processContentWithLatex, messageId) 
     `;
 }
 
+function buildCouncilSynthesisSection(synthesis, processContentWithLatex, messageId) {
+    if (!synthesis || ['skipped', 'waiting', 'pending'].includes(synthesis.status)) return '';
+
+    const status = synthesis.status || 'pending';
+    const statusLabel = status === 'complete'
+        ? 'complete'
+        : status === 'partial'
+            ? 'partial'
+            : status;
+    let bodyHtml = '';
+    const synthesisModel = synthesis.model || synthesis.modelId || '';
+    const synthesisModelHtml = synthesisModel
+        ? `
+            <span class="council-response-separator" aria-hidden="true">·</span>
+            ${buildCouncilModelLabel(synthesisModel, { includeProvider: true })}
+        `
+        : '';
+
+    if ((status === 'complete' || status === 'partial') && synthesis.response) {
+        const citations = Array.isArray(synthesis.citations) ? synthesis.citations : [];
+        let rawContent = synthesis.response;
+        if (citations.length > 0) {
+            rawContent = insertRawCitationMarkers(rawContent, citations);
+        }
+        let processedContent = processContentWithLatex(rawContent);
+        if (citations.length > 0) {
+            processedContent = addInlineCitationMarkers(processedContent, messageId);
+        }
+        processedContent = enhanceInlineLinks(processedContent, `${messageId}-synthesis`);
+        bodyHtml = `
+            <div class="${CLASSES.assistantBubble}">
+                <div class="${CLASSES.assistantContent}">
+                    ${processedContent}
+                </div>
+            </div>
+        `;
+    } else if (status === 'error') {
+        const fallbackLabel = synthesis.fallbackLabel || 'Response A';
+        bodyHtml = `
+            <div class="council-response-placeholder council-response-placeholder-error">
+                Council synthesis failed. Continuing from ${escapeHtml(fallbackLabel)}.
+            </div>
+        `;
+    } else if (status === 'cancelled') {
+        bodyHtml = `
+            <div class="council-response-placeholder">
+                Council synthesis was stopped. Continuing from the completed first response.
+            </div>
+        `;
+    } else {
+        bodyHtml = `
+            <div class="council-response-placeholder">
+                Preparing Council answer...
+            </div>
+        `;
+    }
+
+    return `
+        <div class="council-synthesis-block">
+            <div class="council-response-meta">
+                <span class="council-response-model council-synthesis-title">
+                    <span>Council Answer</span>
+                    ${synthesisModelHtml}
+                </span>
+                <span class="council-response-status">${escapeHtml(statusLabel)}</span>
+            </div>
+            ${bodyHtml}
+        </div>
+    `;
+}
+
+function formatCouncilModelDisplayName(modelName, options = {}) {
+    const { includeProvider = false } = options;
+    if (!modelName || typeof modelName !== 'string') return modelName || '';
+
+    const standardized = getStandardizedModelDisplayName(modelName) || modelName;
+    const shortName = extractShortModelName(standardized);
+    if (!includeProvider) {
+        return shortName || standardized;
+    }
+
+    if (standardized.includes(': ')) {
+        return standardized;
+    }
+
+    const provider = inferProvider(standardized);
+    return provider && shortName
+        ? `${provider}: ${shortName}`
+        : standardized;
+}
+
+function buildCouncilModelLabel(modelName, options = {}) {
+    const displayName = formatCouncilModelDisplayName(modelName || '', options);
+    const shortName = extractShortModelName(modelName || '');
+    const provider = inferProvider(modelName || '');
+    const iconData = provider ? getProviderIcon(provider, 'w-3 h-3') : { html: '', hasIcon: false };
+    const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
+    const iconHtml = iconData.html || `<span class="text-[10px] font-semibold">${escapeHtml((shortName || displayName || '?').charAt(0).toUpperCase())}</span>`;
+    return `
+        <span class="council-response-model-label">
+            <span class="council-response-icon ${bgClass}">${iconHtml}</span>
+            <span>${escapeHtml(displayName || modelName || '')}</span>
+        </span>
+    `;
+}
+
+function buildCouncilModeIconHtml() {
+    return `
+        <svg class="w-3.5 h-3.5 text-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.6">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M7.2 13.8H6.4a3.4 3.4 0 0 1-3.4-3.4V7.1a3.4 3.4 0 0 1 3.4-3.4h5.3a3.4 3.4 0 0 1 3.4 3.4v.55" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M8.9 10.2a3.4 3.4 0 0 1 3.4-3.4h5.3a3.4 3.4 0 0 1 3.4 3.4v3.3a3.4 3.4 0 0 1-3.4 3.4h-2.1L12 20.3v-3.4h.3a3.4 3.4 0 0 1-3.4-3.4v-3.3Z" />
+        </svg>
+    `;
+}
+
 function buildAssistantActionRow(message, citationsToggle = '', extraButtonsHtml = '', noResponseNotice = '') {
     return `
         <div class="assistant-actions-anchor assistant-actions-row flex items-center justify-between gap-2 w-full -mt-1">
@@ -1502,13 +1618,16 @@ function buildCouncilAssistantMessage({
     const council = message.council || {};
     const stage1Entries = Array.isArray(council.stage1) ? council.stage1 : [];
     const activeLabel = stage1Entries[0]?.label || null;
-    const stageLabel = council.currentStage === 'stage1' ? 'Stage 1' : 'Council';
-    const statusMessage = council.statusMessage || 'Collecting first opinions...';
+    const hasSynthesis = !!council.synthesis;
+    const displayTitle = hasSynthesis ? 'Council' : 'Parallel';
+    const stageLabel = !hasSynthesis || council.currentStage === 'stage1'
+        ? 'Stage 1'
+        : 'Council';
     const canonicalLabel = council.canonicalStage1Label || null;
-    const canonicalModel = council.canonicalModel || null;
-    const canonicalShortName = canonicalModel ? extractShortModelName(canonicalModel) : null;
-    const errorCount = Array.isArray(council.errors) ? council.errors.length : 0;
-    const chairmanShortName = council.chairmanModel ? extractShortModelName(council.chairmanModel) : null;
+    const stage1ErrorCount = Array.isArray(council.errors)
+        ? council.errors.filter((error) => !error?.stage || error.stage === 'stage1').length
+        : 0;
+    const synthesis = council.synthesis || null;
     const citationsBubble = buildCitationsSection(message.citations, message.id);
     const citationsToggle = buildCitationsToggleButton(message.citations, message.id);
     const assistantActionsRow = buildAssistantActionRow(message, citationsToggle);
@@ -1545,7 +1664,6 @@ function buildCouncilAssistantMessage({
         : '';
 
     const stage1Panels = stage1Entries.map((entry) => {
-        const shortName = extractShortModelName(entry.model || '');
         const isActive = useSideBySide || entry.label === activeLabel;
         return `
             <div
@@ -1553,39 +1671,50 @@ function buildCouncilAssistantMessage({
                 data-council-panel-label="${escapeHtmlAttribute(entry.label)}"
             >
                 <div class="council-response-meta">
-                    <span class="council-response-model">${escapeHtml(shortName || entry.model || '')}</span>
-                    <span class="council-response-status">${escapeHtml(entry.status || 'pending')}${canonicalLabel === entry.label ? ' · Used for follow-up turns' : ''}</span>
+                    <span class="council-response-model">${buildCouncilModelLabel(entry.model || entry.modelId || '')}</span>
+                    <span class="council-response-status">${escapeHtml(entry.status || 'pending')}${synthesis?.status === 'error' && canonicalLabel === entry.label ? ' · Fallback context' : ''}</span>
                 </div>
                 ${buildCouncilStage1EntryBody(entry, processContentWithLatex, message.id)}
             </div>
         `;
     }).join('');
 
-    const stage1Summary = canonicalShortName
-        ? `Follow-up turns use ${canonicalShortName} as the canonical chat context; compare the second lane for verification.`
-        : (chairmanShortName ? `Chairman is set to ${chairmanShortName}.` : 'Select two models to compare first opinions.');
+    const { statusMessage, stage1Summary } = getCouncilDisplayState(council);
+    const stagePillHtml = hasSynthesis
+        ? `<span class="council-stage-pill">${escapeHtml(stageLabel)}</span>`
+        : '';
+    const stageStatusRow = statusMessage
+        ? `
+                    <div class="council-stage-row">
+                        ${stagePillHtml}
+                        <span class="council-stage-status">${escapeHtml(statusMessage)}</span>
+                    </div>
+        `
+        : '';
+    const stageNoteRow = stage1Summary
+        ? `<div class="council-stage-note">${escapeHtml(stage1Summary)}</div>`
+        : '';
+    const synthesisSection = buildCouncilSynthesisSection(synthesis, processContentWithLatex, message.id);
 
     return `
         <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}"${getRawContentAttribute(message.content)}>
             <div class="${CLASSES.assistantGroup}">
                 <div class="${CLASSES.assistantHeader}">
-                    <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow ${bgClass}">
-                        ${iconData.html}
+                    <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow bg-muted">
+                        ${buildCouncilModeIconHtml()}
                     </div>
-                    <span class="${CLASSES.assistantModelName}" style="font-size: 0.7rem;">LLM Council</span>
+                    <span class="${CLASSES.assistantModelName}" style="font-size: 0.7rem;">${escapeHtml(displayTitle)}</span>
                     <span class="${assistantTimeClass}" style="font-size: 0.7rem;">${formatTime(message.timestamp)}</span>
                 </div>
                 <div class="council-stage-block">
-                    <div class="council-stage-row">
-                        <span class="council-stage-pill">${escapeHtml(stageLabel)}</span>
-                        <span class="council-stage-status">${escapeHtml(statusMessage)}</span>
-                    </div>
-                    <div class="council-stage-note">${escapeHtml(stage1Summary)}</div>
-                    ${errorCount > 0 ? `<div class="council-stage-warning">${errorCount} council request${errorCount === 1 ? '' : 's'} failed during Stage 1.</div>` : ''}
+                    ${stageStatusRow}
+                    ${stageNoteRow}
+                    ${stage1ErrorCount > 0 ? `<div class="council-stage-warning">${stage1ErrorCount} model request${stage1ErrorCount === 1 ? '' : 's'} failed.</div>` : ''}
                     ${stage1Tabs}
                     <div class="${useSideBySide ? 'council-response-grid' : 'council-response-stack'}">
                         ${stage1Panels}
                     </div>
+                    ${synthesisSection}
                 </div>
                 ${assistantActionsRow}
                 ${citationsBubble}
@@ -1920,7 +2049,17 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
  * @returns {string} HTML string
  */
 function buildTypingIndicator(id, providerName, modelName, timestamp, phase = 'requesting-key') {
-    const iconData = getProviderIcon(providerName, 'w-3.5 h-3.5');
+    const isCouncil = providerName === 'LLM Council'
+        || modelName === 'LLM Council'
+        || providerName === 'Council'
+        || modelName === 'Council'
+        || providerName === 'Compare'
+        || modelName === 'Compare'
+        || providerName === 'Parallel'
+        || modelName === 'Parallel';
+    const iconData = isCouncil
+        ? { html: buildCouncilModeIconHtml(), hasIcon: false }
+        : getProviderIcon(providerName, 'w-3.5 h-3.5');
     const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
     const displayModelName = extractShortModelName(modelName);
     return `

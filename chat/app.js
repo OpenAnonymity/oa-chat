@@ -79,6 +79,8 @@ import { COUNCIL_MODE_FEATURE_FLAG } from './config.js';
 import {
     RESPONSE_MODE_SINGLE,
     RESPONSE_MODE_COUNCIL,
+    COUNCIL_OUTPUT_PARALLEL,
+    COUNCIL_OUTPUT_SYNTHESIS,
     buildDefaultCouncilConfig,
     normalizeResponseMode,
     normalizeCouncilConfig,
@@ -176,6 +178,8 @@ class ChatApp {
             scrubberPreviewDiff: document.getElementById('scrubber-preview-diff'),
             sendBtn: document.getElementById('send-btn'),
             modelPickerBtn: document.getElementById('model-picker-btn'),
+            councilInlineModels: document.getElementById('council-inline-models'),
+            councilSecondaryInlineSelect: document.getElementById('council-secondary-inline-select'),
             modelPickerModal: document.getElementById('model-picker-modal'),
             closeModalBtn: document.getElementById('close-modal-btn'),
             modelsList: document.getElementById('models-list'),
@@ -3603,7 +3607,11 @@ class ChatApp {
 
         const fallbackModelName = this.normalizeModelName(session.model) || session.model || null;
         const normalizedCouncilState = normalizeCouncilConfig(session.councilConfig, fallbackModelName);
-        if (!areCouncilConfigsEqual(session.councilConfig, normalizedCouncilState)) {
+        const hasModernCouncilShape = Object.prototype.hasOwnProperty.call(session.councilConfig || {}, 'synthesisModel')
+            && Object.prototype.hasOwnProperty.call(session.councilConfig || {}, 'outputMode')
+            && Object.prototype.hasOwnProperty.call(session.councilConfig || {}, 'reviewEnabled')
+            && !Object.prototype.hasOwnProperty.call(session.councilConfig || {}, 'chairmanModel');
+        if (!areCouncilConfigsEqual(session.councilConfig, normalizedCouncilState) || !hasModernCouncilShape) {
             session.councilConfig = normalizedCouncilState;
             needsSave = true;
         }
@@ -3634,9 +3642,13 @@ class ChatApp {
         const requestedMembers = Array.isArray(options.members)
             ? options.members
             : (session.councilConfig?.members || []);
-        const requestedChairman = options.chairmanModel !== undefined
-            ? options.chairmanModel
-            : session.councilConfig?.chairmanModel;
+        const currentCouncilConfig = normalizeCouncilConfig(session.councilConfig, fallbackModelName);
+        const requestedSynthesisModel = options.synthesisModel !== undefined
+            ? options.synthesisModel
+            : (options.chairmanModel !== undefined ? options.chairmanModel : currentCouncilConfig.synthesisModel);
+        const requestedOutputMode = options.outputMode !== undefined
+            ? options.outputMode
+            : currentCouncilConfig.outputMode;
 
         session.responseMode = requestedEnabled
             ? RESPONSE_MODE_COUNCIL
@@ -3645,13 +3657,25 @@ class ChatApp {
             {
                 enabled: requestedEnabled,
                 members: requestedMembers,
-                chairmanModel: requestedChairman
+                synthesisModel: requestedSynthesisModel,
+                outputMode: requestedOutputMode,
+                reviewEnabled: false
             },
             fallbackModelName
         );
+        if (
+            session.councilAccess?.synthesis
+            && (
+                session.councilConfig.synthesisModel !== currentCouncilConfig.synthesisModel
+                || session.councilConfig.outputMode !== currentCouncilConfig.outputMode
+            )
+        ) {
+            delete session.councilAccess.synthesis;
+        }
 
         await chatDB.saveSession(session);
         this.renderSessions();
+        this.renderCurrentModel();
         return session;
     }
 
@@ -4227,6 +4251,7 @@ class ChatApp {
     triggerPostTurnMemoryExtraction(session) {
         if (!this.memoryFeatureEnabled) return;
         if (!session?.id) return;
+        if (this.isCouncilModeActive(session)) return;
         this.runPostTurnMemoryExtraction(session).catch((error) => {
             console.warn('[App] Background memory extraction failed:', error);
         });
@@ -5337,7 +5362,7 @@ class ChatApp {
         }
 
         try {
-            if (lastUserMessage && !options.skipMemoryAugment) {
+            if (lastUserMessage && !options.skipMemoryAugment && !this.isCouncilModeActive(session)) {
                 await this.removeLocalOnlyMessagesAfter(session.id, lastUserMessage.id);
                 const memoryMessages = await chatDB.getSessionMessages(session.id);
                 const conversationText = this.buildConversationText(memoryMessages);
@@ -6398,9 +6423,12 @@ class ChatApp {
      */
     showTypingIndicator(modelName, phase = 'requesting-key') {
         const model = this.state.models.find(m => m.name === modelName || m.id === modelName);
-        const providerName = model?.provider
+        const specialProviderName = ['LLM Council', 'Council', 'Compare', 'Parallel'].includes(modelName)
+            ? modelName
+            : '';
+        const providerName = specialProviderName || (model?.provider
             ? resolveProvider(model.provider).displayName
-            : resolveProviderFromModelReference(modelName).displayName;
+            : resolveProviderFromModelReference(modelName).displayName);
         const id = 'typing-' + Date.now();
         const timestamp = Date.now();
         const typingHtml = this.ui.buildTypingIndicator(id, providerName, modelName, timestamp, phase);
@@ -6699,6 +6727,7 @@ class ChatApp {
 
             this.renderSessions();
             this.renderMessages();
+            this.renderCurrentModel();
             if (deletedCurrentSession) {
                 this.resetMessageInputLayout({ resetScroll: true });
                 this.restoreChatbarStateForSession(this.state.currentSessionId);
@@ -7831,6 +7860,23 @@ class ChatApp {
         if (this.modelPicker) {
             this.modelPicker.renderCurrentModel();
         }
+        this.chatInput?.refreshMultiModelSettingsUI?.();
+        this.chatInput?.updateMemoryToggleUI?.();
+        this.updateCouncilLayoutMode();
+    }
+
+    updateCouncilLayoutMode(session = this.getCurrentSession()) {
+        if (typeof document === 'undefined') return;
+        const isPendingCouncilMode = !session && this.pendingCouncilConfig?.enabled === true;
+        const isCouncilLayoutMode = this.isCouncilModeActive(session) || isPendingCouncilMode;
+        const outputMode = session?.councilConfig?.outputMode
+            || this.pendingCouncilConfig?.outputMode
+            || COUNCIL_OUTPUT_PARALLEL;
+        document.documentElement.classList.toggle('council-layout-mode', isCouncilLayoutMode);
+        document.documentElement.classList.toggle(
+            'council-synthesis-layout-mode',
+            isCouncilLayoutMode && outputMode === COUNCIL_OUTPUT_SYNTHESIS
+        );
     }
 
     /**
@@ -8299,6 +8345,30 @@ class ChatApp {
                 e.preventDefault();
                 if (this.modelPicker) {
                     this.modelPicker.toggle();
+                }
+            }
+
+            // Cmd/Ctrl + J for the second Parallel/Council model picker
+            if ((e.metaKey || e.ctrlKey) && e.key === 'j') {
+                const session = this.getCurrentSession();
+                const pendingCouncilEnabled = this.pendingCouncilConfig?.enabled === true;
+                if (this.modelPicker && (this.isCouncilModeActive(session) || pendingCouncilEnabled)) {
+                    e.preventDefault();
+                    this.modelPicker.toggle({ selectionMode: 'council-secondary' });
+                }
+            }
+
+            // Cmd/Ctrl + L for the Council synthesis model picker
+            if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L')) {
+                const session = this.getCurrentSession();
+                const isActiveCouncilSynthesis = this.isCouncilModeActive(session)
+                    && session?.councilConfig?.outputMode === COUNCIL_OUTPUT_SYNTHESIS;
+                const isPendingCouncilSynthesis = !session
+                    && this.pendingCouncilConfig?.enabled === true
+                    && this.pendingCouncilConfig?.outputMode === COUNCIL_OUTPUT_SYNTHESIS;
+                if (this.modelPicker && (isActiveCouncilSynthesis || isPendingCouncilSynthesis)) {
+                    e.preventDefault();
+                    this.modelPicker.toggle({ selectionMode: 'council-synthesis' });
                 }
             }
 

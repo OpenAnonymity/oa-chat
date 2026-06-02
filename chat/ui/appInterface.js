@@ -109,6 +109,16 @@ export function createModelPickerInterface(app, options = {}) {
         getCurrentSession: () => app.getCurrentSession(),
         getDefaultModelName: () => app.getDefaultModelName(),
         normalizeModelName: (modelName) => app.normalizeModelName(modelName),
+        getPrimaryModelName: () => {
+            if (app.chatInput?.getPrimaryModelName) {
+                return app.chatInput.getPrimaryModelName();
+            }
+            const session = app.getCurrentSession();
+            const rawModelName = session?.model || app.state.pendingModelName || null;
+            return rawModelName ? (app.normalizeModelName(rawModelName) || rawModelName) : null;
+        },
+        getCouncilSecondaryModelName: () => app.chatInput?.getSelectedCouncilSecondaryModelName?.() || '',
+        getCouncilSynthesisModelName: () => app.chatInput?.getCouncilSynthesisModelForSelection?.() || '',
         renderCurrentModel: () => app.renderCurrentModel(),
         actions: {
             async selectModel(modelName) {
@@ -127,6 +137,20 @@ export function createModelPickerInterface(app, options = {}) {
                 await db.saveSession(session);
                 app.renderCurrentModel();
                 return { session, modelName: normalizedModelName };
+            },
+            async selectCouncilSecondaryModel(modelName) {
+                const normalizedModelName = app.normalizeModelName(modelName);
+                if (app.chatInput?.selectCouncilSecondaryModel) {
+                    await app.chatInput.selectCouncilSecondaryModel(normalizedModelName);
+                }
+                return { session: app.getCurrentSession(), modelName: normalizedModelName };
+            },
+            async selectCouncilSynthesisModel(modelName) {
+                const normalizedModelName = app.normalizeModelName(modelName);
+                if (app.chatInput?.selectCouncilSynthesisModel) {
+                    await app.chatInput.selectCouncilSynthesisModel(normalizedModelName);
+                }
+                return { session: app.getCurrentSession(), modelName: normalizedModelName };
             }
         }
     };
@@ -188,6 +212,8 @@ const COMPONENT_APP_KEYS = new Set([
     'getCurrentSession',
     'getCurrentSessionStreamingPhase',
     'getDefaultModelId',
+    'getDefaultModelName',
+    'getFallbackModelEntry',
     'getFilteredSessions',
     'getMessageTemplateOptions',
     'getPromptSlideUpMessageIdForSession',

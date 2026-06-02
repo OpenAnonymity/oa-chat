@@ -17,7 +17,20 @@ import {
     getEditableDiffSelectionState
 } from '../services/editableDiffRenderer.js';
 import { normalizeReasoningEffort } from '../services/reasoningConfig.js';
-import { RESPONSE_MODE_COUNCIL } from '../domain/councilConfig.js';
+import { getProviderIcon } from '../services/providerIcons.js';
+import { onModelTiersUpdate } from '../services/modelTiers.js';
+import {
+    RESPONSE_MODE_COUNCIL,
+    COUNCIL_OUTPUT_PARALLEL,
+    COUNCIL_OUTPUT_SYNTHESIS
+} from '../domain/councilConfig.js';
+import {
+    findModelByNameOrId,
+    getConfiguredSecondaryModelNameForModels,
+    resolvePrimaryModelNameForModels,
+    resolveSecondaryModelNameForModels,
+    resolveSynthesisModelNameForModels
+} from '../domain/modelSelection.js';
 
 const MESSAGE_INPUT_MAX_HEIGHT_PX = 300;
 const MESSAGE_INPUT_PREVIEW_EXPANDED_MIN_HEIGHT_PX = 384;
@@ -60,6 +73,13 @@ export default class ChatInput {
         this.scrubberModelSelect = null;
         this.memoryAgentModelSelect = null;
         this.multiModelSecondarySelect = null;
+        this.multiModelSecondaryInlineSelect = null;
+        this.multiModelSecondaryInlineButton = null;
+        this.multiModelSynthesisSelect = null;
+        this.multiModelModeSelect = null;
+        this.councilSynthesisInlineSelect = null;
+        this.councilSynthesisInlineButton = null;
+        onModelTiersUpdate(() => this.refreshMultiModelSettingsUI());
         // Store undone scrubber state for redo functionality
         this.scrubberUndoState = null;
     }
@@ -243,12 +263,16 @@ export default class ChatInput {
                 const button = e.target.closest('.chat-mode-toggle-btn');
                 if (!button) return;
 
-                const isMemory = button.dataset.modeOption === 'memory';
+                const mode = button.dataset.modeOption || 'chat';
+                const isMemory = mode === 'memory';
+                const isParallel = mode === 'parallel';
+                const isCouncil = mode === 'council';
+                const currentMode = this.app.elements.memoryToggle?.dataset?.mode || 'chat';
                 if (isMemory && this.app.memoryFeatureEnabled === false) {
                     this.updateMemoryToggleUI();
                     return;
                 }
-                if (isMemory && this.app.memoryMode && this.app.memoryEditor) {
+                if (isMemory && currentMode === 'memory' && this.app.memoryMode && this.app.memoryEditor) {
                     this.app.memoryEditor.open();
                     return;
                 }
@@ -256,7 +280,17 @@ export default class ChatInput {
                 container.classList.add('sliding');
                 setTimeout(() => container.classList.remove('sliding'), 250);
                 this.app.memoryMode = isMemory && this.app.memoryFeatureEnabled !== false;
+
+                if (isParallel || isCouncil) {
+                    await this.setCouncilModeFromComposer(true, {
+                        outputMode: isCouncil ? COUNCIL_OUTPUT_SYNTHESIS : COUNCIL_OUTPUT_PARALLEL
+                    });
+                } else {
+                    await this.setCouncilModeFromComposer(false);
+                }
+
                 this.updateMemoryToggleUI();
+                this.refreshMultiModelSettingsUI();
                 await this.app.data.saveSetting('memoryMode', this.app.memoryMode);
             });
         }
@@ -320,20 +354,30 @@ export default class ChatInput {
                 : pendingCouncilConfig?.enabled === true;
             const enable = !currentlyEnabled;
             const members = this.getMultiModelMembersForSelection();
+            const synthesisModel = this.getCouncilSynthesisModelForSelection();
+            const outputMode = enable
+                ? COUNCIL_OUTPUT_PARALLEL
+                : this.getMultiModelOutputModeForSelection();
             if (!session) {
                 this.app.setPendingCouncilConfig?.({
                     enabled: enable,
                     members,
-                    chairmanModel: members[0] || null
+                    synthesisModel,
+                    outputMode,
+                    reviewEnabled: false
                 });
                 this.refreshMultiModelSettingsUI();
+                this.updateMemoryToggleUI();
                 return;
             }
             await this.app.setCouncilModeForCurrentSession({
                 enabled: enable,
-                members
+                members,
+                synthesisModel,
+                outputMode
             });
             this.refreshMultiModelSettingsUI();
+            this.updateMemoryToggleUI();
         };
 
         document.addEventListener('click', async (event) => {
@@ -349,14 +393,87 @@ export default class ChatInput {
             secondarySelect.addEventListener('click', (event) => event.stopPropagation());
             secondarySelect.addEventListener('change', async (event) => {
                 event.stopPropagation();
+                if (this.multiModelSecondaryInlineSelect) {
+                    this.multiModelSecondaryInlineSelect.value = event.target.value;
+                }
+                await this.persistCouncilSelectionFromControls();
+            });
+        }
+
+        const secondaryInlineSelect = document.getElementById('council-secondary-inline-select');
+        if (secondaryInlineSelect) {
+            this.multiModelSecondaryInlineSelect = secondaryInlineSelect;
+            secondaryInlineSelect.addEventListener('click', (event) => event.stopPropagation());
+            secondaryInlineSelect.addEventListener('change', async (event) => {
+                event.stopPropagation();
+                if (this.multiModelSecondarySelect) {
+                    this.multiModelSecondarySelect.value = event.target.value;
+                }
+                await this.persistCouncilSelectionFromControls();
+            });
+        }
+
+        const secondaryInlineButton = document.getElementById('council-secondary-model-btn');
+        if (secondaryInlineButton) {
+            this.multiModelSecondaryInlineButton = secondaryInlineButton;
+            secondaryInlineButton.addEventListener('click', (event) => {
+                event.stopPropagation();
+                this.openCouncilSecondaryModelPicker();
+            });
+            secondaryInlineButton.addEventListener('keydown', (event) => {
+                if (event.key !== 'ArrowDown' && event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                event.stopPropagation();
+                this.openCouncilSecondaryModelPicker();
+            });
+        }
+
+        const synthesisInlineSelect = document.getElementById('council-synthesis-inline-select');
+        if (synthesisInlineSelect) {
+            this.councilSynthesisInlineSelect = synthesisInlineSelect;
+            synthesisInlineSelect.addEventListener('click', (event) => event.stopPropagation());
+            synthesisInlineSelect.addEventListener('change', async (event) => {
+                event.stopPropagation();
+                if (this.multiModelSynthesisSelect) {
+                    this.multiModelSynthesisSelect.value = event.target.value;
+                }
+                await this.persistCouncilSelectionFromControls();
+            });
+        }
+
+        const synthesisInlineButton = document.getElementById('council-synthesis-model-btn');
+        if (synthesisInlineButton) {
+            this.councilSynthesisInlineButton = synthesisInlineButton;
+            synthesisInlineButton.addEventListener('click', (event) => {
+                event.stopPropagation();
+                this.openCouncilSynthesisModelPicker();
+            });
+            synthesisInlineButton.addEventListener('keydown', (event) => {
+                if (event.key !== 'ArrowDown' && event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                event.stopPropagation();
+                this.openCouncilSynthesisModelPicker();
+            });
+        }
+
+        const modeSelect = document.getElementById('multi-model-mode-select');
+        if (modeSelect) {
+            this.multiModelModeSelect = modeSelect;
+            modeSelect.addEventListener('click', (event) => event.stopPropagation());
+            modeSelect.addEventListener('change', async (event) => {
+                event.stopPropagation();
                 const session = this.app.getCurrentSession();
                 const members = this.getMultiModelMembersForSelection();
+                const synthesisModel = this.getCouncilSynthesisModelForSelection();
+                const outputMode = this.getMultiModelOutputModeForSelection();
                 if (!session) {
                     const pendingCouncilConfig = this.app.getPendingCouncilConfig?.();
                     this.app.setPendingCouncilConfig?.({
                         enabled: pendingCouncilConfig?.enabled === true,
                         members,
-                        chairmanModel: members[0] || null
+                        synthesisModel,
+                        outputMode,
+                        reviewEnabled: false
                     });
                     this.refreshMultiModelSettingsUI();
                     return;
@@ -364,7 +481,41 @@ export default class ChatInput {
                 const enabled = session.responseMode === RESPONSE_MODE_COUNCIL && session.councilConfig?.enabled === true;
                 await this.app.setCouncilModeForCurrentSession({
                     enabled,
-                    members
+                    members,
+                    synthesisModel,
+                    outputMode
+                });
+                this.refreshMultiModelSettingsUI();
+            });
+        }
+
+        const synthesisSelect = document.getElementById('multi-model-synthesis-select');
+        if (synthesisSelect) {
+            this.multiModelSynthesisSelect = synthesisSelect;
+            synthesisSelect.addEventListener('click', (event) => event.stopPropagation());
+            synthesisSelect.addEventListener('change', async (event) => {
+                event.stopPropagation();
+                const session = this.app.getCurrentSession();
+                const members = this.getMultiModelMembersForSelection();
+                const synthesisModel = this.getCouncilSynthesisModelForSelection();
+                if (!session) {
+                    const pendingCouncilConfig = this.app.getPendingCouncilConfig?.();
+                    this.app.setPendingCouncilConfig?.({
+                        enabled: pendingCouncilConfig?.enabled === true,
+                        members,
+                        synthesisModel,
+                        outputMode: this.getMultiModelOutputModeForSelection(),
+                        reviewEnabled: false
+                    });
+                    this.refreshMultiModelSettingsUI();
+                    return;
+                }
+                const enabled = session.responseMode === RESPONSE_MODE_COUNCIL && session.councilConfig?.enabled === true;
+                await this.app.setCouncilModeForCurrentSession({
+                    enabled,
+                    members,
+                    synthesisModel,
+                    outputMode: this.getMultiModelOutputModeForSelection()
                 });
                 this.refreshMultiModelSettingsUI();
             });
@@ -1804,7 +1955,17 @@ export default class ChatInput {
         if (!container) return;
 
         const memoryFeatureEnabled = this.app.memoryFeatureEnabled !== false;
-        const mode = memoryFeatureEnabled && this.app.memoryMode ? 'memory' : 'chat';
+        const session = this.app.getCurrentSession();
+        const pendingCouncilConfig = this.app.getPendingCouncilConfig?.();
+        const isCouncilEnabled = session
+            ? session.responseMode === RESPONSE_MODE_COUNCIL && session.councilConfig?.enabled === true
+            : pendingCouncilConfig?.enabled === true;
+        const councilOutputMode = session?.councilConfig?.outputMode
+            || pendingCouncilConfig?.outputMode
+            || COUNCIL_OUTPUT_PARALLEL;
+        const mode = isCouncilEnabled
+            ? (councilOutputMode === COUNCIL_OUTPUT_SYNTHESIS ? 'council' : 'parallel')
+            : (memoryFeatureEnabled && this.app.memoryMode ? 'memory' : 'chat');
         const isFirstRender = container.style.visibility === 'hidden';
         if (isFirstRender) {
             const indicator = container.querySelector('.chat-mode-toggle-indicator');
@@ -1840,6 +2001,92 @@ export default class ChatInput {
         });
     }
 
+    async setCouncilModeFromComposer(enabled, options = {}) {
+        const members = this.getMultiModelMembersForSelection({ preferControlSelection: false });
+        const synthesisModel = this.getCouncilSynthesisModelForSelection();
+        const outputMode = options.outputMode || COUNCIL_OUTPUT_PARALLEL;
+        const session = this.app.getCurrentSession();
+
+        if (!session) {
+            this.app.setPendingCouncilConfig?.({
+                enabled,
+                members,
+                synthesisModel,
+                outputMode,
+                reviewEnabled: false
+            });
+            return null;
+        }
+
+        return this.app.setCouncilModeForCurrentSession({
+            enabled,
+            members,
+            synthesisModel,
+            outputMode
+        });
+    }
+
+    async persistCouncilSelectionFromControls() {
+        const session = this.app.getCurrentSession();
+        const members = this.getMultiModelMembersForSelection();
+        const synthesisModel = this.getCouncilSynthesisModelForSelection();
+        const outputMode = this.getMultiModelOutputModeForSelection();
+
+        if (!session) {
+            const pendingCouncilConfig = this.app.getPendingCouncilConfig?.();
+            this.app.setPendingCouncilConfig?.({
+                enabled: pendingCouncilConfig?.enabled === true,
+                members,
+                synthesisModel,
+                outputMode,
+                reviewEnabled: false
+            });
+            this.refreshMultiModelSettingsUI();
+            return;
+        }
+
+        const enabled = session.responseMode === RESPONSE_MODE_COUNCIL && session.councilConfig?.enabled === true;
+        await this.app.setCouncilModeForCurrentSession({
+            enabled,
+            members,
+            synthesisModel,
+            outputMode
+        });
+        this.refreshMultiModelSettingsUI();
+    }
+
+    async selectCouncilSecondaryModel(modelName) {
+        if (!modelName) return;
+        if (this.multiModelSecondaryInlineSelect) {
+            this.multiModelSecondaryInlineSelect.value = modelName;
+        }
+        if (this.multiModelSecondarySelect) {
+            this.multiModelSecondarySelect.value = modelName;
+        }
+        await this.persistCouncilSelectionFromControls();
+    }
+
+    async selectCouncilSynthesisModel(modelName) {
+        if (!modelName) return;
+        if (this.councilSynthesisInlineSelect) {
+            this.councilSynthesisInlineSelect.value = modelName;
+        }
+        if (this.multiModelSynthesisSelect) {
+            this.multiModelSynthesisSelect.value = modelName;
+        }
+        await this.persistCouncilSelectionFromControls();
+    }
+
+    openCouncilSecondaryModelPicker() {
+        if (!this.app.modelPicker?.open) return;
+        this.app.modelPicker.open({ selectionMode: 'council-secondary' });
+    }
+
+    openCouncilSynthesisModelPicker() {
+        if (!this.app.modelPicker?.open) return;
+        this.app.modelPicker.open({ selectionMode: 'council-synthesis' });
+    }
+
     /**
      * Legacy hook: extended-thinking toggle was removed from settings.
      * Keep reasoning enabled and update the effort control only.
@@ -1872,52 +2119,338 @@ export default class ChatInput {
 
     getPrimaryModelName() {
         const session = this.app.getCurrentSession();
-        return this.app.normalizeModelName(session?.model)
+        const preferredModelName = this.app.normalizeModelName(session?.model)
             || session?.model
             || this.app.state.pendingModelName
             || '';
+        const fallbackModelName = this.app.getFallbackModelEntry?.(session)?.name
+            || this.app.getDefaultModelName?.()
+            || '';
+        return resolvePrimaryModelNameForModels({
+            models: this.app.state.models,
+            preferredModelName,
+            fallbackModelName,
+            normalizeModelName: (modelName) => this.app.normalizeModelName?.(modelName)
+        });
     }
 
-    getMultiModelMembersForSelection() {
+    getMultiModelMembersForSelection(options = {}) {
+        const { preferControlSelection = true } = options;
         const primary = this.getPrimaryModelName();
-        const secondary = this.multiModelSecondarySelect?.value || '';
+        const secondary = this.getSelectedCouncilSecondaryModelName(primary, { preferControlSelection });
         return [primary, secondary].filter(Boolean);
+    }
+
+    getSelectedCouncilSecondaryModelName(primaryModelName = this.getPrimaryModelName(), options = {}) {
+        const { preferControlSelection = true } = options;
+        const configuredSecondary = this.getConfiguredSecondaryModelName(primaryModelName);
+        const controlSecondary = preferControlSelection
+            ? (this.multiModelSecondaryInlineSelect?.value || this.multiModelSecondarySelect?.value || '')
+            : '';
+        return this.resolveSecondaryModelName(primaryModelName, controlSecondary || configuredSecondary);
+    }
+
+    getConfiguredSecondaryModelName(primaryModelName) {
+        const session = this.app.getCurrentSession();
+        const pendingCouncilConfig = this.app.getPendingCouncilConfig?.();
+        const councilMembers = session?.councilConfig?.members || pendingCouncilConfig?.members || [];
+        return getConfiguredSecondaryModelNameForModels({
+            models: this.app.state.models,
+            councilMembers,
+            primaryModelName,
+            normalizeModelName: (modelName) => this.app.normalizeModelName?.(modelName)
+        });
+    }
+
+    getDefaultSecondaryModelName(primaryModelName) {
+        const models = Array.isArray(this.app.state.models) ? this.app.state.models : [];
+        return models.find((model) => model?.name && model.name !== primaryModelName)?.name || '';
+    }
+
+    resolveSecondaryModelName(primaryModelName, preferredModelName = '') {
+        return resolveSecondaryModelNameForModels({
+            models: this.app.state.models,
+            primaryModelName,
+            preferredModelName,
+            normalizeModelName: (modelName) => this.app.normalizeModelName?.(modelName)
+        });
+    }
+
+    resolveCouncilSynthesisModelName(preferredModelName = '', fallbackModelName = this.getPrimaryModelName()) {
+        return resolveSynthesisModelNameForModels({
+            models: this.app.state.models,
+            preferredModelName,
+            fallbackModelName,
+            normalizeModelName: (modelName) => this.app.normalizeModelName?.(modelName)
+        });
+    }
+
+    getModelEntryByName(modelName) {
+        return findModelByNameOrId(
+            this.app.state.models,
+            modelName,
+            (candidate) => this.app.normalizeModelName?.(candidate)
+        );
+    }
+
+    inferProviderFromModelName(modelName) {
+        if (!modelName) return null;
+        if (modelName.includes(': ')) return modelName.split(': ')[0];
+        const lowerName = modelName.toLowerCase();
+        if (lowerName.includes('gpt') || lowerName.includes('o1-') || lowerName.includes('o3-') || lowerName.includes('o4-')) return 'OpenAI';
+        if (lowerName.includes('claude')) return 'Anthropic';
+        if (lowerName.includes('gemini')) return 'Google';
+        if (lowerName.includes('llama')) return 'Meta';
+        if (lowerName.includes('mistral')) return 'Mistral';
+        if (lowerName.includes('deepseek')) return 'DeepSeek';
+        if (lowerName.includes('qwen')) return 'Qwen';
+        if (lowerName.includes('command')) return 'Cohere';
+        if (lowerName.includes('sonar')) return 'Perplexity';
+        if (lowerName.includes('nemotron')) return 'Nvidia';
+        return null;
+    }
+
+    getShortModelName(modelName) {
+        if (!modelName) return '';
+        return modelName.includes(': ')
+            ? modelName.split(': ').slice(1).join(': ')
+            : modelName;
+    }
+
+    buildModelIconHtml(modelName, sizeClass = 'w-3 h-3') {
+        const model = this.getModelEntryByName(modelName);
+        const provider = model?.provider || this.inferProviderFromModelName(modelName);
+        const iconData = provider ? getProviderIcon(provider, sizeClass) : { html: '', hasIcon: false };
+        const shortName = this.getShortModelName(modelName);
+        const iconHtml = iconData.html || `<span class="text-[10px] font-semibold">${this.escapeOptionText((shortName || '?').charAt(0).toUpperCase())}</span>`;
+        return {
+            html: iconHtml,
+            bgClass: iconData.hasIcon ? 'bg-white' : 'bg-muted'
+        };
+    }
+
+    getCouncilSynthesisModelForSelection() {
+        const session = this.app.getCurrentSession();
+        const pendingCouncilConfig = this.app.getPendingCouncilConfig?.();
+        const preferredModelName = this.councilSynthesisInlineSelect?.value
+            || this.multiModelSynthesisSelect?.value
+            || session?.councilConfig?.synthesisModel
+            || session?.councilConfig?.chairmanModel
+            || pendingCouncilConfig?.synthesisModel
+            || pendingCouncilConfig?.chairmanModel
+            || this.getPrimaryModelName()
+            || '';
+        return this.resolveCouncilSynthesisModelName(preferredModelName, this.getPrimaryModelName());
+    }
+
+    getMultiModelOutputModeForSelection() {
+        const selectedComposerMode = this.app.elements.memoryToggle?.dataset?.mode;
+        if (selectedComposerMode === 'council') {
+            return COUNCIL_OUTPUT_SYNTHESIS;
+        }
+        if (selectedComposerMode === 'parallel') {
+            return COUNCIL_OUTPUT_PARALLEL;
+        }
+        if (this.multiModelModeSelect) {
+            return this.multiModelModeSelect?.value === COUNCIL_OUTPUT_PARALLEL
+                ? COUNCIL_OUTPUT_PARALLEL
+                : COUNCIL_OUTPUT_SYNTHESIS;
+        }
+
+        const session = this.app.getCurrentSession();
+        const pendingCouncilConfig = this.app.getPendingCouncilConfig?.();
+        return session?.councilConfig?.outputMode
+            || pendingCouncilConfig?.outputMode
+            || COUNCIL_OUTPUT_PARALLEL;
     }
 
     refreshMultiModelSettingsUI() {
         const session = this.app.getCurrentSession();
         const toggle = document.getElementById('multi-model-toggle');
         const select = document.getElementById('multi-model-secondary-select');
-        if (!toggle || !select) return;
+        const inlineContainer = document.getElementById('council-inline-models');
+        const inlineSelect = document.getElementById('council-secondary-inline-select');
+        const inlineButton = document.getElementById('council-secondary-model-btn');
+        const synthesisInlineSelect = document.getElementById('council-synthesis-inline-select');
+        const synthesisInlineButton = document.getElementById('council-synthesis-model-btn');
+        const synthesisDivider = document.getElementById('council-synthesis-divider');
+        const modeSelect = document.getElementById('multi-model-mode-select');
+        const synthesisSelect = document.getElementById('multi-model-synthesis-select');
 
         const pendingCouncilConfig = this.app.getPendingCouncilConfig?.();
         const isEnabled = session
             ? session.responseMode === RESPONSE_MODE_COUNCIL && session.councilConfig?.enabled === true
             : pendingCouncilConfig?.enabled === true;
-        toggle.setAttribute('aria-checked', String(isEnabled));
-        toggle.classList.toggle('switch-active', isEnabled);
-        toggle.classList.toggle('switch-inactive', !isEnabled);
-
-        const primary = this.getPrimaryModelName();
-        const councilMembers = session?.councilConfig?.members || pendingCouncilConfig?.members || [];
-        const selectedSecondary = councilMembers.find((modelName) => modelName && modelName !== primary) || '';
-        const models = Array.isArray(this.app.state.models) ? this.app.state.models : [];
-        const availableModels = models.filter((model) => model?.name && model.name !== primary);
-
-        if (availableModels.length === 0) {
-            select.innerHTML = '<option value="" disabled selected>No second model</option>';
-            select.disabled = true;
-            return;
+        if (toggle) {
+            toggle.setAttribute('aria-checked', String(isEnabled));
+            toggle.classList.toggle('switch-active', isEnabled);
+            toggle.classList.toggle('switch-inactive', !isEnabled);
+        }
+        if (inlineContainer) {
+            inlineContainer.classList.toggle('hidden', !isEnabled);
+            inlineContainer.classList.toggle('flex', isEnabled);
+        }
+        const primaryModelButton = this.app.elements.modelPickerBtn || document.getElementById('model-picker-btn');
+        if (primaryModelButton) {
+            if (isEnabled) {
+                primaryModelButton.setAttribute('data-tooltip', 'Primary model');
+                primaryModelButton.setAttribute('data-tooltip-position', 'top');
+            } else {
+                primaryModelButton.removeAttribute('data-tooltip');
+                primaryModelButton.removeAttribute('data-tooltip-position');
+            }
         }
 
-        select.disabled = false;
-        select.innerHTML = availableModels.map((model, index) => {
+        const primary = this.getPrimaryModelName();
+        const requestedCouncilSynthesisModel = session?.councilConfig?.synthesisModel
+            || session?.councilConfig?.chairmanModel
+            || pendingCouncilConfig?.synthesisModel
+            || pendingCouncilConfig?.chairmanModel
+            || primary
+            || '';
+        const outputMode = session?.councilConfig?.outputMode
+            || pendingCouncilConfig?.outputMode
+            || COUNCIL_OUTPUT_PARALLEL;
+        const isSynthesisMode = isEnabled && outputMode === COUNCIL_OUTPUT_SYNTHESIS;
+        if (typeof document !== 'undefined') {
+            document.documentElement.classList.toggle('council-layout-mode', isEnabled);
+            document.documentElement.classList.toggle('council-synthesis-layout-mode', isSynthesisMode);
+        }
+        const models = Array.isArray(this.app.state.models) ? this.app.state.models : [];
+        const availableModels = models.filter((model) => model?.name && model.name !== primary);
+        const allSelectableModels = models.filter((model) => model?.name);
+        const modelsLoaded = allSelectableModels.length > 0;
+        const councilSynthesisModel = this.resolveCouncilSynthesisModelName(requestedCouncilSynthesisModel, primary);
+        const configuredSecondary = this.getConfiguredSecondaryModelName(primary);
+        const selectedSecondary = this.resolveSecondaryModelName(primary, configuredSecondary);
+
+        if (modeSelect) {
+            this.multiModelModeSelect = modeSelect;
+            modeSelect.value = outputMode === COUNCIL_OUTPUT_PARALLEL
+                ? COUNCIL_OUTPUT_PARALLEL
+                : COUNCIL_OUTPUT_SYNTHESIS;
+        }
+
+        const renderSecondaryOptions = () => availableModels.map((model, index) => {
             const value = model.name;
             const selected = selectedSecondary
                 ? value === selectedSecondary
                 : index === 0;
             return `<option value="${this.escapeOptionValue(value)}"${selected ? ' selected' : ''}>${this.escapeOptionText(value)}</option>`;
         }).join('');
+
+        if (select) {
+            if (availableModels.length === 0) {
+                select.innerHTML = '<option value="" disabled selected>No second model</option>';
+                select.disabled = true;
+            } else {
+                select.disabled = false;
+                select.innerHTML = renderSecondaryOptions();
+            }
+        }
+
+        if (inlineSelect) {
+            this.multiModelSecondaryInlineSelect = inlineSelect;
+            if (availableModels.length === 0) {
+                inlineSelect.innerHTML = '<option value="" disabled selected>No second model</option>';
+                inlineSelect.disabled = true;
+            } else {
+                inlineSelect.disabled = false;
+                inlineSelect.innerHTML = renderSecondaryOptions();
+            }
+        }
+
+        if (inlineButton) {
+            this.multiModelSecondaryInlineButton = inlineButton;
+            inlineButton.disabled = availableModels.length === 0;
+            inlineButton.setAttribute('aria-label', 'Secondary model');
+            inlineButton.setAttribute('data-tooltip', 'Secondary model');
+            inlineButton.setAttribute('data-tooltip-position', 'top');
+            const selectedModel = availableModels.find((model) => model.name === selectedSecondary) || availableModels[0] || null;
+            if (!selectedModel) {
+                inlineButton.innerHTML = '<span class="model-name-container min-w-0 truncate">No second model</span>';
+            } else {
+                const icon = this.buildModelIconHtml(selectedModel.name, 'w-3 h-3');
+                inlineButton.innerHTML = `
+                    <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 ${icon.bgClass}">
+                        ${icon.html}
+                    </div>
+                    <span class="model-name-container min-w-0 truncate">${this.escapeOptionText(this.getShortModelName(selectedModel.name))}</span>
+                    <div class="flex items-center gap-0.5 ml-2 pointer-events-none text-muted-foreground text-xs">
+                        <span class="opacity-60">⌘</span>
+                        <span class="opacity-60">J</span>
+                    </div>
+                `;
+            }
+        }
+
+        if (synthesisDivider) {
+            synthesisDivider.classList.toggle('hidden', !isSynthesisMode);
+        }
+
+        const renderSynthesisOptions = () => {
+            const options = [...allSelectableModels];
+            if (!modelsLoaded && councilSynthesisModel && !options.some((model) => model.name === councilSynthesisModel)) {
+                options.unshift({ name: councilSynthesisModel });
+            }
+            return options.map((model, index) => {
+                const value = model.name;
+                const selected = councilSynthesisModel
+                    ? value === councilSynthesisModel
+                    : index === 0;
+                return `<option value="${this.escapeOptionValue(value)}"${selected ? ' selected' : ''}>${this.escapeOptionText(value)}</option>`;
+            }).join('');
+        };
+
+        if (synthesisInlineSelect) {
+            this.councilSynthesisInlineSelect = synthesisInlineSelect;
+            if (allSelectableModels.length === 0 && !councilSynthesisModel) {
+                synthesisInlineSelect.innerHTML = '<option value="" disabled selected>No council model</option>';
+                synthesisInlineSelect.disabled = true;
+            } else {
+                synthesisInlineSelect.disabled = !isSynthesisMode;
+                synthesisInlineSelect.innerHTML = renderSynthesisOptions();
+            }
+        }
+
+        if (synthesisInlineButton) {
+            this.councilSynthesisInlineButton = synthesisInlineButton;
+            synthesisInlineButton.classList.toggle('hidden', !isSynthesisMode);
+            synthesisInlineButton.disabled = !isSynthesisMode || (allSelectableModels.length === 0 && !councilSynthesisModel);
+            synthesisInlineButton.setAttribute('aria-label', 'Council model');
+            synthesisInlineButton.setAttribute('data-tooltip', 'Council model');
+            synthesisInlineButton.setAttribute('data-tooltip-position', 'top');
+            const selectedModel = allSelectableModels.find((model) => model.name === councilSynthesisModel)
+                || (!modelsLoaded && councilSynthesisModel ? { name: councilSynthesisModel } : null)
+                || allSelectableModels[0]
+                || null;
+            if (!selectedModel) {
+                synthesisInlineButton.innerHTML = '<span class="model-name-container min-w-0 truncate">No council model</span>';
+            } else {
+                const icon = this.buildModelIconHtml(selectedModel.name, 'w-3 h-3');
+                synthesisInlineButton.innerHTML = `
+                    <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 ${icon.bgClass}">
+                        ${icon.html}
+                    </div>
+                    <span class="model-name-container min-w-0 truncate">${this.escapeOptionText(this.getShortModelName(selectedModel.name))}</span>
+                    <div class="flex items-center gap-0.5 ml-2 pointer-events-none text-muted-foreground text-xs">
+                        <span class="opacity-60">⌘</span>
+                        <span class="opacity-60">L</span>
+                    </div>
+                `;
+            }
+        }
+
+        if (synthesisSelect) {
+            this.multiModelSynthesisSelect = synthesisSelect;
+            if (allSelectableModels.length === 0 && !councilSynthesisModel) {
+                synthesisSelect.innerHTML = '<option value="" disabled selected>No council model</option>';
+                synthesisSelect.disabled = true;
+            } else {
+                synthesisSelect.disabled = outputMode === COUNCIL_OUTPUT_PARALLEL;
+                synthesisSelect.innerHTML = renderSynthesisOptions();
+            }
+        }
     }
 
     escapeOptionValue(value) {

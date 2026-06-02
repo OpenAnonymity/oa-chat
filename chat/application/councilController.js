@@ -1,7 +1,10 @@
 import { chatDB as defaultChatDB } from '../db.js';
 import { parseReasoningContent } from '../services/reasoningParser.js';
 import { persistVerifierSubmitKeyProof } from './accessController.js';
+import { getMessageTextContent } from '../domain/messageContent.js';
+import { buildCouncilSynthesisMessages } from '../domain/councilPrompts.js';
 import {
+    COUNCIL_OUTPUT_SYNTHESIS,
     RESPONSE_MODE_COUNCIL,
     buildCouncilMembersForSession,
     normalizeCouncilConfig
@@ -9,6 +12,8 @@ import {
 
 const SAVE_INTERVAL_MS = 350;
 const LANE_IDS = ['primary', 'secondary'];
+const SYNTHESIS_LANE_ID = 'synthesis';
+const SYNTHESIS_CONTEXT_MAX_CHARS = 8000;
 
 function isAbortError(error) {
     return error?.name === 'AbortError' || error?.isCancelled || error?.message === 'AbortError';
@@ -52,6 +57,19 @@ function extractCitations(result) {
     return citations.length > 0 ? citations : null;
 }
 
+function extractTokenCount(result) {
+    return result?.usage?.total_tokens
+        || result?.usage?.totalTokens
+        || result?.data?.usage?.total_tokens
+        || result?.data?.usage?.totalTokens
+        || null;
+}
+
+function truncateFromStart(text, maxChars = SYNTHESIS_CONTEXT_MAX_CHARS) {
+    if (!text || text.length <= maxChars) return text || '';
+    return text.slice(text.length - maxChars);
+}
+
 export default class CouncilController {
     constructor({ app, chatDB = defaultChatDB, inferenceService = null, ticketClient = null }) {
         this.app = app;
@@ -87,10 +105,32 @@ export default class CouncilController {
         }
     }
 
-    resolveModelEntries(session) {
-        const fallbackModelName = this.app.normalizeModelName(session?.model)
+    findModelEntry(modelNameOrId) {
+        if (!modelNameOrId || !Array.isArray(this.app.state.models)) return null;
+        const normalizedName = this.app.normalizeModelName(modelNameOrId) || modelNameOrId;
+        return this.app.state.models.find((model) => model.name === normalizedName)
+            || this.app.state.models.find((model) => model.name === modelNameOrId)
+            || this.app.state.models.find((model) => model.id === modelNameOrId)
+            || this.app.state.models.find((model) => model.id === normalizedName)
+            || null;
+    }
+
+    resolvePrimaryModelName(session) {
+        const requestedModelName = this.app.normalizeModelName(session?.model)
             || session?.model
             || this.inferenceService.getDefaultModelName(session);
+        const requestedEntry = this.findModelEntry(requestedModelName);
+        if (requestedEntry?.name) {
+            return requestedEntry.name;
+        }
+        const fallbackEntry = typeof this.app.getFallbackModelEntry === 'function'
+            ? this.app.getFallbackModelEntry(session)
+            : null;
+        return fallbackEntry?.name || requestedModelName;
+    }
+
+    resolveModelEntries(session) {
+        const fallbackModelName = this.resolvePrimaryModelName(session);
         const normalizedConfig = normalizeCouncilConfig(session?.councilConfig, fallbackModelName);
         const requestedNames = [
             fallbackModelName,
@@ -98,15 +138,12 @@ export default class CouncilController {
                 { ...session, councilConfig: normalizedConfig },
                 fallbackModelName
             ).filter((modelName) => modelName !== fallbackModelName)
-        ].slice(0, 2);
+        ];
 
         const entries = [];
         const seenIds = new Set();
         for (const name of requestedNames) {
-            const normalizedName = this.app.normalizeModelName(name) || name;
-            const modelEntry = this.app.state.models.find((model) => model.name === normalizedName)
-                || this.app.state.models.find((model) => model.id === name)
-                || this.app.state.models.find((model) => model.id === normalizedName);
+            const modelEntry = this.findModelEntry(name);
             if (!modelEntry || seenIds.has(modelEntry.id)) continue;
             seenIds.add(modelEntry.id);
             entries.push({
@@ -116,12 +153,39 @@ export default class CouncilController {
             if (entries.length >= 2) break;
         }
 
+        if (entries.length > 0 && entries.length < 2 && Array.isArray(this.app.state.models)) {
+            for (const modelEntry of this.app.state.models) {
+                if (!modelEntry?.id || !modelEntry?.name || seenIds.has(modelEntry.id)) continue;
+                seenIds.add(modelEntry.id);
+                entries.push({
+                    ...modelEntry,
+                    laneId: LANE_IDS[entries.length] || `lane-${entries.length + 1}`
+                });
+                if (entries.length >= 2) break;
+            }
+        }
+
         if (entries.length === 0) {
             const fallbackEntry = this.app.getFallbackModelEntry(session);
             if (fallbackEntry) entries.push({ ...fallbackEntry, laneId: 'primary' });
         }
 
         return entries;
+    }
+
+    resolveSynthesisEntry(session, stageEntries = []) {
+        const fallbackModelName = this.resolvePrimaryModelName(session)
+            || stageEntries[0]?.name
+            || this.inferenceService.getDefaultModelName(session);
+        const normalizedConfig = normalizeCouncilConfig(session?.councilConfig, fallbackModelName);
+        const requestedModel = normalizedConfig.synthesisModel || fallbackModelName;
+        const modelEntry = this.findModelEntry(requestedModel)
+            || this.findModelEntry(fallbackModelName)
+            || stageEntries[0]
+            || (typeof this.app.getFallbackModelEntry === 'function' ? this.app.getFallbackModelEntry(session) : null);
+        return modelEntry
+            ? { ...modelEntry, laneId: SYNTHESIS_LANE_ID }
+            : null;
     }
 
     ensureCouncilAccessContainer(session) {
@@ -167,6 +231,38 @@ export default class CouncilController {
         return new Date(laneAccess.expiresAt) <= new Date();
     }
 
+    getBannedLaneAccessInfo(session, laneAccess) {
+        if (!laneAccess?.apiKeyInfo) return null;
+        const verifier = this.inferenceService.getVerificationAdapter?.(session);
+        if (!verifier?.supports) return null;
+        const accessId = typeof verifier.getAccessId === 'function'
+            ? verifier.getAccessId(laneAccess.apiKeyInfo)
+            : null;
+        if (!accessId) return null;
+
+        const stationState = typeof verifier.getAccessState === 'function'
+            ? verifier.getAccessState(accessId)
+            : null;
+        const isBannedInCache = typeof verifier.isAccessBanned === 'function'
+            ? verifier.isAccessBanned(accessId)
+            : false;
+        if (!stationState?.banned && !isBannedInCache) return null;
+
+        const broadcastData = typeof verifier.getLastBroadcastData === 'function'
+            ? verifier.getLastBroadcastData()
+            : null;
+        const bannedInfo = broadcastData?.banned_stations?.find((station) => station.station_id === accessId);
+        return {
+            stationId: accessId,
+            reason: stationState?.banReason || bannedInfo?.reason || 'Unknown',
+            bannedAt: stationState?.bannedAt || bannedInfo?.banned_at || null
+        };
+    }
+
+    isLaneAccessBanned(session, laneAccess) {
+        return !!this.getBannedLaneAccessInfo(session, laneAccess);
+    }
+
     buildLaneSession(session, laneId) {
         const laneAccess = this.getLaneAccess(session, laneId);
         return {
@@ -189,9 +285,33 @@ export default class CouncilController {
         return entries.reduce((total, entry) => total + this.getTicketCostForEntry(entry), 0);
     }
 
+    getFreshEntriesForAccess(session, entries) {
+        entries.forEach((entry) => this.seedPrimaryLaneAccessFromSession(session, entry));
+        return entries.filter((entry) => this.needsFreshLaneAccess(session, entry));
+    }
+
+    calculateFreshTicketRequirement(session, entries) {
+        return this.getFreshEntriesForAccess(session, entries)
+            .reduce((total, entry) => total + this.getTicketCostForEntry(entry), 0);
+    }
+
+    assertSufficientTicketsForEntries(session, entries, label = 'selected model responses') {
+        const freshTicketCost = this.calculateFreshTicketRequirement(session, entries);
+        const availableTickets = this.ticketClient.getTicketCount();
+        if (freshTicketCost > availableTickets) {
+            throw new Error(`Not enough tickets for ${label}. Need ${freshTicketCost}, but only ${availableTickets} available.`);
+        }
+        return freshTicketCost;
+    }
+
     needsFreshLaneAccess(session, entry) {
         const laneAccess = this.getLaneAccess(session, entry.laneId);
-        return !(laneAccess?.apiKey && laneAccess.modelId === entry.id && !this.isLaneAccessExpired(laneAccess));
+        return !(
+            laneAccess?.apiKey
+            && laneAccess.modelId === entry.id
+            && !this.isLaneAccessExpired(laneAccess)
+            && !this.isLaneAccessBanned(session, laneAccess)
+        );
     }
 
     seedPrimaryLaneAccessFromSession(session, entry) {
@@ -209,6 +329,14 @@ export default class CouncilController {
         }
         const accessModelId = this.resolveAccessModelId(accessInfo.info || session.apiKeyInfo || null);
         if (accessModelId !== entry.id) {
+            return null;
+        }
+        if (this.isLaneAccessBanned(session, {
+            apiKey: accessInfo.token,
+            apiKeyInfo: accessInfo.info || session.apiKeyInfo || null,
+            expiresAt: accessInfo.expiresAt || session.expiresAt || null,
+            modelId: entry.id
+        })) {
             return null;
         }
         return this.setLaneAccess(session, 'primary', {
@@ -290,7 +418,7 @@ export default class CouncilController {
         };
         this.inferenceService.setAccessInfo(laneSession, result);
 
-        const verifier = this.inferenceService.getVerificationAdapter(session);
+        const verifier = this.inferenceService.getVerificationAdapter?.(session);
         if (verifier?.supports) {
             const laneInfo = this.inferenceService.getAccessInfo(laneSession);
             const verifyResult = await this.inferenceService.verifyAccess(session, laneInfo?.info);
@@ -330,36 +458,40 @@ export default class CouncilController {
     async ensureLaneAccess(session, entry, typingId) {
         this.seedPrimaryLaneAccessFromSession(session, entry);
         const laneAccess = this.getLaneAccess(session, entry.laneId);
-        if (laneAccess?.apiKey && laneAccess.modelId === entry.id && !this.isLaneAccessExpired(laneAccess)) {
+        if (
+            laneAccess?.apiKey
+            && laneAccess.modelId === entry.id
+            && !this.isLaneAccessExpired(laneAccess)
+            && !this.isLaneAccessBanned(session, laneAccess)
+        ) {
             return laneAccess;
+        }
+        if (laneAccess?.apiKey && this.isLaneAccessBanned(session, laneAccess)) {
+            this.clearLaneAccess(session, entry.laneId);
+            await this.chatDB.saveSession(session);
         }
         return this.requestLaneAccess(session, entry, typingId);
     }
 
     async ensureAccessForEntries(session, entries, typingId) {
         const ticketsRequired = Math.max(1, this.calculateCouncilTicketRequirement(entries));
-        entries.forEach((entry) => this.seedPrimaryLaneAccessFromSession(session, entry));
-        const freshEntries = entries.filter((entry) => this.needsFreshLaneAccess(session, entry));
-        const freshTicketCost = freshEntries.reduce((total, entry) => total + this.getTicketCostForEntry(entry), 0);
-        const availableTickets = this.ticketClient.getTicketCount();
-        if (freshTicketCost > availableTickets) {
-            throw new Error(`Not enough tickets for multi-model response. Need ${freshTicketCost}, but only ${availableTickets} available.`);
-        }
+        this.assertSufficientTicketsForEntries(session, entries);
         for (const entry of entries) {
             await this.ensureLaneAccess(session, entry, typingId);
         }
         return ticketsRequired;
     }
 
-    buildAssistantMessage({ session, entries, initialPendingPhase, ticketsRequired = null }) {
+    buildAssistantMessage({ session, entries, synthesisEntry = null, initialPendingPhase, ticketsRequired = null }) {
         const now = Date.now();
+        const normalizedCouncilConfig = normalizeCouncilConfig(session.councilConfig, session.model);
         return {
             id: this.app.generateId(),
             sessionId: session.id,
             role: 'assistant',
             content: '',
             timestamp: now,
-            model: 'LLM Council',
+            model: synthesisEntry ? 'Council' : 'Parallel',
             tokenCount: null,
             streamingTokens: 0,
             streamingReasoning: false,
@@ -369,9 +501,10 @@ export default class CouncilController {
                 enabled: true,
                 mode: RESPONSE_MODE_COUNCIL,
                 currentStage: 'stage1',
-                statusMessage: 'Collecting first opinions...',
+                statusMessage: 'Waiting for responses...',
                 stage1: entries.map((entry, index) => ({
                     label: buildCouncilLabel(index),
+                    laneId: entry.laneId,
                     model: entry.name,
                     modelId: entry.id,
                     status: 'pending',
@@ -380,7 +513,17 @@ export default class CouncilController {
                 errors: [],
                 canonicalStage1Label: buildCouncilLabel(0),
                 canonicalModel: entries[0]?.name || null,
-                chairmanModel: normalizeCouncilConfig(session.councilConfig, session.model).chairmanModel || null,
+                synthesis: synthesisEntry ? {
+                    model: synthesisEntry.name,
+                    modelId: synthesisEntry.id,
+                    status: 'waiting',
+                    response: '',
+                    error: null,
+                    fallbackUsed: false
+                } : null,
+                synthesisModel: synthesisEntry?.name || normalizedCouncilConfig.synthesisModel || null,
+                outputMode: normalizedCouncilConfig.outputMode,
+                reviewEnabled: false,
                 ticketsRequired,
                 startedAt: now
             }
@@ -396,6 +539,104 @@ export default class CouncilController {
         if (!options.skipSessionsRender) {
             this.app.renderSessions();
         }
+    }
+
+    buildSynthesisConversationContext(sanitizedMessages = []) {
+        const priorMessages = sanitizedMessages.slice(0, -1);
+        const transcript = priorMessages
+            .map((message) => {
+                const text = getMessageTextContent(message?.content).trim();
+                if (!text) return null;
+                const role = message.role === 'assistant'
+                    ? 'Assistant'
+                    : message.role === 'user'
+                        ? 'User'
+                        : message.role || 'Message';
+                return `${role}: ${text}`;
+            })
+            .filter(Boolean)
+            .join('\n\n');
+        return truncateFromStart(transcript);
+    }
+
+    buildSynthesisResponses(stageEntries = []) {
+        return stageEntries
+            .filter((entry) => entry?.status === 'complete' && typeof entry.response === 'string' && entry.response.trim())
+            .map((entry) => ({
+                label: entry.label,
+                response: entry.response
+            }));
+    }
+
+    getStage1EntryForLane(message, entry, entries = []) {
+        const stageEntries = Array.isArray(message?.council?.stage1)
+            ? message.council.stage1
+            : [];
+        if (stageEntries.length === 0) return null;
+
+        const laneIndex = entries.findIndex((candidate) => candidate.laneId === entry.laneId);
+        const laneLabel = laneIndex >= 0 ? buildCouncilLabel(laneIndex) : null;
+        return stageEntries.find((stageEntry) => stageEntry.laneId === entry.laneId)
+            || stageEntries.find((stageEntry) => stageEntry.label === laneLabel)
+            || stageEntries.find((stageEntry) => stageEntry.modelId === entry.id)
+            || stageEntries.find((stageEntry) => stageEntry.model === entry.name)
+            || null;
+    }
+
+    buildLaneConversationMessages(messages = [], entry, entries = []) {
+        return messages
+            .map((message) => {
+                if (message?.role !== 'assistant' || !Array.isArray(message?.council?.stage1)) {
+                    return message;
+                }
+
+                const synthesis = message.council.synthesis;
+                if ((synthesis?.status === 'complete' || synthesis?.status === 'partial') && synthesis.response) {
+                    return {
+                        ...message,
+                        content: synthesis.response,
+                        model: 'Council'
+                    };
+                }
+
+                const stageEntry = this.getStage1EntryForLane(message, entry, entries);
+                if (stageEntry?.status === 'complete' && stageEntry.response) {
+                    return {
+                        ...message,
+                        content: stageEntry.response,
+                        model: stageEntry.model || entry.name
+                    };
+                }
+
+                return null;
+            })
+            .filter(Boolean);
+    }
+
+    async runSynthesisCompletion({
+        session,
+        synthesisEntry,
+        sanitizedMessages,
+        userMessage,
+        stageEntries,
+        abortController,
+        typingId = null
+    }) {
+        const userQuery = getMessageTextContent(userMessage?.content).trim()
+            || getMessageTextContent(sanitizedMessages[sanitizedMessages.length - 1]?.content).trim();
+        const messages = buildCouncilSynthesisMessages({
+            userQuery,
+            conversationContext: this.buildSynthesisConversationContext(sanitizedMessages),
+            responses: this.buildSynthesisResponses(stageEntries)
+        });
+        return this.sendLaneMessagesCompletion({
+            session,
+            entry: synthesisEntry,
+            messages,
+            searchEnabled: false,
+            abortController,
+            typingId
+        });
     }
 
     async runMultiModelTurn({
@@ -420,12 +661,18 @@ export default class CouncilController {
                 await this.app.addMessage('assistant', 'No models are available right now. Please add a model and try again.', { isLocalOnly: true });
                 return;
             }
+            const normalizedCouncilConfig = normalizeCouncilConfig(session?.councilConfig, session?.model || entries[0]?.name || null);
+            const shouldRunSynthesis = normalizedCouncilConfig.outputMode === COUNCIL_OUTPUT_SYNTHESIS;
+            const synthesisEntry = shouldRunSynthesis ? this.resolveSynthesisEntry(session, entries) : null;
+            const accessEntries = synthesisEntry ? [...entries, synthesisEntry] : entries;
 
             typingId = this.app.isViewingSession(session.id)
-                ? this.app.showTypingIndicator('LLM Council', initialPendingPhase)
+                ? this.app.showTypingIndicator(shouldRunSynthesis ? 'Council' : 'Parallel', initialPendingPhase)
                 : null;
 
-            const ticketsRequired = await this.ensureAccessForEntries(session, entries, typingId);
+            this.assertSufficientTicketsForEntries(session, accessEntries);
+            const ticketsRequired = Math.max(1, this.calculateCouncilTicketRequirement(accessEntries));
+            await this.ensureAccessForEntries(session, entries, typingId);
 
             if (typingId) {
                 this.app.removeTypingIndicator(typingId);
@@ -443,8 +690,12 @@ export default class CouncilController {
             const messages = await this.chatDB.getSessionMessages(session.id);
             const filteredMessages = messages.filter((message) => !message.isLocalOnly);
             const sanitizedMessages = this.app.sanitizeMessagesForApi(filteredMessages);
+            const laneSanitizedMessages = new Map(entries.map((entry) => [
+                entry.laneId,
+                this.app.sanitizeMessagesForApi(this.buildLaneConversationMessages(filteredMessages, entry, entries))
+            ]));
 
-            assistantMessage = this.buildAssistantMessage({ session, entries, initialPendingPhase, ticketsRequired });
+            assistantMessage = this.buildAssistantMessage({ session, entries, synthesisEntry, initialPendingPhase, ticketsRequired });
             if (scrubberOriginalPrompt && scrubberRedactedPrompt) {
                 assistantMessage.scrubber = this.app.createAssistantScrubberMetadata({
                     originalPrompt: scrubberOriginalPrompt,
@@ -469,7 +720,7 @@ export default class CouncilController {
                     const result = await this.sendLaneCompletion({
                         session,
                         entry,
-                        sanitizedMessages,
+                        sanitizedMessages: laneSanitizedMessages.get(entry.laneId) || sanitizedMessages,
                         searchEnabled,
                         abortController,
                         typingId: null
@@ -522,18 +773,100 @@ export default class CouncilController {
                 assistantMessage.citations = canonical.citations || null;
                 assistantMessage.council.canonicalStage1Label = canonical.label;
                 assistantMessage.council.canonicalModel = canonical.model;
-                if (wasCancelled) {
+                if (assistantMessage.scrubber) {
+                    assistantMessage.scrubber.redactedResponse = canonical.response;
+                }
+
+                if (!wasCancelled && synthesisEntry && assistantMessage.council.synthesis) {
+                    assistantMessage.council.currentStage = 'synthesis';
+                    assistantMessage.council.statusMessage = 'Preparing Council answer...';
+                    assistantMessage.council.synthesis.status = 'running';
+                    await persistProgress(true);
+
+                    try {
+                        await this.ensureAccessForEntries(session, [synthesisEntry], null);
+                        const synthesisResult = await this.runSynthesisCompletion({
+                            session,
+                            synthesisEntry,
+                            sanitizedMessages,
+                            userMessage,
+                            stageEntries: assistantMessage.council.stage1,
+                            abortController,
+                            typingId: null
+                        });
+                        const synthesisResponse = extractResponseContent(synthesisResult);
+                        if (!synthesisResponse) {
+                            throw new Error('Council synthesis returned an empty response.');
+                        }
+                        const synthesisCitations = extractCitations(synthesisResult);
+                        const synthesisStatus = completed.length === entries.length ? 'complete' : 'partial';
+                        assistantMessage.content = synthesisResponse;
+                        assistantMessage.model = 'Council';
+                        assistantMessage.reasoning = extractReasoning(synthesisResult);
+                        assistantMessage.tokenCount = extractTokenCount(synthesisResult);
+                        assistantMessage.citations = synthesisCitations || null;
+                        assistantMessage.council.synthesis = {
+                            model: synthesisEntry.name,
+                            modelId: synthesisEntry.id,
+                            status: synthesisStatus,
+                            response: synthesisResponse,
+                            citations: synthesisCitations,
+                            error: null,
+                            fallbackUsed: false,
+                            completedAt: Date.now()
+                        };
+                        assistantMessage.council.statusMessage = synthesisStatus === 'partial'
+                            ? 'Council answer ready from one completed response.'
+                            : 'Council answer ready.';
+                        if (assistantMessage.scrubber) {
+                            assistantMessage.scrubber.redactedResponse = synthesisResponse;
+                        }
+                    } catch (error) {
+                        if (isAbortError(error)) {
+                            assistantMessage.council.synthesis.status = 'cancelled';
+                            assistantMessage.council.synthesis.cancelledAt = Date.now();
+                            assistantMessage.council.statusMessage = 'Stopped after first opinions.';
+                        } else {
+                            const errorMessage = error?.message || 'Council synthesis failed.';
+                            assistantMessage.content = canonical.response;
+                            assistantMessage.model = canonical.model;
+                            assistantMessage.citations = canonical.citations || null;
+                            assistantMessage.council.synthesis = {
+                                model: synthesisEntry.name,
+                                modelId: synthesisEntry.id,
+                                status: 'error',
+                                response: '',
+                                error: errorMessage,
+                                fallbackUsed: true,
+                                fallbackLabel: canonical.label,
+                                fallbackModel: canonical.model,
+                                completedAt: Date.now()
+                            };
+                            assistantMessage.council.errors.push({
+                                model: synthesisEntry.name,
+                                stage: 'synthesis',
+                                message: errorMessage
+                            });
+                            assistantMessage.council.statusMessage = `Council synthesis failed. Continuing from ${canonical.label}.`;
+                            if (assistantMessage.scrubber) {
+                                assistantMessage.scrubber.redactedResponse = canonical.response;
+                            }
+                        }
+                    }
+                } else if (wasCancelled) {
                     assistantMessage.council.statusMessage = 'Stopped after partial responses.';
                 } else {
-                    assistantMessage.council.statusMessage = completed.length > 1
-                        ? 'First opinions ready.'
-                        : 'One model responded.';
+                    assistantMessage.council.statusMessage = null;
                 }
             } else {
                 assistantMessage.content = 'All selected models failed to respond.';
-                assistantMessage.model = 'LLM Council';
+                assistantMessage.model = shouldRunSynthesis ? 'Council' : 'Parallel';
                 assistantMessage.council.statusMessage = 'No model responses completed.';
                 assistantMessage.isLocalOnly = true;
+                if (assistantMessage.council.synthesis) {
+                    assistantMessage.council.synthesis.status = 'skipped';
+                    assistantMessage.council.synthesis.error = 'No model responses completed.';
+                }
             }
             assistantMessage.council.currentStage = 'complete';
             assistantMessage.council.completedAt = Date.now();
@@ -544,17 +877,16 @@ export default class CouncilController {
             if (assistantMessage.citations && assistantMessage.citations.length > 0) {
                 this.app.enrichCitationsAndUpdateUI(assistantMessage);
             }
-            this.app.triggerPostTurnMemoryExtraction(session);
         } catch (error) {
             if (typingId) this.app.removeTypingIndicator(typingId);
             if (isAbortError(error)) return;
-            console.error('Error running multi-model turn:', error);
+            console.error('Error running Parallel/Council turn:', error);
             if (userMessage?.id) {
                 await this.app.clearSessionTitleGenerationPending(session.id);
             }
             if (assistantMessage) {
-                assistantMessage.content = assistantMessage.content || 'Sorry, I encountered an error while processing the multi-model request.';
-                assistantMessage.council.statusMessage = 'Multi-model request failed.';
+                assistantMessage.content = assistantMessage.content || 'Sorry, I encountered an error while processing the selected model request.';
+                assistantMessage.council.statusMessage = 'Model request failed.';
                 assistantMessage.isLocalOnly = true;
                 await this.saveAndRender(assistantMessage, session);
             } else {
@@ -573,14 +905,36 @@ export default class CouncilController {
         hasRetriedAfterCredit = false
     }) {
         const processedMessages = this.app.processMessagesWithFiles(sanitizedMessages, entry.id);
+        return this.sendLaneMessagesCompletion({
+            session,
+            entry,
+            messages: processedMessages,
+            searchEnabled,
+            abortController,
+            typingId,
+            hasRetriedAfterCredit
+        });
+    }
+
+    async sendLaneMessagesCompletion({
+        session,
+        entry,
+        messages,
+        searchEnabled,
+        abortController,
+        typingId = null,
+        hasRetriedAfterCredit = false
+    }) {
         const laneSession = this.buildLaneSession(session, entry.laneId);
         try {
             return await this.inferenceService.sendCompletionStrict(
-                processedMessages,
+                messages,
                 entry.id,
                 laneSession,
                 {
-                    context: `Multi-model response (${entry.name})`,
+                    context: entry.laneId === SYNTHESIS_LANE_ID
+                        ? `Council synthesis (${entry.name})`
+                        : `Parallel response (${entry.name})`,
                     signal: abortController?.signal || null,
                     searchEnabled,
                     reasoningEnabled: this.app.reasoningEnabled,
@@ -592,10 +946,10 @@ export default class CouncilController {
                 this.clearLaneAccess(session, entry.laneId);
                 await this.chatDB.saveSession(session);
                 await this.requestLaneAccess(session, entry, typingId);
-                return this.sendLaneCompletion({
+                return this.sendLaneMessagesCompletion({
                     session,
                     entry,
-                    sanitizedMessages,
+                    messages,
                     searchEnabled,
                     abortController,
                     typingId,

@@ -35,6 +35,7 @@ export default class ModelPicker {
         this.hasRenderedOnce = false;
         this.modelConfigVersion = 0;
         this.searchDebounceTimer = null;
+        this.selectionMode = 'primary';
 
         // Listen for pinned/disabled updates (API fetch completed)
         onPinnedModelsUpdate(() => this._onConfigUpdate());
@@ -111,12 +112,21 @@ export default class ModelPicker {
     /**
      * Opens the model picker modal and focuses the search input.
      */
-    open() {
+    open(options = {}) {
+        this.selectionMode = options.selectionMode || options.mode || 'primary';
         const modal = this.app.elements.modelPickerModal;
         modal.classList.remove('hidden');
+        modal.dataset.selectionMode = this.selectionMode;
+        if (this.app.elements.modelSearch) {
+            this.app.elements.modelSearch.placeholder = this.isSecondarySelectionMode()
+                ? 'Search second model...'
+                : this.isSynthesisSelectionMode()
+                    ? 'Search council model...'
+                    : 'Search models...';
+        }
         this.highlightedIndex = -1;
         const shouldRestoreScroll = this.savedScrollTop > 0;
-        this.renderModels('', shouldRestoreScroll);
+        this.renderModels('', shouldRestoreScroll, true);
         // Restore scroll position after browser renders the content
         requestAnimationFrame(() => {
             if (shouldRestoreScroll) {
@@ -133,8 +143,11 @@ export default class ModelPicker {
         // Save scroll position before hiding (from the scroll container, not inner list)
         this.savedScrollTop = this.app.elements.modelListScrollArea.scrollTop;
         this.app.elements.modelPickerModal.classList.add('hidden');
+        delete this.app.elements.modelPickerModal.dataset.selectionMode;
         // Clear search
         this.app.elements.modelSearch.value = '';
+        this.app.elements.modelSearch.placeholder = 'Search models...';
+        this.selectionMode = 'primary';
         // Focus input after closing modal
         requestAnimationFrame(() => {
             if (this.app.elements.messageInput) {
@@ -146,12 +159,23 @@ export default class ModelPicker {
     /**
      * Toggles the model picker modal open/closed.
      */
-    toggle() {
+    toggle(options = {}) {
+        const requestedMode = options.selectionMode || options.mode || 'primary';
         if (this.app.elements.modelPickerModal.classList.contains('hidden')) {
-            this.open();
+            this.open({ selectionMode: requestedMode });
+        } else if (this.selectionMode !== requestedMode) {
+            this.open({ selectionMode: requestedMode });
         } else {
             this.close();
         }
+    }
+
+    isSecondarySelectionMode() {
+        return this.selectionMode === 'council-secondary';
+    }
+
+    isSynthesisSelectionMode() {
+        return this.selectionMode === 'council-synthesis';
     }
 
     /**
@@ -163,9 +187,13 @@ export default class ModelPicker {
      */
     filterModels(searchTerm = '') {
         // First filter out disabled models
-        const allowedModels = this.app.state.models.filter(model =>
+        let allowedModels = this.app.state.models.filter(model =>
             !this.disabledModels.has(model.id)
         );
+        if (this.isSecondarySelectionMode()) {
+            const primaryModelName = this.app.getPrimaryModelName?.() || null;
+            allowedModels = allowedModels.filter(model => model.name !== primaryModelName);
+        }
 
         // Split into non-empty lowercase terms
         const terms = searchTerm.toLowerCase().split(' ').filter(Boolean);
@@ -192,6 +220,20 @@ export default class ModelPicker {
     }
 
     getCurrentModelName() {
+        if (this.isSecondarySelectionMode()) {
+            return this.app.getCouncilSecondaryModelName?.() || '';
+        }
+        if (this.isSynthesisSelectionMode()) {
+            return this.app.getCouncilSynthesisModelName?.() || '';
+        }
+        return this.getPrimaryCurrentModelName();
+    }
+
+    getPrimaryCurrentModelName() {
+        const resolvedPrimaryModelName = this.app.getPrimaryModelName?.();
+        if (resolvedPrimaryModelName) {
+            return resolvedPrimaryModelName;
+        }
         const session = this.app.getCurrentSession();
         const rawModelName = (session && session.model) || this.app.state.pendingModelName || null;
         const modelsLoaded = this.app.state.models && this.app.state.models.length > 0;
@@ -212,9 +254,12 @@ export default class ModelPicker {
         const modelsLength = this.app.state.models?.length || 0;
         const reasoningFlag = this.app.reasoningEnabled ? '1' : '0';
         const loadingFlag = this.app.state.modelsLoading ? '1' : '0';
+        const primaryModelName = this.app.getPrimaryModelName?.() || '';
         return [
+            this.selectionMode,
             searchTerm,
             this.getCurrentModelName(),
+            primaryModelName,
             modelsVersion,
             modelsLength,
             this.modelConfigVersion,
@@ -344,7 +389,9 @@ export default class ModelPicker {
      */
     buildModelOptionHTML(model) {
         const session = this.app.getCurrentSession();
-        const currentModel = session?.model || this.app.state.pendingModelName;
+        const currentModel = this.isSecondarySelectionMode() || this.isSynthesisSelectionMode()
+            ? this.getCurrentModelName()
+            : (session?.model || this.app.state.pendingModelName);
         const isSelected = currentModel === model.name;
         const iconData = getProviderIcon(model.provider, 'w-3.5 h-3.5');
         const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
@@ -389,7 +436,13 @@ export default class ModelPicker {
      * @param {string} modelName - Display name chosen by the user
      */
     async selectModel(modelName) {
-        await this.app.actions.selectModel(modelName);
+        if (this.isSecondarySelectionMode() && this.app.actions.selectCouncilSecondaryModel) {
+            await this.app.actions.selectCouncilSecondaryModel(modelName);
+        } else if (this.isSynthesisSelectionMode() && this.app.actions.selectCouncilSynthesisModel) {
+            await this.app.actions.selectCouncilSynthesisModel(modelName);
+        } else {
+            await this.app.actions.selectModel(modelName);
+        }
         this.close(); // close() handles input focus
     }
 
@@ -412,7 +465,7 @@ export default class ModelPicker {
      * Renders the current model display in the input area.
      */
     renderCurrentModel() {
-        const currentModelName = this.getCurrentModelName();
+        const currentModelName = this.getPrimaryCurrentModelName();
 
         // Guard against elements not being available
         if (!this.app.elements.modelPickerBtn) {

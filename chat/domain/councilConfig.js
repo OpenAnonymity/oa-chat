@@ -1,10 +1,16 @@
 export const RESPONSE_MODE_SINGLE = 'single';
 export const RESPONSE_MODE_COUNCIL = 'council';
+export const COUNCIL_OUTPUT_PARALLEL = 'parallel';
+export const COUNCIL_OUTPUT_SYNTHESIS = 'council';
 
 const MAX_COUNCIL_MEMBERS = 2;
 
 export function normalizeResponseMode(mode) {
     return mode === RESPONSE_MODE_COUNCIL ? RESPONSE_MODE_COUNCIL : RESPONSE_MODE_SINGLE;
+}
+
+export function normalizeCouncilOutputMode(mode) {
+    return mode === COUNCIL_OUTPUT_SYNTHESIS ? COUNCIL_OUTPUT_SYNTHESIS : COUNCIL_OUTPUT_PARALLEL;
 }
 
 function normalizeModelNameValue(modelName) {
@@ -40,7 +46,9 @@ export function buildDefaultCouncilConfig(fallbackModelName = null) {
     return {
         enabled: false,
         members,
-        chairmanModel: members[0] || null
+        synthesisModel: members[0] || null,
+        outputMode: COUNCIL_OUTPUT_PARALLEL,
+        reviewEnabled: false
     };
 }
 
@@ -48,15 +56,19 @@ export function normalizeCouncilConfig(config = {}, fallbackModelName = null) {
     const fallback = normalizeModelNameValue(fallbackModelName);
     const requestedMembers = Array.isArray(config?.members) ? config.members : [];
     const members = normalizeMembers(requestedMembers, fallback);
-    const chairmanModel = normalizeModelNameValue(config?.chairmanModel)
+    const synthesisModel = normalizeModelNameValue(config?.synthesisModel)
+        || normalizeModelNameValue(config?.chairmanModel)
         || members[0]
         || fallback
         || null;
+    const outputMode = normalizeCouncilOutputMode(config?.outputMode);
 
     return {
         enabled: config?.enabled === true,
         members,
-        chairmanModel
+        synthesisModel,
+        outputMode,
+        reviewEnabled: config?.reviewEnabled === true
     };
 }
 
@@ -64,7 +76,9 @@ export function areCouncilConfigsEqual(left, right) {
     const a = normalizeCouncilConfig(left);
     const b = normalizeCouncilConfig(right);
     return a.enabled === b.enabled
-        && a.chairmanModel === b.chairmanModel
+        && a.synthesisModel === b.synthesisModel
+        && a.outputMode === b.outputMode
+        && a.reviewEnabled === b.reviewEnabled
         && a.members.length === b.members.length
         && a.members.every((member, index) => member === b.members[index]);
 }

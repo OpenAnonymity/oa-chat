@@ -128,3 +128,91 @@ export function resolveDefaultModelPreferenceUpdate(options = {}) {
         changed: shouldSaveStoredPreference || pendingChanged
     };
 }
+
+export function findModelByNameOrId(models = [], modelNameOrId = '', normalizeModelNameFn = null) {
+    if (!modelNameOrId || !Array.isArray(models)) return null;
+    const normalizedName = typeof normalizeModelNameFn === 'function'
+        ? (normalizeModelNameFn(modelNameOrId) || modelNameOrId)
+        : modelNameOrId;
+    return models.find((model) => model?.name === normalizedName)
+        || models.find((model) => model?.name === modelNameOrId)
+        || models.find((model) => model?.id === modelNameOrId)
+        || models.find((model) => model?.id === normalizedName)
+        || null;
+}
+
+export function getConfiguredSecondaryModelNameForModels({
+    models = [],
+    councilMembers = [],
+    primaryModelName = '',
+    normalizeModelName = null
+} = {}) {
+    const hasLoadedModels = Array.isArray(models) && models.length > 0;
+    const primaryEntry = findModelByNameOrId(models, primaryModelName, normalizeModelName);
+    return (Array.isArray(councilMembers) ? councilMembers : []).find((modelName) => {
+        if (!modelName || modelName === primaryModelName) return false;
+        const modelEntry = findModelByNameOrId(models, modelName, normalizeModelName);
+        if (hasLoadedModels && !modelEntry) return false;
+        if (!modelEntry || !primaryEntry) return true;
+        return modelEntry.id !== primaryEntry.id;
+    }) || '';
+}
+
+export function resolveSecondaryModelNameForModels({
+    models = [],
+    primaryModelName = '',
+    preferredModelName = '',
+    normalizeModelName = null
+} = {}) {
+    const availableModels = Array.isArray(models)
+        ? models.filter((model) => model?.name && model.name !== primaryModelName)
+        : [];
+    const preferredMatch = preferredModelName
+        ? findModelByNameOrId(availableModels, preferredModelName, normalizeModelName)
+        : null;
+    return preferredMatch?.name || availableModels[0]?.name || '';
+}
+
+export function resolvePrimaryModelNameForModels({
+    models = [],
+    preferredModelName = '',
+    fallbackModelName = '',
+    normalizeModelName = null
+} = {}) {
+    const availableModels = Array.isArray(models)
+        ? models.filter((model) => model?.name)
+        : [];
+    if (availableModels.length === 0) {
+        return preferredModelName || fallbackModelName || '';
+    }
+
+    const preferredMatch = preferredModelName
+        ? findModelByNameOrId(availableModels, preferredModelName, normalizeModelName)
+        : null;
+    const fallbackMatch = fallbackModelName
+        ? findModelByNameOrId(availableModels, fallbackModelName, normalizeModelName)
+        : null;
+    return preferredMatch?.name || fallbackMatch?.name || availableModels[0]?.name || '';
+}
+
+export function resolveSynthesisModelNameForModels({
+    models = [],
+    preferredModelName = '',
+    fallbackModelName = '',
+    normalizeModelName = null
+} = {}) {
+    const availableModels = Array.isArray(models)
+        ? models.filter((model) => model?.name)
+        : [];
+    if (availableModels.length === 0) {
+        return preferredModelName || fallbackModelName || '';
+    }
+
+    const preferredMatch = preferredModelName
+        ? findModelByNameOrId(availableModels, preferredModelName, normalizeModelName)
+        : null;
+    const fallbackMatch = fallbackModelName
+        ? findModelByNameOrId(availableModels, fallbackModelName, normalizeModelName)
+        : null;
+    return preferredMatch?.name || fallbackMatch?.name || availableModels[0]?.name || '';
+}

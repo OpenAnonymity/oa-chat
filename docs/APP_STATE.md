@@ -172,50 +172,124 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     the no-session pending model if it was still tracking the old default.
     Initial model-catalog load also drains pinned updates that arrived while
     `modelsLoading` was true.
-- 2026-05-29: Multi-model response mode is wired as a session-level opt-in.
-  - The settings menu `Privacy` section exposes a `Multi-model` switch and a
-    `Second` model selector. Normal sessions still use single-model chat.
+- 2026-05-29: Parallel/Council response mode is wired as a session-level opt-in.
+  - The bottom chat-mode slider now has `Chat`, `Parallel`, `Council`, and
+    `Memory` states. Turning on user-facing `Parallel` from the composer
+    exposes an inline second-model picker beside the primary model picker and
+    keeps output to Stage 1 only: two model responses, no synthesis/chairman
+    request. Turning on `Council` exposes the primary, secondary, and Council
+    model pickers; the third picker selects `synthesisModel` and enables the
+    existing synthesis pass below the two first responses. The second picker
+    uses `⌘J`; the Council picker uses `⌘L`. Both open the same centered
+    searchable model picker modal as the primary `⌘K` picker. Secondary
+    selection excludes the primary model; Council selection can choose any
+    selectable model. If a persisted Council model is no longer selectable, the
+    composer falls back to the same primary/default model the controller will
+    charge for instead of displaying a stale model name. Ticket costs remain
+    shown inside the modal options. While Parallel or Council is active, the
+    primary picker tooltip reads `Primary model`, the secondary picker tooltip
+    reads `Secondary model`, and the Council picker tooltip reads `Council
+    model`. The Council picker is hidden in Parallel mode; its button has a
+    local hidden override because the shared picker button class sets
+    `display: inline-flex`. Compact width constraints are applied while either
+    multi-model mode is active, with a tighter variant for the three-picker
+    Council composer.
+    The picker derives the same fallback secondary model as the controller,
+    including legacy model-id members and stale-member skipping, so its
+    displayed model matches the lane that will be charged, and refreshes when
+    model ticket tiers update. If the
+    session's primary model is stale or unavailable, both the composer and
+    controller resolve the primary lane to the default/fallback model before
+    assigning the secondary lane.
+    The settings menu no longer exposes duplicate legacy multi-model rows;
+    Normal sessions still use single-model chat.
   - The switch can be set before a session exists; `ChatApp.pendingCouncilConfig`
     carries that choice into the first created session. Enabled sessions persist
     `responseMode: 'council'` plus `councilConfig` with up to two member display
-    names. The active session model is the primary lane; the selected second
-    model is the verification lane.
+    names, `outputMode`, `synthesisModel`, and `reviewEnabled: false`. The
+    active session model is the primary lane; the selected second model is the
+    comparison lane. `Parallel` writes `outputMode: 'parallel'`, so synthesis is
+    skipped and no synthesis key is acquired. `Council` writes
+    `outputMode: 'council'`, so the selected Council model gets its own
+    synthesis key and writes the final answer. Missing/legacy `outputMode` still
+    normalizes to `parallel` to avoid unexpected third-key redemption. If a
+    config only names the primary model, the controller adds the first available
+    non-primary model as the secondary lane.
   - `chat/application/councilController.js` runs the selected models in
     parallel through `inferenceService.sendCompletionStrict(...)`, preserving
     the browser-only OpenRouter path and the existing ephemeral access flow.
   - Council access is lane-scoped under `session.councilAccess.primary` and
-    `session.councilAccess.secondary`. Each lane stores its own ephemeral key,
-    access metadata, expiry, and model id, and each lane redeems tickets for its
-    own selected model instead of sharing the session-level key.
+    `session.councilAccess.secondary`, plus `session.councilAccess.synthesis`
+    for the Council answer. Each lane stores its own ephemeral key, access
+    metadata, expiry, and model id, and each lane redeems tickets for its own
+    selected model instead of sharing the session-level key.
   - If a lane key expires, changes model, or OpenRouter reports credit
-    exhaustion, only that lane is cleared and refreshed. Before acquiring any
-    missing lane keys, the controller checks that enough tickets exist for all
-    lanes that need fresh access so it does not partially charge one lane and
-    then fail on the other.
-  - If council mode is enabled after a normal single-model turn, the primary
+    exhaustion, only that lane is cleared and refreshed. Reused lane keys are
+    also checked against the verifier's live/cached banned-station state before
+    use; a now-banned lane key is treated as stale, cleared, included in ticket
+    preflight, and replaced before inference. Before acquiring any missing lane
+    keys, the controller checks that enough tickets exist for all missing
+    primary/secondary/synthesis lanes so it does not partially charge one lane
+    and then fail on another. Parallel mode preflights/acquires only the primary
+    and secondary lanes. Changing only the Council model or switching between
+    Parallel and Council clears only `councilAccess.synthesis`; primary and
+    secondary lane keys are left alone.
+  - Persisted Memory mode can remain enabled globally, but send/regenerate do
+    not run memory augmentation while the visible session is in Parallel or
+    Council mode. Clicking Memory from a Parallel/Council session now switches
+    modes instead of just opening the memory editor because Memory was already
+    true in global settings. Post-turn memory extraction is also skipped for
+    Parallel/Council sessions so a two-lane Parallel turn does not redeem an
+    extra confidential memory key after the visible model requests finish.
+  - If Parallel or Council is enabled after a normal single-model turn, the primary
     lane can seed from the existing `session.apiKey` when the key is valid and
     the access metadata identifies the same primary model. In that case,
-    opening council only redeems tickets for missing/new lanes such as the
+    opening Parallel or Council only redeems tickets for missing/new lanes such as the
     secondary model; seeded primary lane access records use
     `ticketsConsumed: 0`. Newly acquired single-model access records are stamped
     with `modelId`/`modelName` so council does not seed an old key whose model
     ownership is ambiguous.
-  - A multi-model turn is stored as one assistant message with `message.council`
-    metadata. `message.content` is the canonical first completed response, so
-    follow-up turns still have a normal assistant context while the second lane
-    remains available for comparison.
-  - The current implementation covers Stage 1 "first opinions" only. It does
-    not yet run Karpathy-style peer ranking or chairman synthesis.
+  - A Stage 1 council turn is stored as one assistant message with
+    `message.council` metadata. `message.council.stage1` keeps the two
+    first-opinion responses. In Stage 1-only mode, each future lane request
+    builds API history from that lane's own prior Stage 1 responses, so the
+    secondary lane does not inherit the primary lane's previous answer.
+  - In Council mode, `message.council.synthesis` keeps the Council answer
+    status/response/error. When synthesis succeeds,
+    `message.content` is the Council answer and `message.model` is `Council`, so
+    future turns use the prior Council answer as normal assistant context. If
+    synthesis fails or the user chose Stage 1-only mode, `message.content` falls
+    back to the first completed Stage 1 response; synthesis failures set
+    `message.council.synthesis.fallbackUsed` to true.
+  - The current implementation covers Stage 1 "first opinions" plus one
+    synthesis pass. It does not yet run Karpathy-style peer ranking or review.
   - `MessageTemplates` renders two council lanes side by side on desktop and
-    stacked on narrow screens; if this grows beyond two lanes, the existing tab
-    fallback remains available. Council messages reuse the normal copy,
-    regenerate, fork, and canonical citation controls.
+    stacked on narrow screens, then renders the Council Answer below them only
+    after synthesis actually starts. Stage 1 response headers include provider
+    icons, and the assistant header uses the same overlapping-message-bubbles
+    icon as the composer mode button, including the initial typing indicator so
+    it does not briefly fall back to the OpenAI icon. Stage 1-only mode labels
+    the assistant row as `Parallel`, shows `Waiting for responses...` only while
+    lanes are pending, and removes the status/note row once responses are
+    visible instead of showing a completion label, lane-history implementation
+    note, or canonical-context explanation. While synthesis runs the message
+    shows `Preparing Council answer...`; the Council Answer header includes the
+    selected synthesis model with its provider icon, matching the model the user
+    chose and was charged for. On synthesis failure it shows `Council synthesis failed.
+    Continuing from Response A.` (or the actual fallback label). Council
+    messages reuse the normal copy, regenerate, fork, and canonical citation
+    controls.
   - `CouncilController` receives `chatDB`, `inferenceService`, and
     `ticketClient` from `ChatApp` instead of importing the service singletons
     directly. This keeps browser storage/network singleton initialization out
     of unit tests and lets `test/application/councilController.test.js` lock
-    down mixed lane costs, one-lane 402 retry, model-change invalidation, and
-    insufficient-ticket preflight behavior with small stubs.
+    down mixed lane costs, synthesis 402 retry, model-change invalidation,
+    insufficient-ticket preflight behavior, lane-specific Stage 1 history,
+    partial synthesis, and synthesis fallback behavior with small stubs.
+  - `chat/domain/councilPrompts.js` defines the synthesis-only council prompt.
+    It intentionally omits Stage 2 review/ranking inputs, anonymizes
+    first-opinion drafts as `Response A`, `Response B`, and asks for one final
+    answer rather than peer review or scoring.
 - 2026-05-26: Prompt edit file drag feedback is scoped to the inline editor.
   - While a prompt edit draft is open, file drags highlight the edit prompt card
     and keep the bottom composer drop overlay hidden, matching the drop target.

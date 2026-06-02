@@ -36,6 +36,7 @@ function createMockApp(overrides = {}) {
         sessionSearchQuery: 'query',
         getCurrentSession: () => session,
         getDefaultModelName: () => 'Default Model',
+        getFallbackModelEntry: () => ({ id: 'model-a', name: 'Model A' }),
         normalizeModelName: (modelName) => `${modelName} normalized`,
         renderCurrentModel: () => calls.push(['renderCurrentModel']),
         getFilteredSessions: () => [{ id: 'session-1' }],
@@ -162,6 +163,56 @@ test('model picker renders cached provider metadata through its narrowed interfa
             globalThis.localStorage = originalLocalStorage;
         }
     }
+});
+
+test('model picker secondary selection delegates to chat input without changing primary model', async () => {
+    const activeSession = { id: 'session-1', model: 'Primary Model' };
+    const { app } = createMockApp({ session: activeSession });
+    const delegatedSelections = [];
+    app.chatInput = {
+        getPrimaryModelName: () => 'Primary Model',
+        getSelectedCouncilSecondaryModelName: () => 'Old Secondary',
+        selectCouncilSecondaryModel: async (modelName) => delegatedSelections.push(modelName)
+    };
+    const ui = createModelPickerInterface(app, {
+        chatDBImpl: {
+            saveSetting: async () => {},
+            saveSession: async () => {}
+        }
+    });
+
+    const result = await ui.actions.selectCouncilSecondaryModel('Model A');
+
+    assert.deepEqual(result, { session: activeSession, modelName: 'Model A normalized' });
+    assert.equal(ui.getPrimaryModelName(), 'Primary Model');
+    assert.equal(ui.getCouncilSecondaryModelName(), 'Old Secondary');
+    assert.equal(activeSession.model, 'Primary Model');
+    assert.deepEqual(delegatedSelections, ['Model A normalized']);
+});
+
+test('model picker council selection delegates to chat input without changing primary model', async () => {
+    const activeSession = { id: 'session-1', model: 'Primary Model' };
+    const { app } = createMockApp({ session: activeSession });
+    const delegatedSelections = [];
+    app.chatInput = {
+        getPrimaryModelName: () => 'Primary Model',
+        getCouncilSynthesisModelForSelection: () => 'Old Council',
+        selectCouncilSynthesisModel: async (modelName) => delegatedSelections.push(modelName)
+    };
+    const ui = createModelPickerInterface(app, {
+        chatDBImpl: {
+            saveSetting: async () => {},
+            saveSession: async () => {}
+        }
+    });
+
+    const result = await ui.actions.selectCouncilSynthesisModel('Model A');
+
+    assert.deepEqual(result, { session: activeSession, modelName: 'Model A normalized' });
+    assert.equal(ui.getPrimaryModelName(), 'Primary Model');
+    assert.equal(ui.getCouncilSynthesisModelName(), 'Old Council');
+    assert.equal(activeSession.model, 'Primary Model');
+    assert.deepEqual(delegatedSelections, ['Model A normalized']);
 });
 
 test('sidebar interface exposes sidebar-only elements and proxies actions', async () => {
@@ -298,6 +349,8 @@ test('component app facade exposes an explicit compatibility contract', () => {
     assert.equal(typeof facade.services.tickets.getTicketCount, 'function');
     assert.equal(facade.elements.sessionsList.id, 'sessionsList');
     assert.equal(facade.getCurrentSession(), null);
+    assert.equal(facade.getDefaultModelName(), 'Default Model');
+    assert.deepEqual(facade.getFallbackModelEntry(), { id: 'model-a', name: 'Model A' });
     assert.equal(facade.notARealAppField, undefined);
 
     facade.searchEnabled = false;

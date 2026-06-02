@@ -3,9 +3,13 @@ import assert from 'node:assert/strict';
 import {
     filterDisabledModels,
     getFallbackModelEntry,
+    getConfiguredSecondaryModelNameForModels,
     normalizeModelName,
     resolveDefaultModelPreferenceUpdate,
-    upgradeDefaultModelPreference
+    resolvePrimaryModelNameForModels,
+    resolveSynthesisModelNameForModels,
+    upgradeDefaultModelPreference,
+    resolveSecondaryModelNameForModels
 } from '../../chat/domain/modelSelection.js';
 
 test('filterDisabledModels returns a copy and removes disabled ids', () => {
@@ -122,5 +126,90 @@ test('resolveDefaultModelPreferenceUpdate preserves active sessions and custom p
             upgradeDefaultModelPreference
         }).nextPendingModelName,
         'Anthropic: Claude'
+    );
+});
+
+const models = [
+    { id: 'openai/gpt', name: 'OpenAI: GPT', provider: 'OpenAI' },
+    { id: 'anthropic/claude', name: 'Anthropic: Claude', provider: 'Anthropic' },
+    { id: 'google/gemini', name: 'Google: Gemini', provider: 'Google' }
+];
+
+function normalizeCouncilModelName(modelName) {
+    const aliases = {
+        'openai/gpt': 'OpenAI: GPT',
+        'anthropic/claude': 'Anthropic: Claude',
+        'google/gemini': 'Google: Gemini'
+    };
+    return aliases[modelName] || modelName;
+}
+
+test('resolveSecondaryModelNameForModels maps configured model ids to display names', () => {
+    assert.equal(
+        resolveSecondaryModelNameForModels({
+            models,
+            primaryModelName: 'OpenAI: GPT',
+            preferredModelName: 'anthropic/claude',
+            normalizeModelName: normalizeCouncilModelName
+        }),
+        'Anthropic: Claude'
+    );
+});
+
+test('getConfiguredSecondaryModelNameForModels skips primary model ids before selecting secondary', () => {
+    assert.equal(
+        getConfiguredSecondaryModelNameForModels({
+            models,
+            councilMembers: ['openai/gpt', 'anthropic/claude'],
+            primaryModelName: 'OpenAI: GPT',
+            normalizeModelName: normalizeCouncilModelName
+        }),
+        'anthropic/claude'
+    );
+});
+
+test('getConfiguredSecondaryModelNameForModels skips stale configured members when models are loaded', () => {
+    assert.equal(
+        getConfiguredSecondaryModelNameForModels({
+            models,
+            councilMembers: ['Missing Model', 'anthropic/claude'],
+            primaryModelName: 'OpenAI: GPT',
+            normalizeModelName: normalizeCouncilModelName
+        }),
+        'anthropic/claude'
+    );
+});
+
+test('resolvePrimaryModelNameForModels falls back when configured primary is stale', () => {
+    assert.equal(
+        resolvePrimaryModelNameForModels({
+            models,
+            preferredModelName: 'Missing Model',
+            fallbackModelName: 'OpenAI: GPT',
+            normalizeModelName: normalizeCouncilModelName
+        }),
+        'OpenAI: GPT'
+    );
+});
+
+test('resolveSynthesisModelNameForModels maps ids and falls back to primary model', () => {
+    assert.equal(
+        resolveSynthesisModelNameForModels({
+            models,
+            preferredModelName: 'google/gemini',
+            fallbackModelName: 'OpenAI: GPT',
+            normalizeModelName: normalizeCouncilModelName
+        }),
+        'Google: Gemini'
+    );
+
+    assert.equal(
+        resolveSynthesisModelNameForModels({
+            models,
+            preferredModelName: 'Missing Model',
+            fallbackModelName: 'OpenAI: GPT',
+            normalizeModelName: normalizeCouncilModelName
+        }),
+        'OpenAI: GPT'
     );
 });
