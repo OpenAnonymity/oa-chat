@@ -191,6 +191,7 @@ const COMPONENT_APP_KEYS = new Set([
     'handleMemoryApprovalDecision',
     'handleEditFileUpload',
     'hasActiveSessionListCriteria',
+    'inlineQuickAsk',
     'isCurrentSessionStreaming',
     'isElectronEnvironment',
     'memoryAgentModel',

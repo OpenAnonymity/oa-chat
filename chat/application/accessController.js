@@ -61,7 +61,10 @@ export async function acquireSessionAccess(options = {}) {
         onGranted = null,
         onAccessRequestError = () => {},
         onVerificationWarning = () => {},
-        onSessionChanged = () => {}
+        onSessionChanged = () => {},
+        modelIdOverride = null,
+        modelNameOverride = null,
+        signal = null
     } = options;
 
     if (!session) throw new Error('No active session found.');
@@ -74,8 +77,11 @@ export async function acquireSessionAccess(options = {}) {
         throw new Error('You have no inference tickets left. Please redeem an invite code for more tickets at the System Panel (right) or request invite code at [here](https://openanonymity.ai/beta/).');
     }
 
-    const modelName = session.model || inferenceService.getDefaultModelName(session);
-    const modelEntry = (Array.isArray(models) ? models : []).find(model => model.name === modelName) ||
+    const modelName = modelNameOverride || session.model || inferenceService.getDefaultModelName(session);
+    const modelEntry = (modelIdOverride && Array.isArray(models)
+        ? models.find(model => model.id === modelIdOverride)
+        : null) ||
+        (Array.isArray(models) ? models : []).find(model => model.name === modelName) ||
         (typeof getFallbackModelEntry === 'function' ? getFallbackModelEntry(session) : null);
     if (!modelEntry) {
         throw new Error('No enabled models are currently available. Please try again later.');
@@ -87,6 +93,13 @@ export async function acquireSessionAccess(options = {}) {
         throw new Error(`Not enough tickets for this model. Need ${ticketsRequired}, but only ${availableTickets} available.`);
     }
 
+    if (signal?.aborted) {
+        const error = new Error('Request aborted');
+        error.name = 'AbortError';
+        error.isCancelled = true;
+        throw error;
+    }
+
     onNetworkSession(session.id);
 
     let result;
@@ -96,7 +109,8 @@ export async function acquireSessionAccess(options = {}) {
     while (retries < maxRetries) {
         try {
             result = await inferenceService.requestAccess(session, {
-                ticketsRequired
+                ticketsRequired,
+                ...(signal ? { signal } : {})
             });
             break;
         } catch (error) {

@@ -1428,6 +1428,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     const lowerModelName = typeof displayModelName === 'string' ? displayModelName.trim().toLowerCase() : '';
     const isMemoryAgent = lowerModelName === 'memory agent';
     const assistantTimeClass = CLASSES.assistantTime;
+    const scrubberRestoredAttribute = message.scrubber?.restored ? ' data-scrubber-restored="true"' : '';
     const memoryAgentIcon = `
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" class="w-3.5 h-3.5 text-primary">
             <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
@@ -1438,7 +1439,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     if (message.streamingPending) {
         const pendingPhase = message.streamingPhase || options.pendingPhase || 'requesting-key';
         return `
-            <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}"${getRawContentAttribute(message.content)}>
+            <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}"${scrubberRestoredAttribute}${getRawContentAttribute(message.content)}>
                 <div class="${CLASSES.assistantGroup}">
                     <div class="${CLASSES.assistantHeader}">
                         <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow ${bgClass}">
@@ -1668,7 +1669,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     `;
 
     return `
-        <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}"${getRawContentAttribute(message.content)}>
+        <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}"${scrubberRestoredAttribute}${getRawContentAttribute(message.content)}>
             <div class="${CLASSES.assistantGroup}">
                 ${isMemoryAgent ? `
                 <div class="${CLASSES.assistantHeader}">

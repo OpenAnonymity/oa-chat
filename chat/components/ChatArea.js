@@ -4,9 +4,10 @@
  * scroll behaviors, and LaTeX rendering.
  */
 
-import { buildMessageHTML, buildEmptyState, buildSharedIndicator, buildImportedIndicator, buildTypingIndicator, RAW_CLIPBOARD_ATTRIBUTE_ENABLED } from './MessageTemplates.js';
+import { buildMessageHTML, buildEmptyState, buildSharedIndicator, buildImportedIndicator, buildTypingIndicator, buildReasoningTrace, RAW_CLIPBOARD_ATTRIBUTE_ENABLED } from './MessageTemplates.js';
 import { exportChats, exportTickets } from '../services/globalExport.js';
 import { parseStreamingReasoningContent, parseReasoningContent } from '../services/reasoningParser.js';
+import { buildQuickAskQuestion, normalizeQuickAskSelection } from '../domain/quickAsk.js';
 
 export default class ChatArea {
     /**
@@ -36,6 +37,18 @@ export default class ChatArea {
         this.renderGeneration = 0;
         this.memoryPromptModal = null;
         this.memoryPromptModalKeyHandler = null;
+        this.quickAsk = {
+            popover: null,
+            window: null,
+            selectedText: '',
+            question: '',
+            messageId: '',
+            activeKey: '',
+            selectionRect: null,
+            abortController: null,
+            activeRequestId: 0,
+            requestInFlight: false
+        };
         this.setupEventListeners();
     }
 
@@ -278,6 +291,488 @@ export default class ChatArea {
                 }
             }
         });
+
+        messagesContainer.addEventListener('mouseup', () => {
+            window.setTimeout(() => this.maybeShowQuickAskPopover(), 0);
+        });
+
+        messagesContainer.addEventListener('keyup', (e) => {
+            if (e.key === 'Shift' || e.key.startsWith('Arrow') || e.key === 'Home' || e.key === 'End') {
+                window.setTimeout(() => this.maybeShowQuickAskPopover(), 0);
+            }
+        });
+
+        messagesContainer.addEventListener('touchend', () => {
+            window.setTimeout(() => this.maybeShowQuickAskPopover(), 0);
+        });
+
+        document.addEventListener('selectionchange', () => {
+            const selection = window.getSelection();
+            if (!selection || selection.isCollapsed || !selection.toString().trim()) {
+                this.hideQuickAskPopover();
+            }
+        });
+
+        document.addEventListener('pointerdown', (e) => {
+            if (e.target.closest?.('.quick-ask-popover, .quick-ask-window')) return;
+            if (this.quickAsk.window && !this.quickAsk.window.classList.contains('hidden')) {
+                this.closeQuickAskWindow();
+            }
+            if (!e.target.closest?.('#messages-container .message-content')) {
+                this.hideQuickAskPopover();
+            }
+        }, true);
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                this.hideQuickAskPopover();
+                if (this.quickAsk.window) {
+                    this.closeQuickAskWindow();
+                }
+            }
+        });
+
+        window.addEventListener('resize', () => this.hideQuickAskPopover());
+        this.app.elements.chatArea?.addEventListener('scroll', () => this.hideQuickAskPopover(), { passive: true });
+    }
+
+    getAssistantSelectionData() {
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return null;
+
+        const selectedText = normalizeQuickAskSelection(selection.toString());
+        if (!selectedText) return null;
+
+        const range = selection.getRangeAt(0);
+        const commonNode = range.commonAncestorContainer;
+        const commonEl = commonNode.nodeType === Node.ELEMENT_NODE
+            ? commonNode
+            : commonNode.parentElement;
+        const contentEl = commonEl?.closest?.('.message-content');
+        if (!contentEl || contentEl.closest('.quick-ask-window')) return null;
+
+        const messageEl = contentEl.closest('[data-message-id]');
+        if (!messageEl || !messageEl.querySelector('.message-assistant')) return null;
+        if (messageEl.dataset.scrubberRestored === 'true') return null;
+
+        let rect = range.getBoundingClientRect();
+        if (!rect || (rect.width === 0 && rect.height === 0)) {
+            rect = range.getClientRects()[0];
+        }
+        if (!rect) return null;
+
+        return {
+            selectedText,
+            messageId: messageEl.dataset.messageId || '',
+            rect: {
+                top: rect.top,
+                right: rect.right,
+                bottom: rect.bottom,
+                left: rect.left,
+                width: rect.width,
+                height: rect.height
+            }
+        };
+    }
+
+    maybeShowQuickAskPopover() {
+        if (this.quickAsk.window &&
+            !this.quickAsk.window.classList.contains('hidden') &&
+            this.quickAsk.window.contains(document.activeElement)) return;
+
+        const selectionData = this.getAssistantSelectionData();
+        if (!selectionData) {
+            this.hideQuickAskPopover();
+            return;
+        }
+
+        this.quickAsk.selectedText = selectionData.selectedText;
+        this.quickAsk.question = buildQuickAskQuestion(selectionData.selectedText);
+        this.quickAsk.messageId = selectionData.messageId;
+        this.quickAsk.selectionRect = selectionData.rect;
+
+        const popover = this.ensureQuickAskPopover();
+        popover.classList.remove('hidden');
+        popover.setAttribute('aria-hidden', 'false');
+        this.positionQuickAskPopover(popover, selectionData.rect);
+    }
+
+    ensureQuickAskPopover() {
+        if (this.quickAsk.popover) return this.quickAsk.popover;
+
+        const popover = document.createElement('div');
+        popover.className = 'quick-ask-popover hidden';
+        popover.setAttribute('aria-hidden', 'true');
+        popover.innerHTML = `
+            <button type="button" class="quick-ask-popover-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor" class="w-3.5 h-3.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.178-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M12 17.25h.008v.008H12v-.008Z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z" />
+                </svg>
+                <span>Ask</span>
+            </button>
+        `;
+        popover.querySelector('.quick-ask-popover-btn')?.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            this.openQuickAskWindow();
+        });
+        document.body.appendChild(popover);
+        this.quickAsk.popover = popover;
+        return popover;
+    }
+
+    positionQuickAskPopover(popover, rect) {
+        const margin = 8;
+        const width = popover.offsetWidth || 76;
+        const height = popover.offsetHeight || 36;
+        const centerX = rect.left + (rect.width / 2);
+        const left = Math.min(
+            Math.max(margin, centerX - (width / 2)),
+            window.innerWidth - width - margin
+        );
+        const top = rect.top - height - margin > margin
+            ? rect.top - height - margin
+            : rect.bottom + margin;
+
+        Object.assign(popover.style, {
+            left: `${left}px`,
+            top: `${Math.min(Math.max(margin, top), window.innerHeight - height - margin)}px`
+        });
+    }
+
+    hideQuickAskPopover() {
+        const popover = this.quickAsk.popover;
+        if (!popover) return;
+        popover.classList.add('hidden');
+        popover.setAttribute('aria-hidden', 'true');
+    }
+
+    getQuickAskKey(selectedText = this.quickAsk.selectedText, messageId = this.quickAsk.messageId) {
+        const sessionId = this.app.getCurrentSession?.()?.id || '';
+        return [sessionId, messageId || '', selectedText || ''].join('::');
+    }
+
+    openQuickAskWindow() {
+        const selectedText = this.quickAsk.selectedText;
+        if (!selectedText) return;
+
+        this.hideQuickAskPopover();
+        window.getSelection()?.removeAllRanges();
+        const key = this.getQuickAskKey(selectedText);
+        const panel = this.ensureQuickAskWindow();
+        if (this.quickAsk.activeKey && this.quickAsk.activeKey === key) {
+            panel.classList.remove('hidden');
+            panel.setAttribute('aria-hidden', 'false');
+            this.positionQuickAskWindow(panel, this.quickAsk.selectionRect);
+            return;
+        }
+
+        this.quickAsk.abortController?.abort();
+        this.quickAsk.abortController = new AbortController();
+        this.quickAsk.activeRequestId += 1;
+        const requestId = this.quickAsk.activeRequestId;
+        this.quickAsk.question = buildQuickAskQuestion(selectedText);
+        this.quickAsk.activeKey = key;
+
+        panel.classList.remove('hidden');
+        panel.setAttribute('aria-hidden', 'false');
+        panel.querySelector('.quick-ask-user-bubble').textContent = this.quickAsk.question;
+        panel.querySelector('.quick-ask-status').textContent = '';
+        this.updateQuickAskReasoning('');
+        this.updateQuickAskCitations(null);
+        this.updateQuickAskAnswer('', { pending: true, status: 'Waiting for response' });
+        this.positionQuickAskWindow(panel, this.quickAsk.selectionRect);
+        this.startQuickAskRequest(requestId);
+    }
+
+    ensureQuickAskWindow() {
+        if (this.quickAsk.window) {
+            if (!this.quickAsk.window.isConnected ||
+                this.quickAsk.window.parentElement !== this.app.elements.messagesContainer) {
+                this.app.elements.messagesContainer.appendChild(this.quickAsk.window);
+            }
+            return this.quickAsk.window;
+        }
+
+        const panel = document.createElement('section');
+        panel.className = 'quick-ask-window hidden';
+        panel.setAttribute('role', 'dialog');
+        panel.setAttribute('aria-label', 'Inline quick ask');
+        panel.setAttribute('aria-hidden', 'true');
+        panel.innerHTML = `
+            <div class="quick-ask-mini-chat" tabindex="-1">
+                <div class="quick-ask-turn quick-ask-turn-user">
+                    <div class="quick-ask-user-bubble message-user py-3 px-4 font-normal max-w-full"></div>
+                </div>
+                <div class="quick-ask-turn quick-ask-turn-assistant">
+                    <div class="quick-ask-assistant-bubble message-assistant">
+                        <div class="quick-ask-status"></div>
+                        <div class="quick-ask-reasoning hidden"></div>
+                        <div class="quick-ask-answer message-content prose"></div>
+                        <div class="quick-ask-sources hidden"></div>
+                    </div>
+                </div>
+            </div>
+        `;
+        panel.addEventListener('click', (e) => {
+            const codeBlockCopyBtn = e.target.closest('.code-block-copy-btn');
+            if (!codeBlockCopyBtn) return;
+            e.preventDefault();
+            this.handleCopyCodeBlock(codeBlockCopyBtn);
+        });
+        this.app.elements.messagesContainer.appendChild(panel);
+        this.quickAsk.window = panel;
+        return panel;
+    }
+
+    positionQuickAskWindow(panel, rect) {
+        const margin = 16;
+        const panelRect = panel.getBoundingClientRect();
+        const width = panelRect.width || Math.min(520, window.innerWidth - (margin * 2));
+        const height = panelRect.height || 360;
+        const sourceRect = rect || {
+            left: window.innerWidth / 2,
+            right: window.innerWidth / 2,
+            top: window.innerHeight / 3,
+            bottom: window.innerHeight / 3,
+            width: 0,
+            height: 0
+        };
+        const centerX = sourceRect.left + ((sourceRect.width || 0) / 2);
+        const left = Math.min(
+            Math.max(margin, centerX - (width / 2)),
+            window.innerWidth - width - margin
+        );
+        const belowTop = sourceRect.bottom + margin;
+        const aboveTop = sourceRect.top - height - margin;
+        const top = belowTop + height <= window.innerHeight - margin
+            ? belowTop
+            : Math.max(margin, aboveTop);
+        const containerRect = this.app.elements.messagesContainer.getBoundingClientRect();
+
+        Object.assign(panel.style, {
+            left: `${left - containerRect.left}px`,
+            top: `${Math.min(Math.max(margin, top), window.innerHeight - height - margin) - containerRect.top}px`
+        });
+    }
+
+    async startQuickAskRequest(requestId) {
+        this.quickAsk.requestInFlight = true;
+        try {
+            await this.app.inlineQuickAsk(this.quickAsk.selectedText, {
+                abortController: this.quickAsk.abortController,
+                onStatus: (status) => {
+                    if (requestId !== this.quickAsk.activeRequestId) return;
+                    this.updateQuickAskStatus(status);
+                },
+                onChunk: (content) => {
+                    if (requestId !== this.quickAsk.activeRequestId) return;
+                    this.updateQuickAskAnswer(content);
+                },
+                onReasoningChunk: (reasoning) => {
+                    if (requestId !== this.quickAsk.activeRequestId) return;
+                    this.updateQuickAskReasoning(reasoning, { streaming: true });
+                },
+                onDone: (result) => {
+                    if (requestId !== this.quickAsk.activeRequestId) return;
+                    this.updateQuickAskReasoning(result.reasoning || '');
+                    this.updateQuickAskAnswer(result.content || '[Model provider returned no response.]');
+                    this.updateQuickAskCitations(result.citations || null);
+                }
+            });
+        } catch (error) {
+            if (requestId !== this.quickAsk.activeRequestId) return;
+            if (error?.isCancelled || this.quickAsk.abortController?.signal.aborted) {
+                this.updateQuickAskStatus('stopped');
+                return;
+            }
+            this.updateQuickAskError(error?.message || 'Quick ask failed.');
+        } finally {
+            if (requestId === this.quickAsk.activeRequestId) {
+                this.quickAsk.requestInFlight = false;
+            }
+        }
+    }
+
+    updateQuickAskStatus(status) {
+        const labelByStatus = {
+            'requesting-key': 'Requesting ephemeral key',
+            'waiting-response': 'Waiting for response',
+            'stream-open': 'Waiting for response',
+            streaming: '',
+            stopped: ''
+        };
+        const label = labelByStatus[status] ?? status ?? '';
+        const statusEl = this.quickAsk.window?.querySelector('.quick-ask-status');
+        if (statusEl) {
+            statusEl.textContent = '';
+            statusEl.classList.remove('pending-response-streaming');
+        }
+        if (label) {
+            const answerEl = this.quickAsk.window?.querySelector('.quick-ask-answer');
+            const hasAnswerContent = answerEl && answerEl.textContent.trim() && !answerEl.querySelector('.pending-response-line');
+            if (!hasAnswerContent) {
+                this.updateQuickAskAnswer('', { pending: true, status: label });
+            }
+        }
+    }
+
+    updateQuickAskAnswer(content, options = {}) {
+        const answerEl = this.quickAsk.window?.querySelector('.quick-ask-answer');
+        if (!answerEl) return;
+        const assistantBubble = answerEl.closest('.quick-ask-assistant-bubble');
+
+        if (options.pending && !content) {
+            assistantBubble?.classList.add('quick-ask-assistant-pending');
+            answerEl.innerHTML = `
+                <div class="pending-response-line">
+                    <span class="pending-response-label pending-response-streaming">${this.escapeHtml(options.status || 'Waiting for response')}</span>
+                </div>
+            `;
+            return;
+        }
+
+        assistantBubble?.classList.remove('quick-ask-assistant-pending');
+        this.updateQuickAskStatus(content ? '' : options.status);
+        answerEl.innerHTML = this.app.processContentWithLatex(content || '');
+        renderMathInElement(answerEl, {
+            delimiters: [
+                {left: '$$', right: '$$', display: true},
+                {left: '\\[', right: '\\]', display: true},
+                {left: '\\(', right: '\\)', display: false}
+            ],
+            throwOnError: false
+        });
+        const miniChat = this.quickAsk.window?.querySelector('.quick-ask-mini-chat');
+        if (miniChat) {
+            miniChat.scrollTop = miniChat.scrollHeight;
+        }
+    }
+
+    updateQuickAskReasoning(reasoning, options = {}) {
+        const reasoningEl = this.quickAsk.window?.querySelector('.quick-ask-reasoning');
+        if (!reasoningEl) return;
+        const text = typeof reasoning === 'string' ? reasoning.trim() : '';
+        if (!text) {
+            reasoningEl.classList.add('hidden');
+            reasoningEl.innerHTML = '';
+            return;
+        }
+
+        reasoningEl.classList.remove('hidden');
+        reasoningEl.innerHTML = buildReasoningTrace(
+            text,
+            `quick-ask-inline-${this.quickAsk.activeRequestId}`,
+            !!options.streaming,
+            this.app.processContentWithLatex.bind(this.app)
+        );
+        renderMathInElement(reasoningEl, {
+            delimiters: [
+                {left: '$$', right: '$$', display: true},
+                {left: '\\[', right: '\\]', display: true},
+                {left: '\\(', right: '\\)', display: false}
+            ],
+            throwOnError: false
+        });
+    }
+
+    updateQuickAskCitations(citations) {
+        const sourcesEl = this.quickAsk.window?.querySelector('.quick-ask-sources');
+        if (!sourcesEl) return;
+        const items = Array.isArray(citations) ? citations.filter(citation => citation?.url) : [];
+        if (items.length === 0) {
+            sourcesEl.classList.add('hidden');
+            sourcesEl.innerHTML = '';
+            return;
+        }
+
+        const links = items.slice(0, 5).map((citation, index) => {
+            let safeUrl = '';
+            try {
+                const parsed = new URL(citation.url);
+                if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+                    safeUrl = parsed.href;
+                }
+            } catch {
+                safeUrl = '';
+            }
+            const label = citation.title || citation.domain || citation.url;
+            const prefix = `${index + 1}. `;
+            if (!safeUrl) {
+                return `<span class="quick-ask-source">${this.escapeHtml(prefix + label)}</span>`;
+            }
+            return `<a class="quick-ask-source" href="${this.escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer">${this.escapeHtml(prefix + label)}</a>`;
+        }).join('');
+
+        sourcesEl.classList.remove('hidden');
+        sourcesEl.innerHTML = `
+            <div class="quick-ask-sources-label">${items.length} source${items.length === 1 ? '' : 's'}</div>
+            <div class="quick-ask-sources-list">${links}</div>
+        `;
+    }
+
+    updateQuickAskError(message) {
+        const answerEl = this.quickAsk.window?.querySelector('.quick-ask-answer');
+        if (!answerEl) return;
+        this.updateQuickAskStatus('');
+        this.updateQuickAskReasoning('');
+        this.updateQuickAskCitations(null);
+        answerEl.closest('.quick-ask-assistant-bubble')?.classList.remove('quick-ask-assistant-pending');
+        answerEl.innerHTML = `<p><strong>Error:</strong> ${this.escapeHtml(message)}</p>`;
+    }
+
+    closeQuickAskWindow(options = {}) {
+        const { abort = false, reset = false } = options;
+        if (abort) {
+            this.quickAsk.abortController?.abort();
+            this.quickAsk.abortController = null;
+            this.quickAsk.activeRequestId += 1;
+            this.quickAsk.requestInFlight = false;
+        }
+        if (this.quickAsk.window) {
+            this.quickAsk.window.classList.add('hidden');
+            this.quickAsk.window.setAttribute('aria-hidden', 'true');
+        }
+        if (reset) {
+            this.quickAsk.selectedText = '';
+            this.quickAsk.question = '';
+            this.quickAsk.messageId = '';
+            this.quickAsk.activeKey = '';
+            this.quickAsk.selectionRect = null;
+        }
+    }
+
+    getQuickAskActiveSessionId() {
+        return this.quickAsk.activeKey ? this.quickAsk.activeKey.split('::')[0] || '' : '';
+    }
+
+    shouldPreserveQuickAskWindowForRender(sessionId) {
+        return Boolean(
+            sessionId &&
+            this.quickAsk.window &&
+            this.quickAsk.activeKey &&
+            this.getQuickAskActiveSessionId() === sessionId
+        );
+    }
+
+    detachQuickAskWindowForRender(sessionId) {
+        if (!this.shouldPreserveQuickAskWindowForRender(sessionId)) return null;
+        const panel = this.quickAsk.window;
+        if (panel.isConnected) {
+            panel.remove();
+        }
+        return panel;
+    }
+
+    restoreQuickAskWindowAfterRender(panel, sessionId) {
+        if (!panel || panel !== this.quickAsk.window) return;
+        if (!this.shouldPreserveQuickAskWindowForRender(sessionId)) return;
+
+        if (!panel.isConnected ||
+            panel.parentElement !== this.app.elements.messagesContainer) {
+            this.app.elements.messagesContainer.appendChild(panel);
+        }
     }
 
     /**
@@ -1050,6 +1545,14 @@ export default class ChatArea {
     async render() {
         // Increment render generation - used to cancel stale renders during rapid session switching
         const currentGeneration = ++this.renderGeneration;
+        const session = this.app.getCurrentSession();
+        const sessionId = session?.id || '';
+        const messagesContainer = this.app.elements.messagesContainer;
+        const preserveQuickAskWindow = this.shouldPreserveQuickAskWindowForRender(sessionId);
+        this.hideQuickAskPopover();
+        if (!preserveQuickAskWindow) {
+            this.closeQuickAskWindow({ abort: true, reset: true });
+        }
 
         // Clear debounce timer but DON'T clear buffer content - it persists across
         // session switches to enable seamless restoration of streaming state
@@ -1062,9 +1565,6 @@ export default class ChatArea {
             clearInterval(this.typewriter.interval);
             this.typewriter.interval = null;
         }
-
-        const session = this.app.getCurrentSession();
-        const messagesContainer = this.app.elements.messagesContainer;
 
         // Check if empty state is already rendered (by prelude.js) to avoid re-render flash
         const hasEmptyState = messagesContainer.querySelector('.welcome-landing') !== null;
@@ -1176,7 +1676,9 @@ export default class ChatArea {
         }
 
         this.app.detachStalePromptSlideUpEffect?.();
+        const detachedQuickAskWindow = this.detachQuickAskWindowForRender(session.id);
         messagesContainer.innerHTML = messagesHtml;
+        this.restoreQuickAskWindowAfterRender(detachedQuickAskWindow, session.id);
         const promptSlideMessageId = this.app.getPromptSlideUpMessageIdForSession?.(
             session.id,
             messages,

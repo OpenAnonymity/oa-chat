@@ -1012,6 +1012,11 @@ class OpenRouterAPI {
                 headers: headers,
                 body: JSON.stringify(requestBody)
             };
+            if (abortController?.signal?.aborted) {
+                const error = new DOMException('The operation was aborted.', 'AbortError');
+                error.isCancelled = true;
+                throw error;
+            }
             if (isAndroidNativeInferenceAvailable()) {
                 const nativeRequest = {
                     url,
