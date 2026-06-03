@@ -295,3 +295,63 @@ test('inline quick ask preserves scrubber and session lifecycle constraints', ()
         'quick ask should add pending breathing room and hide when clicking elsewhere'
     );
 });
+
+test('composer mode toggle exposes Chat, Parallel, and Memory only', () => {
+    const html = read('chat/index.html');
+    assert.equal(html.includes('data-mode-option="chat"'), true);
+    assert.equal(html.includes('data-mode-option="parallel"'), true);
+    assert.equal(html.includes('data-mode-option="memory"'), true);
+    assert.equal(
+        html.includes('data-mode-option="council"'),
+        false,
+        'Council review should be a Parallel setting, not a visible composer mode'
+    );
+});
+
+test('parallel composer keeps the Council model picker out of the input bar', () => {
+    const html = read('chat/index.html');
+    assert.equal(html.includes('id="council-secondary-model-btn"'), true);
+    assert.equal(
+        html.includes('id="council-synthesis-model-btn"'),
+        false,
+        'Council model selection belongs in settings, not the Parallel composer'
+    );
+    assert.equal(html.includes('id="council-review-toggle"'), true);
+    assert.equal(html.includes('id="council-review-model-btn"'), true);
+});
+
+test('council review setting drives synthesis output mode in ChatInput', () => {
+    const source = read('chat/components/ChatInput.js');
+    assert.equal(source.includes('council-review-toggle'), true);
+    assert.equal(source.includes('setCouncilReviewEnabledFromSettings'), true);
+    assert.equal(source.includes('currentlyMultiModelEnabled'), true);
+    assert.equal(source.includes('closeSettingsMenu()'), true);
+    assert.equal(source.includes('openCouncilSynthesisModelPicker({ closeSettings: true })'), true);
+    assert.match(
+        source,
+        /enabled \? COUNCIL_OUTPUT_SYNTHESIS : COUNCIL_OUTPUT_PARALLEL/,
+        'Council review on should persist synthesis output mode, and off should persist parallel'
+    );
+    assert.match(
+        source,
+        /enabled: currentlyMultiModelEnabled/,
+        'Council review should persist as a setting without forcing Parallel mode on by itself'
+    );
+});
+
+test('council model shortcut follows review setting, not just active Parallel', () => {
+    const source = read('chat/app.js');
+    assert.equal(source.includes('const isCouncilReviewEnabled'), true);
+    assert.match(
+        source,
+        /session\?\.councilConfig\?\.outputMode === COUNCIL_OUTPUT_SYNTHESIS/,
+        'Active-session Council model shortcut should work when review is enabled as a setting'
+    );
+    assert.match(
+        source,
+        /pendingCouncilConfig\?\.outputMode === COUNCIL_OUTPUT_SYNTHESIS/,
+        'Pending Council model shortcut should work when review is enabled as a setting'
+    );
+    const shortcutBlock = source.slice(source.indexOf('// Cmd/Ctrl + L for the Council synthesis model picker'));
+    assert.equal(shortcutBlock.includes('isCouncilModeActive(session)'), false);
+});

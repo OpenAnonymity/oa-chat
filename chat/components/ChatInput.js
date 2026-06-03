@@ -79,6 +79,8 @@ export default class ChatInput {
         this.multiModelModeSelect = null;
         this.councilSynthesisInlineSelect = null;
         this.councilSynthesisInlineButton = null;
+        this.councilReviewToggle = null;
+        this.councilReviewModelButton = null;
         onModelTiersUpdate(() => this.refreshMultiModelSettingsUI());
         // Store undone scrubber state for redo functionality
         this.scrubberUndoState = null;
@@ -266,7 +268,6 @@ export default class ChatInput {
                 const mode = button.dataset.modeOption || 'chat';
                 const isMemory = mode === 'memory';
                 const isParallel = mode === 'parallel';
-                const isCouncil = mode === 'council';
                 const currentMode = this.app.elements.memoryToggle?.dataset?.mode || 'chat';
                 if (isMemory && this.app.memoryFeatureEnabled === false) {
                     this.updateMemoryToggleUI();
@@ -281,10 +282,8 @@ export default class ChatInput {
                 setTimeout(() => container.classList.remove('sliding'), 250);
                 this.app.memoryMode = isMemory && this.app.memoryFeatureEnabled !== false;
 
-                if (isParallel || isCouncil) {
-                    await this.setCouncilModeFromComposer(true, {
-                        outputMode: isCouncil ? COUNCIL_OUTPUT_SYNTHESIS : COUNCIL_OUTPUT_PARALLEL
-                    });
+                if (isParallel) {
+                    await this.setCouncilModeFromComposer(true);
                 } else {
                     await this.setCouncilModeFromComposer(false);
                 }
@@ -346,47 +345,6 @@ export default class ChatInput {
             }
         });
 
-        const toggleMultiModelMode = async () => {
-            const session = this.app.getCurrentSession();
-            const pendingCouncilConfig = this.app.getPendingCouncilConfig?.();
-            const currentlyEnabled = session
-                ? session.responseMode === RESPONSE_MODE_COUNCIL && session.councilConfig?.enabled === true
-                : pendingCouncilConfig?.enabled === true;
-            const enable = !currentlyEnabled;
-            const members = this.getMultiModelMembersForSelection();
-            const synthesisModel = this.getCouncilSynthesisModelForSelection();
-            const outputMode = enable
-                ? COUNCIL_OUTPUT_PARALLEL
-                : this.getMultiModelOutputModeForSelection();
-            if (!session) {
-                this.app.setPendingCouncilConfig?.({
-                    enabled: enable,
-                    members,
-                    synthesisModel,
-                    outputMode,
-                    reviewEnabled: false
-                });
-                this.refreshMultiModelSettingsUI();
-                this.updateMemoryToggleUI();
-                return;
-            }
-            await this.app.setCouncilModeForCurrentSession({
-                enabled: enable,
-                members,
-                synthesisModel,
-                outputMode
-            });
-            this.refreshMultiModelSettingsUI();
-            this.updateMemoryToggleUI();
-        };
-
-        document.addEventListener('click', async (event) => {
-            if (!event.target.closest('#multi-model-toggle-row, #multi-model-toggle')) return;
-            event.preventDefault();
-            event.stopPropagation();
-            await toggleMultiModelMode();
-        }, true);
-
         const secondarySelect = document.getElementById('multi-model-secondary-select');
         if (secondarySelect) {
             this.multiModelSecondarySelect = secondarySelect;
@@ -441,18 +399,29 @@ export default class ChatInput {
             });
         }
 
-        const synthesisInlineButton = document.getElementById('council-synthesis-model-btn');
-        if (synthesisInlineButton) {
-            this.councilSynthesisInlineButton = synthesisInlineButton;
-            synthesisInlineButton.addEventListener('click', (event) => {
+        const councilReviewToggle = document.getElementById('council-review-toggle');
+        if (councilReviewToggle) {
+            this.councilReviewToggle = councilReviewToggle;
+            councilReviewToggle.addEventListener('click', async (event) => {
+                event.preventDefault();
                 event.stopPropagation();
-                this.openCouncilSynthesisModelPicker();
+                const enabled = councilReviewToggle.getAttribute('aria-checked') !== 'true';
+                await this.setCouncilReviewEnabledFromSettings(enabled);
             });
-            synthesisInlineButton.addEventListener('keydown', (event) => {
+        }
+
+        const councilReviewModelButton = document.getElementById('council-review-model-btn');
+        if (councilReviewModelButton) {
+            this.councilReviewModelButton = councilReviewModelButton;
+            councilReviewModelButton.addEventListener('click', (event) => {
+                event.stopPropagation();
+                this.openCouncilSynthesisModelPicker({ closeSettings: true });
+            });
+            councilReviewModelButton.addEventListener('keydown', (event) => {
                 if (event.key !== 'ArrowDown' && event.key !== 'Enter' && event.key !== ' ') return;
                 event.preventDefault();
                 event.stopPropagation();
-                this.openCouncilSynthesisModelPicker();
+                this.openCouncilSynthesisModelPicker({ closeSettings: true });
             });
         }
 
@@ -1960,11 +1929,8 @@ export default class ChatInput {
         const isCouncilEnabled = session
             ? session.responseMode === RESPONSE_MODE_COUNCIL && session.councilConfig?.enabled === true
             : pendingCouncilConfig?.enabled === true;
-        const councilOutputMode = session?.councilConfig?.outputMode
-            || pendingCouncilConfig?.outputMode
-            || COUNCIL_OUTPUT_PARALLEL;
         const mode = isCouncilEnabled
-            ? (councilOutputMode === COUNCIL_OUTPUT_SYNTHESIS ? 'council' : 'parallel')
+            ? 'parallel'
             : (memoryFeatureEnabled && this.app.memoryMode ? 'memory' : 'chat');
         const isFirstRender = container.style.visibility === 'hidden';
         if (isFirstRender) {
@@ -2004,7 +1970,7 @@ export default class ChatInput {
     async setCouncilModeFromComposer(enabled, options = {}) {
         const members = this.getMultiModelMembersForSelection({ preferControlSelection: false });
         const synthesisModel = this.getCouncilSynthesisModelForSelection();
-        const outputMode = options.outputMode || COUNCIL_OUTPUT_PARALLEL;
+        const outputMode = options.outputMode || this.getMultiModelOutputModeForSelection();
         const session = this.app.getCurrentSession();
 
         if (!session) {
@@ -2024,6 +1990,44 @@ export default class ChatInput {
             synthesisModel,
             outputMode
         });
+    }
+
+    async setCouncilReviewEnabledFromSettings(enabled) {
+        const session = this.app.getCurrentSession();
+        const pendingCouncilConfig = this.app.getPendingCouncilConfig?.();
+        const currentlyMultiModelEnabled = session
+            ? session.responseMode === RESPONSE_MODE_COUNCIL && session.councilConfig?.enabled === true
+            : pendingCouncilConfig?.enabled === true;
+        const members = this.getMultiModelMembersForSelection();
+        const synthesisModel = this.getCouncilSynthesisModelForSelection();
+        const outputMode = enabled ? COUNCIL_OUTPUT_SYNTHESIS : COUNCIL_OUTPUT_PARALLEL;
+
+        if (currentlyMultiModelEnabled) {
+            this.app.memoryMode = false;
+            await this.app.data?.saveSetting?.('memoryMode', false);
+        }
+
+        if (!session) {
+            this.app.setPendingCouncilConfig?.({
+                enabled: currentlyMultiModelEnabled,
+                members,
+                synthesisModel,
+                outputMode,
+                reviewEnabled: false
+            });
+            this.refreshMultiModelSettingsUI();
+            this.updateMemoryToggleUI();
+            return;
+        }
+
+        await this.app.setCouncilModeForCurrentSession({
+            enabled: currentlyMultiModelEnabled,
+            members,
+            synthesisModel,
+            outputMode
+        });
+        this.refreshMultiModelSettingsUI();
+        this.updateMemoryToggleUI();
     }
 
     async persistCouncilSelectionFromControls() {
@@ -2082,8 +2086,17 @@ export default class ChatInput {
         this.app.modelPicker.open({ selectionMode: 'council-secondary' });
     }
 
-    openCouncilSynthesisModelPicker() {
+    closeSettingsMenu() {
+        if (!this.app.elements.settingsMenu) return;
+        this.app.elements.settingsMenu.classList.add('hidden');
+        this.app.elements.settingsBtn?.classList.remove('tooltip-disabled');
+    }
+
+    openCouncilSynthesisModelPicker(options = {}) {
         if (!this.app.modelPicker?.open) return;
+        if (options.closeSettings) {
+            this.closeSettingsMenu();
+        }
         this.app.modelPicker.open({ selectionMode: 'council-synthesis' });
     }
 
@@ -2244,12 +2257,10 @@ export default class ChatInput {
     }
 
     getMultiModelOutputModeForSelection() {
-        const selectedComposerMode = this.app.elements.memoryToggle?.dataset?.mode;
-        if (selectedComposerMode === 'council') {
-            return COUNCIL_OUTPUT_SYNTHESIS;
-        }
-        if (selectedComposerMode === 'parallel') {
-            return COUNCIL_OUTPUT_PARALLEL;
+        if (this.councilReviewToggle) {
+            return this.councilReviewToggle.getAttribute('aria-checked') === 'true'
+                ? COUNCIL_OUTPUT_SYNTHESIS
+                : COUNCIL_OUTPUT_PARALLEL;
         }
         if (this.multiModelModeSelect) {
             return this.multiModelModeSelect?.value === COUNCIL_OUTPUT_PARALLEL
@@ -2266,14 +2277,14 @@ export default class ChatInput {
 
     refreshMultiModelSettingsUI() {
         const session = this.app.getCurrentSession();
-        const toggle = document.getElementById('multi-model-toggle');
         const select = document.getElementById('multi-model-secondary-select');
         const inlineContainer = document.getElementById('council-inline-models');
         const inlineSelect = document.getElementById('council-secondary-inline-select');
         const inlineButton = document.getElementById('council-secondary-model-btn');
         const synthesisInlineSelect = document.getElementById('council-synthesis-inline-select');
-        const synthesisInlineButton = document.getElementById('council-synthesis-model-btn');
-        const synthesisDivider = document.getElementById('council-synthesis-divider');
+        const councilReviewToggle = document.getElementById('council-review-toggle');
+        const councilReviewModelRow = document.getElementById('council-review-model-row');
+        const councilReviewModelButton = document.getElementById('council-review-model-btn');
         const modeSelect = document.getElementById('multi-model-mode-select');
         const synthesisSelect = document.getElementById('multi-model-synthesis-select');
 
@@ -2281,11 +2292,6 @@ export default class ChatInput {
         const isEnabled = session
             ? session.responseMode === RESPONSE_MODE_COUNCIL && session.councilConfig?.enabled === true
             : pendingCouncilConfig?.enabled === true;
-        if (toggle) {
-            toggle.setAttribute('aria-checked', String(isEnabled));
-            toggle.classList.toggle('switch-active', isEnabled);
-            toggle.classList.toggle('switch-inactive', !isEnabled);
-        }
         if (inlineContainer) {
             inlineContainer.classList.toggle('hidden', !isEnabled);
             inlineContainer.classList.toggle('flex', isEnabled);
@@ -2293,12 +2299,16 @@ export default class ChatInput {
         const primaryModelButton = this.app.elements.modelPickerBtn || document.getElementById('model-picker-btn');
         if (primaryModelButton) {
             if (isEnabled) {
-                primaryModelButton.setAttribute('data-tooltip', 'Primary model');
+                const primaryModelName = this.getPrimaryModelName();
+                primaryModelButton.setAttribute('data-tooltip', `Primary model: ${primaryModelName || 'Select model'}`);
                 primaryModelButton.setAttribute('data-tooltip-position', 'top');
+                primaryModelButton.setAttribute('aria-label', `Primary model: ${primaryModelName || 'Select model'}`);
             } else {
                 primaryModelButton.removeAttribute('data-tooltip');
                 primaryModelButton.removeAttribute('data-tooltip-position');
+                primaryModelButton.setAttribute('aria-label', 'Select model');
             }
+            primaryModelButton.classList.toggle('model-picker-icon-only', isEnabled);
         }
 
         const primary = this.getPrimaryModelName();
@@ -2311,7 +2321,8 @@ export default class ChatInput {
         const outputMode = session?.councilConfig?.outputMode
             || pendingCouncilConfig?.outputMode
             || COUNCIL_OUTPUT_PARALLEL;
-        const isSynthesisMode = isEnabled && outputMode === COUNCIL_OUTPUT_SYNTHESIS;
+        const isCouncilReviewEnabled = outputMode === COUNCIL_OUTPUT_SYNTHESIS;
+        const isSynthesisMode = isEnabled && isCouncilReviewEnabled;
         if (typeof document !== 'undefined') {
             document.documentElement.classList.toggle('council-layout-mode', isEnabled);
             document.documentElement.classList.toggle('council-synthesis-layout-mode', isSynthesisMode);
@@ -2363,13 +2374,16 @@ export default class ChatInput {
         if (inlineButton) {
             this.multiModelSecondaryInlineButton = inlineButton;
             inlineButton.disabled = availableModels.length === 0;
-            inlineButton.setAttribute('aria-label', 'Secondary model');
-            inlineButton.setAttribute('data-tooltip', 'Secondary model');
             inlineButton.setAttribute('data-tooltip-position', 'top');
+            inlineButton.classList.toggle('council-model-icon-only', isEnabled);
             const selectedModel = availableModels.find((model) => model.name === selectedSecondary) || availableModels[0] || null;
             if (!selectedModel) {
+                inlineButton.setAttribute('aria-label', 'Secondary model: none available');
+                inlineButton.setAttribute('data-tooltip', 'Secondary model: none available');
                 inlineButton.innerHTML = '<span class="model-name-container min-w-0 truncate">No second model</span>';
             } else {
+                inlineButton.setAttribute('aria-label', `Secondary model: ${selectedModel.name}`);
+                inlineButton.setAttribute('data-tooltip', `Secondary model: ${selectedModel.name}`);
                 const icon = this.buildModelIconHtml(selectedModel.name, 'w-3 h-3');
                 inlineButton.innerHTML = `
                     <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 ${icon.bgClass}">
@@ -2382,10 +2396,6 @@ export default class ChatInput {
                     </div>
                 `;
             }
-        }
-
-        if (synthesisDivider) {
-            synthesisDivider.classList.toggle('hidden', !isSynthesisMode);
         }
 
         const renderSynthesisOptions = () => {
@@ -2402,33 +2412,35 @@ export default class ChatInput {
             }).join('');
         };
 
-        if (synthesisInlineSelect) {
-            this.councilSynthesisInlineSelect = synthesisInlineSelect;
-            if (allSelectableModels.length === 0 && !councilSynthesisModel) {
-                synthesisInlineSelect.innerHTML = '<option value="" disabled selected>No council model</option>';
-                synthesisInlineSelect.disabled = true;
-            } else {
-                synthesisInlineSelect.disabled = !isSynthesisMode;
-                synthesisInlineSelect.innerHTML = renderSynthesisOptions();
-            }
+        if (councilReviewToggle) {
+            this.councilReviewToggle = councilReviewToggle;
+            councilReviewToggle.setAttribute('aria-checked', String(isCouncilReviewEnabled));
+            councilReviewToggle.classList.toggle('switch-active', isCouncilReviewEnabled);
+            councilReviewToggle.classList.toggle('switch-inactive', !isCouncilReviewEnabled);
+            councilReviewToggle.title = isCouncilReviewEnabled
+                ? 'Council review is on'
+                : 'Council review is off';
         }
 
-        if (synthesisInlineButton) {
-            this.councilSynthesisInlineButton = synthesisInlineButton;
-            synthesisInlineButton.classList.toggle('hidden', !isSynthesisMode);
-            synthesisInlineButton.disabled = !isSynthesisMode || (allSelectableModels.length === 0 && !councilSynthesisModel);
-            synthesisInlineButton.setAttribute('aria-label', 'Council model');
-            synthesisInlineButton.setAttribute('data-tooltip', 'Council model');
-            synthesisInlineButton.setAttribute('data-tooltip-position', 'top');
+        if (councilReviewModelRow) {
+            councilReviewModelRow.classList.toggle('hidden', !isCouncilReviewEnabled);
+        }
+
+        if (councilReviewModelButton) {
+            this.councilReviewModelButton = councilReviewModelButton;
+            councilReviewModelButton.disabled = !isCouncilReviewEnabled || (allSelectableModels.length === 0 && !councilSynthesisModel);
+            councilReviewModelButton.setAttribute('aria-label', `Council model: ${councilSynthesisModel || 'none available'}`);
+            councilReviewModelButton.setAttribute('data-tooltip', `Council model: ${councilSynthesisModel || 'none available'}`);
+            councilReviewModelButton.setAttribute('data-tooltip-position', 'left');
             const selectedModel = allSelectableModels.find((model) => model.name === councilSynthesisModel)
                 || (!modelsLoaded && councilSynthesisModel ? { name: councilSynthesisModel } : null)
                 || allSelectableModels[0]
                 || null;
             if (!selectedModel) {
-                synthesisInlineButton.innerHTML = '<span class="model-name-container min-w-0 truncate">No council model</span>';
+                councilReviewModelButton.innerHTML = '<span class="model-name-container min-w-0 truncate">No council model</span>';
             } else {
                 const icon = this.buildModelIconHtml(selectedModel.name, 'w-3 h-3');
-                synthesisInlineButton.innerHTML = `
+                councilReviewModelButton.innerHTML = `
                     <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 ${icon.bgClass}">
                         ${icon.html}
                     </div>
@@ -2441,13 +2453,24 @@ export default class ChatInput {
             }
         }
 
+        if (synthesisInlineSelect) {
+            this.councilSynthesisInlineSelect = synthesisInlineSelect;
+            if (allSelectableModels.length === 0 && !councilSynthesisModel) {
+                synthesisInlineSelect.innerHTML = '<option value="" disabled selected>No council model</option>';
+                synthesisInlineSelect.disabled = true;
+            } else {
+                synthesisInlineSelect.disabled = !isCouncilReviewEnabled;
+                synthesisInlineSelect.innerHTML = renderSynthesisOptions();
+            }
+        }
+
         if (synthesisSelect) {
             this.multiModelSynthesisSelect = synthesisSelect;
             if (allSelectableModels.length === 0 && !councilSynthesisModel) {
                 synthesisSelect.innerHTML = '<option value="" disabled selected>No council model</option>';
                 synthesisSelect.disabled = true;
             } else {
-                synthesisSelect.disabled = outputMode === COUNCIL_OUTPUT_PARALLEL;
+                synthesisSelect.disabled = !isCouncilReviewEnabled;
                 synthesisSelect.innerHTML = renderSynthesisOptions();
             }
         }

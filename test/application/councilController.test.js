@@ -747,6 +747,7 @@ test('runMultiModelTurn stores successful synthesis as canonical message content
 
 test('runMultiModelTurn skips synthesis in parallel output mode', async () => {
     let synthesisCalls = 0;
+    const accessEntryBatches = [];
     const { controller, session, userMessage, savedMessages } = createRunTurnHarness({
         councilConfig: { outputMode: 'parallel' },
         sendLaneCompletion: async ({ entry }) => ({ content: `${entry.name} first response` }),
@@ -755,6 +756,10 @@ test('runMultiModelTurn skips synthesis in parallel output mode', async () => {
             return { content: 'should not run' };
         }
     });
+    controller.ensureAccessForEntries = async (_session, entries) => {
+        accessEntryBatches.push(entries.map((entry) => entry.laneId));
+        return 0;
+    };
 
     await controller.runMultiModelTurn({
         session,
@@ -772,6 +777,7 @@ test('runMultiModelTurn skips synthesis in parallel output mode', async () => {
     assert.equal(finalMessage.council.outputMode, 'parallel');
     assert.equal(finalMessage.council.statusMessage, null);
     assert.equal(synthesisCalls, 0);
+    assert.deepEqual(accessEntryBatches, [['primary', 'secondary']]);
 });
 
 test('runMultiModelTurn triggers post-turn memory extraction in parallel output mode', async () => {

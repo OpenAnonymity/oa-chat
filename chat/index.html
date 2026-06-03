@@ -556,17 +556,6 @@
                                             <select id="council-secondary-inline-select" class="hidden" aria-hidden="true" tabindex="-1">
                                                 <option value="" disabled selected>Loading…</option>
                                             </select>
-                                            <span id="council-synthesis-divider" class="council-inline-divider hidden" aria-hidden="true"></span>
-                                            <button id="council-synthesis-model-btn" type="button" class="council-secondary-model-btn council-synthesis-model-btn hidden" aria-haspopup="dialog" aria-expanded="false" aria-label="Council model" data-tooltip="Council model" data-tooltip-position="top">
-                                                <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 bg-muted">
-                                                    <div class="w-2.5 h-2.5 rounded-full border-[1.5px] border-gray-300 border-t-gray-400 animate-spin"></div>
-                                                </div>
-                                                <span class="model-name-container min-w-0 truncate">Council model</span>
-                                                <div class="flex items-center gap-0.5 ml-2 pointer-events-none text-muted-foreground text-xs">
-                                                    <span class="opacity-60">⌘</span>
-                                                    <span class="opacity-60">L</span>
-                                                </div>
-                                            </button>
                                             <select id="council-synthesis-inline-select" class="hidden" aria-hidden="true" tabindex="-1">
                                                 <option value="" disabled selected>Loading…</option>
                                             </select>
@@ -668,6 +657,33 @@
                                                             <button data-action="export-memory" data-memory-requires-feature data-enabled-title="Export memories" class="flex-1 px-2 py-1 text-[11px] text-popover-foreground hover-highlight rounded transition-colors border border-border text-center">Export</button>
                                                             <button data-action="import-memory" data-memory-requires-feature data-enabled-title="Import memories" class="flex-1 px-2 py-1 text-[11px] text-popover-foreground hover-highlight rounded transition-colors border border-border text-center">Import</button>
                                                         </div>
+                                                    </div>
+                                                </div>
+
+                                                <!-- Parallel Section -->
+                                                <div id="parallel-settings-section" class="mt-2 border-t border-border pt-2">
+                                                    <p class="px-3 pb-1 text-xs font-light tracking-wide text-muted-foreground">Parallel</p>
+                                                    <div class="px-3 py-1.5 flex items-center justify-between gap-2">
+                                                        <span class="text-xs text-muted-foreground">Council review</span>
+                                                        <button id="council-review-toggle" type="button" role="switch" aria-checked="false" class="switch-toggle switch-toggle-sm switch-inactive" data-tooltip="Add a Council answer after the two model responses" data-tooltip-position="left">
+                                                            <span class="switch-toggle-indicator"></span>
+                                                        </button>
+                                                    </div>
+                                                    <div id="council-review-model-row" class="px-3 py-1 flex items-center gap-2 hidden">
+                                                        <span class="text-xs text-muted-foreground w-12 shrink-0">Council</span>
+                                                        <button id="council-review-model-btn" type="button" class="council-review-model-btn" aria-haspopup="dialog" aria-expanded="false" aria-label="Council model">
+                                                            <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 bg-muted">
+                                                                <div class="w-2.5 h-2.5 rounded-full border-[1.5px] border-gray-300 border-t-gray-400 animate-spin"></div>
+                                                            </div>
+                                                            <span class="model-name-container min-w-0 truncate">Council model</span>
+                                                            <div class="flex items-center gap-0.5 ml-2 pointer-events-none text-muted-foreground text-xs">
+                                                                <span class="opacity-60">⌘</span>
+                                                                <span class="opacity-60">L</span>
+                                                            </div>
+                                                        </button>
+                                                        <select id="multi-model-synthesis-select" class="hidden" aria-hidden="true" tabindex="-1">
+                                                            <option value="" disabled selected>Loading…</option>
+                                                        </select>
                                                     </div>
                                                 </div>
 
@@ -796,12 +812,6 @@
                                                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.6">
                                                     <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 6.5h5.7a2.5 2.5 0 0 1 2.5 2.5v3.2a2.5 2.5 0 0 1-2.5 2.5H8.1L4.5 18v-3.3A2.5 2.5 0 0 1 2 12.2V9a2.5 2.5 0 0 1 2.5-2.5Z" />
                                                     <path stroke-linecap="round" stroke-linejoin="round" d="M14.1 8h5.4A2.5 2.5 0 0 1 22 10.5v3.2a2.5 2.5 0 0 1-2.5 2.5h-2.1L14 19.5v-3.3" />
-                                                </svg>
-                                            </button>
-                                            <button type="button" role="radio" class="chat-mode-toggle-btn" data-mode-option="council" aria-label="Council" aria-checked="false" data-tooltip="Council" data-tooltip-position="top">
-                                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.6">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M7.2 13.8H6.4a3.4 3.4 0 0 1-3.4-3.4V7.1a3.4 3.4 0 0 1 3.4-3.4h5.3a3.4 3.4 0 0 1 3.4 3.4v.55" />
-                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M8.9 10.2a3.4 3.4 0 0 1 3.4-3.4h5.3a3.4 3.4 0 0 1 3.4 3.4v3.3a3.4 3.4 0 0 1-3.4 3.4h-2.1L12 20.3v-3.4h.3a3.4 3.4 0 0 1-3.4-3.4v-3.3Z" />
                                                 </svg>
                                             </button>
                                             <button type="button" role="radio" class="chat-mode-toggle-btn" data-mode-option="memory" aria-label="Memory" aria-checked="false" data-tooltip-position="top">

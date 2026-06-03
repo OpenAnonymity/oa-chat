@@ -8347,7 +8347,7 @@ class ChatApp {
                 }
             }
 
-            // Cmd/Ctrl + J for the second Parallel/Council model picker
+            // Cmd/Ctrl + J for the second Parallel model picker
             if ((e.metaKey || e.ctrlKey) && e.key === 'j') {
                 const session = this.getCurrentSession();
                 const pendingCouncilEnabled = this.pendingCouncilConfig?.enabled === true;
@@ -8360,13 +8360,16 @@ class ChatApp {
             // Cmd/Ctrl + L for the Council synthesis model picker
             if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L')) {
                 const session = this.getCurrentSession();
-                const isActiveCouncilSynthesis = this.isCouncilModeActive(session)
-                    && session?.councilConfig?.outputMode === COUNCIL_OUTPUT_SYNTHESIS;
-                const isPendingCouncilSynthesis = !session
-                    && this.pendingCouncilConfig?.enabled === true
-                    && this.pendingCouncilConfig?.outputMode === COUNCIL_OUTPUT_SYNTHESIS;
-                if (this.modelPicker && (isActiveCouncilSynthesis || isPendingCouncilSynthesis)) {
+                const isCouncilReviewEnabled = session?.councilConfig?.outputMode === COUNCIL_OUTPUT_SYNTHESIS
+                    || (!session && this.pendingCouncilConfig?.outputMode === COUNCIL_OUTPUT_SYNTHESIS);
+                const isSettingsOpen = this.elements.settingsMenu
+                    && !this.elements.settingsMenu.classList.contains('hidden');
+                if (this.modelPicker && (isCouncilReviewEnabled || isSettingsOpen)) {
                     e.preventDefault();
+                    if (isSettingsOpen) {
+                        this.elements.settingsMenu.classList.add('hidden');
+                        this.elements.settingsBtn?.classList.remove('tooltip-disabled');
+                    }
                     this.modelPicker.toggle({ selectionMode: 'council-synthesis' });
                 }
             }
