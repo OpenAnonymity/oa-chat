@@ -157,6 +157,59 @@ test('acquireSessionAccess requests tickets, verifies access, saves, and clears 
     assert.equal(harness.savedSessions.length, 1);
 });
 
+test('acquireSessionAccess uses model override for ticket cost without mutating session model', async () => {
+    const harness = createAccessHarness({
+        getTicketCost: (modelId) => modelId === 'model-instant' ? 1 : 4
+    });
+
+    const token = await acquireSessionAccess({
+        session: harness.session,
+        models: [
+            { id: 'model-a', name: 'Model A' },
+            { id: 'model-instant', name: 'OpenAI: GPT-5.3 Instant' }
+        ],
+        reasoningEnabled: false,
+        inferenceService: harness.inferenceService,
+        ticketClient: harness.ticketClient,
+        chatDB: harness.chatDB,
+        getTicketCost: harness.getTicketCost,
+        getFallbackModelEntry: harness.getFallbackModelEntry,
+        modelNameOverride: 'OpenAI: GPT-5.3 Instant',
+        ...harness.callbacks
+    });
+
+    assert.equal(token, 'secret-key');
+    assert.deepEqual(harness.requested.map(item => item.request), [{ ticketsRequired: 1 }]);
+    assert.equal(harness.session.model, 'Model A');
+});
+
+test('acquireSessionAccess uses model id override when display name does not match catalog', async () => {
+    const harness = createAccessHarness({
+        getTicketCost: (modelId) => modelId === 'model-instant' ? 1 : 4
+    });
+
+    const token = await acquireSessionAccess({
+        session: harness.session,
+        models: [
+            { id: 'model-a', name: 'Model A' },
+            { id: 'model-instant', name: 'Raw Provider GPT Chat Name' }
+        ],
+        reasoningEnabled: false,
+        inferenceService: harness.inferenceService,
+        ticketClient: harness.ticketClient,
+        chatDB: harness.chatDB,
+        getTicketCost: harness.getTicketCost,
+        getFallbackModelEntry: harness.getFallbackModelEntry,
+        modelIdOverride: 'model-instant',
+        modelNameOverride: 'OpenAI: GPT-5.3 Instant',
+        ...harness.callbacks
+    });
+
+    assert.equal(token, 'secret-key');
+    assert.deepEqual(harness.requested.map(item => item.request), [{ ticketsRequired: 1 }]);
+    assert.equal(harness.session.model, 'Model A');
+});
+
 test('acquireSessionAccess retries spent tickets before succeeding', async () => {
     const harness = createAccessHarness({
         requestAccess: async (targetSession, request, attempt) => {
@@ -234,5 +287,31 @@ test('acquireSessionAccess rejects insufficient tickets before network calls', a
     );
 
     assert.equal(harness.requested.length, 0);
+    assert.deepEqual(harness.networkSessions, []);
+});
+
+test('acquireSessionAccess rejects an aborted signal before network calls', async () => {
+    const harness = createAccessHarness();
+    const controller = new AbortController();
+    controller.abort();
+
+    await assert.rejects(
+        acquireSessionAccess({
+            session: harness.session,
+            models: [{ id: 'model-a', name: 'Model A' }],
+            reasoningEnabled: true,
+            inferenceService: harness.inferenceService,
+            ticketClient: harness.ticketClient,
+            chatDB: harness.chatDB,
+            getTicketCost: harness.getTicketCost,
+            getFallbackModelEntry: harness.getFallbackModelEntry,
+            signal: controller.signal,
+            ...harness.callbacks
+        }),
+        /Request aborted/
+    );
+
+    assert.equal(harness.requested.length, 0);
+    assert.equal(harness.savedSessions.length, 0);
     assert.deepEqual(harness.networkSessions, []);
 });

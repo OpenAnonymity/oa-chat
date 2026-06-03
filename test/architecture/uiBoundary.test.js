@@ -128,3 +128,111 @@ test('initial model load drains pinned availability refreshes', () => {
         'initial model load should drain pinned updates that arrived while models were loading'
     );
 });
+
+test('inline quick ask preserves scrubber and session lifecycle constraints', () => {
+    const appSource = read('chat/app.js');
+    const apiSource = read('chat/api.js');
+    const chatAreaSource = read('chat/components/ChatArea.js');
+    const templatesSource = read('chat/components/MessageTemplates.js');
+
+    assert.ok(
+        templatesSource.includes('data-scrubber-restored="true"'),
+        'restored assistant scrubber content should be marked in rendered DOM'
+    );
+    assert.ok(
+        chatAreaSource.includes("messageEl.dataset.scrubberRestored === 'true'"),
+        'quick ask selection should be disabled for restored scrubber content'
+    );
+
+    const inlineQuickAskMatch = appSource.match(/async inlineQuickAsk\([\s\S]*?\n    updateTypingIndicator/);
+    assert.ok(inlineQuickAskMatch, 'inlineQuickAsk method should be present');
+    const quickAskModelResolverMatch = appSource.match(/async resolveModelForQuickAsk\([\s\S]*?\n    async inlineQuickAsk/);
+    assert.ok(quickAskModelResolverMatch, 'resolveModelForQuickAsk method should be present');
+    assert.ok(
+        /onStatus\?\.\('requesting-key'\)[\s\S]*?acquireAndSetAccess[\s\S]*?abortController\.signal\.aborted[\s\S]*?inferenceService\.streamCompletion/.test(inlineQuickAskMatch[0]),
+        'inline quick ask should acquire access for expired past sessions and re-check cancellation before inference'
+    );
+    assert.ok(
+        inlineQuickAskMatch[0].includes('signal: abortController.signal'),
+        'quick ask access acquisition should receive the panel abort signal'
+    );
+    assert.ok(
+        inlineQuickAskMatch[0].includes('const { modelId, modelName } = await this.resolveModelForQuickAsk(session);') &&
+        inlineQuickAskMatch[0].includes('modelIdOverride: modelId') &&
+        inlineQuickAskMatch[0].includes('modelNameOverride: modelName'),
+        'quick ask should resolve the pinned instant model before key acquisition and use it for ticket cost'
+    );
+    assert.ok(
+        quickAskModelResolverMatch[0].includes('getDefaultModelConfig()') &&
+        appSource.includes('getQuickAskPinnedInstantModel') &&
+        appSource.includes('isQuickAskPinnedInstantModel') &&
+        appSource.includes("name.includes('instant')") &&
+        !quickAskModelResolverMatch[0].includes('chatDB.saveSession'),
+        'quick ask model resolution should prefer pinned GPT instant without mutating the session model'
+    );
+    assert.ok(
+        appSource.includes('accessAcquisitionInFlight') &&
+        appSource.includes('reserveAccessAcquisitionHandoff') &&
+        appSource.includes('waitForAccessAcquisition') &&
+        appSource.includes('entry.controller.abort()'),
+        'session access acquisition should be shared and cancellable to avoid duplicate ticket redemption'
+    );
+    assert.ok(
+        inlineQuickAskMatch[0].includes('getSessionStreamingState(session.id).isStreaming'),
+        'inline quick ask should not run concurrently with the main session stream'
+    );
+    assert.ok(
+        /buildQuickAskMessages[\s\S]*?abortController\.signal\.aborted[\s\S]*?inferenceService\.streamCompletion/.test(inlineQuickAskMatch[0]),
+        'inline quick ask should re-check cancellation immediately before starting inference'
+    );
+    assert.ok(
+        /abortController\?\.signal\?\.aborted[\s\S]*?isAndroidNativeInferenceAvailable/.test(apiSource),
+        'streamCompletion should reject already-aborted requests before Android native transport starts'
+    );
+
+    const renderMatch = chatAreaSource.match(/async render\(\) \{[\s\S]*?const session = this\.app\.getCurrentSession\(\);/);
+    assert.ok(renderMatch, 'ChatArea.render should be present');
+    assert.ok(
+        chatAreaSource.includes('if (!preserveQuickAskWindow)') &&
+        chatAreaSource.includes('this.closeQuickAskWindow({ abort: true, reset: true });'),
+        'full message rerenders should still abort and reset quick ask windows when they are not preserved'
+    );
+    assert.ok(
+        chatAreaSource.includes('!this.quickAsk.window.isConnected') &&
+        chatAreaSource.includes('shouldPreserveQuickAskWindowForRender') &&
+        chatAreaSource.includes('detachQuickAskWindowForRender') &&
+        chatAreaSource.includes('restoreQuickAskWindowAfterRender'),
+        'same-session renders should preserve and reconnect quick ask windows during no-key acquisition'
+    );
+
+    const sendMessageMatch = appSource.match(/async sendMessage\(\) \{[\s\S]*?const abortController = new AbortController\(\);/);
+    assert.ok(sendMessageMatch, 'sendMessage should be present');
+    assert.ok(
+        sendMessageMatch[0].includes('this.reserveAccessAcquisitionHandoff(session);') &&
+        sendMessageMatch[0].includes('this.chatArea?.closeQuickAskWindow?.();'),
+        'starting a normal send should hand off key acquisition before hiding any active quick ask'
+    );
+
+    assert.ok(
+        chatAreaSource.includes("this.updateQuickAskReasoning('');") &&
+        chatAreaSource.includes('this.updateQuickAskCitations(null);'),
+        'new quick ask requests and errors should clear stale reasoning and sources'
+    );
+    assert.ok(
+        chatAreaSource.includes('activeKey') &&
+        chatAreaSource.includes("panel.classList.remove('hidden');") &&
+        !chatAreaSource.includes('quick-ask-close-btn') &&
+        !chatAreaSource.includes('quick-ask-stop-btn'),
+        'quick ask should hide without inline close/stop controls and allow reopening the same selection state'
+    );
+    assert.ok(
+        chatAreaSource.includes('buildReasoningTrace(') &&
+        chatAreaSource.includes('pending-response-line'),
+        'quick ask pending and reasoning states should reuse main chat formatting'
+    );
+    assert.ok(
+        chatAreaSource.includes('quick-ask-assistant-pending') &&
+        chatAreaSource.includes('this.closeQuickAskWindow();'),
+        'quick ask should add pending breathing room and hide when clicking elsewhere'
+    );
+});

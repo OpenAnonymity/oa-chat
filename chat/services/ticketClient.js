@@ -875,13 +875,30 @@ class TicketClient {
      * The issued API key carries no user identity.
      *
      * @param {number} ticketCount - Number of tickets to use (default: 1)
+     * @param {Object} options - Optional request controls
+     * @param {AbortSignal} options.signal - Cancels the key request before completion
      * @returns {Promise<Object>} API key data with verification signatures
      */
-    async requestApiKey(ticketCount = 1) {
+    async requestApiKey(ticketCount = 1, options = {}) {
         try {
+            const { signal = null } = options;
+            if (signal?.aborted) {
+                const error = new Error('Request aborted');
+                error.name = 'AbortError';
+                error.isCancelled = true;
+                throw error;
+            }
+
             const { tickets, result } = await this.ticketStore.consumeTickets(
                 ticketCount,
                 async ({ tickets, totalCount, remainingCount }) => {
+                    if (signal?.aborted) {
+                        const error = new Error('Request aborted');
+                        error.name = 'AbortError';
+                        error.isCancelled = true;
+                        throw error;
+                    }
+
                     networkLogger.logRequest({
                         type: 'local',
                         method: 'LOCAL',
@@ -920,7 +937,8 @@ class TicketClient {
                             {
                                 context: 'Org API key',
                                 maxAttempts: 3,    // Retry transient failures (network/5xx/429)
-                                timeoutMs: 30000   // 30s timeout - org has internal station timeout
+                                timeoutMs: 30000,  // 30s timeout - org has internal station timeout
+                                signal
                             }
                         ));
                     } catch (error) {

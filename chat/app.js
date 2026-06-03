@@ -23,7 +23,7 @@ import {
 } from './services/memoryBridge.js';
 import shareService from './services/shareService.js';
 import { getTicketCost, initModelTiers } from './services/modelTiers.js';
-import { initPinnedModels, onPinnedModelsUpdate, getDisabledModels, getPinnedModels, getStandardizedModelDisplayName } from './services/modelConfig.js';
+import { initPinnedModels, onPinnedModelsUpdate, getDefaultModelConfig, getDisabledModels, getPinnedModels, getStandardizedModelDisplayName } from './services/modelConfig.js';
 import accountService from './services/accountService.js';
 import apiKeyStore from './services/apiKeyStore.js';
 import { generateUlid21 } from './services/ulid.js';
@@ -45,6 +45,11 @@ import {
     getMessageTextContent as getMessageTextContentValue,
     processMessagesForApi
 } from './domain/messageContent.js';
+import {
+    buildQuickAskMessages,
+    buildQuickAskQuestion,
+    normalizeQuickAskSelection
+} from './domain/quickAsk.js';
 import { normalizePendingPhase as normalizeStreamingPendingPhase } from './domain/streamingState.js';
 import {
     filterDisabledModels as filterDisabledModelsValue,
@@ -211,6 +216,7 @@ class ChatApp {
         this.modelPicker = null;
         this.memoryEditor = null;
         this.sessionStreamingStates = new Map(); // Track streaming state per session
+        this.accessAcquisitionInFlight = new Map(); // backend/session/model -> shared access acquisition
         this.sessionScrollPositions = new Map(); // Track scrollTop per session in-memory
         this.sessionChatbarStates = new Map(); // Track in-tab chatbar drafts per session
         this.chatScrollSaveFrame = null;
@@ -4864,6 +4870,8 @@ class ChatApp {
         // Check if current session is already streaming
         const streamingState = this.getSessionStreamingState(session.id);
         if (streamingState.isStreaming) return;
+        this.reserveAccessAcquisitionHandoff(session);
+        this.chatArea?.closeQuickAskWindow?.();
 
         // Get the last user message to anchor during regeneration
         const messages = await chatDB.getSessionMessages(session.id);
@@ -4918,6 +4926,7 @@ class ChatApp {
                         this.floatingPanel.showMessage(`Acquiring ${accessLabel}...`, 'info');
                     }
                     await this.acquireAndSetAccess(session, {
+                        signal: abortController.signal,
                         onGranted: () => {
                             this.advancePendingStateAfterAccessGranted(session.id, typingId);
                         }
@@ -5337,6 +5346,8 @@ class ChatApp {
         // Check if current session is already streaming
         const streamingState = this.getSessionStreamingState(session.id);
         if (streamingState.isStreaming) return;
+        this.reserveAccessAcquisitionHandoff(session);
+        this.chatArea?.closeQuickAskWindow?.();
 
         // Create abort controller for this stream
         const abortController = new AbortController();
@@ -5430,6 +5441,7 @@ class ChatApp {
                         this.floatingPanel.showMessage(`Acquiring ${accessLabel}...`, 'info');
                     }
                     await this.acquireAndSetAccess(session, {
+                        signal: abortController.signal,
                         onGranted: () => {
                             this.advancePendingStateAfterAccessGranted(session.id, typingId);
                         }
@@ -5909,6 +5921,224 @@ class ChatApp {
         const hasAccessToken = !!inferenceService.getAccessToken(session);
         const isAccessExpired = inferenceService.isAccessExpired(session);
         return (!hasAccessToken || isAccessExpired) ? 'requesting-key' : 'waiting-response';
+    }
+
+    isQuickAskPinnedInstantModel(model, modelName = '') {
+        const id = String(model?.id || '').toLowerCase();
+        const name = String(modelName || model?.name || '').toLowerCase();
+        const isGpt = id.includes('openai/gpt') || name.includes('gpt');
+        const isInstant = name.includes('instant') || id.endsWith('-chat') || id.includes('-chat:');
+        return isGpt && isInstant;
+    }
+
+    getQuickAskPinnedInstantModel(defaults = {}) {
+        const pinnedModelIds = Array.isArray(defaults.pinnedModels) ? defaults.pinnedModels : [];
+        for (const modelId of pinnedModelIds) {
+            const model = this.state.models.find(entry => entry.id === modelId);
+            if (!model) continue;
+            const modelName = this.normalizeModelName(model.name || model.id) || model.name || model.id;
+            const modelNameFromId = this.normalizeModelName(modelId) || modelName;
+            if (this.isQuickAskPinnedInstantModel(model, modelName) ||
+                this.isQuickAskPinnedInstantModel({ id: modelId, name: modelNameFromId }, modelNameFromId)) {
+                return {
+                    model,
+                    modelName
+                };
+            }
+        }
+        return null;
+    }
+
+    async resolveModelForQuickAsk(session) {
+        const defaults = getDefaultModelConfig();
+        const defaultModelId = defaults.defaultModelId || inferenceService.getDefaultModelId(session);
+        const instantModel = this.getQuickAskPinnedInstantModel(defaults);
+        let modelNameToUse = instantModel?.modelName ||
+            this.normalizeModelName(defaults.defaultModelName || defaultModelId) ||
+            defaults.defaultModelName ||
+            inferenceService.getDefaultModelName(session);
+
+        let selectedModelEntry = instantModel?.model ||
+            (defaultModelId
+                ? this.state.models.find(m => m.id === defaultModelId)
+                : null);
+
+        if (!selectedModelEntry) {
+            selectedModelEntry = modelNameToUse
+                ? this.state.models.find(m => m.name === modelNameToUse)
+                : null;
+        }
+
+        if (!selectedModelEntry) {
+            const fallbackModel = this.getFallbackModelEntry(session);
+            if (fallbackModel) {
+                selectedModelEntry = fallbackModel;
+                modelNameToUse = this.normalizeModelName(fallbackModel.name);
+            }
+        }
+
+        if (!modelNameToUse || !selectedModelEntry) {
+            throw new Error('No models are available right now. Please add a model and try again.');
+        }
+
+        return {
+            modelId: selectedModelEntry.id,
+            modelName: modelNameToUse
+        };
+    }
+
+    async inlineQuickAsk(selectionText, options = {}) {
+        const selectedText = normalizeQuickAskSelection(selectionText);
+        const question = buildQuickAskQuestion(selectedText);
+        if (!question) {
+            throw new Error('Select text in a model response to ask about it.');
+        }
+
+        const session = this.getCurrentSession();
+        if (!session) {
+            throw new Error('Start a chat before using inline quick ask.');
+        }
+
+        if (this.getSessionStreamingState(session.id).isStreaming) {
+            throw new Error('Quick ask is unavailable while this chat is streaming.');
+        }
+
+        const verifier = inferenceService.getVerificationAdapter(session);
+        const accessInfo = inferenceService.getAccessInfo(session);
+        const accessId = verifier?.getAccessId(accessInfo?.info);
+        if (verifier?.supports && accessId) {
+            const stationState = verifier.getAccessState(accessId);
+            const isBannedInCache = verifier.isAccessBanned(accessId);
+            if (stationState?.banned || isBannedInCache) {
+                const broadcastData = verifier.getLastBroadcastData();
+                const bannedInfo = broadcastData?.banned_stations?.find(s => s.station_id === accessId);
+                this.showBannedStationWarningModal({
+                    stationId: accessId,
+                    reason: stationState?.banReason || bannedInfo?.reason || 'Unknown',
+                    bannedAt: stationState?.bannedAt || bannedInfo?.banned_at,
+                    sessionId: session.id
+                });
+                throw new Error('The current station is banned.');
+            }
+        }
+
+        const abortController = options.abortController || new AbortController();
+        if (abortController.signal.aborted) {
+            const error = new Error('Quick ask cancelled.');
+            error.isCancelled = true;
+            throw error;
+        }
+
+        const { modelId, modelName } = await this.resolveModelForQuickAsk(session);
+        const hasAccessToken = !!inferenceService.getAccessToken(session);
+        const isAccessExpired = inferenceService.isAccessExpired(session);
+        const accessLabel = inferenceService.getAccessLabel(session);
+        if (!hasAccessToken || isAccessExpired) {
+            options.onStatus?.('requesting-key');
+            try {
+                if (this.floatingPanel) {
+                    this.floatingPanel.showMessage(`Acquiring ${accessLabel}...`, 'info');
+                }
+                await this.acquireAndSetAccess(session, {
+                    modelIdOverride: modelId,
+                    modelNameOverride: modelName,
+                    signal: abortController.signal,
+                    onGranted: () => {
+                        options.onStatus?.('waiting-response');
+                    }
+                });
+                if (this.floatingPanel) {
+                    this.floatingPanel.showMessage(`${accessLabel} ready`, 'success', 2000);
+                }
+            } catch (error) {
+                if (this.floatingPanel) {
+                    this.floatingPanel.showMessage(error.message, 'error', 5000);
+                }
+                throw error;
+            }
+            if (abortController.signal.aborted) {
+                const error = new Error('Quick ask cancelled.');
+                error.isCancelled = true;
+                throw error;
+            }
+            if (this.getSessionStreamingState(session.id).isStreaming) {
+                throw new Error('Quick ask is unavailable while this chat is streaming.');
+            }
+        } else {
+            options.onStatus?.('waiting-response');
+        }
+
+        if (window.networkLogger) {
+            window.networkLogger.setCurrentSession(session.id);
+        }
+
+        const messages = await chatDB.getSessionMessages(session.id);
+        const filteredMessages = messages.filter(msg => !msg.isLocalOnly);
+        const sanitizedMessages = this.sanitizeMessagesForApi(filteredMessages);
+        const processedMessages = this.processMessagesWithFiles(sanitizedMessages, modelId);
+        const quickAskMessages = buildQuickAskMessages(processedMessages, selectedText);
+        if (this.getSessionStreamingState(session.id).isStreaming) {
+            throw new Error('Quick ask is unavailable while this chat is streaming.');
+        }
+        if (abortController.signal.aborted) {
+            const error = new Error('Quick ask cancelled.');
+            error.isCancelled = true;
+            throw error;
+        }
+
+        let content = '';
+        let reasoning = '';
+        let streamingTokenCount = 0;
+        let firstChunkReceived = false;
+        const tokenData = await inferenceService.streamCompletion(
+            quickAskMessages,
+            modelId,
+            session,
+            async (chunk) => {
+                if (!firstChunkReceived) {
+                    firstChunkReceived = true;
+                    options.onStatus?.('streaming');
+                }
+                if (!chunk) return;
+                content += chunk;
+                options.onChunk?.(content, chunk);
+            },
+            (tokenUpdate) => {
+                streamingTokenCount = tokenUpdate.completionTokens || streamingTokenCount;
+                options.onTokenUpdate?.(streamingTokenCount);
+            },
+            [],
+            this.searchEnabled,
+            abortController,
+            () => {
+                options.onStatus?.('stream-open');
+            },
+            async (reasoningChunk) => {
+                if (!firstChunkReceived) {
+                    firstChunkReceived = true;
+                    options.onStatus?.('streaming');
+                }
+                reasoning += reasoningChunk || '';
+                options.onReasoningChunk?.(reasoning, reasoningChunk);
+            },
+            this.reasoningEnabled,
+            this.reasoningEffort
+        );
+
+        const rawReasoning = tokenData.reasoning || reasoning || null;
+        const result = {
+            question,
+            selectedText,
+            content,
+            reasoning: rawReasoning ? parseReasoningContent(rawReasoning) : null,
+            tokenCount: tokenData.totalTokens || tokenData.completionTokens || streamingTokenCount || null,
+            model: this.normalizeModelName(
+                inferenceService.getDisplayName(tokenData.model || modelId, modelName, session)
+            ) || modelName,
+            citations: tokenData.citations || null
+        };
+        options.onDone?.(result);
+        return result;
     }
 
     updateTypingIndicator(id, phase) {
@@ -8322,37 +8552,145 @@ Your API key has been cleared. A new key from a different station will be obtain
         persistVerifierSubmitKeyProofValue(session, verifyResult);
     }
 
-    async acquireAndSetAccess(session, options = {}) {
-        return acquireSessionAccess({
-            session,
-            models: this.state.models,
-            reasoningEnabled: this.reasoningEnabled,
-            inferenceService,
-            ticketClient,
-            chatDB,
-            getTicketCost,
-            getFallbackModelEntry: (targetSession) => this.getFallbackModelEntry(targetSession),
-            onTicketUsed: () => {
-                this.showToast('Ticket already used, trying next available');
-            },
-            onNetworkSession: (sessionId) => {
-                if (window.networkLogger) {
-                    window.networkLogger.setCurrentSession(sessionId);
+    getAccessAcquisitionKey(session, modelNameOverride = null, modelIdOverride = null) {
+        const backendId = session?.inferenceBackend || inferenceService.getDefaultBackendId();
+        const modelKey = modelIdOverride ||
+            this.normalizeModelName(modelNameOverride || session?.model) ||
+            modelNameOverride ||
+            session?.model ||
+            inferenceService.getDefaultModelName(session) ||
+            'default-model';
+        return `${backendId}:${session?.id || 'no-session'}:${modelKey}`;
+    }
+
+    reserveAccessAcquisitionHandoff(session, durationMs = 5000) {
+        const key = this.getAccessAcquisitionKey(session);
+        const entry = this.accessAcquisitionInFlight.get(key);
+        if (!entry) return;
+        entry.keepAliveUntil = Math.max(entry.keepAliveUntil || 0, Date.now() + durationMs);
+    }
+
+    abortAccessAcquisitionWhenUnclaimed(entry) {
+        if (!entry || entry.waiters > 0 || entry.controller.signal.aborted) return;
+
+        const keepAliveDelay = Math.max(0, (entry.keepAliveUntil || 0) - Date.now());
+        if (keepAliveDelay > 0) {
+            if (entry.abortTimer) {
+                clearTimeout(entry.abortTimer);
+            }
+            entry.abortTimer = window.setTimeout(() => {
+                entry.abortTimer = null;
+                if (entry.waiters === 0 && this.accessAcquisitionInFlight.get(entry.key) === entry) {
+                    entry.controller.abort();
                 }
-            },
-            onGranted: options.onGranted,
-            onAccessRequestError: (error) => {
-                console.error('Failed to automatically acquire API access:', error);
-            },
-            onVerificationWarning: (...args) => {
-                console.warn(...args);
-            },
-            onSessionChanged: (changedSession) => {
-                if (this.rightPanel) {
-                    this.rightPanel.onSessionChange(changedSession);
+            }, keepAliveDelay);
+            return;
+        }
+
+        entry.controller.abort();
+    }
+
+    async waitForAccessAcquisition(entry, options = {}) {
+        const signal = options.signal || null;
+        this.throwIfAborted(signal);
+
+        entry.waiters += 1;
+        if (entry.abortTimer) {
+            clearTimeout(entry.abortTimer);
+            entry.abortTimer = null;
+        }
+        let abortHandler = null;
+
+        try {
+            const token = signal
+                ? await Promise.race([
+                    entry.promise,
+                    new Promise((_, reject) => {
+                        abortHandler = () => reject(this.createCancelledError());
+                        signal.addEventListener('abort', abortHandler, { once: true });
+                    })
+                ])
+                : await entry.promise;
+
+            if (typeof options.onGranted === 'function') {
+                try {
+                    await options.onGranted(token);
+                } catch (error) {
+                    console.warn('Pending-state update after access grant failed:', error);
                 }
             }
-        });
+
+            return token;
+        } finally {
+            if (signal && abortHandler) {
+                signal.removeEventListener('abort', abortHandler);
+            }
+            entry.waiters = Math.max(0, entry.waiters - 1);
+            if (signal?.aborted && entry.waiters === 0) {
+                this.abortAccessAcquisitionWhenUnclaimed(entry);
+            }
+        }
+    }
+
+    async acquireAndSetAccess(session, options = {}) {
+        this.throwIfAborted(options.signal || null);
+        const key = this.getAccessAcquisitionKey(session, options.modelNameOverride, options.modelIdOverride);
+        let entry = this.accessAcquisitionInFlight.get(key);
+
+        if (!entry) {
+            const controller = new AbortController();
+            entry = {
+                key,
+                controller,
+                waiters: 0,
+                keepAliveUntil: 0,
+                abortTimer: null,
+                promise: null
+            };
+            entry.promise = acquireSessionAccess({
+                session,
+                models: this.state.models,
+                reasoningEnabled: this.reasoningEnabled,
+                inferenceService,
+                ticketClient,
+                chatDB,
+                getTicketCost,
+                getFallbackModelEntry: (targetSession) => this.getFallbackModelEntry(targetSession),
+                modelIdOverride: options.modelIdOverride,
+                modelNameOverride: options.modelNameOverride,
+                signal: controller.signal,
+                onTicketUsed: () => {
+                    this.showToast('Ticket already used, trying next available');
+                },
+                onNetworkSession: (sessionId) => {
+                    if (window.networkLogger) {
+                        window.networkLogger.setCurrentSession(sessionId);
+                    }
+                },
+                onAccessRequestError: (error) => {
+                    console.error('Failed to automatically acquire API access:', error);
+                },
+                onVerificationWarning: (...args) => {
+                    console.warn(...args);
+                },
+                onSessionChanged: (changedSession) => {
+                    if (this.rightPanel) {
+                        this.rightPanel.onSessionChange(changedSession);
+                    }
+                }
+            }).finally(() => {
+                if (entry.abortTimer) {
+                    clearTimeout(entry.abortTimer);
+                    entry.abortTimer = null;
+                }
+                if (this.accessAcquisitionInFlight.get(key) === entry) {
+                    this.accessAcquisitionInFlight.delete(key);
+                }
+            });
+            this.accessAcquisitionInFlight.set(key, entry);
+        }
+
+        return this.waitForAccessAcquisition(entry, options);
     }
 
     /**

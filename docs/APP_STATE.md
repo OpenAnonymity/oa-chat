@@ -25,6 +25,60 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
+- 2026-06-03: Inline quick ask is a non-persistent mini-chat for selected
+  assistant text.
+  - Selecting text inside an assistant `.message-content` shows a compact
+    fixed-position `Ask` popover. User-message selections, selections inside the
+    quick-ask window, scrubber-restored assistant responses, and collapsed
+    selections are ignored.
+  - Clicking `Ask` opens a small force-touch-style panel near the selection
+    inside the scrolling message container, with a single unsaved user turn,
+    `Briefly explain "<selection>" in context.`, and a streamed assistant
+    answer. The panel is positioned in message content
+    coordinates, not viewport-fixed coordinates, so it scrolls with the response
+    instead of staying pinned to the screen. Clicking elsewhere in the chat UI
+    hides the panel without aborting the in-flight answer.
+  - The panel intentionally has no title/selected-term header; the selected text
+    is already represented by the generated user question. Keep the panel shadow
+    restrained and reuse the main `.message-user` bubble styling for the quick
+    user prompt so it stays visually consistent with normal chat turns. Pending
+    labels and reasoning traces reuse the main chat `.pending-response-*` and
+    `buildReasoningTrace(...)` formatting rather than custom quick-ask labels.
+    The panel has no close control; outside clicks and Escape hide it without
+    aborting the request, and reopening the same selected text restores the same
+    in-memory quick-ask state. Same-session message rerenders must preserve and
+    reconnect the cached quick-ask panel; otherwise key acquisition or storage
+    refreshes can leave `this.quickAsk.window` pointing at a detached DOM node
+    and make later `Ask` clicks appear to do nothing. Restores should reattach
+    the panel without recomputing its position because its saved absolute
+    `left/top` are already content-relative and should continue to scroll with
+    the message.
+  - `ChatApp.inlineQuickAsk(...)` appends the quick question to the sanitized
+    current transcript in memory only. It reuses the current session backend,
+    scrubber redaction, file-to-API processing, search and reasoning toggles,
+    and the current ephemeral access credential when one is active, but it
+    resolves inference to the first pinned GPT Instant model instead of the
+    session's selected model. If no pinned GPT Instant model is loaded, it falls
+    back through the normal pinned default path. For older sessions with a
+    missing or expired key, quick ask goes through the same
+    `acquireAndSetAccess(...)` ticket redemption path as a normal send with a
+    model id override so ticket cost is based on the resolved instant model even
+    when catalog display names differ from normalized names, shows the standard
+    `Requesting ephemeral key` pending state, and re-checks the panel abort
+    before inference begins. Access acquisition is keyed by backend, session,
+    and model so callers with different ticket-cost models do not incorrectly
+    share a redemption; same-model callers still share via
+    `accessAcquisitionInFlight`. Normal send/regenerate call
+    `reserveAccessAcquisitionHandoff(...)` before closing the quick-ask panel so
+    same-model key requests can survive the handoff. The underlying key request
+    receives an abort signal and is cancelled when the last waiter aborts
+    outside that handoff window.
+  - Quick-ask answers are not written to IndexedDB, do not create sessions, and
+    do not update session search/title state. User close only hides the panel and
+    lets the request finish in memory. Full `ChatArea.render()` calls abort/reset
+    the panel so a quick ask cannot linger across session switches. Starting a
+    normal send or regeneration hides any active quick ask before the main
+    session stream begins.
 - 2026-05-30: Fresh-chat default model follows the pinned model order.
   - `modelConfig.getDefaultModelConfig()` now derives `defaultModelId` and
     `defaultModelName` from the first current pinned model, falling back to the

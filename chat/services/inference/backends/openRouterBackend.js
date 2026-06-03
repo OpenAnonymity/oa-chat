@@ -105,8 +105,8 @@ const openRouterBackend = {
         if (!session.expiresAt) return true;
         return new Date(session.expiresAt) <= new Date();
     },
-    async requestAccess({ ticketsRequired }) {
-        return ticketClient.requestApiKey(ticketsRequired || 1);
+    async requestAccess({ ticketsRequired, signal }) {
+        return ticketClient.requestApiKey(ticketsRequired || 1, { signal });
     },
     verification: {
         supports: true,
