@@ -186,10 +186,12 @@ test('requestLaneAccess passes abort signal and rejects already-aborted requests
     assert.equal(requests.length, 1);
 });
 
-test('resolveModelEntries adds a fallback secondary model when config only has primary', () => {
+test('resolveModelEntries adds Gemini 3.5 Flash as fallback secondary model when config only has primary', () => {
     const controller = createController({
         models: [
             { id: 'openai/gpt', name: 'GPT' },
+            { id: 'openai/gpt-oss-120b', name: 'GPT OSS' },
+            { id: 'google/gemini-3.5-flash', name: 'Gemini 3.5 Flash', provider: 'Google' },
             { id: 'anthropic/claude', name: 'Claude' }
         ],
         inferenceService: {
@@ -208,7 +210,7 @@ test('resolveModelEntries adds a fallback secondary model when config only has p
 
     const entries = controller.resolveModelEntries(session);
 
-    assert.deepEqual(entries.map((entry) => entry.name), ['GPT', 'Claude']);
+    assert.deepEqual(entries.map((entry) => entry.name), ['GPT', 'Gemini 3.5 Flash']);
     assert.deepEqual(entries.map((entry) => entry.laneId), ['primary', 'secondary']);
 });
 
@@ -316,6 +318,88 @@ test('ensureAccessForEntries reuses valid single-chat primary access and only ch
     assert.equal(session.councilAccess.primary.modelId, 'openai/gpt');
     assert.equal(session.councilAccess.primary.ticketsConsumed, 0);
     assert.equal(session.councilAccess.secondary.apiKey, 'secondary-key');
+});
+
+test('seedSessionAccessFromPrimaryLane restores valid primary lane access for single chat', () => {
+    const validExpiry = new Date(Date.now() + 60_000).toISOString();
+    const setAccessCalls = [];
+    const setCurrentAccessCalls = [];
+    const controller = createController({
+        inferenceService: {
+            setAccessInfo: (session, accessInfo) => {
+                setAccessCalls.push(accessInfo);
+                session.apiKey = accessInfo.key;
+                session.apiKeyInfo = accessInfo;
+                session.expiresAt = accessInfo.expiresAt;
+            },
+            setCurrentAccess: (session, accessInfo) => {
+                setCurrentAccessCalls.push({ sessionId: session.id, accessInfo });
+            },
+            getVerificationAdapter: () => ({ supports: false })
+        }
+    });
+    const session = {
+        id: 'session-1',
+        apiKey: null,
+        apiKeyInfo: null,
+        expiresAt: null,
+        councilAccess: {
+            primary: {
+                apiKey: 'primary-lane-key',
+                apiKeyInfo: { stationId: 'station-a', modelId: 'openai/gpt-old' },
+                expiresAt: validExpiry,
+                modelId: 'openai/gpt-new'
+            },
+            secondary: {
+                apiKey: 'secondary-lane-key',
+                apiKeyInfo: { stationId: 'station-b' },
+                expiresAt: validExpiry,
+                modelId: 'anthropic/claude'
+            }
+        }
+    };
+
+    const laneAccess = controller.seedSessionAccessFromPrimaryLane(session);
+
+    assert.equal(laneAccess.apiKey, 'primary-lane-key');
+    assert.equal(session.apiKey, 'primary-lane-key');
+    assert.equal(session.expiresAt, validExpiry);
+    assert.equal(setAccessCalls.length, 1);
+    assert.equal(setAccessCalls[0].key, 'primary-lane-key');
+    assert.equal(setAccessCalls[0].modelId, 'openai/gpt-new');
+    assert.equal(setCurrentAccessCalls.length, 1);
+    assert.equal(setCurrentAccessCalls[0].accessInfo.key, 'primary-lane-key');
+    assert.notEqual(session.apiKey, 'secondary-lane-key');
+});
+
+test('seedSessionAccessFromPrimaryLane skips expired primary lane access', () => {
+    let setAccessCalled = false;
+    const controller = createController({
+        inferenceService: {
+            setAccessInfo: () => {
+                setAccessCalled = true;
+            },
+            getVerificationAdapter: () => ({ supports: false })
+        }
+    });
+    const session = {
+        id: 'session-1',
+        apiKey: null,
+        councilAccess: {
+            primary: {
+                apiKey: 'expired-primary-key',
+                apiKeyInfo: { stationId: 'station-a' },
+                expiresAt: new Date(Date.now() - 60_000).toISOString(),
+                modelId: 'openai/gpt'
+            }
+        }
+    };
+
+    const laneAccess = controller.seedSessionAccessFromPrimaryLane(session);
+
+    assert.equal(laneAccess, null);
+    assert.equal(setAccessCalled, false);
+    assert.equal(session.apiKey, null);
 });
 
 test('ensureAccessForEntries does not seed primary lane when session access lacks model metadata', async () => {
@@ -849,6 +933,52 @@ test('runMultiModelTurn stores successful synthesis as canonical message content
     assert.equal(synthesisCalls[0].synthesisEntry.laneId, 'synthesis');
 });
 
+test('runMultiModelTurn sends one memory-processed prompt to both lanes without duplicating it into synthesis context', async () => {
+    const stageRequests = [];
+    const processCalls = [];
+    const synthesisMessages = [];
+    const { controller, session, userMessage, savedMessages } = createRunTurnHarness({
+        runSynthesisCompletion: async ({ sanitizedMessages }) => {
+            synthesisMessages.push(JSON.parse(JSON.stringify(sanitizedMessages)));
+            return { content: 'Council final answer' };
+        }
+    });
+    controller.app.processMessagesWithFiles = (messages, modelId) => {
+        processCalls.push({
+            modelId,
+            messages: JSON.parse(JSON.stringify(messages))
+        });
+        return messages.map((message) => message.role === 'user'
+            ? { ...message, content: 'Explain the issue with approved memory.' }
+            : message
+        );
+    };
+    controller.inferenceService.sendCompletionStrict = async (messages, modelId) => {
+        stageRequests.push({
+            modelId,
+            lastUserContent: messages.findLast((message) => message.role === 'user')?.content || ''
+        });
+        return { content: `${modelId} response` };
+    };
+
+    await controller.runMultiModelTurn({
+        session,
+        userMessage,
+        searchEnabled: false,
+        abortController: new AbortController(),
+        initialPendingPhase: 'requesting-key'
+    });
+
+    assert.deepEqual(processCalls.map((call) => call.modelId), ['openai/gpt', 'anthropic/claude']);
+    assert.deepEqual(stageRequests, [
+        { modelId: 'openai/gpt', lastUserContent: 'Explain the issue with approved memory.' },
+        { modelId: 'anthropic/claude', lastUserContent: 'Explain the issue with approved memory.' }
+    ]);
+    assert.equal(synthesisMessages.length, 1);
+    assert.equal(synthesisMessages[0].findLast((message) => message.role === 'user')?.content, 'Explain the issue.');
+    assert.equal(savedMessages.at(-1).content, 'Council final answer');
+});
+
 test('runMultiModelTurn skips synthesis in parallel output mode', async () => {
     let synthesisCalls = 0;
     const accessEntryBatches = [];
@@ -882,6 +1012,28 @@ test('runMultiModelTurn skips synthesis in parallel output mode', async () => {
     assert.equal(finalMessage.council.statusMessage, null);
     assert.equal(synthesisCalls, 0);
     assert.deepEqual(accessEntryBatches, [['primary', 'secondary']]);
+});
+
+test('removeAssistantMessagesAfter can preserve the current local Memory Agent row during council regenerate', async () => {
+    const deletedMessages = [];
+    const controller = createController({
+        chatDB: {
+            getSessionMessages: async () => [
+                { id: 'user-1', role: 'user', content: 'retry this' },
+                { id: 'memory-1', role: 'assistant', model: 'memory agent', isLocalOnly: true },
+                { id: 'assistant-1', role: 'assistant', model: 'Parallel' },
+                { id: 'status-1', role: 'assistant', isLocalOnly: true }
+            ],
+            deleteMessage: async (messageId) => {
+                deletedMessages.push(messageId);
+            }
+        }
+    });
+    controller.app.isViewingSession = () => false;
+
+    await controller.removeAssistantMessagesAfter('session-1', 'user-1', { preserveLocalOnlyMessages: true });
+
+    assert.deepEqual(deletedMessages, ['assistant-1']);
 });
 
 test('runMultiModelTurn triggers post-turn memory extraction in parallel output mode', async () => {

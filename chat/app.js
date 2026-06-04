@@ -188,6 +188,7 @@ class ChatApp {
             settingsMenu: document.getElementById('settings-menu'),
             searchToggle: document.getElementById('search-toggle'),
             memoryToggle: document.getElementById('chat-mode-toggle'),
+            memoryContextToggle: document.getElementById('memory-context-toggle'),
             toggleRightPanelBtn: document.getElementById('toggle-right-panel-btn'), // This might be legacy, but let's keep it for now.
             showRightPanelBtn: document.getElementById('show-right-panel-btn'),
             shareBtn: document.getElementById('share-btn'),
@@ -3663,6 +3664,9 @@ class ChatApp {
             },
             fallbackModelName
         );
+        if (!requestedEnabled && this.councilController) {
+            this.councilController.seedSessionAccessFromPrimaryLane(session);
+        }
         await chatDB.saveSession(session);
         this.renderSessions();
         this.renderCurrentModel();
@@ -5351,7 +5355,8 @@ class ChatApp {
         }
 
         try {
-            if (lastUserMessage && !options.skipMemoryAugment && !this.isCouncilModeActive(session)) {
+            const shouldAttemptMemoryAugment = lastUserMessage && !options.skipMemoryAugment;
+            if (shouldAttemptMemoryAugment) {
                 await this.removeLocalOnlyMessagesAfter(session.id, lastUserMessage.id);
                 const memoryMessages = await chatDB.getSessionMessages(session.id);
                 const conversationText = this.buildConversationText(memoryMessages);
@@ -5377,7 +5382,8 @@ class ChatApp {
                     userMessage: lastUserMessage,
                     searchEnabled: this.searchEnabled,
                     abortController,
-                    initialPendingPhase
+                    initialPendingPhase,
+                    preserveLocalOnlyMessages: shouldAttemptMemoryAugment || options.skipMemoryAugment === true
                 });
                 return;
             }

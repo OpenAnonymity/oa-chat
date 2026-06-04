@@ -187,35 +187,45 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     redeem tickets, and OpenRouter credit exhaustion decides whether a fresh
     lane key is needed.
 - 2026-05-29: Parallel/Council response mode is wired as a session-level opt-in.
-  - The bottom chat-mode slider now has only `Chat`, `Parallel`, and `Memory`
-    states. Turning on user-facing `Parallel` from the composer exposes an
-    inline second-model picker beside the primary model picker and, by default,
-    keeps output to Stage 1 only: two model responses, no synthesis/chairman
-    request. Council is no longer a visible composer mode; the settings menu has
-    a `Parallel` section with a `Council review` switch. Turning that switch on
-    writes `outputMode: 'council'`, reveals the Council model picker inside
-    settings, and enables the existing synthesis pass below the two first
-    responses. The primary picker uses `⌘K`, the secondary picker uses `⌘J`,
-    and the Council picker uses `⌘L` only when Council review is enabled or the
-    settings menu is open. All three open the same centered searchable model
-    picker modal; opening the Council picker from settings closes the settings
-    popover first so it does not sit above the modal. Secondary selection
-    excludes the primary model; Council selection can choose any selectable
-    model. If a persisted Council model is
+  - The bottom response-mode slider has `Chat` and `Parallel` states. Memory is
+    a separate book-icon toggle beside it, so users can combine `Chat + Memory`
+    or `Parallel + Memory`; clicking Parallel no longer turns Memory off, and
+    clicking the book no longer leaves Parallel. A single book click toggles
+    memory auto-attach; a quick double-click opens the memory panel and leaves
+    auto-attach on. Turning on user-facing `Parallel` from the composer exposes
+    an inline second-model picker beside the primary model picker and, by
+    default, keeps output to Stage 1 only: two model responses, no
+    synthesis/chairman request. Council is no longer a visible composer mode;
+    the settings menu has a `Parallel` section with a `Council review` switch.
+    Turning that switch on writes
+    `outputMode: 'council'`, reveals the Council model picker inside settings,
+    and enables the existing synthesis pass below the two first responses. The
+    primary picker uses `⌘K`, the secondary picker uses `⌘J`, and the Council
+    picker uses `⌘L` only when Council review is enabled or the settings menu is
+    open. All three open the same centered searchable model picker modal;
+    opening the Council picker from settings closes the settings popover first
+    so it does not sit above the modal. Secondary selection excludes the primary
+    model; Council selection can choose any selectable model. If a persisted
+    Council model is
     no longer selectable, settings fall back to the same primary/default model
     the controller will charge for instead of displaying a stale model name.
     Ticket costs remain shown inside the modal options. While Parallel is
     active, the composer shows compact icon-only primary and secondary model
     buttons with full model names in tooltip/aria labels; the Council model is
     never shown in the composer. The Council review switch reflects
-    `outputMode` even when the visible slider is on Chat or Memory, so a user
-    can temporarily leave Parallel and return without losing the review setting;
+    `outputMode` even when the response-mode slider is on Chat, so a user can
+    temporarily leave Parallel and return without losing the review setting;
     synthesis access is still only preflighted/acquired when Parallel is active
-    with Council review on.
+    with Council review on. Toggling Council review does not alter the
+    independent Memory book state.
     The picker derives the same fallback secondary model as the controller,
     including legacy model-id members and stale-member skipping, so its
     displayed model matches the lane that will be charged, and refreshes when
-    model ticket tiers update. If the
+    model ticket tiers update. When there is no configured second model,
+    Parallel prefers Google Gemini 3.5 Flash as the secondary lane if it is
+    available and not already the primary model; otherwise it falls back to the
+    first available non-primary model. This keeps GPT OSS from becoming the
+    implicit second lane just because it appears earlier in the catalog. If the
     session's primary model is stale or unavailable, both the composer and
     controller resolve the primary lane to the default/fallback model before
     assigning the secondary lane.
@@ -260,14 +270,22 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     lanes. Changing the Council model or toggling Council review does not
     proactively clear `councilAccess.synthesis`; synthesis access refreshes only
     when that lane actually needs a fresh key.
-  - Persisted Memory mode can remain enabled globally, but send/regenerate do
-    not run memory augmentation while the visible session is in Parallel.
-    Clicking Memory from a Parallel session now switches modes instead of just
-    opening the memory editor because Memory was already true in global
-    settings. Post-turn background memory extraction still runs after
-    successful Parallel responses, so a separate confidential memory key
-    redemption can appear after the visible model requests finish; that is
-    memory ingestion, not a hidden response lane.
+  - Persisted Memory mode can remain enabled globally, and send/regenerate now
+    run memory augmentation once before a Parallel/Council turn fans out to
+    model lanes. The approved `_lastApiContent` override is applied by
+    `processMessagesWithFiles(...)` to the shared last user turn, so primary
+    and secondary lanes receive the same memory-augmented prompt. The Council
+    synthesis prompt still uses the canonical chat context plus Stage 1
+    responses; memory is not injected a second time into synthesis. The
+    override is cleared by the app-level send/regenerate `finally` block after
+    the full turn completes, fails, or is cancelled. Council regenerate
+    preserves the current local-only Memory Agent status row while pruning old
+    model responses. A single book-toggle click only changes `memoryMode` and
+    does not alter Parallel/Council session config; double-clicking the book
+    opens the memory panel and keeps `memoryMode` enabled. Post-turn background
+    memory extraction still runs after successful Parallel responses, so a
+    separate confidential memory key redemption can appear after the visible
+    model requests finish; that is memory ingestion, not a hidden response lane.
   - If Parallel is enabled after a normal single-model turn, the primary
     lane can seed from the existing `session.apiKey` when the key is valid and
     the access metadata identifies the same primary model. In that case,
@@ -276,6 +294,13 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     `ticketsConsumed: 0`. Newly acquired single-model access records are stamped
     with `modelId`/`modelName` so council does not seed an old key whose model
     ownership is ambiguous.
+  - If Parallel is disabled, `ChatApp.setCouncilModeForCurrentSession(...)`
+    seeds normal single-chat access back from a valid `councilAccess.primary`
+    record. Returning to single chat should therefore keep using the primary
+    lane key instead of redeeming a new ticket, unless that primary lane key is
+    missing, expired, banned, or later rejected by OpenRouter for exhausted
+    credit. Secondary and synthesis keys are never pooled into single-chat
+    access.
   - A Stage 1 council turn is stored as one assistant message with
     `message.council` metadata. `message.council.stage1` keeps the two
     first-opinion responses. In Stage 1-only mode, each future lane request
@@ -600,7 +625,7 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - Read [MEMORY_MODE.md](MEMORY_MODE.md) before touching this path.
   - The app-side contract is `chat/app.js -> chat/services/memoryBridge.js -> chat/nanomem/browser.js`; do not import `nanomem/src/...` from app code.
   - `chat/nanomem` is a tracked symlink and production build now hard-requires the `nanomem` submodule. If the bundle suddenly starts failing on `node:*` imports from `nanomem`, check that the browser entry is still pointing at `nanomem/src/browser.js`, not the generic index.
-  - Memory mode is a global toggle persisted in IndexedDB setting `memoryMode`, not a per-session mode.
+  - Memory mode is a global book toggle persisted in IndexedDB setting `memoryMode`, not a per-session mode.
   - Memory mode now also persists `memoryAutoInclude` and `memoryAgentModel`. The first short-circuits the in-chat approval wait, and the second is used by both live retrieval and memory backfill/import.
   - The retrieval summary is a local-only assistant message with an agent trace and explicit include/skip controls. Regeneration clears older local-only memory status messages after the last user turn before rerunning retrieval.
   - The pending approval row now has `Include memory`, `Always include`, `Skip`, and `Edit prompt`. After memory is approved/sent, the revised prompt remains visible in the local status message, so the approved row only shows the status chip and omits a separate view/edit button. `Always include` is not just a one-shot approve: it flips the global `memoryAutoInclude` setting on and the settings-menu switch should reflect that immediately.

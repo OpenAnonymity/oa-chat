@@ -27,6 +27,7 @@ import {
 import {
     findModelByNameOrId,
     getConfiguredSecondaryModelNameForModels,
+    getDefaultSecondaryModelNameForModels,
     resolvePrimaryModelNameForModels,
     resolveSecondaryModelNameForModels,
     resolveSynthesisModelNameForModels
@@ -266,21 +267,10 @@ export default class ChatInput {
                 if (!button) return;
 
                 const mode = button.dataset.modeOption || 'chat';
-                const isMemory = mode === 'memory';
                 const isParallel = mode === 'parallel';
-                const currentMode = this.app.elements.memoryToggle?.dataset?.mode || 'chat';
-                if (isMemory && this.app.memoryFeatureEnabled === false) {
-                    this.updateMemoryToggleUI();
-                    return;
-                }
-                if (isMemory && currentMode === 'memory' && this.app.memoryMode && this.app.memoryEditor) {
-                    this.app.memoryEditor.open();
-                    return;
-                }
                 const container = this.app.elements.memoryToggle;
                 container.classList.add('sliding');
                 setTimeout(() => container.classList.remove('sliding'), 250);
-                this.app.memoryMode = isMemory && this.app.memoryFeatureEnabled !== false;
 
                 if (isParallel) {
                     await this.setCouncilModeFromComposer(true);
@@ -290,7 +280,12 @@ export default class ChatInput {
 
                 this.updateMemoryToggleUI();
                 this.refreshMultiModelSettingsUI();
-                await this.app.data.saveSetting('memoryMode', this.app.memoryMode);
+            });
+        }
+
+        if (this.app.elements.memoryContextToggle) {
+            this.app.elements.memoryContextToggle.addEventListener('click', (event) => {
+                this.handleMemoryContextToggleClick(event);
             });
         }
 
@@ -1919,6 +1914,33 @@ export default class ChatInput {
         toggle.classList.toggle('search-active', this.app.searchEnabled);
     }
 
+    async setMemoryContextEnabled(enabled) {
+        this.app.memoryMode = enabled === true;
+        this.updateMemoryToggleUI();
+        await this.app.data.saveSetting('memoryMode', this.app.memoryMode);
+    }
+
+    async openMemoryContextPanel() {
+        await this.setMemoryContextEnabled(true);
+        this.app.memoryEditor?.open?.();
+    }
+
+    handleMemoryContextToggleClick(event) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        if (event.detail >= 2) {
+            this.openMemoryContextPanel().catch(error => {
+                console.error('Failed to open memory panel:', error);
+            });
+            return;
+        }
+
+        this.setMemoryContextEnabled(!this.app.memoryMode).catch(error => {
+            console.error('Failed to toggle memory context:', error);
+        });
+    }
+
     updateMemoryToggleUI() {
         const container = this.app.elements.memoryToggle;
         if (!container) return;
@@ -1929,9 +1951,7 @@ export default class ChatInput {
         const isCouncilEnabled = session
             ? session.responseMode === RESPONSE_MODE_COUNCIL && session.councilConfig?.enabled === true
             : pendingCouncilConfig?.enabled === true;
-        const mode = isCouncilEnabled
-            ? 'parallel'
-            : (memoryFeatureEnabled && this.app.memoryMode ? 'memory' : 'chat');
+        const mode = isCouncilEnabled ? 'parallel' : 'chat';
         const isFirstRender = container.style.visibility === 'hidden';
         if (isFirstRender) {
             const indicator = container.querySelector('.chat-mode-toggle-indicator');
@@ -1965,6 +1985,16 @@ export default class ChatInput {
                 }
             }
         });
+
+        const memoryButton = this.app.elements.memoryContextToggle;
+        if (memoryButton) {
+            const memoryEnabled = this.app.memoryMode === true;
+            memoryButton.setAttribute('aria-checked', String(memoryEnabled));
+            memoryButton.classList.toggle('memory-active', memoryEnabled);
+            memoryButton.title = memoryEnabled
+                ? 'Auto-attach memory is on. Double-click to open memory.'
+                : 'Auto-attach memory is off. Double-click to open memory.';
+        }
     }
 
     async setCouncilModeFromComposer(enabled, options = {}) {
@@ -2001,11 +2031,6 @@ export default class ChatInput {
         const members = this.getMultiModelMembersForSelection();
         const synthesisModel = this.getCouncilSynthesisModelForSelection();
         const outputMode = enabled ? COUNCIL_OUTPUT_SYNTHESIS : COUNCIL_OUTPUT_PARALLEL;
-
-        if (currentlyMultiModelEnabled) {
-            this.app.memoryMode = false;
-            await this.app.data?.saveSetting?.('memoryMode', false);
-        }
 
         if (!session) {
             this.app.setPendingCouncilConfig?.({
@@ -2176,8 +2201,11 @@ export default class ChatInput {
     }
 
     getDefaultSecondaryModelName(primaryModelName) {
-        const models = Array.isArray(this.app.state.models) ? this.app.state.models : [];
-        return models.find((model) => model?.name && model.name !== primaryModelName)?.name || '';
+        return getDefaultSecondaryModelNameForModels({
+            models: this.app.state.models,
+            primaryModelName,
+            normalizeModelName: (modelName) => this.app.normalizeModelName?.(modelName)
+        });
     }
 
     resolveSecondaryModelName(primaryModelName, preferredModelName = '') {

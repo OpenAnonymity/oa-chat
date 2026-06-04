@@ -814,13 +814,13 @@
                                                     <path stroke-linecap="round" stroke-linejoin="round" d="M14.1 8h5.4A2.5 2.5 0 0 1 22 10.5v3.2a2.5 2.5 0 0 1-2.5 2.5h-2.1L14 19.5v-3.3" />
                                                 </svg>
                                             </button>
-                                            <button type="button" role="radio" class="chat-mode-toggle-btn" data-mode-option="memory" aria-label="Memory" aria-checked="false" data-tooltip-position="top">
-                                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
-                                                </svg>
-                                                <span class="chat-mode-html-tooltip"><span data-memory-tooltip-text>Auto-attach relevant context</span> <span data-memory-tooltip-beta class="px-1 py-0.5 rounded text-[8px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 uppercase tracking-wide">Beta</span></span>
-                                            </button>
                                         </div>
+                                        <button id="memory-context-toggle" type="button" role="switch" aria-label="Auto-attach relevant memory" aria-checked="false" class="memory-context-toggle inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-7 w-7 cursor-pointer select-none" data-tooltip-position="top">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
+                                            </svg>
+                                            <span class="chat-mode-html-tooltip">Auto-attach relevant context. Double-click to open memory <span class="px-1 py-0.5 rounded text-[8px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 uppercase tracking-wide">Beta</span></span>
+                                        </button>
                                     </div>
 
                                     <button

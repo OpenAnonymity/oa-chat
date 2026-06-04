@@ -112,6 +112,146 @@ test('component templates do not reach through backend globals', () => {
     );
 });
 
+test('composer mode toggle exposes Chat and Parallel with independent Memory toggle', () => {
+    const html = read('chat/index.html');
+    const source = read('chat/components/ChatInput.js');
+    assert.equal(html.includes('data-mode-option="chat"'), true);
+    assert.equal(html.includes('data-mode-option="parallel"'), true);
+    assert.equal(
+        html.includes('data-mode-option="memory"'),
+        false,
+        'Memory should be an independent book toggle, not a third segmented mode'
+    );
+    assert.equal(html.includes('id="memory-context-toggle"'), true);
+    assert.equal(source.includes('memoryContextToggle.addEventListener'), true);
+    assert.equal(source.includes('handleMemoryContextToggleClick(event)'), true);
+    assert.equal(source.includes('MEMORY_CONTEXT_DOUBLE_CLICK_MS'), false);
+    assert.equal(source.includes('memoryContextToggleClickTimer'), false);
+    assert.equal(source.includes('setTimeout(() => {\n            this.memoryContextToggleClickTimer'), false);
+    assert.equal(source.includes('openMemoryContextPanel'), true);
+    assert.equal(source.includes('this.app.memoryEditor?.open?.()'), true);
+    assert.equal(html.includes('Double-click to open memory'), true);
+    assert.equal(source.includes('this.app.memoryMode = isMemory'), false);
+    assert.equal(
+        html.includes('data-mode-option="council"'),
+        false,
+        'Council review should be a Parallel setting, not a visible composer mode'
+    );
+});
+
+test('parallel composer keeps the Council model picker out of the input bar', () => {
+    const html = read('chat/index.html');
+    assert.equal(html.includes('id="council-secondary-model-btn"'), true);
+    assert.equal(
+        html.includes('id="council-synthesis-model-btn"'),
+        false,
+        'Council model selection belongs in settings, not the Parallel composer'
+    );
+    assert.equal(html.includes('id="council-review-toggle"'), true);
+    assert.equal(html.includes('id="council-review-model-btn"'), true);
+});
+
+test('council review setting drives synthesis output mode in ChatInput', () => {
+    const source = read('chat/components/ChatInput.js');
+    const appSource = read('chat/app.js');
+    assert.equal(source.includes('council-review-toggle'), true);
+    assert.equal(source.includes('setCouncilReviewEnabledFromSettings'), true);
+    assert.equal(source.includes('currentlyMultiModelEnabled'), true);
+    assert.equal(source.includes('closeSettingsMenu()'), true);
+    assert.equal(source.includes('openCouncilSynthesisModelPicker({ closeSettings: true })'), true);
+    assert.match(
+        source,
+        /enabled \? COUNCIL_OUTPUT_SYNTHESIS : COUNCIL_OUTPUT_PARALLEL/,
+        'Council review on should persist synthesis output mode, and off should persist parallel'
+    );
+    assert.match(
+        source,
+        /enabled: currentlyMultiModelEnabled/,
+        'Council review should persist as a setting without forcing Parallel mode on by itself'
+    );
+    assert.equal(
+        appSource.includes('delete session.councilAccess.synthesis'),
+        false,
+        'Changing the Council review model should not proactively clear the synthesis lane key'
+    );
+    assert.equal(
+        /setCouncilReviewEnabledFromSettings[\s\S]*?saveSetting\?\.\('memoryMode', false\)/.test(source),
+        false,
+        'Council review should not silently turn off the independent Memory toggle'
+    );
+});
+
+test('turning off Parallel restores primary lane access to single chat', () => {
+    const source = read('chat/app.js');
+    const modeSetter = source.match(/async setCouncilModeForCurrentSession\([\s\S]*?\n    getPendingCouncilConfig/);
+
+    assert.ok(modeSetter, 'setCouncilModeForCurrentSession should be present');
+    assert.ok(
+        /if \(!requestedEnabled && this\.councilController\) \{[\s\S]*?seedSessionAccessFromPrimaryLane\(session\);/.test(modeSetter[0]),
+        'disabling Parallel should seed normal session access from the valid primary lane'
+    );
+});
+
+test('memory augmentation runs once before Parallel fan-out and clears the one-shot override', () => {
+    const source = read('chat/app.js');
+    const regenerateStart = source.indexOf('async regenerateResponse');
+    const sendStart = source.indexOf('async sendMessage()');
+    const regenerateEnd = source.indexOf('/**\n     * Sends a user message', regenerateStart);
+    const sendEnd = source.indexOf('/**\n     * Shows a typing indicator', sendStart);
+    const regenerateBlock = source.slice(regenerateStart, regenerateEnd);
+    const sendBlock = source.slice(sendStart, sendEnd);
+
+    assert.equal(
+        source.includes('this.memoryMode && !this.isCouncilModeActive(session)'),
+        false,
+        'send-time memory augmentation should not be disabled for Parallel/Council'
+    );
+    assert.equal(
+        source.includes('!options.skipMemoryAugment && !this.isCouncilModeActive(session)'),
+        false,
+        'regenerate memory augmentation should not be disabled for Parallel/Council'
+    );
+    assert.ok(
+        sendBlock.indexOf('await this.runMemoryAugmentFlow(content, userMessage, session') <
+            sendBlock.indexOf('await this.councilController.runSendTurn'),
+        'send should run Memory once before the Parallel/Council controller fans out to lanes'
+    );
+    assert.ok(
+        regenerateBlock.indexOf('await this.runMemoryAugmentFlow(lastUserMessage.content ||') <
+            regenerateBlock.indexOf('await this.councilController.runRegenerateTurn'),
+        'regenerate should rerun Memory once before the Parallel/Council controller fans out to lanes'
+    );
+    assert.ok(
+        regenerateBlock.includes('preserveLocalOnlyMessages: shouldAttemptMemoryAugment || options.skipMemoryAugment === true'),
+        'council regenerate should preserve the current Memory Agent status row after approval/auto-include'
+    );
+    assert.ok(
+        regenerateBlock.includes('} finally {\n            this._lastApiContent = null;'),
+        'regenerate should clear the one-shot memory API override in a finally block'
+    );
+    assert.ok(
+        sendBlock.includes('} finally {\n            this._lastApiContent = null;'),
+        'send should clear the one-shot memory API override in a finally block'
+    );
+});
+
+test('council model shortcut follows review setting, not just active Parallel', () => {
+    const source = read('chat/app.js');
+    assert.equal(source.includes('const isCouncilReviewEnabled'), true);
+    assert.match(
+        source,
+        /session\?\.councilConfig\?\.outputMode === COUNCIL_OUTPUT_SYNTHESIS/,
+        'Active-session Council model shortcut should work when review is enabled as a setting'
+    );
+    assert.match(
+        source,
+        /pendingCouncilConfig\?\.outputMode === COUNCIL_OUTPUT_SYNTHESIS/,
+        'Pending Council model shortcut should work when review is enabled as a setting'
+    );
+    const shortcutBlock = source.slice(source.indexOf('// Cmd/Ctrl + L for the Council synthesis model picker'));
+    assert.equal(shortcutBlock.includes('isCouncilModeActive(session)'), false);
+});
+
 test('initial model load drains pinned availability refreshes', () => {
     const source = read('chat/app.js');
     const initialLoadMatch = source.match(/this\.loadModels\(\)\.then\(async \(\) => \{([\s\S]*?)\}\)\.catch/);

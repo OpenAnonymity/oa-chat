@@ -4,6 +4,7 @@ import {
     filterDisabledModels,
     getFallbackModelEntry,
     getConfiguredSecondaryModelNameForModels,
+    getDefaultSecondaryModelNameForModels,
     normalizeModelName,
     resolveDefaultModelPreferenceUpdate,
     resolvePrimaryModelNameForModels,
@@ -153,6 +154,79 @@ test('resolveSecondaryModelNameForModels maps configured model ids to display na
             normalizeModelName: normalizeCouncilModelName
         }),
         'Anthropic: Claude'
+    );
+});
+
+test('resolveSecondaryModelNameForModels defaults to Gemini 3.5 Flash when available', () => {
+    const fallbackModels = [
+        { id: 'openai/gpt-oss-120b', name: 'OpenAI: GPT OSS 120B', provider: 'OpenAI' },
+        { id: 'google/gemini-3.5-flash', name: 'Google: Gemini 3.5 Flash', provider: 'Google' },
+        { id: 'anthropic/claude', name: 'Anthropic: Claude', provider: 'Anthropic' }
+    ];
+
+    assert.equal(
+        resolveSecondaryModelNameForModels({
+            models: fallbackModels,
+            primaryModelName: 'OpenAI: GPT',
+            preferredModelName: '',
+            normalizeModelName: normalizeCouncilModelName
+        }),
+        'Google: Gemini 3.5 Flash'
+    );
+    assert.equal(
+        getDefaultSecondaryModelNameForModels({
+            models: fallbackModels,
+            primaryModelName: 'OpenAI: GPT',
+            normalizeModelName: normalizeCouncilModelName
+        }),
+        'Google: Gemini 3.5 Flash'
+    );
+    assert.equal(
+        resolveSecondaryModelNameForModels({
+            models: [
+                { id: 'openai/gpt-oss-120b', name: 'OpenAI: GPT OSS 120B', provider: 'OpenAI' },
+                { id: 'google/gemini-3-5-flash', name: 'Google: Gemini 3-5 Flash', provider: 'Google' }
+            ],
+            primaryModelName: 'OpenAI: GPT',
+            preferredModelName: '',
+            normalizeModelName: normalizeCouncilModelName
+        }),
+        'Google: Gemini 3-5 Flash'
+    );
+});
+
+test('resolveSecondaryModelNameForModels falls back when Gemini 3.5 Flash is primary', () => {
+    const fallbackModels = [
+        { id: 'openai/gpt-oss-120b', name: 'OpenAI: GPT OSS 120B', provider: 'OpenAI' },
+        { id: 'google/gemini-3.5-flash', name: 'Google: Gemini 3.5 Flash', provider: 'Google' }
+    ];
+
+    assert.equal(
+        resolveSecondaryModelNameForModels({
+            models: fallbackModels,
+            primaryModelName: 'Google: Gemini 3.5 Flash',
+            preferredModelName: '',
+            normalizeModelName: normalizeCouncilModelName
+        }),
+        'OpenAI: GPT OSS 120B'
+    );
+});
+
+test('resolveSecondaryModelNameForModels does not prefer Gemini 3.5 Flash variants', () => {
+    const fallbackModels = [
+        { id: 'openai/gpt-oss-120b', name: 'OpenAI: GPT OSS 120B', provider: 'OpenAI' },
+        { id: 'google/gemini-3.5-flash-lite', name: 'Google: Gemini 3.5 Flash Lite', provider: 'Google' },
+        { id: 'google/gemini-3.5-flash-preview', name: 'Google: Gemini 3.5 Flash Preview', provider: 'Google' }
+    ];
+
+    assert.equal(
+        resolveSecondaryModelNameForModels({
+            models: fallbackModels,
+            primaryModelName: 'OpenAI: GPT',
+            preferredModelName: '',
+            normalizeModelName: normalizeCouncilModelName
+        }),
+        'OpenAI: GPT OSS 120B'
     );
 });
 

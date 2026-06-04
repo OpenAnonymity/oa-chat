@@ -9,6 +9,7 @@ import {
     buildCouncilMembersForSession,
     normalizeCouncilConfig
 } from '../domain/councilConfig.js';
+import { resolveSecondaryModelNameForModels } from '../domain/modelSelection.js';
 
 const SAVE_INTERVAL_MS = 350;
 const LANE_IDS = ['primary', 'secondary'];
@@ -96,14 +97,15 @@ export default class CouncilController {
     }
 
     async runRegenerateTurn(options) {
-        const { session, userMessage } = options;
+        const { session, userMessage, preserveLocalOnlyMessages = false } = options;
         if (session?.id && userMessage?.id) {
-            await this.removeAssistantMessagesAfter(session.id, userMessage.id);
+            await this.removeAssistantMessagesAfter(session.id, userMessage.id, { preserveLocalOnlyMessages });
         }
         return this.runMultiModelTurn(options);
     }
 
-    async removeAssistantMessagesAfter(sessionId, userMessageId) {
+    async removeAssistantMessagesAfter(sessionId, userMessageId, options = {}) {
+        const { preserveLocalOnlyMessages = false } = options;
         const messages = await this.chatDB.getSessionMessages(sessionId);
         const userIndex = messages.findIndex((message) => message.id === userMessageId);
         if (userIndex === -1) return;
@@ -111,6 +113,7 @@ export default class CouncilController {
         await Promise.all(
             laterMessages
                 .filter((message) => message.role === 'assistant')
+                .filter((message) => !(preserveLocalOnlyMessages && message.isLocalOnly))
                 .map((message) => this.chatDB.deleteMessage(message.id))
         );
         if (this.app.isViewingSession(sessionId)) {
@@ -164,6 +167,22 @@ export default class CouncilController {
                 laneId: LANE_IDS[entries.length] || `lane-${entries.length + 1}`
             });
             if (entries.length >= 2) break;
+        }
+
+        if (entries.length > 0 && entries.length < 2 && Array.isArray(this.app.state.models)) {
+            const fallbackSecondaryName = resolveSecondaryModelNameForModels({
+                models: this.app.state.models,
+                primaryModelName: entries[0]?.name || fallbackModelName,
+                normalizeModelName: (modelName) => this.app.normalizeModelName?.(modelName)
+            });
+            const fallbackSecondaryEntry = this.findModelEntry(fallbackSecondaryName);
+            if (fallbackSecondaryEntry?.id && !seenIds.has(fallbackSecondaryEntry.id)) {
+                seenIds.add(fallbackSecondaryEntry.id);
+                entries.push({
+                    ...fallbackSecondaryEntry,
+                    laneId: LANE_IDS[entries.length] || `lane-${entries.length + 1}`
+                });
+            }
         }
 
         if (entries.length > 0 && entries.length < 2 && Array.isArray(this.app.state.models)) {
@@ -358,6 +377,31 @@ export default class CouncilController {
             modelId: entry.id,
             ticketsConsumed: 0
         });
+    }
+
+    seedSessionAccessFromPrimaryLane(session) {
+        const laneAccess = this.getLaneAccess(session, 'primary');
+        if (
+            !laneAccess?.apiKey
+            || this.isLaneAccessExpired(laneAccess)
+            || this.isLaneAccessBanned(session, laneAccess)
+        ) {
+            return null;
+        }
+
+        const accessInfo = {
+            ...(laneAccess.apiKeyInfo || {}),
+            key: laneAccess.apiKey,
+            token: laneAccess.apiKey,
+            expiresAt: laneAccess.expiresAt || laneAccess.apiKeyInfo?.expiresAt || laneAccess.apiKeyInfo?.expires_at || null,
+            modelId: laneAccess.modelId || laneAccess.apiKeyInfo?.modelId || laneAccess.apiKeyInfo?.model_id || null
+        };
+
+        this.inferenceService.setAccessInfo(session, accessInfo);
+        if (typeof this.inferenceService.setCurrentAccess === 'function') {
+            this.inferenceService.setCurrentAccess(session, accessInfo);
+        }
+        return laneAccess;
     }
 
     resolveAccessModelId(accessInfo) {

@@ -158,6 +158,37 @@ export function getConfiguredSecondaryModelNameForModels({
     }) || '';
 }
 
+function isPreferredSecondaryModel(model) {
+    const id = String(model?.id || '').trim().toLowerCase();
+    const name = String(model?.name || '').trim().toLowerCase();
+    const provider = String(model?.provider || '').trim().toLowerCase();
+    return id === 'google/gemini-3.5-flash'
+        || id === 'google/gemini-3-5-flash'
+        || (provider === 'google' && name === 'gemini 3.5 flash')
+        || name === 'google: gemini 3.5 flash';
+}
+
+export function getDefaultSecondaryModelNameForModels({
+    models = [],
+    primaryModelName = '',
+    normalizeModelName = null
+} = {}) {
+    const availableModels = Array.isArray(models)
+        ? models.filter((model) => model?.name && model.name !== primaryModelName)
+        : [];
+    if (availableModels.length === 0) {
+        return '';
+    }
+
+    const primaryEntry = findModelByNameOrId(models, primaryModelName, normalizeModelName);
+    const preferredModel = availableModels.find((model) => {
+        if (!isPreferredSecondaryModel(model)) return false;
+        return !primaryEntry || model.id !== primaryEntry.id;
+    });
+
+    return preferredModel?.name || availableModels[0]?.name || '';
+}
+
 export function resolveSecondaryModelNameForModels({
     models = [],
     primaryModelName = '',
@@ -170,7 +201,11 @@ export function resolveSecondaryModelNameForModels({
     const preferredMatch = preferredModelName
         ? findModelByNameOrId(availableModels, preferredModelName, normalizeModelName)
         : null;
-    return preferredMatch?.name || availableModels[0]?.name || '';
+    return preferredMatch?.name || getDefaultSecondaryModelNameForModels({
+        models,
+        primaryModelName,
+        normalizeModelName
+    });
 }
 
 export function resolvePrimaryModelNameForModels({
