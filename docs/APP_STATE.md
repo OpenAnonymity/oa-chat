@@ -172,6 +172,20 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     the no-session pending model if it was still tracking the old default.
     Initial model-catalog load also drains pinned updates that arrived while
     `modelsLoading` was true.
+- 2026-06-04: Single-model ticket redemption is key-based, not selection-based.
+  - Primary model selection only updates the stored model preference/session
+    field and rerenders the picker label; it does not clear
+    `session.apiKey` or redeem tickets. A normal send only calls
+    `acquireAndSetAccess(...)` when the session has no access token or the
+    token is expired. If a user switches from a cheap model to an expensive
+    model while an existing session key is still valid, the app will try that
+    existing key first. More tickets are redeemed only when a fresh key is
+    needed, such as missing/expired access or a pre-stream 402 credit-exhaustion
+    retry. The model picker badge shows the ticket cost for the next new key,
+    not an immediate charge on click. Parallel/Council follows the same
+    key-based charging model within each lane: model changes do not proactively
+    redeem tickets, and OpenRouter credit exhaustion decides whether a fresh
+    lane key is needed.
 - 2026-05-29: Parallel/Council response mode is wired as a session-level opt-in.
   - The bottom chat-mode slider now has only `Chat`, `Parallel`, and `Memory`
     states. Turning on user-facing `Parallel` from the composer exposes an
@@ -226,19 +240,26 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - Council access is lane-scoped under `session.councilAccess.primary` and
     `session.councilAccess.secondary`, plus `session.councilAccess.synthesis`
     for the Council answer. Each lane stores its own ephemeral key, access
-    metadata, expiry, and model id, and each lane redeems tickets for its own
-    selected model instead of sharing the session-level key.
-  - If a lane key expires, changes model, or OpenRouter reports credit
+    metadata, expiry, and last-issued model id. Lane keys are lane-scoped, not
+    model-scoped: primary only uses `councilAccess.primary`, secondary only uses
+    `councilAccess.secondary`, and synthesis only uses
+    `councilAccess.synthesis`, but a valid same-lane key can be tried after
+    that lane switches models. There is no cross-lane key pooling.
+  - If a lane key is missing, expires, is banned, or OpenRouter reports credit
     exhaustion, only that lane is cleared and refreshed. Reused lane keys are
     also checked against the verifier's live/cached banned-station state before
     use; a now-banned lane key is treated as stale, cleared, included in ticket
-    preflight, and replaced before inference. Before acquiring any missing lane
-    keys, the controller checks that enough tickets exist for all missing
-    primary/secondary/synthesis lanes so it does not partially charge one lane
-    and then fail on another. Parallel with Council review off
-    preflights/acquires only the primary and secondary lanes. Changing only the
-    Council model or toggling Council review clears only
-    `councilAccess.synthesis`; primary and secondary lane keys are left alone.
+    preflight, and replaced before inference. A lane model switch does not count
+    as stale access for ticket preflight; if the existing key cannot afford the
+    new request, the lane request gets a pre-stream 402, clears only that lane,
+    redeems a fresh key priced for the selected lane model, and retries once.
+    Before acquiring any missing/expired/banned lane keys, the controller checks
+    that enough tickets exist for all fresh primary/secondary/synthesis lanes so
+    it does not partially charge one lane and then fail on another. Parallel
+    with Council review off preflights/acquires only the primary and secondary
+    lanes. Changing the Council model or toggling Council review does not
+    proactively clear `councilAccess.synthesis`; synthesis access refreshes only
+    when that lane actually needs a fresh key.
   - Persisted Memory mode can remain enabled globally, but send/regenerate do
     not run memory augmentation while the visible session is in Parallel.
     Clicking Memory from a Parallel session now switches modes instead of just
@@ -289,7 +310,7 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     `ticketClient` from `ChatApp` instead of importing the service singletons
     directly. This keeps browser storage/network singleton initialization out
     of unit tests and lets `test/application/councilController.test.js` lock
-    down mixed lane costs, synthesis 402 retry, model-change invalidation,
+    down mixed lane costs, same-lane model-switch reuse, synthesis 402 retry,
     insufficient-ticket preflight behavior, lane-specific Stage 1 history,
     partial synthesis, and synthesis fallback behavior with small stubs.
   - `chat/domain/councilPrompts.js` defines the synthesis-only council prompt.

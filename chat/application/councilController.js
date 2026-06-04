@@ -19,6 +19,19 @@ function isAbortError(error) {
     return error?.name === 'AbortError' || error?.isCancelled || error?.message === 'AbortError';
 }
 
+function createAbortError(message = 'Request aborted') {
+    const error = new Error(message);
+    error.name = 'AbortError';
+    error.isCancelled = true;
+    return error;
+}
+
+function throwIfAborted(signal) {
+    if (signal?.aborted) {
+        throw createAbortError();
+    }
+}
+
 function buildCouncilLabel(index) {
     return `Response ${String.fromCharCode(65 + index)}`;
 }
@@ -308,7 +321,6 @@ export default class CouncilController {
         const laneAccess = this.getLaneAccess(session, entry.laneId);
         return !(
             laneAccess?.apiKey
-            && laneAccess.modelId === entry.id
             && !this.isLaneAccessExpired(laneAccess)
             && !this.isLaneAccessBanned(session, laneAccess)
         );
@@ -317,7 +329,7 @@ export default class CouncilController {
     seedPrimaryLaneAccessFromSession(session, entry) {
         if (entry?.laneId !== 'primary') return null;
         const laneAccess = this.getLaneAccess(session, 'primary');
-        if (laneAccess?.apiKey && laneAccess.modelId === entry.id && !this.isLaneAccessExpired(laneAccess)) {
+        if (laneAccess?.apiKey && !this.isLaneAccessExpired(laneAccess) && !this.isLaneAccessBanned(session, laneAccess)) {
             return laneAccess;
         }
         if (!session?.apiKey || this.inferenceService.isAccessExpired(session)) {
@@ -365,7 +377,8 @@ export default class CouncilController {
         return modelEntry?.id || null;
     }
 
-    async requestLaneAccess(session, entry, typingId) {
+    async requestLaneAccess(session, entry, typingId, signal = null) {
+        throwIfAborted(signal);
         const ticketsRequired = Math.max(1, this.getTicketCostForEntry(entry));
         const availableTickets = this.ticketClient.getTicketCount();
         if (availableTickets < ticketsRequired) {
@@ -385,10 +398,17 @@ export default class CouncilController {
         let retries = 0;
         const maxRetries = Math.min(availableTickets, ticketsRequired + 10);
         while (retries < maxRetries) {
+            throwIfAborted(signal);
             try {
-                result = await this.inferenceService.requestAccess(session, { ticketsRequired });
+                result = await this.inferenceService.requestAccess(session, {
+                    ticketsRequired,
+                    ...(signal ? { signal } : {})
+                });
                 break;
             } catch (error) {
+                if (isAbortError(error) || signal?.aborted) {
+                    throw error;
+                }
                 if (error.code === 'TICKET_USED') {
                     retries += 1;
                     this.app.showToast?.('Ticket already used, trying next available');
@@ -401,6 +421,7 @@ export default class CouncilController {
         if (!result) {
             throw new Error('All available tickets were already spent');
         }
+        throwIfAborted(signal);
 
         if (typingId) {
             try {
@@ -455,12 +476,12 @@ export default class CouncilController {
         return laneAccess;
     }
 
-    async ensureLaneAccess(session, entry, typingId) {
+    async ensureLaneAccess(session, entry, typingId, signal = null) {
+        throwIfAborted(signal);
         this.seedPrimaryLaneAccessFromSession(session, entry);
         const laneAccess = this.getLaneAccess(session, entry.laneId);
         if (
             laneAccess?.apiKey
-            && laneAccess.modelId === entry.id
             && !this.isLaneAccessExpired(laneAccess)
             && !this.isLaneAccessBanned(session, laneAccess)
         ) {
@@ -470,14 +491,15 @@ export default class CouncilController {
             this.clearLaneAccess(session, entry.laneId);
             await this.chatDB.saveSession(session);
         }
-        return this.requestLaneAccess(session, entry, typingId);
+        return this.requestLaneAccess(session, entry, typingId, signal);
     }
 
-    async ensureAccessForEntries(session, entries, typingId) {
+    async ensureAccessForEntries(session, entries, typingId, signal = null) {
+        throwIfAborted(signal);
         const ticketsRequired = Math.max(1, this.calculateCouncilTicketRequirement(entries));
         this.assertSufficientTicketsForEntries(session, entries);
         for (const entry of entries) {
-            await this.ensureLaneAccess(session, entry, typingId);
+            await this.ensureLaneAccess(session, entry, typingId, signal);
         }
         return ticketsRequired;
     }
@@ -672,7 +694,7 @@ export default class CouncilController {
 
             this.assertSufficientTicketsForEntries(session, accessEntries);
             const ticketsRequired = Math.max(1, this.calculateCouncilTicketRequirement(accessEntries));
-            await this.ensureAccessForEntries(session, entries, typingId);
+            await this.ensureAccessForEntries(session, entries, typingId, abortController?.signal || null);
 
             if (typingId) {
                 this.app.removeTypingIndicator(typingId);
@@ -784,7 +806,7 @@ export default class CouncilController {
                     await persistProgress(true);
 
                     try {
-                        await this.ensureAccessForEntries(session, [synthesisEntry], null);
+                        await this.ensureAccessForEntries(session, [synthesisEntry], null, abortController?.signal || null);
                         const synthesisResult = await this.runSynthesisCompletion({
                             session,
                             synthesisEntry,
@@ -948,7 +970,7 @@ export default class CouncilController {
             if (!hasRetriedAfterCredit && this.app.isAccessCreditExhaustedError(error)) {
                 this.clearLaneAccess(session, entry.laneId);
                 await this.chatDB.saveSession(session);
-                await this.requestLaneAccess(session, entry, typingId);
+            await this.requestLaneAccess(session, entry, typingId, abortController?.signal || null);
                 return this.sendLaneMessagesCompletion({
                     session,
                     entry,

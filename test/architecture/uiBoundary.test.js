@@ -195,18 +195,21 @@ test('inline quick ask preserves scrubber and session lifecycle constraints', ()
     assert.ok(inlineQuickAskMatch, 'inlineQuickAsk method should be present');
     const quickAskModelResolverMatch = appSource.match(/async resolveModelForQuickAsk\([\s\S]*?\n    async inlineQuickAsk/);
     assert.ok(quickAskModelResolverMatch, 'resolveModelForQuickAsk method should be present');
+    const quickAskAccessMatch = appSource.match(/async ensureQuickAskAccess\([\s\S]*?\n    getQuickAskConversationMessages/);
+    assert.ok(quickAskAccessMatch, 'ensureQuickAskAccess method should be present');
     assert.ok(
-        /onStatus\?\.\('requesting-key'\)[\s\S]*?acquireAndSetAccess[\s\S]*?abortController\.signal\.aborted[\s\S]*?inferenceService\.streamCompletion/.test(inlineQuickAskMatch[0]),
+        /onStatus\?\.\('requesting-key'\)[\s\S]*?acquireAndSetAccess[\s\S]*?abortController\.signal\.aborted/.test(quickAskAccessMatch[0]) &&
+        /inferenceService\.streamCompletion\([\s\S]*?quickAskAccessSession/.test(inlineQuickAskMatch[0]),
         'inline quick ask should acquire access for expired past sessions and re-check cancellation before inference'
     );
     assert.ok(
-        inlineQuickAskMatch[0].includes('signal: abortController.signal'),
+        quickAskAccessMatch[0].includes('signal: abortController.signal'),
         'quick ask access acquisition should receive the panel abort signal'
     );
     assert.ok(
-        inlineQuickAskMatch[0].includes('const { modelId, modelName } = await this.resolveModelForQuickAsk(session);') &&
-        inlineQuickAskMatch[0].includes('modelIdOverride: modelId') &&
-        inlineQuickAskMatch[0].includes('modelNameOverride: modelName'),
+        inlineQuickAskMatch[0].includes('const quickAskModel = await this.resolveModelForQuickAsk(session);') &&
+        quickAskAccessMatch[0].includes('modelIdOverride: quickAskModel.modelId') &&
+        quickAskAccessMatch[0].includes('modelNameOverride: quickAskModel.modelName'),
         'quick ask should resolve the pinned instant model before key acquisition and use it for ticket cost'
     );
     assert.ok(
@@ -216,6 +219,24 @@ test('inline quick ask preserves scrubber and session lifecycle constraints', ()
         appSource.includes("name.includes('instant')") &&
         !quickAskModelResolverMatch[0].includes('chatDB.saveSession'),
         'quick ask model resolution should prefer pinned GPT instant without mutating the session model'
+    );
+    assert.ok(
+        quickAskModelResolverMatch[0].includes('this.isCouncilModeActive(session)') &&
+        quickAskModelResolverMatch[0].includes('primaryEntry?.id === selectedModelEntry.id') &&
+        quickAskModelResolverMatch[0].includes("quickAskModel.laneId = primaryEntry.laneId || 'primary';") &&
+        quickAskAccessMatch[0].includes('this.councilController.seedPrimaryLaneAccessFromSession(session, entry);') &&
+        quickAskAccessMatch[0].includes('abortController.signal') &&
+        appSource.includes('this.councilController.buildLaneSession(session, quickAskModel.laneId)') &&
+        appSource.includes('this.councilController.buildLaneConversationMessages('),
+        'parallel quick ask should reuse primary lane access only when the pinned quick-ask model matches the primary lane'
+    );
+    assert.ok(
+        inlineQuickAskMatch[0].includes('this.isAccessCreditExhaustedError(error)') &&
+        inlineQuickAskMatch[0].includes('this.councilController.clearLaneAccess(session, quickAskModel.laneId);') &&
+        inlineQuickAskMatch[0].includes('this.councilController.requestLaneAccess(') &&
+        inlineQuickAskMatch[0].includes('abortController.signal') &&
+        inlineQuickAskMatch[0].includes('quickAskAccessSession = this.getQuickAskAccessSession(session, quickAskModel);'),
+        'parallel quick ask should directly refresh an exhausted reused primary lane key before retrying once'
     );
     assert.ok(
         appSource.includes('accessAcquisitionInFlight') &&

@@ -3663,16 +3663,6 @@ class ChatApp {
             },
             fallbackModelName
         );
-        if (
-            session.councilAccess?.synthesis
-            && (
-                session.councilConfig.synthesisModel !== currentCouncilConfig.synthesisModel
-                || session.councilConfig.outputMode !== currentCouncilConfig.outputMode
-            )
-        ) {
-            delete session.councilAccess.synthesis;
-        }
-
         await chatDB.saveSession(session);
         this.renderSessions();
         this.renderCurrentModel();
@@ -6504,10 +6494,152 @@ class ChatApp {
             throw new Error('No models are available right now. Please add a model and try again.');
         }
 
-        return {
+        const quickAskModel = {
             modelId: selectedModelEntry.id,
             modelName: modelNameToUse
         };
+
+        if (this.isCouncilModeActive(session) && this.councilController) {
+            const entries = this.councilController.resolveModelEntries(session);
+            const primaryEntry = entries.find(entry => entry.laneId === 'primary') || entries[0] || null;
+            if (primaryEntry?.id === selectedModelEntry.id) {
+                quickAskModel.laneId = primaryEntry.laneId || 'primary';
+                quickAskModel.laneEntry = primaryEntry;
+                quickAskModel.laneEntries = entries;
+            }
+        }
+
+        return quickAskModel;
+    }
+
+    getQuickAskAccessSession(session, quickAskModel) {
+        if (quickAskModel?.laneId && this.councilController?.buildLaneSession) {
+            return this.councilController.buildLaneSession(session, quickAskModel.laneId);
+        }
+        return session;
+    }
+
+    getBannedAccessWarning(accessSession) {
+        const verifier = inferenceService.getVerificationAdapter(accessSession);
+        const accessInfo = inferenceService.getAccessInfo(accessSession);
+        const accessId = verifier?.getAccessId(accessInfo?.info);
+        if (!verifier?.supports || !accessId) return null;
+
+        const stationState = verifier.getAccessState(accessId);
+        const isBannedInCache = verifier.isAccessBanned(accessId);
+        if (!stationState?.banned && !isBannedInCache) return null;
+
+        const broadcastData = verifier.getLastBroadcastData();
+        const bannedInfo = broadcastData?.banned_stations?.find(s => s.station_id === accessId);
+        return {
+            stationId: accessId,
+            reason: stationState?.banReason || bannedInfo?.reason || 'Unknown',
+            bannedAt: stationState?.bannedAt || bannedInfo?.banned_at
+        };
+    }
+
+    async ensureQuickAskAccess(session, quickAskModel, abortController, options = {}) {
+        const accessLabel = inferenceService.getAccessLabel(session);
+
+        if (quickAskModel?.laneId && quickAskModel?.laneEntry && this.councilController) {
+            const entry = quickAskModel.laneEntry;
+            this.councilController.seedPrimaryLaneAccessFromSession(session, entry);
+            let quickAskAccessSession = this.getQuickAskAccessSession(session, quickAskModel);
+            const needsFreshAccess = this.councilController.needsFreshLaneAccess(session, entry);
+
+            if (needsFreshAccess) {
+                options.onStatus?.('requesting-key');
+                try {
+                    if (this.floatingPanel) {
+                        this.floatingPanel.showMessage(`Acquiring ${accessLabel} for ${entry.name}...`, 'info');
+                    }
+                    await this.councilController.ensureAccessForEntries(
+                        session,
+                        [entry],
+                        null,
+                        abortController.signal
+                    );
+                    options.onStatus?.('waiting-response');
+                    if (this.floatingPanel) {
+                        this.floatingPanel.showMessage(`${accessLabel} ready`, 'success', 2000);
+                    }
+                } catch (error) {
+                    if (this.floatingPanel) {
+                        this.floatingPanel.showMessage(error.message, 'error', 5000);
+                    }
+                    throw error;
+                }
+                quickAskAccessSession = this.getQuickAskAccessSession(session, quickAskModel);
+            } else {
+                options.onStatus?.('waiting-response');
+            }
+
+            if (abortController.signal.aborted) {
+                const error = new Error('Quick ask cancelled.');
+                error.isCancelled = true;
+                throw error;
+            }
+
+            return quickAskAccessSession;
+        }
+
+        const accessSession = this.getQuickAskAccessSession(session, quickAskModel);
+        const bannedAccess = this.getBannedAccessWarning(accessSession);
+        if (bannedAccess) {
+            this.showBannedStationWarningModal({
+                ...bannedAccess,
+                sessionId: session.id
+            });
+            throw new Error('The current station is banned.');
+        }
+
+        const hasAccessToken = !!inferenceService.getAccessToken(accessSession);
+        const isAccessExpired = inferenceService.isAccessExpired(accessSession);
+        if (!hasAccessToken || isAccessExpired) {
+            options.onStatus?.('requesting-key');
+            try {
+                if (this.floatingPanel) {
+                    this.floatingPanel.showMessage(`Acquiring ${accessLabel}...`, 'info');
+                }
+                await this.acquireAndSetAccess(session, {
+                    modelIdOverride: quickAskModel.modelId,
+                    modelNameOverride: quickAskModel.modelName,
+                    signal: abortController.signal,
+                    onGranted: () => {
+                        options.onStatus?.('waiting-response');
+                    }
+                });
+                if (this.floatingPanel) {
+                    this.floatingPanel.showMessage(`${accessLabel} ready`, 'success', 2000);
+                }
+            } catch (error) {
+                if (this.floatingPanel) {
+                    this.floatingPanel.showMessage(error.message, 'error', 5000);
+                }
+                throw error;
+            }
+        } else {
+            options.onStatus?.('waiting-response');
+        }
+
+        if (abortController.signal.aborted) {
+            const error = new Error('Quick ask cancelled.');
+            error.isCancelled = true;
+            throw error;
+        }
+
+        return accessSession;
+    }
+
+    getQuickAskConversationMessages(filteredMessages, quickAskModel) {
+        if (quickAskModel?.laneEntry && this.councilController?.buildLaneConversationMessages) {
+            return this.councilController.buildLaneConversationMessages(
+                filteredMessages,
+                quickAskModel.laneEntry,
+                quickAskModel.laneEntries || []
+            );
+        }
+        return filteredMessages;
     }
 
     async inlineQuickAsk(selectionText, options = {}) {
@@ -6526,25 +6658,6 @@ class ChatApp {
             throw new Error('Quick ask is unavailable while this chat is streaming.');
         }
 
-        const verifier = inferenceService.getVerificationAdapter(session);
-        const accessInfo = inferenceService.getAccessInfo(session);
-        const accessId = verifier?.getAccessId(accessInfo?.info);
-        if (verifier?.supports && accessId) {
-            const stationState = verifier.getAccessState(accessId);
-            const isBannedInCache = verifier.isAccessBanned(accessId);
-            if (stationState?.banned || isBannedInCache) {
-                const broadcastData = verifier.getLastBroadcastData();
-                const bannedInfo = broadcastData?.banned_stations?.find(s => s.station_id === accessId);
-                this.showBannedStationWarningModal({
-                    stationId: accessId,
-                    reason: stationState?.banReason || bannedInfo?.reason || 'Unknown',
-                    bannedAt: stationState?.bannedAt || bannedInfo?.banned_at,
-                    sessionId: session.id
-                });
-                throw new Error('The current station is banned.');
-            }
-        }
-
         const abortController = options.abortController || new AbortController();
         if (abortController.signal.aborted) {
             const error = new Error('Quick ask cancelled.');
@@ -6552,43 +6665,11 @@ class ChatApp {
             throw error;
         }
 
-        const { modelId, modelName } = await this.resolveModelForQuickAsk(session);
-        const hasAccessToken = !!inferenceService.getAccessToken(session);
-        const isAccessExpired = inferenceService.isAccessExpired(session);
-        const accessLabel = inferenceService.getAccessLabel(session);
-        if (!hasAccessToken || isAccessExpired) {
-            options.onStatus?.('requesting-key');
-            try {
-                if (this.floatingPanel) {
-                    this.floatingPanel.showMessage(`Acquiring ${accessLabel}...`, 'info');
-                }
-                await this.acquireAndSetAccess(session, {
-                    modelIdOverride: modelId,
-                    modelNameOverride: modelName,
-                    signal: abortController.signal,
-                    onGranted: () => {
-                        options.onStatus?.('waiting-response');
-                    }
-                });
-                if (this.floatingPanel) {
-                    this.floatingPanel.showMessage(`${accessLabel} ready`, 'success', 2000);
-                }
-            } catch (error) {
-                if (this.floatingPanel) {
-                    this.floatingPanel.showMessage(error.message, 'error', 5000);
-                }
-                throw error;
-            }
-            if (abortController.signal.aborted) {
-                const error = new Error('Quick ask cancelled.');
-                error.isCancelled = true;
-                throw error;
-            }
-            if (this.getSessionStreamingState(session.id).isStreaming) {
-                throw new Error('Quick ask is unavailable while this chat is streaming.');
-            }
-        } else {
-            options.onStatus?.('waiting-response');
+        const quickAskModel = await this.resolveModelForQuickAsk(session);
+        const { modelId, modelName } = quickAskModel;
+        let quickAskAccessSession = await this.ensureQuickAskAccess(session, quickAskModel, abortController, options);
+        if (this.getSessionStreamingState(session.id).isStreaming) {
+            throw new Error('Quick ask is unavailable while this chat is streaming.');
         }
 
         if (window.networkLogger) {
@@ -6597,7 +6678,8 @@ class ChatApp {
 
         const messages = await chatDB.getSessionMessages(session.id);
         const filteredMessages = messages.filter(msg => !msg.isLocalOnly);
-        const sanitizedMessages = this.sanitizeMessagesForApi(filteredMessages);
+        const conversationMessages = this.getQuickAskConversationMessages(filteredMessages, quickAskModel);
+        const sanitizedMessages = this.sanitizeMessagesForApi(conversationMessages);
         const processedMessages = this.processMessagesWithFiles(sanitizedMessages, modelId);
         const quickAskMessages = buildQuickAskMessages(processedMessages, selectedText);
         if (this.getSessionStreamingState(session.id).isStreaming) {
@@ -6613,10 +6695,10 @@ class ChatApp {
         let reasoning = '';
         let streamingTokenCount = 0;
         let firstChunkReceived = false;
-        const tokenData = await inferenceService.streamCompletion(
+        const streamQuickAsk = () => inferenceService.streamCompletion(
             quickAskMessages,
             modelId,
-            session,
+            quickAskAccessSession,
             async (chunk) => {
                 if (!firstChunkReceived) {
                     firstChunkReceived = true;
@@ -6647,6 +6729,38 @@ class ChatApp {
             this.reasoningEnabled,
             this.reasoningEffort
         );
+
+        let tokenData;
+        try {
+            tokenData = await streamQuickAsk();
+        } catch (error) {
+            if (
+                quickAskModel.laneId &&
+                quickAskModel.laneEntry &&
+                !firstChunkReceived &&
+                this.isAccessCreditExhaustedError(error)
+            ) {
+                this.councilController.clearLaneAccess(session, quickAskModel.laneId);
+                await chatDB.saveSession(session);
+                options.onStatus?.('requesting-key');
+                await this.councilController.requestLaneAccess(
+                    session,
+                    quickAskModel.laneEntry,
+                    null,
+                    abortController.signal
+                );
+                quickAskAccessSession = this.getQuickAskAccessSession(session, quickAskModel);
+                if (abortController.signal.aborted) {
+                    const cancelled = new Error('Quick ask cancelled.');
+                    cancelled.isCancelled = true;
+                    throw cancelled;
+                }
+                options.onStatus?.('waiting-response');
+                tokenData = await streamQuickAsk();
+            } else {
+                throw error;
+            }
+        }
 
         const rawReasoning = tokenData.reasoning || reasoning || null;
         const result = {
