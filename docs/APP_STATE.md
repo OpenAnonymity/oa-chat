@@ -318,24 +318,25 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - `MessageTemplates` renders two council lanes side by side on desktop and
     stacked on narrow screens, then renders the Council Answer below them only
     after synthesis actually starts. Stage 1 response headers include provider
-    icons, and the assistant header uses the same overlapping-message-bubbles
-    icon as the Council review treatment, including the initial typing
-    indicator so it does not briefly fall back to the OpenAI icon. The aggregate
-    assistant row intentionally omits a visible `Parallel`/`Council` text label;
-    the lane cards and optional Council Answer section already identify the
-    mode. Completed lane and synthesis status chips are also hidden, while
-    error/cancelled/partial/fallback status remains visible. Pending lane cards
-    reuse the normal chat `Waiting for response` shimmer instead of showing a
-    `Pending` chip or custom `Waiting for this model to finish...` copy. Stage
-    1-only mode removes the aggregate status/note row instead of showing a
-    waiting row, completion label, lane-history implementation note, or
-    canonical-context explanation. While synthesis runs the message
-    shows `Preparing Council answer...`; the Council Answer header includes the
-    selected synthesis model with its provider icon, matching the model the user
-    chose and was charged for. On synthesis failure it shows `Council synthesis failed.
-    Continuing from Response A.` (or the actual fallback label). Council
-    messages reuse the normal copy, regenerate, fork, and canonical citation
-    controls.
+    icons. Parallel/Council does not use the generic typing-indicator row during
+    access acquisition; `CouncilController` saves the assistant message before
+    lane access is acquired so the selected model cards and `Waiting for
+    response` shimmer appear immediately. The aggregate assistant row
+    intentionally omits a visible `Parallel`/`Council` text label and redundant
+    top-left mode icon; the lane cards and optional Council Answer section
+    already identify the mode. Completed lane and synthesis status chips are
+    also hidden, while error/cancelled/partial/fallback status remains visible.
+    Pending lane cards reuse the normal chat `Waiting for response` shimmer
+    instead of showing a `Pending` chip or custom `Waiting for this model to
+    finish...` copy. Stage 1-only mode removes the aggregate status/note row
+    instead of showing a waiting row, completion label, lane-history
+    implementation note, or canonical-context explanation. While synthesis
+    runs, the message shows `Preparing Council answer...`; the Council Answer
+    header includes the selected synthesis model with its provider icon,
+    matching the model the user chose and was charged for. On synthesis failure
+    it shows `Council synthesis failed. Continuing from Response A.` (or the
+    actual fallback label). Council messages reuse the normal copy, regenerate,
+    fork, and canonical citation controls.
   - `CouncilController` receives `chatDB`, `inferenceService`, and
     `ticketClient` from `ChatApp` instead of importing the service singletons
     directly. This keeps browser storage/network singleton initialization out

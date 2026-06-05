@@ -1627,11 +1627,7 @@ function buildAssistantActionRow(message, citationsToggle = '', extraButtonsHtml
 
 function buildCouncilAssistantMessage({
     message,
-    processContentWithLatex,
-    formatTime,
-    assistantTimeClass,
-    bgClass,
-    iconData
+    processContentWithLatex
 }) {
     const council = message.council || {};
     const stage1Entries = Array.isArray(council.stage1) ? council.stage1 : [];
@@ -1718,12 +1714,6 @@ function buildCouncilAssistantMessage({
     return `
         <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}"${getRawContentAttribute(message.content)}>
             <div class="${CLASSES.assistantGroup}">
-                <div class="${CLASSES.assistantHeader}">
-                    <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow bg-muted">
-                        ${buildCouncilModeIconHtml()}
-                    </div>
-                    <span class="${assistantTimeClass}" style="font-size: 0.7rem;">${formatTime(message.timestamp)}</span>
-                </div>
                 <div class="council-stage-block">
                     ${stageStatusRow}
                     ${stageNoteRow}
@@ -1794,11 +1784,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     if (message.council?.enabled) {
         return buildCouncilAssistantMessage({
             message,
-            processContentWithLatex,
-            formatTime,
-            assistantTimeClass,
-            bgClass,
-            iconData
+            processContentWithLatex
         });
     }
 

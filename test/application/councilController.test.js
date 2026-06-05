@@ -979,6 +979,48 @@ test('runMultiModelTurn sends one memory-processed prompt to both lanes without 
     assert.equal(savedMessages.at(-1).content, 'Council final answer');
 });
 
+test('runMultiModelTurn saves pending lane cards before acquiring access', async () => {
+    const accessSnapshots = [];
+    const { controller, session, userMessage, savedMessages } = createRunTurnHarness({
+        councilConfig: { outputMode: 'parallel' },
+        sendLaneCompletion: async ({ entry }) => ({ content: `${entry.name} first response` })
+    });
+    let showTypingCalls = 0;
+    controller.app.isViewingSession = () => true;
+    controller.app.showTypingIndicator = () => {
+        showTypingCalls += 1;
+        return 'typing-should-not-render';
+    };
+    controller.ensureAccessForEntries = async (_session, entries) => {
+        accessSnapshots.push({
+            laneIds: entries.map((entry) => entry.laneId),
+            savedMessage: JSON.parse(JSON.stringify(savedMessages.at(-1)))
+        });
+    };
+
+    await controller.runMultiModelTurn({
+        session,
+        userMessage,
+        searchEnabled: false,
+        abortController: new AbortController(),
+        initialPendingPhase: 'requesting-key'
+    });
+
+    assert.equal(showTypingCalls, 0);
+    assert.equal(accessSnapshots.length, 1);
+    assert.deepEqual(accessSnapshots[0].laneIds, ['primary', 'secondary']);
+    assert.deepEqual(
+        accessSnapshots[0].savedMessage.council.stage1.map((entry) => ({
+            model: entry.model,
+            status: entry.status
+        })),
+        [
+            { model: 'GPT', status: 'pending' },
+            { model: 'Claude', status: 'pending' }
+        ]
+    );
+});
+
 test('runMultiModelTurn skips synthesis in parallel output mode', async () => {
     let synthesisCalls = 0;
     const accessEntryBatches = [];

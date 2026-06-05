@@ -119,6 +119,12 @@ test('parallel aggregate messages omit redundant visible mode and completion lab
         false,
         'Parallel/Council aggregate rows should use the icon without a redundant text title'
     );
+    const councilMessageBlock = source.match(/function buildCouncilAssistantMessage[\s\S]*?\n}\n\n\/\*\*/)?.[0] || '';
+    assert.equal(
+        councilMessageBlock.includes('buildCouncilModeIconHtml()'),
+        false,
+        'Parallel/Council messages should not render a redundant aggregate icon header'
+    );
     assert.equal(
         source.includes('${escapeHtml(displayTitle)}'),
         false,

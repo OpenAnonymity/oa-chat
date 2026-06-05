@@ -732,26 +732,8 @@ export default class CouncilController {
             const synthesisEntry = shouldRunSynthesis ? this.resolveSynthesisEntry(session, entries) : null;
             const accessEntries = synthesisEntry ? [...entries, synthesisEntry] : entries;
 
-            typingId = this.app.isViewingSession(session.id)
-                ? this.app.showTypingIndicator(shouldRunSynthesis ? 'Council' : 'Parallel', initialPendingPhase)
-                : null;
-
             this.assertSufficientTicketsForEntries(session, accessEntries);
             const ticketsRequired = Math.max(1, this.calculateCouncilTicketRequirement(accessEntries));
-            await this.ensureAccessForEntries(session, entries, typingId, abortController?.signal || null);
-
-            if (typingId) {
-                this.app.removeTypingIndicator(typingId);
-                typingId = null;
-            }
-
-            if (userMessage?.id) {
-                this.app.generateSessionTitleIfNeeded(session.id, userMessage.id, {
-                    accessSession: this.buildLaneSession(session, 'primary')
-                }).catch(error => {
-                    console.debug('Session title generation failed:', error);
-                });
-            }
 
             const messages = await this.chatDB.getSessionMessages(session.id);
             const filteredMessages = messages.filter((message) => !message.isLocalOnly);
@@ -771,6 +753,16 @@ export default class CouncilController {
             }
 
             await this.saveAndRender(assistantMessage, session);
+
+            await this.ensureAccessForEntries(session, entries, typingId, abortController?.signal || null);
+
+            if (userMessage?.id) {
+                this.app.generateSessionTitleIfNeeded(session.id, userMessage.id, {
+                    accessSession: this.buildLaneSession(session, 'primary')
+                }).catch(error => {
+                    console.debug('Session title generation failed:', error);
+                });
+            }
 
             let lastSaveAt = 0;
             const persistProgress = async (force = false) => {
@@ -948,14 +940,36 @@ export default class CouncilController {
             }
         } catch (error) {
             if (typingId) this.app.removeTypingIndicator(typingId);
-            if (isAbortError(error)) return;
+            if (isAbortError(error)) {
+                if (assistantMessage?.id) {
+                    await this.chatDB.deleteMessage(assistantMessage.id);
+                    await this.app.refreshSessionConversationSearchText(session, null, { persist: true });
+                    if (this.app.chatArea && this.app.isViewingSession(session.id)) {
+                        await this.app.chatArea.render();
+                    }
+                }
+                return;
+            }
             console.error('Error running Parallel/Council turn:', error);
             if (userMessage?.id) {
                 await this.app.clearSessionTitleGenerationPending(session.id);
             }
             if (assistantMessage) {
+                const errorMessage = error?.message || 'Request failed';
                 assistantMessage.content = assistantMessage.content || 'Sorry, I encountered an error while processing the selected model request.';
                 assistantMessage.council.statusMessage = 'Model request failed.';
+                if (Array.isArray(assistantMessage.council?.stage1)) {
+                    assistantMessage.council.stage1.forEach((entry) => {
+                        if (entry.status === 'pending' || entry.status === 'running' || entry.status === 'waiting') {
+                            entry.status = 'error';
+                            entry.error = errorMessage;
+                        }
+                    });
+                }
+                assistantMessage.council.currentStage = 'complete';
+                assistantMessage.council.completedAt = Date.now();
+                assistantMessage.streamingTokens = null;
+                assistantMessage.streamingPhase = null;
                 assistantMessage.isLocalOnly = true;
                 await this.saveAndRender(assistantMessage, session);
             } else {
