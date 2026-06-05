@@ -1450,8 +1450,8 @@ function buildCouncilStage1EntryBody(entry, processContentWithLatex, messageId) 
     }
 
     return `
-        <div class="council-response-placeholder">
-            Waiting for this model to finish...
+        <div class="px-2 py-1">
+            ${buildPendingIndicatorContent('waiting-response')}
         </div>
     `;
 }
@@ -1460,11 +1460,7 @@ function buildCouncilSynthesisSection(synthesis, processContentWithLatex, messag
     if (!synthesis || ['skipped', 'waiting', 'pending'].includes(synthesis.status)) return '';
 
     const status = synthesis.status || 'pending';
-    const statusLabel = status === 'complete'
-        ? 'complete'
-        : status === 'partial'
-            ? 'partial'
-            : status;
+    const statusHtml = buildCouncilResponseStatus(status);
     let bodyHtml = '';
     const synthesisModel = synthesis.model || synthesis.modelId || '';
     const synthesisModelHtml = synthesisModel
@@ -1520,7 +1516,7 @@ function buildCouncilSynthesisSection(synthesis, processContentWithLatex, messag
                     <span>Council Answer</span>
                     ${synthesisModelHtml}
                 </span>
-                <span class="council-response-status">${escapeHtml(statusLabel)}</span>
+                ${statusHtml}
             </div>
             ${bodyHtml}
         </div>
@@ -1560,6 +1556,28 @@ function buildCouncilModelLabel(modelName, options = {}) {
             <span>${escapeHtml(displayName || modelName || '')}</span>
         </span>
     `;
+}
+
+function formatCouncilResponseStatus(status, options = {}) {
+    const normalizedStatus = typeof status === 'string'
+        ? status.trim().toLowerCase()
+        : '';
+    const hiddenStatuses = new Set(['complete', 'pending', 'running', 'waiting']);
+    const statusLabel = {
+        error: 'Failed',
+        cancelled: 'Cancelled',
+        partial: 'Partial'
+    }[normalizedStatus] || (normalizedStatus && !hiddenStatuses.has(normalizedStatus) ? status : '');
+    const fallbackLabel = options.isFallbackContext ? 'Fallback context' : '';
+
+    return [statusLabel, fallbackLabel].filter(Boolean).join(' · ');
+}
+
+function buildCouncilResponseStatus(status, options = {}) {
+    const statusText = formatCouncilResponseStatus(status, options);
+    return statusText
+        ? `<span class="council-response-status">${escapeHtml(statusText)}</span>`
+        : '';
 }
 
 function buildCouncilModeIconHtml() {
@@ -1619,7 +1637,6 @@ function buildCouncilAssistantMessage({
     const stage1Entries = Array.isArray(council.stage1) ? council.stage1 : [];
     const activeLabel = stage1Entries[0]?.label || null;
     const hasSynthesis = !!council.synthesis;
-    const displayTitle = hasSynthesis ? 'Council' : 'Parallel';
     const stageLabel = !hasSynthesis || council.currentStage === 'stage1'
         ? 'Stage 1'
         : 'Council';
@@ -1672,7 +1689,9 @@ function buildCouncilAssistantMessage({
             >
                 <div class="council-response-meta">
                     <span class="council-response-model">${buildCouncilModelLabel(entry.model || entry.modelId || '')}</span>
-                    <span class="council-response-status">${escapeHtml(entry.status || 'pending')}${synthesis?.status === 'error' && canonicalLabel === entry.label ? ' · Fallback context' : ''}</span>
+                    ${buildCouncilResponseStatus(entry.status || 'pending', {
+                        isFallbackContext: synthesis?.status === 'error' && canonicalLabel === entry.label
+                    })}
                 </div>
                 ${buildCouncilStage1EntryBody(entry, processContentWithLatex, message.id)}
             </div>
@@ -1703,7 +1722,6 @@ function buildCouncilAssistantMessage({
                     <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow bg-muted">
                         ${buildCouncilModeIconHtml()}
                     </div>
-                    <span class="${CLASSES.assistantModelName}" style="font-size: 0.7rem;">${escapeHtml(displayTitle)}</span>
                     <span class="${assistantTimeClass}" style="font-size: 0.7rem;">${formatTime(message.timestamp)}</span>
                 </div>
                 <div class="council-stage-block">
@@ -2061,7 +2079,10 @@ function buildTypingIndicator(id, providerName, modelName, timestamp, phase = 'r
         ? { html: buildCouncilModeIconHtml(), hasIcon: false }
         : getProviderIcon(providerName, 'w-3.5 h-3.5');
     const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
-    const displayModelName = extractShortModelName(modelName);
+    const displayModelName = isCouncil ? '' : extractShortModelName(modelName);
+    const modelNameHtml = displayModelName
+        ? `<span class="${CLASSES.assistantModelName}" style="font-size: 0.7rem;">${escapeHtml(displayModelName)}</span>`
+        : '';
     return `
         <div id="${id}" class="${CLASSES.typingWrapper}" data-provider-name="${escapeHtmlAttribute(providerName)}" data-phase="${escapeHtmlAttribute(normalizePendingPhase(phase))}">
             <div class="${CLASSES.assistantGroup}">
@@ -2069,7 +2090,7 @@ function buildTypingIndicator(id, providerName, modelName, timestamp, phase = 'r
                     <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow ${bgClass} p-0.5">
                         ${iconData.html}
                     </div>
-                    <span class="${CLASSES.assistantModelName}" style="font-size: 0.7rem;">${escapeHtml(displayModelName)}</span>
+                    ${modelNameHtml}
                     <span class="${CLASSES.assistantTime}" style="font-size: 0.7rem;">${formatPendingTimestamp(timestamp)}</span>
                 </div>
                 <div class="px-2 py-1">

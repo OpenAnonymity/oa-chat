@@ -320,11 +320,16 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     after synthesis actually starts. Stage 1 response headers include provider
     icons, and the assistant header uses the same overlapping-message-bubbles
     icon as the Council review treatment, including the initial typing
-    indicator so it does not briefly fall back to the OpenAI icon. Stage 1-only mode labels
-    the assistant row as `Parallel`, shows `Waiting for responses...` only while
-    lanes are pending, and removes the status/note row once responses are
-    visible instead of showing a completion label, lane-history implementation
-    note, or canonical-context explanation. While synthesis runs the message
+    indicator so it does not briefly fall back to the OpenAI icon. The aggregate
+    assistant row intentionally omits a visible `Parallel`/`Council` text label;
+    the lane cards and optional Council Answer section already identify the
+    mode. Completed lane and synthesis status chips are also hidden, while
+    error/cancelled/partial/fallback status remains visible. Pending lane cards
+    reuse the normal chat `Waiting for response` shimmer instead of showing a
+    `Pending` chip or custom `Waiting for this model to finish...` copy. Stage
+    1-only mode removes the aggregate status/note row instead of showing a
+    waiting row, completion label, lane-history implementation note, or
+    canonical-context explanation. While synthesis runs the message
     shows `Preparing Council answer...`; the Council Answer header includes the
     selected synthesis model with its provider icon, matching the model the user
     chose and was charged for. On synthesis failure it shows `Council synthesis failed.

@@ -112,6 +112,55 @@ test('component templates do not reach through backend globals', () => {
     );
 });
 
+test('parallel aggregate messages omit redundant visible mode and completion labels', () => {
+    const source = read('chat/components/MessageTemplates.js');
+    assert.equal(
+        source.includes('const displayTitle'),
+        false,
+        'Parallel/Council aggregate rows should use the icon without a redundant text title'
+    );
+    assert.equal(
+        source.includes('${escapeHtml(displayTitle)}'),
+        false,
+        'Parallel/Council aggregate title text should not render in the assistant header'
+    );
+    assert.equal(
+        source.includes("const displayModelName = isCouncil ? '' : extractShortModelName(modelName);"),
+        true,
+        'Parallel/Council typing indicators should hide the redundant text label'
+    );
+    assert.equal(
+        source.includes("const hiddenStatuses = new Set(['complete', 'pending', 'running', 'waiting']);"),
+        true,
+        'completed and in-progress lane/synthesis statuses should be hidden while important non-complete statuses can remain visible'
+    );
+    assert.equal(
+        source.includes('!hiddenStatuses.has(normalizedStatus)'),
+        true,
+        'pending/running/waiting statuses should not fall through as raw visible text'
+    );
+    assert.equal(
+        source.includes("pending: 'Pending'"),
+        false,
+        'pending lane status should not render a redundant status chip'
+    );
+    assert.equal(
+        source.includes('Waiting for this model to finish...'),
+        false,
+        'pending lanes should reuse the main chat waiting indicator, not custom lane copy'
+    );
+    assert.equal(
+        source.includes("buildPendingIndicatorContent('waiting-response')"),
+        true,
+        'pending lanes should reuse the main chat waiting indicator'
+    );
+    assert.equal(
+        source.includes("${escapeHtml(entry.status || 'pending')}"),
+        false,
+        'lane cards should not render raw complete/pending status strings directly'
+    );
+});
+
 test('composer mode toggle exposes Chat and Parallel with independent Memory toggle', () => {
     const html = read('chat/index.html');
     const source = read('chat/components/ChatInput.js');

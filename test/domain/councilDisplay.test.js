@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { getCouncilDisplayState } from '../../chat/domain/councilDisplay.js';
 
-test('parallel council display shows waiting only while lanes are pending', () => {
+test('parallel council display omits aggregate waiting row while lanes are pending', () => {
     const display = getCouncilDisplayState({
         currentStage: 'stage1',
         statusMessage: 'Waiting for responses...',
@@ -13,7 +13,7 @@ test('parallel council display shows waiting only while lanes are pending', () =
         synthesis: null
     });
 
-    assert.equal(display.statusMessage, 'Waiting for responses...');
+    assert.equal(display.statusMessage, '');
     assert.equal(display.stage1Summary, '');
 });
 
