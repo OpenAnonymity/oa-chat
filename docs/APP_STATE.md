@@ -337,6 +337,33 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     it shows `Council synthesis failed. Continuing from Response A.` (or the
     actual fallback label). Council messages reuse the normal copy, regenerate,
     fork, and canonical citation controls.
+  - Parallel/Council layout has two separate stability rules. Transcript width
+    is sticky for any session that is actively in Parallel/Council or has ever
+    entered Parallel/Council; `session.hasCouncilLayoutPreference` preserves the
+    wider layout when the user toggles back to Chat, even before a Parallel
+    response is saved. Pending no-session Parallel state can also hold this
+    preference until the first session is created, but it must not force layout
+    changes onto unrelated existing sessions. `session.hasCouncilTranscript`
+    separately tracks saved `message.council` output across session switches and forks, and
+    `ChatArea.render(...)` backfills/recomputes it from stored messages for
+    older sessions. Regenerate, resend, prompt edit, and cancelled Council turns
+    recompute the transcript hint after pruning, but they do not clear the
+    user's sticky layout preference. The manual wide-screen toggle uses the
+    same message width as Parallel/Council (`min(92vw, 82rem)`) so switching
+    modes does not make Chat wide feel narrower. Background saves may mark a
+    non-visible session as having a council transcript, but root layout classes
+    should only update for the currently viewed session. Composer controls are
+    stable independently: a
+    reversible `+` menu on the left contains the existing file upload, settings,
+    and web-search controls using their original element IDs/handlers; response
+    mode and Memory stay visible next to it. Web search defaults on, but the `+`
+    button stays visually neutral; only the Web search row inside the menu shows
+    `On`/`Off` and active styling. Compact model pickers sit beside the send
+    button on the right. Chat mode shows only the primary model icon; Parallel
+    reveals the secondary model icon to the left of primary, keeping primary
+    anchored closest to the send button, without reserving blank space next to
+    the file/settings controls. Full model names remain available through
+    tooltip/aria labels and the shared model picker.
   - `CouncilController` receives `chatDB`, `inferenceService`, and
     `ticketClient` from `ChatApp` instead of importing the service singletons
     directly. This keeps browser storage/network singleton initialization out

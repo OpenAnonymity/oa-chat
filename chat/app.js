@@ -177,6 +177,8 @@ class ChatApp {
             inputCard: document.getElementById('input-card'),
             scrubberPreviewDiff: document.getElementById('scrubber-preview-diff'),
             sendBtn: document.getElementById('send-btn'),
+            composerMoreBtn: document.getElementById('composer-more-btn'),
+            composerMoreMenu: document.getElementById('composer-more-menu'),
             modelPickerBtn: document.getElementById('model-picker-btn'),
             councilInlineModels: document.getElementById('council-inline-models'),
             councilSecondaryInlineSelect: document.getElementById('council-secondary-inline-select'),
@@ -276,6 +278,7 @@ class ChatApp {
         this.pendingModelAvailabilityRefresh = false;
         this.pendingTicketCode = null;
         this.pendingCouncilConfig = null;
+        this.pendingCouncilLayoutPreference = false;
         this.hasInitialLinkContext = this.detectInitialLinkContext();
         this.splitCodeWarningOverlay = null;
         this.councilController = new CouncilController({
@@ -3444,7 +3447,9 @@ class ChatApp {
 
         const pendingCouncilConfig = normalizeCouncilConfig(this.pendingCouncilConfig, modelNameForNewSession);
         const usePendingCouncilMode = pendingCouncilConfig.enabled === true;
+        const useCouncilLayoutPreference = this.pendingCouncilLayoutPreference === true || usePendingCouncilMode;
         this.pendingCouncilConfig = null;
+        this.pendingCouncilLayoutPreference = false;
         const session = {
             id: this.generateId(),
             title,
@@ -3462,7 +3467,8 @@ class ChatApp {
             memoryRetrievedContext: { version: 1, entries: [] },
             scrubberKey: null,
             scrubberKeyInfo: null,
-            searchEnabled: this.searchEnabled
+            searchEnabled: this.searchEnabled,
+            ...(useCouncilLayoutPreference ? { hasCouncilLayoutPreference: true } : {})
         };
 
         // Clear pending model since it's now part of the session
@@ -3630,6 +3636,76 @@ class ChatApp {
             && normalizedCouncilState.enabled === true;
     }
 
+    messageUsesCouncilLayout(message) {
+        return !!message?.council?.enabled || Array.isArray(message?.council?.stage1);
+    }
+
+    messagesUseCouncilLayout(messages = []) {
+        return Array.isArray(messages) && messages.some((message) => this.messageUsesCouncilLayout(message));
+    }
+
+    sessionUsesCouncilLayout(session = this.getCurrentSession(), messages = null) {
+        if (!COUNCIL_MODE_FEATURE_FLAG) return false;
+        const isPendingCouncilMode = !session && this.pendingCouncilConfig?.enabled === true;
+        const isPendingCouncilLayoutPreference = !session && this.pendingCouncilLayoutPreference === true;
+        return this.isCouncilModeActive(session)
+            || isPendingCouncilMode
+            || isPendingCouncilLayoutPreference
+            || session?.hasCouncilLayoutPreference === true
+            || session?.hasCouncilTranscript === true
+            || this.messagesUseCouncilLayout(messages);
+    }
+
+    shouldUpdateCouncilLayoutForSession(session) {
+        return !!(session?.id && this.isViewingSession(session.id));
+    }
+
+    async setSessionCouncilTranscriptHint(session, hasCouncilTranscript, options = {}) {
+        if (!session) return false;
+
+        const nextHasCouncilTranscript = hasCouncilTranscript === true;
+        const currentHasCouncilTranscript = session.hasCouncilTranscript === true;
+        const changed = currentHasCouncilTranscript !== nextHasCouncilTranscript;
+
+        if (changed) {
+            if (nextHasCouncilTranscript) {
+                session.hasCouncilTranscript = true;
+            } else {
+                delete session.hasCouncilTranscript;
+            }
+        }
+
+        if (this.shouldUpdateCouncilLayoutForSession(session)) {
+            this.updateCouncilLayoutMode(session);
+        }
+
+        if (changed && options.persist !== false) {
+            await chatDB.saveSession(session);
+        }
+
+        return changed;
+    }
+
+    async markSessionHasCouncilTranscript(session, options = {}) {
+        return this.setSessionCouncilTranscriptHint(session, true, options);
+    }
+
+    async recomputeSessionCouncilTranscriptHint(session, messages = null, options = {}) {
+        if (!session?.id) return false;
+        const sessionMessages = Array.isArray(messages)
+            ? messages
+            : await chatDB.getSessionMessages(session.id);
+        return this.setSessionCouncilTranscriptHint(
+            session,
+            this.messagesUseCouncilLayout(sessionMessages),
+            options
+        );
+    }
+
+    persistCouncilLayoutHintFromMessages(session, messages = []) {
+        return this.recomputeSessionCouncilTranscriptHint(session, messages, { persist: true });
+    }
+
     async setCouncilModeForCurrentSession(options = {}) {
         const session = this.getCurrentSession();
         if (!session) return null;
@@ -3664,6 +3740,9 @@ class ChatApp {
             },
             fallbackModelName
         );
+        if (requestedEnabled) {
+            session.hasCouncilLayoutPreference = true;
+        }
         if (!requestedEnabled && this.councilController) {
             this.councilController.seedSessionAccessFromPrimaryLane(session);
         }
@@ -3682,6 +3761,9 @@ class ChatApp {
             || this.state.pendingModelName
             || inferenceService.getDefaultModelName();
         this.pendingCouncilConfig = normalizeCouncilConfig(config, fallbackModelName);
+        if (this.pendingCouncilConfig.enabled === true) {
+            this.pendingCouncilLayoutPreference = true;
+        }
         return this.pendingCouncilConfig;
     }
 
@@ -7098,6 +7180,7 @@ class ChatApp {
         const remainingMessages = messages.slice(0, messageIndex + 1);
         remainingMessages[messageIndex] = message;
         this.applySessionConversationSearchText(session, remainingMessages);
+        await this.recomputeSessionCouncilTranscriptHint(session, remainingMessages, { persist: false });
         await chatDB.saveSession(session);
 
         // Clear edit mode
@@ -7172,6 +7255,9 @@ class ChatApp {
             apiKeyInfo: null,
             expiresAt: null,
             searchEnabled: this.searchEnabled,
+            hasCouncilLayoutPreference: session.hasCouncilLayoutPreference === true
+                || this.messagesUseCouncilLayout(messagesToCopy),
+            hasCouncilTranscript: this.messagesUseCouncilLayout(messagesToCopy),
             forkedFrom: session.id
         };
         this.applySessionConversationSearchText(newSession, messagesToCopy);
@@ -7984,10 +8070,9 @@ class ChatApp {
         this.updateCouncilLayoutMode();
     }
 
-    updateCouncilLayoutMode(session = this.getCurrentSession()) {
+    updateCouncilLayoutMode(session = this.getCurrentSession(), messages = null) {
         if (typeof document === 'undefined') return;
-        const isPendingCouncilMode = !session && this.pendingCouncilConfig?.enabled === true;
-        const isCouncilLayoutMode = this.isCouncilModeActive(session) || isPendingCouncilMode;
+        const isCouncilLayoutMode = this.sessionUsesCouncilLayout(session, messages);
         const outputMode = session?.councilConfig?.outputMode
             || this.pendingCouncilConfig?.outputMode
             || COUNCIL_OUTPUT_PARALLEL;

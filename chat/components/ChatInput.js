@@ -261,6 +261,26 @@ export default class ChatInput {
             await this.app.data.saveSetting('searchEnabled', this.app.searchEnabled);
         });
 
+        if (this.app.elements.composerMoreBtn && this.app.elements.composerMoreMenu) {
+            this.app.elements.composerMoreBtn.addEventListener('click', (event) => {
+                event.stopPropagation();
+                this.toggleComposerMoreMenu();
+            });
+
+            this.app.elements.composerMoreMenu.addEventListener('click', (event) => {
+                event.stopPropagation();
+                if (event.target.closest('#file-upload-btn, #search-toggle')) {
+                    this.closeComposerMoreMenu();
+                }
+            });
+
+            document.addEventListener('keydown', (event) => {
+                if (event.key === 'Escape') {
+                    this.closeComposerMoreMenu();
+                }
+            });
+        }
+
         if (this.app.elements.memoryToggle) {
             this.app.elements.memoryToggle.addEventListener('click', async (e) => {
                 const button = e.target.closest('.chat-mode-toggle-btn');
@@ -318,18 +338,19 @@ export default class ChatInput {
             const isHidden = menu.classList.contains('hidden');
 
             if (isHidden) {
+                const btnRect = btn.getBoundingClientRect();
                 // Move menu to body for backdrop-filter to work (escapes input-card stacking context)
                 document.body.appendChild(menu);
                 menu.classList.remove('hidden');
                 btn.classList.add('tooltip-disabled'); // Hide tooltip while menu is open
 
                 // Position relative to settings button
-                const btnRect = btn.getBoundingClientRect();
                 menu.style.left = `${btnRect.left}px`;
                 menu.style.bottom = `${window.innerHeight - btnRect.top + 8}px`;
                 menu.style.width = `${SETTINGS_MENU_WIDTH_PX}px`;
                 menu.style.minWidth = `${SETTINGS_MENU_WIDTH_PX}px`;
                 menu.style.maxWidth = `${SETTINGS_MENU_WIDTH_PX}px`;
+                this.closeComposerMoreMenu();
 
                 this.ensureScrubberModelsLoaded();
                 this.refreshMemorySettingsUI();
@@ -578,6 +599,7 @@ export default class ChatInput {
         // Close settings menu when clicking outside
         // Note: Toggle controls inside the menu use stopPropagation() to prevent this from firing
         document.addEventListener('click', () => {
+            this.closeComposerMoreMenu();
             if (!this.app.elements.settingsMenu.classList.contains('hidden')) {
                 this.app.elements.settingsMenu.classList.add('hidden');
                 this.app.elements.settingsBtn.classList.remove('tooltip-disabled');
@@ -1911,7 +1933,49 @@ export default class ChatInput {
     updateSearchToggleUI() {
         const toggle = this.app.elements.searchToggle;
         toggle.setAttribute('aria-pressed', this.app.searchEnabled);
+        toggle.setAttribute('aria-checked', this.app.searchEnabled ? 'true' : 'false');
         toggle.classList.toggle('search-active', this.app.searchEnabled);
+        const stateLabel = toggle.querySelector('.composer-menu-state');
+        if (stateLabel) {
+            stateLabel.textContent = this.app.searchEnabled ? 'On' : 'Off';
+        }
+    }
+
+    toggleComposerMoreMenu() {
+        const menu = this.app.elements.composerMoreMenu;
+        if (!menu) return;
+        if (menu.classList.contains('hidden')) {
+            this.openComposerMoreMenu();
+        } else {
+            this.closeComposerMoreMenu();
+        }
+    }
+
+    openComposerMoreMenu() {
+        const menu = this.app.elements.composerMoreMenu;
+        const button = this.app.elements.composerMoreBtn;
+        if (!menu || !button) return;
+        this.closeSettingsMenu();
+        menu.classList.remove('hidden');
+        button.setAttribute('aria-expanded', 'true');
+        button.classList.add('tooltip-disabled');
+    }
+
+    closeComposerMoreMenu() {
+        const menu = this.app.elements.composerMoreMenu;
+        const button = this.app.elements.composerMoreBtn;
+        if (!menu || !button) return;
+        menu.classList.add('hidden');
+        button.setAttribute('aria-expanded', 'false');
+        button.classList.remove('tooltip-disabled');
+    }
+
+    closeSettingsMenu() {
+        const menu = this.app.elements.settingsMenu;
+        const button = this.app.elements.settingsBtn;
+        if (!menu) return;
+        menu.classList.add('hidden');
+        button?.classList.remove('tooltip-disabled');
     }
 
     async setMemoryContextEnabled(enabled) {
@@ -2323,20 +2387,15 @@ export default class ChatInput {
         if (inlineContainer) {
             inlineContainer.classList.toggle('hidden', !isEnabled);
             inlineContainer.classList.toggle('flex', isEnabled);
+            inlineContainer.setAttribute('aria-hidden', isEnabled ? 'false' : 'true');
         }
         const primaryModelButton = this.app.elements.modelPickerBtn || document.getElementById('model-picker-btn');
         if (primaryModelButton) {
-            if (isEnabled) {
-                const primaryModelName = this.getPrimaryModelName();
-                primaryModelButton.setAttribute('data-tooltip', `Primary model: ${primaryModelName || 'Select model'}`);
-                primaryModelButton.setAttribute('data-tooltip-position', 'top');
-                primaryModelButton.setAttribute('aria-label', `Primary model: ${primaryModelName || 'Select model'}`);
-            } else {
-                primaryModelButton.removeAttribute('data-tooltip');
-                primaryModelButton.removeAttribute('data-tooltip-position');
-                primaryModelButton.setAttribute('aria-label', 'Select model');
-            }
-            primaryModelButton.classList.toggle('model-picker-icon-only', isEnabled);
+            const primaryModelName = this.getPrimaryModelName();
+            primaryModelButton.setAttribute('data-tooltip', `Primary model: ${primaryModelName || 'Select model'}`);
+            primaryModelButton.setAttribute('data-tooltip-position', 'top');
+            primaryModelButton.setAttribute('aria-label', `Primary model: ${primaryModelName || 'Select model'}`);
+            primaryModelButton.classList.add('model-picker-icon-only');
         }
 
         const primary = this.getPrimaryModelName();
@@ -2350,11 +2409,7 @@ export default class ChatInput {
             || pendingCouncilConfig?.outputMode
             || COUNCIL_OUTPUT_PARALLEL;
         const isCouncilReviewEnabled = outputMode === COUNCIL_OUTPUT_SYNTHESIS;
-        const isSynthesisMode = isEnabled && isCouncilReviewEnabled;
-        if (typeof document !== 'undefined') {
-            document.documentElement.classList.toggle('council-layout-mode', isEnabled);
-            document.documentElement.classList.toggle('council-synthesis-layout-mode', isSynthesisMode);
-        }
+        this.app.updateCouncilLayoutMode?.(session);
         const models = Array.isArray(this.app.state.models) ? this.app.state.models : [];
         const availableModels = models.filter((model) => model?.name && model.name !== primary);
         const allSelectableModels = models.filter((model) => model?.name);
@@ -2401,9 +2456,15 @@ export default class ChatInput {
 
         if (inlineButton) {
             this.multiModelSecondaryInlineButton = inlineButton;
-            inlineButton.disabled = availableModels.length === 0;
+            inlineButton.disabled = !isEnabled || availableModels.length === 0;
             inlineButton.setAttribute('data-tooltip-position', 'top');
-            inlineButton.classList.toggle('council-model-icon-only', isEnabled);
+            inlineButton.classList.add('council-model-icon-only');
+            inlineButton.setAttribute('aria-hidden', isEnabled ? 'false' : 'true');
+            if (isEnabled) {
+                inlineButton.removeAttribute('tabindex');
+            } else {
+                inlineButton.setAttribute('tabindex', '-1');
+            }
             const selectedModel = availableModels.find((model) => model.name === selectedSecondary) || availableModels[0] || null;
             if (!selectedModel) {
                 inlineButton.setAttribute('aria-label', 'Secondary model: none available');

@@ -110,12 +110,19 @@ export default class CouncilController {
         const userIndex = messages.findIndex((message) => message.id === userMessageId);
         if (userIndex === -1) return;
         const laterMessages = messages.slice(userIndex + 1);
+        const messagesToDelete = laterMessages
+            .filter((message) => message.role === 'assistant')
+            .filter((message) => !(preserveLocalOnlyMessages && message.isLocalOnly));
         await Promise.all(
-            laterMessages
-                .filter((message) => message.role === 'assistant')
-                .filter((message) => !(preserveLocalOnlyMessages && message.isLocalOnly))
-                .map((message) => this.chatDB.deleteMessage(message.id))
+            messagesToDelete.map((message) => this.chatDB.deleteMessage(message.id))
         );
+        const deletedIds = new Set(messagesToDelete.map((message) => message.id));
+        const remainingMessages = messages.filter((message) => !deletedIds.has(message.id));
+        const session = this.app.state?.sessionsById?.get(sessionId)
+            || this.app.state?.sessions?.find((entry) => entry.id === sessionId)
+            || await this.chatDB.getSession?.(sessionId)
+            || null;
+        await this.app.recomputeSessionCouncilTranscriptHint?.(session, remainingMessages);
         if (this.app.isViewingSession(sessionId)) {
             await this.app.chatArea?.render();
         }
@@ -597,6 +604,9 @@ export default class CouncilController {
     }
 
     async saveAndRender(message, session, options = {}) {
+        if (message?.council?.enabled) {
+            await this.app.markSessionHasCouncilTranscript?.(session, { persist: true });
+        }
         await this.chatDB.saveMessage(message);
         await this.app.refreshSessionConversationSearchText(session, null, { persist: true });
         if (this.app.chatArea && this.app.isViewingSession(session.id)) {
@@ -818,6 +828,7 @@ export default class CouncilController {
             if (wasCancelled && completed.length === 0) {
                 await this.chatDB.deleteMessage(assistantMessage.id);
                 await this.app.refreshSessionConversationSearchText(session, null, { persist: true });
+                await this.app.recomputeSessionCouncilTranscriptHint?.(session);
                 if (this.app.chatArea && this.app.isViewingSession(session.id)) {
                     await this.app.chatArea.render();
                 }
@@ -944,6 +955,7 @@ export default class CouncilController {
                 if (assistantMessage?.id) {
                     await this.chatDB.deleteMessage(assistantMessage.id);
                     await this.app.refreshSessionConversationSearchText(session, null, { persist: true });
+                    await this.app.recomputeSessionCouncilTranscriptHint?.(session);
                     if (this.app.chatArea && this.app.isViewingSession(session.id)) {
                         await this.app.chatArea.render();
                     }

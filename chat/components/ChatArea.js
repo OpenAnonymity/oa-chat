@@ -1265,6 +1265,8 @@ export default class ChatArea {
         for (const msg of messagesToDelete) {
             await this.app.data.deleteMessage(msg.id);
         }
+        const remainingMessages = messages.slice(0, messageIndex);
+        await this.app.recomputeSessionCouncilTranscriptHint?.(session, remainingMessages);
 
         // Re-render messages to remove deleted messages from UI
         await this.render();
@@ -1574,6 +1576,8 @@ export default class ChatArea {
         for (const msg of messagesToDelete) {
             await this.app.data.deleteMessage(msg.id);
         }
+        const remainingMessages = messages.slice(0, messageIndex + 1);
+        await this.app.recomputeSessionCouncilTranscriptHint?.(session, remainingMessages);
 
         await this.render();
         await this.app.regenerateResponse();
@@ -1672,6 +1676,12 @@ export default class ChatArea {
         if (currentGeneration !== this.renderGeneration) {
             return; // Bail out - a newer render is in progress
         }
+
+        const persistCouncilLayoutHint = this.app.persistCouncilLayoutHintFromMessages?.(session, messages);
+        persistCouncilLayoutHint?.catch?.((error) => {
+            console.debug('Unable to persist council layout hint:', error);
+        });
+        this.app.updateCouncilLayoutMode?.(session, messages);
 
         if (messages.length === 0) {
             if (!hasEmptyState) {
