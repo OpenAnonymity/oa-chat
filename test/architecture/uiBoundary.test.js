@@ -206,6 +206,134 @@ test('parallel composer keeps the Council model picker out of the input bar', ()
     assert.equal(html.includes('id="council-review-model-btn"'), true);
 });
 
+test('parallel layout stays wide for transcripts and forks with council output', () => {
+    const appSource = read('chat/app.js');
+    const chatAreaSource = read('chat/components/ChatArea.js');
+    const controllerSource = read('chat/application/councilController.js');
+    const chatInputSource = read('chat/components/ChatInput.js');
+    const styles = read('chat/styles.css');
+
+    assert.equal(appSource.includes('messageUsesCouncilLayout(message)'), true);
+    assert.equal(appSource.includes('messagesUseCouncilLayout(messages = [])'), true);
+    assert.equal(appSource.includes('session?.hasCouncilLayoutPreference === true'), true);
+    assert.equal(appSource.includes('const isPendingCouncilLayoutPreference = !session'), true);
+    assert.equal(appSource.includes('this.pendingCouncilLayoutPreference === true'), true);
+    assert.equal(appSource.includes('session?.hasCouncilTranscript === true'), true);
+    assert.equal(appSource.includes('shouldUpdateCouncilLayoutForSession(session)'), true);
+    assert.equal(appSource.includes('recomputeSessionCouncilTranscriptHint(session, messages = null, options = {})'), true);
+    assert.equal(appSource.includes('updateCouncilLayoutMode(session = this.getCurrentSession(), messages = null)'), true);
+    assert.equal(
+        chatAreaSource.includes('this.app.updateCouncilLayoutMode?.(session, messages);'),
+        true,
+        'message render should update effective wide layout from actual transcript contents'
+    );
+    assert.equal(
+        appSource.includes('hasCouncilTranscript: this.messagesUseCouncilLayout(messagesToCopy)'),
+        true,
+        'forks should preserve the wide-layout hint when copied messages include Parallel/Council output'
+    );
+    assert.equal(
+        appSource.includes('session.hasCouncilLayoutPreference = true;'),
+        true,
+        'turning Parallel on should make the wider layout sticky for the session'
+    );
+    assert.equal(
+        appSource.includes('hasCouncilLayoutPreference: session.hasCouncilLayoutPreference === true'),
+        true,
+        'forks should preserve the sticky wide-layout preference'
+    );
+    assert.equal(
+        chatInputSource.includes("document.documentElement.classList.toggle('council-layout-mode'"),
+        false,
+        'ChatInput should not override transcript layout based only on active Parallel state'
+    );
+    assert.equal(
+        chatAreaSource.includes('this.app.recomputeSessionCouncilTranscriptHint?.(session, remainingMessages);'),
+        true,
+        'regenerate/resend truncation should recompute the persisted transcript layout hint'
+    );
+    assert.equal(
+        controllerSource.includes('this.app.recomputeSessionCouncilTranscriptHint?.(session, remainingMessages);'),
+        true,
+        'Council regenerate pruning should recompute the persisted transcript layout hint'
+    );
+    assert.equal(
+        styles.includes('html.wide-mode #messages-container {\n    --messages-max-width: min(92vw, 82rem);'),
+        true,
+        'manual wide mode should use the same message width as Parallel/Council layout'
+    );
+    assert.equal(
+        styles.includes('html.council-layout-mode #messages-container {\n    --messages-max-width: min(92vw, 82rem);'),
+        true,
+        'Parallel/Council layout should stay aligned with manual wide mode width'
+    );
+});
+
+test('composer model controls keep stable compact slots across Chat and Parallel', () => {
+    const html = read('chat/index.html');
+    const appSource = read('chat/app.js');
+    const source = read('chat/components/ChatInput.js');
+    const styles = read('chat/styles.css');
+
+    assert.equal(html.includes('class="composer-left-actions'), true);
+    assert.equal(html.includes('class="composer-right-actions'), true);
+    const moreMenuIndex = html.indexOf('id="composer-more-menu"');
+    const fileUploadIndex = html.indexOf('id="file-upload-btn"');
+    const settingsIndex = html.indexOf('id="settings-btn"');
+    const searchIndex = html.indexOf('id="search-toggle"');
+    const modeToggleIndex = html.indexOf('id="chat-mode-toggle"');
+    assert.equal(html.includes('id="composer-more-btn"'), true);
+    assert.equal(moreMenuIndex > -1, true);
+    assert.equal(fileUploadIndex > moreMenuIndex, true);
+    assert.equal(settingsIndex > moreMenuIndex, true);
+    assert.equal(searchIndex > moreMenuIndex, true);
+    assert.equal(searchIndex < modeToggleIndex, true);
+    assert.equal(html.includes('class="composer-more-menu-item relative"'), true);
+    assert.equal(html.includes('class="composer-more-menu-item" role="menuitem"'), true);
+    assert.equal(html.includes('role="menuitemcheckbox"'), true);
+    assert.equal(html.includes('class="composer-more-active-dot"'), false);
+    assert.equal(appSource.includes('this.searchEnabled = true;'), true);
+    assert.equal(appSource.includes('savedSearchEnabled !== undefined ? savedSearchEnabled : true'), true);
+    const secondaryClusterIndex = html.indexOf('id="council-inline-models"');
+    const primaryModelIndex = html.indexOf('id="model-picker-btn"');
+    const sendButtonIndex = html.indexOf('id="send-btn"');
+    assert.equal(secondaryClusterIndex > -1, true);
+    assert.equal(primaryModelIndex > -1, true);
+    assert.equal(sendButtonIndex > -1, true);
+    assert.equal(
+        secondaryClusterIndex < primaryModelIndex && primaryModelIndex < sendButtonIndex,
+        true,
+        'Parallel composer should render secondary, then primary, then send so primary stays closest to send'
+    );
+    assert.equal(html.includes('id="model-picker-btn" class="model-picker-icon-only'), true);
+    assert.equal(html.includes('<span class="model-name-container">Select Model</span>'), true);
+    assert.equal(html.includes('council-secondary-model-btn council-model-icon-only'), true);
+    assert.equal(html.includes('id="council-inline-models" class="hidden council-inline-models"'), true);
+    assert.equal(html.includes('council-inline-divider'), false);
+    assert.equal(source.includes("inlineContainer.classList.toggle('hidden', !isEnabled);"), true);
+    assert.equal(source.includes("inlineContainer.classList.toggle('flex', isEnabled);"), true);
+    assert.equal(source.includes("primaryModelButton.classList.add('model-picker-icon-only');"), true);
+    assert.equal(source.includes("inlineButton.classList.add('council-model-icon-only');"), true);
+    assert.equal(source.includes('inlineButton.disabled = !isEnabled || availableModels.length === 0;'), true);
+    assert.equal(source.includes('toggleComposerMoreMenu()'), true);
+    assert.equal(source.includes('closeComposerMoreMenu()'), true);
+    assert.equal(source.includes('updateComposerMoreButtonUI()'), false);
+    assert.match(
+        source,
+        /openComposerMoreMenu\(\)[\s\S]*?this\.closeSettingsMenu\(\);/,
+        'opening the + menu should close Settings so the two popovers cannot overlap'
+    );
+    assert.equal(source.includes("event.target.closest('#file-upload-btn, #search-toggle')"), true);
+    assert.equal(styles.includes('.composer-right-actions'), true);
+    assert.equal(styles.includes('.composer-more-menu'), true);
+    assert.equal(styles.includes('.composer-more-menu-item'), true);
+    assert.equal(styles.includes('.composer-more-btn.composer-more-active'), false);
+    assert.equal(styles.includes('.composer-more-active-dot'), false);
+    assert.equal(styles.includes('.council-inline-models.council-inline-reserved'), false);
+    assert.equal(styles.includes('.council-inline-divider'), false);
+    assert.equal(styles.includes('#model-picker-btn.model-picker-icon-only,'), true);
+});
+
 test('council review setting drives synthesis output mode in ChatInput', () => {
     const source = read('chat/components/ChatInput.js');
     const appSource = read('chat/app.js');
