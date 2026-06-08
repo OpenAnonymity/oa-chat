@@ -15,9 +15,9 @@ const WELCOME_DIALOG_BASE_WIDTH = 464;
 const WELCOME_DIALOG_VIEWPORT_WIDTH_RATIO = 0.94;
 const WELCOME_THEME_TOGGLE_CLEARANCE = 8;
 const BETA_SIGNUP_URL = 'https://openanonymity.ai/beta';
-const FREE_ACCESS_EMAIL_HINT_HTML = `Enter an email for limited free access (email collected only to prevent spam). We encourage you to <a href="${BETA_SIGNUP_URL}" target="_blank" rel="noopener noreferrer" class="underline hover:text-foreground transition-colors"><strong>sign up</strong></a> for more access!`;
-const FREE_ACCESS_UNAVAILABLE_HINT = 'Free access is unavailable right now. Please sign up for an invite code.';
-const FREE_ACCESS_UNAVAILABLE_HINT_HTML = `Experimental access is unavailable right now. Please <a href="${BETA_SIGNUP_URL}" target="_blank" rel="noopener noreferrer" class="underline hover:text-foreground transition-colors">sign up</a> for an invite code.`;
+const FREE_ACCESS_EMAIL_HINT_HTML = `Email is only collected to prevent spam. Consider <a href="${BETA_SIGNUP_URL}" target="_blank" rel="noopener noreferrer" class="underline hover:text-foreground transition-colors">requesting</a> an invite code for more access.`;
+const FREE_ACCESS_UNAVAILABLE_HINT = 'Free access is unavailable right now. Please request an invite code.';
+const FREE_ACCESS_UNAVAILABLE_HINT_HTML = `Free access is unavailable right now. Please <a href="${BETA_SIGNUP_URL}" target="_blank" rel="noopener noreferrer" class="underline hover:text-foreground transition-colors">request</a> an invite code.`;
 
 class WelcomePanel {
     constructor(app) {
@@ -71,6 +71,8 @@ class WelcomePanel {
         if (localStorage.getItem(STORAGE_KEY_DISMISSED) === 'true') return false;
         // Don't show if user already has tickets
         if (ticketClient.getTicketCount() > 0) return false;
+        // Don't show if self-hosted station mode is enabled
+        if (ticketClient.isSelfHostedStationModeEnabled()) return false;
         return true;
     }
 
@@ -298,7 +300,7 @@ class WelcomePanel {
         const feedbackEl = document.getElementById('invite-feedback-text');
         if (!feedbackEl) return;
 
-        const showHint = this.isPreviewMode() && !this.redeemError && this.previewEmail.trim().length > 0;
+        const showHint = this.isPreviewMode() && !this.redeemError;
         const feedbackHtml = this.redeemError
             ? (this.redeemError === FREE_ACCESS_UNAVAILABLE_HINT
                 ? FREE_ACCESS_UNAVAILABLE_HINT_HTML
@@ -581,6 +583,12 @@ class WelcomePanel {
         setTimeout(() => this.app.elements.messageInput?.focus(), 150);
     }
 
+    async handleEnableLocalMode() {
+        await preferencesStore.savePreference(PREF_KEYS.selfHostedStationMode, true);
+        this.close();
+        setTimeout(() => this.app.elements.messageInput?.focus(), 150);
+    }
+
     handleImportData() {
         const input = document.getElementById('global-import-input');
         if (!input) return;
@@ -640,7 +648,7 @@ class WelcomePanel {
         const inputPlaceholder = isPreviewMode ? 'Email address' : 'Invite code';
         const inputMaxLength = isPreviewMode ? 254 : 24;
         const inputValue = this.getCurrentAccessValue();
-        const showPreviewHint = isPreviewMode && !hasError && this.previewEmail.trim().length > 0;
+        const showPreviewHint = isPreviewMode && !hasError;
         const feedbackHtml = hasError
             ? (this.redeemError === FREE_ACCESS_UNAVAILABLE_HINT
                 ? FREE_ACCESS_UNAVAILABLE_HINT_HTML
@@ -933,8 +941,22 @@ class WelcomePanel {
                     </button>
                 </div>
 
+                <!-- Local mode toggle -->
+                <div class="flex items-center justify-center" style="margin-top:16px">
+                    <button
+                        id="welcome-local-mode-btn"
+                        class="text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1.5"
+                        type="button"
+                    >
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M5.25 14.25h13.5m-13.5 0a3 3 0 01-3-3m3 3a3 3 0 100 6h13.5a3 3 0 100-6m-16.5-3a3 3 0 013-3h13.5a3 3 0 013 3m-19.5 0a4.5 4.5 0 01.9-2.7L5.737 5.1a3.375 3.375 0 012.7-1.35h7.126c1.062 0 2.062.5 2.7 1.35l2.587 3.45a4.5 4.5 0 01.9 2.7m0 0a3 3 0 01-3 3m0 3h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008zm-3 6h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008z" />
+                        </svg>
+                        <span>Use with local / self-hosted model</span>
+                    </button>
+                </div>
+
                 <!-- Footer -->
-                <div class="flex items-center justify-between" style="margin-top:22px">
+                <div class="flex items-center justify-between" style="margin-top:12px">
                     <a
                         href="https://openanonymity.ai/blog/unlinkable-inference/"
                         target="_blank"
@@ -1236,6 +1258,11 @@ class WelcomePanel {
         const startChattingBtn = document.getElementById('start-chatting-btn');
         if (startChattingBtn) {
             startChattingBtn.onclick = () => this.handleStartChatting();
+        }
+
+        const localModeBtn = document.getElementById('welcome-local-mode-btn');
+        if (localModeBtn) {
+            localModeBtn.onclick = () => this.handleEnableLocalMode();
         }
     }
 

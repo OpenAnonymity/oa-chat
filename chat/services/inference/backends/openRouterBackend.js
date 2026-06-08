@@ -107,7 +107,9 @@ const openRouterBackend = {
         return ticketClient.requestApiKey(ticketsRequired || 1);
     },
     verification: {
-        supports: true,
+        get supports() {
+            return !ticketClient.isSelfHostedStationModeEnabled();
+        },
         init: () => stationVerifier.init(),
         startBroadcastCheck: (getCurrentSession) => stationVerifier.startBroadcastCheck(getCurrentSession),
         setBannedWarningCallback: (callback) => stationVerifier.setBannedWarningCallback(callback),

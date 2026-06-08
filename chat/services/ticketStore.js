@@ -7,11 +7,14 @@ import storageEvents from './storageEvents.js';
 import { chatDB } from '../db.js';
 import syncService from './syncService.js';
 import preferencesStore, { PREF_KEYS } from './preferencesStore.js';
+import { isSelfHostedStationModeEnabled } from './selfHostedModeCheck.js';
 
 const STORAGE_KEY = 'inference_tickets';
 const ARCHIVE_KEY = 'inference_tickets_archive';
-const DB_ACTIVE_KEY = 'tickets-active';
-const DB_ARCHIVE_KEY = 'tickets-archive';
+const DB_ACTIVE_KEY_MANAGED = 'tickets-active';
+const DB_ARCHIVE_KEY_MANAGED = 'tickets-archive';
+const DB_ACTIVE_KEY_SELF_HOSTED = 'tickets-active-self-hosted';
+const DB_ARCHIVE_KEY_SELF_HOSTED = 'tickets-archive-self-hosted';
 const LOCK_NAME = 'oa-inference-tickets';
 const TICKETS_UPDATED_EVENT = 'tickets-updated';
 
@@ -23,7 +26,9 @@ class TicketStore {
         this.initPromise = null;
         this.storageUnsubscribe = null;
         this.syncUnsubscribe = null;
+        this.modeUnsubscribe = null;
         this.hasMarkedTicketHistory = false;
+        this.selfHostedModeEnabled = isSelfHostedStationModeEnabled();
     }
 
     async init() {
@@ -34,6 +39,16 @@ class TicketStore {
         this.initPromise = (async () => {
             storageEvents.init();
             await this.ensureDbReady();
+            try {
+                const savedMode = await preferencesStore.getPreference(PREF_KEYS.selfHostedStationMode);
+                if (typeof savedMode === 'boolean') {
+                    this.selfHostedModeEnabled = savedMode;
+                } else {
+                    this.selfHostedModeEnabled = isSelfHostedStationModeEnabled();
+                }
+            } catch (error) {
+                this.selfHostedModeEnabled = isSelfHostedStationModeEnabled();
+            }
             await this.migrateFromLocalStorage();
             await this.loadFromDatabase({ emitUpdate: false });
             await this.cleanLegacyTickets();
@@ -50,6 +65,24 @@ class TicketStore {
                     if (payload.event === 'blob_received' && payload.data?.type === 'tickets') {
                         this.loadFromDatabase({ emitUpdate: true, skipBroadcast: true });
                     }
+                });
+            }
+
+            if (!this.modeUnsubscribe) {
+                this.modeUnsubscribe = preferencesStore.onChange((key, value) => {
+                    if (key !== PREF_KEYS.selfHostedStationMode || typeof value !== 'boolean') {
+                        return;
+                    }
+                    if (this.selfHostedModeEnabled === value) {
+                        return;
+                    }
+                    this.selfHostedModeEnabled = value;
+                    this.withLock(async () => {
+                        await this.ensureDbReady();
+                        await this.loadFromDatabase({ emitUpdate: true, skipBroadcast: true });
+                    }).catch((error) => {
+                        console.warn('Failed to switch ticket store scope:', error);
+                    });
                 });
             }
 
@@ -246,15 +279,17 @@ class TicketStore {
         return combined;
     }
 
-    async readFromDatabase() {
+    async readFromDatabase(options = {}) {
         if (typeof chatDB === 'undefined' || !chatDB.db) {
             return { active: [], archived: [] };
         }
 
+        const dbKeys = options.dbKeys || this.getDbKeysForCurrentMode();
+
         try {
             const [active, archived] = await Promise.all([
-                chatDB.getSetting(DB_ACTIVE_KEY),
-                chatDB.getSetting(DB_ARCHIVE_KEY)
+                chatDB.getSetting(dbKeys.activeKey),
+                chatDB.getSetting(dbKeys.archiveKey)
             ]);
 
             return {
@@ -268,17 +303,19 @@ class TicketStore {
     }
 
     async persistTickets(activeTickets, archivedTickets, options = {}) {
+        const dbKeys = options.dbKeys || this.getDbKeysForCurrentMode();
+        const updateInMemory = options.updateInMemory !== false;
         let persisted = false;
         if (typeof chatDB !== 'undefined' && chatDB.db) {
             try {
                 if (typeof chatDB.saveSettings === 'function') {
                     await chatDB.saveSettings([
-                        { key: DB_ACTIVE_KEY, value: activeTickets },
-                        { key: DB_ARCHIVE_KEY, value: archivedTickets }
+                        { key: dbKeys.activeKey, value: activeTickets },
+                        { key: dbKeys.archiveKey, value: archivedTickets }
                     ]);
                 } else {
-                    await chatDB.saveSetting(DB_ACTIVE_KEY, activeTickets);
-                    await chatDB.saveSetting(DB_ARCHIVE_KEY, archivedTickets);
+                    await chatDB.saveSetting(dbKeys.activeKey, activeTickets);
+                    await chatDB.saveSetting(dbKeys.archiveKey, archivedTickets);
                 }
                 persisted = true;
             } catch (error) {
@@ -286,14 +323,17 @@ class TicketStore {
             }
         }
 
-        this.tickets = activeTickets;
-        this.archive = archivedTickets;
         await this.markHadTicketsBeforeIfNeeded(activeTickets.length, archivedTickets.length);
-        if (options.emitUpdate !== false) {
-            this.emitUpdate();
-        }
-        if (!options.skipBroadcast) {
-            storageEvents.broadcast('tickets-updated', { updatedAt: Date.now() });
+
+        if (updateInMemory) {
+            this.tickets = activeTickets;
+            this.archive = archivedTickets;
+            if (options.emitUpdate !== false) {
+                this.emitUpdate();
+            }
+            if (!options.skipBroadcast) {
+                storageEvents.broadcast('tickets-updated', { updatedAt: Date.now() });
+            }
         }
 
         // Trigger sync on local changes (debounced)
@@ -312,24 +352,28 @@ class TicketStore {
             }
             return;
         }
-        const { active, archived } = await this.readFromDatabase();
+        const { active, archived } = await this.readFromDatabase(options);
         const { tickets: normalizedActive, archived: reclassified, changed } = this.normalizeTickets(active);
         const { tickets: normalizedArchive, changed: archiveChanged } = this.normalizeTickets(archived, { allowUsed: true });
         const mergedArchive = this.mergeTickets(normalizedArchive, reclassified);
 
         if (changed || archiveChanged || reclassified.length > 0) {
             await this.persistTickets(normalizedActive, mergedArchive, {
+                dbKeys: options.dbKeys,
+                updateInMemory: options.updateInMemory,
                 skipBroadcast: options.skipBroadcast,
                 emitUpdate: options.emitUpdate
             });
             return;
         }
 
-        this.tickets = normalizedActive;
-        this.archive = normalizedArchive;
         await this.markHadTicketsBeforeIfNeeded(normalizedActive.length, normalizedArchive.length);
-        if (options.emitUpdate !== false) {
-            this.emitUpdate();
+        if (options.updateInMemory !== false) {
+            this.tickets = normalizedActive;
+            this.archive = normalizedArchive;
+            if (options.emitUpdate !== false) {
+                this.emitUpdate();
+            }
         }
     }
 
@@ -359,19 +403,23 @@ class TicketStore {
         const { tickets: normalizedArchive } = this.normalizeTickets(parsedArchive, { allowUsed: true });
         const mergedArchive = this.mergeTickets(normalizedArchive, reclassified);
 
-        const existing = await this.readFromDatabase();
+        const managedDbKeys = this.getDbKeysForMode(false);
+        const existing = await this.readFromDatabase({ dbKeys: managedDbKeys });
         const combinedActive = this.mergeTickets(existing.active, normalizedActive);
         const combinedArchive = this.mergeTickets(existing.archived, mergedArchive);
         const archivedIds = new Set(combinedArchive.map(ticket => ticket.finalized_ticket));
         const filteredActive = combinedActive.filter(ticket => !archivedIds.has(ticket.finalized_ticket));
 
-        const persisted = await this.persistTickets(filteredActive, combinedArchive, { skipBroadcast: true, emitUpdate: false });
+        const persisted = await this.persistTickets(filteredActive, combinedArchive, {
+            dbKeys: managedDbKeys,
+            updateInMemory: false,
+            skipSync: true,
+            skipBroadcast: true,
+            emitUpdate: false
+        });
         if (persisted) {
             localStorage.removeItem(STORAGE_KEY);
             localStorage.removeItem(ARCHIVE_KEY);
-        } else {
-            this.tickets = filteredActive;
-            this.archive = combinedArchive;
         }
     }
 
@@ -575,6 +623,16 @@ class TicketStore {
                 totalArchived: mergedArchived.length
             };
         });
+    }
+
+    getDbKeysForMode(selfHostedModeEnabled) {
+        return selfHostedModeEnabled
+            ? { activeKey: DB_ACTIVE_KEY_SELF_HOSTED, archiveKey: DB_ARCHIVE_KEY_SELF_HOSTED }
+            : { activeKey: DB_ACTIVE_KEY_MANAGED, archiveKey: DB_ARCHIVE_KEY_MANAGED };
+    }
+
+    getDbKeysForCurrentMode() {
+        return this.getDbKeysForMode(this.selfHostedModeEnabled);
     }
 }
 

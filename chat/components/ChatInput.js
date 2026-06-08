@@ -61,6 +61,11 @@ export default class ChatInput {
         this.scrubberModelSelect = null;
         // Store undone scrubber state for redo functionality
         this.scrubberUndoState = null;
+        this.stationModeSettings = {
+            enabled: ticketClient.isSelfHostedStationModeEnabled(),
+            stationUrl: ticketClient.getSelfHostedStationBaseUrl(),
+            error: null
+        };
     }
 
     /**
@@ -294,6 +299,9 @@ export default class ChatInput {
             if (e.target.closest('.display-toggle-container') || e.target.closest('.theme-toggle-container')) {
                 return;
             }
+            if (e.target.closest('#station-mode-settings-section')) {
+                return;
+            }
             if (e.target.tagName === 'BUTTON') {
                 const action = e.target.dataset.action || e.target.textContent.trim();
 
@@ -399,6 +407,7 @@ export default class ChatInput {
 
         // Setup scrubber controls (model picker + shortcut)
         this.setupScrubberControls();
+        this.setupStationModeControls();
 
         // Initialize scrubber hint visibility
         this.updateScrubberHintVisibility();
@@ -1644,6 +1653,176 @@ export default class ChatInput {
                 themeManager.setPreference(preference);
             }
         });
+    }
+
+    setupStationModeControls() {
+        const networkBtn = document.getElementById('settings-station-mode-network-btn');
+        const selfhostedBtn = document.getElementById('settings-station-mode-selfhosted-btn');
+        const configSection = document.getElementById('settings-self-hosted-config');
+        const modeError = document.getElementById('settings-self-hosted-mode-error');
+        const stationUrlInput = document.getElementById('settings-self-hosted-station-url-input');
+
+        if (!networkBtn || !selfhostedBtn || !configSection || !modeError) {
+            return;
+        }
+
+        const stopMenuClose = (event) => event.stopPropagation();
+
+        networkBtn.addEventListener('click', async (event) => {
+            stopMenuClose(event);
+            if (this.stationModeSettings.enabled) {
+                await this.toggleStationModeSetting();
+            }
+        });
+
+        selfhostedBtn.addEventListener('click', async (event) => {
+            stopMenuClose(event);
+            if (!this.stationModeSettings.enabled) {
+                await this.toggleStationModeSetting();
+            }
+        });
+
+        if (stationUrlInput) {
+            stationUrlInput.addEventListener('click', stopMenuClose);
+            stationUrlInput.addEventListener('input', () => {
+                this.stationModeSettings.error = null;
+                this.updateStationModeSettingsUI();
+            });
+            stationUrlInput.addEventListener('keydown', async (event) => {
+                event.stopPropagation();
+                if (event.key === 'Enter') {
+                    event.preventDefault();
+                    await this.saveStationModeUrl(stationUrlInput.value);
+                }
+            });
+            stationUrlInput.addEventListener('blur', async () => {
+                await this.saveStationModeUrl(stationUrlInput.value);
+            });
+        }
+
+        Promise.all([
+            preferencesStore.getPreference(PREF_KEYS.selfHostedStationMode),
+            preferencesStore.getPreference(PREF_KEYS.selfHostedStationUrl)
+        ]).then(([enabled, stationUrl]) => {
+            this.stationModeSettings.enabled = typeof enabled === 'boolean'
+                ? enabled
+                : ticketClient.isSelfHostedStationModeEnabled();
+            this.stationModeSettings.stationUrl = typeof stationUrl === 'string'
+                ? (ticketClient.normalizeStationBaseUrl(stationUrl) || '')
+                : ticketClient.getSelfHostedStationBaseUrl();
+            this.stationModeSettings.error = null;
+            this.updateStationModeSettingsUI();
+        });
+
+        preferencesStore.onChange((key, value) => {
+            if (key === PREF_KEYS.selfHostedStationMode && typeof value === 'boolean') {
+                this.stationModeSettings.enabled = value;
+                this.stationModeSettings.error = null;
+                this.updateStationModeSettingsUI();
+            }
+            if (key === PREF_KEYS.selfHostedStationUrl && typeof value === 'string') {
+                this.stationModeSettings.stationUrl = ticketClient.normalizeStationBaseUrl(value) || '';
+                this.stationModeSettings.error = null;
+                this.updateStationModeSettingsUI();
+            }
+        });
+
+        this.updateStationModeSettingsUI();
+    }
+
+    updateStationModeSettingsUI() {
+        const networkBtn = document.getElementById('settings-station-mode-network-btn');
+        const selfhostedBtn = document.getElementById('settings-station-mode-selfhosted-btn');
+        const configSection = document.getElementById('settings-self-hosted-config');
+        const modeError = document.getElementById('settings-self-hosted-mode-error');
+        const stationUrlInput = document.getElementById('settings-self-hosted-station-url-input');
+
+        if (!networkBtn || !selfhostedBtn || !configSection || !modeError) {
+            return;
+        }
+
+        const enabled = !!this.stationModeSettings.enabled;
+        const activeClasses = ['bg-accent', 'text-accent-foreground', 'font-medium'];
+        const inactiveClasses = ['text-popover-foreground'];
+
+        if (enabled) {
+            networkBtn.classList.remove(...activeClasses);
+            networkBtn.classList.add(...inactiveClasses);
+            selfhostedBtn.classList.remove(...inactiveClasses);
+            selfhostedBtn.classList.add(...activeClasses);
+        } else {
+            selfhostedBtn.classList.remove(...activeClasses);
+            selfhostedBtn.classList.add(...inactiveClasses);
+            networkBtn.classList.remove(...inactiveClasses);
+            networkBtn.classList.add(...activeClasses);
+        }
+
+        configSection.classList.toggle('hidden', !enabled);
+
+        if (stationUrlInput) {
+            const stationUrl = String(this.stationModeSettings.stationUrl || '');
+            if (document.activeElement !== stationUrlInput && stationUrlInput.value !== stationUrl) {
+                stationUrlInput.value = stationUrl;
+            }
+        }
+
+        const errorMessage = String(this.stationModeSettings.error || '').trim();
+        if (errorMessage) {
+            modeError.textContent = errorMessage;
+            modeError.classList.remove('hidden');
+        } else {
+            modeError.textContent = '';
+            modeError.classList.add('hidden');
+        }
+    }
+
+    async toggleStationModeSetting() {
+        const nextEnabled = !this.stationModeSettings.enabled;
+        this.stationModeSettings.enabled = nextEnabled;
+        this.stationModeSettings.error = (nextEnabled && !this.stationModeSettings.stationUrl)
+            ? 'Set a station URL before requesting API keys.'
+            : null;
+        await preferencesStore.savePreference(PREF_KEYS.selfHostedStationMode, nextEnabled);
+        this.updateStationModeSettingsUI();
+    }
+
+    async saveStationModeUrl(rawValue = null) {
+        const stationUrlInput = document.getElementById('settings-self-hosted-station-url-input');
+        const valueToUse = rawValue == null
+            ? (stationUrlInput?.value ?? this.stationModeSettings.stationUrl)
+            : rawValue;
+        const trimmed = String(valueToUse || '').trim();
+        const existingNormalized = ticketClient.normalizeStationBaseUrl(this.stationModeSettings.stationUrl) || '';
+
+        if (!trimmed) {
+            this.stationModeSettings.stationUrl = '';
+            this.stationModeSettings.error = this.stationModeSettings.enabled
+                ? 'Set a station URL before requesting API keys.'
+                : null;
+            if (existingNormalized !== '') {
+                await preferencesStore.savePreference(PREF_KEYS.selfHostedStationUrl, '');
+            }
+            this.updateStationModeSettingsUI();
+            return;
+        }
+
+        const normalized = ticketClient.normalizeStationBaseUrl(trimmed);
+        if (!normalized) {
+            this.stationModeSettings.error = 'Station URL must be a valid HTTP(S) URL.';
+            this.updateStationModeSettingsUI();
+            return;
+        }
+
+        this.stationModeSettings.stationUrl = normalized;
+        this.stationModeSettings.error = null;
+        this.updateStationModeSettingsUI();
+
+        if (normalized === existingNormalized) {
+            return;
+        }
+
+        await preferencesStore.savePreference(PREF_KEYS.selfHostedStationUrl, normalized);
+        this.app?.showToast?.('Self-hosted station URL saved.', 'success', 2500);
     }
 
     /**

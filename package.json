@@ -1,6 +1,7 @@
 {
   "name": "oa-chat",
   "private": true,
+  "license": "AGPL-3.0-or-later",
   "devDependencies": {
     "esbuild": "^0.27.2",
     "terser": "^5.31.0",

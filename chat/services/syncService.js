@@ -15,6 +15,7 @@
 import { ORG_API_BASE } from '../config.js';
 import { chatDB } from '../db.js';
 import { fetchRetry } from './fetchRetry.js';
+import { isSelfHostedStationModeEnabled } from './selfHostedModeCheck.js';
 
 const SYNC_LOCK_NAME = 'oa-sync';
 const SYNC_SALT = 'oa-sync-v1';
@@ -228,6 +229,9 @@ class SyncService {
      * No separate flag needed.
      */
     isEnabled() {
+        if (isSelfHostedStationModeEnabled()) {
+            return false;
+        }
         return !!(this.masterKey && this.accessToken);
     }
 

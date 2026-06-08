@@ -12,6 +12,9 @@ const PREF_KEYS = {
     rightPanelVisible: 'pref-right-panel-visible',
     ticketInfoVisible: 'pref-ticket-info-visible',
     invitationFormVisible: 'pref-invitation-form-visible',
+    selfHostedStationMode: 'pref-self-hosted-station-mode',
+    selfHostedStationUrl: 'pref-self-hosted-station-url',
+    selfHostedStationStartupToken: 'pref-self-hosted-station-startup-token',
     welcomeDismissed: 'pref-welcome-dismissed',
     hadTicketsBefore: 'pref-had-tickets-before',
     freeAccessRequested: 'pref-free-access-requested',
@@ -32,6 +35,9 @@ const LOCAL_STORAGE_KEYS = {
     rightPanelVisible: 'oa-right-panel-visible',
     ticketInfoVisible: 'oa-ticket-info-visible',
     invitationFormVisible: 'oa-invitation-form-visible',
+    selfHostedStationMode: 'oa-self-hosted-station-enabled',
+    selfHostedStationUrl: 'oa-self-hosted-station-url',
+    selfHostedStationStartupToken: 'oa-self-hosted-station-startup-token',
     welcomeDismissed: 'oa-welcome-dismissed',
     proxySettings: 'oa-network-proxy-settings',
     sharePasswordMode: 'oa-share-password-mode',
@@ -50,6 +56,9 @@ const DEFAULT_PREFERENCES = {
     [PREF_KEYS.rightPanelVisible]: null,
     [PREF_KEYS.ticketInfoVisible]: true,
     [PREF_KEYS.invitationFormVisible]: null,
+    [PREF_KEYS.selfHostedStationMode]: false,
+    [PREF_KEYS.selfHostedStationUrl]: '',
+    [PREF_KEYS.selfHostedStationStartupToken]: '',
     [PREF_KEYS.welcomeDismissed]: false,
     [PREF_KEYS.hadTicketsBefore]: false,
     [PREF_KEYS.freeAccessRequested]: false,
@@ -73,6 +82,9 @@ const PREF_SNAPSHOT_KEYS = new Set([
     PREF_KEYS.rightPanelVisible,
     PREF_KEYS.ticketInfoVisible,
     PREF_KEYS.invitationFormVisible,
+    PREF_KEYS.selfHostedStationMode,
+    PREF_KEYS.selfHostedStationUrl,
+    PREF_KEYS.selfHostedStationStartupToken,
     PREF_KEYS.welcomeDismissed
 ]);
 
@@ -86,6 +98,9 @@ const PREF_SNAPSHOT_MAP = new Map([
     [PREF_KEYS.rightPanelVisible, LOCAL_STORAGE_KEYS.rightPanelVisible],
     [PREF_KEYS.ticketInfoVisible, LOCAL_STORAGE_KEYS.ticketInfoVisible],
     [PREF_KEYS.invitationFormVisible, LOCAL_STORAGE_KEYS.invitationFormVisible],
+    [PREF_KEYS.selfHostedStationMode, LOCAL_STORAGE_KEYS.selfHostedStationMode],
+    [PREF_KEYS.selfHostedStationUrl, LOCAL_STORAGE_KEYS.selfHostedStationUrl],
+    [PREF_KEYS.selfHostedStationStartupToken, LOCAL_STORAGE_KEYS.selfHostedStationStartupToken],
     [PREF_KEYS.welcomeDismissed, LOCAL_STORAGE_KEYS.welcomeDismissed]
 ]);
 
@@ -202,6 +217,21 @@ class PreferencesStore {
                 key: PREF_KEYS.invitationFormVisible,
                 storageKey: LOCAL_STORAGE_KEYS.invitationFormVisible,
                 parse: (value) => value === 'true'
+            },
+            {
+                key: PREF_KEYS.selfHostedStationMode,
+                storageKey: LOCAL_STORAGE_KEYS.selfHostedStationMode,
+                parse: (value) => value === 'true'
+            },
+            {
+                key: PREF_KEYS.selfHostedStationUrl,
+                storageKey: LOCAL_STORAGE_KEYS.selfHostedStationUrl,
+                parse: (value) => (value || '').trim()
+            },
+            {
+                key: PREF_KEYS.selfHostedStationStartupToken,
+                storageKey: LOCAL_STORAGE_KEYS.selfHostedStationStartupToken,
+                parse: (value) => (value || '').trim()
             },
             {
                 key: PREF_KEYS.welcomeDismissed,
@@ -469,12 +499,18 @@ class PreferencesStore {
             } else if (key === PREF_KEYS.leftSidebarWidth) {
                 const parsed = Number(value);
                 serialized = Number.isFinite(parsed) && parsed > 0 ? String(Math.round(parsed)) : null;
-            } else if (key === PREF_KEYS.rightPanelVisible || key === PREF_KEYS.leftSidebarVisible || key === PREF_KEYS.ticketInfoVisible || key === PREF_KEYS.invitationFormVisible || key === PREF_KEYS.wideMode || key === PREF_KEYS.welcomeDismissed) {
+            } else if (key === PREF_KEYS.rightPanelVisible || key === PREF_KEYS.leftSidebarVisible || key === PREF_KEYS.ticketInfoVisible || key === PREF_KEYS.invitationFormVisible || key === PREF_KEYS.selfHostedStationMode || key === PREF_KEYS.wideMode || key === PREF_KEYS.welcomeDismissed) {
                 if (value === null || value === undefined) {
                     serialized = null;
                 } else {
                     serialized = value ? 'true' : 'false';
                 }
+            } else if (key === PREF_KEYS.selfHostedStationUrl) {
+                const url = typeof value === 'string' ? value.trim() : '';
+                serialized = url || null;
+            } else if (key === PREF_KEYS.selfHostedStationStartupToken) {
+                const token = typeof value === 'string' ? value.trim() : '';
+                serialized = token || null;
             }
 
             if (serialized === null) {

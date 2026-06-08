@@ -102,6 +102,8 @@ class RightPanel {
         const savedFormVisible = localStorage.getItem('oa-invitation-form-visible');
         this.invitationFormPreference = savedFormVisible === 'true' ? true : savedFormVisible === 'false' ? false : null;
         this.showInvitationForm = this.invitationFormPreference ?? false;
+        this.selfHostedModeEnabled = ticketClient.isSelfHostedStationModeEnabled();
+        this.selfHostedStationUrl = ticketClient.getSelfHostedStationBaseUrl();
 
         // Ticket info panel state - check localStorage snapshot first to avoid flash
         const savedTicketInfoVisible = localStorage.getItem('oa-ticket-info-visible');
@@ -147,6 +149,22 @@ class RightPanel {
                 }
             });
 
+        preferencesStore.getPreference(PREF_KEYS.selfHostedStationMode)
+            .then((enabled) => {
+                if (typeof enabled === 'boolean') {
+                    this.selfHostedModeEnabled = enabled;
+                    this.renderTopSectionOnly();
+                }
+            });
+
+        preferencesStore.getPreference(PREF_KEYS.selfHostedStationUrl)
+            .then((url) => {
+                if (typeof url === 'string') {
+                    this.selfHostedStationUrl = ticketClient.normalizeStationBaseUrl(url) || '';
+                    this.renderTopSectionOnly();
+                }
+            });
+
         preferencesStore.onChange((key, value) => {
             if (key === PREF_KEYS.rightPanelVisible && typeof value === 'boolean') {
                 this.isVisible = value;
@@ -160,6 +178,14 @@ class RightPanel {
             if (key === PREF_KEYS.invitationFormVisible && typeof value === 'boolean') {
                 this.showInvitationForm = value;
                 this.invitationFormPreference = value;
+                this.renderTopSectionOnly();
+            }
+            if (key === PREF_KEYS.selfHostedStationMode && typeof value === 'boolean') {
+                this.selfHostedModeEnabled = value;
+                this.renderTopSectionOnly();
+            }
+            if (key === PREF_KEYS.selfHostedStationUrl && typeof value === 'string') {
+                this.selfHostedStationUrl = ticketClient.normalizeStationBaseUrl(value) || '';
                 this.renderTopSectionOnly();
             }
         });
@@ -596,7 +622,14 @@ class RightPanel {
     }
 
     async handleRegister(invitationCode) {
-        if (!invitationCode || invitationCode.length !== 24) {
+        const rawValue = String(invitationCode || '').trim();
+        if (this.selfHostedModeEnabled) {
+            if (!rawValue) {
+                this.registrationError = 'Enter a station token to request tickets.';
+                this.renderTopSectionOnly();
+                return;
+            }
+        } else if (!rawValue || rawValue.length !== 24) {
             this.registrationError = 'Invalid ticket code (must be 24 characters)';
             this.renderTopSectionOnly();
             return;
@@ -614,7 +647,7 @@ class RightPanel {
         }
 
         try {
-            await ticketClient.alphaRegister(invitationCode, (message, percent) => {
+            await ticketClient.alphaRegister(rawValue, (message, percent) => {
                 this.smoothProgress.set(percent);
                 this.registrationProgress = { message, percent };
                 // Update message text directly to avoid innerHTML replacement
@@ -627,12 +660,16 @@ class RightPanel {
             this.ticketCount = ticketClient.getTicketCount();
 
             if (this.pendingInvitationSource) {
-                const ticketCount = this.getInvitationTicketCount(invitationCode) ?? this.pendingInvitationTickets;
+                const ticketCount = this.selfHostedModeEnabled
+                    ? 100
+                    : (this.getInvitationTicketCount(rawValue) ?? this.pendingInvitationTickets);
                 const countLabel = Number.isFinite(ticketCount)
                     ? `${ticketCount} ticket${ticketCount === 1 ? '' : 's'}`
                     : 'tickets';
                 this.app?.showToast?.(
-                    `Ticket code redeemed for ${countLabel}`,
+                    this.selfHostedModeEnabled
+                        ? `Tickets issued: ${countLabel}`
+                        : `Ticket code redeemed for ${countLabel}`,
                     'success',
                     5000
                 );
@@ -1667,10 +1704,17 @@ class RightPanel {
         const splitShareUrl = this.getTicketCodeShareUrl(this.splitResult?.code);
         const splitShareUrlEscaped = splitShareUrl ? this.escapeHtml(splitShareUrl) : '';
         const splitShareUrlAttribute = splitShareUrl ? this.escapeHtmlAttribute(splitShareUrl) : '';
+        const invitationInputPlaceholder = this.selfHostedModeEnabled
+            ? 'Enter station token'
+            : 'Enter 24-char ticket code';
+        const invitationInputMaxLength = this.selfHostedModeEnabled ? '' : 'maxlength="24"';
+        const redeemLabel = this.selfHostedModeEnabled
+            ? (this.isRegistering ? 'Requesting tickets' : 'Request tickets')
+            : (this.isRegistering ? 'Redeeming ticket code' : 'Redeem ticket code');
 
         return `
                 <!-- Invitation Code Section -->
-                <div class="p-3">
+                <div class="p-3 border-b border-border/60">
                 <div class="flex items-center justify-between">
                     <div class="flex items-center gap-1.5">
                         <svg class="w-3.5 h-3.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1719,6 +1763,7 @@ class RightPanel {
                     >
                         <span>Export</span>
                     </button>
+                    ${this.selfHostedModeEnabled ? '' : `
                     <button
                         id="split-tickets-btn"
                         class="btn-ghost-hover inline-flex items-center justify-center gap-1 px-2 py-1 text-[10px] rounded-md border border-border bg-background transition-all duration-200 shadow-sm flex-1"
@@ -1727,6 +1772,7 @@ class RightPanel {
                     >
                         <span>Split</span>
                     </button>
+                    `}
                 </div>
 
                 ${this.showSplitControls ? `
@@ -1833,8 +1879,8 @@ class RightPanel {
                             <input
                                 id="invitation-code-input"
                                 type="text"
-                                placeholder="Enter 24-char ticket code"
-                                maxlength="24"
+                                placeholder="${invitationInputPlaceholder}"
+                                ${invitationInputMaxLength}
                                 class="flex-1 h-full px-3 text-xs bg-transparent text-foreground placeholder:text-muted-foreground/70 focus:outline-none"
                                 value="${this.pendingInvitationCode ? this.escapeHtml(this.pendingInvitationCode) : ''}"
                                 ${this.isRegistering ? 'disabled' : ''}
@@ -1842,7 +1888,7 @@ class RightPanel {
                             <button
                                 type="submit"
                                 class="flex-shrink-0 w-6 h-6 m-1 rounded-md border border-border bg-background text-muted-foreground hover:text-foreground hover:bg-accent transition-colors flex items-center justify-center disabled:opacity-50 disabled:pointer-events-none"
-                                aria-label="${this.isRegistering ? 'Redeeming ticket code' : 'Redeem ticket code'}"
+                                aria-label="${redeemLabel}"
                                 ${this.isRegistering ? 'disabled' : ''}
                             >
                                 <svg class="w-3 h-3" width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
@@ -1850,6 +1896,7 @@ class RightPanel {
                                 </svg>
                             </button>
                         </div>
+                        ${this.selfHostedModeEnabled ? '' : `
                         <a
                             href="https://openanonymity.ai/beta"
                             target="_blank"
@@ -1861,6 +1908,7 @@ class RightPanel {
                             </svg>
                             <span>Request invite code</span>
                         </a>
+                        `}
                     </form>
 
                     ${this.registrationProgress ? `
@@ -1976,12 +2024,14 @@ class RightPanel {
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
                             </svg>
                             <span class="text-xs font-medium">Ephemeral Access Key</span>
+                            ${this.selfHostedModeEnabled ? '' : `
                             <button
                                 id="verifier-attestation-btn"
                                 class="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-border text-[8px] text-muted-foreground hover:text-foreground hover:bg-accent hover:border-foreground/20 transition-all"
                                 title="Show verifier attestation"
                                 type="button"
                             >?</button>
+                            `}
                         </div>
                         <div class="flex items-center justify-between text-[10px] font-mono bg-muted/20 p-2 rounded-md border border-border break-all text-foreground">
                             ${(() => {
@@ -2037,12 +2087,14 @@ class RightPanel {
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
                             </svg>
                             <span class="text-xs font-medium">Ephemeral Access Key</span>
+                            ${this.selfHostedModeEnabled ? '' : `
                             <button
                                 id="verifier-attestation-btn"
                                 class="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-border text-[8px] text-muted-foreground hover:text-foreground hover:bg-accent hover:border-foreground/20 transition-all"
                                 title="Show verifier attestation"
                                 type="button"
                             >?</button>
+                            `}
                         </div>
                         <div class="flex items-center justify-between text-[10px] bg-muted/10 p-2 rounded-md border border-dashed border-border text-muted-foreground">
                             <span class="flex-1 min-w-0">Requested on message send</span>
@@ -2089,6 +2141,14 @@ class RightPanel {
     }
 
     getProxyStatusMeta(settings = this.proxySettings, status = this.proxyStatus) {
+        if (this.selfHostedModeEnabled) {
+            return {
+                label: 'Unavailable in self-hosted mode',
+                textClass: 'text-muted-foreground',
+                dotClass: 'bg-muted-foreground/40'
+            };
+        }
+
         if (status?.fallbackActive || status?.lastError) {
             return { label: 'Proxy Unavailable — try again or use your own VPN', textClass: 'text-amber-500 dark:text-amber-400', dotClass: 'bg-amber-500' };
         }
@@ -2115,9 +2175,15 @@ class RightPanel {
         const status = this.proxyStatus || networkProxy.getStatus();
         const statusMeta = this.getProxyStatusMeta(settings, status);
         const pending = this.proxyActionPending;
+        const lockedBySelfHostedMode = this.selfHostedModeEnabled;
+        const proxyEnabledForUi = !lockedBySelfHostedMode && !!settings.enabled;
         const tlsInfo = networkProxy.getTlsInfo();
         const hasTlsInfo = tlsInfo.version !== null;
-        const isEncrypted = settings.enabled && status.usingProxy;
+        const isEncrypted = proxyEnabledForUi && status.usingProxy;
+        const toggleDisabled = pending || lockedBySelfHostedMode;
+        const toggleTitle = lockedBySelfHostedMode
+            ? 'Proxy is unavailable in self-hosted station mode'
+            : (proxyEnabledForUi ? 'Disable relay' : 'Enable relay');
 
         return `<div class="p-3 space-y-2">
                 <!-- Header Row: Title + Toggle -->
@@ -2139,16 +2205,16 @@ class RightPanel {
                     </div>
                     <button
                         id="proxy-toggle-btn"
-                        class="switch-toggle ${settings.enabled ? 'switch-active' : 'switch-inactive'}"
-                        ${pending ? 'disabled' : ''}
-                        title="${settings.enabled ? 'Disable relay' : 'Enable relay'}"
+                        class="switch-toggle ${proxyEnabledForUi ? 'switch-active' : 'switch-inactive'}"
+                        ${toggleDisabled ? 'disabled' : ''}
+                        title="${toggleTitle}"
                     >
                         <span class="switch-toggle-indicator"></span>
                     </button>
                 </div>
 
                 <!-- Status Row -->
-                <div class="flex items-center justify-between text-[10px] ${!settings.enabled ? 'opacity-50' : ''}">
+                <div class="flex items-center justify-between text-[10px] ${(!proxyEnabledForUi || lockedBySelfHostedMode) ? 'opacity-50' : ''}">
                     <div class="flex items-center gap-1.5 min-w-0">
                         <span class="w-1.5 h-1.5 rounded-full shrink-0 ${statusMeta.dotClass}"></span>
                         <span class="${statusMeta.textClass} truncate" ${statusMeta.title ? `title="${this.escapeHtml(statusMeta.title)}"` : ''}>${this.escapeHtml(statusMeta.label)}</span>
@@ -2165,7 +2231,7 @@ class RightPanel {
                 </div>
 
                 <!-- Security Details Button -->
-                ${settings.enabled ? `
+                ${proxyEnabledForUi ? `
                     <button id="proxy-security-details-btn" class="btn-ghost-hover w-full flex items-center justify-center gap-1.5 px-2 py-1.5 text-[10px] font-medium rounded-md border border-border bg-background text-foreground transition-all duration-200 hover:shadow-sm">
                         <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
@@ -2180,6 +2246,10 @@ class RightPanel {
 
     async handleProxyToggle() {
         if (this.proxyActionPending) return;
+        if (this.selfHostedModeEnabled) {
+            this.app?.showToast?.('Network proxy is unavailable in self-hosted station mode.', 'error');
+            return;
+        }
 
         // Block toggle when there are active proxy requests (e.g., streaming response)
         if (networkProxy.hasActiveRequests()) {
@@ -2284,8 +2354,10 @@ class RightPanel {
                 const input = document.getElementById('invitation-code-input');
                 if (input) {
                     const rawValue = input.value.trim();
-                    const normalized = this.normalizeInvitationCode(rawValue);
-                    if (this.pendingInvitationCode !== null) {
+                    const normalized = this.selfHostedModeEnabled
+                        ? rawValue
+                        : this.normalizeInvitationCode(rawValue);
+                    if (this.pendingInvitationCode !== null && !this.selfHostedModeEnabled) {
                         this.pendingInvitationCode = normalized;
                         this.pendingInvitationTickets = this.getInvitationTicketCount(normalized);
                     }

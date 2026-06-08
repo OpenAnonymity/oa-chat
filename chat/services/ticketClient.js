@@ -32,6 +32,11 @@ import networkLogger from './networkLogger.js';
 import networkProxy from './networkProxy.js';
 import ticketStore from './ticketStore.js';
 import { ORG_API_BASE } from '../config.js';
+import { isSelfHostedStationModeEnabled } from './selfHostedModeCheck.js';
+
+const SELF_HOSTED_STATION_URL_STORAGE_KEY = 'oa-self-hosted-station-url';
+const SELF_HOSTED_STATION_STARTUP_TOKEN_STORAGE_KEY = 'oa-self-hosted-station-startup-token';
+const SELF_HOSTED_FIXED_TICKET_REQUEST_COUNT = 100;
 
 class TicketClient {
     constructor() {
@@ -74,6 +79,102 @@ class TicketClient {
 
     async importTickets(payload) {
         return this.ticketStore.importTickets(payload);
+    }
+
+    isSelfHostedStationModeEnabled() {
+        return isSelfHostedStationModeEnabled();
+    }
+
+    isOrgFeaturesDisabled() {
+        return this.isSelfHostedStationModeEnabled();
+    }
+
+    normalizeStationBaseUrl(rawValue) {
+        const trimmed = (rawValue || '').trim();
+        if (!trimmed) return '';
+
+        const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+
+        try {
+            const parsed = new URL(withScheme);
+            if (!/^https?:$/i.test(parsed.protocol)) {
+                return '';
+            }
+
+            const normalizedPath = parsed.pathname.replace(/\/+$/, '');
+            const pathname = normalizedPath && normalizedPath !== '/' ? normalizedPath : '';
+            return `${parsed.origin}${pathname}`;
+        } catch (error) {
+            return '';
+        }
+    }
+
+    getSelfHostedStationBaseUrl() {
+        if (typeof localStorage === 'undefined') return '';
+        try {
+            const rawValue = localStorage.getItem(SELF_HOSTED_STATION_URL_STORAGE_KEY);
+            return this.normalizeStationBaseUrl(rawValue);
+        } catch (error) {
+            return '';
+        }
+    }
+
+    getSelfHostedStationStartupToken() {
+        if (typeof localStorage === 'undefined') return '';
+        try {
+            const rawValue = localStorage.getItem(SELF_HOSTED_STATION_STARTUP_TOKEN_STORAGE_KEY);
+            return String(rawValue || '').trim();
+        } catch (error) {
+            return '';
+        }
+    }
+
+    buildApiUrl(baseUrl, endpointPath) {
+        const sanitizedBase = String(baseUrl || '').replace(/\/+$/, '');
+        const sanitizedPath = String(endpointPath || '').replace(/^\/+/, '');
+        if (!sanitizedBase || !sanitizedPath) return '';
+
+        const loweredPath = sanitizedPath.toLowerCase();
+        let dedupedPath = sanitizedPath;
+
+        if (/\/api\/v2$/i.test(sanitizedBase)) {
+            if (loweredPath.startsWith('api/v2/')) {
+                dedupedPath = sanitizedPath.slice('api/v2/'.length);
+            } else if (loweredPath.startsWith('api/')) {
+                dedupedPath = sanitizedPath.slice('api/'.length);
+            }
+        } else if (/\/api$/i.test(sanitizedBase) && loweredPath.startsWith('api/')) {
+            dedupedPath = sanitizedPath.slice('api/'.length);
+        }
+
+        return `${sanitizedBase}/${dedupedPath}`;
+    }
+
+    resolveTicketApiBaseUrl(operationLabel = 'request an API key') {
+        if (!this.isSelfHostedStationModeEnabled()) {
+            return ORG_API_BASE;
+        }
+
+        const stationBaseUrl = this.getSelfHostedStationBaseUrl();
+        if (!stationBaseUrl) {
+            throw new Error(
+                `Set a valid self-hosted station URL in Settings before trying to ${operationLabel}.`
+            );
+        }
+
+        return stationBaseUrl;
+    }
+
+    resolveSelfHostedTicketRequestConfig(startupToken, operationLabel = 'request tickets') {
+        const stationBaseUrl = this.resolveTicketApiBaseUrl(operationLabel);
+
+        if (!startupToken) {
+            throw new Error(
+                `Enter a station token to ${operationLabel}.`
+            );
+        }
+
+        return { stationBaseUrl, startupToken };
     }
 
     getRetryAfterSeconds(response, data) {
@@ -477,17 +578,35 @@ class TicketClient {
         const yieldToUI = () => new Promise(resolve => setTimeout(resolve, 0));
 
         try {
-            if (progressCallback) progressCallback('Validating ticket code...', 1);
-
-            if (!invitationCode || invitationCode.length !== 24) {
-                throw new Error('Invalid ticket code format (must be 24 characters)');
+            const selfHostedModeEnabled = this.isSelfHostedStationModeEnabled();
+            if (progressCallback) {
+                progressCallback(
+                    selfHostedModeEnabled ? 'Validating ticket request...' : 'Validating ticket code...',
+                    1
+                );
             }
+            const normalizedInput = String(invitationCode || '').trim();
 
-            const suffix = invitationCode.slice(20, 24);
-            const ticketCount = parseInt(suffix, 16);
+            let ticketCount = 0;
+            let selfHostedTicketRequestConfig = null;
 
-            if (isNaN(ticketCount) || ticketCount === 0) {
-                throw new Error('Invalid ticket code: unable to determine ticket count');
+            if (selfHostedModeEnabled) {
+                if (!normalizedInput) {
+                    throw new Error('Enter a station token to request tickets.');
+                }
+                ticketCount = SELF_HOSTED_FIXED_TICKET_REQUEST_COUNT;
+                selfHostedTicketRequestConfig = this.resolveSelfHostedTicketRequestConfig(normalizedInput, 'request tickets');
+            } else {
+                if (!normalizedInput || normalizedInput.length !== 24) {
+                    throw new Error('Invalid ticket code format (must be 24 characters)');
+                }
+
+                const suffix = normalizedInput.slice(20, 24);
+                ticketCount = parseInt(suffix, 16);
+
+                if (isNaN(ticketCount) || ticketCount === 0) {
+                    throw new Error('Invalid ticket code: unable to determine ticket count');
+                }
             }
 
             if (progressCallback) progressCallback('Initializing Privacy Pass...', 2);
@@ -510,10 +629,20 @@ class TicketClient {
             // detection. Future: automated transparency log for key consistency.
             let publicKey;
             try {
+                const publicKeyUrl = selfHostedModeEnabled
+                    ? this.buildApiUrl(selfHostedTicketRequestConfig.stationBaseUrl, 'api/tickets/issue/public-key')
+                    : `${ORG_API_BASE}/api/ticket/issue/public-key`;
+                const requestHeaders = selfHostedModeEnabled
+                    ? { 'Authorization': `Bearer ${selfHostedTicketRequestConfig.startupToken}` }
+                    : {};
                 const { data: keyData } = await networkProxy.fetchWithRetryJson(
-                    `${ORG_API_BASE}/api/ticket/issue/public-key`,
-                    {},
-                    { context: 'Public key', maxAttempts: 3, timeoutMs: 10000 }
+                    publicKeyUrl,
+                    { headers: requestHeaders },
+                    {
+                        context: selfHostedModeEnabled ? 'Self-hosted ticket public key' : 'Public key',
+                        maxAttempts: 3,
+                        timeoutMs: 10000
+                    }
                 );
                 publicKey = keyData.public_key;
 
@@ -570,11 +699,27 @@ class TicketClient {
             // (unblinded) tickets for the first time -- cryptographically unlinkable to
             // these blinded requests. Even with complete records, the org cannot correlate
             // issuance to redemption. This is the core guarantee of blind signatures.
-            const registerUrl = `${ORG_API_BASE}/api/alpha-register`;
-            const registerBody = {
-                credential: invitationCode,
-                blinded_requests: indexedBlindedRequests
-            };
+            const registerUrl = selfHostedModeEnabled
+                ? this.buildApiUrl(selfHostedTicketRequestConfig.stationBaseUrl, 'api/tickets/ticket_request')
+                : `${ORG_API_BASE}/api/alpha-register`;
+            const registerHeaders = selfHostedModeEnabled
+                ? {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${selfHostedTicketRequestConfig.startupToken}`
+                }
+                : { 'Content-Type': 'application/json' };
+            const registerBody = selfHostedModeEnabled
+                ? {
+                    ticket_request: 'ticket_request',
+                    blinded_requests: indexedBlindedRequests
+                }
+                : {
+                    credential: normalizedInput,
+                    blinded_requests: indexedBlindedRequests
+                };
+            const registerRequestSummary = selfHostedModeEnabled
+                ? { ticket_request: '***', blinded_requests: `${indexedBlindedRequests.length} tickets` }
+                : { credential: '***', blinded_requests: `${indexedBlindedRequests.length} tickets` };
 
             let signData;
             try {
@@ -582,11 +727,11 @@ class TicketClient {
                     registerUrl,
                     {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: registerHeaders,
                         body: JSON.stringify(registerBody)
                     },
                     {
-                        context: 'Alpha register',
+                        context: selfHostedModeEnabled ? 'Self-hosted ticket request' : 'Alpha register',
                         maxAttempts: 1,  // No retry - blinded tickets consumed on success
                         timeoutMs: Math.max(120000, ticketCount * 50)
                     }
@@ -601,8 +746,8 @@ class TicketClient {
                     url: registerUrl,
                     status: signResponse.status,
                     request: {
-                        headers: { 'Content-Type': 'application/json' },
-                        body: { credential: '***', blinded_requests: `${indexedBlindedRequests.length} tickets` }
+                        headers: networkLogger.sanitizeHeaders(registerHeaders),
+                        body: registerRequestSummary
                     },
                     response: signData
                 });
@@ -618,8 +763,8 @@ class TicketClient {
                     url: registerUrl,
                     status: 0,
                     request: {
-                        headers: { 'Content-Type': 'application/json' },
-                        body: { credential: '***', blinded_requests: `${indexedBlindedRequests.length} tickets` }
+                        headers: networkLogger.sanitizeHeaders(registerHeaders),
+                        body: registerRequestSummary
                     },
                     error: error.message
                 });
@@ -701,12 +846,14 @@ class TicketClient {
 
             await this.ticketStore.addTickets(tickets);
 
-            if (progressCallback) progressCallback('Code redeemed!', 100);
+            if (progressCallback) {
+                progressCallback(selfHostedModeEnabled ? 'Tickets issued!' : 'Code redeemed!', 100);
+            }
 
             return {
                 success: true,
                 tickets_issued: tickets.length,
-                credential: invitationCode,
+                credential: normalizedInput,
                 expires_at: signData.expires_at,
             };
 
@@ -897,12 +1044,16 @@ class TicketClient {
                         ? `InferenceTicket token=${tokenValues}`
                         : `InferenceTicket tokens=${tokenValues}`;
 
-                    const requestKeyUrl = `${ORG_API_BASE}/api/request_key`;
+                    const selfHostedModeEnabled = this.isSelfHostedStationModeEnabled();
+                    const apiBaseUrl = this.resolveTicketApiBaseUrl('request an API key');
+                    const requestKeyUrl = this.buildApiUrl(apiBaseUrl, 'api/request_key');
                     const requestHeaders = {
                         'Authorization': authHeader,
                     };
 
-                    console.log(`🔑 Requesting API key from org (${tickets.length} ticket${tickets.length > 1 ? 's' : ''})...`);
+                    console.log(
+                        `🔑 Requesting API key from ${selfHostedModeEnabled ? 'self-hosted station' : 'org'} (${tickets.length} ticket${tickets.length > 1 ? 's' : ''})...`
+                    );
 
                     let response;
                     let data;
@@ -915,7 +1066,7 @@ class TicketClient {
                                 headers: requestHeaders,
                             },
                             {
-                                context: 'Org API key',
+                                context: selfHostedModeEnabled ? 'Self-hosted station API key' : 'Org API key',
                                 maxAttempts: 3,    // Retry transient failures (network/5xx/429)
                                 timeoutMs: 30000   // 30s timeout - org has internal station timeout
                             }
@@ -962,10 +1113,17 @@ class TicketClient {
 
                     const missingFields = [];
                     if (!data?.key) missingFields.push('key');
-                    if (!data?.station_id) missingFields.push('station_id');
-                    if (!data?.station_signature) missingFields.push('station_signature');
-                    if (!data?.org_signature) missingFields.push('org_signature');
-                    if (!data?.expires_at_unix) missingFields.push('expires_at_unix');
+                    const expiresAtUnixRaw = data?.expires_at_unix ?? data?.expiresAtUnix;
+                    const expiresAtRaw = data?.expires_at ?? data?.expiresAt;
+                    const hasExpiryUnix = Number.isFinite(Number(expiresAtUnixRaw)) && Number(expiresAtUnixRaw) > 0;
+                    const hasExpiryText = typeof expiresAtRaw === 'string' && expiresAtRaw.trim().length > 0;
+                    if (!hasExpiryUnix && !hasExpiryText) missingFields.push('expires_at_unix');
+
+                    if (!selfHostedModeEnabled) {
+                        if (!data?.station_id) missingFields.push('station_id');
+                        if (!data?.station_signature) missingFields.push('station_signature');
+                        if (!data?.org_signature) missingFields.push('org_signature');
+                    }
 
                     if (missingFields.length > 0) {
                         const responseMessage = `${data?.detail || data?.error || data?.message || ''}`;
@@ -987,6 +1145,16 @@ class TicketClient {
             );
 
             const { data } = result;
+            const selfHostedModeEnabled = this.isSelfHostedStationModeEnabled();
+            const expiresAtUnixRaw = data?.expires_at_unix ?? data?.expiresAtUnix;
+            const expiresAtUnix = Number.isFinite(Number(expiresAtUnixRaw)) ? Number(expiresAtUnixRaw) : null;
+            const expiresAtFromPayload = typeof (data?.expires_at ?? data?.expiresAt) === 'string'
+                ? (data?.expires_at ?? data?.expiresAt)
+                : null;
+            const expiresAt = expiresAtFromPayload || (expiresAtUnix ? new Date(expiresAtUnix * 1000).toISOString() : null);
+            const stationId = data?.station_id || data?.stationId || data?.station_name || null;
+            const stationUrl = data?.station_url || data?.stationUrl ||
+                (selfHostedModeEnabled ? this.getSelfHostedStationBaseUrl() : null);
 
             return {
                 key: data.key,
@@ -994,13 +1162,13 @@ class TicketClient {
                 ticketsConsumed: data.tickets_consumed || tickets.length,
                 creditLimit: data.credit_limit,
                 durationMinutes: data.duration_minutes,
-                expiresAt: data.expires_at,
-                expiresAtUnix: data.expires_at_unix,
-                stationId: data.station_id,
-                stationUrl: data.station_url,
+                expiresAt,
+                expiresAtUnix,
+                stationId,
+                stationUrl,
                 recentlyAttested: data.station_recently_attested || false,
-                stationSignature: data.station_signature,
-                orgSignature: data.org_signature,
+                stationSignature: data.station_signature || null,
+                orgSignature: data.org_signature || null,
                 ticketsUsed: tickets.map(t => ({
                     blindedRequest: t.blinded_request,
                     signedResponse: t.signed_response,
@@ -1019,6 +1187,10 @@ class TicketClient {
      * @returns {Promise<Object>} API key data
      */
     async requestConfidentialApiKey(ticketCount = 1) {
+        if (this.isSelfHostedStationModeEnabled()) {
+            throw new Error('Confidential API key is unavailable in self-hosted station mode.');
+        }
+
         try {
             const { tickets, result } = await this.ticketStore.consumeTickets(
                 ticketCount,

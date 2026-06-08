@@ -109,6 +109,7 @@ export default class Sidebar {
         const isActive = session.id === this.app.state.currentSessionId;
         const titleClass = session.title === 'New Chat' ? 'italic text-muted-foreground' : '';
         const isShared = !!session.shareInfo?.shareId;
+        const sharingDisabled = !!this.app?.isOrgFeaturesDisabled?.();
         // Show imported indicator for pure imports and forked imports (not local forks)
         // forkedFrom alone (without importedMessageCount) indicates a LOCAL fork, not an import
         const isImported = !!(session.importedFrom || session.importedSource ||
@@ -151,8 +152,8 @@ export default class Sidebar {
                     <div class="session-menu hidden absolute right-0 top-10 z-[100] rounded-lg border border-border bg-popover shadow-lg p-1 min-w-[140px]" data-session-id="${session.id}">
                         <button class="rename-session-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">Rename</button>
                         <button class="copy-link-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">Copy Link</button>
-                        <button class="share-session-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">${shareLabel}</button>
-                        ${isShared ? `<button class="delete-share-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">Delete Share</button>` : ''}
+                        ${sharingDisabled ? '' : `<button class="share-session-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">${shareLabel}</button>`}
+                        ${!sharingDisabled && isShared ? `<button class="delete-share-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">Delete Share</button>` : ''}
                         <button class="export-pdf-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">Export as PDF</button>
                         <button class="delete-session-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">Delete</button>
                     </div>
@@ -193,6 +194,11 @@ export default class Sidebar {
             const shareAction = e.target.closest('.share-session-action');
             if (shareAction) {
                 e.stopPropagation();
+                if (this.app?.isOrgFeaturesDisabled?.()) {
+                    this.app.showToast?.('Sharing is unavailable in self-hosted station mode.', 'error');
+                    this.closeAllMenus();
+                    return;
+                }
                 const sessionId = shareAction.dataset.sessionId;
                 this.closeAllMenus();
                 if (sessionId !== this.app.state.currentSessionId) {
@@ -217,6 +223,11 @@ export default class Sidebar {
             const deleteShareAction = e.target.closest('.delete-share-action');
             if (deleteShareAction) {
                 e.stopPropagation();
+                if (this.app?.isOrgFeaturesDisabled?.()) {
+                    this.app.showToast?.('Sharing is unavailable in self-hosted station mode.', 'error');
+                    this.closeAllMenus();
+                    return;
+                }
                 const sessionId = deleteShareAction.dataset.sessionId;
                 this.closeAllMenus();
                 if (sessionId !== this.app.state.currentSessionId) {

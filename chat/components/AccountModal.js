@@ -65,13 +65,26 @@ class AccountModal {
     attachTabListener() {
         const tabBtn = document.getElementById('account-tab-btn');
         if (tabBtn) {
-            tabBtn.onclick = () => this.isOpen ? this.close() : this.open();
+            tabBtn.onclick = () => {
+                if (this.app?.isOrgFeaturesDisabled?.()) {
+                    this.app?.showToast?.('Account and sync are unavailable in self-hosted station mode.', 'error');
+                    return;
+                }
+                this.isOpen ? this.close() : this.open();
+            };
         }
     }
 
     updateTabIndicator() {
         const tabBtn = document.getElementById('account-tab-btn');
         if (!tabBtn) return;
+        const orgFeaturesDisabled = !!this.app?.isOrgFeaturesDisabled?.();
+        tabBtn.classList.toggle('hidden', orgFeaturesDisabled);
+        if (orgFeaturesDisabled) {
+            tabBtn.dataset.status = 'none';
+            tabBtn.title = 'Account unavailable in self-hosted station mode';
+            return;
+        }
         // Only show logged-in (green) after session is verified with server
         const isLoggedIn = this.accountState?.accountId && this.accountState?.sessionVerified;
         tabBtn.dataset.status = isLoggedIn ? 'logged-in' : 'none';
@@ -79,6 +92,10 @@ class AccountModal {
     }
 
     open() {
+        if (this.app?.isOrgFeaturesDisabled?.()) {
+            this.app?.showToast?.('Account and sync are unavailable in self-hosted station mode.', 'error');
+            return;
+        }
         if (this.isOpen || !this.overlay) return;
         this.isOpen = true;
         this.returnFocusEl = document.activeElement;

@@ -2,6 +2,7 @@ import { PROXY_URL } from '../config.js';
 import transportHints from './inference/transportHints.js';
 import preferencesStore, { PREF_KEYS } from './preferencesStore.js';
 import { fetchRetry, fetchRetryJson } from './fetchRetry.js';
+import { isSelfHostedStationModeEnabled } from './selfHostedModeCheck.js';
 
 const DEFAULT_SETTINGS = {
     enabled: true,
@@ -97,8 +98,10 @@ class NetworkProxy {
     }
 
     normalizeSettings(rawSettings = {}) {
+        const requestedEnabled = rawSettings.enabled !== undefined ? !!rawSettings.enabled : DEFAULT_SETTINGS.enabled;
+        const enabled = isSelfHostedStationModeEnabled() ? false : requestedEnabled;
         return {
-            enabled: rawSettings.enabled !== undefined ? !!rawSettings.enabled : DEFAULT_SETTINGS.enabled,
+            enabled,
             url: PROXY_URL, // Always use hardcoded URL
             fallbackToDirect: rawSettings.fallbackToDirect !== false
         };
@@ -136,6 +139,27 @@ class NetworkProxy {
 
     hasActiveRequests() {
         return this.activeRequestCount > 0;
+    }
+
+    markProxyInactiveState() {
+        this.state.activeProxyUrl = null;
+        this.state.usingProxy = false;
+        this.state.connectionVerified = false;
+        this.state.ready = false;
+    }
+
+    closeProxySessionIfIdle() {
+        if (this.state.settings.enabled || this.activeRequestCount > 0) {
+            return false;
+        }
+
+        if (this.httpSession) {
+            this.httpSession.close();
+            this.httpSession = null;
+        }
+
+        this.markProxyInactiveState();
+        return true;
     }
 
     // === TLS Inspection Methods ===
@@ -424,6 +448,7 @@ class NetworkProxy {
 
         try {
             const wasEnabled = this.state.settings.enabled;
+            const allowDisableDuringActiveRequests = options.allowDisableDuringActiveRequests === true;
             this.state.settings = this.normalizeSettings({ ...this.state.settings, ...partial });
 
             if (!options.skipPersist) {
@@ -438,18 +463,16 @@ class NetworkProxy {
                 });
             } else {
                 // Proxy disabled - close session
-                // GUARD: Cannot close session while requests are in-flight
-                if (this.activeRequestCount > 0) {
+                // GUARD: Cannot close session while requests are in-flight unless explicitly allowed
+                if (this.activeRequestCount > 0 && !allowDisableDuringActiveRequests) {
                     throw new Error('Cannot disable proxy while requests are in progress');
                 }
-                if (this.httpSession) {
-                    this.httpSession.close();
-                    this.httpSession = null;
+
+                this.markProxyInactiveState();
+
+                if (this.activeRequestCount === 0) {
+                    this.closeProxySessionIfIdle();
                 }
-                this.state.activeProxyUrl = null;
-                this.state.usingProxy = false;
-                this.state.connectionVerified = false;
-                this.state.ready = false;
             }
 
             if (!options.silent) {
@@ -592,6 +615,7 @@ class NetworkProxy {
         // If no body (e.g., HEAD request, 204), decrement immediately
         if (!response.body) {
             this.activeRequestCount = Math.max(0, this.activeRequestCount - 1);
+            this.closeProxySessionIfIdle();
             this.emitChange();
             return response;
         }
@@ -604,6 +628,7 @@ class NetworkProxy {
             if (!decremented) {
                 decremented = true;
                 self.activeRequestCount = Math.max(0, self.activeRequestCount - 1);
+                self.closeProxySessionIfIdle();
                 self.emitChange();
             }
         };
@@ -639,7 +664,18 @@ class NetworkProxy {
     }
 
     async fetch(resource, init = {}, config = {}) {
-        const preferProxy = config.bypassProxy ? false : this.state.settings.enabled;
+        const selfHostedModeEnabled = isSelfHostedStationModeEnabled();
+        if (selfHostedModeEnabled && this.state.settings.enabled) {
+            this.state.settings.enabled = false;
+            this.markProxyInactiveState();
+            this.closeProxySessionIfIdle();
+            void this.saveSettings(this.state.settings).catch((error) => {
+                console.warn('[networkProxy] Failed to persist self-hosted proxy disable:', error);
+            });
+            this.emitChange();
+        }
+
+        const preferProxy = config.bypassProxy ? false : (this.state.settings.enabled && !selfHostedModeEnabled);
         const forceProxy = !!config.forceProxy;
 
         const url = typeof resource === 'string' ? resource : resource.url;
@@ -723,6 +759,7 @@ class NetworkProxy {
             this.state.settings.enabled = false;
             this.state.fallbackActive = true;
             await this.saveSettings(this.state.settings);
+            this.closeProxySessionIfIdle();
 
             // Emit change to update UI to show failure status
             this.emitChange();

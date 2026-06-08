@@ -104,6 +104,7 @@
         (function () {
             try {
                 const dismissed = localStorage.getItem('oa-welcome-dismissed') === 'true';
+                const selfHostedMode = localStorage.getItem('oa-self-hosted-station-enabled') === 'true';
                 const hasTickets = (() => {
                     try {
                         const tickets = localStorage.getItem('inference_tickets');
@@ -111,7 +112,7 @@
                     } catch { return false; }
                 })();
 
-                if (dismissed || hasTickets) {
+                if (dismissed || hasTickets || selfHostedMode) {
                     document.documentElement.setAttribute('data-welcome-hidden', 'true');
                 }
             } catch (error) {
@@ -517,6 +518,41 @@
                                                         <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"></path>
                                                     </svg>
                                                 </a>
+
+                                                <!-- Station Section -->
+                                                <div id="station-mode-settings-section" class="mt-2 border-t border-border pt-2">
+                                                    <p class="px-3 pb-1 text-xs font-light tracking-wide text-muted-foreground">Station</p>
+                                                    <div class="px-3 py-1 flex items-center gap-2">
+                                                        <button
+                                                            id="settings-station-mode-network-btn"
+                                                            class="flex-1 px-2 py-1 text-[11px] text-popover-foreground hover-highlight rounded transition-colors border border-border text-center"
+                                                            type="button"
+                                                        >OA</button>
+                                                        <button
+                                                            id="settings-station-mode-selfhosted-btn"
+                                                            class="flex-1 px-2 py-1 text-[11px] text-popover-foreground hover-highlight rounded transition-colors border border-border text-center"
+                                                            type="button"
+                                                        >Self-hosted</button>
+                                                    </div>
+                                                    <div id="settings-self-hosted-config" class="hidden">
+                                                        <div class="px-3 py-1 flex items-center gap-2">
+                                                            <span class="text-xs text-muted-foreground w-12 shrink-0">URL</span>
+                                                            <input
+                                                                id="settings-self-hosted-station-url-input"
+                                                                type="text"
+                                                                placeholder="https://your-station.example"
+                                                                class="input-focus-clean flex-1 h-7 px-2 text-[11px] border border-border rounded bg-background text-foreground"
+                                                                autocapitalize="off"
+                                                                spellcheck="false"
+                                                                autocomplete="off"
+                                                            />
+                                                        </div>
+                                                        <p class="px-3 py-1 text-[10px] text-muted-foreground/70 leading-relaxed">
+                                                            Share, sync, proxy, and confidential key are disabled.
+                                                        </p>
+                                                    </div>
+                                                    <p id="settings-self-hosted-mode-error" class="hidden px-3 py-0.5 text-[10px] text-destructive"></p>
+                                                </div>
 
                                                 <!-- Data Controls Section (modular - can be moved elsewhere) -->
                                                 <div id="data-management-section" class="mt-2 border-t border-border pt-2">
