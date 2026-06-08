@@ -45,6 +45,7 @@ export default class ChatArea {
             messageId: '',
             activeKey: '',
             selectionRect: null,
+            windowAnchor: null,
             abortController: null,
             activeRequestId: 0,
             requestInFlight: false
@@ -333,7 +334,10 @@ export default class ChatArea {
         });
 
         window.addEventListener('resize', () => this.hideQuickAskPopover());
-        this.app.elements.chatArea?.addEventListener('scroll', () => this.hideQuickAskPopover(), { passive: true });
+        this.app.elements.chatArea?.addEventListener('scroll', () => {
+            this.hideQuickAskPopover();
+            this.syncQuickAskWindowToScroll();
+        }, { passive: true });
     }
 
     getAssistantSelectionData() {
@@ -395,6 +399,7 @@ export default class ChatArea {
         popover.classList.remove('hidden');
         popover.setAttribute('aria-hidden', 'false');
         this.positionQuickAskPopover(popover, selectionData.rect);
+        this.updateQuickAskLayerState();
     }
 
     ensureQuickAskPopover() {
@@ -446,6 +451,7 @@ export default class ChatArea {
         if (!popover) return;
         popover.classList.add('hidden');
         popover.setAttribute('aria-hidden', 'true');
+        this.updateQuickAskLayerState();
     }
 
     getQuickAskKey(selectedText = this.quickAsk.selectedText, messageId = this.quickAsk.messageId) {
@@ -465,6 +471,7 @@ export default class ChatArea {
             panel.classList.remove('hidden');
             panel.setAttribute('aria-hidden', 'false');
             this.positionQuickAskWindow(panel, this.quickAsk.selectionRect);
+            this.updateQuickAskLayerState();
             return;
         }
 
@@ -477,6 +484,7 @@ export default class ChatArea {
 
         panel.classList.remove('hidden');
         panel.setAttribute('aria-hidden', 'false');
+        this.updateQuickAskLayerState();
         panel.querySelector('.quick-ask-user-bubble').textContent = this.quickAsk.question;
         panel.querySelector('.quick-ask-status').textContent = '';
         this.updateQuickAskReasoning('');
@@ -489,8 +497,8 @@ export default class ChatArea {
     ensureQuickAskWindow() {
         if (this.quickAsk.window) {
             if (!this.quickAsk.window.isConnected ||
-                this.quickAsk.window.parentElement !== this.app.elements.messagesContainer) {
-                this.app.elements.messagesContainer.appendChild(this.quickAsk.window);
+                this.quickAsk.window.parentElement !== document.body) {
+                document.body.appendChild(this.quickAsk.window);
             }
             return this.quickAsk.window;
         }
@@ -521,16 +529,42 @@ export default class ChatArea {
             e.preventDefault();
             this.handleCopyCodeBlock(codeBlockCopyBtn);
         });
-        this.app.elements.messagesContainer.appendChild(panel);
+        document.body.appendChild(panel);
         this.quickAsk.window = panel;
         return panel;
     }
 
-    positionQuickAskWindow(panel, rect) {
+    syncQuickAskWindowToScroll() {
+        if (!this.quickAsk.window ||
+            this.quickAsk.window.classList.contains('hidden') ||
+            !this.quickAsk.windowAnchor) return;
+        this.positionQuickAskWindow(this.quickAsk.window, null, { preserveAnchor: true });
+    }
+
+    positionQuickAskWindow(panel, rect, options = {}) {
         const margin = 16;
+        const chatArea = this.app.elements.chatArea;
+        const scrollTop = chatArea?.scrollTop || 0;
+        const scrollLeft = chatArea?.scrollLeft || 0;
+        const chatAreaRect = chatArea?.getBoundingClientRect();
         const panelRect = panel.getBoundingClientRect();
         const width = panelRect.width || Math.min(520, window.innerWidth - (margin * 2));
         const height = panelRect.height || 360;
+
+        if (options.preserveAnchor && this.quickAsk.windowAnchor) {
+            const anchoredLeft = (chatAreaRect?.left || 0) + this.quickAsk.windowAnchor.left - scrollLeft;
+            const anchoredTop = (chatAreaRect?.top || 0) + this.quickAsk.windowAnchor.top - scrollTop;
+            const isInChatViewport = !chatAreaRect ||
+                (anchoredTop + height > chatAreaRect.top && anchoredTop < chatAreaRect.bottom);
+
+            Object.assign(panel.style, {
+                left: `${anchoredLeft}px`,
+                top: `${anchoredTop}px`,
+                visibility: isInChatViewport ? '' : 'hidden'
+            });
+            return;
+        }
+
         const sourceRect = rect || {
             left: window.innerWidth / 2,
             right: window.innerWidth / 2,
@@ -549,12 +583,17 @@ export default class ChatArea {
         const top = belowTop + height <= window.innerHeight - margin
             ? belowTop
             : Math.max(margin, aboveTop);
-        const containerRect = this.app.elements.messagesContainer.getBoundingClientRect();
+        const clampedTop = Math.min(Math.max(margin, top), window.innerHeight - height - margin);
 
         Object.assign(panel.style, {
-            left: `${left - containerRect.left}px`,
-            top: `${Math.min(Math.max(margin, top), window.innerHeight - height - margin) - containerRect.top}px`
+            left: `${left}px`,
+            top: `${clampedTop}px`,
+            visibility: ''
         });
+        this.quickAsk.windowAnchor = {
+            left: left - (chatAreaRect?.left || 0) + scrollLeft,
+            top: clampedTop - (chatAreaRect?.top || 0) + scrollTop
+        };
     }
 
     async startQuickAskRequest(requestId) {
@@ -733,6 +772,7 @@ export default class ChatArea {
         if (this.quickAsk.window) {
             this.quickAsk.window.classList.add('hidden');
             this.quickAsk.window.setAttribute('aria-hidden', 'true');
+            this.updateQuickAskLayerState();
         }
         if (reset) {
             this.quickAsk.selectedText = '';
@@ -740,7 +780,14 @@ export default class ChatArea {
             this.quickAsk.messageId = '';
             this.quickAsk.activeKey = '';
             this.quickAsk.selectionRect = null;
+            this.quickAsk.windowAnchor = null;
         }
+    }
+
+    updateQuickAskLayerState() {
+        const popoverVisible = this.quickAsk.popover && !this.quickAsk.popover.classList.contains('hidden');
+        const windowVisible = this.quickAsk.window && !this.quickAsk.window.classList.contains('hidden');
+        document.body.classList.toggle('quick-ask-layer-active', Boolean(popoverVisible || windowVisible));
     }
 
     getQuickAskActiveSessionId() {
@@ -770,8 +817,8 @@ export default class ChatArea {
         if (!this.shouldPreserveQuickAskWindowForRender(sessionId)) return;
 
         if (!panel.isConnected ||
-            panel.parentElement !== this.app.elements.messagesContainer) {
-            this.app.elements.messagesContainer.appendChild(panel);
+            panel.parentElement !== document.body) {
+            document.body.appendChild(panel);
         }
     }
 

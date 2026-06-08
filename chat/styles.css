@@ -696,7 +696,7 @@ html.switching-theme *::after {
 
 .quick-ask-popover {
     position: fixed;
-    z-index: 1200;
+    z-index: 45;
     pointer-events: auto;
 }
 
@@ -733,8 +733,8 @@ html.switching-theme *::after {
 }
 
 .quick-ask-window {
-    position: absolute;
-    z-index: 1190;
+    position: fixed;
+    z-index: 45;
     width: min(520px, calc(100vw - 32px));
     max-height: min(520px, calc(100vh - 32px));
     display: flex;
@@ -745,6 +745,13 @@ html.switching-theme *::after {
     background: hsl(var(--color-popover));
     color: hsl(var(--color-popover-foreground));
     box-shadow: 0 14px 34px rgb(0 0 0 / 0.18);
+}
+
+body.quick-ask-layer-active .absolute.bottom-0.left-0.right-0,
+body.quick-ask-layer-active #input-card,
+body.quick-ask-layer-active div:has(> #input-card.scrubber-preview-expanded),
+body.quick-ask-layer-active #input-card.scrubber-preview-expanded {
+    z-index: 40 !important;
 }
 
 .quick-ask-mini-chat {

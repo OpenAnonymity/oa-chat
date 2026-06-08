@@ -32,12 +32,16 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     quick-ask window, scrubber-restored assistant responses, and collapsed
     selections are ignored.
   - Clicking `Ask` opens a small force-touch-style panel near the selection
-    inside the scrolling message container, with a single unsaved user turn,
+    as a body-level fixed overlay with a saved chat-scroll anchor, with a single unsaved user turn,
     `Briefly explain "<selection>" in context.`, and a streamed assistant
-    answer. The panel is positioned in message content
-    coordinates, not viewport-fixed coordinates, so it scrolls with the response
-    instead of staying pinned to the screen. Clicking elsewhere in the chat UI
-    hides the panel without aborting the in-flight answer.
+    answer. The panel is portaled out of the message container so it paints
+    above the composer and message chrome while staying below modal layers, but
+    `ChatArea` updates its saved anchor on chat scroll so it still moves with
+    the selected response instead of staying pinned to the screen. Clicking
+    elsewhere in the chat UI hides the panel without aborting the in-flight
+    answer. While the popover or panel is visible, `body.quick-ask-layer-active`
+    lowers the composer-specific z-indexes below the quick-ask layer; keep quick
+    ask below modal `z-50` surfaces.
   - The panel intentionally has no title/selected-term header; the selected text
     is already represented by the generated user question. Keep the panel shadow
     restrained and reuse the main `.message-user` bubble styling for the quick

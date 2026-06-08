@@ -134,6 +134,7 @@ test('inline quick ask preserves scrubber and session lifecycle constraints', ()
     const apiSource = read('chat/api.js');
     const chatAreaSource = read('chat/components/ChatArea.js');
     const templatesSource = read('chat/components/MessageTemplates.js');
+    const stylesSource = read('chat/styles.css');
 
     assert.ok(
         templatesSource.includes('data-scrubber-restored="true"'),
@@ -203,6 +204,18 @@ test('inline quick ask preserves scrubber and session lifecycle constraints', ()
         chatAreaSource.includes('detachQuickAskWindowForRender') &&
         chatAreaSource.includes('restoreQuickAskWindowAfterRender'),
         'same-session renders should preserve and reconnect quick ask windows during no-key acquisition'
+    );
+    assert.ok(
+        chatAreaSource.includes('document.body.appendChild(this.quickAsk.window)') &&
+        chatAreaSource.includes('document.body.appendChild(panel)') &&
+        chatAreaSource.includes('windowAnchor') &&
+        chatAreaSource.includes('syncQuickAskWindowToScroll') &&
+        chatAreaSource.includes('preserveAnchor') &&
+        chatAreaSource.includes('quick-ask-layer-active') &&
+        /\.quick-ask-window\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?z-index:\s*45;/.test(stylesSource) &&
+        /\.quick-ask-popover\s*\{[\s\S]*?z-index:\s*45;/.test(stylesSource) &&
+        /body\.quick-ask-layer-active #input-card[\s\S]*?z-index:\s*40 !important;/.test(stylesSource),
+        'quick ask window should portal above chat chrome but below app modals while preserving a scroll anchor'
     );
 
     const sendMessageMatch = appSource.match(/async sendMessage\(\) \{[\s\S]*?const abortController = new AbortController\(\);/);
