@@ -29,25 +29,30 @@ export function buildCouncilSynthesisPrompt(options = {}) {
         ? `\nRelevant conversation context:\n${conversationContext}\n`
         : '';
 
-    return `You are synthesizing a final answer from an LLM council.
+    return `You are an independent reviewer comparing two anonymous draft answers to the same user request.
 
-The council has already produced anonymous draft responses to the user's request. Your job is to write one final answer for the user.
+The user asked a question, and one or two anonymous models produced available draft answers. Read Response A and Response B fairly, critically, concisely, and with attention to evidence.
+
+Identify what each response gets right, what each misses, and where either response is unsupported or incorrect. Then give a clear final answer to the user's original request.
 
 Rules:
-- Do not mention model names, providers, or hidden identities.
-- Treat the drafts as anonymous source material, not as items to compare.
-- Combine the strongest correct points from the drafts.
-- Correct mistakes, unsupported claims, or missing nuance when you can.
-- If the drafts disagree, resolve the disagreement using the user's request and the evidence in the drafts.
-- If the answer is uncertain, state the uncertainty plainly.
-- Write only the final answer the user should read.
+- Refer only to Response A and Response B.
+- Do not mention model names, provider names, or hidden identities, even if a draft includes them.
+- Be specific. Do not praise both responses generically.
+- If one response is clearly stronger, say so and explain why.
+- If both are incomplete, synthesize the best answer and state the missing caveats.
+- If only one response is available, review it as a partial comparison and clearly state that the other response was unavailable.
+- Do not assign scores, grades, or ranked lists.
+- Do not use chatty phrasing like "for you" or "what you should actually use."
+- Do not end with a generic follow-up offer unless the user's request explicitly asks for one.
+- Keep the review concise and useful.
 
 Original user request:
 ${userQuery || '[No user request provided]'}${contextSection}
 Anonymous draft responses:
 ${responseBlocks || '[No draft responses provided]'}
 
-Final Council Answer:`.trim();
+Write the review and final answer now:`.trim();
 }
 
 export function buildCouncilSynthesisMessages(options = {}) {

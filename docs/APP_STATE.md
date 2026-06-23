@@ -197,27 +197,30 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     default, keeps output to Stage 1 only: two model responses, no
     synthesis/chairman request. Council is no longer a visible composer mode;
     the settings menu has a `Parallel` section with a `Council review` switch.
-    Turning that switch on writes
-    `outputMode: 'council'`, reveals the Council model picker inside settings,
-    and enables the existing synthesis pass below the two first responses. The
-    primary picker uses `⌘K`, the secondary picker uses `⌘J`, and the Council
-    picker uses `⌘L` only when Council review is enabled or the settings menu is
-    open. All three open the same centered searchable model picker modal;
-    opening the Council picker from settings closes the settings popover first
-    so it does not sit above the modal. Secondary selection excludes the primary
-    model; Council selection can choose any selectable model. If a persisted
-    Council model is
+    Turning that switch on also turns Parallel on, writes
+    `outputMode: 'council'`, reveals a Council model select inside settings,
+    and enables the existing review pass below the two first responses. The
+    primary picker uses `⌘K`, the secondary picker uses `⌘J`, and `⌘L` still
+    opens the shared searchable model picker for Council selection when Council
+    review is enabled or the settings menu is open. The visible Council setting
+    itself follows the Scrubber/Memory settings pattern: a compact native
+    select row, not a composer-style model chip. Its option values stay as raw
+    catalog names for model matching, but visible option labels omit provider
+    prefixes/company names like `OpenAI:` or `Anthropic:`. Secondary and Council selection can
+    choose any selectable model, including the current primary model. If a
+    persisted Council model is
     no longer selectable, settings fall back to the same primary/default model
     the controller will charge for instead of displaying a stale model name.
     Ticket costs remain shown inside the modal options. While Parallel is
-    active, the composer shows compact icon-only primary and secondary model
-    buttons with full model names in tooltip/aria labels; the Council model is
-    never shown in the composer. The Council review switch reflects
-    `outputMode` even when the response-mode slider is on Chat, so a user can
-    temporarily leave Parallel and return without losing the review setting;
-    synthesis access is still only preflighted/acquired when Parallel is active
-    with Council review on. Toggling Council review does not alter the
-    independent Memory book state.
+    active, the composer shows primary and secondary model chips with provider
+    icons, provider-stripped names, and full model names in tooltip/aria labels;
+    the Council model is never shown in the composer. Turning Council review
+    off leaves the user in Parallel but skips the Council answer. Switching the composer
+    from Parallel back to Chat resets `outputMode` to plain Parallel, so the
+    next Parallel use starts as two-model comparison unless the user re-enables
+    Council review; synthesis access is still only preflighted/acquired when
+    Parallel is active with Council review on. Toggling Council review does not
+    alter the independent Memory book state.
     The picker derives the same fallback secondary model as the controller,
     including legacy model-id members and stale-member skipping, so its
     displayed model matches the lane that will be charged, and refreshes when
@@ -244,6 +247,13 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     avoid unexpected third-key redemption. If a config only names the primary
     model, the controller adds the first available non-primary model as the
     secondary lane.
+  - The Council synthesis prompt lives in `chat/domain/councilPrompts.js`. It
+    asks the synthesis model to act as an independent reviewer over anonymous
+    `Response A` / `Response B` drafts, then produce a clear final answer to
+    the original request. The review should be fair, critical, concise, and
+    evidence-oriented, but avoid generic praise, model/provider identities,
+    scores/grades/ranked lists, chatty phrasing, and generic follow-up offers.
+    Partial synthesis is supported when only one draft response is available.
   - `chat/application/councilController.js` runs the selected models in
     parallel through `inferenceService.sendCompletionStrict(...)`, preserving
     the browser-only OpenRouter path and the existing ephemeral access flow.
@@ -314,7 +324,8 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     back to the first completed Stage 1 response; synthesis failures set
     `message.council.synthesis.fallbackUsed` to true.
   - The current implementation covers Stage 1 "first opinions" plus one
-    synthesis pass. It does not yet run Karpathy-style peer ranking or review.
+    Council review pass. It does not yet run Karpathy-style peer ranking or
+    scoring.
   - `MessageTemplates` renders two council lanes side by side on desktop and
     stacked on narrow screens, then renders the Council Answer below them only
     after synthesis actually starts. Stage 1 response headers include provider
@@ -331,12 +342,31 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     finish...` copy. Stage 1-only mode removes the aggregate status/note row
     instead of showing a waiting row, completion label, lane-history
     implementation note, or canonical-context explanation. While synthesis
-    runs, the message shows `Preparing Council answer...`; the Council Answer
-    header includes the selected synthesis model with its provider icon,
-    matching the model the user chose and was charged for. On synthesis failure
-    it shows `Council synthesis failed. Continuing from Response A.` (or the
-    actual fallback label). Council messages reuse the normal copy, regenerate,
-    fork, and canonical citation controls.
+    runs, the Council answer section is separated from the two draft responses
+    by a subtle horizontal rule, then shows the selected synthesis model with
+    its provider icon, providerless model name, and a visible `Council` role
+    badge. It reuses the normal chat `Waiting for response` shimmer while
+    omitting the aggregate `Council`/ready status row. Once the Council answer
+    is available, the same selected-model row remains above the answer,
+    matching the model the user chose and was charged for; redundant `Council
+    Answer` header copy and completed-status text stay hidden. On synthesis failure it shows `Council synthesis failed.
+    Continuing from Response A.` (or the actual fallback label). Council
+    review suppresses the aggregate copy/regenerate/fork action row while
+    synthesis is waiting/pending/running, then restores it once synthesis
+    reaches a final or fallback state; plain Parallel keeps normal actions
+    inside each completed lane card instead of on the aggregate message, because
+    aggregate copy/regenerate/fork is ambiguous when two drafts are visible.
+    The Council answer block is width-capped, centered, and given extra top
+    spacing below the two lanes so synthesis reads like the normal narrow
+    transcript even when Parallel keeps the page wide. Lane copy copies only that lane response. Lane fork is
+    intentionally disabled for Parallel lanes for now, and completed aggregate
+    Council answers also omit fork; normal fork remains on single-chat
+    assistant messages only.
+    Lane regenerate refreshes only that lane, reusing or refreshing only that lane access; if the lane was not canonical, the
+    existing canonical response stays canonical. Like normal regenerate, lane
+    regenerate prunes later messages before rerunning so future context cannot
+    depend on the replaced answer. Canonical citation controls stay available
+    with the aggregate message.
   - Parallel/Council layout has two separate stability rules. Transcript width
     is sticky for any session that is actively in Parallel/Council or has ever
     entered Parallel/Council; `session.hasCouncilLayoutPreference` preserves the
@@ -353,17 +383,76 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     modes does not make Chat wide feel narrower. Background saves may mark a
     non-visible session as having a council transcript, but root layout classes
     should only update for the currently viewed session. Composer controls are
-    stable independently: a
-    reversible `+` menu on the left contains the existing file upload, settings,
-    and web-search controls using their original element IDs/handlers; response
-    mode and Memory stay visible next to it. Web search defaults on, but the `+`
-    button stays visually neutral; only the Web search row inside the menu shows
-    `On`/`Off` and active styling. Compact model pickers sit beside the send
-    button on the right. Chat mode shows only the primary model icon; Parallel
-    reveals the secondary model icon to the left of primary, keeping primary
-    anchored closest to the send button, without reserving blank space next to
-    the file/settings controls. Full model names remain available through
-    tooltip/aria labels and the shared model picker.
+    stable independently: the default composer keeps attachment and Settings
+    visible inline, while Web search moves to the bottom of the existing
+    Settings menu; there is no separate `+` menu. File upload, settings, and
+    web search keep their original element IDs/handlers, and response mode and
+    Memory stay visible beside them. Web search defaults on, but only the Web
+    search row shows `On`/`Off` and active styling. Compact model pickers sit on
+    the left side of the composer, with file/settings/mode/memory/send controls
+    anchored together on the right to reduce layout flash. Chat mode shows the
+    primary model icon plus a compact name; Parallel reveals the secondary
+    model chip after primary. Model chips use `fit-content` natural width up to
+    a shared responsive max width (`12.25rem` on desktop, `8.75rem` on small
+    screens) so short model names produce short buttons while long names cap
+    cleanly. The root `data-composer-mode` is refreshed from both the mode
+    toggle and the multi-model settings refresh so URL-based width variants
+    apply immediately after switching Chat/Parallel. The composer label is the
+    full provider-stripped catalog name; JavaScript does not apply a character
+    budget or semantic/family-name rewrite. CSS owns the
+    visual ellipsis via the label span (`overflow: hidden`, `white-space:
+    nowrap`, `text-overflow: ellipsis`), so truncation follows actual rendered
+    button width across devices. Labels must not wrap to multiple lines. The
+    chip should not hide overflow at the button level because that clips
+    descenders in labels with letters like `g`, `p`, and `y`; horizontal
+    clipping belongs on the label span. The composer left action group allows
+    visible overflow so model-chip tooltips are not clipped. Composer model
+    chips set both
+    `data-tooltip` and native `title` to the full provider-stripped catalog
+    name, with no lane label like `Primary model:` or `Secondary model:` and no
+    provider prefix like `OpenAI:` or `Anthropic:`. Those hover labels stay on a
+    single line. When a user edits/rewrites a prompt, the edit box mirrors the
+    models that will receive the regenerated turn: Chat shows the primary chip,
+    while active Parallel/Council sessions show primary and secondary chips.
+    The Council/chair model remains Settings-only and is not shown in the edit
+    box. Changing either model while edit mode is open refreshes those edit
+    chips from the composer chips. Full provider names remain visible in the shared model picker. Run
+    `npm run audit:model-labels` to check the current live OpenRouter catalog
+    for labels that fail providerless normalization and to inspect the longest
+    CSS-truncated label. `combined` is the default composer width mode: Chat
+    mode primary chips use natural width and can grow up to the same width as
+    two Parallel chips plus their gap; Parallel stays unchanged. The comparison link
+    `?composerWidth=matched` keeps Chat and Parallel chips at the same one-chip
+    max width, while `?composerWidth=combined` explicitly selects the default.
+    In combined mode, Chat max width is calculated as two Parallel chip maxes
+    plus `--composer-model-chip-gap`, the same variable used for the actual
+    Parallel model-chip gap. Short model names still use natural button width in both width modes. Keep
+    the combined width selector at ID-level specificity because the base
+    composer chip width rule is also ID-scoped. The send button has a small
+    left margin (`0.9rem`) so the Memory-to-send gap is wider without changing
+    spacing between Memory and the other right-side controls. This targets only
+    `.composer-right-actions #send-btn`, not the shared right-side control gap.
+    OpenRouter catalog display names are trimmed on live ingest and cache
+    load/save, and model selection helpers compare by id plus trimmed display
+    name so provider catalog quirks
+    like `Baidu: ERNIE 4.5 VL 424B A47B ` do not make secondary selection fail
+    when the visible label omits the trailing whitespace. Parallel mode permits
+    the same model in both lanes. `session.councilConfig.members` may therefore
+    contain duplicate model names, and the controller preserves them as separate
+    primary/secondary lane entries with separate lane access records. If both
+    lanes need fresh access, they are still charged independently even when the
+    selected model is the same.
+  - Composer design comparisons are available through `?composerVariant=1..4`
+    on the same branch/deployment. Variant 1 uses icon-only Parallel model
+    chips and visible inline file/settings/web buttons. Variant 2 uses full
+    Parallel model names and visible inline file/settings/web buttons. Variant
+    3 is the default/current direction: full model names with attachment and
+    Settings visible inline, and Web search inside Settings. Variant 4 uses
+    icon-only Parallel model chips with attachment and Settings visible inline,
+    and Web search inside Settings. The variants are implemented with
+    `data-composer-variant`, `data-composer-tools`, and
+    `data-composer-parallel-models` on `<html>` so the behavior can be compared
+    without maintaining separate branches.
   - `CouncilController` receives `chatDB`, `inferenceService`, and
     `ticketClient` from `ChatApp` instead of importing the service singletons
     directly. This keeps browser storage/network singleton initialization out
@@ -371,10 +460,12 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     down mixed lane costs, same-lane model-switch reuse, synthesis 402 retry,
     insufficient-ticket preflight behavior, lane-specific Stage 1 history,
     partial synthesis, and synthesis fallback behavior with small stubs.
-  - `chat/domain/councilPrompts.js` defines the synthesis-only council prompt.
-    It intentionally omits Stage 2 review/ranking inputs, anonymizes
-    first-opinion drafts as `Response A`, `Response B`, and asks for one final
-    answer rather than peer review or scoring.
+  - `chat/domain/councilPrompts.js` defines the Council synthesis prompt. It
+    intentionally omits Stage 2 peer-ranking inputs, anonymizes first-opinion
+    drafts as `Response A`, `Response B`, and asks the Council model to compare
+    the anonymous drafts, call out strengths, misses, unsupported claims, and
+    then write a concise final answer. It avoids model/provider identities,
+    scores/grades/ranked lists, chatty phrasing, and generic follow-up offers.
 - 2026-05-26: Prompt edit file drag feedback is scoped to the inline editor.
   - While a prompt edit draft is open, file drags highlight the edit prompt card
     and keep the bottom composer drop overlay hidden, matching the drop target.

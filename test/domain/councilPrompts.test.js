@@ -17,7 +17,7 @@ test('buildAnonymousResponseBlocks labels responses without model identities', (
     assert.doesNotMatch(blocks, /OpenAI|Anthropic|GPT|Claude/);
 });
 
-test('buildCouncilSynthesisPrompt excludes review-stage language', () => {
+test('buildCouncilSynthesisPrompt asks for concise anonymous review', () => {
     const prompt = buildCouncilSynthesisPrompt({
         userQuery: 'Which answer is better?',
         responses: [
@@ -26,12 +26,44 @@ test('buildCouncilSynthesisPrompt excludes review-stage language', () => {
         ]
     });
 
-    assert.match(prompt, /Final Council Answer:/);
-    assert.doesNotMatch(prompt, /\b(rank|ranking|review|score|scoring)\b/i);
+    assert.match(prompt, /independent reviewer/i);
+    assert.match(prompt, /one or two anonymous models produced available draft answers/i);
+    assert.match(prompt, /Read Response A and Response B/i);
+    assert.match(prompt, /what each response gets right/i);
+    assert.match(prompt, /unsupported or incorrect/i);
+    assert.match(prompt, /Do not mention model names, provider names, or hidden identities/i);
+    assert.match(prompt, /If one response is clearly stronger/i);
+    assert.match(prompt, /clear final answer/i);
+    assert.match(prompt, /Do not assign scores, grades, or ranked lists/i);
+    assert.match(prompt, /Do not use chatty phrasing/i);
+    assert.match(prompt, /Keep the review concise and useful/i);
+    assert.match(prompt, /Write the review and final answer now:/);
+    assert.doesNotMatch(prompt, /paper submissions/i);
+    assert.doesNotMatch(prompt, /Council review and final take:/);
+    assert.doesNotMatch(prompt, /Council review:/);
+    assert.doesNotMatch(prompt, /Final take for you/i);
+    assert.doesNotMatch(prompt, /Best combined answer/i);
     assert.doesNotMatch(prompt, /STAGE 2/i);
     assert.doesNotMatch(prompt, /Peer Rankings/i);
+    assert.doesNotMatch(prompt, /ranking inputs/i);
+    assert.doesNotMatch(prompt, /numerical scoring/i);
     assert.doesNotMatch(prompt, /Chairman/i);
     assert.doesNotMatch(prompt, /Model A|Model B/);
+});
+
+test('buildCouncilSynthesisPrompt supports partial draft availability', () => {
+    const prompt = buildCouncilSynthesisPrompt({
+        userQuery: 'Summarize the decision.',
+        responses: [
+            { model: 'OpenAI: GPT', response: 'Use the blue wire.' }
+        ]
+    });
+
+    assert.match(prompt, /one or two anonymous models produced available draft answers/i);
+    assert.match(prompt, /If only one response is available/);
+    assert.match(prompt, /Response A:\nUse the blue wire\./);
+    assert.doesNotMatch(prompt, /Response B:/);
+    assert.doesNotMatch(prompt, /OpenAI|GPT/);
 });
 
 test('buildCouncilSynthesisMessages returns a user message with optional context', () => {
