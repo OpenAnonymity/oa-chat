@@ -114,6 +114,7 @@ test('component templates do not reach through backend globals', () => {
 
 test('parallel aggregate messages omit redundant visible mode and completion labels', () => {
     const source = read('chat/components/MessageTemplates.js');
+    const styles = read('chat/styles.css');
     assert.equal(
         source.includes('const displayTitle'),
         false,
@@ -156,9 +157,134 @@ test('parallel aggregate messages omit redundant visible mode and completion lab
         'pending lanes should reuse the main chat waiting indicator, not custom lane copy'
     );
     assert.equal(
+        source.includes('Preparing Council answer...'),
+        false,
+        'Council synthesis should reuse the normal waiting copy instead of custom preparation text'
+    );
+    assert.equal(
+        source.includes('<span>Council Answer</span>'),
+        false,
+        'Council synthesis should not render redundant Council Answer header copy'
+    );
+    assert.equal(
+        source.includes('buildCouncilModelLabel(synthesisModel, { includeProvider: true })'),
+        false,
+        'Council synthesis model labels should match lane labels by omitting provider prefixes'
+    );
+    assert.equal(
+        source.includes("buildCouncilModelLabel(synthesisModel, { roleLabel: 'Council' })"),
+        true,
+        'Council synthesis should identify the selected synthesis model as the Council model'
+    );
+    assert.equal(
+        source.includes("buildCouncilModelLabel(entry.model || entry.modelId || '')"),
+        true,
+        'Stage 1 lane labels should remain plain model labels without Council role text'
+    );
+    assert.equal(
+        source.includes('council-response-role-label'),
+        true,
+        'Council role text should use a dedicated label class'
+    );
+    assert.equal(
+        source.includes('(${escapeHtml(roleLabel)})'),
+        false,
+        'Council role text should render as a visible badge, not a subtle parenthetical suffix'
+    );
+    assert.equal(
+        source.includes('const showMeta = !!(synthesisModelHtml || statusHtml);'),
+        true,
+        'Council synthesis should show the selected model row while waiting and after completion'
+    );
+    assert.equal(
+        source.includes("const COUNCIL_SYNTHESIS_ACTION_PENDING_STATUSES = new Set(['waiting', 'pending', 'running']);"),
+        true,
+        'Council review should define the synthesis states that hide aggregate message actions'
+    );
+    assert.equal(
+        source.includes('const assistantActionsRow = hasSynthesis && shouldShowCouncilAssistantActions(synthesis)'),
+        true,
+        'Council review should hide aggregate copy/regenerate/fork while synthesis is still pending and plain Parallel should not use aggregate actions'
+    );
+    assert.equal(
+        source.includes(': buildAssistantCitationsOnlyRow(citationsToggle);'),
+        true,
+        'Council review should keep citation controls available while synthesis actions are hidden'
+    );
+    assert.equal(
+        source.includes("? buildAssistantActionRow(message, citationsToggle, '', '', { includeFork: false })"),
+        true,
+        'Council review should restore aggregate copy/regenerate after final states while keeping fork disabled'
+    );
+    assert.equal(
+        source.includes('const { includeFork = true } = options;'),
+        true,
+        'generic assistant actions should keep normal chat fork as the default'
+    );
+    assert.equal(
+        source.includes('${forkButtonHtml}'),
+        true,
+        'fork button rendering should be opt-in for council aggregate rows'
+    );
+    assert.equal(
+        source.includes('function buildCouncilLaneActionRow(entry, messageId)'),
+        true,
+        'Plain Parallel should render lane-scoped response actions'
+    );
+    assert.equal(
+        source.includes('copy-council-lane-btn'),
+        true,
+        'Plain Parallel lanes should expose lane copy actions'
+    );
+    assert.equal(
+        source.includes('regenerate-council-lane-btn'),
+        true,
+        'Plain Parallel lanes should expose lane regenerate actions'
+    );
+    assert.equal(
+        source.includes('fork-council-lane-btn'),
+        false,
+        'Plain Parallel lanes should not expose lane fork actions'
+    );
+    assert.equal(
         source.includes("buildPendingIndicatorContent('waiting-response')"),
         true,
         'pending lanes should reuse the main chat waiting indicator'
+    );
+    assert.equal(
+        styles.includes('.council-synthesis-block'),
+        true,
+        'Council synthesis should have its own centered layout block'
+    );
+    assert.equal(
+        styles.includes('width: min(100%, 46rem);'),
+        true,
+        'Council synthesis should be width-capped like the narrow transcript'
+    );
+    assert.equal(
+        styles.includes('margin: 1.4rem auto 0;'),
+        true,
+        'Council synthesis should be centered with breathing room under the two lane cards'
+    );
+    assert.equal(
+        styles.includes('border-top: 1px solid hsl(var(--color-border) / 0.7);'),
+        true,
+        'Council synthesis should have a subtle separator above the Council answer'
+    );
+    assert.equal(
+        styles.includes('padding: 0.9rem clamp(0.75rem, 2vw, 1.25rem) 0;'),
+        true,
+        'Council synthesis should keep breathing room between the separator and model label'
+    );
+    assert.equal(
+        styles.includes('.council-response-role-label'),
+        true,
+        'Council synthesis role text should be styled separately from the model name'
+    );
+    assert.equal(
+        styles.includes('border: 1px solid hsl(var(--color-border));'),
+        true,
+        'Council role text should be visible as a lightweight badge'
     );
     assert.equal(
         source.includes("${escapeHtml(entry.status || 'pending')}"),
@@ -196,6 +322,7 @@ test('composer mode toggle exposes Chat and Parallel with independent Memory tog
 
 test('parallel composer keeps the Council model picker out of the input bar', () => {
     const html = read('chat/index.html');
+    const chatInputSource = read('chat/components/ChatInput.js');
     assert.equal(html.includes('id="council-secondary-model-btn"'), true);
     assert.equal(
         html.includes('id="council-synthesis-model-btn"'),
@@ -203,7 +330,18 @@ test('parallel composer keeps the Council model picker out of the input bar', ()
         'Council model selection belongs in settings, not the Parallel composer'
     );
     assert.equal(html.includes('id="council-review-toggle"'), true);
-    assert.equal(html.includes('id="council-review-model-btn"'), true);
+    assert.equal(html.includes('id="council-review-model-select"'), true);
+    assert.equal(html.includes('id="council-review-model-btn"'), false);
+    assert.equal(
+        chatInputSource.includes('this.councilReviewModelSelect = councilReviewModelSelect'),
+        true,
+        'Council review model should use the same settings select pattern as scrubber and memory models'
+    );
+    assert.equal(
+        chatInputSource.includes('const label = this.getFullModelHoverName(value);'),
+        true,
+        'Council review model select labels should omit provider/company names while preserving raw model values'
+    );
 });
 
 test('parallel layout stays wide for transcripts and forks with council output', () => {
@@ -222,6 +360,11 @@ test('parallel layout stays wide for transcripts and forks with council output',
     assert.equal(appSource.includes('shouldUpdateCouncilLayoutForSession(session)'), true);
     assert.equal(appSource.includes('recomputeSessionCouncilTranscriptHint(session, messages = null, options = {})'), true);
     assert.equal(appSource.includes('updateCouncilLayoutMode(session = this.getCurrentSession(), messages = null)'), true);
+    assert.equal(
+        appSource.includes('const outputMode = isCouncilModeEnabled ? storedOutputMode : COUNCIL_OUTPUT_PARALLEL;'),
+        true,
+        'synthesis layout should ignore stale council output mode when Parallel/Council is disabled'
+    );
     assert.equal(
         chatAreaSource.includes('this.app.updateCouncilLayoutMode?.(session, messages);'),
         true,
@@ -279,18 +422,31 @@ test('composer model controls keep stable compact slots across Chat and Parallel
     assert.equal(html.includes('class="composer-right-actions'), true);
     const moreMenuIndex = html.indexOf('id="composer-more-menu"');
     const fileUploadIndex = html.indexOf('id="file-upload-btn"');
+    const fileActionIndex = html.indexOf('id="composer-file-action"');
+    const settingsControlIndex = html.indexOf('id="composer-settings-control"');
+    const settingsActionsIndex = html.indexOf('id="composer-settings-actions"');
     const settingsIndex = html.indexOf('id="settings-btn"');
+    const themeToggleIndex = html.indexOf('id="theme-toggle"');
     const searchIndex = html.indexOf('id="search-toggle"');
     const modeToggleIndex = html.indexOf('id="chat-mode-toggle"');
-    assert.equal(html.includes('id="composer-more-btn"'), true);
+    assert.equal(html.includes('id="composer-more-btn"'), false);
     assert.equal(moreMenuIndex > -1, true);
+    assert.equal(fileActionIndex > -1, true);
+    assert.equal(settingsControlIndex > -1, true);
+    assert.equal(settingsActionsIndex > -1, true);
+    assert.equal(themeToggleIndex > -1, true);
     assert.equal(fileUploadIndex > moreMenuIndex, true);
+    assert.equal(fileUploadIndex > fileActionIndex, true);
     assert.equal(settingsIndex > moreMenuIndex, true);
+    assert.equal(settingsIndex > settingsControlIndex, true);
+    assert.equal(settingsActionsIndex > settingsIndex, true);
+    assert.equal(settingsActionsIndex > themeToggleIndex, true);
     assert.equal(searchIndex > moreMenuIndex, true);
     assert.equal(searchIndex < modeToggleIndex, true);
-    assert.equal(html.includes('class="composer-more-menu-item relative"'), true);
-    assert.equal(html.includes('class="composer-more-menu-item" role="menuitem"'), true);
+    assert.equal(html.includes('class="composer-more-menu-item relative" role="menuitem" aria-label="Attach files"'), true);
+    assert.equal(html.includes('class="composer-more-menu-item" role="menuitem" aria-label="Settings"'), true);
     assert.equal(html.includes('role="menuitemcheckbox"'), true);
+    assert.equal(html.includes('role="menuitemcheckbox" aria-label="Web search"'), true);
     assert.equal(html.includes('class="composer-more-active-dot"'), false);
     assert.equal(appSource.includes('this.searchEnabled = true;'), true);
     assert.equal(appSource.includes('savedSearchEnabled !== undefined ? savedSearchEnabled : true'), true);
@@ -301,47 +457,161 @@ test('composer model controls keep stable compact slots across Chat and Parallel
     assert.equal(primaryModelIndex > -1, true);
     assert.equal(sendButtonIndex > -1, true);
     assert.equal(
-        secondaryClusterIndex < primaryModelIndex && primaryModelIndex < sendButtonIndex,
+        primaryModelIndex < secondaryClusterIndex
+            && secondaryClusterIndex < fileActionIndex
+            && fileActionIndex < settingsControlIndex
+            && settingsControlIndex < sendButtonIndex,
         true,
-        'Parallel composer should render secondary, then primary, then send so primary stays closest to send'
+        'Parallel composer should render model chips on the left and keep file/settings/send anchored on the right'
     );
-    assert.equal(html.includes('id="model-picker-btn" class="model-picker-icon-only'), true);
+    assert.equal(html.includes('id="model-picker-btn" class="composer-model-chip'), true);
     assert.equal(html.includes('<span class="model-name-container">Select Model</span>'), true);
-    assert.equal(html.includes('council-secondary-model-btn council-model-icon-only'), true);
+    assert.equal(html.includes('council-secondary-model-btn composer-model-chip'), true);
     assert.equal(html.includes('id="council-inline-models" class="hidden council-inline-models"'), true);
     assert.equal(html.includes('council-inline-divider'), false);
     assert.equal(source.includes("inlineContainer.classList.toggle('hidden', !isEnabled);"), true);
     assert.equal(source.includes("inlineContainer.classList.toggle('flex', isEnabled);"), true);
-    assert.equal(source.includes("primaryModelButton.classList.add('model-picker-icon-only');"), true);
-    assert.equal(source.includes("inlineButton.classList.add('council-model-icon-only');"), true);
+    assert.equal(source.includes("primaryModelButton.classList.remove('model-picker-icon-only');"), true);
+    assert.equal(source.includes("primaryModelButton.classList.add('composer-model-chip');"), true);
+    assert.equal(source.includes("inlineButton.classList.remove('council-model-icon-only');"), true);
+    assert.equal(source.includes("inlineButton.classList.add('composer-model-chip');"), true);
+    assert.equal(source.includes('getComposerModelDisplayName(modelName)'), true);
+    assert.equal(source.includes('getProviderlessModelDisplayName(modelName)'), true);
+    assert.equal(source.includes("primaryModelButton.setAttribute('data-tooltip', primaryHoverName);"), true);
+    assert.equal(source.includes("inlineButton.setAttribute('data-tooltip', secondaryHoverName);"), true);
+    assert.equal(source.includes('const availableModels = models.filter((model) => model?.name);'), true);
+    assert.equal(source.includes('primaryEntry?.id && model.id === primaryEntry.id'), false);
+    assert.equal(source.includes("const DEFAULT_COMPOSER_VARIANT = '3';"), true);
+    assert.equal(source.includes("'1': { parallelModels: 'icons', tools: 'inline' }"), true);
+    assert.equal(source.includes("'2': { parallelModels: 'names', tools: 'inline' }"), true);
+    assert.equal(source.includes("'3': { parallelModels: 'names', tools: 'settings' }"), true);
+    assert.equal(source.includes("'4': { parallelModels: 'icons', tools: 'settings' }"), true);
+    assert.equal(source.includes("new URLSearchParams(window.location.search).get('composerVariant')"), true);
+    assert.equal(source.includes("const DEFAULT_COMPOSER_WIDTH = 'combined';"), true);
+    assert.equal(source.includes("new Set(['matched', 'combined'])"), true);
+    assert.equal(source.includes("new URLSearchParams(window.location.search).get('composerWidth')"), true);
+    assert.equal(source.includes('resolveSendGap()'), false);
+    assert.equal(source.includes("new URLSearchParams(window.location.search).get('sendGap')"), false);
+    assert.equal(source.includes('document.documentElement.dataset.composerVariant'), true);
+    assert.equal(source.includes('document.documentElement.dataset.composerTools'), true);
+    assert.equal(source.includes('document.documentElement.dataset.composerParallelModels'), true);
+    assert.equal(source.includes('document.documentElement.dataset.composerWidth'), true);
+    assert.equal(source.includes('document.documentElement.dataset.sendGap'), false);
+    assert.equal(source.includes('document.documentElement.dataset.composerMode = mode;'), true);
+    assert.equal(source.includes('setComposerModeDataset(isCouncilEnabled)'), true);
+    assert.equal(source.includes('this.setComposerModeDataset(isEnabled);'), true);
+    assert.equal(source.includes('placeComposerToolControls()'), true);
+    assert.equal(source.includes('toolsContainer.append(fileAction, settingsControl, searchToggle);'), true);
+    assert.equal(source.includes('toolsContainer.append(fileAction, settingsControl);'), true);
+    assert.equal(source.includes('settingsActions.append(searchToggle);'), true);
+    assert.equal(source.includes("e.target.closest('#file-upload-btn, #search-toggle')"), true);
     assert.equal(source.includes('inlineButton.disabled = !isEnabled || availableModels.length === 0;'), true);
-    assert.equal(source.includes('toggleComposerMoreMenu()'), true);
-    assert.equal(source.includes('closeComposerMoreMenu()'), true);
+    assert.equal(source.includes('toggleComposerMoreMenu()'), false);
+    assert.equal(source.includes('closeComposerMoreMenu()'), false);
     assert.equal(source.includes('updateComposerMoreButtonUI()'), false);
-    assert.match(
-        source,
-        /openComposerMoreMenu\(\)[\s\S]*?this\.closeSettingsMenu\(\);/,
-        'opening the + menu should close Settings so the two popovers cannot overlap'
-    );
-    assert.equal(source.includes("event.target.closest('#file-upload-btn, #search-toggle')"), true);
+    assert.equal(appSource.includes('composerMoreBtn'), false);
     assert.equal(styles.includes('.composer-right-actions'), true);
+    assert.equal(styles.includes('.composer-right-actions #send-btn'), true);
+    assert.equal(styles.includes('html[data-send-gap='), false);
+    assert.equal(styles.includes('margin-left: 0.9rem;'), true);
+    assert.equal(styles.includes('.composer-left-actions'), true);
+    assert.equal(styles.includes('overflow: visible;'), true);
     assert.equal(styles.includes('.composer-more-menu'), true);
     assert.equal(styles.includes('.composer-more-menu-item'), true);
     assert.equal(styles.includes('.composer-more-btn.composer-more-active'), false);
     assert.equal(styles.includes('.composer-more-active-dot'), false);
     assert.equal(styles.includes('.council-inline-models.council-inline-reserved'), false);
     assert.equal(styles.includes('.council-inline-divider'), false);
-    assert.equal(styles.includes('#model-picker-btn.model-picker-icon-only,'), true);
+    assert.equal(styles.includes('#model-picker-btn.composer-model-chip,'), true);
+    assert.equal(styles.includes('--composer-model-chip-max-width: 12.25rem;'), true);
+    assert.equal(styles.includes('--composer-model-chip-gap: 0.4rem;'), true);
+    assert.equal(styles.includes('gap: var(--composer-model-chip-gap);'), true);
+    assert.equal(styles.includes('flex: 0 1 auto;'), true);
+    assert.equal(styles.includes('width: fit-content;'), true);
+    assert.equal(styles.includes('max-width: var(--composer-model-chip-max-width);'), true);
+    assert.equal(styles.includes('html[data-composer-width="combined"][data-composer-mode="chat"] #model-picker-btn.composer-model-chip'), true);
+    assert.equal(styles.includes('width: max-content;'), true);
+    assert.equal(styles.includes('max-width: calc(var(--composer-model-chip-max-width) + var(--composer-model-chip-max-width) + var(--composer-model-chip-gap));'), true);
+    assert.equal(styles.includes('html[data-composer-width="combined"][data-composer-mode="parallel"]'), false);
+    assert.equal(styles.includes('--composer-model-chip-width'), false);
+    assert.equal(styles.includes('white-space: nowrap;'), true);
+    assert.equal(styles.includes('text-overflow: ellipsis;'), true);
+    assert.equal(styles.includes('line-height: 1.25;'), true);
+    assert.equal(styles.includes('#model-picker-btn.composer-model-chip[data-tooltip]:hover::after'), true);
+    assert.equal(styles.includes('max-width: min(32rem, calc(100vw - 2rem));'), false);
+    assert.equal(styles.includes('.composer-settings-actions'), true);
+    assert.equal(styles.includes('border-top: 1px solid hsl(var(--color-border));'), true);
+    assert.equal(styles.includes('#composer-more-menu > #composer-settings-control'), true);
+    assert.equal(styles.includes('flex-wrap: nowrap;'), true);
+    assert.equal(styles.includes('html[data-composer-parallel-models="icons"][data-composer-mode="parallel"] #model-picker-btn.composer-model-chip'), true);
+    assert.equal(styles.includes('.model-picker-icon-only .model-name-container'), false);
+});
+
+test('prompt edit model chips mirror active Parallel model lanes', () => {
+    const appSource = read('chat/app.js');
+    const chatAreaSource = read('chat/components/ChatArea.js');
+    const messageTemplatesSource = read('chat/components/MessageTemplates.js');
+    const modelPickerSource = read('chat/components/ModelPicker.js');
+    const appInterfaceSource = read('chat/ui/appInterface.js');
+    const styles = read('chat/styles.css');
+
+    assert.equal(
+        messageTemplatesSource.includes('const isParallelEdit = options.editParallelEnabled === true;'),
+        true,
+        'edit prompt template should render secondary model controls only when Parallel/Council is active'
+    );
+    assert.equal(messageTemplatesSource.includes('id="edit-model-picker-btn"'), true);
+    assert.equal(messageTemplatesSource.includes('id="edit-secondary-model-picker-btn"'), true);
+    assert.equal(messageTemplatesSource.includes('data-edit-model-lane="primary"'), true);
+    assert.equal(messageTemplatesSource.includes('data-edit-model-lane="secondary"'), true);
+    assert.equal(
+        appSource.includes('editParallelEnabled = this.isCouncilModeActive(session)'),
+        true,
+        'edit template options should follow the current session response mode'
+    );
+    assert.equal(
+        appSource.includes('await this.refreshEditMessage(this.editingMessageId);'),
+        true,
+        'mode changes should re-render an open edit box so primary/secondary chips match the next regeneration mode'
+    );
+    assert.equal(appSource.includes('editPrimaryModelName'), true);
+    assert.equal(appSource.includes('editSecondaryModelName'), true);
+    assert.equal(
+        chatAreaSource.includes("this.app.modelPicker.open({ selectionMode: 'council-secondary' });"),
+        true,
+        'secondary edit model chip should open the same secondary model picker as the composer'
+    );
+    assert.equal(chatAreaSource.includes('updateEditModelPickerChip('), true);
+    assert.equal(chatAreaSource.includes("document.getElementById('council-secondary-model-btn')"), true);
+    assert.equal(chatAreaSource.includes('label.textContent = modelName;'), true);
+    assert.equal(
+        /updateEditModelPickerChip[\s\S]*?targetButton\.innerHTML/.test(chatAreaSource),
+        false,
+        'external model labels should not be inserted into edit chips through innerHTML'
+    );
+    assert.equal(
+        modelPickerSource.includes('this.app.refreshEditModelPickerButton?.();'),
+        true,
+        'model changes should refresh edit prompt chips while edit mode is open'
+    );
+    assert.equal(appInterfaceSource.includes('refreshEditModelPickerButton'), true);
+    assert.equal(appSource.includes('this.chatArea?.updateEditModelPickerButton?.();'), true);
+    assert.equal(styles.includes('.edit-prompt-model-group'), true);
+    assert.equal(styles.includes('.edit-prompt-model-chip'), true);
 });
 
 test('council review setting drives synthesis output mode in ChatInput', () => {
     const source = read('chat/components/ChatInput.js');
     const appSource = read('chat/app.js');
     assert.equal(source.includes('council-review-toggle'), true);
+    assert.equal(source.includes('council-review-model-select'), true);
+    assert.equal(source.includes('this.councilReviewModelSelect = councilReviewModelSelect'), true);
     assert.equal(source.includes('setCouncilReviewEnabledFromSettings'), true);
     assert.equal(source.includes('currentlyMultiModelEnabled'), true);
     assert.equal(source.includes('closeSettingsMenu()'), true);
-    assert.equal(source.includes('openCouncilSynthesisModelPicker({ closeSettings: true })'), true);
+    assert.equal(source.includes('openCouncilSynthesisModelPicker({ closeSettings: true })'), false);
+    assert.equal(source.includes('this.councilSynthesisInlineSelect.value = event.target.value;'), true);
+    assert.equal(source.includes('this.multiModelSynthesisSelect.value = event.target.value;'), true);
     assert.match(
         source,
         /enabled \? COUNCIL_OUTPUT_SYNTHESIS : COUNCIL_OUTPUT_PARALLEL/,
@@ -349,8 +619,28 @@ test('council review setting drives synthesis output mode in ChatInput', () => {
     );
     assert.match(
         source,
-        /enabled: currentlyMultiModelEnabled/,
-        'Council review should persist as a setting without forcing Parallel mode on by itself'
+        /const nextMultiModelEnabled = enabled \|\| currentlyMultiModelEnabled;/,
+        'Turning Council review on should also turn Parallel mode on'
+    );
+    assert.match(
+        source,
+        /enabled: nextMultiModelEnabled/,
+        'Council review should persist the auto-enabled Parallel state'
+    );
+    assert.match(
+        source,
+        /const outputMode = isEnabled \? storedOutputMode : COUNCIL_OUTPUT_PARALLEL;/,
+        'Disabled Parallel should display Council review as off even if stale stored outputMode was council'
+    );
+    assert.match(
+        source,
+        /const outputMode = enabled\s*\?\s*\(options\.outputMode \|\| this\.getMultiModelOutputModeForSelection\(\)\)\s*:\s*COUNCIL_OUTPUT_PARALLEL;/,
+        'Switching the composer back to Chat should clear Council review so the next Parallel use starts plain Parallel'
+    );
+    assert.match(
+        appSource,
+        /const requestedOutputMode = !requestedEnabled\s*\?\s*COUNCIL_OUTPUT_PARALLEL\s*:\s*\(options\.outputMode !== undefined/,
+        'Disabling Parallel should normalize stored council output mode back to plain Parallel'
     );
     assert.equal(
         appSource.includes('delete session.councilAccess.synthesis'),
@@ -418,21 +708,21 @@ test('memory augmentation runs once before Parallel fan-out and clears the one-s
     );
 });
 
-test('council model shortcut follows review setting, not just active Parallel', () => {
+test('council model shortcut follows enabled review setting', () => {
     const source = read('chat/app.js');
     assert.equal(source.includes('const isCouncilReviewEnabled'), true);
     assert.match(
         source,
-        /session\?\.councilConfig\?\.outputMode === COUNCIL_OUTPUT_SYNTHESIS/,
-        'Active-session Council model shortcut should work when review is enabled as a setting'
+        /this\.isCouncilModeActive\(session\) && session\?\.councilConfig\?\.outputMode === COUNCIL_OUTPUT_SYNTHESIS/,
+        'Active-session Council model shortcut should require both Parallel and Council review to be enabled'
     );
     assert.match(
         source,
-        /pendingCouncilConfig\?\.outputMode === COUNCIL_OUTPUT_SYNTHESIS/,
-        'Pending Council model shortcut should work when review is enabled as a setting'
+        /this\.pendingCouncilConfig\?\.enabled === true && this\.pendingCouncilConfig\?\.outputMode === COUNCIL_OUTPUT_SYNTHESIS/,
+        'Pending Council model shortcut should require both pending Parallel and Council review to be enabled'
     );
     const shortcutBlock = source.slice(source.indexOf('// Cmd/Ctrl + L for the Council synthesis model picker'));
-    assert.equal(shortcutBlock.includes('isCouncilModeActive(session)'), false);
+    assert.equal(shortcutBlock.includes('isCouncilModeActive(session)'), true);
 });
 
 test('initial model load drains pinned availability refreshes', () => {

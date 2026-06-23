@@ -177,7 +177,6 @@ class ChatApp {
             inputCard: document.getElementById('input-card'),
             scrubberPreviewDiff: document.getElementById('scrubber-preview-diff'),
             sendBtn: document.getElementById('send-btn'),
-            composerMoreBtn: document.getElementById('composer-more-btn'),
             composerMoreMenu: document.getElementById('composer-more-menu'),
             modelPickerBtn: document.getElementById('model-picker-btn'),
             councilInlineModels: document.getElementById('council-inline-models'),
@@ -3723,9 +3722,11 @@ class ChatApp {
         const requestedSynthesisModel = options.synthesisModel !== undefined
             ? options.synthesisModel
             : (options.chairmanModel !== undefined ? options.chairmanModel : currentCouncilConfig.synthesisModel);
-        const requestedOutputMode = options.outputMode !== undefined
-            ? options.outputMode
-            : currentCouncilConfig.outputMode;
+        const requestedOutputMode = !requestedEnabled
+            ? COUNCIL_OUTPUT_PARALLEL
+            : (options.outputMode !== undefined
+                ? options.outputMode
+                : currentCouncilConfig.outputMode);
 
         session.responseMode = requestedEnabled
             ? RESPONSE_MODE_COUNCIL
@@ -3749,6 +3750,9 @@ class ChatApp {
         await chatDB.saveSession(session);
         this.renderSessions();
         this.renderCurrentModel();
+        if (this.editingMessageId && this.editDrafts.has(this.editingMessageId)) {
+            await this.refreshEditMessage(this.editingMessageId);
+        }
         return session;
     }
 
@@ -5861,6 +5865,110 @@ class ChatApp {
         }
     }
 
+    async regenerateCouncilLane(messageId, laneId, options = {}) {
+        let session = this.getCurrentSession();
+        if (!session || !messageId || !laneId) return;
+        if (!options.skipMemoryAugment) this._lastApiContent = null;
+
+        if (session.importedFrom) {
+            await this.markImportedSessionAsForked(session);
+            this.updateUrlWithSession(session.id);
+        }
+
+        const streamingState = this.getSessionStreamingState(session.id);
+        if (streamingState.isStreaming) return;
+        this.reserveAccessAcquisitionHandoff(session);
+        this.chatArea?.closeQuickAskWindow?.();
+
+        const messages = await chatDB.getSessionMessages(session.id);
+        const messageIndex = messages.findIndex(m => m.id === messageId);
+        if (messageIndex === -1) return;
+
+        const assistantMessage = messages[messageIndex];
+        if (assistantMessage?.role !== 'assistant' || !Array.isArray(assistantMessage?.council?.stage1)) return;
+        if (assistantMessage.council.synthesis) {
+            this.showToast?.('Per-model regenerate is available in Parallel mode before Council review.');
+            return;
+        }
+        const stageEntry = this.findCouncilStageEntryByLane(assistantMessage, laneId);
+        if (!stageEntry?.response) return;
+
+        const userMessage = [...messages.slice(0, messageIndex)].reverse().find(m => m.role === 'user');
+        if (!userMessage) return;
+
+        const messagesToDelete = messages.slice(messageIndex + 1);
+        for (const msg of messagesToDelete) {
+            await chatDB.deleteMessage(msg.id);
+        }
+        const remainingMessages = messages.slice(0, messageIndex + 1);
+        await this.recomputeSessionCouncilTranscriptHint?.(session, remainingMessages);
+        if (this.chatArea && this.isViewingSession(session.id)) {
+            await this.chatArea.render();
+        }
+
+        const abortController = new AbortController();
+        const initialPendingPhase = this.resolvePendingPhaseForSession(session);
+        this.setSessionStreamingState(session.id, true, abortController, initialPendingPhase);
+        this.isAutoScrollPaused = true;
+
+        if (userMessage.id) {
+            this.startPromptSlideUpEffect(userMessage.id);
+        }
+
+        try {
+            const shouldAttemptMemoryAugment = userMessage && !options.skipMemoryAugment;
+            if (shouldAttemptMemoryAugment) {
+                const conversationText = this.buildConversationText(messages.slice(0, messageIndex));
+                try {
+                    await this.runMemoryAugmentFlow(userMessage.content || '', userMessage, session, {
+                        conversationText,
+                        signal: abortController.signal
+                    });
+                } catch (error) {
+                    if (error?.isCancelled) {
+                        return;
+                    }
+                    throw error;
+                }
+                if (abortController.signal.aborted) {
+                    return;
+                }
+            }
+
+            await this.councilController.runRegenerateLaneTurn({
+                session,
+                assistantMessageId: messageId,
+                laneId,
+                userMessage,
+                searchEnabled: this.searchEnabled,
+                abortController,
+                initialPendingPhase
+            });
+
+            if (this.chatArea && this.isViewingSession(session.id)) {
+                await this.chatArea.render();
+            }
+        } catch (error) {
+            if (!this.isCancelledError(error, abortController.signal)) {
+                console.error('Error regenerating Parallel lane:', error);
+                if (this.floatingPanel) {
+                    this.floatingPanel.showMessage(error.message, 'error', 5000);
+                }
+                if (this.isViewingSession(session.id)) {
+                    await this.addMessage('assistant', `**Error:** ${error.message}`, { isLocalOnly: true });
+                }
+            }
+        } finally {
+            this._lastApiContent = null;
+            this.setSessionStreamingState(session.id, false, null);
+            this.isAutoScrollPaused = false;
+            this.updateScrollButtonVisibility();
+            requestAnimationFrame(() => {
+                this.elements.messageInput.focus();
+            });
+        }
+    }
+
     /**
      * Sends a user message and streams the AI response.
      * Handles API key acquisition, model selection, and streaming updates.
@@ -6948,10 +7056,22 @@ class ChatApp {
      */
     getMessageTemplateOptions(messageId) {
         const editDraft = this.editDrafts.get(messageId) || null;
+        const session = this.getCurrentSession();
+        const editParallelEnabled = this.isCouncilModeActive(session);
+        const editPrimaryModelName = this.chatInput?.getPrimaryModelName?.()
+            || this.normalizeModelName(session?.model)
+            || session?.model
+            || this.getDefaultModelName();
+        const editSecondaryModelName = editParallelEnabled
+            ? (this.chatInput?.getSelectedCouncilSecondaryModelName?.(editPrimaryModelName) || '')
+            : '';
         return {
             isEditing: this.editingMessageId === messageId,
             editContent: editDraft?.content,
             editFiles: editDraft?.files,
+            editParallelEnabled,
+            editPrimaryModelName,
+            editSecondaryModelName,
             memoryFeatureEnabled: this.memoryFeatureEnabled !== false
         };
     }
@@ -7071,6 +7191,16 @@ class ChatApp {
         snapshot.streamingTokens = null;
 
         return snapshot;
+    }
+
+    findCouncilStageEntryByLane(message, laneId) {
+        const stageEntries = Array.isArray(message?.council?.stage1)
+            ? message.council.stage1
+            : [];
+        if (!laneId || stageEntries.length === 0) return null;
+        return stageEntries.find((entry) => entry?.laneId === laneId)
+            || stageEntries.find((entry) => entry?.label === laneId)
+            || null;
     }
 
     /**
@@ -8066,6 +8196,7 @@ class ChatApp {
             this.modelPicker.renderCurrentModel();
         }
         this.chatInput?.refreshMultiModelSettingsUI?.();
+        this.chatArea?.updateEditModelPickerButton?.();
         this.chatInput?.updateMemoryToggleUI?.();
         this.updateCouncilLayoutMode();
     }
@@ -8073,9 +8204,13 @@ class ChatApp {
     updateCouncilLayoutMode(session = this.getCurrentSession(), messages = null) {
         if (typeof document === 'undefined') return;
         const isCouncilLayoutMode = this.sessionUsesCouncilLayout(session, messages);
-        const outputMode = session?.councilConfig?.outputMode
+        const isCouncilModeEnabled = session
+            ? this.isCouncilModeActive(session)
+            : this.pendingCouncilConfig?.enabled === true;
+        const storedOutputMode = session?.councilConfig?.outputMode
             || this.pendingCouncilConfig?.outputMode
             || COUNCIL_OUTPUT_PARALLEL;
+        const outputMode = isCouncilModeEnabled ? storedOutputMode : COUNCIL_OUTPUT_PARALLEL;
         document.documentElement.classList.toggle('council-layout-mode', isCouncilLayoutMode);
         document.documentElement.classList.toggle(
             'council-synthesis-layout-mode',
@@ -8565,8 +8700,9 @@ class ChatApp {
             // Cmd/Ctrl + L for the Council synthesis model picker
             if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L')) {
                 const session = this.getCurrentSession();
-                const isCouncilReviewEnabled = session?.councilConfig?.outputMode === COUNCIL_OUTPUT_SYNTHESIS
-                    || (!session && this.pendingCouncilConfig?.outputMode === COUNCIL_OUTPUT_SYNTHESIS);
+                const isCouncilReviewEnabled = session
+                    ? this.isCouncilModeActive(session) && session?.councilConfig?.outputMode === COUNCIL_OUTPUT_SYNTHESIS
+                    : this.pendingCouncilConfig?.enabled === true && this.pendingCouncilConfig?.outputMode === COUNCIL_OUTPUT_SYNTHESIS;
                 const isSettingsOpen = this.elements.settingsMenu
                     && !this.elements.settingsMenu.classList.contains('hidden');
                 if (this.modelPicker && (isCouncilReviewEnabled || isSettingsOpen)) {

@@ -9,6 +9,10 @@
 
 import { getProviderIcon } from '../services/providerIcons.js';
 import { resolveProvider, resolveProviderFromModelReference } from '../services/providerRegistry.js';
+import {
+    getComposerModelDisplayName,
+    getProviderlessModelDisplayName
+} from '../domain/modelSelection.js';
 import { getDefaultModelConfig, onPinnedModelsUpdate } from '../services/modelConfig.js';
 import { getTicketCost, onModelTiersUpdate } from '../services/modelTiers.js';
 
@@ -190,10 +194,6 @@ export default class ModelPicker {
         let allowedModels = this.app.state.models.filter(model =>
             !this.disabledModels.has(model.id)
         );
-        if (this.isSecondarySelectionMode()) {
-            const primaryModelName = this.app.getPrimaryModelName?.() || null;
-            allowedModels = allowedModels.filter(model => model.name !== primaryModelName);
-        }
 
         // Split into non-empty lowercase terms
         const terms = searchTerm.toLowerCase().split(' ').filter(Boolean);
@@ -443,6 +443,7 @@ export default class ModelPicker {
         } else {
             await this.app.actions.selectModel(modelName);
         }
+        this.app.refreshEditModelPickerButton?.();
         this.close(); // close() handles input focus
     }
 
@@ -474,7 +475,7 @@ export default class ModelPicker {
 
         // Always show shortcut HTML
         const shortcutHtml = `
-            <div class="flex items-center gap-0.5 ml-2 pointer-events-none text-muted-foreground text-xs">
+            <div class="model-shortcut flex items-center gap-0.5 ml-2 pointer-events-none text-muted-foreground text-xs">
                 <span class="opacity-60">⌘</span>
                 <span class="opacity-60">K</span>
             </div>
@@ -496,32 +497,23 @@ export default class ModelPicker {
         const iconContent = iconData.html || `<span class="text-[10px] font-semibold">?</span>`;
         const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
 
-        // Extract short model name (without provider prefix) for compact display
-        // Format: "Provider: Model" -> "Model"
-        let shortModelName = currentModelName;
-        if (currentModelName && currentModelName.includes(': ')) {
-            shortModelName = currentModelName.split(': ').slice(1).join(': ');
-        }
+        const shortModelName = getComposerModelDisplayName(currentModelName);
+        const hoverModelName = getProviderlessModelDisplayName(currentModelName) || 'Select model';
 
         this.app.elements.modelPickerBtn.innerHTML = `
             <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 ${bgClass}">
                 ${iconContent}
             </div>
-            <span class="model-name-container min-w-0 truncate">${shortModelName}</span>
+            <span class="model-name-container min-w-0">${shortModelName}</span>
             ${shortcutHtml}
         `;
         this.app.elements.modelPickerBtn.classList.add('gap-1.5');
+        this.app.elements.modelPickerBtn.title = hoverModelName;
+        this.app.elements.modelPickerBtn.setAttribute('data-tooltip', hoverModelName);
+        this.app.elements.modelPickerBtn.setAttribute('data-tooltip-position', 'top');
+        this.app.elements.modelPickerBtn.setAttribute('aria-label', `Primary model: ${hoverModelName}`);
 
-        // Also update the edit form model picker button if it exists (keeps it in sync)
-        const editModelPickerBtn = document.getElementById('edit-model-picker-btn');
-        if (editModelPickerBtn) {
-            editModelPickerBtn.innerHTML = `
-                <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 ${bgClass}">
-                    ${iconContent}
-                </div>
-                <span class="model-name-container min-w-0 truncate">${shortModelName}</span>
-            `;
-        }
+        this.app.refreshEditModelPickerButton?.();
     }
 
     /**

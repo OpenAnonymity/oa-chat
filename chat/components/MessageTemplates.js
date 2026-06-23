@@ -609,6 +609,24 @@ function buildUserMessage(message, options = {}) {
         const attachmentCount = editFiles.length;
         const attachmentLabel = `${attachmentCount} attachment${attachmentCount === 1 ? '' : 's'}`;
         const safeMessageId = escapeHtmlAttribute(message.id);
+        const isParallelEdit = options.editParallelEnabled === true;
+        const primaryModelName = options.editPrimaryModelName || 'Primary model';
+        const secondaryModelName = options.editSecondaryModelName || 'Secondary model';
+        const editSecondaryModelChip = isParallelEdit ? `
+                                    <button
+                                        id="edit-secondary-model-picker-btn"
+                                        class="edit-secondary-model-picker-btn edit-prompt-model-chip btn-ghost-hover inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 border border-input h-7 px-2 gap-1.5 min-w-0"
+                                        data-message-id="${safeMessageId}"
+                                        data-edit-model-lane="secondary"
+                                        title="${escapeHtmlAttribute(secondaryModelName)}"
+                                        aria-label="Secondary model: ${escapeHtmlAttribute(secondaryModelName)}"
+                                    >
+                                        <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 bg-muted">
+                                            <span class="text-[10px] font-semibold">...</span>
+                                        </div>
+                                        <span class="model-name-container min-w-0 truncate">${escapeHtml(secondaryModelName)}</span>
+                                    </button>
+        ` : '';
         return `
             <div class="${CLASSES.userWrapper}" data-message-id="${safeMessageId}"${getRawContentAttribute(message.content)}>
                 <div class="${CLASSES.userGroup}">
@@ -623,19 +641,24 @@ function buildUserMessage(message, options = {}) {
                                 >${escapeHtml(editContent)}</textarea>
                             </div>
                             <div class="flex items-center justify-between gap-2 pt-1.5">
-                                <div class="flex min-w-0 items-center gap-1">
-                                    <button
-                                        id="edit-model-picker-btn"
-                                        class="edit-model-picker-btn btn-ghost-hover inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 border border-input h-7 px-2 gap-1.5 min-w-0"
-                                        data-message-id="${safeMessageId}"
-                                        title="Select model for regeneration"
-                                    >
-                                        <!-- Content will be populated by ChatArea.updateEditModelPickerButton -->
-                                        <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 bg-muted">
-                                            <span class="text-[10px] font-semibold">...</span>
-                                        </div>
-                                        <span class="model-name-container min-w-0 truncate">Loading...</span>
-                                    </button>
+                                <div class="edit-prompt-toolbar-left flex min-w-0 items-center gap-1">
+                                    <div class="edit-prompt-model-group" aria-label="${isParallelEdit ? 'Models for Parallel regeneration' : 'Model for regeneration'}">
+                                        <button
+                                            id="edit-model-picker-btn"
+                                            class="edit-model-picker-btn edit-primary-model-picker-btn edit-prompt-model-chip btn-ghost-hover inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 border border-input h-7 px-2 gap-1.5 min-w-0"
+                                            data-message-id="${safeMessageId}"
+                                            data-edit-model-lane="primary"
+                                            title="${escapeHtmlAttribute(primaryModelName)}"
+                                            aria-label="Primary model: ${escapeHtmlAttribute(primaryModelName)}"
+                                        >
+                                            <!-- Content will be populated by ChatArea.updateEditModelPickerButton -->
+                                            <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 bg-muted">
+                                                <span class="text-[10px] font-semibold">...</span>
+                                            </div>
+                                            <span class="model-name-container min-w-0 truncate">${escapeHtml(primaryModelName)}</span>
+                                        </button>
+                                        ${editSecondaryModelChip}
+                                    </div>
                                     <input
                                         type="file"
                                         class="edit-file-input hidden"
@@ -1413,7 +1436,43 @@ function inferProvider(name) {
     return null;
 }
 
-function buildCouncilStage1EntryBody(entry, processContentWithLatex, messageId) {
+function buildCouncilLaneActionRow(entry, messageId) {
+    if (entry?.status !== 'complete' || !entry.response) {
+        return '';
+    }
+
+    const laneId = entry.laneId || '';
+    const label = entry.label || laneId || 'response';
+    const laneAttributes = `
+        data-message-id="${escapeHtmlAttribute(messageId)}"
+        data-council-lane-id="${escapeHtmlAttribute(laneId)}"
+        data-council-label="${escapeHtmlAttribute(label)}"
+    `;
+
+    return `
+        <div class="council-response-actions" aria-label="${escapeHtmlAttribute(`${label} actions`)}">
+            <button
+                class="message-action-btn council-lane-action-btn copy-council-lane-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+                ${laneAttributes}
+                data-tooltip="Copy response">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
+                </svg>
+            </button>
+            <button
+                class="message-action-btn council-lane-action-btn regenerate-council-lane-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+                ${laneAttributes}
+                data-tooltip="Regenerate this response">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                </svg>
+            </button>
+        </div>
+    `;
+}
+
+function buildCouncilStage1EntryBody(entry, processContentWithLatex, messageId, options = {}) {
+    const { showLaneActions = false } = options;
     if (entry?.status === 'complete' && entry.response) {
         let rawContent = entry.response;
         if (entry.citations && entry.citations.length > 0) {
@@ -1430,6 +1489,7 @@ function buildCouncilStage1EntryBody(entry, processContentWithLatex, messageId) 
                     ${processedContent}
                 </div>
             </div>
+            ${showLaneActions ? buildCouncilLaneActionRow(entry, messageId) : ''}
         `;
     }
 
@@ -1464,9 +1524,15 @@ function buildCouncilSynthesisSection(synthesis, processContentWithLatex, messag
     let bodyHtml = '';
     const synthesisModel = synthesis.model || synthesis.modelId || '';
     const synthesisModelHtml = synthesisModel
+        ? buildCouncilModelLabel(synthesisModel, { roleLabel: 'Council' })
+        : '';
+    const showMeta = !!(synthesisModelHtml || statusHtml);
+    const metaHtml = showMeta
         ? `
-            <span class="council-response-separator" aria-hidden="true">·</span>
-            ${buildCouncilModelLabel(synthesisModel, { includeProvider: true })}
+            <div class="council-response-meta">
+                ${synthesisModelHtml ? `<span class="council-response-model council-synthesis-title">${synthesisModelHtml}</span>` : ''}
+                ${statusHtml}
+            </div>
         `
         : '';
 
@@ -1503,21 +1569,15 @@ function buildCouncilSynthesisSection(synthesis, processContentWithLatex, messag
         `;
     } else {
         bodyHtml = `
-            <div class="council-response-placeholder">
-                Preparing Council answer...
+            <div class="px-2 py-1">
+                ${buildPendingIndicatorContent('waiting-response')}
             </div>
         `;
     }
 
     return `
         <div class="council-synthesis-block">
-            <div class="council-response-meta">
-                <span class="council-response-model council-synthesis-title">
-                    <span>Council Answer</span>
-                    ${synthesisModelHtml}
-                </span>
-                ${statusHtml}
-            </div>
+            ${metaHtml}
             ${bodyHtml}
         </div>
     `;
@@ -1544,6 +1604,7 @@ function formatCouncilModelDisplayName(modelName, options = {}) {
 }
 
 function buildCouncilModelLabel(modelName, options = {}) {
+    const { roleLabel = '' } = options;
     const displayName = formatCouncilModelDisplayName(modelName || '', options);
     const shortName = extractShortModelName(modelName || '');
     const provider = inferProvider(modelName || '');
@@ -1553,7 +1614,8 @@ function buildCouncilModelLabel(modelName, options = {}) {
     return `
         <span class="council-response-model-label">
             <span class="council-response-icon ${bgClass}">${iconHtml}</span>
-            <span>${escapeHtml(displayName || modelName || '')}</span>
+            <span class="council-response-model-name">${escapeHtml(displayName || modelName || '')}</span>
+            ${roleLabel ? `<span class="council-response-role-label">${escapeHtml(roleLabel)}</span>` : ''}
         </span>
     `;
 }
@@ -1589,7 +1651,19 @@ function buildCouncilModeIconHtml() {
     `;
 }
 
-function buildAssistantActionRow(message, citationsToggle = '', extraButtonsHtml = '', noResponseNotice = '') {
+function buildAssistantActionRow(message, citationsToggle = '', extraButtonsHtml = '', noResponseNotice = '', options = {}) {
+    const { includeFork = true } = options;
+    const forkButtonHtml = includeFork ? `
+                <button
+                    class="message-action-btn fork-conversation-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+                    data-message-id="${message.id}"
+                    data-tooltip="Fork conversation from here">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M2 12h6c6 0 10-4 14-8m-4 0h4v4M8 12c6 0 10 4 14 8m-4 0h4v-4" />
+                    </svg>
+                </button>
+    ` : '';
+
     return `
         <div class="assistant-actions-anchor assistant-actions-row flex items-center justify-between gap-2 w-full -mt-1">
             <div class="flex items-center gap-1">
@@ -1609,20 +1683,39 @@ function buildAssistantActionRow(message, citationsToggle = '', extraButtonsHtml
                         <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
                     </svg>
                 </button>
-                <button
-                    class="message-action-btn fork-conversation-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
-                    data-message-id="${message.id}"
-                    data-tooltip="Fork conversation from here">
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M2 12h6c6 0 10-4 14-8m-4 0h4v4M8 12c6 0 10 4 14 8m-4 0h4v-4" />
-                    </svg>
-                </button>
+                ${forkButtonHtml}
                 ${extraButtonsHtml}
                 ${noResponseNotice}
             </div>
             ${citationsToggle}
         </div>
     `;
+}
+
+function buildAssistantCitationsOnlyRow(citationsToggle = '') {
+    if (!citationsToggle) {
+        return '';
+    }
+
+    return `
+        <div class="assistant-actions-anchor assistant-actions-row flex items-center justify-between gap-2 w-full -mt-1">
+            <div></div>
+            ${citationsToggle}
+        </div>
+    `;
+}
+
+const COUNCIL_SYNTHESIS_ACTION_PENDING_STATUSES = new Set(['waiting', 'pending', 'running']);
+
+function shouldShowCouncilAssistantActions(synthesis) {
+    if (!synthesis) {
+        return true;
+    }
+
+    const status = typeof synthesis.status === 'string'
+        ? synthesis.status.trim().toLowerCase()
+        : '';
+    return !COUNCIL_SYNTHESIS_ACTION_PENDING_STATUSES.has(status);
 }
 
 function buildCouncilAssistantMessage({
@@ -1643,7 +1736,10 @@ function buildCouncilAssistantMessage({
     const synthesis = council.synthesis || null;
     const citationsBubble = buildCitationsSection(message.citations, message.id);
     const citationsToggle = buildCitationsToggleButton(message.citations, message.id);
-    const assistantActionsRow = buildAssistantActionRow(message, citationsToggle);
+    const showLaneActions = !hasSynthesis;
+    const assistantActionsRow = hasSynthesis && shouldShowCouncilAssistantActions(synthesis)
+        ? buildAssistantActionRow(message, citationsToggle, '', '', { includeFork: false })
+        : buildAssistantCitationsOnlyRow(citationsToggle);
 
     const useSideBySide = stage1Entries.length > 1 && stage1Entries.length <= 2;
     const stage1Tabs = stage1Entries.length > 1 && !useSideBySide
@@ -1682,6 +1778,7 @@ function buildCouncilAssistantMessage({
             <div
                 class="council-response-panel${isActive ? '' : ' hidden'}"
                 data-council-panel-label="${escapeHtmlAttribute(entry.label)}"
+                data-council-lane-id="${escapeHtmlAttribute(entry.laneId || '')}"
             >
                 <div class="council-response-meta">
                     <span class="council-response-model">${buildCouncilModelLabel(entry.model || entry.modelId || '')}</span>
@@ -1689,7 +1786,7 @@ function buildCouncilAssistantMessage({
                         isFallbackContext: synthesis?.status === 'error' && canonicalLabel === entry.label
                     })}
                 </div>
-                ${buildCouncilStage1EntryBody(entry, processContentWithLatex, message.id)}
+                ${buildCouncilStage1EntryBody(entry, processContentWithLatex, message.id, { showLaneActions })}
             </div>
         `;
     }).join('');

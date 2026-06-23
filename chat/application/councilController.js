@@ -9,7 +9,7 @@ import {
     buildCouncilMembersForSession,
     normalizeCouncilConfig
 } from '../domain/councilConfig.js';
-import { resolveSecondaryModelNameForModels } from '../domain/modelSelection.js';
+import { findModelByNameOrId, resolveSecondaryModelNameForModels } from '../domain/modelSelection.js';
 
 const SAVE_INTERVAL_MS = 350;
 const LANE_IDS = ['primary', 'secondary'];
@@ -104,6 +104,123 @@ export default class CouncilController {
         return this.runMultiModelTurn(options);
     }
 
+    async runRegenerateLaneTurn({
+        session,
+        assistantMessageId,
+        laneId,
+        userMessage,
+        searchEnabled,
+        abortController,
+        initialPendingPhase
+    }) {
+        throwIfAborted(abortController?.signal || null);
+        if (!session?.id || !assistantMessageId || !laneId) return null;
+
+        if (!Array.isArray(this.app.state.models) || this.app.state.models.length === 0) {
+            await this.app.loadModels();
+        }
+
+        const messages = await this.chatDB.getSessionMessages(session.id);
+        const assistantIndex = messages.findIndex((message) => message.id === assistantMessageId);
+        if (assistantIndex === -1) return null;
+
+        const assistantMessage = messages[assistantIndex];
+        if (assistantMessage?.role !== 'assistant' || !Array.isArray(assistantMessage?.council?.stage1)) {
+            return null;
+        }
+        if (assistantMessage.council.synthesis) {
+            throw new Error('Per-model regenerate is available in Parallel mode before Council review.');
+        }
+
+        const stageEntry = this.getStage1EntryByLaneId(assistantMessage, laneId);
+        if (!stageEntry) {
+            throw new Error('Could not find that Parallel response.');
+        }
+        const selectedLaneWasCanonical = assistantMessage.council.canonicalStage1Label === stageEntry.label;
+
+        const entries = this.resolveModelEntries(session);
+        const entry = this.resolveEntryForStage1Entry(session, stageEntry, entries);
+        if (!entry?.id || !entry?.name) {
+            throw new Error('Could not resolve the model for that Parallel response.');
+        }
+
+        this.assertSufficientTicketsForEntries(session, [entry], `${entry.name} response`);
+
+        const priorMessages = messages
+            .slice(0, assistantIndex)
+            .filter((message) => !message.isLocalOnly);
+        const sanitizedMessages = this.app.sanitizeMessagesForApi(
+            this.buildLaneConversationMessages(priorMessages, entry, entries)
+        );
+
+        stageEntry.status = 'pending';
+        stageEntry.response = '';
+        stageEntry.error = null;
+        stageEntry.reasoning = null;
+        stageEntry.citations = null;
+        stageEntry.startedAt = Date.now();
+        stageEntry.completedAt = null;
+        stageEntry.cancelledAt = null;
+        assistantMessage.council.currentStage = 'stage1';
+        assistantMessage.council.statusMessage = null;
+        assistantMessage.council.errors = (assistantMessage.council.errors || [])
+            .filter((error) => error?.laneId !== laneId && error?.model !== stageEntry.model);
+        assistantMessage.streamingPhase = initialPendingPhase || 'waiting-response';
+        assistantMessage.streamingTokens = null;
+        assistantMessage.timestamp = Date.now();
+        this.refreshStage1CanonicalResponse(assistantMessage);
+        await this.saveAndRender(assistantMessage, session, { skipSessionsRender: true });
+
+        try {
+            await this.ensureAccessForEntries(session, [entry], null, abortController?.signal || null);
+            stageEntry.status = 'running';
+            await this.saveAndRender(assistantMessage, session, { skipSessionsRender: true });
+
+            const result = await this.sendLaneCompletion({
+                session,
+                entry,
+                sanitizedMessages,
+                searchEnabled,
+                abortController,
+                typingId: null
+            });
+            stageEntry.response = extractResponseContent(result);
+            stageEntry.reasoning = extractReasoning(result);
+            stageEntry.citations = extractCitations(result);
+            stageEntry.status = 'complete';
+            stageEntry.completedAt = Date.now();
+            stageEntry.error = null;
+            this.refreshStage1CanonicalResponse(
+                assistantMessage,
+                selectedLaneWasCanonical ? stageEntry.label : null
+            );
+        } catch (error) {
+            if (isAbortError(error)) {
+                stageEntry.status = 'cancelled';
+                stageEntry.cancelledAt = Date.now();
+            } else {
+                stageEntry.status = 'error';
+                stageEntry.error = error?.message || 'Request failed';
+                assistantMessage.council.errors.push({
+                    laneId,
+                    model: stageEntry.model,
+                    message: stageEntry.error
+                });
+            }
+            this.refreshStage1CanonicalResponse(assistantMessage);
+        }
+
+        assistantMessage.council.completedAt = Date.now();
+        assistantMessage.streamingPhase = null;
+        assistantMessage.streamingTokens = null;
+        await this.saveAndRender(assistantMessage, session);
+        await this.app.recomputeSessionCouncilTranscriptHint?.(session);
+        if (stageEntry.status === 'complete') {
+            this.app.triggerPostTurnMemoryExtraction?.(session);
+        }
+        return assistantMessage;
+    }
+
     async removeAssistantMessagesAfter(sessionId, userMessageId, options = {}) {
         const { preserveLocalOnlyMessages = false } = options;
         const messages = await this.chatDB.getSessionMessages(sessionId);
@@ -130,12 +247,11 @@ export default class CouncilController {
 
     findModelEntry(modelNameOrId) {
         if (!modelNameOrId || !Array.isArray(this.app.state.models)) return null;
-        const normalizedName = this.app.normalizeModelName(modelNameOrId) || modelNameOrId;
-        return this.app.state.models.find((model) => model.name === normalizedName)
-            || this.app.state.models.find((model) => model.name === modelNameOrId)
-            || this.app.state.models.find((model) => model.id === modelNameOrId)
-            || this.app.state.models.find((model) => model.id === normalizedName)
-            || null;
+        return findModelByNameOrId(
+            this.app.state.models,
+            modelNameOrId,
+            (candidate) => this.app.normalizeModelName(candidate)
+        );
     }
 
     resolvePrimaryModelName(session) {
@@ -155,20 +271,23 @@ export default class CouncilController {
     resolveModelEntries(session) {
         const fallbackModelName = this.resolvePrimaryModelName(session);
         const normalizedConfig = normalizeCouncilConfig(session?.councilConfig, fallbackModelName);
+        const configuredMembers = buildCouncilMembersForSession(
+            { ...session, councilConfig: normalizedConfig },
+            fallbackModelName
+        );
         const requestedNames = [
-            fallbackModelName,
-            ...buildCouncilMembersForSession(
-                { ...session, councilConfig: normalizedConfig },
-                fallbackModelName
-            ).filter((modelName) => modelName !== fallbackModelName)
+            fallbackModelName
         ];
+        if (configuredMembers.length >= 2) {
+            requestedNames.push(configuredMembers[1]);
+        } else if (configuredMembers[0] && configuredMembers[0] !== fallbackModelName) {
+            requestedNames.push(configuredMembers[0]);
+        }
 
         const entries = [];
-        const seenIds = new Set();
         for (const name of requestedNames) {
             const modelEntry = this.findModelEntry(name);
-            if (!modelEntry || seenIds.has(modelEntry.id)) continue;
-            seenIds.add(modelEntry.id);
+            if (!modelEntry) continue;
             entries.push({
                 ...modelEntry,
                 laneId: LANE_IDS[entries.length] || `lane-${entries.length + 1}`
@@ -183,8 +302,7 @@ export default class CouncilController {
                 normalizeModelName: (modelName) => this.app.normalizeModelName?.(modelName)
             });
             const fallbackSecondaryEntry = this.findModelEntry(fallbackSecondaryName);
-            if (fallbackSecondaryEntry?.id && !seenIds.has(fallbackSecondaryEntry.id)) {
-                seenIds.add(fallbackSecondaryEntry.id);
+            if (fallbackSecondaryEntry?.id) {
                 entries.push({
                     ...fallbackSecondaryEntry,
                     laneId: LANE_IDS[entries.length] || `lane-${entries.length + 1}`
@@ -194,8 +312,7 @@ export default class CouncilController {
 
         if (entries.length > 0 && entries.length < 2 && Array.isArray(this.app.state.models)) {
             for (const modelEntry of this.app.state.models) {
-                if (!modelEntry?.id || !modelEntry?.name || seenIds.has(modelEntry.id)) continue;
-                seenIds.add(modelEntry.id);
+                if (!modelEntry?.id || !modelEntry?.name) continue;
                 entries.push({
                     ...modelEntry,
                     laneId: LANE_IDS[entries.length] || `lane-${entries.length + 1}`
@@ -659,6 +776,64 @@ export default class CouncilController {
             || null;
     }
 
+    getStage1EntryByLaneId(message, laneId) {
+        const stageEntries = Array.isArray(message?.council?.stage1)
+            ? message.council.stage1
+            : [];
+        if (!laneId || stageEntries.length === 0) return null;
+        return stageEntries.find((stageEntry) => stageEntry.laneId === laneId)
+            || stageEntries.find((stageEntry) => stageEntry.label === laneId)
+            || null;
+    }
+
+    resolveEntryForStage1Entry(session, stageEntry, entries = []) {
+        const laneId = stageEntry?.laneId || 'primary';
+        const catalogEntry = this.findModelEntry(stageEntry?.modelId)
+            || this.findModelEntry(stageEntry?.model)
+            || entries.find((entry) => entry.laneId === laneId)
+            || null;
+        if (catalogEntry?.id && catalogEntry?.name) {
+            return { ...catalogEntry, laneId };
+        }
+        return {
+            id: stageEntry?.modelId || stageEntry?.model || session?.model || null,
+            name: stageEntry?.model || stageEntry?.modelId || session?.model || null,
+            laneId
+        };
+    }
+
+    refreshStage1CanonicalResponse(message, preferredLabel = null) {
+        const stageEntries = Array.isArray(message?.council?.stage1)
+            ? message.council.stage1
+            : [];
+        const completed = stageEntries.filter((entry) => entry?.status === 'complete' && entry.response);
+        const existingLabel = message?.council?.canonicalStage1Label || null;
+        const canonical = completed.find((entry) => entry.label === preferredLabel)
+            || completed.find((entry) => entry.label === existingLabel)
+            || completed[0]
+            || null;
+
+        if (!canonical) {
+            message.content = '';
+            message.model = 'Parallel';
+            message.citations = null;
+            if (message.scrubber) {
+                message.scrubber.redactedResponse = '';
+            }
+            return null;
+        }
+
+        message.content = canonical.response;
+        message.model = canonical.model;
+        message.citations = canonical.citations || null;
+        message.council.canonicalStage1Label = canonical.label;
+        message.council.canonicalModel = canonical.model;
+        if (message.scrubber) {
+            message.scrubber.redactedResponse = canonical.response;
+        }
+        return canonical;
+    }
+
     buildLaneConversationMessages(messages = [], entry, entries = []) {
         return messages
             .map((message) => {
@@ -848,7 +1023,7 @@ export default class CouncilController {
 
                 if (!wasCancelled && synthesisEntry && assistantMessage.council.synthesis) {
                     assistantMessage.council.currentStage = 'synthesis';
-                    assistantMessage.council.statusMessage = 'Preparing Council answer...';
+                    assistantMessage.council.statusMessage = 'Waiting for response';
                     assistantMessage.council.synthesis.status = 'running';
                     await persistProgress(true);
 
@@ -884,9 +1059,7 @@ export default class CouncilController {
                             fallbackUsed: false,
                             completedAt: Date.now()
                         };
-                        assistantMessage.council.statusMessage = synthesisStatus === 'partial'
-                            ? 'Council answer ready from one completed response.'
-                            : 'Council answer ready.';
+                        assistantMessage.council.statusMessage = null;
                         if (assistantMessage.scrubber) {
                             assistantMessage.scrubber.redactedResponse = synthesisResponse;
                         }

@@ -134,11 +134,45 @@ export function findModelByNameOrId(models = [], modelNameOrId = '', normalizeMo
     const normalizedName = typeof normalizeModelNameFn === 'function'
         ? (normalizeModelNameFn(modelNameOrId) || modelNameOrId)
         : modelNameOrId;
+    const lookupValues = [normalizedName, modelNameOrId]
+        .map((value) => String(value || '').trim())
+        .filter(Boolean);
     return models.find((model) => model?.name === normalizedName)
         || models.find((model) => model?.name === modelNameOrId)
         || models.find((model) => model?.id === modelNameOrId)
         || models.find((model) => model?.id === normalizedName)
+        || models.find((model) => lookupValues.includes(String(model?.name || '').trim()))
+        || models.find((model) => lookupValues.includes(String(model?.id || '').trim()))
         || null;
+}
+
+function modelName(model) {
+    return String(model?.name || '').trim();
+}
+
+function normalizeCompactModelLabel(label = '') {
+    return String(label || '')
+        .replace(/\s+/g, ' ')
+        .replace(/\s+-\s*$/g, '')
+        .replace(/-\s*$/g, '')
+        .replace(/\(\s*\)/g, '')
+        .trim();
+}
+
+function removeProviderPrefix(modelName = '') {
+    const originalName = String(modelName || '').trim();
+    if (!originalName) return '';
+    return originalName.includes(': ')
+        ? originalName.split(': ').slice(1).join(': ')
+        : originalName;
+}
+
+export function getProviderlessModelDisplayName(modelName = '') {
+    return normalizeCompactModelLabel(removeProviderPrefix(modelName));
+}
+
+export function getComposerModelDisplayName(modelName = '') {
+    return getProviderlessModelDisplayName(modelName);
 }
 
 export function getConfiguredSecondaryModelNameForModels({
@@ -148,14 +182,21 @@ export function getConfiguredSecondaryModelNameForModels({
     normalizeModelName = null
 } = {}) {
     const hasLoadedModels = Array.isArray(models) && models.length > 0;
-    const primaryEntry = findModelByNameOrId(models, primaryModelName, normalizeModelName);
-    return (Array.isArray(councilMembers) ? councilMembers : []).find((modelName) => {
-        if (!modelName || modelName === primaryModelName) return false;
-        const modelEntry = findModelByNameOrId(models, modelName, normalizeModelName);
-        if (hasLoadedModels && !modelEntry) return false;
-        if (!modelEntry || !primaryEntry) return true;
-        return modelEntry.id !== primaryEntry.id;
-    }) || '';
+    const validMembers = (Array.isArray(councilMembers) ? councilMembers : []).reduce((members, memberName) => {
+        if (!memberName) return members;
+        const modelEntry = findModelByNameOrId(models, memberName, normalizeModelName);
+        if (hasLoadedModels && !modelEntry) return members;
+        members.push(modelName(modelEntry) || String(memberName).trim());
+        return members;
+    }, []);
+
+    if (validMembers.length >= 2) {
+        return validMembers[1];
+    }
+    if (validMembers.length === 1 && String(validMembers[0]).trim() !== String(primaryModelName || '').trim()) {
+        return validMembers[0];
+    }
+    return '';
 }
 
 function isPreferredSecondaryModel(model) {
@@ -173,20 +214,24 @@ export function getDefaultSecondaryModelNameForModels({
     primaryModelName = '',
     normalizeModelName = null
 } = {}) {
+    const primaryEntry = findModelByNameOrId(models, primaryModelName, normalizeModelName);
     const availableModels = Array.isArray(models)
-        ? models.filter((model) => model?.name && model.name !== primaryModelName)
+        ? models.filter((model) => model?.name)
         : [];
     if (availableModels.length === 0) {
         return '';
     }
+    const nonPrimaryModels = availableModels.filter((model) => {
+        if (primaryEntry?.id && model.id === primaryEntry.id) return false;
+        return modelName(model) !== String(primaryModelName || '').trim();
+    });
 
-    const primaryEntry = findModelByNameOrId(models, primaryModelName, normalizeModelName);
-    const preferredModel = availableModels.find((model) => {
+    const preferredModel = nonPrimaryModels.find((model) => {
         if (!isPreferredSecondaryModel(model)) return false;
         return !primaryEntry || model.id !== primaryEntry.id;
     });
 
-    return preferredModel?.name || availableModels[0]?.name || '';
+    return modelName(preferredModel) || modelName(nonPrimaryModels[0]) || modelName(availableModels[0]) || '';
 }
 
 export function resolveSecondaryModelNameForModels({
@@ -196,12 +241,12 @@ export function resolveSecondaryModelNameForModels({
     normalizeModelName = null
 } = {}) {
     const availableModels = Array.isArray(models)
-        ? models.filter((model) => model?.name && model.name !== primaryModelName)
+        ? models.filter((model) => model?.name)
         : [];
     const preferredMatch = preferredModelName
         ? findModelByNameOrId(availableModels, preferredModelName, normalizeModelName)
         : null;
-    return preferredMatch?.name || getDefaultSecondaryModelNameForModels({
+    return modelName(preferredMatch) || getDefaultSecondaryModelNameForModels({
         models,
         primaryModelName,
         normalizeModelName
@@ -227,7 +272,7 @@ export function resolvePrimaryModelNameForModels({
     const fallbackMatch = fallbackModelName
         ? findModelByNameOrId(availableModels, fallbackModelName, normalizeModelName)
         : null;
-    return preferredMatch?.name || fallbackMatch?.name || availableModels[0]?.name || '';
+    return modelName(preferredMatch) || modelName(fallbackMatch) || modelName(availableModels[0]) || '';
 }
 
 export function resolveSynthesisModelNameForModels({
@@ -249,5 +294,5 @@ export function resolveSynthesisModelNameForModels({
     const fallbackMatch = fallbackModelName
         ? findModelByNameOrId(availableModels, fallbackModelName, normalizeModelName)
         : null;
-    return preferredMatch?.name || fallbackMatch?.name || availableModels[0]?.name || '';
+    return modelName(preferredMatch) || modelName(fallbackMatch) || modelName(availableModels[0]) || '';
 }

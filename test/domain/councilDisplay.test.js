@@ -68,10 +68,10 @@ test('skipped synthesis display keeps failure status without canonical-context n
     assert.equal(display.stage1Summary, '');
 });
 
-test('running synthesis display omits explanatory stage note', () => {
+test('running synthesis display omits aggregate status row', () => {
     const display = getCouncilDisplayState({
         currentStage: 'synthesis',
-        statusMessage: 'Preparing Council answer...',
+        statusMessage: 'Waiting for response',
         stage1: [
             { label: 'Response A', status: 'complete' },
             { label: 'Response B', status: 'complete' }
@@ -81,11 +81,11 @@ test('running synthesis display omits explanatory stage note', () => {
         }
     });
 
-    assert.equal(display.statusMessage, 'Preparing Council answer...');
+    assert.equal(display.statusMessage, '');
     assert.equal(display.stage1Summary, '');
 });
 
-test('completed synthesis display omits canonical-context stage note', () => {
+test('completed synthesis display omits aggregate status row', () => {
     const display = getCouncilDisplayState({
         currentStage: 'complete',
         statusMessage: 'Council answer ready.',
@@ -98,6 +98,6 @@ test('completed synthesis display omits canonical-context stage note', () => {
         }
     });
 
-    assert.equal(display.statusMessage, 'Council answer ready.');
+    assert.equal(display.statusMessage, '');
     assert.equal(display.stage1Summary, '');
 });

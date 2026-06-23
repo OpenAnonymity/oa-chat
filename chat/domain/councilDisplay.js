@@ -9,6 +9,7 @@ export function getCouncilDisplayState(council = {}) {
     const stage1Entries = Array.isArray(council.stage1) ? council.stage1 : [];
     const synthesis = council.synthesis || null;
     const hasSynthesis = !!synthesis;
+    const synthesisStatus = synthesis?.status || null;
     const rawStatusMessage = typeof council.statusMessage === 'string'
         ? council.statusMessage.trim()
         : '';
@@ -18,10 +19,12 @@ export function getCouncilDisplayState(council = {}) {
     const suppressLegacyParallelStatus = !hasSynthesis
         && !hasPendingStage1
         && PARALLEL_STATUS_MESSAGES_TO_HIDE_AFTER_STAGE1.has(rawStatusMessage);
-    const explicitStatusMessage = suppressPendingStage1Status || suppressLegacyParallelStatus ? '' : rawStatusMessage;
+    const suppressNormalSynthesisStatus = ['running', 'complete', 'partial'].includes(synthesisStatus);
+    const explicitStatusMessage = suppressPendingStage1Status || suppressLegacyParallelStatus || suppressNormalSynthesisStatus
+        ? ''
+        : rawStatusMessage;
     const statusMessage = explicitStatusMessage;
 
-    const synthesisStatus = synthesis?.status || null;
     const stage1Summary = '';
 
     return {

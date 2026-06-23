@@ -214,7 +214,7 @@ test('resolveModelEntries adds Gemini 3.5 Flash as fallback secondary model when
     assert.deepEqual(entries.map((entry) => entry.laneId), ['primary', 'secondary']);
 });
 
-test('resolveModelEntries dedupes configured model ids before choosing secondary lane', () => {
+test('resolveModelEntries preserves configured secondary lane', () => {
     const controller = createController({
         models: [
             { id: 'openai/gpt', name: 'GPT' },
@@ -238,6 +238,60 @@ test('resolveModelEntries dedupes configured model ids before choosing secondary
     const entries = controller.resolveModelEntries(session);
 
     assert.deepEqual(entries.map((entry) => entry.id), ['openai/gpt', 'anthropic/claude']);
+    assert.deepEqual(entries.map((entry) => entry.laneId), ['primary', 'secondary']);
+});
+
+test('resolveModelEntries allows the same model in both Parallel lanes', () => {
+    const controller = createController({
+        models: [
+            { id: 'openai/gpt', name: 'GPT' },
+            { id: 'anthropic/claude', name: 'Claude' }
+        ],
+        inferenceService: {
+            getDefaultModelName: () => 'GPT'
+        }
+    });
+    const session = {
+        id: 'session-1',
+        model: 'GPT',
+        councilConfig: {
+            enabled: true,
+            members: ['GPT', 'GPT'],
+            outputMode: 'parallel'
+        }
+    };
+
+    const entries = controller.resolveModelEntries(session);
+
+    assert.deepEqual(entries.map((entry) => entry.id), ['openai/gpt', 'openai/gpt']);
+    assert.deepEqual(entries.map((entry) => entry.laneId), ['primary', 'secondary']);
+});
+
+test('resolveModelEntries matches trimmed configured secondary against trailing-space catalog names', () => {
+    const controller = createController({
+        models: [
+            { id: 'openai/gpt', name: 'GPT' },
+            { id: 'baidu/ernie-4.5-vl-424b-a47b', name: 'Baidu: ERNIE 4.5 VL 424B A47B ' },
+            { id: 'anthropic/claude', name: 'Claude' }
+        ],
+        inferenceService: {
+            getDefaultModelName: () => 'GPT'
+        }
+    });
+    const session = {
+        id: 'session-1',
+        model: 'GPT',
+        councilConfig: {
+            enabled: true,
+            members: ['GPT', 'Baidu: ERNIE 4.5 VL 424B A47B'],
+            outputMode: 'parallel'
+        }
+    };
+
+    const entries = controller.resolveModelEntries(session);
+
+    assert.deepEqual(entries.map((entry) => entry.id), ['openai/gpt', 'baidu/ernie-4.5-vl-424b-a47b']);
+    assert.deepEqual(entries.map((entry) => entry.name), ['GPT', 'Baidu: ERNIE 4.5 VL 424B A47B ']);
     assert.deepEqual(entries.map((entry) => entry.laneId), ['primary', 'secondary']);
 });
 
@@ -1184,6 +1238,118 @@ test('runMultiModelTurn uses each lane previous Stage 1 response in parallel out
     assert.ok(!sentMessagesByLane.get('primary').some((message) => message.content === 'Prior Claude response'));
     assert.ok(!sentMessagesByLane.get('secondary').some((message) => message.content === 'Prior GPT response'));
     assert.equal(savedMessages.at(-1).council.synthesis, null);
+});
+
+test('runRegenerateLaneTurn refreshes only the selected Parallel lane', async () => {
+    const userMessage = {
+        id: 'user-1',
+        sessionId: 'session-1',
+        role: 'user',
+        content: 'Compare this',
+        timestamp: Date.now() - 1
+    };
+    const assistantMessage = {
+        id: 'assistant-1',
+        sessionId: 'session-1',
+        role: 'assistant',
+        content: 'Original GPT response',
+        model: 'GPT',
+        timestamp: Date.now(),
+        council: {
+            stage1: [
+                {
+                    label: 'Response A',
+                    laneId: 'primary',
+                    model: 'GPT',
+                    modelId: 'openai/gpt',
+                    status: 'complete',
+                    response: 'Original GPT response'
+                },
+                {
+                    label: 'Response B',
+                    laneId: 'secondary',
+                    model: 'Claude',
+                    modelId: 'anthropic/claude',
+                    status: 'complete',
+                    response: 'Original Claude response'
+                }
+            ],
+            synthesis: null,
+            outputMode: 'parallel',
+            canonicalStage1Label: 'Response A',
+            canonicalModel: 'GPT',
+            errors: []
+        }
+    };
+    const messages = [userMessage, assistantMessage];
+    const savedMessages = [];
+    const accessEntries = [];
+    const sentMessagesByLane = new Map();
+    const memoryExtractionCalls = [];
+    const controller = createController({
+        ticketCount: 10,
+        models: [
+            { id: 'openai/gpt', name: 'GPT' },
+            { id: 'anthropic/claude', name: 'Claude' }
+        ],
+        chatDB: {
+            getSessionMessages: async () => messages,
+            saveMessage: async (message) => {
+                savedMessages.push(JSON.parse(JSON.stringify(message)));
+            },
+            saveSession: async () => {}
+        },
+        inferenceService: {
+            getDefaultModelName: () => 'GPT'
+        }
+    });
+    Object.assign(controller.app, {
+        loadModels: async () => {},
+        sanitizeMessagesForApi: (targetMessages) => targetMessages,
+        refreshSessionConversationSearchText: async () => {},
+        renderSessions: () => {},
+        isViewingSession: () => false,
+        recomputeSessionCouncilTranscriptHint: async () => {},
+        triggerPostTurnMemoryExtraction: (targetSession) => {
+            memoryExtractionCalls.push(targetSession?.id || null);
+        }
+    });
+    controller.ensureAccessForEntries = async (_session, entries) => {
+        accessEntries.push(entries.map((entry) => entry.laneId));
+    };
+    controller.assertSufficientTicketsForEntries = () => 0;
+    controller.sendLaneCompletion = async ({ entry, sanitizedMessages }) => {
+        sentMessagesByLane.set(entry.laneId, sanitizedMessages);
+        return { content: 'Regenerated Claude response' };
+    };
+
+    await controller.runRegenerateLaneTurn({
+        session: {
+            id: 'session-1',
+            model: 'GPT',
+            councilConfig: {
+                members: ['GPT', 'Claude'],
+                outputMode: 'parallel'
+            },
+            councilAccess: {}
+        },
+        assistantMessageId: 'assistant-1',
+        laneId: 'secondary',
+        userMessage,
+        searchEnabled: false,
+        abortController: new AbortController(),
+        initialPendingPhase: 'requesting-key'
+    });
+
+    const finalMessage = savedMessages.at(-1);
+    assert.deepEqual(accessEntries, [['secondary']]);
+    assert.equal(finalMessage.council.stage1[0].response, 'Original GPT response');
+    assert.equal(finalMessage.council.stage1[1].response, 'Regenerated Claude response');
+    assert.equal(finalMessage.council.stage1[1].status, 'complete');
+    assert.equal(finalMessage.content, 'Original GPT response');
+    assert.equal(finalMessage.model, 'GPT');
+    assert.deepEqual(sentMessagesByLane.get('secondary').map((message) => message.id), ['user-1']);
+    assert.deepEqual(memoryExtractionCalls, ['session-1']);
 });
 
 test('runMultiModelTurn attempts partial synthesis when one Stage 1 lane succeeds', async () => {

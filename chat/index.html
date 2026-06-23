@@ -529,19 +529,45 @@
                                 </div>
 
                                 <!-- Bottom Actions Bar (never wraps - buttons collapse on mobile via CSS) -->
-                                <div class="flex items-center justify-between gap-1 pt-1.5">
+                                <div class="composer-bottom-actions flex items-center justify-between gap-1 pt-1.5">
                                     <div class="composer-left-actions relative flex min-w-0 items-center gap-1">
-                                        <div id="composer-more-control" class="composer-more-control relative">
-                                            <button id="composer-more-btn" type="button" class="composer-more-btn inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-7 w-7" aria-haspopup="menu" aria-expanded="false" aria-label="More composer actions" data-tooltip="More actions" data-tooltip-position="top">
-                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.7">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14M5 12h14" />
-                                                </svg>
+                                        <button id="model-picker-btn" class="composer-model-chip btn-ghost-hover inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:text-accent-foreground h-7 px-2 gap-1.5 text-foreground min-w-0">
+                                            <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 bg-muted">
+                                                <div class="w-2.5 h-2.5 rounded-full border-[1.5px] border-gray-300 border-t-gray-400 animate-spin"></div>
+                                            </div>
+                                            <span class="model-name-container">Select Model</span>
+                                            <div class="model-shortcut flex items-center gap-0.5 ml-2 pointer-events-none text-muted-foreground text-xs">
+                                                <span class="opacity-60">⌘</span>
+                                                <span class="opacity-60">K</span>
+                                            </div>
+                                        </button>
+                                        <div id="council-inline-models" class="hidden council-inline-models" aria-hidden="true">
+                                            <button id="council-secondary-model-btn" type="button" class="council-secondary-model-btn composer-model-chip" aria-haspopup="dialog" aria-expanded="false" aria-label="Secondary model" data-tooltip="Secondary model" data-tooltip-position="top" aria-hidden="true" disabled tabindex="-1">
+                                                <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 bg-muted">
+                                                    <div class="w-2.5 h-2.5 rounded-full border-[1.5px] border-gray-300 border-t-gray-400 animate-spin"></div>
+                                                </div>
+                                                <span class="model-name-container min-w-0">Second model</span>
+                                                <div class="model-shortcut flex items-center gap-0.5 ml-2 pointer-events-none text-muted-foreground text-xs">
+                                                    <span class="opacity-60">⌘</span>
+                                                    <span class="opacity-60">J</span>
+                                                </div>
                                             </button>
-                                            <div id="composer-more-menu" class="hidden composer-more-menu" role="menu" aria-label="Composer actions">
-                                        <!-- File Upload Button -->
-                                        <span class="composer-more-menu-row">
-                                            <input type="file" id="file-upload-input" multiple accept="image/*,.pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,audio/*" class="hidden">
-                                            <button id="file-upload-btn" class="composer-more-menu-item relative" role="menuitem" data-tooltip="Attach files" data-tooltip-position="top">
+                                            <select id="council-secondary-inline-select" class="hidden" aria-hidden="true" tabindex="-1">
+                                                <option value="" disabled selected>Loading…</option>
+                                            </select>
+                                            <select id="council-synthesis-inline-select" class="hidden" aria-hidden="true" tabindex="-1">
+                                                <option value="" disabled selected>Loading…</option>
+                                            </select>
+                                        </div>
+                                    </div>
+
+                                    <div class="composer-right-actions flex items-center gap-1">
+                                        <div id="composer-more-control" class="composer-more-control relative">
+                                            <div id="composer-more-menu" class="composer-more-menu" role="group" aria-label="Composer actions">
+	                                        <!-- File Upload Button -->
+	                                        <span id="composer-file-action" class="composer-more-menu-row">
+	                                            <input type="file" id="file-upload-input" multiple accept="image/*,.pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,audio/*" class="hidden">
+	                                            <button id="file-upload-btn" class="composer-more-menu-item relative" role="menuitem" aria-label="Attach files" data-tooltip="Attach files" data-tooltip-position="top">
                                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                                                     <path stroke-linecap="round" stroke-linejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 0 1-6.364-6.364l10.94-10.94A3 3 0 1 1 19.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 0 0 2.112 2.13" />
                                                 </svg>
@@ -551,8 +577,8 @@
                                         </span>
 
                                         <!-- Settings Dropdown -->
-                                        <div class="relative z-50">
-                                            <button id="settings-btn" class="composer-more-menu-item" role="menuitem" data-tooltip="Settings" data-tooltip-position="top">
+                                        <div id="composer-settings-control" class="relative z-50">
+                                            <button id="settings-btn" class="composer-more-menu-item" role="menuitem" aria-label="Settings" data-tooltip="Settings" data-tooltip-position="top">
                                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                                                     <path stroke-linecap="round" stroke-linejoin="round" d="M10.343 3.94c.09-.542.56-.94 1.11-.94h1.093c.55 0 1.02.398 1.11.94l.149.894c.07.424.384.764.78.93.398.164.855.142 1.205-.108l.737-.527a1.125 1.125 0 0 1 1.45.12l.773.774c.39.389.44 1.002.12 1.45l-.527.737c-.25.35-.272.806-.107 1.204.165.397.505.71.93.78l.893.15c.543.09.94.559.94 1.109v1.094c0 .55-.397 1.02-.94 1.11l-.894.149c-.424.07-.764.383-.929.78-.165.398-.143.854.107 1.204l.527.738c.32.447.269 1.06-.12 1.45l-.774.773a1.125 1.125 0 0 1-1.449.12l-.738-.527c-.35-.25-.806-.272-1.203-.107-.398.165-.71.505-.781.929l-.149.894c-.09.542-.56.94-1.11.94h-1.094c-.55 0-1.019-.398-1.11-.94l-.148-.894c-.071-.424-.384-.764-.781-.93-.398-.164-.854-.142-1.204.108l-.738.527c-.447.32-1.06.269-1.45-.12l-.773-.774a1.125 1.125 0 0 1-.12-1.45l.527-.737c.25-.35.272-.806.108-1.204-.165-.397-.506-.71-.93-.78l-.894-.15c-.542-.09-.94-.56-.94-1.109v-1.094c0-.55.398-1.02.94-1.11l.894-.149c.424-.07.765-.383.93-.78.165-.398.143-.854-.108-1.204l-.526-.738a1.125 1.125 0 0 1 .12-1.45l.773-.773a1.125 1.125 0 0 1 1.45-.12l.737.527c.35.25.807.272 1.204.107.397-.165.71-.505.78-.929l.15-.894Z" />
                                                     <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
@@ -651,16 +677,9 @@
                                                     </div>
                                                     <div id="council-review-model-row" class="px-3 py-1 flex items-center gap-2 hidden">
                                                         <span class="text-xs text-muted-foreground w-12 shrink-0">Council</span>
-                                                        <button id="council-review-model-btn" type="button" class="council-review-model-btn" aria-haspopup="dialog" aria-expanded="false" aria-label="Council model">
-                                                            <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 bg-muted">
-                                                                <div class="w-2.5 h-2.5 rounded-full border-[1.5px] border-gray-300 border-t-gray-400 animate-spin"></div>
-                                                            </div>
-                                                            <span class="model-name-container min-w-0 truncate">Council model</span>
-                                                            <div class="flex items-center gap-0.5 ml-2 pointer-events-none text-muted-foreground text-xs">
-                                                                <span class="opacity-60">⌘</span>
-                                                                <span class="opacity-60">L</span>
-                                                            </div>
-                                                        </button>
+                                                        <select id="council-review-model-select" class="flex-1 min-w-0 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-popover-foreground focus:outline-none focus:ring-1 focus:ring-ring truncate">
+                                                            <option value="" disabled selected>Loading…</option>
+                                                        </select>
                                                         <select id="multi-model-synthesis-select" class="hidden" aria-hidden="true" tabindex="-1">
                                                             <option value="" disabled selected>Loading…</option>
                                                         </select>
@@ -772,11 +791,12 @@
                                                     </div>
                                                     <p id="theme-effective-label" class="px-3 text-[11px] text-muted-foreground/80"></p>
                                                 </div>
+                                                <div id="composer-settings-actions" class="composer-settings-actions"></div>
                                             </div>
                                         </div>
 
                                         <!-- Search Toggle -->
-                                        <button id="search-toggle" class="composer-more-menu-item cursor-pointer select-none search-active" role="menuitemcheckbox" data-tooltip="Web search" data-tooltip-position="top" aria-pressed="true" aria-checked="true">
+                                        <button id="search-toggle" class="composer-more-menu-item cursor-pointer select-none search-active" role="menuitemcheckbox" aria-label="Web search" data-tooltip="Web search" data-tooltip-position="top" aria-pressed="true" aria-checked="true">
                                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                                                 <path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 0 0 8.716-6.747M12 21a9.004 9.004 0 0 1-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 0 1 7.843 4.582M12 3a8.997 8.997 0 0 0-7.843 4.582m15.686 0A11.953 11.953 0 0 1 12 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0 1 21 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0 1 12 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 0 1 3 12c0-1.605.42-3.113 1.157-4.418" />
                                             </svg>
@@ -804,37 +824,6 @@
                                                 <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
                                             </svg>
                                             <span class="chat-mode-html-tooltip">Auto-attach relevant context. Double-click to open memory <span class="px-1 py-0.5 rounded text-[8px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 uppercase tracking-wide">Beta</span></span>
-                                        </button>
-                                    </div>
-
-                                    <div class="composer-right-actions flex items-center gap-1">
-                                        <div id="council-inline-models" class="hidden council-inline-models" aria-hidden="true">
-                                            <button id="council-secondary-model-btn" type="button" class="council-secondary-model-btn council-model-icon-only" aria-haspopup="dialog" aria-expanded="false" aria-label="Secondary model" data-tooltip="Secondary model" data-tooltip-position="top" aria-hidden="true" disabled tabindex="-1">
-                                                <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 bg-muted">
-                                                    <div class="w-2.5 h-2.5 rounded-full border-[1.5px] border-gray-300 border-t-gray-400 animate-spin"></div>
-                                                </div>
-                                                <span class="model-name-container min-w-0 truncate">Second model</span>
-                                                <div class="flex items-center gap-0.5 ml-2 pointer-events-none text-muted-foreground text-xs">
-                                                    <span class="opacity-60">⌘</span>
-                                                    <span class="opacity-60">J</span>
-                                                </div>
-                                            </button>
-                                            <select id="council-secondary-inline-select" class="hidden" aria-hidden="true" tabindex="-1">
-                                                <option value="" disabled selected>Loading…</option>
-                                            </select>
-                                            <select id="council-synthesis-inline-select" class="hidden" aria-hidden="true" tabindex="-1">
-                                                <option value="" disabled selected>Loading…</option>
-                                            </select>
-                                        </div>
-                                        <button id="model-picker-btn" class="model-picker-icon-only btn-ghost-hover inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:text-accent-foreground h-7 px-2 gap-1.5 text-foreground min-w-0">
-                                            <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 bg-muted">
-                                                <div class="w-2.5 h-2.5 rounded-full border-[1.5px] border-gray-300 border-t-gray-400 animate-spin"></div>
-                                            </div>
-                                            <span class="model-name-container">Select Model</span>
-                                            <div class="flex items-center gap-0.5 ml-2 pointer-events-none text-muted-foreground text-xs">
-                                                <span class="opacity-60">⌘</span>
-                                                <span class="opacity-60">K</span>
-                                            </div>
                                         </button>
                                         <button
                                             id="send-btn"

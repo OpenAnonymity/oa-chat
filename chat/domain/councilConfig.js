@@ -19,7 +19,6 @@ function normalizeModelNameValue(modelName) {
 
 function normalizeMembers(members, fallbackModelName = null) {
     const normalized = [];
-    const seen = new Set();
 
     const candidates = Array.isArray(members) && members.length > 0
         ? members
@@ -27,8 +26,7 @@ function normalizeMembers(members, fallbackModelName = null) {
 
     for (const candidate of candidates) {
         const modelName = normalizeModelNameValue(candidate);
-        if (!modelName || seen.has(modelName)) continue;
-        seen.add(modelName);
+        if (!modelName) continue;
         normalized.push(modelName);
         if (normalized.length >= MAX_COUNCIL_MEMBERS) break;
     }

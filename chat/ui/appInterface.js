@@ -120,6 +120,7 @@ export function createModelPickerInterface(app, options = {}) {
         getCouncilSecondaryModelName: () => app.chatInput?.getSelectedCouncilSecondaryModelName?.() || '',
         getCouncilSynthesisModelName: () => app.chatInput?.getCouncilSynthesisModelForSelection?.() || '',
         renderCurrentModel: () => app.renderCurrentModel(),
+        refreshEditModelPickerButton: () => app.chatArea?.updateEditModelPickerButton?.(),
         actions: {
             async selectModel(modelName) {
                 const normalizedModelName = app.normalizeModelName(modelName);
@@ -237,6 +238,7 @@ const COMPONENT_APP_KEYS = new Set([
     'pruneMemoryRetrievedContextFromMessage',
     'reasoningEffort',
     'reasoningEnabled',
+    'regenerateCouncilLane',
     'regenerateResponse',
     'reloadSessions',
     'renderMessages',

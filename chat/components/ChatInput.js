@@ -26,6 +26,8 @@ import {
 } from '../domain/councilConfig.js';
 import {
     findModelByNameOrId,
+    getComposerModelDisplayName,
+    getProviderlessModelDisplayName,
     getConfiguredSecondaryModelNameForModels,
     getDefaultSecondaryModelNameForModels,
     resolvePrimaryModelNameForModels,
@@ -36,6 +38,15 @@ import {
 const MESSAGE_INPUT_MAX_HEIGHT_PX = 300;
 const MESSAGE_INPUT_PREVIEW_EXPANDED_MIN_HEIGHT_PX = 384;
 const SETTINGS_MENU_WIDTH_PX = 260;
+const DEFAULT_COMPOSER_VARIANT = '3';
+const COMPOSER_VARIANTS = {
+    '1': { parallelModels: 'icons', tools: 'inline' },
+    '2': { parallelModels: 'names', tools: 'inline' },
+    '3': { parallelModels: 'names', tools: 'settings' },
+    '4': { parallelModels: 'icons', tools: 'settings' }
+};
+const DEFAULT_COMPOSER_WIDTH = 'combined';
+const COMPOSER_WIDTH_MODES = new Set(['matched', 'combined']);
 
 export default class ChatInput {
     /**
@@ -81,11 +92,89 @@ export default class ChatInput {
         this.councilSynthesisInlineSelect = null;
         this.councilSynthesisInlineButton = null;
         this.councilReviewToggle = null;
-        this.councilReviewModelButton = null;
+        this.councilReviewModelSelect = null;
+        this.composerVariant = this.resolveComposerVariant();
+        this.composerWidth = this.resolveComposerWidth();
         onModelTiersUpdate(() => this.refreshMultiModelSettingsUI());
+        this.applyComposerVariant();
         // Store undone scrubber state for redo functionality
         this.scrubberUndoState = null;
     }
+
+    resolveComposerVariant() {
+        if (typeof window === 'undefined') return DEFAULT_COMPOSER_VARIANT;
+        const requestedVariant = new URLSearchParams(window.location.search).get('composerVariant');
+        return Object.prototype.hasOwnProperty.call(COMPOSER_VARIANTS, requestedVariant)
+            ? requestedVariant
+            : DEFAULT_COMPOSER_VARIANT;
+    }
+
+    resolveComposerWidth() {
+        if (typeof window === 'undefined') return DEFAULT_COMPOSER_WIDTH;
+        const requestedWidth = new URLSearchParams(window.location.search).get('composerWidth');
+        return COMPOSER_WIDTH_MODES.has(requestedWidth)
+            ? requestedWidth
+            : DEFAULT_COMPOSER_WIDTH;
+    }
+
+    getComposerVariantConfig() {
+        return COMPOSER_VARIANTS[this.composerVariant] || COMPOSER_VARIANTS[DEFAULT_COMPOSER_VARIANT];
+    }
+
+    isComposerToolsInline() {
+        return this.getComposerVariantConfig().tools === 'inline';
+    }
+
+    getComposerToolElements() {
+        return {
+            toolsContainer: document.getElementById('composer-more-menu'),
+            fileAction: document.getElementById('composer-file-action'),
+            settingsControl: document.getElementById('composer-settings-control'),
+            settingsActions: document.getElementById('composer-settings-actions'),
+            searchToggle: document.getElementById('search-toggle')
+        };
+    }
+
+    placeComposerToolControls() {
+        if (typeof document === 'undefined') return;
+        const {
+            toolsContainer,
+            fileAction,
+            settingsControl,
+            settingsActions,
+            searchToggle
+        } = this.getComposerToolElements();
+        if (!toolsContainer || !fileAction || !settingsControl || !settingsActions || !searchToggle) return;
+
+        if (this.isComposerToolsInline()) {
+            toolsContainer.append(fileAction, settingsControl, searchToggle);
+        } else {
+            toolsContainer.append(fileAction, settingsControl);
+            settingsActions.append(searchToggle);
+        }
+    }
+
+    applyComposerVariant() {
+        if (typeof document === 'undefined') return;
+        const config = this.getComposerVariantConfig();
+        document.documentElement.dataset.composerVariant = this.composerVariant;
+        document.documentElement.dataset.composerTools = config.tools;
+        document.documentElement.dataset.composerParallelModels = config.parallelModels;
+        document.documentElement.dataset.composerWidth = this.composerWidth;
+        if (!document.documentElement.dataset.composerMode) {
+            document.documentElement.dataset.composerMode = 'chat';
+        }
+        this.placeComposerToolControls();
+    }
+
+    setComposerModeDataset(isCouncilEnabled) {
+        const mode = isCouncilEnabled ? 'parallel' : 'chat';
+        if (typeof document !== 'undefined') {
+            document.documentElement.dataset.composerMode = mode;
+        }
+        return mode;
+    }
+
 
     /**
      * Sets up all event listeners for the input area controls.
@@ -261,26 +350,6 @@ export default class ChatInput {
             await this.app.data.saveSetting('searchEnabled', this.app.searchEnabled);
         });
 
-        if (this.app.elements.composerMoreBtn && this.app.elements.composerMoreMenu) {
-            this.app.elements.composerMoreBtn.addEventListener('click', (event) => {
-                event.stopPropagation();
-                this.toggleComposerMoreMenu();
-            });
-
-            this.app.elements.composerMoreMenu.addEventListener('click', (event) => {
-                event.stopPropagation();
-                if (event.target.closest('#file-upload-btn, #search-toggle')) {
-                    this.closeComposerMoreMenu();
-                }
-            });
-
-            document.addEventListener('keydown', (event) => {
-                if (event.key === 'Escape') {
-                    this.closeComposerMoreMenu();
-                }
-            });
-        }
-
         if (this.app.elements.memoryToggle) {
             this.app.elements.memoryToggle.addEventListener('click', async (e) => {
                 const button = e.target.closest('.chat-mode-toggle-btn');
@@ -350,7 +419,6 @@ export default class ChatInput {
                 menu.style.width = `${SETTINGS_MENU_WIDTH_PX}px`;
                 menu.style.minWidth = `${SETTINGS_MENU_WIDTH_PX}px`;
                 menu.style.maxWidth = `${SETTINGS_MENU_WIDTH_PX}px`;
-                this.closeComposerMoreMenu();
 
                 this.ensureScrubberModelsLoaded();
                 this.refreshMemorySettingsUI();
@@ -408,6 +476,9 @@ export default class ChatInput {
             synthesisInlineSelect.addEventListener('click', (event) => event.stopPropagation());
             synthesisInlineSelect.addEventListener('change', async (event) => {
                 event.stopPropagation();
+                if (this.councilReviewModelSelect) {
+                    this.councilReviewModelSelect.value = event.target.value;
+                }
                 if (this.multiModelSynthesisSelect) {
                     this.multiModelSynthesisSelect.value = event.target.value;
                 }
@@ -426,18 +497,19 @@ export default class ChatInput {
             });
         }
 
-        const councilReviewModelButton = document.getElementById('council-review-model-btn');
-        if (councilReviewModelButton) {
-            this.councilReviewModelButton = councilReviewModelButton;
-            councilReviewModelButton.addEventListener('click', (event) => {
+        const councilReviewModelSelect = document.getElementById('council-review-model-select');
+        if (councilReviewModelSelect) {
+            this.councilReviewModelSelect = councilReviewModelSelect;
+            councilReviewModelSelect.addEventListener('click', (event) => event.stopPropagation());
+            councilReviewModelSelect.addEventListener('change', async (event) => {
                 event.stopPropagation();
-                this.openCouncilSynthesisModelPicker({ closeSettings: true });
-            });
-            councilReviewModelButton.addEventListener('keydown', (event) => {
-                if (event.key !== 'ArrowDown' && event.key !== 'Enter' && event.key !== ' ') return;
-                event.preventDefault();
-                event.stopPropagation();
-                this.openCouncilSynthesisModelPicker({ closeSettings: true });
+                if (this.councilSynthesisInlineSelect) {
+                    this.councilSynthesisInlineSelect.value = event.target.value;
+                }
+                if (this.multiModelSynthesisSelect) {
+                    this.multiModelSynthesisSelect.value = event.target.value;
+                }
+                await this.persistCouncilSelectionFromControls();
             });
         }
 
@@ -480,6 +552,12 @@ export default class ChatInput {
             synthesisSelect.addEventListener('click', (event) => event.stopPropagation());
             synthesisSelect.addEventListener('change', async (event) => {
                 event.stopPropagation();
+                if (this.councilReviewModelSelect) {
+                    this.councilReviewModelSelect.value = event.target.value;
+                }
+                if (this.councilSynthesisInlineSelect) {
+                    this.councilSynthesisInlineSelect.value = event.target.value;
+                }
                 const session = this.app.getCurrentSession();
                 const members = this.getMultiModelMembersForSelection();
                 const synthesisModel = this.getCouncilSynthesisModelForSelection();
@@ -510,6 +588,9 @@ export default class ChatInput {
         // Stop propagation for all clicks inside the menu to prevent document click handler from closing it
         this.app.elements.settingsMenu.addEventListener('click', async (e) => {
             e.stopPropagation();
+            if (e.target.closest('#file-upload-btn, #search-toggle')) {
+                return;
+            }
             // Skip toggle buttons - they have their own handlers
             if (e.target.closest('.display-toggle-container') || e.target.closest('.theme-toggle-container')) {
                 return;
@@ -599,7 +680,6 @@ export default class ChatInput {
         // Close settings menu when clicking outside
         // Note: Toggle controls inside the menu use stopPropagation() to prevent this from firing
         document.addEventListener('click', () => {
-            this.closeComposerMoreMenu();
             if (!this.app.elements.settingsMenu.classList.contains('hidden')) {
                 this.app.elements.settingsMenu.classList.add('hidden');
                 this.app.elements.settingsBtn.classList.remove('tooltip-disabled');
@@ -1941,35 +2021,6 @@ export default class ChatInput {
         }
     }
 
-    toggleComposerMoreMenu() {
-        const menu = this.app.elements.composerMoreMenu;
-        if (!menu) return;
-        if (menu.classList.contains('hidden')) {
-            this.openComposerMoreMenu();
-        } else {
-            this.closeComposerMoreMenu();
-        }
-    }
-
-    openComposerMoreMenu() {
-        const menu = this.app.elements.composerMoreMenu;
-        const button = this.app.elements.composerMoreBtn;
-        if (!menu || !button) return;
-        this.closeSettingsMenu();
-        menu.classList.remove('hidden');
-        button.setAttribute('aria-expanded', 'true');
-        button.classList.add('tooltip-disabled');
-    }
-
-    closeComposerMoreMenu() {
-        const menu = this.app.elements.composerMoreMenu;
-        const button = this.app.elements.composerMoreBtn;
-        if (!menu || !button) return;
-        menu.classList.add('hidden');
-        button.setAttribute('aria-expanded', 'false');
-        button.classList.remove('tooltip-disabled');
-    }
-
     closeSettingsMenu() {
         const menu = this.app.elements.settingsMenu;
         const button = this.app.elements.settingsBtn;
@@ -2015,7 +2066,7 @@ export default class ChatInput {
         const isCouncilEnabled = session
             ? session.responseMode === RESPONSE_MODE_COUNCIL && session.councilConfig?.enabled === true
             : pendingCouncilConfig?.enabled === true;
-        const mode = isCouncilEnabled ? 'parallel' : 'chat';
+        const mode = this.setComposerModeDataset(isCouncilEnabled);
         const isFirstRender = container.style.visibility === 'hidden';
         if (isFirstRender) {
             const indicator = container.querySelector('.chat-mode-toggle-indicator');
@@ -2064,7 +2115,9 @@ export default class ChatInput {
     async setCouncilModeFromComposer(enabled, options = {}) {
         const members = this.getMultiModelMembersForSelection({ preferControlSelection: false });
         const synthesisModel = this.getCouncilSynthesisModelForSelection();
-        const outputMode = options.outputMode || this.getMultiModelOutputModeForSelection();
+        const outputMode = enabled
+            ? (options.outputMode || this.getMultiModelOutputModeForSelection())
+            : COUNCIL_OUTPUT_PARALLEL;
         const session = this.app.getCurrentSession();
 
         if (!session) {
@@ -2092,13 +2145,14 @@ export default class ChatInput {
         const currentlyMultiModelEnabled = session
             ? session.responseMode === RESPONSE_MODE_COUNCIL && session.councilConfig?.enabled === true
             : pendingCouncilConfig?.enabled === true;
+        const nextMultiModelEnabled = enabled || currentlyMultiModelEnabled;
         const members = this.getMultiModelMembersForSelection();
         const synthesisModel = this.getCouncilSynthesisModelForSelection();
         const outputMode = enabled ? COUNCIL_OUTPUT_SYNTHESIS : COUNCIL_OUTPUT_PARALLEL;
 
         if (!session) {
             this.app.setPendingCouncilConfig?.({
-                enabled: currentlyMultiModelEnabled,
+                enabled: nextMultiModelEnabled,
                 members,
                 synthesisModel,
                 outputMode,
@@ -2110,7 +2164,7 @@ export default class ChatInput {
         }
 
         await this.app.setCouncilModeForCurrentSession({
-            enabled: currentlyMultiModelEnabled,
+            enabled: nextMultiModelEnabled,
             members,
             synthesisModel,
             outputMode
@@ -2161,6 +2215,9 @@ export default class ChatInput {
 
     async selectCouncilSynthesisModel(modelName) {
         if (!modelName) return;
+        if (this.councilReviewModelSelect) {
+            this.councilReviewModelSelect.value = modelName;
+        }
         if (this.councilSynthesisInlineSelect) {
             this.councilSynthesisInlineSelect.value = modelName;
         }
@@ -2316,10 +2373,11 @@ export default class ChatInput {
     }
 
     getShortModelName(modelName) {
-        if (!modelName) return '';
-        return modelName.includes(': ')
-            ? modelName.split(': ').slice(1).join(': ')
-            : modelName;
+        return getComposerModelDisplayName(modelName);
+    }
+
+    getFullModelHoverName(modelName) {
+        return getProviderlessModelDisplayName(modelName) || 'Select model';
     }
 
     buildModelIconHtml(modelName, sizeClass = 'w-3 h-3') {
@@ -2337,7 +2395,8 @@ export default class ChatInput {
     getCouncilSynthesisModelForSelection() {
         const session = this.app.getCurrentSession();
         const pendingCouncilConfig = this.app.getPendingCouncilConfig?.();
-        const preferredModelName = this.councilSynthesisInlineSelect?.value
+        const preferredModelName = this.councilReviewModelSelect?.value
+            || this.councilSynthesisInlineSelect?.value
             || this.multiModelSynthesisSelect?.value
             || session?.councilConfig?.synthesisModel
             || session?.councilConfig?.chairmanModel
@@ -2376,7 +2435,7 @@ export default class ChatInput {
         const synthesisInlineSelect = document.getElementById('council-synthesis-inline-select');
         const councilReviewToggle = document.getElementById('council-review-toggle');
         const councilReviewModelRow = document.getElementById('council-review-model-row');
-        const councilReviewModelButton = document.getElementById('council-review-model-btn');
+        const councilReviewModelSelect = document.getElementById('council-review-model-select');
         const modeSelect = document.getElementById('multi-model-mode-select');
         const synthesisSelect = document.getElementById('multi-model-synthesis-select');
 
@@ -2384,6 +2443,7 @@ export default class ChatInput {
         const isEnabled = session
             ? session.responseMode === RESPONSE_MODE_COUNCIL && session.councilConfig?.enabled === true
             : pendingCouncilConfig?.enabled === true;
+        this.setComposerModeDataset(isEnabled);
         if (inlineContainer) {
             inlineContainer.classList.toggle('hidden', !isEnabled);
             inlineContainer.classList.toggle('flex', isEnabled);
@@ -2392,10 +2452,13 @@ export default class ChatInput {
         const primaryModelButton = this.app.elements.modelPickerBtn || document.getElementById('model-picker-btn');
         if (primaryModelButton) {
             const primaryModelName = this.getPrimaryModelName();
-            primaryModelButton.setAttribute('data-tooltip', `Primary model: ${primaryModelName || 'Select model'}`);
+            const primaryHoverName = this.getFullModelHoverName(primaryModelName);
+            primaryModelButton.setAttribute('data-tooltip', primaryHoverName);
             primaryModelButton.setAttribute('data-tooltip-position', 'top');
-            primaryModelButton.setAttribute('aria-label', `Primary model: ${primaryModelName || 'Select model'}`);
-            primaryModelButton.classList.add('model-picker-icon-only');
+            primaryModelButton.setAttribute('aria-label', `Primary model: ${primaryHoverName}`);
+            primaryModelButton.title = primaryHoverName;
+            primaryModelButton.classList.remove('model-picker-icon-only');
+            primaryModelButton.classList.add('composer-model-chip');
         }
 
         const primary = this.getPrimaryModelName();
@@ -2405,13 +2468,14 @@ export default class ChatInput {
             || pendingCouncilConfig?.chairmanModel
             || primary
             || '';
-        const outputMode = session?.councilConfig?.outputMode
+        const storedOutputMode = session?.councilConfig?.outputMode
             || pendingCouncilConfig?.outputMode
             || COUNCIL_OUTPUT_PARALLEL;
+        const outputMode = isEnabled ? storedOutputMode : COUNCIL_OUTPUT_PARALLEL;
         const isCouncilReviewEnabled = outputMode === COUNCIL_OUTPUT_SYNTHESIS;
         this.app.updateCouncilLayoutMode?.(session);
         const models = Array.isArray(this.app.state.models) ? this.app.state.models : [];
-        const availableModels = models.filter((model) => model?.name && model.name !== primary);
+        const availableModels = models.filter((model) => model?.name);
         const allSelectableModels = models.filter((model) => model?.name);
         const modelsLoaded = allSelectableModels.length > 0;
         const councilSynthesisModel = this.resolveCouncilSynthesisModelName(requestedCouncilSynthesisModel, primary);
@@ -2458,28 +2522,36 @@ export default class ChatInput {
             this.multiModelSecondaryInlineButton = inlineButton;
             inlineButton.disabled = !isEnabled || availableModels.length === 0;
             inlineButton.setAttribute('data-tooltip-position', 'top');
-            inlineButton.classList.add('council-model-icon-only');
+            inlineButton.classList.remove('council-model-icon-only');
+            inlineButton.classList.add('composer-model-chip');
             inlineButton.setAttribute('aria-hidden', isEnabled ? 'false' : 'true');
             if (isEnabled) {
                 inlineButton.removeAttribute('tabindex');
             } else {
                 inlineButton.setAttribute('tabindex', '-1');
             }
-            const selectedModel = availableModels.find((model) => model.name === selectedSecondary) || availableModels[0] || null;
+            const selectedModel = findModelByNameOrId(
+                availableModels,
+                selectedSecondary,
+                (modelName) => this.app.normalizeModelName?.(modelName)
+            ) || availableModels[0] || null;
             if (!selectedModel) {
-                inlineButton.setAttribute('aria-label', 'Secondary model: none available');
-                inlineButton.setAttribute('data-tooltip', 'Secondary model: none available');
+                inlineButton.setAttribute('aria-label', 'Secondary model unavailable');
+                inlineButton.setAttribute('data-tooltip', 'No model available');
+                inlineButton.title = 'No model available';
                 inlineButton.innerHTML = '<span class="model-name-container min-w-0 truncate">No second model</span>';
             } else {
-                inlineButton.setAttribute('aria-label', `Secondary model: ${selectedModel.name}`);
-                inlineButton.setAttribute('data-tooltip', `Secondary model: ${selectedModel.name}`);
+                const secondaryHoverName = this.getFullModelHoverName(selectedModel.name);
+                inlineButton.setAttribute('aria-label', `Secondary model: ${secondaryHoverName}`);
+                inlineButton.setAttribute('data-tooltip', secondaryHoverName);
+                inlineButton.title = secondaryHoverName;
                 const icon = this.buildModelIconHtml(selectedModel.name, 'w-3 h-3');
                 inlineButton.innerHTML = `
                     <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 ${icon.bgClass}">
                         ${icon.html}
                     </div>
-                    <span class="model-name-container min-w-0 truncate">${this.escapeOptionText(this.getShortModelName(selectedModel.name))}</span>
-                    <div class="flex items-center gap-0.5 ml-2 pointer-events-none text-muted-foreground text-xs">
+                    <span class="model-name-container min-w-0">${this.escapeOptionText(this.getShortModelName(selectedModel.name))}</span>
+                    <div class="model-shortcut flex items-center gap-0.5 ml-2 pointer-events-none text-muted-foreground text-xs">
                         <span class="opacity-60">⌘</span>
                         <span class="opacity-60">J</span>
                     </div>
@@ -2494,10 +2566,11 @@ export default class ChatInput {
             }
             return options.map((model, index) => {
                 const value = model.name;
+                const label = this.getFullModelHoverName(value);
                 const selected = councilSynthesisModel
                     ? value === councilSynthesisModel
                     : index === 0;
-                return `<option value="${this.escapeOptionValue(value)}"${selected ? ' selected' : ''}>${this.escapeOptionText(value)}</option>`;
+                return `<option value="${this.escapeOptionValue(value)}"${selected ? ' selected' : ''}>${this.escapeOptionText(label)}</option>`;
             }).join('');
         };
 
@@ -2515,30 +2588,22 @@ export default class ChatInput {
             councilReviewModelRow.classList.toggle('hidden', !isCouncilReviewEnabled);
         }
 
-        if (councilReviewModelButton) {
-            this.councilReviewModelButton = councilReviewModelButton;
-            councilReviewModelButton.disabled = !isCouncilReviewEnabled || (allSelectableModels.length === 0 && !councilSynthesisModel);
-            councilReviewModelButton.setAttribute('aria-label', `Council model: ${councilSynthesisModel || 'none available'}`);
-            councilReviewModelButton.setAttribute('data-tooltip', `Council model: ${councilSynthesisModel || 'none available'}`);
-            councilReviewModelButton.setAttribute('data-tooltip-position', 'left');
-            const selectedModel = allSelectableModels.find((model) => model.name === councilSynthesisModel)
-                || (!modelsLoaded && councilSynthesisModel ? { name: councilSynthesisModel } : null)
-                || allSelectableModels[0]
-                || null;
-            if (!selectedModel) {
-                councilReviewModelButton.innerHTML = '<span class="model-name-container min-w-0 truncate">No council model</span>';
+        if (councilReviewModelSelect) {
+            this.councilReviewModelSelect = councilReviewModelSelect;
+            const councilHoverName = councilSynthesisModel
+                ? this.getFullModelHoverName(councilSynthesisModel)
+                : 'No model available';
+            councilReviewModelSelect.setAttribute('aria-label', `Council model: ${councilHoverName}`);
+            councilReviewModelSelect.title = councilHoverName;
+            if (allSelectableModels.length === 0 && !councilSynthesisModel) {
+                councilReviewModelSelect.innerHTML = '<option value="" disabled selected>No council model</option>';
+                councilReviewModelSelect.disabled = true;
             } else {
-                const icon = this.buildModelIconHtml(selectedModel.name, 'w-3 h-3');
-                councilReviewModelButton.innerHTML = `
-                    <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 ${icon.bgClass}">
-                        ${icon.html}
-                    </div>
-                    <span class="model-name-container min-w-0 truncate">${this.escapeOptionText(this.getShortModelName(selectedModel.name))}</span>
-                    <div class="flex items-center gap-0.5 ml-2 pointer-events-none text-muted-foreground text-xs">
-                        <span class="opacity-60">⌘</span>
-                        <span class="opacity-60">L</span>
-                    </div>
-                `;
+                councilReviewModelSelect.disabled = !isCouncilReviewEnabled;
+                councilReviewModelSelect.innerHTML = renderSynthesisOptions();
+                if (councilSynthesisModel) {
+                    councilReviewModelSelect.value = councilSynthesisModel;
+                }
             }
         }
 

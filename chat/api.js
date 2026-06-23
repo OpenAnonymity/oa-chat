@@ -184,8 +184,10 @@ class OpenRouterAPI {
             }
 
             // Apply custom display name if one exists
-            const defaultName = model.name || model.id;
-            const displayName = this.getDisplayName(model.id, defaultName);
+            const defaultName = typeof model.name === 'string' && model.name.trim()
+                ? model.name.trim()
+                : model.id;
+            const displayName = String(this.getDisplayName(model.id, defaultName) || defaultName).trim();
 
             return {
                 id: model.id,

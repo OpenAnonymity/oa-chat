@@ -2,6 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
     filterDisabledModels,
+    findModelByNameOrId,
+    getComposerModelDisplayName,
+    getProviderlessModelDisplayName,
     getFallbackModelEntry,
     getConfiguredSecondaryModelNameForModels,
     getDefaultSecondaryModelNameForModels,
@@ -63,6 +66,68 @@ test('normalizeModelName resolves ids through display-name provider and standard
         }),
         'Provider Standard Name'
     );
+});
+
+test('getComposerModelDisplayName removes provider prefixes without character truncation', () => {
+    assert.equal(getComposerModelDisplayName('OpenAI: GPT-5.5'), 'GPT-5.5');
+    assert.equal(
+        getComposerModelDisplayName('Anthropic: Claude Opus 4.8 (Fast)'),
+        'Claude Opus 4.8 (Fast)'
+    );
+    assert.equal(
+        getComposerModelDisplayName('Google: Gemini 2.5 Flash Lite Preview 09-2025'),
+        'Gemini 2.5 Flash Lite Preview 09-2025'
+    );
+    assert.equal(
+        getComposerModelDisplayName('Baidu: ERNIE 4.5 VL 424B A47B '),
+        'ERNIE 4.5 VL 424B A47B'
+    );
+});
+
+test('getProviderlessModelDisplayName returns full hover label without provider prefix', () => {
+    assert.equal(
+        getProviderlessModelDisplayName('Anthropic: Claude Opus 4.8 (Fast)'),
+        'Claude Opus 4.8 (Fast)'
+    );
+    assert.equal(
+        getProviderlessModelDisplayName('OpenAI: GPT-5.5'),
+        'GPT-5.5'
+    );
+});
+
+test('getComposerModelDisplayName keeps full providerless labels for CSS truncation', () => {
+    const longCatalogNames = [
+        'Anthropic: Claude Opus 4.8 (Fast)',
+        'Anthropic: Claude Sonnet 4.5 (Preview)',
+        'Google: Gemini 2.5 Flash Lite Preview 09-2025',
+        'Google: Gemini 3.1 Pro Preview Custom Tools',
+        'Google: Gemma 4 26B A4B (free)',
+        'Inflection: Inflection 3 Productivity',
+        'Liquid: LFM2.5-1.2B-Thinking (free)',
+        'Mistral: Mistral Small 3.1 24B',
+        'Mistral: Mistral Small 3.2 24B',
+        'Meta: Llama 3.2 11B Vision Instruct',
+        'Meta: Llama 3.3 70B Instruct (free)',
+        'Nous: Hermes 3 405B Instruct (free)',
+        'NVIDIA: Llama 3.3 Nemotron Super 49B V1.5',
+        'NVIDIA: Nemotron 3 Nano 30B A3B (free)',
+        'NVIDIA: Nemotron 3 Ultra (free)',
+        'NVIDIA: Nemotron 3.5 Content Safety (free)'
+    ];
+
+    for (const modelName of longCatalogNames) {
+        assert.equal(
+            getComposerModelDisplayName(modelName),
+            getProviderlessModelDisplayName(modelName),
+            `${modelName} should render its full providerless name and let CSS truncate by width`
+        );
+    }
+});
+
+test('findModelByNameOrId tolerates trailing display-name whitespace', () => {
+    const baidu = { id: 'baidu/ernie-4.5-vl-424b-a47b', name: 'Baidu: ERNIE 4.5 VL 424B A47B ' };
+    assert.equal(findModelByNameOrId([baidu], 'Baidu: ERNIE 4.5 VL 424B A47B'), baidu);
+    assert.equal(findModelByNameOrId([baidu], 'baidu/ernie-4.5-vl-424b-a47b'), baidu);
 });
 
 test('upgradeDefaultModelPreference upgrades configured previous defaults', () => {
@@ -157,6 +222,27 @@ test('resolveSecondaryModelNameForModels maps configured model ids to display na
     );
 });
 
+test('resolveSecondaryModelNameForModels keeps trailing-space catalog names selectable', () => {
+    const baiduModel = {
+        id: 'baidu/ernie-4.5-vl-424b-a47b',
+        name: 'Baidu: ERNIE 4.5 VL 424B A47B ',
+        provider: 'Baidu'
+    };
+
+    assert.equal(
+        resolveSecondaryModelNameForModels({
+            models: [
+                { id: 'openai/gpt', name: 'OpenAI: GPT', provider: 'OpenAI' },
+                baiduModel
+            ],
+            primaryModelName: 'OpenAI: GPT',
+            preferredModelName: 'Baidu: ERNIE 4.5 VL 424B A47B',
+            normalizeModelName: normalizeCouncilModelName
+        }),
+        'Baidu: ERNIE 4.5 VL 424B A47B'
+    );
+});
+
 test('resolveSecondaryModelNameForModels defaults to Gemini 3.5 Flash when available', () => {
     const fallbackModels = [
         { id: 'openai/gpt-oss-120b', name: 'OpenAI: GPT OSS 120B', provider: 'OpenAI' },
@@ -230,7 +316,19 @@ test('resolveSecondaryModelNameForModels does not prefer Gemini 3.5 Flash varian
     );
 });
 
-test('getConfiguredSecondaryModelNameForModels skips primary model ids before selecting secondary', () => {
+test('getConfiguredSecondaryModelNameForModels preserves explicit duplicate secondary lanes', () => {
+    assert.equal(
+        getConfiguredSecondaryModelNameForModels({
+            models,
+            councilMembers: ['openai/gpt', 'openai/gpt'],
+            primaryModelName: 'OpenAI: GPT',
+            normalizeModelName: normalizeCouncilModelName
+        }),
+        'OpenAI: GPT'
+    );
+});
+
+test('getConfiguredSecondaryModelNameForModels selects the second configured member', () => {
     assert.equal(
         getConfiguredSecondaryModelNameForModels({
             models,
@@ -238,7 +336,19 @@ test('getConfiguredSecondaryModelNameForModels skips primary model ids before se
             primaryModelName: 'OpenAI: GPT',
             normalizeModelName: normalizeCouncilModelName
         }),
-        'anthropic/claude'
+        'Anthropic: Claude'
+    );
+});
+
+test('resolveSecondaryModelNameForModels allows the primary model when explicitly selected', () => {
+    assert.equal(
+        resolveSecondaryModelNameForModels({
+            models,
+            primaryModelName: 'OpenAI: GPT',
+            preferredModelName: 'openai/gpt',
+            normalizeModelName: normalizeCouncilModelName
+        }),
+        'OpenAI: GPT'
     );
 });
 
@@ -250,7 +360,7 @@ test('getConfiguredSecondaryModelNameForModels skips stale configured members wh
             primaryModelName: 'OpenAI: GPT',
             normalizeModelName: normalizeCouncilModelName
         }),
-        'anthropic/claude'
+        'Anthropic: Claude'
     );
 });
 

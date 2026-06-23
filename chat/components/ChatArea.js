@@ -153,6 +153,14 @@ export default class ChatArea {
                 return;
             }
 
+            const copyCouncilLaneBtn = e.target.closest('.copy-council-lane-btn');
+            if (copyCouncilLaneBtn) {
+                const messageId = copyCouncilLaneBtn.dataset.messageId;
+                const laneId = copyCouncilLaneBtn.dataset.councilLaneId;
+                await this.handleCopyCouncilLane(messageId, laneId, copyCouncilLaneBtn);
+                return;
+            }
+
             const copyUserBtn = e.target.closest('.copy-user-message-btn');
             if (copyUserBtn) {
                 const messageId = copyUserBtn.dataset.messageId;
@@ -171,6 +179,14 @@ export default class ChatArea {
             if (regenerateBtn) {
                 const messageId = regenerateBtn.dataset.messageId;
                 await this.handleRegenerateMessage(messageId);
+                return;
+            }
+
+            const regenerateCouncilLaneBtn = e.target.closest('.regenerate-council-lane-btn');
+            if (regenerateCouncilLaneBtn) {
+                const messageId = regenerateCouncilLaneBtn.dataset.messageId;
+                const laneId = regenerateCouncilLaneBtn.dataset.councilLaneId;
+                await this.handleRegenerateCouncilLane(messageId, laneId, regenerateCouncilLaneBtn);
                 return;
             }
 
@@ -254,6 +270,16 @@ export default class ChatArea {
             if (forkBtn) {
                 const messageId = forkBtn.dataset.messageId;
                 await this.app.forkConversation(messageId);
+                return;
+            }
+
+            const editSecondaryModelPickerBtn = e.target.closest('.edit-secondary-model-picker-btn');
+            if (editSecondaryModelPickerBtn) {
+                e.preventDefault();
+                e.stopPropagation();
+                if (this.app.modelPicker) {
+                    this.app.modelPicker.open({ selectionMode: 'council-secondary' });
+                }
                 return;
             }
 
@@ -1091,6 +1117,33 @@ export default class ChatArea {
         }
     }
 
+    findCouncilLaneEntry(message, laneId) {
+        const stageEntries = Array.isArray(message?.council?.stage1)
+            ? message.council.stage1
+            : [];
+        if (!laneId || stageEntries.length === 0) return null;
+        return stageEntries.find((entry) => entry?.laneId === laneId)
+            || stageEntries.find((entry) => entry?.label === laneId)
+            || null;
+    }
+
+    async handleCopyCouncilLane(messageId, laneId, button = null) {
+        const session = this.app.getCurrentSession();
+        if (!session || !messageId || !laneId) return;
+
+        const messages = await this.app.data.getSessionMessages(session.id);
+        const message = messages.find((entry) => entry.id === messageId);
+        const laneEntry = this.findCouncilLaneEntry(message, laneId);
+        const response = typeof laneEntry?.response === 'string'
+            ? laneEntry.response
+            : '';
+
+        if (!response.trim()) return;
+
+        this.copyToClipboard(response);
+        this.animateCopyButton(button || document.querySelector(`.copy-council-lane-btn[data-message-id="${messageId}"][data-council-lane-id="${laneId}"]`));
+    }
+
     /**
      * Shows copy success feedback on the appropriate button.
      * @param {string} messageId - The message ID
@@ -1122,8 +1175,10 @@ export default class ChatArea {
      * @param {HTMLElement} btn - The button element
      */
     animateCopyButton(btn) {
+        if (!btn) return;
         const originalTitle = btn.title;
         const svg = btn.querySelector('svg');
+        if (!svg) return;
         const originalSvgContent = svg.innerHTML;
 
         // Replace with checkmark icon
@@ -1273,6 +1328,31 @@ export default class ChatArea {
 
         // Trigger regeneration by calling the app's regenerateResponse method
         await this.app.regenerateResponse();
+    }
+
+    async handleRegenerateCouncilLane(messageId, laneId, triggerButton = null) {
+        const session = this.app.getCurrentSession();
+        if (!session || !messageId || !laneId) return;
+
+        if (this.app.isCurrentSessionStreaming()) {
+            const stopped = await this.app.stopCurrentSessionStreamingAndWait();
+            if (!stopped) return;
+        }
+
+        if (triggerButton) {
+            triggerButton.classList.add('is-processing');
+            triggerButton.setAttribute('aria-busy', 'true');
+            triggerButton.blur();
+        }
+
+        try {
+            await this.app.regenerateCouncilLane(messageId, laneId);
+        } finally {
+            if (triggerButton) {
+                triggerButton.classList.remove('is-processing');
+                triggerButton.removeAttribute('aria-busy');
+            }
+        }
     }
 
     /**
@@ -2957,24 +3037,39 @@ export default class ChatArea {
      * Updates the edit model picker button content to sync with the main model picker.
      * Called after render when editing a message.
      */
+    updateEditModelPickerChip(targetButton, sourceButton, laneLabel) {
+        if (!targetButton || !sourceButton) return;
+
+        const iconDiv = sourceButton.querySelector('.w-5.h-5');
+        const modelNameSpan = sourceButton.querySelector('.model-name-container');
+        if (!iconDiv || !modelNameSpan) return;
+
+        const modelName = modelNameSpan.textContent?.trim() || `${laneLabel} model`;
+        const iconClone = iconDiv.cloneNode(true);
+        const label = document.createElement('span');
+        label.className = 'model-name-container min-w-0 truncate';
+        label.textContent = modelName;
+        targetButton.replaceChildren(iconClone, label);
+        const hoverName = sourceButton.getAttribute('data-tooltip')
+            || sourceButton.title
+            || modelName;
+        targetButton.title = hoverName;
+        targetButton.setAttribute('data-tooltip', hoverName);
+        targetButton.setAttribute('data-tooltip-position', 'top');
+        targetButton.setAttribute('aria-label', `${laneLabel} model: ${hoverName}`);
+    }
+
     updateEditModelPickerButton() {
-        const editModelPickerBtn = document.getElementById('edit-model-picker-btn');
-        if (!editModelPickerBtn) return;
-
-        // Get the main model picker button's inner HTML (except the keyboard shortcut)
-        const mainBtn = this.app.elements.modelPickerBtn;
-        if (!mainBtn) return;
-
-        // Extract icon and model name from main button
-        const iconDiv = mainBtn.querySelector('.w-5.h-5');
-        const modelNameSpan = mainBtn.querySelector('.model-name-container');
-
-        if (iconDiv && modelNameSpan) {
-            editModelPickerBtn.innerHTML = `
-                ${iconDiv.outerHTML}
-                <span class="model-name-container min-w-0 truncate">${modelNameSpan.textContent}</span>
-            `;
-        }
+        this.updateEditModelPickerChip(
+            document.getElementById('edit-model-picker-btn'),
+            this.app.elements.modelPickerBtn,
+            'Primary'
+        );
+        this.updateEditModelPickerChip(
+            document.getElementById('edit-secondary-model-picker-btn'),
+            document.getElementById('council-secondary-model-btn'),
+            'Secondary'
+        );
     }
 
     /**
