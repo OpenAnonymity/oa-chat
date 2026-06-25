@@ -523,6 +523,15 @@ export default class ChatInput {
                 const members = this.getMultiModelMembersForSelection();
                 const synthesisModel = this.getCouncilSynthesisModelForSelection();
                 const outputMode = this.getMultiModelOutputModeForSelection();
+                const enabled = session
+                    ? session.responseMode === RESPONSE_MODE_COUNCIL && session.councilConfig?.enabled === true
+                    : this.app.getPendingCouncilConfig?.()?.enabled === true;
+                await this.persistParallelDefaults({
+                    enabled,
+                    members,
+                    synthesisModel,
+                    outputMode
+                });
                 if (!session) {
                     const pendingCouncilConfig = this.app.getPendingCouncilConfig?.();
                     this.app.setPendingCouncilConfig?.({
@@ -535,7 +544,6 @@ export default class ChatInput {
                     this.refreshMultiModelSettingsUI();
                     return;
                 }
-                const enabled = session.responseMode === RESPONSE_MODE_COUNCIL && session.councilConfig?.enabled === true;
                 await this.app.setCouncilModeForCurrentSession({
                     enabled,
                     members,
@@ -561,24 +569,33 @@ export default class ChatInput {
                 const session = this.app.getCurrentSession();
                 const members = this.getMultiModelMembersForSelection();
                 const synthesisModel = this.getCouncilSynthesisModelForSelection();
+                const outputMode = this.getMultiModelOutputModeForSelection();
+                const enabled = session
+                    ? session.responseMode === RESPONSE_MODE_COUNCIL && session.councilConfig?.enabled === true
+                    : this.app.getPendingCouncilConfig?.()?.enabled === true;
+                await this.persistParallelDefaults({
+                    enabled,
+                    members,
+                    synthesisModel,
+                    outputMode
+                });
                 if (!session) {
                     const pendingCouncilConfig = this.app.getPendingCouncilConfig?.();
                     this.app.setPendingCouncilConfig?.({
                         enabled: pendingCouncilConfig?.enabled === true,
                         members,
                         synthesisModel,
-                        outputMode: this.getMultiModelOutputModeForSelection(),
+                        outputMode,
                         reviewEnabled: false
                     });
                     this.refreshMultiModelSettingsUI();
                     return;
                 }
-                const enabled = session.responseMode === RESPONSE_MODE_COUNCIL && session.councilConfig?.enabled === true;
                 await this.app.setCouncilModeForCurrentSession({
                     enabled,
                     members,
                     synthesisModel,
-                    outputMode: this.getMultiModelOutputModeForSelection()
+                    outputMode
                 });
                 this.refreshMultiModelSettingsUI();
             });
@@ -2119,6 +2136,12 @@ export default class ChatInput {
             ? (options.outputMode || this.getMultiModelOutputModeForSelection())
             : COUNCIL_OUTPUT_PARALLEL;
         const session = this.app.getCurrentSession();
+        await this.persistParallelDefaults({
+            enabled,
+            members,
+            synthesisModel,
+            outputMode
+        });
 
         if (!session) {
             this.app.setPendingCouncilConfig?.({
@@ -2139,6 +2162,34 @@ export default class ChatInput {
         });
     }
 
+    async persistParallelDefaults(options = {}) {
+        const enabled = options.enabled === true;
+        const members = Array.isArray(options.members) ? options.members : this.getMultiModelMembersForSelection();
+        const secondaryModel = typeof members[1] === 'string' && members[1].trim()
+            ? members[1].trim()
+            : null;
+        const synthesisModel = typeof options.synthesisModel === 'string' && options.synthesisModel.trim()
+            ? options.synthesisModel.trim()
+            : null;
+        const outputMode = options.outputMode === COUNCIL_OUTPUT_SYNTHESIS
+            ? COUNCIL_OUTPUT_SYNTHESIS
+            : COUNCIL_OUTPUT_PARALLEL;
+
+        this.app.setParallelDefaults?.({
+            enabled,
+            secondaryModel,
+            synthesisModel,
+            outputMode
+        });
+
+        await Promise.all([
+            this.app.data.saveSetting('parallelModeEnabled', enabled),
+            this.app.data.saveSetting('parallelSecondaryModel', secondaryModel),
+            this.app.data.saveSetting('parallelSynthesisModel', synthesisModel),
+            this.app.data.saveSetting('parallelOutputMode', outputMode)
+        ]);
+    }
+
     async setCouncilReviewEnabledFromSettings(enabled) {
         const session = this.app.getCurrentSession();
         const pendingCouncilConfig = this.app.getPendingCouncilConfig?.();
@@ -2149,6 +2200,12 @@ export default class ChatInput {
         const members = this.getMultiModelMembersForSelection();
         const synthesisModel = this.getCouncilSynthesisModelForSelection();
         const outputMode = enabled ? COUNCIL_OUTPUT_SYNTHESIS : COUNCIL_OUTPUT_PARALLEL;
+        await this.persistParallelDefaults({
+            enabled: nextMultiModelEnabled,
+            members,
+            synthesisModel,
+            outputMode
+        });
 
         if (!session) {
             this.app.setPendingCouncilConfig?.({
@@ -2178,6 +2235,15 @@ export default class ChatInput {
         const members = this.getMultiModelMembersForSelection();
         const synthesisModel = this.getCouncilSynthesisModelForSelection();
         const outputMode = this.getMultiModelOutputModeForSelection();
+        const currentEnabled = session
+            ? session.responseMode === RESPONSE_MODE_COUNCIL && session.councilConfig?.enabled === true
+            : this.app.getPendingCouncilConfig?.()?.enabled === true;
+        await this.persistParallelDefaults({
+            enabled: currentEnabled,
+            members,
+            synthesisModel,
+            outputMode
+        });
 
         if (!session) {
             const pendingCouncilConfig = this.app.getPendingCouncilConfig?.();

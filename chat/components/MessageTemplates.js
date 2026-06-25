@@ -1354,6 +1354,15 @@ function buildCitationsSection(citations, messageId) {
     `;
 }
 
+function buildCitationScopeId(messageId, scope = '') {
+    const normalizedScope = String(scope || 'sources')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+    return normalizedScope ? `${messageId}-${normalizedScope}` : `${messageId}-sources`;
+}
+
 /**
  * Extracts just the model name from a full "Provider: ModelName" string.
  * @param {string} fullName - Full model name (e.g., "OpenAI: GPT-5.1 Thinking")
@@ -1474,13 +1483,17 @@ function buildCouncilLaneActionRow(entry, messageId) {
 function buildCouncilStage1EntryBody(entry, processContentWithLatex, messageId, options = {}) {
     const { showLaneActions = false } = options;
     if (entry?.status === 'complete' && entry.response) {
+        const citations = Array.isArray(entry.citations) ? entry.citations : [];
+        const citationScopeId = buildCitationScopeId(messageId, entry.laneId || entry.label || 'lane');
+        const citationsToggle = buildCitationsToggleButton(citations, citationScopeId);
+        const citationsSection = buildCitationsSection(citations, citationScopeId);
         let rawContent = entry.response;
-        if (entry.citations && entry.citations.length > 0) {
-            rawContent = insertRawCitationMarkers(rawContent, entry.citations);
+        if (citations.length > 0) {
+            rawContent = insertRawCitationMarkers(rawContent, citations);
         }
         let processedContent = processContentWithLatex(rawContent);
-        if (entry.citations && entry.citations.length > 0) {
-            processedContent = addInlineCitationMarkers(processedContent, messageId);
+        if (citations.length > 0) {
+            processedContent = addInlineCitationMarkers(processedContent, citationScopeId);
         }
         processedContent = enhanceInlineLinks(processedContent, `${messageId}-${entry.label}`);
         return `
@@ -1490,6 +1503,8 @@ function buildCouncilStage1EntryBody(entry, processContentWithLatex, messageId, 
                 </div>
             </div>
             ${showLaneActions ? buildCouncilLaneActionRow(entry, messageId) : ''}
+            ${citationsToggle ? `<div class="council-response-sources-row">${citationsToggle}</div>` : ''}
+            ${citationsSection}
         `;
     }
 
@@ -1538,13 +1553,16 @@ function buildCouncilSynthesisSection(synthesis, processContentWithLatex, messag
 
     if ((status === 'complete' || status === 'partial') && synthesis.response) {
         const citations = Array.isArray(synthesis.citations) ? synthesis.citations : [];
+        const citationScopeId = buildCitationScopeId(messageId, 'synthesis');
+        const citationsToggle = buildCitationsToggleButton(citations, citationScopeId);
+        const citationsSection = buildCitationsSection(citations, citationScopeId);
         let rawContent = synthesis.response;
         if (citations.length > 0) {
             rawContent = insertRawCitationMarkers(rawContent, citations);
         }
         let processedContent = processContentWithLatex(rawContent);
         if (citations.length > 0) {
-            processedContent = addInlineCitationMarkers(processedContent, messageId);
+            processedContent = addInlineCitationMarkers(processedContent, citationScopeId);
         }
         processedContent = enhanceInlineLinks(processedContent, `${messageId}-synthesis`);
         bodyHtml = `
@@ -1553,6 +1571,8 @@ function buildCouncilSynthesisSection(synthesis, processContentWithLatex, messag
                     ${processedContent}
                 </div>
             </div>
+            ${citationsToggle ? `<div class="council-response-sources-row">${citationsToggle}</div>` : ''}
+            ${citationsSection}
         `;
     } else if (status === 'error') {
         const fallbackLabel = synthesis.fallbackLabel || 'Response A';
@@ -1734,12 +1754,10 @@ function buildCouncilAssistantMessage({
         ? council.errors.filter((error) => !error?.stage || error.stage === 'stage1').length
         : 0;
     const synthesis = council.synthesis || null;
-    const citationsBubble = buildCitationsSection(message.citations, message.id);
-    const citationsToggle = buildCitationsToggleButton(message.citations, message.id);
     const showLaneActions = !hasSynthesis;
     const assistantActionsRow = hasSynthesis && shouldShowCouncilAssistantActions(synthesis)
-        ? buildAssistantActionRow(message, citationsToggle, '', '', { includeFork: false })
-        : buildAssistantCitationsOnlyRow(citationsToggle);
+        ? buildAssistantActionRow(message, '', '', '', { includeFork: false })
+        : '';
 
     const useSideBySide = stage1Entries.length > 1 && stage1Entries.length <= 2;
     const stage1Tabs = stage1Entries.length > 1 && !useSideBySide
@@ -1822,7 +1840,6 @@ function buildCouncilAssistantMessage({
                     ${synthesisSection}
                 </div>
                 ${assistantActionsRow}
-                ${citationsBubble}
             </div>
         </div>
     `;

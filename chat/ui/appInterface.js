@@ -130,6 +130,7 @@ export function createModelPickerInterface(app, options = {}) {
 
                 if (!session) {
                     app.state.pendingModelName = normalizedModelName;
+                    app.applyPersistedParallelPendingConfig?.(normalizedModelName);
                     app.renderCurrentModel();
                     return { session: null, modelName: normalizedModelName };
                 }
@@ -259,6 +260,7 @@ const COMPONENT_APP_KEYS = new Set([
     'setMemoryFeatureEnabled',
     'setCouncilModeForCurrentSession',
     'setPendingCouncilConfig',
+    'setParallelDefaults',
     'shareCurrentSession',
     'shouldAutoScrollChat',
     'showLoadingToast',

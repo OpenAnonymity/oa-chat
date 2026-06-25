@@ -207,14 +207,29 @@ test('parallel aggregate messages omit redundant visible mode and completion lab
         'Council review should hide aggregate copy/regenerate/fork while synthesis is still pending and plain Parallel should not use aggregate actions'
     );
     assert.equal(
-        source.includes(': buildAssistantCitationsOnlyRow(citationsToggle);'),
+        source.includes('const citationScopeId = buildCitationScopeId(messageId, entry.laneId || entry.label || \'lane\');'),
         true,
-        'Council review should keep citation controls available while synthesis actions are hidden'
+        'Stage 1 lanes should render lane-scoped citation controls'
     );
     assert.equal(
-        source.includes("? buildAssistantActionRow(message, citationsToggle, '', '', { includeFork: false })"),
+        source.includes("const citationScopeId = buildCitationScopeId(messageId, 'synthesis');"),
         true,
-        'Council review should restore aggregate copy/regenerate after final states while keeping fork disabled'
+        'Council synthesis should render its own citation controls'
+    );
+    assert.equal(
+        source.includes('council-response-sources-row'),
+        true,
+        'Council/Parallel sources should appear inside the lane or synthesis block'
+    );
+    assert.equal(
+        source.includes('buildAssistantCitationsOnlyRow(citationsToggle);'),
+        false,
+        'Council/Parallel messages should not render aggregate citation controls for lane-specific sources'
+    );
+    assert.equal(
+        source.includes("? buildAssistantActionRow(message, '', '', '', { includeFork: false })"),
+        true,
+        'Council review should restore aggregate copy/regenerate after final states while keeping fork disabled and sources local to the response that produced them'
     );
     assert.equal(
         source.includes('const { includeFork = true } = options;'),
@@ -428,6 +443,7 @@ test('composer model controls keep stable compact slots across Chat and Parallel
     const settingsIndex = html.indexOf('id="settings-btn"');
     const themeToggleIndex = html.indexOf('id="theme-toggle"');
     const searchIndex = html.indexOf('id="search-toggle"');
+    const memoryToggleIndex = html.indexOf('id="memory-context-toggle"');
     const modeToggleIndex = html.indexOf('id="chat-mode-toggle"');
     assert.equal(html.includes('id="composer-more-btn"'), false);
     assert.equal(moreMenuIndex > -1, true);
@@ -443,6 +459,7 @@ test('composer model controls keep stable compact slots across Chat and Parallel
     assert.equal(settingsActionsIndex > themeToggleIndex, true);
     assert.equal(searchIndex > moreMenuIndex, true);
     assert.equal(searchIndex < modeToggleIndex, true);
+    assert.equal(memoryToggleIndex > -1, true);
     assert.equal(html.includes('class="composer-more-menu-item relative" role="menuitem" aria-label="Attach files"'), true);
     assert.equal(html.includes('class="composer-more-menu-item" role="menuitem" aria-label="Settings"'), true);
     assert.equal(html.includes('role="menuitemcheckbox"'), true);
@@ -456,6 +473,11 @@ test('composer model controls keep stable compact slots across Chat and Parallel
     assert.equal(secondaryClusterIndex > -1, true);
     assert.equal(primaryModelIndex > -1, true);
     assert.equal(sendButtonIndex > -1, true);
+    assert.equal(
+        searchIndex < memoryToggleIndex && memoryToggleIndex < modeToggleIndex && modeToggleIndex < sendButtonIndex,
+        true,
+        'Memory should sit immediately to the left of the Chat/Parallel toggle, before send'
+    );
     assert.equal(
         primaryModelIndex < secondaryClusterIndex
             && secondaryClusterIndex < fileActionIndex
@@ -520,6 +542,7 @@ test('composer model controls keep stable compact slots across Chat and Parallel
     assert.equal(styles.includes('.composer-more-menu-item'), true);
     assert.equal(styles.includes('.composer-more-btn.composer-more-active'), false);
     assert.equal(styles.includes('.composer-more-active-dot'), false);
+    assert.equal(styles.includes('.council-response-sources-row'), true);
     assert.equal(styles.includes('.council-inline-models.council-inline-reserved'), false);
     assert.equal(styles.includes('.council-inline-divider'), false);
     assert.equal(styles.includes('#model-picker-btn.composer-model-chip,'), true);
@@ -651,6 +674,63 @@ test('council review setting drives synthesis output mode in ChatInput', () => {
         /setCouncilReviewEnabledFromSettings[\s\S]*?saveSetting\?\.\('memoryMode', false\)/.test(source),
         false,
         'Council review should not silently turn off the independent Memory toggle'
+    );
+});
+
+test('Parallel mode and secondary model persist as new-session defaults', () => {
+    const appSource = read('chat/app.js');
+    const chatInputSource = read('chat/components/ChatInput.js');
+    const appInterfaceSource = read('chat/ui/appInterface.js');
+
+    assert.equal(appSource.includes("chatDB.getSetting('parallelModeEnabled')"), true);
+    assert.equal(appSource.includes("chatDB.getSetting('parallelSecondaryModel')"), true);
+    assert.equal(appSource.includes("chatDB.getSetting('parallelSynthesisModel')"), true);
+    assert.equal(appSource.includes("chatDB.getSetting('parallelOutputMode')"), true);
+    assert.equal(appSource.includes('this.parallelModeEnabled = savedParallelModeEnabled === true;'), true);
+    assert.equal(appSource.includes('this.parallelSecondaryModel = typeof savedParallelSecondaryModel ==='), true);
+    assert.equal(appSource.includes('this.parallelOutputMode = normalizeCouncilOutputMode(savedParallelOutputMode);'), true);
+    assert.equal(appSource.includes('buildPersistedParallelCouncilConfig(fallbackModelName = null)'), true);
+    assert.equal(appSource.includes('applyPersistedParallelPendingConfig(fallbackModelName = null)'), true);
+    assert.match(
+        appSource,
+        /clearCurrentSession[\s\S]*?this\.state\.pendingModelName = normalizedSelectedModelName \|\| null;[\s\S]*?this\.applyPersistedParallelPendingConfig\(this\.state\.pendingModelName\);/,
+        'New Chat should rebuild pending Parallel config before rendering the empty composer'
+    );
+    assert.equal(
+        appSource.includes('const pendingCouncilConfig = this.pendingCouncilConfig')
+            && appSource.includes(': this.buildPersistedParallelCouncilConfig(modelNameForNewSession);'),
+        true,
+        'new sessions should inherit persisted Parallel defaults when there is no explicit pending config'
+    );
+    assert.equal(
+        appSource.includes('councilConfig: pendingCouncilConfig || buildDefaultCouncilConfig(modelNameForNewSession)'),
+        true,
+        'new sessions should preserve persisted secondary defaults even when Parallel is currently off'
+    );
+
+    assert.equal(chatInputSource.includes('async persistParallelDefaults(options = {})'), true);
+    assert.equal(chatInputSource.includes("this.app.data.saveSetting('parallelModeEnabled', enabled)"), true);
+    assert.equal(chatInputSource.includes("this.app.data.saveSetting('parallelSecondaryModel', secondaryModel)"), true);
+    assert.equal(chatInputSource.includes("this.app.data.saveSetting('parallelSynthesisModel', synthesisModel)"), true);
+    assert.equal(chatInputSource.includes("this.app.data.saveSetting('parallelOutputMode', outputMode)"), true);
+    assert.equal(chatInputSource.includes('this.app.setParallelDefaults?.({'), true);
+    assert.equal(chatInputSource.includes('this.app.parallelModeEnabled = enabled'), false);
+    assert.equal(chatInputSource.includes('this.app.parallelSecondaryModel = secondaryModel'), false);
+    assert.equal(appInterfaceSource.includes("'setParallelDefaults'"), true);
+    assert.match(
+        chatInputSource,
+        /setCouncilModeFromComposer[\s\S]*?await this\.persistParallelDefaults\(\{/,
+        'Chat/Parallel mode changes should persist globally'
+    );
+    assert.match(
+        chatInputSource,
+        /persistCouncilSelectionFromControls[\s\S]*?await this\.persistParallelDefaults\(\{/,
+        'secondary and Council model changes should persist globally'
+    );
+    assert.match(
+        appInterfaceSource,
+        /app\.state\.pendingModelName = normalizedModelName;[\s\S]*?app\.applyPersistedParallelPendingConfig\?\.\(normalizedModelName\);/,
+        'changing the primary model before first send should keep pending Parallel config aligned'
     );
 });
 

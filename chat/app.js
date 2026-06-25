@@ -83,6 +83,7 @@ import {
     COUNCIL_OUTPUT_SYNTHESIS,
     buildDefaultCouncilConfig,
     normalizeResponseMode,
+    normalizeCouncilOutputMode,
     normalizeCouncilConfig,
     areCouncilConfigsEqual
 } from './domain/councilConfig.js';
@@ -264,6 +265,10 @@ class ChatApp {
         this.memoryWorkGeneration = 0;
         this._lastApiContent = null;
         this._lastApiContentGeneration = null;
+        this.parallelModeEnabled = false;
+        this.parallelSecondaryModel = null;
+        this.parallelSynthesisModel = null;
+        this.parallelOutputMode = COUNCIL_OUTPUT_PARALLEL;
         this.deleteHistoryReturnFocusEl = null;
         this.isDeletingAllChats = false;
         this.appVersionSignature = null;
@@ -1865,7 +1870,11 @@ class ChatApp {
             chatDB.getSetting('memoryMode'),
             chatDB.getSetting('memoryAutoInclude'),
             chatDB.getSetting('memoryAgentModel'),
-            chatDB.getSetting('reasoningEffort')
+            chatDB.getSetting('reasoningEffort'),
+            chatDB.getSetting('parallelModeEnabled'),
+            chatDB.getSetting('parallelSecondaryModel'),
+            chatDB.getSetting('parallelSynthesisModel'),
+            chatDB.getSetting('parallelOutputMode')
         ]);
 
         // Restore session from sessionStorage as early as possible for chat area hydration.
@@ -1884,7 +1893,11 @@ class ChatApp {
             savedMemoryMode,
             savedMemoryAutoInclude,
             savedMemoryAgentModel,
-            savedReasoningEffort
+            savedReasoningEffort,
+            savedParallelModeEnabled,
+            savedParallelSecondaryModel,
+            savedParallelSynthesisModel,
+            savedParallelOutputMode
         ] = await settingsPromise;
 
         // Process model preference
@@ -1923,6 +1936,17 @@ class ChatApp {
         this.reasoningEnabled = true;
         chatDB.saveSetting('reasoningEnabled', true).catch(() => {});
         this.reasoningEffort = normalizeReasoningEffort(savedReasoningEffort);
+        this.parallelModeEnabled = savedParallelModeEnabled === true;
+        this.parallelSecondaryModel = typeof savedParallelSecondaryModel === 'string' && savedParallelSecondaryModel.trim()
+            ? savedParallelSecondaryModel.trim()
+            : null;
+        this.parallelSynthesisModel = typeof savedParallelSynthesisModel === 'string' && savedParallelSynthesisModel.trim()
+            ? savedParallelSynthesisModel.trim()
+            : null;
+        this.parallelOutputMode = normalizeCouncilOutputMode(savedParallelOutputMode);
+        if (!this.state.currentSessionId) {
+            this.applyPersistedParallelPendingConfig(this.state.pendingModelName);
+        }
 
         // This cache is display-only: request-time selection continues to use
         // state.models after the active backend's live catalog has loaded.
@@ -3444,7 +3468,9 @@ class ChatApp {
         }
         const modelNameForNewSession = pendingModelName || normalizedSelectedModelName || null;
 
-        const pendingCouncilConfig = normalizeCouncilConfig(this.pendingCouncilConfig, modelNameForNewSession);
+        const pendingCouncilConfig = this.pendingCouncilConfig
+            ? normalizeCouncilConfig(this.pendingCouncilConfig, modelNameForNewSession)
+            : this.buildPersistedParallelCouncilConfig(modelNameForNewSession);
         const usePendingCouncilMode = pendingCouncilConfig.enabled === true;
         const useCouncilLayoutPreference = this.pendingCouncilLayoutPreference === true || usePendingCouncilMode;
         this.pendingCouncilConfig = null;
@@ -3456,7 +3482,7 @@ class ChatApp {
             updatedAt: Date.now(),
             model: modelNameForNewSession,
             responseMode: usePendingCouncilMode ? RESPONSE_MODE_COUNCIL : RESPONSE_MODE_SINGLE,
-            councilConfig: usePendingCouncilMode ? pendingCouncilConfig : buildDefaultCouncilConfig(modelNameForNewSession),
+            councilConfig: pendingCouncilConfig || buildDefaultCouncilConfig(modelNameForNewSession),
             inferenceBackend: inferenceService.getDefaultBackendId(),
             apiKey: null,
             apiKeyInfo: null,
@@ -3771,6 +3797,50 @@ class ChatApp {
         return this.pendingCouncilConfig;
     }
 
+    buildPersistedParallelCouncilConfig(fallbackModelName = null) {
+        const primaryModel = this.normalizeModelName(fallbackModelName)
+            || fallbackModelName
+            || this.normalizeModelName(this.state.pendingModelName)
+            || this.state.pendingModelName
+            || inferenceService.getDefaultModelName();
+        const secondaryModel = typeof this.parallelSecondaryModel === 'string' && this.parallelSecondaryModel.trim()
+            ? this.parallelSecondaryModel.trim()
+            : null;
+        const synthesisModel = typeof this.parallelSynthesisModel === 'string' && this.parallelSynthesisModel.trim()
+            ? this.parallelSynthesisModel.trim()
+            : primaryModel;
+        return normalizeCouncilConfig({
+            enabled: this.parallelModeEnabled === true,
+            members: [primaryModel, secondaryModel].filter(Boolean),
+            synthesisModel,
+            outputMode: this.parallelOutputMode,
+            reviewEnabled: false
+        }, primaryModel);
+    }
+
+    setParallelDefaults(options = {}) {
+        this.parallelModeEnabled = options.enabled === true;
+        this.parallelSecondaryModel = typeof options.secondaryModel === 'string' && options.secondaryModel.trim()
+            ? options.secondaryModel.trim()
+            : null;
+        this.parallelSynthesisModel = typeof options.synthesisModel === 'string' && options.synthesisModel.trim()
+            ? options.synthesisModel.trim()
+            : null;
+        this.parallelOutputMode = normalizeCouncilOutputMode(options.outputMode);
+        return {
+            enabled: this.parallelModeEnabled,
+            secondaryModel: this.parallelSecondaryModel,
+            synthesisModel: this.parallelSynthesisModel,
+            outputMode: this.parallelOutputMode
+        };
+    }
+
+    applyPersistedParallelPendingConfig(fallbackModelName = null) {
+        this.pendingCouncilConfig = this.buildPersistedParallelCouncilConfig(fallbackModelName);
+        this.pendingCouncilLayoutPreference = this.parallelModeEnabled === true;
+        return this.pendingCouncilConfig;
+    }
+
     async ensureDatabaseReady() {
         try {
             await this.dbReadyPromise;
@@ -4039,6 +4109,7 @@ class ChatApp {
         }
         this.state.pendingModelName = normalizedSelectedModelName || null;
         this.cachedModelDisplayMetadata = inferenceService.getCachedModels();
+        this.applyPersistedParallelPendingConfig(this.state.pendingModelName);
 
         // Update UI to reflect no session selected
         this.renderSessions();

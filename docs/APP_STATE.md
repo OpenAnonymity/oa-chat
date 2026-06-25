@@ -188,14 +188,14 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     lane key is needed.
 - 2026-05-29: Parallel/Council response mode is wired as a session-level opt-in.
   - The bottom response-mode slider has `Chat` and `Parallel` states. Memory is
-    a separate book-icon toggle beside it, so users can combine `Chat + Memory`
-    or `Parallel + Memory`; clicking Parallel no longer turns Memory off, and
-    clicking the book no longer leaves Parallel. A single book click toggles
-    memory auto-attach; a quick double-click opens the memory panel and leaves
-    auto-attach on. Turning on user-facing `Parallel` from the composer exposes
-    an inline second-model picker beside the primary model picker and, by
-    default, keeps output to Stage 1 only: two model responses, no
-    synthesis/chairman request. Council is no longer a visible composer mode;
+    a separate book-icon toggle immediately to the left of that slider, so users
+    can combine `Chat + Memory` or `Parallel + Memory`; clicking Parallel no
+    longer turns Memory off, and clicking the book no longer leaves Parallel. A
+    single book click toggles memory auto-attach; a quick double-click opens the
+    memory panel and leaves auto-attach on. Turning on user-facing `Parallel`
+    from the composer exposes an inline second-model picker beside the primary
+    model picker and, by default, keeps output to Stage 1 only: two model
+    responses, no synthesis/chairman request. Council is no longer a visible composer mode;
     the settings menu has a `Parallel` section with a `Council review` switch.
     Turning that switch on also turns Parallel on, writes
     `outputMode: 'council'`, reveals a Council model select inside settings,
@@ -232,8 +232,21 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     session's primary model is stale or unavailable, both the composer and
     controller resolve the primary lane to the default/fallback model before
     assigning the secondary lane.
-    The settings menu no longer exposes duplicate legacy multi-model rows;
-    Normal sessions still use single-model chat.
+    The settings menu no longer exposes duplicate legacy multi-model rows.
+    Parallel mode is a global persisted preference: toggling Chat/Parallel
+    writes `parallelModeEnabled`, and new sessions inherit that mode unless a
+    more specific pending session config exists. The last secondary model,
+    Council model, and Parallel/Council output mode are persisted as
+    `parallelSecondaryModel`, `parallelSynthesisModel`, and
+    `parallelOutputMode`. New single-chat sessions still keep the saved
+    secondary model in their disabled `councilConfig`, so turning Parallel on in
+    that session reuses the user's last secondary model instead of reverting to
+    the default. The empty New Chat composer rebuilds its pending council config
+    from those persisted defaults before rendering, so the visible Chat/Parallel
+    state matches the mode that first send will use. Composer components update
+    the in-memory persisted defaults through `ChatApp.setParallelDefaults()`;
+    direct writes like `this.app.parallelModeEnabled = ...` will fail through
+    the strict component facade.
   - The switch can be set before a session exists; `ChatApp.pendingCouncilConfig`
     carries that choice into the first created session. Enabled sessions persist
     `responseMode: 'council'` plus `councilConfig` with up to two member display
@@ -356,6 +369,12 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     reaches a final or fallback state; plain Parallel keeps normal actions
     inside each completed lane card instead of on the aggregate message, because
     aggregate copy/regenerate/fork is ambiguous when two drafts are visible.
+    Web-search sources are also lane-local: each Stage 1 lane renders its own
+    Sources button and citation carousel at the bottom of that response only
+    when that lane produced citations. Council synthesis renders its own
+    separate Sources button when the synthesis response has citations; aggregate
+    Council/Parallel messages no longer reuse one canonical sources button for
+    all visible responses.
     The Council answer block is width-capped, centered, and given extra top
     spacing below the two lanes so synthesis reads like the normal narrow
     transcript even when Parallel keeps the page wide. Lane copy copies only that lane response. Lane fork is
