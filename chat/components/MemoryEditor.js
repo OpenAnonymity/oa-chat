@@ -10,6 +10,7 @@ import { readOmfFile, validateOmf, previewOmfImport, importOmf } from '../servic
 import { normalizeMessagesForMemory } from '../services/memoryMessageNormalization.js';
 import { formatMemoryConfidenceLabel, getMemoryConfidenceBarCount } from '../services/memoryConfidence.js';
 import {
+    CONFIDENTIAL_KEY_TICKETS,
     ensureMemoryKey,
     importData as importMemoryData,
     invalidateMemoryKey,
@@ -47,18 +48,28 @@ class MemoryEditor {
         this.backfillState = null;
         this.backfillProgress = this._getInitialBackfillProgress();
         this.backfillAbortController = null;
+        this.memoryOperationGeneration = 0;
+        this.memoryOperationAbortControllers = new Set();
     }
 
     async openToFile(path) {
         if (!path) return;
         const dir = path.indexOf('/') !== -1 ? path.slice(0, path.indexOf('/')) : null;
         if (dir) this.expandedDirs.add(dir);
-        await this.open();
+        const opened = await this.open();
+        if (!opened) return;
         await this._selectFile(path);
     }
 
     async open() {
-        if (this.isOpen || !this.overlay) return;
+        if (!this._isMemoryFeatureEnabled()) {
+            this._showMemoryOffToast();
+            return false;
+        }
+        if (this.isOpen) return true;
+        if (!this.overlay) return false;
+        const operation = this._beginMemoryOperation();
+        if (!operation) return false;
         this.isOpen = true;
         this.returnFocusEl = document.activeElement;
         this.isCreatingFile = false;
@@ -70,8 +81,19 @@ class MemoryEditor {
         this.importDoc = null;
         this.importResult = null;
 
-        await memoryFileSystem.init();
-        await this._loadFileTree();
+        try {
+            this._assertMemoryOperationActive(operation);
+            await memoryFileSystem.init({ signal: operation.signal });
+            this._assertMemoryOperationActive(operation);
+            await this._loadFileTree(operation);
+            this._assertMemoryOperationActive(operation);
+        } catch (error) {
+            this.close({ silent: true });
+            this._handleMemoryOperationError(error);
+            return false;
+        } finally {
+            this._finishMemoryOperation(operation);
+        }
 
         this.render();
         this.overlay.classList.remove('hidden');
@@ -87,10 +109,12 @@ class MemoryEditor {
             }
         };
         document.addEventListener('keydown', this.escapeHandler);
+        return true;
     }
 
-    close() {
+    close(options = {}) {
         if (!this.isOpen || !this.overlay) return;
+        const { silent = false } = options;
         const keepBackfillRunning = this._isBackfillActive();
         this.isOpen = false;
         this.overlay.classList.add('hidden');
@@ -118,13 +142,88 @@ class MemoryEditor {
         }
         this.returnFocusEl = null;
 
-        if (keepBackfillRunning) {
+        if (keepBackfillRunning && !silent) {
             this.app?.showToast?.('Backfill continues in background.', 'info', 3000);
         }
     }
 
-    async _loadFileTree() {
-        const all = await memoryFileSystem.exportAll();
+    handleMemoryFeatureDisabled() {
+        this.memoryOperationGeneration += 1;
+        for (const controller of this.memoryOperationAbortControllers) {
+            controller.abort();
+        }
+        if (this.backfillState === 'running') {
+            this._requestBackfillStop('Memory is off in settings. Stopping backfill...');
+        } else if (this.backfillState === 'stopping') {
+            this.backfillAbortController?.abort();
+        }
+        if (this.isOpen) {
+            this.close({ silent: true });
+        }
+    }
+
+    _isMemoryFeatureEnabled() {
+        return this.app?.memoryFeatureEnabled !== false;
+    }
+
+    _showMemoryOffToast() {
+        this.app?.showToast?.('Memory is off in settings.', 'info', 3000);
+    }
+
+    _createMemoryOperationAbortError() {
+        const error = new Error('Memory is off in settings.');
+        error.name = 'AbortError';
+        error.isCancelled = true;
+        return error;
+    }
+
+    _beginMemoryOperation() {
+        if (!this._isMemoryFeatureEnabled()) {
+            this._showMemoryOffToast();
+            return null;
+        }
+        const controller = new AbortController();
+        this.memoryOperationAbortControllers.add(controller);
+        return {
+            controller,
+            generation: this.memoryOperationGeneration,
+            signal: controller.signal
+        };
+    }
+
+    _finishMemoryOperation(operation) {
+        if (operation?.controller) {
+            this.memoryOperationAbortControllers.delete(operation.controller);
+        }
+    }
+
+    _isMemoryOperationActive(operation) {
+        return !!operation
+            && operation.generation === this.memoryOperationGeneration
+            && !operation.signal?.aborted
+            && this._isMemoryFeatureEnabled();
+    }
+
+    _assertMemoryOperationActive(operation) {
+        if (!this._isMemoryOperationActive(operation)) {
+            throw this._createMemoryOperationAbortError();
+        }
+    }
+
+    _handleMemoryOperationError(error) {
+        if (error?.name !== 'AbortError' && !error?.isCancelled) {
+            return false;
+        }
+        if (!this._isMemoryFeatureEnabled()) {
+            this._showMemoryOffToast();
+        }
+        return true;
+    }
+
+    async _loadFileTree(operation = null) {
+        if (operation) this._assertMemoryOperationActive(operation);
+        const all = await memoryFileSystem.exportAll(operation ? { signal: operation.signal } : undefined);
+        if (operation) this._assertMemoryOperationActive(operation);
         this.files = all
             .filter((file) => !file.path.endsWith('_tree.md'))
             .map((file) => ({ path: file.path, l0: file.l0 || file.oneLiner || '' }))
@@ -629,20 +728,30 @@ class MemoryEditor {
 
     async _selectFile(path) {
         if (!path) return;
+        const operation = this._beginMemoryOperation();
+        if (!operation) return;
 
-        this.overlay.querySelectorAll('.memory-file-item.is-selected').forEach((el) => {
-            el.classList.remove('is-selected');
-        });
-        const newEl = this.overlay.querySelector(`.memory-file-item[data-path="${CSS.escape(path)}"]`);
-        if (newEl) {
-            newEl.classList.add('is-selected');
+        try {
+            this._assertMemoryOperationActive(operation);
+            this.overlay.querySelectorAll('.memory-file-item.is-selected').forEach((el) => {
+                el.classList.remove('is-selected');
+            });
+            const newEl = this.overlay.querySelector(`.memory-file-item[data-path="${CSS.escape(path)}"]`);
+            if (newEl) {
+                newEl.classList.add('is-selected');
+            }
+
+            this.selectedPath = path;
+            this.editorContent = await memoryFileSystem.read(path, { signal: operation.signal }) || '';
+            this._assertMemoryOperationActive(operation);
+            this.isDirty = false;
+            this.isEditing = false;
+            this._updateEditorPane();
+        } catch (error) {
+            if (!this._handleMemoryOperationError(error)) throw error;
+        } finally {
+            this._finishMemoryOperation(operation);
         }
-
-        this.selectedPath = path;
-        this.editorContent = await memoryFileSystem.read(path) || '';
-        this.isDirty = false;
-        this.isEditing = false;
-        this._updateEditorPane();
     }
 
     _updateEditorPane() {
@@ -691,6 +800,10 @@ class MemoryEditor {
     }
 
     _startNewFolder() {
+        if (!this._isMemoryFeatureEnabled()) {
+            this._showMemoryOffToast();
+            return;
+        }
         this.isCreatingFolder = true;
         this.isCreatingFile = false;
         this.newFolderName = '';
@@ -698,6 +811,10 @@ class MemoryEditor {
     }
 
     async _createNewFolder(name) {
+        if (!this._isMemoryFeatureEnabled()) {
+            this._showMemoryOffToast();
+            return;
+        }
         if (!name) return;
         name = name.replace(/[\/\\]/g, '').replace(/\.md$/i, '');
         if (!name) return;
@@ -710,6 +827,10 @@ class MemoryEditor {
     }
 
     _startNewFile() {
+        if (!this._isMemoryFeatureEnabled()) {
+            this._showMemoryOffToast();
+            return;
+        }
         this.isCreatingFile = true;
         this.isCreatingFolder = false;
         this.newFilePath = '';
@@ -718,63 +839,104 @@ class MemoryEditor {
 
     async _createNewFile(path) {
         if (!path) return;
+        const operation = this._beginMemoryOperation();
+        if (!operation) return;
         if (!path.endsWith('.md')) {
             path += '.md';
         }
 
-        this.isCreatingFile = false;
-        await memoryFileSystem.write(path, `# ${path.split('/').pop().replace('.md', '')}\n\n`);
-        await this._loadFileTree();
+        try {
+            this._assertMemoryOperationActive(operation);
+            this.isCreatingFile = false;
+            await memoryFileSystem.write(path, `# ${path.split('/').pop().replace('.md', '')}\n\n`, { signal: operation.signal });
+            this._assertMemoryOperationActive(operation);
+            await this._loadFileTree(operation);
 
-        const slashIdx = path.indexOf('/');
-        if (slashIdx !== -1) {
-            this.expandedDirs.add(path.slice(0, slashIdx));
+            const slashIdx = path.indexOf('/');
+            if (slashIdx !== -1) {
+                this.expandedDirs.add(path.slice(0, slashIdx));
+            }
+
+            this.selectedPath = path;
+            this.editorContent = await memoryFileSystem.read(path, { signal: operation.signal }) || '';
+            this._assertMemoryOperationActive(operation);
+            this.isDirty = false;
+            this.isEditing = true;
+            this.render();
+        } catch (error) {
+            if (!this._handleMemoryOperationError(error)) throw error;
+        } finally {
+            this._finishMemoryOperation(operation);
         }
-
-        this.selectedPath = path;
-        this.editorContent = await memoryFileSystem.read(path) || '';
-        this.isDirty = false;
-        this.isEditing = true;
-        this.render();
     }
 
     async _saveFile() {
         if (!this.selectedPath || !this.isDirty) return;
-        await memoryFileSystem.write(this.selectedPath, this.editorContent);
-        this.isDirty = false;
-        await this._loadFileTree();
-        this.render();
-        this.app?.showToast?.('Memory file saved', 'success');
+        const operation = this._beginMemoryOperation();
+        if (!operation) return;
+        try {
+            this._assertMemoryOperationActive(operation);
+            await memoryFileSystem.write(this.selectedPath, this.editorContent, { signal: operation.signal });
+            this._assertMemoryOperationActive(operation);
+            this.isDirty = false;
+            await this._loadFileTree(operation);
+            this.render();
+            this.app?.showToast?.('Memory file saved', 'success');
+        } catch (error) {
+            if (!this._handleMemoryOperationError(error)) throw error;
+        } finally {
+            this._finishMemoryOperation(operation);
+        }
     }
 
     async _deleteFile() {
         if (!this.selectedPath) return;
+        const operation = this._beginMemoryOperation();
+        if (!operation) return;
 
-        await memoryFileSystem.delete(this.selectedPath);
-        this.selectedPath = null;
-        this.editorContent = '';
-        this.isDirty = false;
-        await this._loadFileTree();
-        this.render();
-        this.app?.showToast?.('Memory file deleted', 'success');
+        try {
+            this._assertMemoryOperationActive(operation);
+            await memoryFileSystem.delete(this.selectedPath, { signal: operation.signal });
+            this._assertMemoryOperationActive(operation);
+            this.selectedPath = null;
+            this.editorContent = '';
+            this.isDirty = false;
+            await this._loadFileTree(operation);
+            this.render();
+            this.app?.showToast?.('Memory file deleted', 'success');
+        } catch (error) {
+            if (!this._handleMemoryOperationError(error)) throw error;
+        } finally {
+            this._finishMemoryOperation(operation);
+        }
     }
 
     async _deleteFolder(dir) {
         if (!dir) return;
+        const operation = this._beginMemoryOperation();
+        if (!operation) return;
         const prefix = `${dir}/`;
         const toDelete = this.files.filter((file) => file.path.startsWith(prefix));
-        for (const file of toDelete) {
-            await memoryFileSystem.delete(file.path);
+        try {
+            for (const file of toDelete) {
+                this._assertMemoryOperationActive(operation);
+                await memoryFileSystem.delete(file.path, { signal: operation.signal });
+            }
+            this._assertMemoryOperationActive(operation);
+            if (this.selectedPath?.startsWith(prefix)) {
+                this.selectedPath = null;
+                this.editorContent = '';
+                this.isDirty = false;
+            }
+            this.expandedDirs.delete(dir);
+            await this._loadFileTree(operation);
+            this.render();
+            this.app?.showToast?.(`Folder "${dir}" deleted`, 'success');
+        } catch (error) {
+            if (!this._handleMemoryOperationError(error)) throw error;
+        } finally {
+            this._finishMemoryOperation(operation);
         }
-        if (this.selectedPath?.startsWith(prefix)) {
-            this.selectedPath = null;
-            this.editorContent = '';
-            this.isDirty = false;
-        }
-        this.expandedDirs.delete(dir);
-        await this._loadFileTree();
-        this.render();
-        this.app?.showToast?.(`Folder "${dir}" deleted`, 'success');
     }
 
     async _renameFolder(oldDir, newDir) {
@@ -790,36 +952,55 @@ class MemoryEditor {
             return;
         }
 
+        const operation = this._beginMemoryOperation();
+        if (!operation) return;
         const prefix = `${oldDir}/`;
         const filesToMove = this.files.filter((file) => file.path.startsWith(prefix));
-        for (const file of filesToMove) {
-            const content = await memoryFileSystem.read(file.path);
-            const newPath = `${newDir}/${file.path.slice(prefix.length)}`;
-            await memoryFileSystem.write(newPath, content || '');
-            await memoryFileSystem.delete(file.path);
-        }
+        try {
+            for (const file of filesToMove) {
+                this._assertMemoryOperationActive(operation);
+                const content = await memoryFileSystem.read(file.path, { signal: operation.signal });
+                this._assertMemoryOperationActive(operation);
+                const newPath = `${newDir}/${file.path.slice(prefix.length)}`;
+                await memoryFileSystem.write(newPath, content || '', { signal: operation.signal });
+                this._assertMemoryOperationActive(operation);
+                await memoryFileSystem.delete(file.path, { signal: operation.signal });
+            }
 
-        if (this.selectedPath?.startsWith(prefix)) {
-            this.selectedPath = `${newDir}/${this.selectedPath.slice(prefix.length)}`;
-            this.editorContent = await memoryFileSystem.read(this.selectedPath) || '';
+            this._assertMemoryOperationActive(operation);
+            if (this.selectedPath?.startsWith(prefix)) {
+                this.selectedPath = `${newDir}/${this.selectedPath.slice(prefix.length)}`;
+                this.editorContent = await memoryFileSystem.read(this.selectedPath, { signal: operation.signal }) || '';
+            }
+            this._assertMemoryOperationActive(operation);
+            this.expandedDirs.delete(oldDir);
+            this.expandedDirs.add(newDir);
+            await this._loadFileTree(operation);
+            this.render();
+            this.app?.showToast?.(`Folder renamed to "${newDir}"`, 'success');
+        } catch (error) {
+            if (!this._handleMemoryOperationError(error)) throw error;
+        } finally {
+            this._finishMemoryOperation(operation);
         }
-
-        this.expandedDirs.delete(oldDir);
-        this.expandedDirs.add(newDir);
-        await this._loadFileTree();
-        this.render();
-        this.app?.showToast?.(`Folder renamed to "${newDir}"`, 'success');
     }
 
     async _handleExport() {
+        const operation = this._beginMemoryOperation();
+        if (!operation) return;
         try {
-            const result = await exportMemoriesAsOmf();
+            this._assertMemoryOperationActive(operation);
+            const result = await exportMemoriesAsOmf({ signal: operation.signal });
+            this._assertMemoryOperationActive(operation);
             if (result.saved) {
                 this.app?.showToast?.('Memories exported (OMF)', 'success');
             }
         } catch (err) {
+            if (this._handleMemoryOperationError(err)) return;
             console.error('[MemoryEditor] Export error:', err);
             this.app?.showToast?.('Failed to export memories', 'error');
+        } finally {
+            this._finishMemoryOperation(operation);
         }
     }
 
@@ -828,19 +1009,28 @@ class MemoryEditor {
     }
 
     async _handleCleanExpired() {
+        if (!this._isMemoryFeatureEnabled()) {
+            this._showMemoryOffToast();
+            return;
+        }
         if (this._isMemoryMaintenanceDisabled()) return;
         if (this.isDirty) {
             this.app?.showToast?.('Save or discard memory edits before cleaning expired memories', 'info');
             return;
         }
 
+        const operation = this._beginMemoryOperation();
+        if (!operation) return;
         const selectedPath = this.selectedPath;
         try {
-            const result = await memoryFileSystem.pruneExpired();
-            await this._loadFileTree();
+            this._assertMemoryOperationActive(operation);
+            const result = await memoryFileSystem.pruneExpired({ signal: operation.signal });
+            this._assertMemoryOperationActive(operation);
+            await this._loadFileTree(operation);
             if (selectedPath && this.files.some((file) => file.path === selectedPath)) {
                 this.selectedPath = selectedPath;
-                this.editorContent = await memoryFileSystem.read(selectedPath) || '';
+                this.editorContent = await memoryFileSystem.read(selectedPath, { signal: operation.signal }) || '';
+                this._assertMemoryOperationActive(operation);
                 this.isDirty = false;
             } else if (selectedPath) {
                 this.selectedPath = null;
@@ -850,6 +1040,7 @@ class MemoryEditor {
             }
 
             const archived = Number(result?.archived || 0);
+            this._assertMemoryOperationActive(operation);
             if (archived > 0) {
                 this.app?.showToast?.(`Archived ${archived} expired memor${archived === 1 ? 'y' : 'ies'}`, 'success');
             } else {
@@ -857,8 +1048,11 @@ class MemoryEditor {
             }
             this.render();
         } catch (err) {
+            if (this._handleMemoryOperationError(err)) return;
             console.error('[MemoryEditor] Clean expired error:', err);
             this.app?.showToast?.('Failed to clean expired memories', 'error');
+        } finally {
+            this._finishMemoryOperation(operation);
         }
     }
 
@@ -872,13 +1066,18 @@ class MemoryEditor {
 
     async importMemoryFile(file) {
         if (!file) return;
-
         if (!this.isOpen) {
-            await this.open();
+            const opened = await this.open();
+            if (!opened) return;
         }
 
+        const operation = this._beginMemoryOperation();
+        if (!operation) return;
+
         try {
+            this._assertMemoryOperationActive(operation);
             const doc = await readOmfFile(file);
+            this._assertMemoryOperationActive(operation);
             const validation = validateOmf(doc);
             if (!validation.valid) {
                 this.app?.showToast?.(validation.error, 'error');
@@ -886,33 +1085,44 @@ class MemoryEditor {
             }
 
             this.importDoc = doc;
-            this.importPreview = await previewOmfImport(doc);
+            this.importPreview = await previewOmfImport(doc, { signal: operation.signal });
+            this._assertMemoryOperationActive(operation);
             this.importState = 'preview';
             this.render();
         } catch (err) {
+            if (this._handleMemoryOperationError(err)) return;
             console.error('[MemoryEditor] Import parse error:', err);
             this.app?.showToast?.('Failed to read file. Is it valid JSON?', 'error');
+        } finally {
+            this._finishMemoryOperation(operation);
         }
     }
 
     async _confirmImport() {
         if (!this.importDoc || this.importState !== 'preview') return;
+        const operation = this._beginMemoryOperation();
+        if (!operation) return;
 
         this.importState = 'importing';
         this.render();
 
         try {
+            this._assertMemoryOperationActive(operation);
             const includeArchived = this.overlay.querySelector('#import-include-archived')?.checked ?? true;
-            const result = await importOmf(this.importDoc, { includeArchived });
+            const result = await importOmf(this.importDoc, { includeArchived, signal: operation.signal });
+            this._assertMemoryOperationActive(operation);
             this.importResult = result;
             this.importState = 'complete';
-            await this._loadFileTree();
+            await this._loadFileTree(operation);
             this.render();
         } catch (err) {
+            if (this._handleMemoryOperationError(err)) return;
             console.error('[MemoryEditor] Import error:', err);
             this.importState = null;
             this.app?.showToast?.(`Import failed: ${err.message}`, 'error');
             this.render();
+        } finally {
+            this._finishMemoryOperation(operation);
         }
     }
 
@@ -997,18 +1207,56 @@ class MemoryEditor {
         };
     }
 
+    async _refreshFilesAfterBackfillIfAllowed(shouldRefreshFiles) {
+        if (!shouldRefreshFiles) {
+            if (this.isOpen) {
+                this._syncBackfillButton();
+            }
+            return;
+        }
+
+        const operation = this._beginMemoryOperation();
+        if (!operation) {
+            if (this.isOpen) {
+                this._syncBackfillButton();
+            }
+            return;
+        }
+
+        try {
+            this._assertMemoryOperationActive(operation);
+            await this._loadFileTree(operation);
+            this._assertMemoryOperationActive(operation);
+            if (this.isOpen) {
+                this.render();
+            }
+        } catch (error) {
+            if (!this._handleMemoryOperationError(error)) throw error;
+        } finally {
+            this._finishMemoryOperation(operation);
+        }
+    }
     _isBackfillActive() {
         return this.backfillState === 'running' || this.backfillState === 'stopping';
     }
 
     _isMemoryMaintenanceDisabled() {
-        return this._isBackfillActive() || this.importState === 'importing';
+        return !this._isMemoryFeatureEnabled() || this._isBackfillActive() || this.importState === 'importing';
     }
 
     _getBackfillButtonState() {
         const total = Math.max(0, Number(this.backfillProgress.total || 0));
         const processed = Math.min(Math.max(0, Number(this.backfillProgress.processed || 0)), total);
         const currentLabel = this.backfillProgress.currentLabel || 'local chats';
+
+        if (!this._isMemoryFeatureEnabled()) {
+            return {
+                label: 'Backfill',
+                title: 'Memory is off in settings',
+                disabled: true,
+                busy: false
+            };
+        }
 
         if (this.backfillState === 'stopping') {
             return {
@@ -1037,6 +1285,10 @@ class MemoryEditor {
     }
 
     _handleBackfillButtonClick() {
+        if (!this._isMemoryFeatureEnabled()) {
+            this._showMemoryOffToast();
+            return;
+        }
         if (this.backfillState === 'running') {
             this._requestBackfillStop();
             return;
@@ -1058,6 +1310,10 @@ class MemoryEditor {
     }
 
     async _startBackfill() {
+        if (!this._isMemoryFeatureEnabled()) {
+            this._showMemoryOffToast();
+            return;
+        }
         if (this._isBackfillActive()) {
             return;
         }
@@ -1132,6 +1388,10 @@ class MemoryEditor {
             let stopReason = null;
 
             for (const candidate of candidates) {
+                if (!this._isMemoryFeatureEnabled()) {
+                    stopReason = 'memory_disabled';
+                    break;
+                }
                 if (this.backfillAbortController.signal.aborted) {
                     stopReason = 'aborted';
                     break;
@@ -1143,8 +1403,31 @@ class MemoryEditor {
                 let itemFinished = false;
 
                 while (!itemFinished) {
+                    if (!this._isMemoryFeatureEnabled()) {
+                        stopReason = 'memory_disabled';
+                        break;
+                    }
                     const previousKey = keySession.memoryKey || null;
-                    const memoryKey = await ensureMemoryKey(keySession, this.app.services.tickets);
+                    let memoryKey = null;
+                    try {
+                        memoryKey = await ensureMemoryKey(keySession, this.app.services.tickets, {
+                            signal: this.backfillAbortController.signal
+                        });
+                    } catch (error) {
+                        if (error?.name === 'AbortError' || this.backfillAbortController.signal.aborted) {
+                            stopReason = this._isMemoryFeatureEnabled() ? 'aborted' : 'memory_disabled';
+                            break;
+                        }
+                        throw error;
+                    }
+                    if (!this._isMemoryFeatureEnabled()) {
+                        if (keySession.memoryKey && keySession.memoryKey !== previousKey) {
+                            invalidateMemoryKey(keySession);
+                            await persistActiveSessionIfChanged(previousKey);
+                        }
+                        stopReason = 'memory_disabled';
+                        break;
+                    }
                     await persistActiveSessionIfChanged(previousKey);
 
                     if (!memoryKey) {
@@ -1200,7 +1483,10 @@ class MemoryEditor {
             await Promise.allSettled(completedSessionSavePromises);
 
             if (stopReason === 'insufficient_tickets') {
-                this.app?.showToast?.('Backfill needs 2 available inference tickets for confidential memory import.', 'info');
+                this.app?.showToast?.(
+                    `Backfill needs ${CONFIDENTIAL_KEY_TICKETS} available inference ticket${CONFIDENTIAL_KEY_TICKETS === 1 ? '' : 's'} for confidential memory import.`,
+                    'info'
+                );
             } else if (stopReason === 'key_expired_no_tickets') {
                 this.app?.showToast?.(
                     'Backfill stopped: no tickets left to renew the confidential key.',
@@ -1223,6 +1509,8 @@ class MemoryEditor {
                 } else {
                     this.app?.showToast?.('Backfill stopped. Click Backfill again to continue.', 'info', 4000);
                 }
+            } else if (stopReason === 'memory_disabled') {
+                this.app?.showToast?.('Backfill stopped because Memory is off in settings.', 'info', 4000);
             } else if (this.backfillProgress.errors > 0) {
                 this.app?.showToast?.(
                     `Backfill finished: ${this.backfillProgress.imported} imported, ${this.backfillProgress.skipped} skipped, ${this.backfillProgress.errors} error${this.backfillProgress.errors === 1 ? '' : 's'}.`,
@@ -1249,14 +1537,7 @@ class MemoryEditor {
             this.backfillAbortController = null;
             this.backfillState = null;
             this.backfillProgress = this._getInitialBackfillProgress();
-            if (shouldRefreshFiles) {
-                await this._loadFileTree();
-                if (this.isOpen) {
-                    this.render();
-                }
-            } else if (this.isOpen) {
-                this._syncBackfillButton();
-            }
+            await this._refreshFilesAfterBackfillIfAllowed(shouldRefreshFiles);
         }
     }
 

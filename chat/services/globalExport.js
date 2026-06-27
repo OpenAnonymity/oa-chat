@@ -98,6 +98,11 @@ async function collectPreferencesFromIndexedDB() {
             preferences.memoryMode = memoryMode;
         }
 
+        const memoryFeatureEnabled = await chatDB.getSetting('memoryFeatureEnabled');
+        if (memoryFeatureEnabled !== undefined) {
+            preferences.memoryFeatureEnabled = memoryFeatureEnabled;
+        }
+
         const memoryAutoInclude = await chatDB.getSetting('memoryAutoInclude');
         if (memoryAutoInclude !== undefined) {
             preferences.memoryAutoInclude = memoryAutoInclude;

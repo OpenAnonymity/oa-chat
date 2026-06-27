@@ -1558,7 +1558,8 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     const citationsToggle = buildCitationsToggleButton(message.citations, message.id);
     const hasCiPromptDraft = !!message.ciPromptDraft;
     const memoryPromptStatus = message.memoryApprovalPrompt?.status;
-    const hasMemoryApprovalPrompt = hasCiPromptDraft && memoryPromptStatus === 'pending';
+    const memoryFeatureEnabled = options.memoryFeatureEnabled !== false;
+    const hasMemoryApprovalPrompt = memoryFeatureEnabled && hasCiPromptDraft && memoryPromptStatus === 'pending';
     const hasMemoryApprovedPrompt = hasCiPromptDraft && memoryPromptStatus === 'approved';
     const isMemoryStatusMessage = isMemoryAgent || Boolean(message.isLocalOnly && (hasAgentTrace || hasCiPromptDraft));
     let memoryApprovalActions = '';

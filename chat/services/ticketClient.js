@@ -1037,13 +1037,30 @@ class TicketClient {
     /**
      * Request a confidential API key by redeeming inference tickets.
      * @param {number} ticketCount - Number of tickets to use (default: 1)
+     * @param {Object} options - Optional request controls
+     * @param {AbortSignal} options.signal - Cancels the confidential key request before completion
      * @returns {Promise<Object>} API key data
      */
-    async requestConfidentialApiKey(ticketCount = 1) {
+    async requestConfidentialApiKey(ticketCount = 1, options = {}) {
         try {
+            const { signal = null } = options;
+            if (signal?.aborted) {
+                const error = new Error('Request aborted');
+                error.name = 'AbortError';
+                error.isCancelled = true;
+                throw error;
+            }
+
             const { tickets, result } = await this.ticketStore.consumeTickets(
                 ticketCount,
                 async ({ tickets, totalCount, remainingCount }) => {
+                    if (signal?.aborted) {
+                        const error = new Error('Request aborted');
+                        error.name = 'AbortError';
+                        error.isCancelled = true;
+                        throw error;
+                    }
+
                     networkLogger.logRequest({
                         type: 'local',
                         method: 'LOCAL',
@@ -1082,7 +1099,8 @@ class TicketClient {
                             {
                                 context: 'Org confidential API key',
                                 maxAttempts: 3,
-                                timeoutMs: 30000
+                                timeoutMs: 30000,
+                                signal
                             }
                         ));
                     } catch (error) {

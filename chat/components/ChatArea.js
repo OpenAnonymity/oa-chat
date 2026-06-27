@@ -168,6 +168,10 @@ export default class ChatArea {
 
             const memoryApprovalBtn = e.target.closest('.memory-approval-btn');
             if (memoryApprovalBtn) {
+                if (this.app.memoryFeatureEnabled === false) {
+                    this.app.showToast?.('Memory is off in settings.', 'info', 3000);
+                    return;
+                }
                 const messageId = memoryApprovalBtn.dataset.messageId;
                 const decision = memoryApprovalBtn.dataset.decision;
                 await this.app.handleMemoryApprovalDecision(messageId, decision);
@@ -176,6 +180,10 @@ export default class ChatArea {
 
             const memoryPreviewBtn = e.target.closest('.memory-preview-btn');
             if (memoryPreviewBtn) {
+                if (this.app.memoryFeatureEnabled === false) {
+                    this.app.showToast?.('Memory is off in settings.', 'info', 3000);
+                    return;
+                }
                 const messageId = memoryPreviewBtn.dataset.messageId;
                 const userMessageId = memoryPreviewBtn.dataset.userMessageId;
                 await this.handleMemoryPromptPreview(messageId, userMessageId);
@@ -1469,6 +1477,10 @@ export default class ChatArea {
     }
 
     async showCiPromptEditor(messageId, draftOverride = null) {
+        if (this.app.memoryFeatureEnabled === false) {
+            this.app.showToast?.('Memory is off in settings.', 'info', 3000);
+            return;
+        }
         const session = this.app.getCurrentSession();
         if (!session) return;
 
@@ -1491,6 +1503,10 @@ export default class ChatArea {
             fullPrompt: draft.editedFullPrompt || draft.fullPrompt || '',
             isReadOnly,
             onSave: isReadOnly ? null : async (editedPrompt) => {
+                if (this.app.memoryFeatureEnabled === false) {
+                    this.app.showToast?.('Memory is off in settings.', 'info', 3000);
+                    return;
+                }
                 message.ciPromptDraft = {
                     ...message.ciPromptDraft,
                     editedFullPrompt: editedPrompt

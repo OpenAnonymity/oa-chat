@@ -25,6 +25,35 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
+- 2026-06-27: Memory now has a global feature gate.
+  - IndexedDB setting `memoryFeatureEnabled` defaults on. When false, app
+    initialization and `setMemoryFeatureEnabled(false)` force `memoryMode` false
+    and persist that reset so reloads stay in Chat mode.
+  - The settings menu has a dedicated `Memory` section. Its first row is the
+    global `Memory feature` switch; `Always attach retrieval`, the memory agent
+    model, and memory import/export controls are flat rows beneath it rather
+    than nested behind a vertical rule, and become disabled when the feature is
+    off.
+  - `triggerPostTurnMemoryExtraction(...)`, `runPostTurnMemoryExtraction(...)`,
+    and `runMemoryAugmentFlow(...)` all check the feature gate before requesting
+    confidential memory keys or constructing retrieval/extraction memory banks.
+    Disabling the feature increments a memory-work generation, aborts in-flight
+    memory retrieval/extraction signals, clears pending memory prompt overrides,
+    resolves pending approval prompts as skipped, and closes/aborts memory-editor
+    backfill work. The bottom chat/memory slider remains hoverable but locked to
+    Chat with `Memory is off in settings` copy on the Memory icon.
+    Confidential memory-key redemption now receives those abort signals, and
+    returned keys are not stored if the feature is disabled during redemption.
+    Memory-editor local storage operations also use an operation generation and
+    abort signal so stale saves, imports, maintenance, and folder operations do
+    not continue their UI completion path after the global feature flips off.
+    `memoryBridge`, `memoryInstances`, and OMF import helpers lazy-load
+    `chat/nanomem/browser.js` only inside active memory operations. Importing
+    the app shell, constructing `MemoryEditor`, toggling settings, or validating
+    disabled controls must not evaluate nanomem while the global feature is off.
+    The memory panel/import/export storage bank is also lazy and only constructs
+    when the feature is enabled and the user explicitly opens or uses memory
+    management.
 - 2026-06-03: Inline quick ask is a non-persistent mini-chat for selected
   assistant text.
   - Selecting text inside an assistant `.message-content` shows a compact
@@ -365,7 +394,7 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - The refresh is intentionally limited to pre-stream failures so an already-started partial assistant response is not discarded or replayed unexpectedly.
 - 2026-04-20: Investigated where a future pre-ingestion memory gate should live.
   - Root conversation ingestion currently happens through live post-turn extraction and manual `Backfill`; OMF import and panel edits are explicit storage writes, not chat-session extraction.
-  - Live extraction runs after successful `sendMessage()` / `regenerateResponse()` completions, re-reads the normalized session, and calls `memoryBridge.ingestMessages(...)` regardless of the chat-vs-memory mode toggle.
+  - Live extraction runs after successful `sendMessage()` / `regenerateResponse()` completions while the global memory feature is enabled, re-reads the normalized session, and calls `memoryBridge.ingestMessages(...)` regardless of the chat-vs-memory mode toggle.
   - `memoryProcessedAt` is written after live extraction but only consulted by manual backfill; live dedupe is limited to `memoryExtractionInFlight`.
   - Keep semantic "is this worth remembering?" policy in `nanomem`. Root `oa-chat` should only handle session/UI dedupe such as "did a new user turn appear since the last ingest?"
   - `nanomem` still has no semantic pre-gate or ingest-side progress/decision event, and a no-write tool loop returns `status: 'processed'` with `writeCalls: 0`.
@@ -406,7 +435,7 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - That trim is now turn-aware, not a blind tail slice. Long assistant answers are clipped before older user turns, so follow-up retrieval is less likely to lose the previous user question while keeping the most recent turn.
   - Root `oa-chat` now runs background memory extraction after every successful assistant response in both normal chat mode and memory mode. Explicit actions such as `Backfill`, `Import`, or direct memory editing still use the same `nanomem` write path, but the post-turn extractor is no longer gated on the mode toggle.
   - The memory-agent model selector in settings is populated from the confidential model list. The allowed list is currently `kimi-k2-5`, `gpt-oss-120b`, `gpt-oss-safeguard-120b`, `llama3-3-70b`, and `gemma4-31b`. `gemma4-31b` is now the default memory-agent model. `kimi-k2-5` remains allowed and is still the only one marked slow.
-  - Root `oa-chat` now mirrors `memory-chat`'s post-response extraction pattern after every successful assistant response, regardless of whether the session is currently in chat mode or memory mode. The app kicks off a non-blocking background `nanomem.ingest(...)` run for the current session.
+  - Root `oa-chat` now mirrors `memory-chat`'s post-response extraction pattern after every successful assistant response while the global memory feature is enabled, regardless of whether the session is currently in chat mode or memory mode. The app kicks off a non-blocking background `nanomem.ingest(...)` run for the current session.
   - That live extraction path uses the same normalized message filter as backfill: local-only messages and `memory agent` status messages are excluded, and scrubber-restored text is preferred over raw stored content when available.
   - The chat controller does not implement a separate extractor. It only orchestrates `ensureMemoryKey(...)` plus `memoryBridge.ingestMessages(...)`; the actual extraction prompt/tools remain inside `nanomem`.
   - Unlike backfill, live post-turn extraction does not skip on `memoryProcessedAt`. This is intentional so regenerations and repeated assistant completions can still re-run extraction if needed. The only dedupe is an in-flight session guard.

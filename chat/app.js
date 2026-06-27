@@ -15,6 +15,7 @@ import scrubberService from './services/scrubberService.js';
 import {
     augmentQuery as runMemoryAugmentQuery,
     augmentQueryAdaptive as runMemoryAugmentQueryAdaptive,
+    CONFIDENTIAL_KEY_TICKETS,
     ensureMemoryKey,
     ingestMessages as ingestMemoryMessages,
     invalidateMemoryKey,
@@ -58,6 +59,10 @@ import {
     resolveDefaultModelPreferenceUpdate as resolveDefaultModelPreferenceUpdateValue,
     upgradeDefaultModelPreference as upgradeDefaultModelPreferenceValue
 } from './domain/modelSelection.js';
+import {
+    resolveMemoryFeatureState as resolveMemoryFeatureStateValue,
+    resolveMemoryFeatureToggle as resolveMemoryFeatureToggleValue
+} from './domain/memorySettings.js';
 import {
     acquireSessionAccess,
     buildVerifierSubmitKeyProof as buildVerifierSubmitKeyProofValue,
@@ -189,6 +194,7 @@ class ChatApp {
         };
 
         this.searchEnabled = true;
+        this.memoryFeatureEnabled = true;
         this.memoryMode = false;
         this.memoryAutoInclude = false;
         this.memoryAgentModel = DEFAULT_MEMORY_AGENT_MODEL;
@@ -229,7 +235,11 @@ class ChatApp {
         this.scrubberPending = null;
         this.memoryApprovalRequests = new Map();
         this.memoryExtractionInFlight = new Set();
+        this.memoryExtractionAbortControllers = new Map();
+        this.memoryAugmentAbortControllers = new Set();
+        this.memoryWorkGeneration = 0;
         this._lastApiContent = null;
+        this._lastApiContentGeneration = null;
         this.deleteHistoryReturnFocusEl = null;
         this.isDeletingAllChats = false;
         this.appVersionSignature = null;
@@ -1800,6 +1810,7 @@ class ChatApp {
         const settingsPromise = Promise.all([
             chatDB.getSetting('selectedModel'),
             chatDB.getSetting('searchEnabled'),
+            chatDB.getSetting('memoryFeatureEnabled'),
             chatDB.getSetting('memoryMode'),
             chatDB.getSetting('memoryAutoInclude'),
             chatDB.getSetting('memoryAgentModel'),
@@ -1818,6 +1829,7 @@ class ChatApp {
         const [
             storedModelPreference,
             savedSearchEnabled,
+            savedMemoryFeatureEnabled,
             savedMemoryMode,
             savedMemoryAutoInclude,
             savedMemoryAgentModel,
@@ -1838,7 +1850,15 @@ class ChatApp {
 
         // Restore search state
         this.searchEnabled = savedSearchEnabled !== undefined ? savedSearchEnabled : true;
-        this.memoryMode = savedMemoryMode === true;
+        const resolvedMemoryFeatureState = resolveMemoryFeatureStateValue({
+            savedMemoryFeatureEnabled,
+            savedMemoryMode
+        });
+        this.memoryFeatureEnabled = resolvedMemoryFeatureState.memoryFeatureEnabled;
+        this.memoryMode = resolvedMemoryFeatureState.memoryMode;
+        if (resolvedMemoryFeatureState.shouldPersistMemoryMode) {
+            chatDB.saveSetting('memoryMode', false).catch(() => {});
+        }
         this.memoryAutoInclude = savedMemoryAutoInclude === true;
         this.memoryAgentModel = isAllowedConfidentialModel(savedMemoryAgentModel)
             ? String(savedMemoryAgentModel).trim()
@@ -4048,6 +4068,7 @@ class ChatApp {
     }
 
     triggerPostTurnMemoryExtraction(session) {
+        if (!this.memoryFeatureEnabled) return;
         if (!session?.id) return;
         this.runPostTurnMemoryExtraction(session).catch((error) => {
             console.warn('[App] Background memory extraction failed:', error);
@@ -4055,6 +4076,10 @@ class ChatApp {
     }
 
     async runPostTurnMemoryExtraction(session) {
+        if (!this.memoryFeatureEnabled) {
+            return { status: 'disabled', writeCalls: 0 };
+        }
+        const memoryRunGeneration = this.memoryWorkGeneration;
         if (!session?.id) {
             return { status: 'skipped', writeCalls: 0 };
         }
@@ -4063,16 +4088,32 @@ class ChatApp {
         }
 
         this.memoryExtractionInFlight.add(session.id);
+        const abortController = new AbortController();
+        this.memoryExtractionAbortControllers.set(session.id, abortController);
         try {
             const messages = await chatDB.getSessionMessages(session.id);
             const normalizedMessages = this.normalizeMessagesForMemory(messages);
             if (normalizedMessages.length < 2) {
                 return { status: 'skipped', writeCalls: 0 };
             }
+            if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+                return { status: 'disabled', writeCalls: 0 };
+            }
 
-            const hadMemoryKey = !!session.memoryKey;
-            const memoryKey = await ensureMemoryKey(session, ticketClient);
-            if (session.memoryKey && (!hadMemoryKey || session.memoryKey !== memoryKey)) {
+            const previousMemoryKey = session.memoryKey || null;
+            const memoryKey = await ensureMemoryKey(session, ticketClient, {
+                signal: abortController.signal
+            });
+            if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+                invalidateMemoryKey(session);
+                try {
+                    await chatDB.saveSession(session);
+                } catch (persistError) {
+                    console.warn('[App] Failed to clear memory key after disabling memory extraction:', persistError);
+                }
+                return { status: 'disabled', writeCalls: 0 };
+            }
+            if (session.memoryKey && session.memoryKey !== previousMemoryKey) {
                 await chatDB.saveSession(session);
             }
             if (!memoryKey) {
@@ -4082,8 +4123,14 @@ class ChatApp {
             const result = await ingestMemoryMessages({
                 messages: normalizedMessages,
                 apiKey: memoryKey,
-                model: this.memoryAgentModel
+                model: this.memoryAgentModel,
+                options: {
+                    signal: abortController.signal
+                }
             });
+            if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+                return { status: 'disabled', writeCalls: 0 };
+            }
 
             if (result?.status !== 'error') {
                 session.memoryProcessedAt = Date.now();
@@ -4092,6 +4139,9 @@ class ChatApp {
 
             return result || { status: 'processed', writeCalls: 0 };
         } catch (error) {
+            if (this.isCancelledError(error, abortController.signal) && !this.isMemoryFeatureActive(memoryRunGeneration)) {
+                return { status: 'disabled', writeCalls: 0 };
+            }
             if (isMemoryAuthError(error)) {
                 invalidateMemoryKey(session);
                 try {
@@ -4103,6 +4153,9 @@ class ChatApp {
             throw error;
         } finally {
             this.memoryExtractionInFlight.delete(session.id);
+            if (this.memoryExtractionAbortControllers.get(session.id) === abortController) {
+                this.memoryExtractionAbortControllers.delete(session.id);
+            }
         }
     }
 
@@ -4147,6 +4200,115 @@ class ChatApp {
         await chatDB.saveSetting('memoryAutoInclude', this.memoryAutoInclude);
     }
 
+    isMemoryFeatureActive(generation = this.memoryWorkGeneration) {
+        return this.memoryFeatureEnabled !== false && generation === this.memoryWorkGeneration;
+    }
+
+    clearMemoryApiOverrideContent() {
+        this._lastApiContent = null;
+        this._lastApiContentGeneration = null;
+    }
+
+    setMemoryApiOverrideContent(content, generation = this.memoryWorkGeneration) {
+        if (!this.isMemoryFeatureActive(generation)) {
+            this.clearMemoryApiOverrideContent();
+            return false;
+        }
+        const normalizedContent = typeof content === 'string' ? content.trim() : '';
+        if (!normalizedContent) {
+            this.clearMemoryApiOverrideContent();
+            return false;
+        }
+        this._lastApiContent = content;
+        this._lastApiContentGeneration = generation;
+        return true;
+    }
+
+    getMemoryApiOverrideContent() {
+        if (!this.isMemoryFeatureActive(this._lastApiContentGeneration)) {
+            this.clearMemoryApiOverrideContent();
+            return null;
+        }
+        return (typeof this._lastApiContent === 'string' && this._lastApiContent.trim().length > 0)
+            ? this._lastApiContent
+            : null;
+    }
+
+    async setMemoryFeatureEnabled(enabled, options = {}) {
+        const resolvedState = resolveMemoryFeatureToggleValue({
+            currentMemoryMode: this.memoryMode,
+            nextMemoryFeatureEnabled: enabled === true
+        });
+        this.memoryFeatureEnabled = resolvedState.memoryFeatureEnabled;
+        this.memoryMode = resolvedState.memoryMode;
+        if (!this.memoryFeatureEnabled) {
+            this.memoryWorkGeneration += 1;
+            this.clearMemoryApiOverrideContent();
+            for (const controller of this.memoryExtractionAbortControllers.values()) {
+                controller.abort();
+            }
+            for (const controller of this.memoryAugmentAbortControllers.values()) {
+                controller.abort();
+            }
+            this.resolvePendingMemoryApprovalsAsSkipped();
+            this.memoryEditor?.handleMemoryFeatureDisabled?.();
+            this.clearPendingMemoryApprovalPromptsForCurrentSession().catch((error) => {
+                console.warn('[App] Failed to clear pending memory approvals after disabling memory:', error);
+            });
+        }
+
+        if (this.chatInput?.updateMemoryToggleUI) {
+            this.chatInput.updateMemoryToggleUI();
+        }
+        if (this.chatInput?.refreshMemorySettingsUI) {
+            this.chatInput.refreshMemorySettingsUI();
+        }
+
+        if (options.persist === false) return;
+
+        const writes = [
+            chatDB.saveSetting('memoryFeatureEnabled', this.memoryFeatureEnabled)
+        ];
+        if (resolvedState.shouldPersistMemoryMode) {
+            writes.push(chatDB.saveSetting('memoryMode', false));
+        }
+        await Promise.all(writes);
+    }
+
+    resolvePendingMemoryApprovalsAsSkipped() {
+        for (const request of Array.from(this.memoryApprovalRequests.values())) {
+            request?.resolve?.({ approved: false, alwaysInclude: false });
+        }
+    }
+
+    async clearPendingMemoryApprovalPromptsForCurrentSession() {
+        const session = this.getCurrentSession();
+        if (!session?.id) return;
+
+        const messages = await chatDB.getSessionMessages(session.id);
+        const pendingMessages = messages.filter((message) =>
+            message?.memoryApprovalPrompt?.status === 'pending' || message?.ciPromptDraft?.status === 'pending'
+        );
+        if (pendingMessages.length === 0) return;
+
+        for (const message of pendingMessages) {
+            if (message.ciPromptDraft) {
+                message.ciPromptDraft = {
+                    ...message.ciPromptDraft,
+                    status: 'denied'
+                };
+            }
+            message.memoryApprovalPrompt = null;
+            if (message.isLocalOnly) {
+                message.content = 'Memory is off in settings. Sending without personal context.';
+            }
+            await chatDB.saveMessage(message);
+            if (this.chatArea && this.isViewingSession(message.sessionId)) {
+                this.chatArea.updateMessage(message);
+            }
+        }
+    }
+
     async setMemoryAgentModel(modelId, options = {}) {
         const nextModel = isAllowedConfidentialModel(modelId)
             ? String(modelId).trim()
@@ -4160,6 +4322,16 @@ class ChatApp {
     }
 
     async handleMemoryApprovalDecision(messageId, decision) {
+        if (!this.memoryFeatureEnabled) {
+            const request = this.memoryApprovalRequests.get(messageId);
+            if (request?.resolve) {
+                request.resolve({ approved: false, alwaysInclude: false });
+            } else {
+                await this.resolveStaleMemoryApproval(messageId, false, false);
+            }
+            return;
+        }
+
         const alwaysInclude = decision === 'always';
         const approved = decision === 'yes' || alwaysInclude;
 
@@ -4180,6 +4352,7 @@ class ChatApp {
     }
 
     async resolveStaleMemoryApproval(messageId, approved, alwaysInclude) {
+        const memoryRunGeneration = this.memoryWorkGeneration;
         const session = this.getCurrentSession();
         if (!session) return;
 
@@ -4193,8 +4366,15 @@ class ChatApp {
             draft.status = 'approved';
             const rawPrompt = (typeof draft.editedFullPrompt === 'string' && draft.editedFullPrompt.trim())
                 ? draft.editedFullPrompt : draft.fullPrompt;
-            this._lastApiContent = stripMemoryPromptUserData(rawPrompt);
-            await this.recordApprovedMemoryContext(session, draft);
+            const recordedContext = await this.recordApprovedMemoryContext(session, draft, memoryRunGeneration);
+            if (!this.isMemoryFeatureActive(memoryRunGeneration) || !recordedContext) {
+                this.clearMemoryApiOverrideContent();
+                msg.content = 'Memory is off in settings. Sending without personal context.';
+                msg.memoryApprovalPrompt = null;
+                await this.persistLocalAssistantStatus(msg);
+                return;
+            }
+            this.setMemoryApiOverrideContent(stripMemoryPromptUserData(rawPrompt), memoryRunGeneration);
 
             const files = draft.memoryFiles || [];
             if (draft.reusedPriorContext || typeof draft.newMemoryFileCount === 'number') {
@@ -4213,7 +4393,7 @@ class ChatApp {
             msg.memoryApprovalPrompt = { status: 'approved', linkedUserMessageId: draft.linkedUserMessageId, autoIncluded: alwaysInclude };
         } else {
             draft.status = 'denied';
-            this._lastApiContent = null;
+            this.clearMemoryApiOverrideContent();
             msg.content = 'Memory skipped. Sending without personal context.';
             msg.memoryApprovalPrompt = null;
         }
@@ -4341,15 +4521,16 @@ class ChatApp {
         return `${prefix}. Review before sending.`;
     }
 
-    async recordApprovedMemoryContext(session, draft) {
-        if (!session || !draft) return;
+    async recordApprovedMemoryContext(session, draft, generation = null) {
+        if (!session || !draft) return false;
+        if (generation !== null && !this.isMemoryFeatureActive(generation)) return false;
         const sourceEntry = draft.memoryContextEntry || null;
-        if (!sourceEntry) return;
+        if (!sourceEntry) return true;
 
         const usedEditedPrompt = typeof draft.editedFullPrompt === 'string' && draft.editedFullPrompt.trim();
         const approvedPrompt = usedEditedPrompt ? draft.editedFullPrompt : draft.fullPrompt;
         const approvedContext = this.extractMemoryUserDataContext(approvedPrompt, usedEditedPrompt ? '' : sourceEntry.context);
-        if (!approvedContext) return;
+        if (!approvedContext) return true;
 
         const existingEntries = this.getMemoryContextEntries(session)
             .filter((entry) => entry.linkedUserMessageId !== sourceEntry.linkedUserMessageId);
@@ -4369,6 +4550,15 @@ class ChatApp {
             entries: nextEntries
         };
         await chatDB.saveSession(session);
+        if (generation !== null && !this.isMemoryFeatureActive(generation)) {
+            session.memoryRetrievedContext = {
+                version: 1,
+                entries: existingEntries
+            };
+            await chatDB.saveSession(session);
+            return false;
+        }
+        return true;
     }
 
     async pruneMemoryRetrievedContextFromMessage(session, messages, messageIndex) {
@@ -4404,11 +4594,32 @@ class ChatApp {
     }
 
     async runMemoryAugmentFlow(query, userMessage, session, options = {}) {
-        if (!this.memoryMode || !userMessage || !session) return null;
+        if (!this.memoryFeatureEnabled || !this.memoryMode || !userMessage || !session) return null;
         if (!query || !query.trim()) return null;
 
         const { conversationText = '', signal = null } = options;
-        this.throwIfAborted(signal);
+        const memoryRunGeneration = this.memoryWorkGeneration;
+        const memoryAbortController = new AbortController();
+        const memorySignal = memoryAbortController.signal;
+        const parentAbortHandler = signal ? () => memoryAbortController.abort() : null;
+        if (signal?.aborted) {
+            memoryAbortController.abort();
+        } else if (signal && parentAbortHandler) {
+            signal.addEventListener('abort', parentAbortHandler, { once: true });
+        }
+        this.memoryAugmentAbortControllers.add(memoryAbortController);
+        const cleanupMemoryAbortController = () => {
+            this.memoryAugmentAbortControllers.delete(memoryAbortController);
+            if (signal && parentAbortHandler) {
+                signal.removeEventListener('abort', parentAbortHandler);
+            }
+        };
+        try {
+            this.throwIfAborted(memorySignal);
+        } catch (error) {
+            cleanupMemoryAbortController();
+            throw error;
+        }
 
         const retrievalMessage = await this.addMessage('assistant', '', {
             isLocalOnly: true,
@@ -4419,7 +4630,10 @@ class ChatApp {
             }
         });
 
-        if (!retrievalMessage) return null;
+        if (!retrievalMessage) {
+            cleanupMemoryAbortController();
+            return null;
+        }
 
         const agentTrace = retrievalMessage.agentTrace;
         let traceRefreshTimer = null;
@@ -4512,18 +4726,45 @@ class ChatApp {
             agentTrace.push({ type: 'model_text', text, iteration });
             scheduleTraceRefresh();
         };
+        const markMemoryDisabled = async () => {
+            this.clearMemoryApiOverrideContent();
+            retrievalMessage.agentTraceStreaming = false;
+            retrievalMessage.memoryApprovalPrompt = null;
+            retrievalMessage.ciPromptDraft = null;
+            retrievalMessage.content = 'Memory is off in settings. Sending original prompt.';
+            await this.persistLocalAssistantStatus(retrievalMessage);
+            return null;
+        };
 
         try {
-            const hadMemoryKey = !!session.memoryKey;
-            const memoryKey = await ensureMemoryKey(session, ticketClient);
-            if (session.memoryKey && (!hadMemoryKey || session.memoryKey !== memoryKey)) {
+            if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+                return await markMemoryDisabled();
+            }
+            const previousMemoryKey = session.memoryKey || null;
+            const memoryKey = await ensureMemoryKey(session, ticketClient, {
+                signal: memorySignal
+            });
+            if (memorySignal.aborted || !this.isMemoryFeatureActive(memoryRunGeneration)) {
+                if (session.memoryKey && session.memoryKey !== previousMemoryKey) {
+                    invalidateMemoryKey(session);
+                }
+                try {
+                    if (session.memoryKey !== previousMemoryKey || session.memoryKeyInfo) {
+                        await chatDB.saveSession(session);
+                    }
+                } catch (persistError) {
+                    console.warn('[App] Failed to clear memory key after disabling memory retrieval:', persistError);
+                }
+                return await markMemoryDisabled();
+            }
+            this.throwIfAborted(memorySignal);
+            if (session.memoryKey && session.memoryKey !== previousMemoryKey) {
                 await chatDB.saveSession(session);
             }
-            this.throwIfAborted(signal);
 
             if (!memoryKey) {
                 retrievalMessage.agentTraceStreaming = false;
-                retrievalMessage.content = 'Memory retrieval needs 2 available inference tickets. Sending without personal context.';
+                retrievalMessage.content = `Memory retrieval needs ${CONFIDENTIAL_KEY_TICKETS} available inference ticket${CONFIDENTIAL_KEY_TICKETS === 1 ? '' : 's'}. Sending without personal context.`;
                 await this.persistLocalAssistantStatus(retrievalMessage);
                 return null;
             }
@@ -4537,7 +4778,7 @@ class ChatApp {
                     conversationText,
                     apiKey: memoryKey,
                     model: this.memoryAgentModel,
-                    signal,
+                    signal: memorySignal,
                     onProgress: handleMemoryProgress,
                     onModelText: handleMemoryModelText
                 })
@@ -4546,7 +4787,7 @@ class ChatApp {
                     conversationText,
                     apiKey: memoryKey,
                     model: this.memoryAgentModel,
-                    signal,
+                    signal: memorySignal,
                     onProgress: handleMemoryProgress,
                     onModelText: handleMemoryModelText
                 });
@@ -4556,7 +4797,10 @@ class ChatApp {
             retrievalMessage.memoryRetrievalAssessment = memoryRetrievalAssessment;
 
             await flushTraceRefresh();
-            this.throwIfAborted(signal);
+            this.throwIfAborted(memorySignal);
+            if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+                return await markMemoryDisabled();
+            }
 
             retrievalMessage.agentTraceStreaming = false;
 
@@ -4592,7 +4836,10 @@ class ChatApp {
                     ? this.buildReusedMemoryApiPrompt(query, previouslyRetrievedContext)
                     : '';
                 if (reusedPrompt) {
-                    this._lastApiContent = stripMemoryPromptUserData(reusedPrompt);
+                    if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+                        return await markMemoryDisabled();
+                    }
+                    this.setMemoryApiOverrideContent(stripMemoryPromptUserData(reusedPrompt), memoryRunGeneration);
                     retrievalMessage.content = 'No new retrieval. Using previously approved memory.';
                 } else {
                     retrievalMessage.content = 'No added memory. Sending original prompt.';
@@ -4600,6 +4847,9 @@ class ChatApp {
                 retrievalMessage.memoryApprovalPrompt = null;
                 retrievalMessage.ciPromptDraft = null;
                 await this.persistLocalAssistantStatus(retrievalMessage);
+                if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+                    return await markMemoryDisabled();
+                }
                 return null;
             }
 
@@ -4629,12 +4879,19 @@ class ChatApp {
             };
             await this.persistLocalAssistantStatus(retrievalMessage);
 
+            if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+                return await markMemoryDisabled();
+            }
+
             if (this.memoryAutoInclude) {
                 const draft = retrievalMessage.ciPromptDraft;
                 draft.status = 'approved';
                 draft.model = this.normalizeModelName(session.model) || session.model || draft.model;
-                this._lastApiContent = stripMemoryPromptUserData(draft.fullPrompt);
-                await this.recordApprovedMemoryContext(session, draft);
+                const recordedContext = await this.recordApprovedMemoryContext(session, draft, memoryRunGeneration);
+                if (!this.isMemoryFeatureActive(memoryRunGeneration) || !recordedContext) {
+                    return await markMemoryDisabled();
+                }
+                this.setMemoryApiOverrideContent(stripMemoryPromptUserData(draft.fullPrompt), memoryRunGeneration);
                 retrievalMessage.content = this.buildMemoryContextSummary({
                     fileCount: draft.newMemoryFileCount || 0,
                     reused: draft.reusedPriorContext === true,
@@ -4648,11 +4905,17 @@ class ChatApp {
                     autoIncluded: true
                 };
                 await this.persistLocalAssistantStatus(retrievalMessage);
+                if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+                    return await markMemoryDisabled();
+                }
                 return draft;
             }
 
-            const approval = await this.waitForMemoryApproval(retrievalMessage.id, signal);
-            this.throwIfAborted(signal);
+            const approval = await this.waitForMemoryApproval(retrievalMessage.id, memorySignal);
+            this.throwIfAborted(memorySignal);
+            if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+                return await markMemoryDisabled();
+            }
 
             const latestMessages = await chatDB.getSessionMessages(retrievalMessage.sessionId);
             const latestRetrievalMessage = latestMessages.find((message) => message.id === retrievalMessage.id);
@@ -4669,8 +4932,11 @@ class ChatApp {
                 const rawPrompt = (typeof draft.editedFullPrompt === 'string' && draft.editedFullPrompt.trim())
                     ? draft.editedFullPrompt
                     : draft.fullPrompt;
-                this._lastApiContent = stripMemoryPromptUserData(rawPrompt);
-                await this.recordApprovedMemoryContext(session, draft);
+                const recordedContext = await this.recordApprovedMemoryContext(session, draft, memoryRunGeneration);
+                if (!this.isMemoryFeatureActive(memoryRunGeneration) || !recordedContext) {
+                    return await markMemoryDisabled();
+                }
+                this.setMemoryApiOverrideContent(stripMemoryPromptUserData(rawPrompt), memoryRunGeneration);
                 retrievalMessage.content = this.buildMemoryContextSummary({
                     fileCount: draft.newMemoryFileCount || 0,
                     reused: draft.reusedPriorContext === true,
@@ -4685,12 +4951,15 @@ class ChatApp {
                 };
             } else {
                 draft.status = 'denied';
-                this._lastApiContent = null;
+                this.clearMemoryApiOverrideContent();
                 retrievalMessage.content = 'Memory skipped. Sending without personal context.';
                 retrievalMessage.memoryApprovalPrompt = null;
             }
 
             await this.persistLocalAssistantStatus(retrievalMessage);
+            if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+                return await markMemoryDisabled();
+            }
             return draft;
         } catch (error) {
             await flushTraceRefresh();
@@ -4703,7 +4972,10 @@ class ChatApp {
                 await chatDB.saveSession(session);
             }
 
-            if (this.isCancelledError(error, signal)) {
+            if (this.isCancelledError(error, memorySignal)) {
+                if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+                    return await markMemoryDisabled();
+                }
                 retrievalMessage.content = 'Memory retrieval cancelled.';
                 await this.persistLocalAssistantStatus(retrievalMessage);
                 throw this.createCancelledError();
@@ -4719,6 +4991,7 @@ class ChatApp {
                 clearTimeout(traceRefreshTimer);
             }
             this.memoryApprovalRequests.delete(retrievalMessage.id);
+            cleanupMemoryAbortController();
         }
     }
 
@@ -4841,15 +5114,29 @@ class ChatApp {
      * @returns {Array} Processed messages with multimodal content
      */
     processMessagesWithFiles(messages, currentModelId) {
-        const apiOverrideContent = (typeof this._lastApiContent === 'string' && this._lastApiContent.trim().length > 0)
-            ? this._lastApiContent
-            : null;
+        const apiOverrideContent = this.getMemoryApiOverrideContent();
         return processMessagesForApi(messages, currentModelId, {
             apiOverrideContent,
             onTextFileDecodeError: (error, file) => {
                 console.error('Failed to decode text file:', file.name, error);
             }
         });
+    }
+
+    refreshProcessedMessagesIfMemoryOverrideChanged(processedMessages, sourceMessages, modelIdForRequest, memoryGenerationAtProcess) {
+        const currentGeneration = this._lastApiContentGeneration;
+        const shouldRebuild = currentGeneration !== memoryGenerationAtProcess ||
+            (currentGeneration !== null && !this.isMemoryFeatureActive(currentGeneration));
+        if (!shouldRebuild) {
+            return {
+                processedMessages,
+                memoryGenerationAtProcess
+            };
+        }
+        return {
+            processedMessages: this.processMessagesWithFiles(sourceMessages, modelIdForRequest),
+            memoryGenerationAtProcess: this._lastApiContentGeneration
+        };
     }
 
     /**
@@ -4859,7 +5146,7 @@ class ChatApp {
     async regenerateResponse(options = {}) {
         let session = this.getCurrentSession();
         if (!session) return;
-        if (!options.skipMemoryAugment) this._lastApiContent = null;
+        if (!options.skipMemoryAugment) this.clearMemoryApiOverrideContent();
 
         // Any local regeneration on an imported session forks it from upstream updates.
         if (session.importedFrom) {
@@ -5016,7 +5303,8 @@ class ChatApp {
                 });
 
                 // Process messages to include file content from stored metadata
-                const processedMessages = this.processMessagesWithFiles(sanitizedMessages, modelIdForRequest);
+                let processedMessages = this.processMessagesWithFiles(sanitizedMessages, modelIdForRequest);
+                let memoryGenerationAtProcess = this._lastApiContentGeneration;
 
                 // Create a placeholder message for streaming
                 const streamingMessageId = this.generateId();
@@ -5040,6 +5328,15 @@ class ChatApp {
 
                 // Save placeholder immediately so switching sessions back can find it
                 await chatDB.saveMessage(streamingMessage);
+                ({
+                    processedMessages,
+                    memoryGenerationAtProcess
+                } = this.refreshProcessedMessagesIfMemoryOverrideChanged(
+                    processedMessages,
+                    sanitizedMessages,
+                    modelIdForRequest,
+                    memoryGenerationAtProcess
+                ));
 
                 let lastSaveLength = 0;
                 const SAVE_INTERVAL_CHARS = 100;
@@ -5281,7 +5578,7 @@ class ChatApp {
                 }
             }
         } finally {
-            this._lastApiContent = null;
+            this.clearMemoryApiOverrideContent();
             this.setSessionStreamingState(session.id, false, null);
             // Reset auto-scroll state and hide button
             this.isAutoScrollPaused = false;
@@ -5302,7 +5599,7 @@ class ChatApp {
         const content = rawContent.trim();
         const hasFiles = this.uploadedFiles.length > 0;
         if (!content && !hasFiles) return;
-        this._lastApiContent = null;
+        this.clearMemoryApiOverrideContent();
 
         // Create session if none exists (first message creates the session)
         if (!this.getCurrentSession()) {
@@ -5407,7 +5704,7 @@ class ChatApp {
                 this.startPromptSlideUpEffect(userMessage.id);
             }
 
-            if (this.memoryMode && content && userMessage) {
+            if (this.memoryFeatureEnabled && this.memoryMode && content && userMessage) {
                 const memoryMessages = await chatDB.getSessionMessages(session.id);
                 const conversationText = this.buildConversationText(memoryMessages);
                 try {
@@ -5542,7 +5839,8 @@ class ChatApp {
                 });
 
                 // Process messages to include file content from stored metadata
-                const processedMessages = this.processMessagesWithFiles(sanitizedMessages, modelIdForRequest);
+                let processedMessages = this.processMessagesWithFiles(sanitizedMessages, modelIdForRequest);
+                let memoryGenerationAtProcess = this._lastApiContentGeneration;
 
                 // Create a placeholder message for streaming
                 const streamingMessageId = this.generateId();
@@ -5574,6 +5872,15 @@ class ChatApp {
                 let firstContentChunk = true; // Track when content starts (after reasoning)
                 let reasoningStartTime = null;
                 let reasoningEndTime = null;
+                ({
+                    processedMessages,
+                    memoryGenerationAtProcess
+                } = this.refreshProcessedMessagesIfMemoryOverrideChanged(
+                    processedMessages,
+                    sanitizedMessages,
+                    modelIdForRequest,
+                    memoryGenerationAtProcess
+                ));
 
                 // Stream the response with token tracking
                 const tokenData = await inferenceService.streamCompletion(
@@ -5884,7 +6191,7 @@ class ChatApp {
             }
             } // End of retryLoop
         } finally {
-            this._lastApiContent = null;
+            this.clearMemoryApiOverrideContent();
             // Clear streaming state for this session
             this.setSessionStreamingState(session.id, false, null);
             // Reset auto-scroll state and hide button
@@ -6225,7 +6532,8 @@ class ChatApp {
         return {
             isEditing: this.editingMessageId === messageId,
             editContent: editDraft?.content,
-            editFiles: editDraft?.files
+            editFiles: editDraft?.files,
+            memoryFeatureEnabled: this.memoryFeatureEnabled !== false
         };
     }
 
@@ -7804,6 +8112,10 @@ class ChatApp {
             // Cmd/Ctrl + Shift + M for memory editor
             if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'm' || e.key === 'M')) {
                 e.preventDefault();
+                if (this.memoryFeatureEnabled === false) {
+                    this.showToast?.('Memory is off in settings.', 'info', 3000);
+                    return;
+                }
                 if (this.memoryEditor) {
                     this.memoryEditor.isOpen ? this.memoryEditor.close() : this.memoryEditor.open();
                 }

@@ -1,10 +1,22 @@
-import { createMemoryBank, stripUserDataTags } from '../nanomem/browser.js';
 import { DEFAULT_MEMORY_AGENT_MODEL, isAllowedConfidentialModel } from './confidentialModelConfig.js';
 
 const TINFOIL_BASE_URL = 'https://inference.tinfoil.sh/v1';
 const MEMORY_KEY_GRACE_MS = 60_000;
 
 export const CONFIDENTIAL_KEY_TICKETS = 1;
+
+function createAbortError() {
+    const error = new Error('Request aborted');
+    error.name = 'AbortError';
+    error.isCancelled = true;
+    return error;
+}
+
+function throwIfAborted(signal) {
+    if (signal?.aborted) {
+        throw createAbortError();
+    }
+}
 
 function getExpiresAt(keyInfo) {
     if (!keyInfo) return null;
@@ -21,19 +33,25 @@ export function hasValidMemoryKey(session) {
     return expiresAt > (Date.now() + MEMORY_KEY_GRACE_MS);
 }
 
-export async function ensureMemoryKey(session, client) {
+export async function ensureMemoryKey(session, client, options = {}) {
     if (!session) {
         throw new Error('No session available for memory key.');
     }
+    const { signal = null } = options;
+    throwIfAborted(signal);
+
     if (hasValidMemoryKey(session)) {
         return session.memoryKey;
     }
 
+    throwIfAborted(signal);
     if (client.getTicketCount() < CONFIDENTIAL_KEY_TICKETS) {
         return null;
     }
 
-    const keyData = await client.requestConfidentialApiKey(CONFIDENTIAL_KEY_TICKETS);
+    const keyData = await client.requestConfidentialApiKey(CONFIDENTIAL_KEY_TICKETS, { signal });
+    throwIfAborted(signal);
+
     session.memoryKey = keyData.key;
     session.memoryKeyInfo = keyData;
     return keyData.key;
@@ -53,14 +71,25 @@ export function isMemoryAuthError(error) {
 }
 
 export function stripMemoryPromptUserData(text) {
-    return stripUserDataTags(text);
+    return String(text || '')
+        .replace(/\[\[user_data\]\]/g, '')
+        .replace(/\[\[\/user_data\]\]/g, '');
 }
 
 function resolveMemoryAgentModel(model) {
     return isAllowedConfidentialModel(model) ? String(model).trim() : DEFAULT_MEMORY_AGENT_MODEL;
 }
 
-function createConfidentialMemoryBank({ apiKey, model, onProgress, onModelText, onToolCall }) {
+async function loadNanomemBrowser(signal = null) {
+    throwIfAborted(signal);
+    const module = await import('../nanomem/browser.js');
+    throwIfAborted(signal);
+    return module;
+}
+
+async function createConfidentialMemoryBank({ apiKey, model, onProgress, onModelText, onToolCall, signal = null }) {
+    const { createMemoryBank } = await loadNanomemBrowser(signal);
+    throwIfAborted(signal);
     return createMemoryBank({
         llm: {
             apiKey,
@@ -76,57 +105,72 @@ function createConfidentialMemoryBank({ apiKey, model, onProgress, onModelText, 
 }
 
 export async function augmentQuery({ query, conversationText, apiKey, model, onProgress, onModelText, signal }) {
-    const memoryBank = createConfidentialMemoryBank({
+    throwIfAborted(signal);
+    const memoryBank = await createConfidentialMemoryBank({
         apiKey,
         model,
         onProgress,
-        onModelText
+        onModelText,
+        signal
     });
 
     await memoryBank.init();
+    throwIfAborted(signal);
     return memoryBank.augmentQuery(query, conversationText, { signal });
 }
 
 export async function retrieveAdaptive({ query, alreadyRetrievedContext, conversationText, apiKey, model, onProgress, onModelText, signal }) {
-    const memoryBank = createConfidentialMemoryBank({
+    throwIfAborted(signal);
+    const memoryBank = await createConfidentialMemoryBank({
         apiKey,
         model,
         onProgress,
-        onModelText
+        onModelText,
+        signal
     });
 
     await memoryBank.init();
+    throwIfAborted(signal);
     return memoryBank.retrieveAdaptive(query, alreadyRetrievedContext, conversationText, { signal });
 }
 
 export async function augmentQueryAdaptive({ query, alreadyRetrievedContext, conversationText, apiKey, model, onProgress, onModelText, signal }) {
-    const memoryBank = createConfidentialMemoryBank({
+    throwIfAborted(signal);
+    const memoryBank = await createConfidentialMemoryBank({
         apiKey,
         model,
         onProgress,
-        onModelText
+        onModelText,
+        signal
     });
 
     await memoryBank.init();
+    throwIfAborted(signal);
     return memoryBank.augmentQueryAdaptive(query, alreadyRetrievedContext, conversationText, { signal });
 }
 
 export async function importData({ input, apiKey, model, options }) {
-    const memoryBank = createConfidentialMemoryBank({
+    throwIfAborted(options?.signal);
+    const memoryBank = await createConfidentialMemoryBank({
         apiKey,
-        model
+        model,
+        signal: options?.signal
     });
 
     await memoryBank.init();
+    throwIfAborted(options?.signal);
     return memoryBank.importData(input, options);
 }
 
 export async function ingestMessages({ messages, apiKey, model, options }) {
-    const memoryBank = createConfidentialMemoryBank({
+    throwIfAborted(options?.signal);
+    const memoryBank = await createConfidentialMemoryBank({
         apiKey,
-        model
+        model,
+        signal: options?.signal
     });
 
     await memoryBank.init();
+    throwIfAborted(options?.signal);
     return memoryBank.ingest(messages, options);
 }

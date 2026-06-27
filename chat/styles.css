@@ -4252,6 +4252,16 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
     pointer-events: none; /* Prevent clicks without changing cursor */
 }
 
+[data-memory-requires-feature]:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+[data-memory-requires-feature]:disabled:hover {
+    color: hsl(var(--color-muted-foreground));
+    background: transparent;
+}
+
 .switch-toggle-indicator {
     position: absolute;
     top: 2px;
@@ -4352,6 +4362,14 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
     transform: translateX(calc(100% + 1px));
 }
 
+.chat-mode-toggle-container.is-disabled {
+    background: hsl(var(--color-muted) / 0.45);
+}
+
+.chat-mode-toggle-container.is-disabled .chat-mode-toggle-indicator {
+    transform: translateX(0);
+}
+
 .chat-mode-toggle-btn {
     position: relative;
     flex: 1;
@@ -4381,6 +4399,21 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
 
 .chat-mode-toggle-btn[aria-checked="true"] {
     color: hsl(var(--color-foreground));
+}
+
+.chat-mode-toggle-container.is-disabled .chat-mode-toggle-btn[data-mode-option="memory"] {
+    cursor: not-allowed;
+    opacity: 0.55;
+}
+
+.chat-mode-toggle-container.is-disabled .chat-mode-toggle-btn[data-mode-option="memory"]:hover {
+    color: hsl(var(--color-muted-foreground));
+    background: transparent;
+    box-shadow: none;
+}
+
+.chat-mode-toggle-container.is-disabled .chat-mode-toggle-btn[data-mode-option="chat"] {
+    cursor: default;
 }
 
 .chat-mode-toggle-container:not(.sliding) .chat-mode-toggle-btn[data-mode-option="memory"][aria-checked="true"]:hover {

@@ -31,6 +31,7 @@ function createMockApp(overrides = {}) {
             currentSessionId: session?.id || null
         },
         reasoningEnabled: true,
+        memoryFeatureEnabled: true,
         sessionSearchQuery: 'query',
         getCurrentSession: () => session,
         getDefaultModelName: () => 'Default Model',
@@ -46,6 +47,7 @@ function createMockApp(overrides = {}) {
         exportChatToPdf: () => calls.push(['exportChatToPdf']),
         updateSessionTitle: (sessionId, title) => calls.push(['updateSessionTitle', sessionId, title]),
         updateToolbarDivider: () => calls.push(['updateToolbarDivider']),
+        setMemoryFeatureEnabled: async (enabled) => calls.push(['setMemoryFeatureEnabled', enabled]),
         hasActiveSessionListCriteria: () => true,
         getSessionListEmptyText: () => 'No sessions'
     };
@@ -165,6 +167,10 @@ test('component data interface isolates persistence calls behind an adapter', as
             deleteSessionMessages: async (...args) => calls.push(['deleteSessionMessages', ...args]),
             saveSession: async (...args) => calls.push(['saveSession', ...args]),
             saveSessionWithMessages: async (...args) => calls.push(['saveSessionWithMessages', ...args]),
+            getSetting: async (...args) => {
+                calls.push(['getSetting', ...args]);
+                return 'setting-value';
+            },
             saveSetting: async (...args) => calls.push(['saveSetting', ...args])
         }
     });
@@ -178,6 +184,7 @@ test('component data interface isolates persistence calls behind an adapter', as
     await data.deleteSessionMessages('session-1');
     await data.saveSession({ id: 'session-1' });
     await data.saveSessionWithMessages({ id: 'session-2' }, [{ id: 'message-3' }]);
+    assert.equal(await data.getSetting('searchEnabled'), 'setting-value');
     await data.saveSetting('searchEnabled', true);
 
     assert.deepEqual(calls, [
@@ -189,6 +196,7 @@ test('component data interface isolates persistence calls behind an adapter', as
         ['deleteSessionMessages', 'session-1'],
         ['saveSession', { id: 'session-1' }],
         ['saveSessionWithMessages', { id: 'session-2' }, [{ id: 'message-3' }]],
+        ['getSetting', 'searchEnabled'],
         ['saveSetting', 'searchEnabled', true]
     ]);
 });
@@ -213,6 +221,17 @@ test('component services interface groups backend-facing services for UI injecti
     assert.deepEqual(services.share, { name: 'share' });
     assert.deepEqual(services.account, { name: 'account' });
     assert.deepEqual(services.sync, { name: 'sync' });
+});
+
+test('component app facade exposes memory feature controls', async () => {
+    const { app, calls } = createMockApp();
+    const facade = createComponentAppFacade(app);
+
+    assert.equal(facade.memoryFeatureEnabled, true);
+
+    await facade.setMemoryFeatureEnabled(false);
+
+    assert.deepEqual(calls, [['setMemoryFeatureEnabled', false]]);
 });
 
 test('component app facade exposes an explicit compatibility contract', () => {

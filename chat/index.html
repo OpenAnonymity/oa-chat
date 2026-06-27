@@ -591,11 +591,6 @@
                                                         <button data-action="import-tickets" class="flex-1 px-2 py-1 text-[11px] text-popover-foreground hover-highlight rounded transition-colors border border-border text-center">Import</button>
                                                     </div>
                                                     <div class="px-3 py-1 flex items-center gap-2">
-                                                        <span class="text-xs text-muted-foreground w-12 shrink-0">Memory</span>
-                                                        <button data-action="export-memory" class="flex-1 px-2 py-1 text-[11px] text-popover-foreground hover-highlight rounded transition-colors border border-border text-center">Export</button>
-                                                        <button data-action="import-memory" class="flex-1 px-2 py-1 text-[11px] text-popover-foreground hover-highlight rounded transition-colors border border-border text-center">Import</button>
-                                                    </div>
-                                                    <div class="px-3 py-1 flex items-center gap-2">
                                                         <span class="text-xs text-muted-foreground w-12 shrink-0">ChatGPT</span>
                                                         <button data-action="import-history" class="flex-1 px-2 py-1 text-[11px] text-popover-foreground hover-highlight rounded transition-colors border border-border text-center">Import from ChatGPT</button>
                                                     </div>
@@ -614,17 +609,35 @@
                                                             <option value="" disabled selected>Loading…</option>
                                                         </select>
                                                     </div>
-                                                    <div class="px-3 py-1 flex items-center gap-2">
-                                                        <span class="text-xs text-muted-foreground w-12 shrink-0">Memory</span>
-                                                        <select id="memory-agent-model-select" class="flex-1 min-w-0 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-popover-foreground focus:outline-none focus:ring-1 focus:ring-ring truncate">
-                                                            <option value="" disabled selected>Loading…</option>
-                                                        </select>
-                                                    </div>
+                                                </div>
+
+                                                <!-- Memory Section -->
+                                                <div id="memory-settings-section" class="mt-2 border-t border-border pt-2">
+                                                    <p class="px-3 pb-1 text-xs font-light tracking-wide text-muted-foreground">Memory</p>
                                                     <div class="px-3 py-1.5 flex items-center justify-between gap-2">
-                                                        <span class="text-xs text-muted-foreground">Always include memory</span>
-                                                        <button id="memory-auto-include-toggle" type="button" role="switch" aria-checked="false" class="switch-toggle switch-toggle-sm switch-inactive" data-tooltip="Automatically include memory-agent prompts without per-message approval" data-tooltip-position="left">
+                                                        <span class="text-xs font-medium text-popover-foreground">Memory feature</span>
+                                                        <button id="memory-feature-toggle" type="button" role="switch" aria-checked="true" class="switch-toggle switch-toggle-sm switch-active" data-tooltip="Enable memory mode and background memory extraction" data-tooltip-position="left">
                                                             <span class="switch-toggle-indicator"></span>
                                                         </button>
+                                                    </div>
+                                                    <div class="mt-1">
+                                                        <div class="px-3 py-1.5 flex items-center justify-between gap-3">
+                                                            <span class="text-xs text-muted-foreground leading-tight min-w-0 flex-1">Always attach retrieval</span>
+                                                            <button id="memory-auto-include-toggle" type="button" role="switch" aria-checked="false" class="switch-toggle switch-toggle-sm switch-inactive shrink-0" data-tooltip="Automatically attach retrieval without per-message approval" data-tooltip-position="left">
+                                                                <span class="switch-toggle-indicator"></span>
+                                                            </button>
+                                                        </div>
+                                                        <div class="px-3 py-1 flex items-center gap-2">
+                                                            <span class="text-xs text-muted-foreground w-12 shrink-0">Model</span>
+                                                            <select id="memory-agent-model-select" class="flex-1 min-w-0 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-popover-foreground focus:outline-none focus:ring-1 focus:ring-ring truncate">
+                                                                <option value="" disabled selected>Loading…</option>
+                                                            </select>
+                                                        </div>
+                                                        <div class="px-3 py-1 flex items-center gap-2">
+                                                            <span class="text-xs text-muted-foreground w-12 shrink-0">Data</span>
+                                                            <button data-action="export-memory" data-memory-requires-feature data-enabled-title="Export memories" class="flex-1 px-2 py-1 text-[11px] text-popover-foreground hover-highlight rounded transition-colors border border-border text-center">Export</button>
+                                                            <button data-action="import-memory" data-memory-requires-feature data-enabled-title="Import memories" class="flex-1 px-2 py-1 text-[11px] text-popover-foreground hover-highlight rounded transition-colors border border-border text-center">Import</button>
+                                                        </div>
                                                     </div>
                                                 </div>
 
@@ -753,7 +766,7 @@
                                                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                                                     <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
                                                 </svg>
-                                                <span class="chat-mode-html-tooltip">Auto-attach relevant context <span class="px-1 py-0.5 rounded text-[8px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 uppercase tracking-wide">Beta</span></span>
+                                                <span class="chat-mode-html-tooltip"><span data-memory-tooltip-text>Auto-attach relevant context</span> <span data-memory-tooltip-beta class="px-1 py-0.5 rounded text-[8px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 uppercase tracking-wide">Beta</span></span>
                                             </button>
                                         </div>
                                     </div>

@@ -67,6 +67,7 @@ export function createComponentDataInterface(options = {}) {
                 await db.saveMessage(message);
             }
         },
+        getSetting: (key) => db.getSetting(key),
         saveSetting: (key, value) => db.saveSetting(key, value)
     };
 }
@@ -197,6 +198,7 @@ const COMPONENT_APP_KEYS = new Set([
     'memoryAgentModel',
     'memoryAutoInclude',
     'memoryEditor',
+    'memoryFeatureEnabled',
     'memoryMode',
     'messageNavigation',
     'modelPicker',
@@ -222,6 +224,7 @@ const COMPONENT_APP_KEYS = new Set([
     'sessionSearchQuery',
     'setMemoryAgentModel',
     'setMemoryAutoInclude',
+    'setMemoryFeatureEnabled',
     'shareCurrentSession',
     'shouldAutoScrollChat',
     'showLoadingToast',

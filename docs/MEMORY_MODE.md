@@ -5,7 +5,8 @@ This document describes the root `oa-chat` memory-mode integration that reuses
 
 ## Scope
 
-- Root `oa-chat` now has a global 2-mode slider: normal chat vs. memory mode.
+- Root `oa-chat` has a global memory feature switch plus a 2-mode slider:
+  normal chat vs. memory mode.
 - Memory mode only brings in the `augment_query` flow.
 - Root `oa-chat` now also exposes the memory filesystem panel shell from
   `memory-chat` via `Cmd/Ctrl+Shift+M`.
@@ -31,7 +32,10 @@ Important boundaries:
 - `chat/app.js` never imports `nanomem/src/...` directly.
 - The app only talks to `nanomem` through `chat/services/memoryBridge.js`.
 - `memoryBridge.js` only imports `createMemoryBank` from the stable browser
-  entrypoint.
+  entrypoint lazily inside active retrieval, extraction, and import operations.
+  It must not statically import `chat/nanomem/browser.js`, because the global
+  Memory feature switch is expected to prevent nanomem module evaluation when
+  Memory is off.
 - Prompt construction, tool definitions, and final `[[user_data]]` stripping
   live behind the `nanomem` browser seam, not in the chat controller.
 - `augment_query` is now a real executed tool inside `nanomem`, not just a
@@ -84,7 +88,8 @@ contract the app should rely on.
   - `provider: 'openai'`
 - `nanomem` still supports the SDK-backed Tinfoil transport for other callers,
   but the root app is intentionally not using it right now.
-- The bridge requests confidential keys from `ticketClient.requestConfidentialApiKey(1)`.
+- The bridge requests confidential keys with `CONFIDENTIAL_KEY_TICKETS` (currently
+  1) and passes the active memory abort signal through the redemption request.
 - The key is cached on the session as `memoryKey` / `memoryKeyInfo`.
 - The cache uses the same 60-second grace-window pattern as scrubber-key
   expiry checks.
@@ -190,9 +195,10 @@ request is sent. Memory writes happen through separate ingestion/storage paths.
 Current write paths in root `oa-chat`:
 
 - Live post-turn extraction runs after successful `sendMessage()` and
-  `regenerateResponse()` completions, normalizes the full current session, and
-  calls `memoryBridge.ingestMessages(...)`. This is not gated by the global
-  chat-vs-memory mode toggle.
+  `regenerateResponse()` completions only when the global memory feature is
+  enabled. It normalizes the full current session and calls
+  `memoryBridge.ingestMessages(...)`. This remains independent of the
+  chat-vs-memory mode toggle when the feature itself is on.
 - Manual `Backfill` scans IndexedDB sessions newest-first and imports eligible
   conversations through `nanomem.importData(...)`, skipping sessions whose
   `updatedAt` is not newer than `session.memoryProcessedAt`.
@@ -205,16 +211,32 @@ forwarding its details into the final prompt.
 
 ## UI Notes
 
-- The chat/memory slider is global and persisted in IndexedDB setting `memoryMode`.
+- The global memory feature switch is persisted in IndexedDB setting
+  `memoryFeatureEnabled` and defaults on for existing users. When it is off,
+  the app forces `memoryMode` false, skips live post-turn extraction, skips
+  memory retrieval, aborts active memory retrieval/extraction work, blocks the
+  memory editor/backfill/import/export entry points, and leaves the chat/memory
+  slider visually locked on Chat. Confidential memory-key redemption is passed
+  the same abort signal, and returned keys are not stored if Memory is disabled
+  during redemption. Memory-editor saves, imports, clean-up, and folder
+  mutations also use an operation generation guard so stale local operations do
+  not complete their UI path after the feature is turned off. The memory bridge,
+  storage singleton, and OMF importer lazy-load `nanomem`; app startup and
+  disabled settings/editor controls must not evaluate the nanomem browser
+  module.
+- The chat/memory slider is global and persisted in IndexedDB setting
+  `memoryMode`, but it cannot enter Memory while `memoryFeatureEnabled` is false.
 - Memory mode also has two persisted privacy settings in IndexedDB:
-  - `memoryAutoInclude`: automatically approve memory prompts without waiting
-    for the per-message buttons
+  - `memoryAutoInclude`: shown in settings as `Always attach retrieval`;
+    automatically approve memory prompts without waiting for the per-message
+    buttons
   - `memoryAgentModel`: the confidential model used for retrieval and
     backfill/import flows
 - Retrieval state is shown as a local-only assistant message, not a modal wizard.
 - Successful assistant responses now also trigger a non-blocking post-turn
-  extraction pass for the current session through `nanomem.ingest(...)`,
-  regardless of whether the current mode is chat or memory.
+  extraction pass for the current session through `nanomem.ingest(...)` when the
+  global memory feature is enabled, regardless of whether the current mode is
+  chat or memory.
 - This mirrors `memory-chat`'s background extractor behavior, but stays behind
   the root app's `memoryBridge.js` seam.
 - Live post-turn extraction reprocesses the whole normalized session each time.
@@ -257,6 +279,13 @@ forwarding its details into the final prompt.
   - `Export` uses the same OMF exporter as the memory panel header.
   - `Import` opens the memory panel and routes the chosen file into the same OMF
     preview/merge flow as the header import button.
+- The settings menu exposes memory controls in a dedicated `Memory` section.
+  The global `Memory feature` switch appears first; `Always attach retrieval`,
+  the memory agent model, and memory import/export controls sit beneath it as
+  flat subordinate rows without a nested vertical rule. Turning the global
+  switch off disables those subordinate controls, forces the bottom chat/memory
+  slider back to Chat, and changes the Memory icon hover copy to
+  `Memory is off in settings`.
 - The panel's `Export` / `Import` buttons now match `memory-chat`, but the
   actual OMF logic lives in `nanomem`:
   - `Export` writes Open Memory Format (`.omf.json`) through `memoryBank.exportOmf()`
@@ -274,8 +303,8 @@ forwarding its details into the final prompt.
   - skips the currently streaming session
   - excludes local-only `memory agent` status messages from the import input
   - uses the currently selected `memoryAgentModel`
-  - uses the same confidential key flow as memory retrieval, so it still needs
-    2 available inference tickets
+  - uses the same confidential key flow as memory retrieval, so it currently
+    needs 1 available inference ticket
   - transient confidential-model transport failures are retried inside `nanomem`
     before the chat is marked failed
   - the header `Backfill` button turns into a stop control while import is running

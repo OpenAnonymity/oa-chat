@@ -7,6 +7,7 @@ import ticketStore from './ticketStore.js';
 import preferencesStore, { PREF_KEYS } from './preferencesStore.js';
 import { chatDB } from '../db.js';
 import { normalizeReasoningEffort } from './reasoningConfig.js';
+import { resolveImportedMemoryPreferences } from '../domain/memorySettings.js';
 
 const SUPPORTED_FORMAT_VERSIONS = ['1.0'];
 
@@ -243,8 +244,18 @@ async function applyPreferences(preferences) {
             applied.push('searchEnabled');
         }
 
-        if ('memoryMode' in preferences) {
-            await chatDB.saveSetting('memoryMode', preferences.memoryMode === true);
+        const importedMemoryState = resolveImportedMemoryPreferences({
+            preferences,
+            currentMemoryFeatureEnabled: await chatDB.getSetting('memoryFeatureEnabled'),
+            currentMemoryMode: await chatDB.getSetting('memoryMode')
+        });
+        if (importedMemoryState.shouldApplyMemoryFeatureEnabled) {
+            await chatDB.saveSetting('memoryFeatureEnabled', importedMemoryState.memoryFeatureEnabled);
+            applied.push('memoryFeatureEnabled');
+        }
+
+        if (importedMemoryState.shouldApplyMemoryMode) {
+            await chatDB.saveSetting('memoryMode', importedMemoryState.memoryMode);
             applied.push('memoryMode');
         }
 
