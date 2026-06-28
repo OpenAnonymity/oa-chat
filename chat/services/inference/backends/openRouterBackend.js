@@ -20,8 +20,8 @@ const openRouterBackend = {
     accessShortLabel: 'API',
     accessType: 'api-key',
     baseUrl: OPENROUTER_BASE_URL,
-    defaultModelId: 'openai/gpt-5.2-chat',
-    defaultModelName: 'OpenAI: GPT-5.2 Instant',
+    defaultModelId: 'openai/gpt-5.3-chat',
+    defaultModelName: 'OpenAI: GPT-5.3 Instant',
     tls: {
         captureHosts: ['openrouter.ai'],
         verifyUrl: OPENROUTER_MODELS_URL,
@@ -30,7 +30,8 @@ const openRouterBackend = {
     fetchModels: () => openRouterAPI.fetchModels(),
     getDisplayName: (modelId, fallback) => openRouterAPI.getDisplayName(modelId, fallback),
     sendCompletion: (messages, modelId, token) => openRouterAPI.sendCompletion(messages, modelId, token),
-    streamCompletion: (messages, modelId, token, onChunk, onTokenUpdate, files, searchEnabled, abortController, onReasoningChunk, reasoningEnabled, reasoningEffort) =>
+    generateSessionTitle: (prompt, token, options) => openRouterAPI.generateSessionTitle(prompt, token, options),
+    streamCompletion: (messages, modelId, token, onChunk, onTokenUpdate, files, searchEnabled, abortController, onStreamOpen, onReasoningChunk, reasoningEnabled, reasoningEffort) =>
         openRouterAPI.streamCompletion(
             messages,
             modelId,
@@ -40,6 +41,7 @@ const openRouterBackend = {
             files,
             searchEnabled,
             abortController,
+            onStreamOpen,
             onReasoningChunk,
             reasoningEnabled,
             reasoningEffort
@@ -103,8 +105,8 @@ const openRouterBackend = {
         if (!session.expiresAt) return true;
         return new Date(session.expiresAt) <= new Date();
     },
-    async requestAccess({ ticketsRequired }) {
-        return ticketClient.requestApiKey(ticketsRequired || 1);
+    async requestAccess({ ticketsRequired, signal }) {
+        return ticketClient.requestApiKey(ticketsRequired || 1, { signal });
     },
     verification: {
         get supports() {

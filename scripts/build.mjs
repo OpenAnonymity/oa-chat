@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs/promises';
+import { execSync } from 'node:child_process';
 import esbuild from 'esbuild';
 import { minify } from 'terser';
 
@@ -13,6 +14,7 @@ const outDir = path.join(repoRoot, 'dist');
 const assetsDir = path.join(outDir, 'assets');
 const vectorDir = path.join(repoRoot, 'vector');
 const localInferenceDir = path.join(repoRoot, 'local_inference');
+const nanomemDir = path.join(repoRoot, 'nanomem');
 
 const pathExists = async (target) => {
     try {
@@ -39,6 +41,26 @@ const replaceBundleBlock = (html, name, scriptPath) => {
     return html.replace(blockRegex, tag);
 };
 
+const versionStaticAssetRefs = (html, version) => {
+    if (!version) return html;
+
+    const addVersion = (rawUrl) => {
+        if (!rawUrl) return rawUrl;
+        if (/^(?:[a-z]+:)?\/\//i.test(rawUrl) || rawUrl.startsWith('data:')) return rawUrl;
+        if (/[?&]v=/.test(rawUrl)) return rawUrl;
+        const joiner = rawUrl.includes('?') ? '&' : '?';
+        return `${rawUrl}${joiner}v=${version}`;
+    };
+
+    return html
+        .replace(/(<link\b[^>]*\bhref=")([^"]+)(")/g, (_, prefix, href, suffix) => {
+            return `${prefix}${addVersion(href)}${suffix}`;
+        })
+        .replace(/(<script\b[^>]*\bsrc=")([^"]+)(")/g, (_, prefix, src, suffix) => {
+            return `${prefix}${addVersion(src)}${suffix}`;
+        });
+};
+
 const collectJsFiles = async (dir) => {
     const entries = await fs.readdir(dir, { withFileTypes: true });
     const files = [];
@@ -54,6 +76,32 @@ const collectJsFiles = async (dir) => {
 };
 
 const build = async () => {
+    if (!(await pathExists(path.join(nanomemDir, 'src')))) {
+        try {
+            execSync('git submodule update --init nanomem', { cwd: repoRoot, stdio: 'pipe' });
+        } catch {
+            throw new Error(
+                '[build] nanomem submodule is missing and could not be initialized.\n' +
+                'Run: git submodule update --init nanomem'
+            );
+        }
+    }
+
+    // Ensure chat/nanomem is a real directory so esbuild can resolve imports.
+    // In dev it's a symlink; in CI the symlink target may not survive filtering.
+    const chatNanomem = path.join(srcDir, 'nanomem');
+    await fs.rm(chatNanomem, { recursive: true, force: true });
+    await fs.cp(nanomemDir, chatNanomem, {
+        recursive: true,
+        filter: (src) => {
+            const rel = path.relative(nanomemDir, src);
+            if (!rel) return true;
+            if (rel === 'node_modules' || rel.startsWith('node_modules/')) return false;
+            if (rel === '.git' || rel.startsWith('.git')) return false;
+            return true;
+        }
+    });
+
     await fs.rm(outDir, { recursive: true, force: true });
     await fs.mkdir(path.join(repoRoot, 'dist'), { recursive: true });
     await fs.cp(srcDir, outDir, { recursive: true });
@@ -87,6 +135,21 @@ const build = async () => {
         await fs.cp(localInferenceDir, localInferenceOutDir, { recursive: true });
     }
 
+    const nanomemOutDir = path.join(outDir, 'nanomem');
+    if (await pathExists(nanomemOutDir)) {
+        const nanomemStat = await fs.lstat(nanomemOutDir);
+        if (nanomemStat.isSymbolicLink()) {
+            await fs.rm(nanomemOutDir, { recursive: true, force: true });
+        }
+    }
+    if (await pathExists(nanomemDir)) {
+        await fs.cp(nanomemDir, nanomemOutDir, { recursive: true });
+        const nanomemGitDir = path.join(nanomemOutDir, '.git');
+        if (await pathExists(nanomemGitDir)) {
+            await fs.rm(nanomemGitDir, { recursive: true, force: true });
+        }
+    }
+
     const result = await esbuild.build({
         entryPoints,
         bundle: true,
@@ -97,6 +160,7 @@ const build = async () => {
         chunkNames: 'chunk-[hash]',
         assetNames: 'asset-[hash]',
         target: ['es2020'],
+        define: { '__DEV__': 'false' },
         minify: true,
         metafile: true,
         logLevel: 'silent'
@@ -121,6 +185,9 @@ const build = async () => {
     html = replaceBundleBlock(html, 'PRELUDE', preludeScriptPath);
     html = replaceBundleBlock(html, 'APP', appScriptPath);
 
+    const appHash = appOutput[0].match(/-([a-z0-9]+)\.js$/i)?.[1];
+    html = versionStaticAssetRefs(html, appHash);
+
     await fs.writeFile(indexPath, html, 'utf8');
 
     const jsFiles = await collectJsFiles(assetsDir);
@@ -139,7 +206,6 @@ const build = async () => {
     }));
 
     // Extract content hash from esbuild output filename for update checking
-    const appHash = appOutput[0].match(/-([a-z0-9]+)\.js$/i)?.[1];
     if (appHash) {
         await fs.writeFile(
             path.join(outDir, 'build.json'),

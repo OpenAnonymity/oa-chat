@@ -2,6 +2,7 @@ import openRouterBackend from './backends/openRouterBackend.js';
 import enclaveStationBackend from './backends/enclaveStationBackend.js';
 import providerDirectBackend from './backends/providerDirectBackend.js';
 import transportHints from './transportHints.js';
+import { getDefaultModelConfig } from '../modelConfig.js';
 
 const backends = new Map([
     [openRouterBackend.id, openRouterBackend],
@@ -60,6 +61,16 @@ function getWelcomeContent(backend = getBackend()) {
     };
 }
 
+function getBackendDefaultModelConfig(backend) {
+    if (backend?.id === DEFAULT_BACKEND_ID) {
+        return getDefaultModelConfig();
+    }
+
+    return {
+        defaultModelId: backend?.defaultModelId || '',
+        defaultModelName: backend?.defaultModelName || ''
+    };
+}
 
 const inferenceService = {
     getBackend,
@@ -69,10 +80,14 @@ const inferenceService = {
         return DEFAULT_BACKEND_ID;
     },
     getDefaultModelId(session) {
-        return getBackendForSession(session).defaultModelId;
+        const backend = getBackendForSession(session);
+        const defaults = getBackendDefaultModelConfig(backend);
+        return defaults.defaultModelId || backend.defaultModelId;
     },
     getDefaultModelName(session) {
-        return getBackendForSession(session).defaultModelName;
+        const backend = getBackendForSession(session);
+        const defaults = getBackendDefaultModelConfig(backend);
+        return defaults.defaultModelName || backend.defaultModelName;
     },
     getBackendLabel(session) {
         return getBackendForSession(session).label;
@@ -94,6 +109,13 @@ const inferenceService = {
     getDisplayName(modelId, fallback, session) {
         const backend = getBackendForSession(session);
         return backend.getDisplayName ? backend.getDisplayName(modelId, fallback) : fallback;
+    },
+    async generateSessionTitle(session, prompt, options = {}) {
+        const backend = getBackendForSession(session);
+        if (typeof backend.generateSessionTitle !== 'function') return '';
+        const token = backend.getAccessToken(session);
+        if (!token) return '';
+        return backend.generateSessionTitle(prompt, token, options);
     },
     getAccessInfo(session) {
         return getBackendForSession(session).getAccessInfo(session);
@@ -128,7 +150,7 @@ const inferenceService = {
         const backend = getBackendForSession(session);
         return backend.verification || null;
     },
-    streamCompletion(messages, modelId, session, onChunk, onTokenUpdate, files, searchEnabled, abortController, onReasoningChunk, reasoningEnabled, reasoningEffort) {
+    streamCompletion(messages, modelId, session, onChunk, onTokenUpdate, files, searchEnabled, abortController, onStreamOpen, onReasoningChunk, reasoningEnabled, reasoningEffort) {
         const backend = getBackendForSession(session);
         const token = backend.getAccessToken(session);
         return backend.streamCompletion(
@@ -140,6 +162,7 @@ const inferenceService = {
             files,
             searchEnabled,
             abortController,
+            onStreamOpen,
             onReasoningChunk,
             reasoningEnabled,
             reasoningEffort

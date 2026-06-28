@@ -1,0 +1,86 @@
+This file lists third-party libraries bundled with this project and their
+respective licenses. Full license texts are available in the referenced
+files or at the provided URLs.
+
+================================================================================
+Marked v11.0.0
+Location: chat/vendor/marked/
+License: MIT
+Copyright (c) 2011-2023 Christopher Jeffrey
+https://github.com/markedjs/marked
+
+================================================================================
+KaTeX v0.16.9
+Location: chat/vendor/katex/
+License: MIT
+Copyright (c) 2013-2020 Khan Academy and other contributors
+https://github.com/KaTeX/KaTeX
+
+================================================================================
+Highlight.js v11.9.0
+Location: chat/vendor/highlight/
+License: BSD-3-Clause
+Copyright (c) 2006-2023 Ivan Sagalaev and other contributors
+https://github.com/highlightjs/highlight.js
+
+================================================================================
+html2pdf.js
+Location: chat/vendor/html2pdf/
+License: MIT
+Copyright (c) 2017 Erik Koopmans
+https://github.com/eKoopmans/html2pdf.js
+
+================================================================================
+hash-wasm (Argon2)
+Location: chat/vendor/hash-wasm/
+License: MIT
+Copyright (c) Dani Biro
+https://github.com/Daninet/hash-wasm
+
+================================================================================
+libcurl.js
+Location: chat/vendor/libcurl/
+License: GNU LGPL v3
+Copyright (C) 2024 ading2210
+https://github.com/ading2210/libcurl.js
+
+Note: libcurl.js is loaded as a dynamically-linked separate script file,
+satisfying LGPL linking requirements. It includes the following sub-libraries:
+- libcurl (curl License)
+- mbedTLS (Apache 2.0)
+- cJSON (MIT)
+- zlib (zlib License)
+- brotli (MIT)
+- nghttp2 (MIT)
+
+================================================================================
+@cloudflare/privacypass-ts
+Location: chat/vendor/privacypass-ts/
+License: Apache-2.0
+Copyright (c) Cloudflare, Inc.
+https://github.com/cloudflare/privacypass-ts
+
+================================================================================
+Orama
+Location: vector/vendor/orama/
+License: Apache-2.0
+Copyright (c) 2023 OramaSearch Inc
+https://github.com/oramasearch/orama
+
+================================================================================
+WebLLM
+Location: local_inference/vendor/webllm/
+License: Apache-2.0
+https://github.com/mlc-ai/web-llm
+
+================================================================================
+Google Fonts (Cormorant, Fira Code, Libre Caslon Text, Source Serif 4, PT Serif)
+Location: chat/fonts/
+License: SIL Open Font License 1.1
+https://fonts.google.com
+
+================================================================================
+KaTeX Fonts
+Location: chat/vendor/katex/fonts/
+License: MIT (part of KaTeX project)
+https://github.com/KaTeX/KaTeX

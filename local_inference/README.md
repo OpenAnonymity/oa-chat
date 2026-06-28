@@ -40,6 +40,8 @@ await localInferenceService.streamResponse({
 - WebLLM (in-browser): `/local_inference/vendor/webllm/web-llm.js`
 - Ollama (local server): OpenAI-compatible inference + `/api/pull` progress
 - vLLM (local server): OpenAI-compatible inference
+- OpenAI-compatible HTTP servers (generic adapter)
+- Tinfoil (hosted OpenAI-compatible): `https://inference.tinfoil.sh`
 
 ## Tests
 ```bash

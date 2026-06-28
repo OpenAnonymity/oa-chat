@@ -3,10 +3,6 @@
  * Manages the ticket system UI panel
  */
 
-import ticketClient from '../services/ticketClient.js';
-import networkLogger from '../services/networkLogger.js';
-import networkProxy from '../services/networkProxy.js';
-import inferenceService from '../services/inference/inferenceService.js';
 import tlsSecurityModal from './TLSSecurityModal.js';
 import proxyInfoModal from './ProxyInfoModal.js';
 import verifierAttestationModal from './VerifierAttestationModal.js';
@@ -14,7 +10,6 @@ import { getActivityDescription, getActivityIcon, getStatusDotClass, formatTimes
 import { getTicketCost } from '../services/modelTiers.js';
 import { exportTickets } from '../services/globalExport.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
-import { chatDB } from '../db.js';
 import { SHARE_BASE_URL } from '../config.js';
 import SmoothProgress from '../services/smoothProgress.js';
 
@@ -27,6 +22,8 @@ const SHOW_UNDERLYING_KEY_DETAILS = true;
 class RightPanel {
     constructor(app) {
         this.app = app; // Reference to main app
+        tlsSecurityModal.configureServices?.(this.app.services);
+        verifierAttestationModal.configureServices?.(this.app.services);
         this.currentSession = null;
 
         // Responsive behavior
@@ -76,19 +73,19 @@ class RightPanel {
         this.previousLogCount = 0;
 
         // Proxy state
-        this.proxySettings = networkProxy.getSettings();
-        this.proxyStatus = networkProxy.getStatus();
+        this.proxySettings = this.app.services.networkProxy.getSettings();
+        this.proxyStatus = this.app.services.networkProxy.getStatus();
         this.proxyActionPending = false;
         this.proxyAnimating = false; // Flag to skip re-render during toggle animation
         this.lastProxyToggleTime = 0; // Rate limit for rapid toggles
-        this.proxyUnsubscribe = networkProxy.onChange(({ settings, status }) => {
+        this.proxyUnsubscribe = this.app.services.networkProxy.onChange(({ settings, status }) => {
             const hadError = this.proxyStatus?.lastError;
             this.proxySettings = settings;
             this.proxyStatus = status;
 
             // Auto-disable proxy when it fails (new error detected while enabled)
             if (!hadError && status?.lastError && settings?.enabled && !this.proxyActionPending) {
-                networkProxy.updateSettings({ enabled: false });
+                this.app.services.networkProxy.updateSettings({ enabled: false });
                 return; // Will trigger another onChange with disabled state
             }
 
@@ -102,8 +99,8 @@ class RightPanel {
         const savedFormVisible = localStorage.getItem('oa-invitation-form-visible');
         this.invitationFormPreference = savedFormVisible === 'true' ? true : savedFormVisible === 'false' ? false : null;
         this.showInvitationForm = this.invitationFormPreference ?? false;
-        this.selfHostedModeEnabled = ticketClient.isSelfHostedStationModeEnabled();
-        this.selfHostedStationUrl = ticketClient.getSelfHostedStationBaseUrl();
+        this.selfHostedModeEnabled = this.app.services.tickets.isSelfHostedStationModeEnabled();
+        this.selfHostedStationUrl = this.app.services.tickets.getSelfHostedStationBaseUrl();
 
         // Ticket info panel state - check localStorage snapshot first to avoid flash
         const savedTicketInfoVisible = localStorage.getItem('oa-ticket-info-visible');
@@ -160,7 +157,7 @@ class RightPanel {
         preferencesStore.getPreference(PREF_KEYS.selfHostedStationUrl)
             .then((url) => {
                 if (typeof url === 'string') {
-                    this.selfHostedStationUrl = ticketClient.normalizeStationBaseUrl(url) || '';
+                    this.selfHostedStationUrl = this.app.services.tickets.normalizeStationBaseUrl(url) || '';
                     this.renderTopSectionOnly();
                 }
             });
@@ -185,7 +182,7 @@ class RightPanel {
                 this.renderTopSectionOnly();
             }
             if (key === PREF_KEYS.selfHostedStationUrl && typeof value === 'string') {
-                this.selfHostedStationUrl = ticketClient.normalizeStationBaseUrl(value) || '';
+                this.selfHostedStationUrl = this.app.services.tickets.normalizeStationBaseUrl(value) || '';
                 this.renderTopSectionOnly();
             }
         });
@@ -193,7 +190,7 @@ class RightPanel {
 
     initializeState() {
         // Load initial ticket count
-        this.ticketCount = ticketClient.getTicketCount();
+        this.ticketCount = this.app.services.tickets.getTicketCount();
         // Only auto-show form when no tickets if user hasn't explicitly set a preference
         if (this.ticketCount === 0 && this.invitationFormPreference === null) {
             this.showInvitationForm = true;
@@ -226,14 +223,14 @@ class RightPanel {
         }
 
         // Load API key from current session
-        inferenceService.ensureSessionBackend(this.currentSession);
-        const accessInfo = inferenceService.getAccessInfo(this.currentSession);
+        this.app.services.inference.ensureSessionBackend(this.currentSession);
+        const accessInfo = this.app.services.inference.getAccessInfo(this.currentSession);
         this.apiKey = accessInfo?.token || null;
         this.apiKeyInfo = accessInfo?.info || null;
         this.expiresAt = accessInfo?.expiresAt || null;
 
         // Load ALL network logs globally (not just for this session)
-        this.networkLogs = networkLogger.getAllLogs();
+        this.networkLogs = this.app.services.networkLogger.getAllLogs();
         this.previousLogCount = this.networkLogs.length;
 
         // Only update the top section (API key/tickets) without re-rendering logs
@@ -253,7 +250,7 @@ class RightPanel {
     }
 
     loadNextTicket() {
-        const tickets = ticketClient.getTickets();
+        const tickets = this.app.services.tickets.getTickets();
         if (tickets && tickets.length > 0) {
             this.currentTicket = tickets[0];
             this.ticketIndex = 0;
@@ -362,7 +359,7 @@ class RightPanel {
         // Listen for ticket updates
         window.addEventListener('tickets-updated', () => {
             const previousTicketCount = this.ticketCount;
-            this.ticketCount = ticketClient.getTicketCount();
+            this.ticketCount = this.app.services.tickets.getTicketCount();
             // Only auto-show form when tickets run out if user hasn't explicitly set a preference
             if (this.ticketCount === 0 && previousTicketCount > 0 && this.invitationFormPreference === null) {
                 this.showInvitationForm = true;
@@ -377,11 +374,11 @@ class RightPanel {
         });
 
         // Subscribe to network logger
-        networkLogger.subscribe(() => {
+        this.app.services.networkLogger.subscribe(() => {
             // Reload ALL logs globally
             // DON'T clear expandedLogIds - preserve expansion state
             const previousCount = this.previousLogCount;
-            this.networkLogs = networkLogger.getAllLogs();
+            this.networkLogs = this.app.services.networkLogger.getAllLogs();
             this.previousLogCount = this.networkLogs.length;
 
             // Use incremental update to preserve scroll and expansion state
@@ -642,12 +639,12 @@ class RightPanel {
         this.renderTopSectionOnly();
 
         // Set current session for network logging
-        if (this.currentSession && window.networkLogger) {
-            window.networkLogger.setCurrentSession(this.currentSession.id);
+        if (this.currentSession && this.app.services.networkLogger) {
+            this.app.services.networkLogger.setCurrentSession(this.currentSession.id);
         }
 
         try {
-            await ticketClient.alphaRegister(rawValue, (message, percent) => {
+            await this.app.services.tickets.alphaRegister(rawValue, (message, percent) => {
                 this.smoothProgress.set(percent);
                 this.registrationProgress = { message, percent };
                 // Update message text directly to avoid innerHTML replacement
@@ -657,7 +654,7 @@ class RightPanel {
 
             this.smoothProgress.stop();
             this.registrationProgress = null;
-            this.ticketCount = ticketClient.getTicketCount();
+            this.ticketCount = this.app.services.tickets.getTicketCount();
 
             if (this.pendingInvitationSource) {
                 const ticketCount = this.selfHostedModeEnabled
@@ -735,9 +732,9 @@ class RightPanel {
         try {
             const rawText = await file.text();
             const payload = JSON.parse(rawText);
-            const result = await ticketClient.importTickets(payload);
+            const result = await this.app.services.tickets.importTickets(payload);
 
-            this.ticketCount = ticketClient.getTicketCount();
+            this.ticketCount = this.app.services.tickets.getTicketCount();
             this.loadNextTicket();
 
             const totalAdded = result.addedActive + result.addedArchived;
@@ -785,7 +782,7 @@ class RightPanel {
             }
             if (result.success) {
                 const total = result.activeCount + result.archivedCount;
-                this.ticketCount = ticketClient.getTicketCount();
+                this.ticketCount = this.app.services.tickets.getTicketCount();
                 this.loadNextTicket();
                 this.importStatus = {
                     type: 'success',
@@ -880,8 +877,8 @@ class RightPanel {
         this.renderTopSectionOnly();
 
         try {
-            const result = await ticketClient.splitTickets(this.splitCount);
-            this.ticketCount = ticketClient.getTicketCount();
+            const result = await this.app.services.tickets.splitTickets(this.splitCount);
+            this.ticketCount = this.app.services.tickets.getTicketCount();
             this.loadNextTicket();
             this.showSplitControls = false;
             this.splitResult = {
@@ -962,12 +959,12 @@ class RightPanel {
 
         if (!this.currentSession) return; // Safety check
 
-        inferenceService.ensureSessionBackend(this.currentSession);
+        this.app.services.inference.ensureSessionBackend(this.currentSession);
 
         try {
             // Set current session for network logging
-            if (this.currentSession && window.networkLogger) {
-                window.networkLogger.setCurrentSession(this.currentSession.id);
+            if (this.currentSession && this.app.services.networkLogger) {
+                this.app.services.networkLogger.setCurrentSession(this.currentSession.id);
             }
 
             // Start the animation
@@ -991,7 +988,7 @@ class RightPanel {
             await this.app.acquireAndSetAccess(this.currentSession);
 
             // Update local state from session
-            const accessInfo = inferenceService.getAccessInfo(this.currentSession);
+            const accessInfo = this.app.services.inference.getAccessInfo(this.currentSession);
             this.apiKey = accessInfo?.token || null;
             this.apiKeyInfo = accessInfo?.info || null;
             this.expiresAt = accessInfo?.expiresAt || null;
@@ -1010,7 +1007,7 @@ class RightPanel {
             }, 500);
         } catch (error) {
             console.error('Error requesting API key:', error);
-            const accessLabel = inferenceService.getAccessLabel(this.currentSession);
+            const accessLabel = this.app.services.inference.getAccessLabel(this.currentSession);
             alert(`Failed to request ${accessLabel}: ${error.message}`);
 
             // Reset state even on error
@@ -1027,7 +1024,7 @@ class RightPanel {
 
     async handleVerifyApiKey() {
         if (!this.apiKey || !this.currentSession) {
-            const accessLabel = inferenceService.getAccessLabel(this.currentSession);
+            const accessLabel = this.app.services.inference.getAccessLabel(this.currentSession);
             alert(`No ${accessLabel} available to verify`);
             return;
         }
@@ -1038,9 +1035,9 @@ class RightPanel {
     async handleClearApiKey() {
         if (!this.currentSession) return;
 
-        inferenceService.clearAccessInfo(this.currentSession);
+        this.app.services.inference.clearAccessInfo(this.currentSession);
 
-        await chatDB.saveSession(this.currentSession);
+        await this.app.data.saveSession(this.currentSession);
 
         this.apiKey = null;
         this.apiKeyInfo = null;
@@ -1074,14 +1071,14 @@ class RightPanel {
         // Store return focus element
         this.verifyModalReturnFocusEl = document.activeElement;
 
-        const accessLabel = inferenceService.getAccessLabel(this.currentSession);
+        const accessLabel = this.app.services.inference.getAccessLabel(this.currentSession);
         const accessLabelTitle = accessLabel.replace(/\b\w/g, (char) => char.toUpperCase());
         const modelIdForTest = (this.app && typeof this.app.getDefaultModelId === 'function')
             ? this.app.getDefaultModelId()
-            : inferenceService.getDefaultModelId(this.currentSession);
+            : this.app.services.inference.getDefaultModelId(this.currentSession);
 
         // Generate curl command with actual key and output truncation
-        const curlCommand = inferenceService.buildCurlCommand(this.currentSession, this.apiKey, modelIdForTest);
+        const curlCommand = this.app.services.inference.buildCurlCommand(this.currentSession, this.apiKey, modelIdForTest);
 
         // Generate simplified modal content
         modal.innerHTML = `
@@ -1270,19 +1267,19 @@ class RightPanel {
         if (!testResult) return;
 
         try {
-            const accessLabel = inferenceService.getAccessLabel(this.currentSession);
+            const accessLabel = this.app.services.inference.getAccessLabel(this.currentSession);
             const accessLabelTitle = accessLabel.replace(/\b\w/g, (char) => char.toUpperCase());
 
             // Tag this request with session ID
-            if (this.currentSession && window.networkLogger) {
-                networkLogger.setCurrentSession(this.currentSession.id);
+            if (this.currentSession && this.app.services.networkLogger) {
+                this.app.services.networkLogger.setCurrentSession(this.currentSession.id);
             }
 
             const modelIdForTest = (this.app && typeof this.app.getDefaultModelId === 'function')
                 ? this.app.getDefaultModelId()
-                : inferenceService.getDefaultModelId(this.currentSession);
+                : this.app.services.inference.getDefaultModelId(this.currentSession);
 
-            const response = await inferenceService.testAccessToken(this.currentSession, this.apiKey, modelIdForTest);
+            const response = await this.app.services.inference.testAccessToken(this.currentSession, this.apiKey, modelIdForTest);
 
             if (response.ok) {
                 const data = await response.json();
@@ -1333,8 +1330,8 @@ class RightPanel {
     }
 
     async handleClearActivityTimeline() {
-        if (window.networkLogger) {
-            await window.networkLogger.clearAllLogs();
+        if (this.app.services.networkLogger) {
+            await this.app.services.networkLogger.clearAllLogs();
             this.networkLogs = [];
             this.previousLogCount = 0;
             this.renderLogsOnly(false); // Re-render logs only (empty state)
@@ -1348,11 +1345,11 @@ class RightPanel {
     }
 
     maskApiKey(key) {
-        return inferenceService.maskAccessToken(this.currentSession, key);
+        return this.app.services.inference.maskAccessToken(this.currentSession, key);
     }
 
     getKeyDisplayInfo() {
-        const displayMask = inferenceService.maskAccessToken(this.currentSession, this.apiKey);
+        const displayMask = this.app.services.inference.maskAccessToken(this.currentSession, this.apiKey);
 
         if (!SHOW_UNDERLYING_KEY_DETAILS) {
             return { displayMask, hoverContentHtml: null };
@@ -1363,7 +1360,7 @@ class RightPanel {
             return { displayMask, hoverContentHtml: null };
         }
 
-        const underlyingInfo = inferenceService.getUnderlyingKeyInfo(this.currentSession);
+        const underlyingInfo = this.app.services.inference.getUnderlyingKeyInfo(this.currentSession);
         if (!underlyingInfo) {
             return { displayMask, hoverContentHtml: null };
         }
@@ -1487,7 +1484,7 @@ class RightPanel {
                                 <div class="space-y-1">
                                     <div class="text-[10px] text-muted-foreground font-medium">Authorization</div>
                                     <div class="text-[10px] font-mono text-muted-foreground bg-background p-2 rounded border border-border/50 break-words">
-                                        ${this.escapeHtml(networkLogger.sanitizeHeaders({ Authorization: log.request.headers.Authorization }).Authorization)}
+                                        ${this.escapeHtml(this.app.services.networkLogger.sanitizeHeaders({ Authorization: log.request.headers.Authorization }).Authorization)}
                                     </div>
                                 </div>
                             ` : ''}
@@ -1522,7 +1519,7 @@ class RightPanel {
                         <div class="space-y-1">
                             <div class="text-[10px] text-muted-foreground font-medium">Response Summary</div>
                             <div class="text-[10px] text-muted-foreground bg-background p-2 rounded border border-border/50 break-words">
-                                ${this.escapeHtml(networkLogger.getResponseSummary(log.response, log.status, {
+                                ${this.escapeHtml(this.app.services.networkLogger.getResponseSummary(log.response, log.status, {
                                     type: log.type,
                                     method: log.method,
                                     url: log.url
@@ -1620,7 +1617,7 @@ class RightPanel {
 
     getTypeBadge(type) {
         const inferenceBadge = {
-            text: inferenceService.getAccessShortLabel(this.currentSession),
+            text: this.app.services.inference.getAccessShortLabel(this.currentSession),
             class: 'bg-blue-500 text-white'
         };
         const badges = {
@@ -1673,7 +1670,7 @@ class RightPanel {
     getSessionKey(sessionId) {
         const session = this.getSessionInfo(sessionId);
         if (!session) return null;
-        return inferenceService.getAccessInfo(session)?.token || null;
+        return this.app.services.inference.getAccessInfo(session)?.token || null;
     }
 
     /**
@@ -1683,7 +1680,7 @@ class RightPanel {
     getSharedKeyCount() {
         if (!this.apiKey || !this.app) return 0;
 
-        return this.app.state.sessions.filter(s => inferenceService.getAccessInfo(s)?.token === this.apiKey).length;
+        return this.app.state.sessions.filter(s => this.app.services.inference.getAccessInfo(s)?.token === this.apiKey).length;
     }
 
     /**
@@ -2171,13 +2168,13 @@ class RightPanel {
     }
 
     generateProxySectionHTML() {
-        const settings = this.proxySettings || networkProxy.getSettings();
-        const status = this.proxyStatus || networkProxy.getStatus();
+        const settings = this.proxySettings || this.app.services.networkProxy.getSettings();
+        const status = this.proxyStatus || this.app.services.networkProxy.getStatus();
         const statusMeta = this.getProxyStatusMeta(settings, status);
         const pending = this.proxyActionPending;
         const lockedBySelfHostedMode = this.selfHostedModeEnabled;
         const proxyEnabledForUi = !lockedBySelfHostedMode && !!settings.enabled;
-        const tlsInfo = networkProxy.getTlsInfo();
+        const tlsInfo = this.app.services.networkProxy.getTlsInfo();
         const hasTlsInfo = tlsInfo.version !== null;
         const isEncrypted = proxyEnabledForUi && status.usingProxy;
         const toggleDisabled = pending || lockedBySelfHostedMode;
@@ -2252,7 +2249,7 @@ class RightPanel {
         }
 
         // Block toggle when there are active proxy requests (e.g., streaming response)
-        if (networkProxy.hasActiveRequests()) {
+        if (this.app.services.networkProxy.hasActiveRequests()) {
             console.warn('[RightPanel] Cannot toggle proxy - requests in progress');
             this.app?.showToast?.('Cannot turn proxy off while data is transmitting', 'error');
             return;
@@ -2279,7 +2276,7 @@ class RightPanel {
         }
 
         try {
-            await networkProxy.updateSettings({ enabled: !this.proxySettings.enabled });
+            await this.app.services.networkProxy.updateSettings({ enabled: !this.proxySettings.enabled });
         } catch (error) {
             // Show toast for active request errors (race condition protection)
             if (error.message?.includes('requests are in progress')) {

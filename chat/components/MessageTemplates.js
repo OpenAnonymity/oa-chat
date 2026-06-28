@@ -7,20 +7,46 @@
 import { getProviderIcon } from '../services/providerIcons.js';
 import { extractDomain } from '../services/urlMetadata.js';
 import { getFileIconSvg } from '../services/fileUtils.js';
+import { getStandardizedModelDisplayName } from '../services/modelConfig.js';
+import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
+import { renderMemoryConfidenceBadgeHtml } from '../services/memoryRetrievalAssessment.js';
 
 // In-memory cache for reasoning trace expanded state (persists across session switches)
 const reasoningExpandedState = new Set();
 
+// Agent trace default expanded state, backed by preferencesStore
+let agentTraceDefaultExpanded = false;
+preferencesStore.getPreference(PREF_KEYS.agentTraceExpanded, { defaultValue: false })
+    .then(v => { agentTraceDefaultExpanded = !!v; });
+preferencesStore.onChange((key, value) => {
+    if (key === PREF_KEYS.agentTraceExpanded) agentTraceDefaultExpanded = !!value;
+});
+
+const AGENT_TOOL_LABELS = {
+    augment_query:   'Adding context to prompt',
+    search_memory:   'Searching memory',
+    retrieve_file:   'Searching memory',
+    read_file:       'Reading memory file',
+    list_directory:  'Browsing memory',
+    assemble_context:'Assembling answer',
+    create_new_file: 'Creating memory file',
+    append_memory:   'Updating memory',
+    update_memory:   'Rewriting memory file',
+};
+
 // Welcome screen configuration
 const WELCOME_SHOW_LOGO = false;  // Set to true to show the logo icon
+let welcomeContentProvider = null;
+
+export function configureMessageTemplateServices(services) {
+    welcomeContentProvider = services?.inference || null;
+}
 
 // Welcome content is managed by inferenceService.js (single source of truth)
 // This getter delegates to inferenceService with a minimal structural fallback
 function getWelcomeContent() {
-    if (typeof window !== 'undefined' &&
-        window.inferenceService &&
-        typeof window.inferenceService.getWelcomeContent === 'function') {
-        return window.inferenceService.getWelcomeContent();
+    if (typeof welcomeContentProvider?.getWelcomeContent === 'function') {
+        return welcomeContentProvider.getWelcomeContent();
     }
     // Fallback used by prelude before app.js initializes inferenceService.
     return {
@@ -50,7 +76,7 @@ const CLASSES = {
     assistantBubble: 'py-3 px-4 font-normal message-assistant w-full flex items-center',
     assistantContent: 'min-w-0 w-full overflow-hidden message-content prose',
 
-    typingWrapper: 'w-full px-2 md:px-3 fade-in pb-4',
+    typingWrapper: 'w-full px-2 md:px-3 self-start pb-0',
     typingGroup: 'flex items-center gap-4',
     typingAvatar: 'flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow bg-muted p-0.5',
     typingAvatarText: 'text-xs font-semibold',
@@ -74,6 +100,18 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+function renderTaggedPromptInline(text) {
+    let html = escapeHtml(text || '');
+    html = html.replace(
+        /\[\[user_data\]\]([\s\S]*?)\[\[\/user_data\]\]/g,
+        '<mark class="user-data-highlight">$1</mark>'
+    );
+    html = html.replace(/\[\[user_data\]\]/g, '');
+    html = html.replace(/\[\[\/user_data\]\]/g, '');
+    html = html.replace(/\n/g, '<br>');
+    return html;
+}
+
 function escapeHtmlAttribute(text) {
     return String(text)
         .replace(/&/g, '&amp;')
@@ -82,6 +120,161 @@ function escapeHtmlAttribute(text) {
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/\n/g, '&#10;');
+}
+
+function normalizePendingPhase(phase) {
+    return phase === 'requesting-key' || phase === 'waiting'
+        ? 'requesting-key'
+        : 'waiting-response';
+}
+
+function formatPendingTimestamp(timestamp) {
+    return new Date(timestamp).toLocaleTimeString('en-US', {
+        hour12: false,
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+    });
+}
+
+function getPendingIndicatorLabel(phase) {
+    return normalizePendingPhase(phase) === 'waiting-response'
+        ? 'Waiting for response'
+        : 'Requesting ephemeral key';
+}
+
+function buildPendingIndicatorContent(phase = 'requesting-key') {
+    const normalizedPhase = normalizePendingPhase(phase);
+    const shimmerClass = ' pending-response-streaming';
+    const label = getPendingIndicatorLabel(normalizedPhase);
+    return `
+        <div class="pending-response-line">
+            <span class="pending-response-label${shimmerClass}">${escapeHtml(label)}</span>
+        </div>
+    `;
+}
+
+function formatAgentTraceResult(result) {
+    if (!result) return '';
+    if (result === '[terminal]') return 'done';
+
+    try {
+        const parsed = JSON.parse(result);
+        if (parsed?.error) return `error: ${parsed.error}`;
+        if (Array.isArray(parsed)) return `${parsed.length} items`;
+        if (Array.isArray(parsed?.files)) return `${parsed.files.length} files`;
+        if (typeof parsed?.content === 'string') return parsed.content.length > 72
+            ? `${parsed.content.slice(0, 69)}...`
+            : parsed.content;
+        if (typeof parsed === 'object' && parsed) {
+            const summary = JSON.stringify(parsed);
+            return summary.length > 72 ? `${summary.slice(0, 69)}...` : summary;
+        }
+    } catch {
+        // Fall through to plain-string formatting.
+    }
+
+    return result.length > 72 ? `${result.slice(0, 69)}...` : result;
+}
+
+function buildAgentTrace(trace, messageId, isStreaming = false) {
+    const steps = Array.isArray(trace) ? trace : [];
+    if (steps.length === 0 && !isStreaming) return '';
+
+    const contentId = `agent-trace-content-${messageId}`;
+    const toggleId = `agent-trace-toggle-${messageId}`;
+    const isExpanded = agentTraceDefaultExpanded;
+
+    const toolCount = steps.filter((step) => step?.type === 'tool_call').length;
+    const lastStep = steps[steps.length - 1];
+    const activeToolStep = isStreaming
+        ? [...steps].reverse().find((step) => step?.type === 'tool_call' && step.state === 'started' && step.tool)
+        : null;
+    let subtitle = toolCount > 0
+        ? `${toolCount} tool${toolCount === 1 ? '' : 's'} used`
+        : 'Memory review ready';
+
+    if (isStreaming) {
+        if (activeToolStep?.tool) {
+            subtitle = `${AGENT_TOOL_LABELS[activeToolStep.tool] || activeToolStep.tool}...`;
+        } else if (lastStep?.type === 'phase' && lastStep.label) {
+            subtitle = lastStep.label;
+        } else if (lastStep?.type === 'reasoning') {
+            subtitle = 'Thinking...';
+        } else if (lastStep?.type === 'model_text') {
+            subtitle = 'Drafting prompt...';
+        } else {
+            subtitle = 'Thinking...';
+        }
+    }
+
+    const stepHtml = steps.map((step, index) => {
+        const isLatest = index === steps.length - 1 && isStreaming;
+        if (step?.type === 'tool_call') {
+            const isRunning = step.state === 'started';
+            const argsStr = step.args
+                ? Object.entries(step.args)
+                    .map(([key, value]) => `${key}: ${typeof value === 'string' ? `"${value}"` : JSON.stringify(value)}`)
+                    .join(', ')
+                : '';
+            const resultStr = isRunning
+                ? ''
+                : formatAgentTraceResult(step.result || '');
+            return `
+                <div class="agent-step agent-step-tool${isLatest ? ' is-latest' : ''}${isRunning ? ' is-running' : ''}">
+                    <span class="agent-step-name">${escapeHtml(AGENT_TOOL_LABELS[step.tool] || step.tool || 'tool')}</span>
+                    ${argsStr ? `<span class="agent-step-args">(${escapeHtml(argsStr)})</span>` : ''}
+                    ${resultStr ? `<span class="agent-step-result">${escapeHtml(resultStr)}</span>` : ''}
+                </div>
+            `;
+        }
+        if (step?.type === 'reasoning') {
+            const text = typeof step.text === 'string' ? step.text.trim() : '';
+            if (!text) return '';
+            return `
+                <div class="agent-step agent-step-thinking${isLatest ? ' is-latest' : ''}">
+                    <span class="agent-step-thinking-text">${escapeHtml(text)}</span>
+                </div>
+            `;
+        }
+        if (step?.type === 'model_text') {
+            const text = typeof step.text === 'string' ? step.text.trim() : '';
+            if (!text) return '';
+            return `
+                <div class="agent-step agent-step-thinking${isLatest ? ' is-latest' : ''}">
+                    <span class="agent-step-thinking-text">${escapeHtml(text)}</span>
+                </div>
+            `;
+        }
+        const label = typeof step?.label === 'string' ? step.label.trim() : '';
+        if (!label) return '';
+        return `
+            <div class="agent-step agent-step-phase${isLatest ? ' is-latest' : ''}">
+                <span class="agent-step-phase-label">${escapeHtml(label)}</span>
+            </div>
+        `;
+    }).join('');
+
+    return `
+        <div class="reasoning-trace w-full">
+            <button
+                class="reasoning-toggle ${isStreaming ? 'flex w-full' : 'inline-flex'} items-center gap-2 px-2 py-1 text-left hover:bg-slate-2 rounded transition-colors"
+                id="${toggleId}"
+                onclick="window.toggleAgentTrace('${messageId}')"
+            >
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5 text-muted-foreground flex-shrink-0">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z" />
+                </svg>
+                <span class="text-xs text-muted-foreground ${isStreaming ? 'flex-1 truncate reasoning-subtitle-streaming' : ''}">${escapeHtml(subtitle)}</span>
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5 text-muted-foreground reasoning-chevron transition-transform flex-shrink-0" ${isExpanded ? 'style="transform: rotate(180deg)"' : ''}>
+                    <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+                </svg>
+            </button>
+            <div class="agent-trace-content reasoning-content text-xs text-muted-foreground overflow-auto ${isExpanded ? '' : 'hidden'}" id="${contentId}">
+                ${stepHtml}
+            </div>
+        </div>
+    `;
 }
 
 export const RAW_CLIPBOARD_ATTRIBUTE_ENABLED = (() => {
@@ -229,12 +422,9 @@ function buildFileAttachments(files) {
     if (!files || files.length === 0) return '';
 
     const fileCards = files.map((file, index) => {
-        const fileSizeKB = (file.size / 1024).toFixed(1);
-        const fileSize = file.size > 1024 * 1024
-            ? `${(file.size / (1024 * 1024)).toFixed(1)} MB`
-            : `${fileSizeKB} KB`;
+        const fileSize = formatAttachmentSize(file.size);
 
-        const isImage = file.type.startsWith('image/');
+        const isImage = (file.type || '').startsWith('image/');
         let iconOrPreview = '';
         // Use data attributes for actions so rendering stays HTML-only.
         let attachmentAttrs = '';
@@ -256,26 +446,31 @@ function buildFileAttachments(files) {
                 >
             `;
         } else {
-            const isPdf = file.type === 'application/pdf';
-            const isAudio = file.type.startsWith('audio/');
+            const detectedType = file.detectedType || '';
+            const fileMimeType = file.type || '';
+            const isPdf = detectedType === 'pdf' || fileMimeType === 'application/pdf';
+            const isDocx = detectedType === 'docx' || /\.docx$/i.test(file.name || '');
+            const isAudio = detectedType === 'audio' || fileMimeType.startsWith('audio/');
 
             // Check if file is text-based by MIME type or common code file extensions
-            const isText = file.type.startsWith('text/') ||
-                          file.type.includes('json') ||
-                          file.type.includes('javascript') ||
-                          file.type.includes('xml') ||
-                          file.type.includes('sh') ||
-                          file.type.includes('yaml') ||
-                          file.type.includes('toml') ||
+            const isText = detectedType === 'text' ||
+                          fileMimeType.startsWith('text/') ||
+                          fileMimeType.includes('json') ||
+                          fileMimeType.includes('javascript') ||
+                          fileMimeType.includes('xml') ||
+                          fileMimeType.includes('sh') ||
+                          fileMimeType.includes('yaml') ||
+                          fileMimeType.includes('toml') ||
                           // Also check by file extension for code files that might have generic MIME types
                           /\.(go|py|js|ts|jsx|tsx|java|c|cpp|h|hpp|cs|rb|php|swift|kt|rs|scala|r|m|mm|sql|sh|bash|zsh|pl|lua|vim|el|clj|ex|exs|erl|hrl|hs|lhs|ml|mli|fs|fsx|fsi|v|sv|svh|vhd|vhdl|tcl|awk|sed|diff|patch|md|markdown|rst|tex|bib|csv|tsv|txt|log|cfg|conf|ini|toml|yaml|yml|xml|html|css|scss|sass|less|json|jsonl|proto|thrift)$/i.test(file.name);
 
             let fileTypeForIcon = null;
             if (isPdf) fileTypeForIcon = 'pdf';
+            else if (isDocx) fileTypeForIcon = 'docx';
             else if (isAudio) fileTypeForIcon = 'audio';
             else if (isText) fileTypeForIcon = 'text';
 
-            iconOrPreview = getFileIconSvg(fileTypeForIcon, file.type, 'w-6 h-6');
+            iconOrPreview = getFileIconSvg(fileTypeForIcon, fileMimeType, 'w-6 h-6');
 
             // For non-images, trigger download by creating a link from dataUrl
             if (file.dataUrl) {
@@ -310,6 +505,85 @@ function buildFileAttachments(files) {
     return `<div class="flex flex-wrap gap-3 mb-2">${fileCards}</div>`;
 }
 
+function formatAttachmentSize(size) {
+    const numericSize = Number(size || 0);
+    if (numericSize <= 0) return '0 KB';
+    return numericSize > 1024 * 1024
+        ? `${(numericSize / (1024 * 1024)).toFixed(1)} MB`
+        : `${(numericSize / 1024).toFixed(1)} KB`;
+}
+
+function buildEditableFileAttachments(files, messageId) {
+    const safeMessageId = escapeHtmlAttribute(messageId);
+    if (!files || files.length === 0) {
+        return '';
+    }
+
+    const fileCards = files.map((file, index) => {
+        const fileMimeType = file.type || '';
+        const detectedType = file.detectedType || '';
+        const isImage = fileMimeType.startsWith('image/') || detectedType === 'image';
+        const isPdf = detectedType === 'pdf' || fileMimeType === 'application/pdf';
+        const isDocx = detectedType === 'docx' || /\.docx$/i.test(file.name || '');
+        const isAudio = detectedType === 'audio' || fileMimeType.startsWith('audio/');
+        const isText = detectedType === 'text' ||
+            fileMimeType.startsWith('text/') ||
+            fileMimeType.includes('json') ||
+            fileMimeType.includes('javascript') ||
+            fileMimeType.includes('xml') ||
+            fileMimeType.includes('yaml') ||
+            fileMimeType.includes('toml');
+
+        let iconOrPreview = '';
+        if (isImage && file.dataUrl) {
+            const safeDataUrl = sanitizeUrl(file.dataUrl, { allowData: true, allowBlob: true, allowMailto: false, allowTel: false, allowHash: false });
+            iconOrPreview = `
+                <img
+                    src="${escapeHtmlAttribute(safeDataUrl || '')}"
+                    class="w-full h-full object-cover"
+                    alt="${escapeHtmlAttribute(file.name || 'Attachment')}"
+                >
+            `;
+        } else {
+            let fileTypeForIcon = null;
+            if (isPdf) fileTypeForIcon = 'pdf';
+            else if (isDocx) fileTypeForIcon = 'docx';
+            else if (isAudio) fileTypeForIcon = 'audio';
+            else if (isText) fileTypeForIcon = 'text';
+            iconOrPreview = getFileIconSvg(fileTypeForIcon, fileMimeType, 'w-6 h-6');
+        }
+
+        return `
+            <div class="group relative flex items-center p-2 gap-3 rounded-xl w-auto max-w-[240px] transition-all select-none overflow-hidden shadow-sm bg-muted/30 border border-border/70">
+                <div class="flex-shrink-0 w-10 h-10 rounded-lg overflow-hidden flex items-center justify-center bg-background border border-border/50 shadow-sm">
+                    ${iconOrPreview}
+                </div>
+                <div class="flex flex-col min-w-0 pr-6">
+                    <span class="text-xs font-medium truncate leading-tight" title="${escapeHtmlAttribute(file.name || 'Attachment')}">
+                        ${escapeHtml(file.name || 'Attachment')}
+                    </span>
+                    <span class="text-[10px] text-muted-foreground truncate">
+                        ${formatAttachmentSize(file.size)}
+                    </span>
+                </div>
+                <button
+                    type="button"
+                    class="remove-edit-attachment-btn absolute top-1.5 right-1.5 p-1 rounded-full text-muted-foreground/70 hover:text-destructive hover:bg-destructive/10 transition-all opacity-100 md:opacity-0 md:group-hover:opacity-100"
+                    data-message-id="${safeMessageId}"
+                    data-attachment-index="${index}"
+                    aria-label="Remove ${escapeHtmlAttribute(file.name || 'attachment')}"
+                >
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-3 h-3">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
+        `;
+    }).join('');
+
+    return `<div class="edit-attachments-row mb-3 flex flex-wrap gap-3">${fileCards}</div>`;
+}
+
 // Threshold for collapsing long user messages (in characters)
 const USER_MESSAGE_COLLAPSE_THRESHOLD = 560;
 
@@ -326,46 +600,85 @@ function buildUserMessage(message, options = {}) {
 
     // If in edit mode, show the edit form instead of the static message
     if (isEditing) {
+        const editFiles = Array.isArray(options.editFiles) ? options.editFiles : (message.files || []);
+        const editContent = typeof options.editContent === 'string' ? options.editContent : (message.content || '');
+        const editAttachments = buildEditableFileAttachments(editFiles, message.id);
+        const attachmentCount = editFiles.length;
+        const attachmentLabel = `${attachmentCount} attachment${attachmentCount === 1 ? '' : 's'}`;
+        const safeMessageId = escapeHtmlAttribute(message.id);
         return `
-            <div class="${CLASSES.userWrapper}" data-message-id="${message.id}"${getRawContentAttribute(message.content)}>
+            <div class="${CLASSES.userWrapper}" data-message-id="${safeMessageId}"${getRawContentAttribute(message.content)}>
                 <div class="${CLASSES.userGroup}">
                     <div class="edit-prompt-form w-full">
-                        <textarea
-                            class="edit-prompt-textarea w-full px-4 py-3 border border-border rounded-lg bg-background text-foreground resize-y focus:outline-none shadow-sm"
-                            rows="3"
-                            data-message-id="${message.id}"
-                        >${escapeHtml(message.content)}</textarea>
-                        <div class="flex items-center justify-between gap-2 mt-2">
-                            <button
-                                id="edit-model-picker-btn"
-                                class="edit-model-picker-btn btn-ghost-hover inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 border border-input h-7 px-2 gap-1.5"
-                                data-message-id="${message.id}"
-                                title="Select model for regeneration"
-                            >
-                                <!-- Content will be populated by ChatArea.updateEditModelPickerButton -->
-                                <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 bg-muted">
-                                    <span class="text-[10px] font-semibold">...</span>
+                        <div class="edit-prompt-input-card rounded-lg border border-border bg-background p-1.5 shadow-sm">
+                            ${editAttachments}
+                            <div class="relative w-full flex flex-col">
+                                <textarea
+                                    class="edit-prompt-textarea w-full flex-1 min-w-0 bg-transparent text-sm leading-6 text-foreground placeholder:text-muted-foreground resize-y overflow-y-auto overflow-x-hidden focus:outline-none px-3 py-2 border-0"
+                                    rows="3"
+                                    data-message-id="${safeMessageId}"
+                                >${escapeHtml(editContent)}</textarea>
+                            </div>
+                            <div class="flex items-center justify-between gap-2 pt-1.5">
+                                <div class="flex min-w-0 items-center gap-1">
+                                    <button
+                                        id="edit-model-picker-btn"
+                                        class="edit-model-picker-btn btn-ghost-hover inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 border border-input h-7 px-2 gap-1.5 min-w-0"
+                                        data-message-id="${safeMessageId}"
+                                        title="Select model for regeneration"
+                                    >
+                                        <!-- Content will be populated by ChatArea.updateEditModelPickerButton -->
+                                        <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 bg-muted">
+                                            <span class="text-[10px] font-semibold">...</span>
+                                        </div>
+                                        <span class="model-name-container min-w-0 truncate">Loading...</span>
+                                    </button>
+                                    <input
+                                        type="file"
+                                        class="edit-file-input hidden"
+                                        data-message-id="${safeMessageId}"
+                                        accept="image/*,.pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,audio/*"
+                                        multiple
+                                    >
+                                    <button
+                                        type="button"
+                                        class="edit-add-files-btn inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-7 w-7 relative"
+                                        data-message-id="${safeMessageId}"
+                                        data-tooltip="Attach files"
+                                        data-tooltip-position="top"
+                                    >
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 0 1-6.364-6.364l10.94-10.94A3 3 0 1 1 19.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 0 0 2.112 2.13" />
+                                        </svg>
+                                        ${attachmentCount > 0 ? `<span class="absolute -top-1 -right-1 w-4 h-4 bg-green-600 text-white text-[10px] font-bold rounded-full flex items-center justify-center">${attachmentCount}</span>` : ''}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="edit-add-files-label min-w-0 truncate bg-transparent px-1 text-left text-[11px] text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none"
+                                        data-message-id="${safeMessageId}"
+                                        data-tooltip="Attach files"
+                                        data-tooltip-position="top"
+                                    >${attachmentLabel}</button>
                                 </div>
-                                <span class="model-name-container min-w-0 truncate">Loading...</span>
-                            </button>
-                            <div class="flex items-center gap-2">
-                                <button
-                                    class="cancel-edit-btn group inline-flex items-center justify-center gap-2 rounded-md text-xs font-medium transition-colors hover-highlight text-muted-foreground hover:text-foreground px-3 py-1.5 border border-transparent"
-                                    data-message-id="${message.id}"
-                                >
-                                    <span>Cancel</span>
-                                    <kbd class="pointer-events-none inline-flex h-4 select-none items-center gap-1 rounded border border-border bg-muted px-1 font-mono text-[10px] font-medium opacity-100">Esc</kbd>
-                                </button>
-                                <button
-                                    class="confirm-edit-btn group inline-flex items-center justify-center gap-2 rounded-md text-xs font-medium transition-colors border border-border px-3 py-1.5 shadow-sm"
-                                    data-message-id="${message.id}"
-                                >
-                                    <span>Save</span>
-                                    <span class="flex items-center gap-0.5 text-muted-foreground pointer-events-none text-xs">
-                                        <span class="opacity-60">⌘</span>
-                                        <span class="opacity-60">↵</span>
-                                    </span>
-                                </button>
+                                <div class="flex items-center gap-2">
+                                    <button
+                                        class="cancel-edit-btn group inline-flex items-center justify-center gap-2 rounded-md text-xs font-medium transition-colors hover-highlight text-muted-foreground hover:text-foreground px-3 py-1.5 border border-transparent"
+                                        data-message-id="${safeMessageId}"
+                                    >
+                                        <span>Cancel</span>
+                                        <kbd class="pointer-events-none inline-flex h-4 select-none items-center gap-1 rounded border border-border bg-muted px-1 font-mono text-[10px] font-medium opacity-100">Esc</kbd>
+                                    </button>
+                                    <button
+                                        class="confirm-edit-btn group inline-flex items-center justify-center gap-2 rounded-md text-xs font-medium transition-colors border border-border px-3 py-1.5 shadow-sm"
+                                        data-message-id="${safeMessageId}"
+                                    >
+                                        <span>Save</span>
+                                        <span class="flex items-center gap-0.5 text-muted-foreground pointer-events-none text-xs">
+                                            <span class="opacity-60">⌘</span>
+                                            <span class="opacity-60">↵</span>
+                                        </span>
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -712,10 +1025,68 @@ function insertRawCitationMarkers(content, citations) {
 function addInlineCitationMarkers(content, messageId) {
     if (!content) return content;
 
-    // Replace citation markers [1], [2], etc. with styled spans
-    return content.replace(/\[(\d+)\]/g, (match, num) => {
-        return `<sup class="inline-citation" data-citation="${num}" data-message-id="${messageId}" title="View source ${num}">[${num}]</sup>`;
+    if (typeof DOMParser === 'undefined' ||
+        typeof NodeFilter === 'undefined' ||
+        typeof Node === 'undefined') {
+        return content;
+    }
+
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(content, 'text/html');
+    const textNodes = [];
+    const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT, {
+        acceptNode(node) {
+            if (!node?.textContent || !/\[\d+\]/.test(node.textContent)) {
+                return NodeFilter.FILTER_REJECT;
+            }
+            const parent = node.parentElement;
+            if (!parent || parent.closest('pre, code, a, button, script, style, textarea')) {
+                return NodeFilter.FILTER_REJECT;
+            }
+            return NodeFilter.FILTER_ACCEPT;
+        }
     });
+
+    let currentNode = walker.nextNode();
+    while (currentNode) {
+        textNodes.push(currentNode);
+        currentNode = walker.nextNode();
+    }
+
+    textNodes.forEach(node => {
+        const text = node.textContent;
+        const fragment = doc.createDocumentFragment();
+        let lastIndex = 0;
+        let hasReplacement = false;
+
+        text.replace(/\[(\d+)\]/g, (match, num, offset) => {
+            if (offset > lastIndex) {
+                fragment.appendChild(doc.createTextNode(text.slice(lastIndex, offset)));
+            }
+
+            const citation = doc.createElement('sup');
+            citation.className = 'inline-citation';
+            citation.dataset.citation = num;
+            citation.dataset.messageId = messageId;
+            citation.title = `View source ${num}`;
+            citation.textContent = match;
+            fragment.appendChild(citation);
+
+            lastIndex = offset + match.length;
+            hasReplacement = true;
+            return match;
+        });
+
+        if (!hasReplacement) return;
+
+        if (lastIndex < text.length) {
+            fragment.appendChild(doc.createTextNode(text.slice(lastIndex)));
+        }
+
+        node.parentNode.replaceChild(fragment, node);
+    });
+
+    return doc.body.innerHTML;
 }
 
 
@@ -961,6 +1332,12 @@ function buildCitationsSection(citations, messageId) {
  */
 function extractShortModelName(fullName) {
     if (!fullName || typeof fullName !== 'string') return fullName;
+
+    const standardized = getStandardizedModelDisplayName(fullName);
+    if (standardized) {
+        fullName = standardized;
+    }
+
     // Handle "Provider: ModelName" format
     const colonIdx = fullName.indexOf(': ');
     if (colonIdx !== -1) {
@@ -1048,24 +1425,33 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
     // Use short model name for display (without provider prefix)
     const displayModelName = extractShortModelName(modelName);
+    const lowerModelName = typeof displayModelName === 'string' ? displayModelName.trim().toLowerCase() : '';
+    const isMemoryAgent = lowerModelName === 'memory agent';
+    const assistantTimeClass = CLASSES.assistantTime;
+    const scrubberRestoredAttribute = message.scrubber?.restored ? ' data-scrubber-restored="true"' : '';
+    const memoryAgentIcon = `
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" class="w-3.5 h-3.5 text-primary">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
+        </svg>
+    `;
 
     // If message is pending (waiting for first chunk), show header with typing indicator
     if (message.streamingPending) {
+        const pendingPhase = message.streamingPhase || options.pendingPhase || 'requesting-key';
         return `
-            <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}"${getRawContentAttribute(message.content)}>
+            <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}"${scrubberRestoredAttribute}${getRawContentAttribute(message.content)}>
                 <div class="${CLASSES.assistantGroup}">
                     <div class="${CLASSES.assistantHeader}">
                         <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow ${bgClass}">
                             ${iconData.html}
                         </div>
                         <span class="${CLASSES.assistantModelName}" style="font-size: 0.7rem;">${displayModelName}</span>
-                        <span class="${CLASSES.assistantTime}" style="font-size: 0.7rem;">${formatTime(message.timestamp)}</span>
+                        <span class="${assistantTimeClass}" style="font-size: 0.7rem;">${formatTime(message.timestamp)}</span>
                     </div>
-                    <div class="flex gap-1 px-4 py-2">
-                        <div class="w-2 h-2 bg-muted-foreground rounded-full animate-pulse"></div>
-                        <div class="w-2 h-2 bg-muted-foreground rounded-full animate-pulse" style="animation-delay: 0.2s"></div>
-                        <div class="w-2 h-2 bg-muted-foreground rounded-full animate-pulse" style="animation-delay: 0.4s"></div>
+                    <div class="px-2 py-1">
+                        ${buildPendingIndicatorContent(pendingPhase)}
                     </div>
+                    <div class="assistant-actions-anchor assistant-actions-placeholder w-full -mt-1" aria-hidden="true"></div>
                 </div>
             </div>
         `;
@@ -1079,10 +1465,41 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
         processContentWithLatex,
         message.reasoningDuration
     );
+    const hasAgentTrace = message.agentTraceStreaming || (Array.isArray(message.agentTrace) && message.agentTrace.length > 0);
+    const agentTraceBubble = hasAgentTrace
+        ? buildAgentTrace(message.agentTrace || [], message.id, message.agentTraceStreaming || false)
+        : '';
 
     // Build text bubble if there's content
     let processedContent = message.content;
-    if (processedContent) {
+    const confidenceBadgeHtml = isMemoryAgent
+        ? renderMemoryConfidenceBadgeHtml(message.memoryRetrievalAssessment || message.ciPromptDraft?.memoryRetrievalAssessment)
+        : '';
+    const ciFullPrompt = message.ciPromptDraft?.fullPrompt || message.ciPromptDraft?.editedFullPrompt;
+    const hasCiPromptForPreview = ciFullPrompt && !!message.ciPromptDraft && (
+        (message.memoryApprovalPrompt?.status === 'pending') ||
+        (message.memoryApprovalPrompt?.status === 'approved')
+    );
+    if (hasCiPromptForPreview) {
+        // Show file list + full crafted prompt with user_data tags rendered inline
+        const memFiles = message.ciPromptDraft?.memoryFiles || [];
+        const fileListHtml = memFiles.length
+            ? `<p class="mem-prompt-files text-muted-foreground">Retrieved ${memFiles.length} memory file${memFiles.length === 1 ? '' : 's'}: ${memFiles.map(f => `<code class="mem-prompt-file" data-mem-file="${escapeHtml(f)}">${escapeHtml(f)}</code>`).join(', ')}</p>`
+            : '';
+        processedContent = `<div class="mem-prompt-preview leading-relaxed">
+            ${fileListHtml}
+            <div class="mem-prompt-box">
+                <div class="mem-prompt-header-row">
+                    <span class="mem-prompt-header text-muted-foreground">Revised prompt with added context</span>
+                    <span class="mem-prompt-header-meta">
+                        ${confidenceBadgeHtml}
+                        <span class="mem-prompt-legend"><span class="mem-prompt-legend-swatch"></span> from private local memory</span>
+                    </span>
+                </div>
+                <div class="mem-prompt-body">${renderTaggedPromptInline(ciFullPrompt)}</div>
+            </div>
+        </div>`;
+    } else if (processedContent) {
         // First insert raw citation markers [1], [2] at correct positions (before HTML processing)
         if (message.citations && message.citations.length > 0) {
             processedContent = insertRawCitationMarkers(processedContent, message.citations);
@@ -1122,7 +1539,9 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     // Check if message is complete but has no user-visible output (no text, no reasoning, no images).
     // Reasoning-only responses can happen when generation is manually interrupted.
     const hasReasoningOutput = typeof message.reasoning === 'string' && message.reasoning.trim().length > 0;
-    const hasNoOutput = !processedContent && !hasReasoningOutput && (!message.images || message.images.length === 0);
+    const hasNoOutput = !processedContent && !hasReasoningOutput && (!message.images || message.images.length === 0) && !hasAgentTrace;
+    const hasRenderableAssistantOutput = !!processedContent || !!generatedImagesHtml || !!thumbnailsBubble;
+    const hideAssistantActionsDuringReasoning = !!message.streamingReasoning && !hasRenderableAssistantOutput;
     // Message is complete if:
     // - Not actively streaming reasoning
     // - streamingTokens is null/undefined (finalized)
@@ -1136,6 +1555,68 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
 
     // Build citations section if there are citations
     const citationsBubble = buildCitationsSection(message.citations, message.id);
+    const citationsToggle = buildCitationsToggleButton(message.citations, message.id);
+    const hasCiPromptDraft = !!message.ciPromptDraft;
+    const memoryPromptStatus = message.memoryApprovalPrompt?.status;
+    const memoryFeatureEnabled = options.memoryFeatureEnabled !== false;
+    const hasMemoryApprovalPrompt = memoryFeatureEnabled && hasCiPromptDraft && memoryPromptStatus === 'pending';
+    const hasMemoryApprovedPrompt = hasCiPromptDraft && memoryPromptStatus === 'approved';
+    const isMemoryStatusMessage = isMemoryAgent || Boolean(message.isLocalOnly && (hasAgentTrace || hasCiPromptDraft));
+    let memoryApprovalActions = '';
+    if (hasMemoryApprovalPrompt) {
+        memoryApprovalActions = `
+            <div class="flex items-center flex-wrap gap-1.5 w-full -mt-1 px-2">
+                <button
+                    type="button"
+                    class="memory-approval-btn memory-approval-primary btn-ghost-hover inline-flex items-center gap-1 justify-center rounded-md text-[10px] font-medium transition-all duration-200 border px-2 py-1 shadow-sm"
+                    data-message-id="${message.id}"
+                    data-decision="yes"
+                >
+                    <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"></path></svg>
+                    Include memory
+                </button>
+                <button
+                    type="button"
+                    class="memory-approval-btn memory-approval-secondary btn-ghost-hover inline-flex items-center gap-1 justify-center rounded-md text-[10px] font-medium transition-all duration-200 border px-2 py-1 shadow-sm"
+                    data-message-id="${message.id}"
+                    data-decision="always"
+                >
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M1.5 14l4 4 8-9.5"></path><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 14l4 4 8-9.5"></path></svg>
+                    Always include
+                </button>
+                <button
+                    type="button"
+                    class="memory-approval-btn btn-ghost-hover inline-flex items-center justify-center rounded-md text-[10px] font-medium transition-all duration-200 border border-border bg-background px-2 py-1 shadow-sm text-muted-foreground hover:text-foreground"
+                    data-message-id="${message.id}"
+                    data-decision="no"
+                >
+                    Skip
+                </button>
+                <button
+                    type="button"
+                    class="memory-preview-btn btn-ghost-hover inline-flex items-center gap-1 justify-center rounded-md text-[10px] transition-all duration-200 border border-border bg-background px-2 py-1 shadow-sm text-muted-foreground hover:text-foreground"
+                    data-message-id="${message.id}"
+                >
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.64 0 8.577 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.64 0-8.577-3.007-9.963-7.178z"></path><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                    Edit prompt
+                </button>
+            </div>
+        `;
+    } else if (hasMemoryApprovedPrompt) {
+        const approvedLabel = message.memoryApprovalPrompt?.autoIncluded ? 'Always include on' : 'Added context';
+        memoryApprovalActions = `
+            <div class="flex items-center flex-wrap gap-1.5 w-full -mt-1 px-2">
+                <button
+                    type="button"
+                    class="memory-approval-btn memory-approval-success inline-flex items-center gap-1 justify-center rounded-md text-[10px] font-medium border px-2 py-1 shadow-sm cursor-default"
+                    disabled
+                >
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"></path></svg>
+                    ${approvedLabel}
+                </button>
+            </div>
+        `;
+    }
     const canRestoreScrubber = message.scrubber?.canRestore || message.scrubber?.redactedPrompt;
     const scrubberToggleButton = canRestoreScrubber ? `
         <button
@@ -1147,53 +1628,75 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
             </svg>
         </button>
     ` : '';
+    const shouldShowMemoryStatusSpacer = hideAssistantActionsDuringReasoning && !isMemoryStatusMessage;
+    const assistantActionsRow = (shouldShowMemoryStatusSpacer || isMemoryStatusMessage) ? (
+        isMemoryStatusMessage
+            ? ''
+            : `
+        <div class="assistant-actions-anchor assistant-actions-placeholder w-full -mt-1" aria-hidden="true"></div>
+    `
+    ) : `
+        <div class="assistant-actions-anchor assistant-actions-row flex items-center justify-between gap-2 w-full -mt-1">
+            <div class="flex items-center gap-1">
+                <button
+                    class="message-action-btn copy-message-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+                    data-message-id="${message.id}"
+                    data-tooltip="Copy message">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
+                    </svg>
+                </button>
+                <button
+                    class="message-action-btn regenerate-message-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+                    data-message-id="${message.id}"
+                    data-tooltip="Regenerate response">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                    </svg>
+                </button>
+                <button
+                    class="message-action-btn fork-conversation-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+                    data-message-id="${message.id}"
+                    data-tooltip="Fork conversation from here">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M2 12h6c6 0 10-4 14-8m-4 0h4v4M8 12c6 0 10 4 14 8m-4 0h4v-4" />
+                    </svg>
+                </button>
+                ${scrubberToggleButton}
+                ${noResponseNotice}
+            </div>
+            ${citationsToggle}
+        </div>
+    `;
 
     return `
-        <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}"${getRawContentAttribute(message.content)}>
+        <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}"${scrubberRestoredAttribute}${getRawContentAttribute(message.content)}>
             <div class="${CLASSES.assistantGroup}">
+                ${isMemoryAgent ? `
+                <div class="${CLASSES.assistantHeader}">
+                    <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow bg-muted">
+                        ${memoryAgentIcon}
+                    </div>
+                    <span class="${CLASSES.assistantModelName}" style="font-size: 0.7rem;">Memory Agent <span class="text-muted-foreground" onmouseenter="this.classList.remove('text-muted-foreground')" onmouseleave="this.classList.add('text-muted-foreground')">(<a href="https://www.nvidia.com/en-us/data-center/solutions/confidential-computing/" target="_blank" style="text-decoration: none; color: inherit;">TEE</a>)</span></span>
+                    <span class="${assistantTimeClass}" style="font-size: 0.7rem;">${formatTime(message.timestamp)}</span>
+                </div>
+                ` : `
                 <div class="${CLASSES.assistantHeader}">
                     <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow ${bgClass}">
                         ${iconData.html}
                     </div>
                     <span class="${CLASSES.assistantModelName}" style="font-size: 0.7rem;">${displayModelName}</span>
-                    <span class="${CLASSES.assistantTime}" style="font-size: 0.7rem;">${formatTime(message.timestamp)}</span>
+                    <span class="${assistantTimeClass}" style="font-size: 0.7rem;">${formatTime(message.timestamp)}</span>
                     ${tokenDisplay}
                 </div>
+                `}
                 ${reasoningBubble}
+                ${agentTraceBubble}
                 ${thumbnailsBubble}
                 ${textBubble}
                 ${imageBubble}
-                <div class="flex items-center justify-between gap-2 w-full -mt-1">
-                    <div class="flex items-center gap-1">
-                        <button
-                            class="message-action-btn copy-message-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
-                            data-message-id="${message.id}"
-                            data-tooltip="Copy message">
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
-                            </svg>
-                        </button>
-                        <button
-                            class="message-action-btn regenerate-message-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
-                            data-message-id="${message.id}"
-                            data-tooltip="Regenerate response">
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
-                            </svg>
-                        </button>
-                        <button
-                            class="message-action-btn fork-conversation-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
-                            data-message-id="${message.id}"
-                            data-tooltip="Fork conversation from here">
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M2 12h6c6 0 10-4 14-8m-4 0h4v4M8 12c6 0 10 4 14 8m-4 0h4v-4" />
-                            </svg>
-                        </button>
-                        ${scrubberToggleButton}
-                        ${noResponseNotice}
-                    </div>
-                    ${buildCitationsToggleButton(message.citations, message.id)}
-                </div>
+                ${memoryApprovalActions}
+                ${assistantActionsRow}
                 ${citationsBubble}
             </div>
         </div>
@@ -1206,20 +1709,24 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
  * @param {string} providerName - Provider name (e.g., "OpenAI", "Anthropic")
  * @returns {string} HTML string
  */
-function buildTypingIndicator(id, providerName) {
+function buildTypingIndicator(id, providerName, modelName, timestamp, phase = 'requesting-key') {
     const iconData = getProviderIcon(providerName, 'w-3.5 h-3.5');
     const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
+    const displayModelName = extractShortModelName(modelName);
     return `
-        <div id="${id}" class="${CLASSES.typingWrapper}">
-            <div class="${CLASSES.typingGroup}">
-                <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow ${bgClass} p-0.5">
-                    ${iconData.html}
+        <div id="${id}" class="${CLASSES.typingWrapper}" data-provider-name="${escapeHtmlAttribute(providerName)}" data-phase="${escapeHtmlAttribute(normalizePendingPhase(phase))}">
+            <div class="${CLASSES.assistantGroup}">
+                <div class="${CLASSES.assistantHeader}">
+                    <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow ${bgClass} p-0.5">
+                        ${iconData.html}
+                    </div>
+                    <span class="${CLASSES.assistantModelName}" style="font-size: 0.7rem;">${escapeHtml(displayModelName)}</span>
+                    <span class="${CLASSES.assistantTime}" style="font-size: 0.7rem;">${formatPendingTimestamp(timestamp)}</span>
                 </div>
-                <div class="${CLASSES.typingDots}">
-                    <div class="${CLASSES.typingDot}"></div>
-                    <div class="${CLASSES.typingDot}" style="animation-delay: 0.2s"></div>
-                    <div class="${CLASSES.typingDot}" style="animation-delay: 0.4s"></div>
+                <div class="px-2 py-1">
+                    ${buildPendingIndicatorContent(phase)}
                 </div>
+                <div class="assistant-actions-anchor assistant-actions-placeholder w-full -mt-1" aria-hidden="true"></div>
             </div>
         </div>
     `;
@@ -1354,7 +1861,7 @@ export function buildMessageHTML(message, helpers, models, sessionModelName, opt
         // Determine provider name and model name
         const defaultModelName = window.app && typeof window.app.getDefaultModelName === 'function'
             ? window.app.getDefaultModelName()
-            : 'OpenAI: GPT-5.2 Instant';
+            : 'OpenAI: GPT-5.3 Instant';
         // For assistant messages, prefer the model stored on the message itself
         const storedModel = message.model || sessionModelName || defaultModelName;
         const isModelId = typeof storedModel === 'string' && storedModel.includes('/');
@@ -1427,6 +1934,23 @@ if (typeof window !== 'undefined') {
             if (window.app && window.app.updateScrollButtonVisibility) {
                 window.app.updateScrollButtonVisibility();
             }
+        }
+    };
+
+    window.toggleAgentTrace = function(messageId) {
+        const contentEl = document.getElementById(`agent-trace-content-${messageId}`);
+        const chevronEl = document.querySelector(`#agent-trace-toggle-${messageId} .reasoning-chevron`);
+
+        if (contentEl && chevronEl) {
+            const isHidden = contentEl.classList.contains('hidden');
+            if (isHidden) {
+                contentEl.classList.remove('hidden');
+                chevronEl.style.transform = 'rotate(180deg)';
+            } else {
+                contentEl.classList.add('hidden');
+                chevronEl.style.transform = '';
+            }
+            preferencesStore.savePreference(PREF_KEYS.agentTraceExpanded, isHidden);
         }
     };
 }

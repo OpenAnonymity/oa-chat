@@ -460,10 +460,13 @@ class TicketClient {
     // -> N blinded tickets. However, blind signatures still prevent the org from
     // linking specific redeemed finalized tickets back to this email, because blinded
     // requests are cryptographically unlinkable to finalized tickets.
-    async requestFreeAccess(email) {
+    async requestFreeAccess(email, { cfTurnstileResponse } = {}) {
         const freeAccessUrl = `${ORG_API_BASE}/chat/free_access`;
         const requestHeaders = { 'Content-Type': 'application/json' };
         const requestBody = { email };
+        if (cfTurnstileResponse) {
+            requestBody.cf_turnstile_response = cfTurnstileResponse;
+        }
 
         let response;
         let data;
@@ -1019,13 +1022,30 @@ class TicketClient {
      * The issued API key carries no user identity.
      *
      * @param {number} ticketCount - Number of tickets to use (default: 1)
+     * @param {Object} options - Optional request controls
+     * @param {AbortSignal} options.signal - Cancels the key request before completion
      * @returns {Promise<Object>} API key data with verification signatures
      */
-    async requestApiKey(ticketCount = 1) {
+    async requestApiKey(ticketCount = 1, options = {}) {
         try {
+            const { signal = null } = options;
+            if (signal?.aborted) {
+                const error = new Error('Request aborted');
+                error.name = 'AbortError';
+                error.isCancelled = true;
+                throw error;
+            }
+
             const { tickets, result } = await this.ticketStore.consumeTickets(
                 ticketCount,
                 async ({ tickets, totalCount, remainingCount }) => {
+                    if (signal?.aborted) {
+                        const error = new Error('Request aborted');
+                        error.name = 'AbortError';
+                        error.isCancelled = true;
+                        throw error;
+                    }
+
                     networkLogger.logRequest({
                         type: 'local',
                         method: 'LOCAL',
@@ -1068,7 +1088,8 @@ class TicketClient {
                             {
                                 context: selfHostedModeEnabled ? 'Self-hosted station API key' : 'Org API key',
                                 maxAttempts: 3,    // Retry transient failures (network/5xx/429)
-                                timeoutMs: 30000   // 30s timeout - org has internal station timeout
+                                timeoutMs: 30000,  // 30s timeout - org has internal station timeout
+                                signal
                             }
                         ));
                     } catch (error) {
@@ -1184,17 +1205,34 @@ class TicketClient {
     /**
      * Request a confidential API key by redeeming inference tickets.
      * @param {number} ticketCount - Number of tickets to use (default: 1)
+     * @param {Object} options - Optional request controls
+     * @param {AbortSignal} options.signal - Cancels the confidential key request before completion
      * @returns {Promise<Object>} API key data
      */
-    async requestConfidentialApiKey(ticketCount = 1) {
+    async requestConfidentialApiKey(ticketCount = 1, options = {}) {
         if (this.isSelfHostedStationModeEnabled()) {
             throw new Error('Confidential API key is unavailable in self-hosted station mode.');
         }
 
         try {
+            const { signal = null } = options;
+            if (signal?.aborted) {
+                const error = new Error('Request aborted');
+                error.name = 'AbortError';
+                error.isCancelled = true;
+                throw error;
+            }
+
             const { tickets, result } = await this.ticketStore.consumeTickets(
                 ticketCount,
                 async ({ tickets, totalCount, remainingCount }) => {
+                    if (signal?.aborted) {
+                        const error = new Error('Request aborted');
+                        error.name = 'AbortError';
+                        error.isCancelled = true;
+                        throw error;
+                    }
+
                     networkLogger.logRequest({
                         type: 'local',
                         method: 'LOCAL',
@@ -1233,7 +1271,8 @@ class TicketClient {
                             {
                                 context: 'Org confidential API key',
                                 maxAttempts: 3,
-                                timeoutMs: 30000
+                                timeoutMs: 30000,
+                                signal
                             }
                         ));
                     } catch (error) {

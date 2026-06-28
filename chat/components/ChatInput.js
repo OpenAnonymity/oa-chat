@@ -8,7 +8,6 @@ import themeManager from '../services/themeManager.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import { exportAllData, exportChats, exportTickets } from '../services/globalExport.js';
 import { importFromFile, formatImportSummary } from '../services/globalImport.js';
-import ticketClient from '../services/ticketClient.js';
 import scrubberService from '../services/scrubberService.js';
 import {
     renderEditableDiff,
@@ -18,11 +17,10 @@ import {
     getEditableDiffSelectionState
 } from '../services/editableDiffRenderer.js';
 import { normalizeReasoningEffort } from '../services/reasoningConfig.js';
-import { chatDB } from '../db.js';
 
 const MESSAGE_INPUT_MAX_HEIGHT_PX = 300;
 const MESSAGE_INPUT_PREVIEW_EXPANDED_MIN_HEIGHT_PX = 384;
-const SETTINGS_MENU_WIDTH_PX = 230;
+const SETTINGS_MENU_WIDTH_PX = 260;
 
 export default class ChatInput {
     /**
@@ -59,11 +57,12 @@ export default class ChatInput {
         };
         this.scrubberModelsReady = false;
         this.scrubberModelSelect = null;
+        this.memoryAgentModelSelect = null;
         // Store undone scrubber state for redo functionality
         this.scrubberUndoState = null;
         this.stationModeSettings = {
-            enabled: ticketClient.isSelfHostedStationModeEnabled(),
-            stationUrl: ticketClient.getSelfHostedStationBaseUrl(),
+            enabled: this.app.services.tickets.isSelfHostedStationModeEnabled(),
+            stationUrl: this.app.services.tickets.getSelfHostedStationBaseUrl(),
             error: null
         };
     }
@@ -239,8 +238,31 @@ export default class ChatInput {
             this.updateSearchToggleUI();
             this.app.updateInputState();
             // Persist search state globally
-            await chatDB.saveSetting('searchEnabled', this.app.searchEnabled);
+            await this.app.data.saveSetting('searchEnabled', this.app.searchEnabled);
         });
+
+        if (this.app.elements.memoryToggle) {
+            this.app.elements.memoryToggle.addEventListener('click', async (e) => {
+                const button = e.target.closest('.chat-mode-toggle-btn');
+                if (!button) return;
+
+                const isMemory = button.dataset.modeOption === 'memory';
+                if (isMemory && this.app.memoryFeatureEnabled === false) {
+                    this.updateMemoryToggleUI();
+                    return;
+                }
+                if (isMemory && this.app.memoryMode && this.app.memoryEditor) {
+                    this.app.memoryEditor.open();
+                    return;
+                }
+                const container = this.app.elements.memoryToggle;
+                container.classList.add('sliding');
+                setTimeout(() => container.classList.remove('sliding'), 250);
+                this.app.memoryMode = isMemory && this.app.memoryFeatureEnabled !== false;
+                this.updateMemoryToggleUI();
+                await this.app.data.saveSetting('memoryMode', this.app.memoryMode);
+            });
+        }
 
         // Reasoning effort control (extended-thinking toggle removed from UI;
         // reasoning is kept enabled in app state for backward-compatible behavior)
@@ -254,7 +276,7 @@ export default class ChatInput {
                 const nextEffort = normalizeReasoningEffort(btn.dataset.reasoningEffort);
                 this.app.reasoningEffort = nextEffort;
                 this.updateReasoningEffortUI();
-                await chatDB.saveSetting('reasoningEffort', nextEffort);
+                await this.app.data.saveSetting('reasoningEffort', nextEffort);
             });
         }
 
@@ -285,6 +307,7 @@ export default class ChatInput {
                 menu.style.maxWidth = `${SETTINGS_MENU_WIDTH_PX}px`;
 
                 this.ensureScrubberModelsLoaded();
+                this.refreshMemorySettingsUI();
             } else {
                 menu.classList.add('hidden');
                 btn.classList.remove('tooltip-disabled');
@@ -305,21 +328,6 @@ export default class ChatInput {
             if (e.target.tagName === 'BUTTON') {
                 const action = e.target.dataset.action || e.target.textContent.trim();
 
-                // Copy Markdown functionality (temporarily disabled)
-                // if (action === 'Copy Markdown') {
-                //     await this.copyLatestMarkdown(e.target);
-                //     return; // Don't close menu immediately
-                // }
-
-                // TODO: Re-enable when implementing Clear Models functionality
-                // if (action === 'Clear Models') {
-                //     const session = this.app.getCurrentSession();
-                //     if (session) {
-                //         session.model = null;
-                //         await chatDB.saveSession(session);
-                //         this.app.renderCurrentModel();
-                //     }
-                // }
                 if (action === 'export-all-data') {
                     await this.handleExportAllData();
                 } else if (action === 'import-data') {
@@ -333,6 +341,11 @@ export default class ChatInput {
                     await this.handleExportTickets();
                 } else if (action === 'import-tickets') {
                     this.handleImportTickets();
+                    return; // Don't close menu until file is selected
+                } else if (action === 'export-memory') {
+                    await this.handleExportMemory();
+                } else if (action === 'import-memory') {
+                    this.handleImportMemory();
                     return; // Don't close menu until file is selected
                 }
                 this.app.elements.settingsMenu.classList.add('hidden');
@@ -365,11 +378,22 @@ export default class ChatInput {
             });
         }
 
+        const memoryImportInput = document.getElementById('memory-import-input');
+        if (memoryImportInput) {
+            memoryImportInput.addEventListener('change', async (e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                    await this.processMemoryImportFile(file);
+                }
+                e.target.value = '';
+            });
+        }
+
         // Clear chat functionality (temporarily disabled)
         // this.app.elements.clearChatBtn.addEventListener('click', async () => {
         //     const session = this.app.getCurrentSession();
         //     if (session) {
-        //         await chatDB.deleteSessionMessages(session.id);
+        //         await this.app.data.deleteSessionMessages(session.id);
         //         this.app.renderMessages();
         //         this.app.elements.settingsMenu.classList.add('hidden');
         //     }
@@ -408,6 +432,9 @@ export default class ChatInput {
         // Setup scrubber controls (model picker + shortcut)
         this.setupScrubberControls();
         this.setupStationModeControls();
+        this.setupMemoryFeatureToggle();
+        this.setupMemoryAutoIncludeToggle();
+        this.refreshMemorySettingsUI();
 
         // Initialize scrubber hint visibility
         this.updateScrubberHintVisibility();
@@ -1439,50 +1466,164 @@ export default class ChatInput {
     }
 
     async setupScrubberControls() {
-        const select = document.getElementById('scrubber-model-select');
-        if (!select) return;
+        const scrubberSelect = document.getElementById('scrubber-model-select');
+        if (scrubberSelect) {
+            scrubberSelect.addEventListener('click', (event) => event.stopPropagation());
+            scrubberSelect.addEventListener('change', async (event) => {
+                const modelId = event.target.value;
+                if (modelId) {
+                    await scrubberService.setSelectedModel(modelId);
+                    this.refreshMemorySettingsUI();
+                }
+            });
+        }
+        this.scrubberModelSelect = scrubberSelect;
 
-        select.addEventListener('click', (event) => event.stopPropagation());
-        select.addEventListener('change', async (event) => {
-            const modelId = event.target.value;
-            if (modelId) {
-                await scrubberService.setSelectedModel(modelId);
-            }
+        const memoryAgentSelect = document.getElementById('memory-agent-model-select');
+        if (memoryAgentSelect) {
+            memoryAgentSelect.addEventListener('click', (event) => event.stopPropagation());
+            memoryAgentSelect.addEventListener('change', async (event) => {
+                const modelId = event.target.value;
+                if (modelId) {
+                    await this.app.setMemoryAgentModel(modelId);
+                    this.refreshMemorySettingsUI();
+                }
+            });
+        }
+        this.memoryAgentModelSelect = memoryAgentSelect;
+    }
+
+    setupMemoryFeatureToggle() {
+        const toggle = document.getElementById('memory-feature-toggle');
+        if (!toggle) return;
+
+        toggle.addEventListener('click', async (event) => {
+            event.stopPropagation();
+            const nextValue = this.app.memoryFeatureEnabled === false;
+            await this.app.setMemoryFeatureEnabled(nextValue);
+            this.refreshMemorySettingsUI();
+            this.updateMemoryToggleUI();
         });
-        this.scrubberModelSelect = select;
     }
 
     async ensureScrubberModelsLoaded() {
-        if (this.scrubberModelsReady || !this.scrubberModelSelect) return;
-        await this.populateScrubberModels(this.scrubberModelSelect);
-        this.scrubberModelsReady = true;
+        if (this.scrubberModelsReady) {
+            this.refreshMemorySettingsUI();
+            return;
+        }
+
+        const selects = [this.scrubberModelSelect, this.memoryAgentModelSelect].filter(Boolean);
+        if (!selects.length) return;
+
+        try {
+            const models = await scrubberService.fetchModels();
+            this.populateConfidentialModels(this.scrubberModelSelect, models, scrubberService.getSelectedModel());
+            this.populateConfidentialModels(this.memoryAgentModelSelect, models, this.app.memoryAgentModel);
+            this.scrubberModelsReady = true;
+        } catch (error) {
+            console.error('Failed to load confidential models:', error);
+            this.setModelSelectError(this.scrubberModelSelect);
+            this.setModelSelectError(this.memoryAgentModelSelect);
+        }
+        this.refreshMemorySettingsUI();
     }
 
-    async populateScrubberModels(selectEl) {
-        selectEl.innerHTML = '<option value="" disabled selected>Loading models…</option>';
-        try {
-            // Model list is public - no session/key required
-            const models = await scrubberService.fetchModels();
-            const selected = scrubberService.getSelectedModel();
-            const options = models.map(model => {
-                const value = model.id || model.name;
-                let label = model.name || model.id;
-                // Add "slow" label for slow models
-                if (scrubberService.isSlowModel(value)) {
-                    label += ' (slow)';
-                }
-                return `<option value="${value}">${label}</option>`;
-            }).join('');
-            let html = options || '<option value="" disabled>No models available</option>';
-            if (selected && !models.find(model => (model.id || model.name) === selected)) {
-                html = `<option value="${selected}">${selected}</option>` + html;
+    populateConfidentialModels(selectEl, models, selected) {
+        if (!selectEl) return;
+        const options = models.map(model => {
+            const value = model.id || model.name;
+            let label = model.name || model.id;
+            if (scrubberService.isSlowModel(value)) {
+                label += ' (slow)';
             }
-            selectEl.innerHTML = html;
-            if (selected) selectEl.value = selected;
-        } catch (error) {
-            console.error('Failed to load scrubber models:', error);
-            selectEl.innerHTML = '<option value="" disabled>Failed to load models</option>';
+            return `<option value="${value}">${label}</option>`;
+        }).join('');
+        let html = options || '<option value="" disabled>No models available</option>';
+        if (selected && !models.find(model => (model.id || model.name) === selected)) {
+            html = `<option value="${selected}">${selected}</option>${html}`;
         }
+        selectEl.innerHTML = html;
+        if (selected) {
+            selectEl.value = selected;
+        }
+    }
+
+    setModelSelectError(selectEl) {
+        if (!selectEl) return;
+        selectEl.innerHTML = '<option value="" disabled>Failed to load models</option>';
+    }
+
+    setupMemoryAutoIncludeToggle() {
+        const toggle = document.getElementById('memory-auto-include-toggle');
+        if (!toggle) return;
+
+        toggle.addEventListener('click', async (event) => {
+            event.stopPropagation();
+            if (this.app.memoryFeatureEnabled === false) {
+                this.refreshMemorySettingsUI();
+                return;
+            }
+            const nextValue = !this.app.memoryAutoInclude;
+            await this.app.setMemoryAutoInclude(nextValue);
+            this.refreshMemorySettingsUI();
+        });
+    }
+
+    updateSwitchToggleUI(toggle, enabled, enabledTitle, disabledTitle) {
+        if (!toggle) return;
+        toggle.setAttribute('aria-checked', enabled ? 'true' : 'false');
+        toggle.classList.toggle('switch-active', enabled);
+        toggle.classList.toggle('switch-inactive', !enabled);
+        toggle.title = enabled ? enabledTitle : disabledTitle;
+        toggle.dataset.tooltip = enabled ? enabledTitle : disabledTitle;
+    }
+
+    refreshMemorySettingsUI() {
+        const memoryFeatureEnabled = this.app.memoryFeatureEnabled !== false;
+        this.updateSwitchToggleUI(
+            document.getElementById('memory-feature-toggle'),
+            memoryFeatureEnabled,
+            'Memory feature is on',
+            'Memory feature is off'
+        );
+
+        const memoryAutoIncludeToggle = document.getElementById('memory-auto-include-toggle');
+        const effectiveMemoryAutoInclude = memoryFeatureEnabled && this.app.memoryAutoInclude;
+        this.updateSwitchToggleUI(
+            memoryAutoIncludeToggle,
+            effectiveMemoryAutoInclude,
+            'Always attach retrieval is on',
+            memoryFeatureEnabled ? 'Always attach retrieval is off' : 'Memory is off in settings'
+        );
+        if (memoryAutoIncludeToggle) {
+            memoryAutoIncludeToggle.disabled = !memoryFeatureEnabled;
+            memoryAutoIncludeToggle.setAttribute('aria-disabled', String(!memoryFeatureEnabled));
+        }
+
+        if (this.scrubberModelSelect) {
+            const selectedScrubberModel = scrubberService.getSelectedModel();
+            if (selectedScrubberModel) {
+                this.scrubberModelSelect.value = selectedScrubberModel;
+            }
+        }
+
+        if (this.memoryAgentModelSelect && this.app.memoryAgentModel) {
+            this.memoryAgentModelSelect.value = this.app.memoryAgentModel;
+        }
+        if (this.memoryAgentModelSelect) {
+            this.memoryAgentModelSelect.disabled = !memoryFeatureEnabled;
+            this.memoryAgentModelSelect.title = memoryFeatureEnabled
+                ? 'Memory agent model'
+                : 'Memory is off in settings';
+        }
+
+        document.querySelectorAll('[data-memory-requires-feature]').forEach((element) => {
+            element.disabled = !memoryFeatureEnabled;
+            element.setAttribute('aria-disabled', String(!memoryFeatureEnabled));
+            element.title = memoryFeatureEnabled
+                ? (element.dataset.enabledTitle || '')
+                : 'Memory is off in settings';
+        });
     }
 
     /**
@@ -1606,6 +1747,47 @@ export default class ChatInput {
         toggle.classList.toggle('search-active', this.app.searchEnabled);
     }
 
+    updateMemoryToggleUI() {
+        const container = this.app.elements.memoryToggle;
+        if (!container) return;
+
+        const memoryFeatureEnabled = this.app.memoryFeatureEnabled !== false;
+        const mode = memoryFeatureEnabled && this.app.memoryMode ? 'memory' : 'chat';
+        const isFirstRender = container.style.visibility === 'hidden';
+        if (isFirstRender) {
+            const indicator = container.querySelector('.chat-mode-toggle-indicator');
+            if (indicator) indicator.style.transition = 'none';
+            container.dataset.mode = mode;
+            container.style.visibility = '';
+            if (indicator) requestAnimationFrame(() => { indicator.style.transition = ''; });
+        } else {
+            container.dataset.mode = mode;
+        }
+        container.setAttribute('aria-disabled', String(!memoryFeatureEnabled));
+        container.classList.toggle('is-disabled', !memoryFeatureEnabled);
+
+        container.querySelectorAll('.chat-mode-toggle-btn').forEach((button) => {
+            button.setAttribute('aria-checked', String(button.dataset.modeOption === mode));
+            const isMemoryButton = button.dataset.modeOption === 'memory';
+            const isDisabledMemoryButton = isMemoryButton && !memoryFeatureEnabled;
+            button.setAttribute('aria-disabled', String(isDisabledMemoryButton));
+            button.tabIndex = isDisabledMemoryButton ? -1 : 0;
+            if (isMemoryButton) {
+                button.title = memoryFeatureEnabled ? 'Memory mode' : 'Memory is off in settings';
+                const tooltipText = button.querySelector('[data-memory-tooltip-text]');
+                const tooltipBeta = button.querySelector('[data-memory-tooltip-beta]');
+                if (tooltipText) {
+                    tooltipText.textContent = memoryFeatureEnabled
+                        ? 'Auto-attach relevant context'
+                        : 'Memory is off in settings';
+                }
+                if (tooltipBeta) {
+                    tooltipBeta.classList.toggle('hidden', !memoryFeatureEnabled);
+                }
+            }
+        });
+    }
+
     /**
      * Legacy hook: extended-thinking toggle was removed from settings.
      * Keep reasoning enabled and update the effort control only.
@@ -1706,10 +1888,10 @@ export default class ChatInput {
         ]).then(([enabled, stationUrl]) => {
             this.stationModeSettings.enabled = typeof enabled === 'boolean'
                 ? enabled
-                : ticketClient.isSelfHostedStationModeEnabled();
+                : this.app.services.tickets.isSelfHostedStationModeEnabled();
             this.stationModeSettings.stationUrl = typeof stationUrl === 'string'
-                ? (ticketClient.normalizeStationBaseUrl(stationUrl) || '')
-                : ticketClient.getSelfHostedStationBaseUrl();
+                ? (this.app.services.tickets.normalizeStationBaseUrl(stationUrl) || '')
+                : this.app.services.tickets.getSelfHostedStationBaseUrl();
             this.stationModeSettings.error = null;
             this.updateStationModeSettingsUI();
         });
@@ -1721,7 +1903,7 @@ export default class ChatInput {
                 this.updateStationModeSettingsUI();
             }
             if (key === PREF_KEYS.selfHostedStationUrl && typeof value === 'string') {
-                this.stationModeSettings.stationUrl = ticketClient.normalizeStationBaseUrl(value) || '';
+                this.stationModeSettings.stationUrl = this.app.services.tickets.normalizeStationBaseUrl(value) || '';
                 this.stationModeSettings.error = null;
                 this.updateStationModeSettingsUI();
             }
@@ -1792,7 +1974,7 @@ export default class ChatInput {
             ? (stationUrlInput?.value ?? this.stationModeSettings.stationUrl)
             : rawValue;
         const trimmed = String(valueToUse || '').trim();
-        const existingNormalized = ticketClient.normalizeStationBaseUrl(this.stationModeSettings.stationUrl) || '';
+        const existingNormalized = this.app.services.tickets.normalizeStationBaseUrl(this.stationModeSettings.stationUrl) || '';
 
         if (!trimmed) {
             this.stationModeSettings.stationUrl = '';
@@ -1806,7 +1988,7 @@ export default class ChatInput {
             return;
         }
 
-        const normalized = ticketClient.normalizeStationBaseUrl(trimmed);
+        const normalized = this.app.services.tickets.normalizeStationBaseUrl(trimmed);
         if (!normalized) {
             this.stationModeSettings.error = 'Station URL must be a valid HTTP(S) URL.';
             this.updateStationModeSettingsUI();
@@ -1877,7 +2059,7 @@ export default class ChatInput {
             return;
         }
 
-        const messages = await chatDB.getSessionMessages(session.id);
+        const messages = await this.app.data.getSessionMessages(session.id);
         const assistantMessages = messages.filter(m => m.role === 'assistant');
 
         if (assistantMessages.length === 0) {
@@ -1983,6 +2165,55 @@ export default class ChatInput {
         this.app.elements.settingsMenu.classList.add('hidden');
     }
 
+    async handleExportMemory() {
+        if (this.app.memoryFeatureEnabled === false) {
+            this.app.showToast?.('Memory is off in settings.', 'info', 3000);
+            return;
+        }
+        if (!this.app.memoryEditor?.exportMemories) {
+            this.app.showToast?.('Memory export unavailable', 'error');
+            return;
+        }
+        await this.app.memoryEditor.exportMemories();
+    }
+
+    handleImportMemory() {
+        if (this.app.memoryFeatureEnabled === false) {
+            this.app.showToast?.('Memory is off in settings.', 'info', 3000);
+            return;
+        }
+        const input = document.getElementById('memory-import-input');
+        if (input) {
+            input.click();
+        }
+        this.app.elements.settingsMenu.classList.add('hidden');
+    }
+
+    async applyImportedRuntimePreferences(appliedPreferences = []) {
+        if (!Array.isArray(appliedPreferences) || appliedPreferences.length === 0) return;
+        const applied = new Set(appliedPreferences);
+
+        if (applied.has('memoryFeatureEnabled') || applied.has('memoryMode')) {
+            const storedMemoryFeatureEnabled = await this.app.data.getSetting('memoryFeatureEnabled');
+            const storedMemoryMode = await this.app.data.getSetting('memoryMode');
+            await this.app.setMemoryFeatureEnabled(storedMemoryFeatureEnabled !== false, { persist: false });
+            this.app.memoryMode = this.app.memoryFeatureEnabled !== false && storedMemoryMode === true;
+            this.updateMemoryToggleUI();
+        }
+
+        if (applied.has('memoryAutoInclude')) {
+            const storedMemoryAutoInclude = await this.app.data.getSetting('memoryAutoInclude');
+            await this.app.setMemoryAutoInclude(storedMemoryAutoInclude === true, { persist: false });
+        }
+
+        if (applied.has('memoryAgentModel')) {
+            const storedMemoryAgentModel = await this.app.data.getSetting('memoryAgentModel');
+            await this.app.setMemoryAgentModel(storedMemoryAgentModel, { persist: false });
+        }
+
+        this.refreshMemorySettingsUI();
+    }
+
     /**
      * Processes the selected tickets import file.
      * @param {File} file - The tickets JSON file
@@ -1993,7 +2224,7 @@ export default class ChatInput {
             const text = await file.text();
             const payload = JSON.parse(text);
 
-            const result = await ticketClient.importTickets(payload);
+            const result = await this.app.services.tickets.importTickets(payload);
             const addedActive = result.addedActive || 0;
             const addedArchived = result.addedArchived || 0;
             const totalAdded = addedActive + addedArchived;
@@ -2041,6 +2272,7 @@ export default class ChatInput {
             if (result.success) {
                 const message = formatImportSummary(result.summary);
                 this.app.showToast?.(message, 'success');
+                await this.applyImportedRuntimePreferences(result.summary?.appliedPreferences);
 
                 // Refresh UI to reflect imported data
                 if (result.summary.importedSessions > 0) {
@@ -2062,6 +2294,22 @@ export default class ChatInput {
             this.app.showToast?.('Failed to import data', 'error');
         } finally {
             dismissToast?.();
+        }
+    }
+
+    async processMemoryImportFile(file) {
+        try {
+            if (this.app.memoryFeatureEnabled === false) {
+                this.app.showToast?.('Memory is off in settings.', 'info', 3000);
+                return;
+            }
+            if (!this.app.memoryEditor?.importMemoryFile) {
+                throw new Error('Memory editor is not available.');
+            }
+            await this.app.memoryEditor.importMemoryFile(file);
+        } catch (error) {
+            console.error('Memory import failed:', error);
+            this.app.showToast?.(error.message || 'Failed to import memory', 'error');
         }
     }
 }

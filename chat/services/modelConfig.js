@@ -8,6 +8,7 @@
  */
 
 import { ORG_API_BASE } from '../config.js';
+import { standardizeModelDisplayName } from './modelNames.js';
 
 // Cache key for pinned/disabled model metadata
 const MODEL_AVAILABILITY_CACHE_KEY = 'oa-model-availability-cache';
@@ -22,6 +23,8 @@ let updatedAt = null;
 
 // Fallback pinned models (used when API is unavailable or returns empty)
 const FALLBACK_PINNED_MODELS = [
+    'openai/gpt-5.3-chat',
+    'openai/gpt-5.3',
     'openai/gpt-5.2-chat',
     'openai/gpt-5.2',
     'anthropic/claude-sonnet-4.5',
@@ -33,10 +36,10 @@ const FALLBACK_PINNED_MODELS = [
 
 // Static configuration defaults
 const DEFAULT_CONFIG = {
-    defaultModelId: 'openai/gpt-5.2-chat',      // API model identifier
-    defaultModelName: 'OpenAI: GPT-5.2 Instant', // Display name in UI
     // Custom display name overrides (model ID -> display name)
     displayNameOverrides: {
+        'openai/gpt-5.3-chat': 'OpenAI: GPT-5.3 Instant',
+        'openai/gpt-5.3': 'OpenAI: GPT-5.3 Thinking',
         'openai/gpt-5.2-chat': 'OpenAI: GPT-5.2 Instant',
         'openai/gpt-5.1-chat': 'OpenAI: GPT-5.1 Instant',
         'openai/gpt-5-chat': 'OpenAI: GPT-5 Instant',
@@ -45,6 +48,16 @@ const DEFAULT_CONFIG = {
         'openai/gpt-5': 'OpenAI: GPT-5 Thinking',
     },
 };
+
+/**
+ * Backward-compatible wrapper around the dedicated model-name standardizer.
+ * Keeps default display-name overrides colocated with model config.
+ */
+export function getStandardizedModelDisplayName(modelReference) {
+    return standardizeModelDisplayName(modelReference, {
+        displayNameOverrides: DEFAULT_CONFIG.displayNameOverrides
+    });
+}
 
 function normalizeModelIdList(value) {
     if (!Array.isArray(value)) return [];
@@ -204,12 +217,33 @@ export function getDisabledModels() {
 }
 
 /**
+ * Get the default model ID.
+ * Mirrors the first model in the pinned list so server-side availability can
+ * promote the default without requiring a client release.
+ * @returns {string|null}
+ */
+export function getDefaultModelId() {
+    return getPinnedModels()[0] || FALLBACK_PINNED_MODELS[0] || null;
+}
+
+/**
+ * Get the default model display name.
+ * @returns {string}
+ */
+export function getDefaultModelName() {
+    const modelId = getDefaultModelId();
+    return getStandardizedModelDisplayName(modelId) || modelId || '';
+}
+
+/**
  * Get static defaults + current availability state.
  * @returns {Object}
  */
 export function getDefaultModelConfig() {
     return {
         ...DEFAULT_CONFIG,
+        defaultModelId: getDefaultModelId(),
+        defaultModelName: getDefaultModelName(),
         pinnedModels: getPinnedModels(),
         disabledModels: getDisabledModels()
     };

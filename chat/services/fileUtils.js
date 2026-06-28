@@ -6,12 +6,11 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB for all files
 // Supported file types
 const SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif'];
 const SUPPORTED_PDF_TYPES = ['application/pdf'];
+const SUPPORTED_DOCX_TYPES = ['application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
 const SUPPORTED_AUDIO_TYPES = ['audio/wav', 'audio/mp3', 'audio/mpeg', 'audio/ogg', 'audio/webm'];
+const DOCX_EXTENSION_RE = /\.docx$/i;
 
-// NOTE: Microsoft Office formats (.docx, .xlsx) are not currently supported.
-// Future implementation would require client-side parsing (e.g., mammoth.js)
-// to extract text content before sending to the AI, as most models don't support
-// these binary formats directly.
+const docxTextCache = new WeakMap();
 
 /**
  * Attempts to detect if a file is text-based by reading a sample of its content.
@@ -87,6 +86,7 @@ async function isTextFile(file) {
 export async function getFileType(file) {
     if (SUPPORTED_IMAGE_TYPES.includes(file.type)) return 'image';
     if (SUPPORTED_PDF_TYPES.includes(file.type)) return 'pdf';
+    if (SUPPORTED_DOCX_TYPES.includes(file.type) || DOCX_EXTENSION_RE.test(file.name || '')) return 'docx';
     if (SUPPORTED_AUDIO_TYPES.includes(file.type)) return 'audio';
 
     // Try to detect text files
@@ -99,7 +99,7 @@ export async function getFileType(file) {
 
 /**
  * Returns an SVG icon string based on file type/mime type.
- * @param {string} fileType - One of 'image', 'pdf', 'audio', 'text', 'unknown'
+ * @param {string} fileType - One of 'image', 'pdf', 'docx', 'audio', 'text', 'unknown'
  * @param {string} mimeType - The detailed mime type
  * @param {string} className - CSS classes for the SVG
  * @returns {string} SVG HTML string
@@ -115,6 +115,12 @@ export function getFileIconSvg(fileType, mimeType, className = "w-8 h-8") {
         return `
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="${className} text-destructive">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+            </svg>
+        `;
+    } else if (fileType === 'docx' || SUPPORTED_DOCX_TYPES.includes(mimeType)) {
+        return `
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="${className} text-blue-600">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 10.5h1.5m-1.5 3h7.5M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
             </svg>
         `;
     } else if (fileType === 'audio') {
@@ -147,6 +153,7 @@ export function getExtensionFromMimeType(mimeType) {
         'image/gif': 'gif',
         'image/webp': 'webp',
         'application/pdf': 'pdf',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
         'audio/wav': 'wav',
         'audio/mp3': 'mp3',
         'audio/mpeg': 'mp3',
@@ -187,20 +194,31 @@ export function getExtensionFromMimeType(mimeType) {
 }
 
 export async function validateFile(file) {
-    const fileType = await getFileType(file);
-
-    if (fileType === 'unknown') {
-        return {
-            valid: false,
-            error: `Unsupported file type: ${file.type}. Supported types: images, PDFs, audio, and text files (Markdown, JSON, CSV, Code, etc.).`
-        };
-    }
-
     if (file.size > MAX_FILE_SIZE) {
         return {
             valid: false,
             error: `File "${file.name}" exceeds the 10MB size limit (${formatFileSize(file.size)}). Please use a smaller file.`
         };
+    }
+
+    const fileType = await getFileType(file);
+
+    if (fileType === 'unknown') {
+        return {
+            valid: false,
+            error: `Unsupported file type: ${file.type || file.name}. Supported types: images, PDFs, Word documents (.docx), audio, and text files (Markdown, JSON, CSV, Code, etc.).`
+        };
+    }
+
+    if (fileType === 'docx') {
+        try {
+            await extractDocxText(file);
+        } catch (error) {
+            return {
+                valid: false,
+                error: `Could not read Word document "${file.name}": ${error.message}`
+            };
+        }
     }
 
     return { valid: true, fileType };
@@ -226,6 +244,189 @@ function getAudioFormat(mimeType) {
     return formatMap[mimeType] || 'wav';
 }
 
+function getUint16(view, offset) {
+    return view.getUint16(offset, true);
+}
+
+function getUint32(view, offset) {
+    return view.getUint32(offset, true);
+}
+
+function findEndOfCentralDirectory(bytes) {
+    const minOffset = Math.max(0, bytes.length - 0x10000 - 22);
+    for (let offset = bytes.length - 22; offset >= minOffset; offset -= 1) {
+        if (
+            bytes[offset] === 0x50 &&
+            bytes[offset + 1] === 0x4b &&
+            bytes[offset + 2] === 0x05 &&
+            bytes[offset + 3] === 0x06
+        ) {
+            return offset;
+        }
+    }
+    return -1;
+}
+
+async function inflateRaw(bytes) {
+    if (typeof DecompressionStream !== 'function') {
+        throw new Error('compressed DOCX entries require browser decompression support');
+    }
+
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+async function unzipDocxEntries(arrayBuffer) {
+    const bytes = new Uint8Array(arrayBuffer);
+    const view = new DataView(arrayBuffer);
+    const eocdOffset = findEndOfCentralDirectory(bytes);
+    if (eocdOffset < 0) {
+        throw new Error('invalid DOCX archive');
+    }
+
+    const entryCount = getUint16(view, eocdOffset + 10);
+    let directoryOffset = getUint32(view, eocdOffset + 16);
+    const decoder = new TextDecoder('utf-8');
+    const entries = new Map();
+
+    for (let i = 0; i < entryCount; i += 1) {
+        if (getUint32(view, directoryOffset) !== 0x02014b50) {
+            throw new Error('invalid DOCX central directory');
+        }
+
+        const compressionMethod = getUint16(view, directoryOffset + 10);
+        const compressedSize = getUint32(view, directoryOffset + 20);
+        const uncompressedSize = getUint32(view, directoryOffset + 24);
+        const filenameLength = getUint16(view, directoryOffset + 28);
+        const extraLength = getUint16(view, directoryOffset + 30);
+        const commentLength = getUint16(view, directoryOffset + 32);
+        const localHeaderOffset = getUint32(view, directoryOffset + 42);
+        const nameStart = directoryOffset + 46;
+        const name = decoder.decode(bytes.slice(nameStart, nameStart + filenameLength));
+
+        entries.set(name, {
+            compressionMethod,
+            compressedSize,
+            uncompressedSize,
+            localHeaderOffset
+        });
+
+        directoryOffset = nameStart + filenameLength + extraLength + commentLength;
+    }
+
+    return {
+        entries,
+        async read(name) {
+            const entry = entries.get(name);
+            if (!entry) return null;
+            const localOffset = entry.localHeaderOffset;
+            if (getUint32(view, localOffset) !== 0x04034b50) {
+                throw new Error(`invalid local header for ${name}`);
+            }
+
+            const filenameLength = getUint16(view, localOffset + 26);
+            const extraLength = getUint16(view, localOffset + 28);
+            const dataStart = localOffset + 30 + filenameLength + extraLength;
+            const compressed = bytes.slice(dataStart, dataStart + entry.compressedSize);
+
+            if (entry.compressionMethod === 0) {
+                return compressed;
+            }
+            if (entry.compressionMethod === 8) {
+                const inflated = await inflateRaw(compressed);
+                if (entry.uncompressedSize && inflated.length !== entry.uncompressedSize) {
+                    console.warn(`DOCX entry ${name} decompressed to ${inflated.length} bytes, expected ${entry.uncompressedSize}.`);
+                }
+                return inflated;
+            }
+
+            throw new Error(`unsupported DOCX compression method ${entry.compressionMethod}`);
+        }
+    };
+}
+
+function decodeXmlEntities(text) {
+    return text.replace(/&(?:#(\d+)|#x([0-9a-fA-F]+)|amp|lt|gt|quot|apos);/g, (match, decimal, hex) => {
+        if (decimal) return String.fromCodePoint(Number(decimal));
+        if (hex) return String.fromCodePoint(Number.parseInt(hex, 16));
+        const entities = {
+            '&amp;': '&',
+            '&lt;': '<',
+            '&gt;': '>',
+            '&quot;': '"',
+            '&apos;': "'"
+        };
+        return entities[match] || match;
+    });
+}
+
+function extractTextFromWordXml(xml) {
+    const output = [];
+    const tokenPattern = /<w:t\b[^>]*>([\s\S]*?)<\/w:t>|<w:tab\b[^>]*\/>|<w:br\b[^>]*\/>|<\/w:p>|<\/w:tc>/g;
+    let match;
+
+    while ((match = tokenPattern.exec(xml)) !== null) {
+        const token = match[0];
+        if (match[1] !== undefined) {
+            output.push(decodeXmlEntities(match[1]));
+        } else if (token.startsWith('<w:tab') || token === '</w:tc>') {
+            output.push('\t');
+        } else {
+            output.push('\n');
+        }
+    }
+
+    return output
+        .join('')
+        .replace(/\r/g, '')
+        .split('\n')
+        .map(line => line.replace(/[ \t]+$/g, ''))
+        .join('\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+}
+
+export async function extractDocxText(file) {
+    if (docxTextCache.has(file)) {
+        return docxTextCache.get(file);
+    }
+
+    const archive = await unzipDocxEntries(await file.arrayBuffer());
+    const xmlNames = Array.from(archive.entries.keys())
+        .filter(name => /^word\/(?:document|header\d+|footer\d+|footnotes|endnotes)\.xml$/i.test(name))
+        .sort((a, b) => {
+            if (a === 'word/document.xml') return -1;
+            if (b === 'word/document.xml') return 1;
+            return a.localeCompare(b);
+        });
+
+    if (!xmlNames.includes('word/document.xml')) {
+        throw new Error('missing word/document.xml');
+    }
+
+    const decoder = new TextDecoder('utf-8');
+    const sections = [];
+    for (const name of xmlNames) {
+        const data = await archive.read(name);
+        if (!data) continue;
+        const text = extractTextFromWordXml(decoder.decode(data));
+        if (text) sections.push(text);
+    }
+
+    const extractedText = sections.join('\n\n').trim();
+    docxTextCache.set(file, extractedText);
+    return extractedText;
+}
+
+async function fileToTextContent(file, fileType) {
+    if (fileType === 'docx') {
+        const extractedText = await extractDocxText(file);
+        return extractedText || '[No readable text found in this Word document]';
+    }
+
+    return await file.text();
+}
+
 export async function fileToMultimodalContent(file) {
     const validation = await validateFile(file);
 
@@ -233,8 +434,17 @@ export async function fileToMultimodalContent(file) {
         throw new Error(validation.error);
     }
 
-    const base64Data = await fileToBase64(file);
     const fileType = validation.fileType;
+
+    if (fileType === 'text' || fileType === 'docx') {
+        const textContent = await fileToTextContent(file, fileType);
+        return {
+            type: 'text',
+            text: `--- File: ${file.name} ---\n${textContent}`
+        };
+    }
+
+    const base64Data = await fileToBase64(file);
 
     if (fileType === 'image') {
         return {

@@ -40,3 +40,9 @@ yarn-error.log*
 # local stash
 stash/
 local/
+
+# Claude Code
+.claude/
+
+# Conductor
+.context/

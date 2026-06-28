@@ -4,7 +4,7 @@
 
 The OpenAnonymity (OA) architecture relies on Privacy Pass (RFC 9578) with RSA Blind Signatures (RFC 9474) to decouple ticket issuance from ticket redemption. While the verifier and client are open-source and their execution is attested, the org backend (station) handling the issuance and redemption is closed-source.
 
-This document provides a formal cryptographic proof that, given the specific client-side implementation in `oa-chat/chat/services/privacyPass.js`, **a malicious, closed-source server absolutely cannot link a redeemed ticket to its issuance event.**
+This document provides a formal cryptographic proof that, given the specific client-side implementation in `chat/services/privacyPass.js`, **a malicious, closed-source server absolutely cannot link a redeemed ticket to its issuance event.**
 
 ## 2. Cryptographic Foundation (RFC 9474)
 
@@ -40,7 +40,7 @@ Even with perfect blinding, a malicious server might try to cheat by manipulatin
 ### Vector B: Challenge Segregation Attack
 
 * **Attack:** The Privacy Pass protocol allows the server to issue a "Challenge" (a nonce) to the client. A malicious server could issue a unique challenge to every client. At redemption, the token includes a hash of the challenge (`challenge_digest`), allowing the server to identify the user.
-* **Defense (Proven Impossibility):** In `privacyPass.js` (Lines 64-66), the client entirely ignores the server's challenge and **hardcodes** a static challenge for all requests with empty redemption context and no origin info:
+* **Defense (Proven Impossibility):** In `privacyPass.js` (Lines 75-86), the client entirely ignores the server's challenge and **hardcodes** a static challenge for all requests with empty redemption context and no origin info:
   ```javascript
   const challenge = new TokenChallenge(
       0x0002,

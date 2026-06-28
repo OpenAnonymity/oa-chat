@@ -3,7 +3,6 @@
  * Returning-user panel for users who previously held tickets.
  */
 
-import ticketClient from '../services/ticketClient.js';
 import themeManager from '../services/themeManager.js';
 
 const STORAGE_KEY_DISMISSED = 'oa-welcome-dismissed';
@@ -40,7 +39,7 @@ class ThanksPanel {
 
     shouldShow() {
         if (localStorage.getItem(STORAGE_KEY_DISMISSED) === 'true') return false;
-        if (ticketClient.getTicketCount() > 0) return false;
+        if (this.app.services.tickets.getTicketCount() > 0) return false;
         return true;
     }
 
@@ -170,7 +169,7 @@ class ThanksPanel {
     }
 
     async redeemInviteCode(inviteCode) {
-        const result = await ticketClient.alphaRegister(inviteCode, (message, percent) => {
+        const result = await this.app.services.tickets.alphaRegister(inviteCode, (message, percent) => {
             this.redeemProgress = { message, percent };
             this.render();
         });
@@ -183,7 +182,7 @@ class ThanksPanel {
         window.dispatchEvent(new CustomEvent('tickets-updated'));
         const redeemedCount = Number.isFinite(this.ticketsRedeemed)
             ? this.ticketsRedeemed
-            : ticketClient.getTicketCount();
+            : this.app.services.tickets.getTicketCount();
         if (redeemedCount > 0) {
             this.app?.showToast?.(
                 `${redeemedCount} ticket${redeemedCount === 1 ? '' : 's'} added.`,
@@ -228,7 +227,7 @@ class ThanksPanel {
 
         try {
             if (inputKind === 'email') {
-                const waitlistResult = await ticketClient.joinWaitlist({
+                const waitlistResult = await this.app.services.tickets.joinWaitlist({
                     email: inputValue,
                     source: 'thanks_panel'
                 });

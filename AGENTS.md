@@ -9,6 +9,31 @@ The org backend being closed-source does not affect this -- blinding runs client
 no OA system sees prompts or responses. See also the blog post:
 [Unlinkable Inference as a User Privacy Architecture](https://openanonymity.ai/blog/unlinkable-inference/).
 
+## Agent Workflow (read docs before code)
+
+For ongoing web-app work, agents should follow this order:
+
+1. Read `docs/PRIVACY_MODEL.md`, then scan the relevant files in `docs/` to understand
+   the current product and feature context before opening implementation files. If the
+   task touches UI/UX, read [docs/APP_STATE.md](docs/APP_STATE.md) first and then any
+   related feature doc under `docs/`.
+2. Explore the code paths that implement the affected behavior, then make the change.
+3. After meaningful implementation or investigation work, update the relevant doc in
+   `docs/` and add any non-obvious learnings, UI nuances, state coupling, persistence
+   details, or follow-up notes to [docs/APP_STATE.md](docs/APP_STATE.md) so future
+   agents can pick up the state cleanly.
+4. Before marking a non-trivial coding task as done, spin up a fresh subagent to
+   review the final diff adversarially for bugs, privacy regressions, missed tests,
+   UI/UX regressions, and maintainability issues. Treat that review as part of the
+   same turn: fix valid findings, rerun the subagent review after material fixes, and
+   iterate back and forth until the fresh review agent approves the final diff. If
+   approval is blocked by residual risk, finish only after that risk is explicitly
+   accepted and reported by the main agent (or by the user when it requires a
+   product/behavior decision).
+
+If no existing doc in `docs/` is a good fit for the new learning, create one and link it
+from [docs/APP_STATE.md](docs/APP_STATE.md).
+
 ## Project Structure & Module Organization
 The app runs entirely in the browser and is organized as ES modules:
 
@@ -59,13 +84,14 @@ The app runs entirely in the browser and is organized as ES modules:
   - `providerIcons.js`: Maps provider names to icons under `img/`.
   - `themeManager.js`: System/light/dark preference management with pre-hydration application.
 - `vendor/privacypass-ts.js`: Bundled `@cloudflare/privacypass-ts` (Apache-2.0, pure JS) for blind signature operations.
+- `docs/APP_STATE.md`: Living handoff doc for current web-app state, subtle UI behaviors, and implementation learnings that may not be obvious from code alone.
 - `styles.css`: Design tokens synced with Tailwind config, prose formatting, reasoning/citation styles, proxy modals, message navigation styling, scroll behaviors, wide mode, and responsive states.
 - `tailwind.config.js`: Tailwind CLI configuration (root).
 - `tailwind.input.css` / `tailwind.generated.css`: Tailwind build input/output.
 - `vendor/`: Self-hosted third-party JS/CSS (Marked, KaTeX, Highlight.js, libcurl.js, hash-wasm, html2pdf).
 - `fonts/`: Self-hosted Google Fonts (`fonts.css` + WOFF2 files). Managed by `scripts/sync-fonts.mjs`.
 - `img/`: Provider and app icons.
-- `README.md`: Legacy, not the source of truth for architecture; see this file.
+- `README.md`: Project overview and quick-start guide.
 
 ## Build, Test, and Development Commands
 The app is still HTML-first for development, but production builds are bundled with esbuild and minified with terser.
@@ -116,6 +142,9 @@ There is no automated test harness yet. Manually verify:
 
 ## Commit & Pull Request Guidelines
 Existing commits use short, present-tense descriptions (e.g. “changes in UI, activity, latex fix”). Follow that tone, keep the first line under ~70 characters, and group related changes together. Pull requests should include: a concise summary of the user-facing impact, screenshots or gifs for UI updates, notes on manual testing performed, and references to any related issues or discussions.
+
+For non-trivial product or UI changes, update the relevant file in `docs/` as part of the
+same change so the next agent inherits the latest behavior, constraints, and lessons.
 
 ## API Keys & Security
 - Keys/tokens are ephemeral and acquired unlinkably via ticket redemption (`services/ticketClient.js` + Privacy Pass). Do not hard-code keys.

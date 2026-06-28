@@ -60,6 +60,15 @@ export default class Sidebar {
         return div.innerHTML;
     }
 
+    escapeHtmlAttribute(text) {
+        return String(text ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
     /**
      * Determines the date group for a session based on its timestamp.
      * @param {number} timestamp - Unix timestamp
@@ -78,6 +87,16 @@ export default class Sidebar {
         if (diffDays <= 7) return 'Previous 7 Days';
         if (diffDays <= 30) return 'Previous 30 Days';
         return 'Older';
+    }
+
+    getStarIconSvg(filled = false) {
+        return filled
+            ? `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <path d="M11.48 3.5a.58.58 0 0 1 1.04 0l2.2 4.46c.08.17.24.29.43.32l4.92.72a.58.58 0 0 1 .32.99l-3.56 3.47a.58.58 0 0 0-.17.51l.84 4.9a.58.58 0 0 1-.84.61l-4.4-2.31a.58.58 0 0 0-.54 0l-4.4 2.31a.58.58 0 0 1-.84-.61l.84-4.9a.58.58 0 0 0-.17-.51L3.61 9.99A.58.58 0 0 1 3.93 9l4.92-.72a.58.58 0 0 0 .43-.32l2.2-4.46Z" />
+                </svg>`
+            : `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M11.48 3.5a.58.58 0 0 1 1.04 0l2.2 4.46c.08.17.24.29.43.32l4.92.72a.58.58 0 0 1 .32.99l-3.56 3.47a.58.58 0 0 0-.17.51l.84 4.9a.58.58 0 0 1-.84.61l-4.4-2.31a.58.58 0 0 0-.54 0l-4.4 2.31a.58.58 0 0 1-.84-.61l.84-4.9a.58.58 0 0 0-.17-.51L3.61 9.99A.58.58 0 0 1 3.93 9l4.92-.72a.58.58 0 0 0 .43-.32l2.2-4.46Z" />
+                </svg>`;
     }
 
     /**
@@ -107,9 +126,17 @@ export default class Sidebar {
      */
     buildSessionHTML(session) {
         const isActive = session.id === this.app.state.currentSessionId;
-        const titleClass = session.title === 'New Chat' ? 'italic text-muted-foreground' : '';
+        const titleClasses = [];
+        if (session.title === 'New Chat') {
+            titleClasses.push('italic', 'text-muted-foreground');
+        }
+        if (session.titleGenerationPending && session.titleSource === 'local') {
+            titleClasses.push('session-title-generating');
+        }
+        const titleClass = titleClasses.join(' ');
         const isShared = !!session.shareInfo?.shareId;
         const sharingDisabled = !!this.app?.isOrgFeaturesDisabled?.();
+        const isStarred = !!session.starred;
         // Show imported indicator for pure imports and forked imports (not local forks)
         // forkedFrom alone (without importedMessageCount) indicates a LOCAL fork, not an import
         const isImported = !!(session.importedFrom || session.importedSource ||
@@ -135,15 +162,24 @@ export default class Sidebar {
             </span>`;
         }
 
+        const starButtonClass = isStarred
+            ? 'session-star-btn session-star-btn--starred opacity-100'
+            : 'session-star-btn opacity-0 group-hover:opacity-100 focus-visible:opacity-100';
+        const starLabel = isStarred ? 'Unstar chat' : 'Star chat';
+        const starMenuLabel = isStarred ? 'Unstar' : 'Star';
+
         return `
             <div class="group relative flex h-9 items-center rounded-lg ${isActive ? 'chat-session active' : 'hover-highlight'} transition-colors pl-3 chat-session" data-session-id="${session.id}">
                 <a class="flex flex-1 items-center justify-between h-full min-w-0 text-foreground hover:text-foreground cursor-pointer">
                     <div class="flex min-w-0 flex-1 items-center">
-                        <input class="session-title-input w-full cursor-pointer truncate bg-transparent text-sm leading-5 focus:outline-none text-foreground ${titleClass}" placeholder="Untitled Chat" readonly data-session-id="${session.id}" value="${this.escapeHtml(session.title)}">
+                        <input class="session-title-input w-full cursor-pointer truncate bg-transparent text-sm leading-5 focus:outline-none text-foreground ${titleClass}" placeholder="Untitled Chat" readonly data-session-id="${this.escapeHtmlAttribute(session.id)}" value="${this.escapeHtmlAttribute(session.title)}">
                         ${indicatorHtml}
                     </div>
                 </a>
                 <div class="flex shrink-0 items-center relative">
+                    <button class="${starButtonClass}" aria-label="${starLabel}" title="${starLabel}" aria-pressed="${isStarred ? 'true' : 'false'}" data-session-id="${this.escapeHtmlAttribute(session.id)}">
+                        ${this.getStarIconSvg(isStarred)}
+                    </button>
                     <button class="session-menu-btn inline-flex items-center justify-center whitespace-nowrap rounded-md font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 gap-2 leading-6 text-muted-foreground border border-transparent h-9 w-9 opacity-0 group-hover:opacity-100" aria-label="Session options" data-session-id="${session.id}">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z" />
@@ -151,6 +187,7 @@ export default class Sidebar {
                     </button>
                     <div class="session-menu hidden absolute right-0 top-10 z-[100] rounded-lg border border-border bg-popover shadow-lg p-1 min-w-[140px]" data-session-id="${session.id}">
                         <button class="rename-session-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">Rename</button>
+                        <button class="toggle-star-session-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">${starMenuLabel}</button>
                         <button class="copy-link-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">Copy Link</button>
                         ${sharingDisabled ? '' : `<button class="share-session-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">${shareLabel}</button>`}
                         ${!sharingDisabled && isShared ? `<button class="delete-share-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">Delete Share</button>` : ''}
@@ -173,6 +210,24 @@ export default class Sidebar {
         this.listenersAttached = true;
 
         list.addEventListener('click', async (e) => {
+            const starBtn = e.target.closest('.session-star-btn');
+            if (starBtn) {
+                e.preventDefault();
+                e.stopPropagation();
+                this.closeAllMenus();
+                await this.app.toggleSessionStar(starBtn.dataset.sessionId);
+                return;
+            }
+
+            const starAction = e.target.closest('.toggle-star-session-action');
+            if (starAction) {
+                e.stopPropagation();
+                const sessionId = starAction.dataset.sessionId;
+                this.closeAllMenus();
+                await this.app.toggleSessionStar(sessionId);
+                return;
+            }
+
             const renameAction = e.target.closest('.rename-session-action');
             if (renameAction) {
                 e.stopPropagation();
@@ -509,9 +564,9 @@ export default class Sidebar {
     }
 
     getFooterText() {
-        if (this.app.sessionSearchQuery.trim()) {
+        if (this.app.hasActiveSessionListCriteria()) {
             if (this.app.state.sessionSearchPending) {
-                return 'Searching...';
+                return this.app.sessionSearchQuery.trim() ? 'Searching...' : 'Filtering...';
             }
             return '';
         }
@@ -563,7 +618,11 @@ export default class Sidebar {
             ? `<div class="px-3 py-2 text-xs text-muted-foreground">${footerText}</div>`
             : '';
 
-        list.innerHTML = html + footerHtml;
+        const emptyHtml = !html && !footerHtml
+            ? `<div class="px-3 py-3 text-xs text-muted-foreground">${this.escapeHtml(this.app.getSessionListEmptyText())}</div>`
+            : '';
+
+        list.innerHTML = html + footerHtml + emptyHtml;
     }
 
     prepareVirtualItems(sessionsToRender) {

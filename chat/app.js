@@ -1,24 +1,10 @@
 // Main application logic
-import RightPanel from './components/RightPanel.js';
-// FEATURE DISABLED: Status indicator and activity banner - uncomment to re-enable
-import FloatingPanel from './components/FloatingPanel.js';
-import MessageNavigation from './components/MessageNavigation.js';
-import Sidebar from './components/Sidebar.js';
-import ChatArea from './components/ChatArea.js';
-import ChatInput from './components/ChatInput.js';
-import ModelPicker from './components/ModelPicker.js';
-import ChatHistoryImportModal from './components/ChatHistoryImportModal.js';
-import AccountModal from './components/AccountModal.js';
-import WelcomePanel from './components/WelcomePanel.js';
-import ThanksPanel from './components/ThanksPanel.js';
-import { buildTypingIndicator } from './components/MessageTemplates.js';
 import themeManager from './services/themeManager.js';
 import preferencesStore, { PREF_KEYS } from './services/preferencesStore.js';
 import storageManager from './services/storageManager.js';
 import storageEvents from './services/storageEvents.js';
 import { getFileIconSvg } from './services/fileUtils.js';
-import { exportChats } from './services/globalExport.js';
-import { exportTickets } from './services/globalExport.js';
+import { exportChats, exportTickets } from './services/globalExport.js';
 import { parseReasoningContent } from './services/reasoningParser.js';
 import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort } from './services/reasoningConfig.js';
 import { fetchUrlMetadata } from './services/urlMetadata.js';
@@ -27,43 +13,89 @@ import inferenceService from './services/inference/inferenceService.js';
 import ticketClient from './services/ticketClient.js';
 import SelfHostedStationModeController from './services/selfHostedStationModeController.js';
 import scrubberService from './services/scrubberService.js';
+import {
+    augmentQuery as runMemoryAugmentQuery,
+    augmentQueryAdaptive as runMemoryAugmentQueryAdaptive,
+    CONFIDENTIAL_KEY_TICKETS,
+    ensureMemoryKey,
+    ingestMessages as ingestMemoryMessages,
+    invalidateMemoryKey,
+    isMemoryAuthError,
+    stripMemoryPromptUserData
+} from './services/memoryBridge.js';
 import shareService from './services/shareService.js';
-import shareModals from './components/ShareModals.js';
 import { getTicketCost, initModelTiers } from './services/modelTiers.js';
-import { initPinnedModels, onPinnedModelsUpdate, getDisabledModels } from './services/modelConfig.js';
+import { initPinnedModels, onPinnedModelsUpdate, getDefaultModelConfig, getDisabledModels, getPinnedModels, getStandardizedModelDisplayName } from './services/modelConfig.js';
 import apiKeyStore from './services/apiKeyStore.js';
 import { generateUlid21 } from './services/ulid.js';
 import { chatDB } from './db.js';
+import { DEFAULT_MEMORY_AGENT_MODEL, isAllowedConfidentialModel } from './services/confidentialModelConfig.js';
+import { normalizeMessagesForMemory } from './services/memoryMessageNormalization.js';
+import { normalizeMemoryRetrievalAssessment } from './services/memoryRetrievalAssessment.js';
+import {
+    buildLocalSessionTitle as buildLocalSessionTitleText,
+    buildForkSessionTitleFields as buildForkSessionTitleFieldsValue,
+    buildSessionTitleSearchText as buildSessionTitleSearchTextValue,
+    normalizeSessionSearchText as normalizeSessionSearchTextValue,
+    getSearchableMessageText as getSearchableMessageTextValue,
+    buildSessionConversationSearchText as buildSessionConversationSearchTextValue,
+    buildSessionSearchIndexFields as buildSessionSearchIndexFieldsValue,
+    cleanGeneratedSessionTitle as cleanGeneratedSessionTitleText
+} from './domain/sessionSearch.js';
+import {
+    getMessageTextContent as getMessageTextContentValue,
+    processMessagesForApi
+} from './domain/messageContent.js';
+import {
+    buildQuickAskMessages,
+    buildQuickAskQuestion,
+    normalizeQuickAskSelection
+} from './domain/quickAsk.js';
+import { normalizePendingPhase as normalizeStreamingPendingPhase } from './domain/streamingState.js';
+import {
+    filterDisabledModels as filterDisabledModelsValue,
+    getFallbackModelEntry as getFallbackModelEntryValue,
+    normalizeModelName as normalizeModelNameValue,
+    resolveDefaultModelPreferenceUpdate as resolveDefaultModelPreferenceUpdateValue,
+    upgradeDefaultModelPreference as upgradeDefaultModelPreferenceValue
+} from './domain/modelSelection.js';
+import {
+    resolveMemoryFeatureState as resolveMemoryFeatureStateValue,
+    resolveMemoryFeatureToggle as resolveMemoryFeatureToggleValue
+} from './domain/memorySettings.js';
+import {
+    acquireSessionAccess,
+    buildVerifierSubmitKeyProof as buildVerifierSubmitKeyProofValue,
+    isAccessCreditExhaustedError as isAccessCreditExhaustedErrorValue,
+    persistVerifierSubmitKeyProof as persistVerifierSubmitKeyProofValue
+} from './application/accessController.js';
+import VanillaChatUi from './ui/vanilla/VanillaChatUi.js';
 
-const DEFAULT_MODEL_NAME = inferenceService.getDefaultModelName();
 const SESSION_PAGE_SIZE = 80;
 const SESSION_SEARCH_LIMIT = 300;
 const SESSION_SCROLL_LOAD_THRESHOLD = 160;
 const SESSION_SEARCH_DEBOUNCE = 180;  // ms wait before triggering search
+const SESSION_CONTENT_SEARCH_MAX_CHARS = 12000;
+const SESSION_CONTENT_SEARCH_MESSAGE_MAX_CHARS = 2000;
+const MEMORY_CONTEXT_MAX_ENTRIES = 16;
+const MEMORY_CONTEXT_MAX_CHARS = 12000;
+const MEMORY_CONTEXT_PROMPT_MAX_CHARS = 9000;
 const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const UPDATE_CHECK_INITIAL_DELAY_MS = 45 * 1000;
+const SESSION_TITLE_MAX_LENGTH = 60;
+const SESSION_TITLE_FALLBACK_LENGTH = 50;
 
 // Layout constants for toolbar overlay prediction
 const SIDEBAR_WIDTH = 220;      // Default sidebar width = minimum width
 const RIGHT_PANEL_WIDTH = 288;  // 18rem = 288px
 const TOOLBAR_PREDICTION_GRACE_MS = 350; // Grace period to respect predicted state during animations
+const SIDEBAR_CLOSE_DURATION_MS = 220;
 
 // Used to upgrade users who were implicitly on the prior default.
-const PREVIOUS_DEFAULT_MODEL_NAME = 'OpenAI: GPT-5.1 Instant';
-
-// Legacy/alternate display names that may exist in persisted settings/sessions.
-// Map them to the canonical display names used by the current UI.
-const MODEL_NAME_ALIASES = new Map([
-    // GPT-5.2 Instant (chat)
-    ['OpenAI: GPT-5.2 Chat', 'OpenAI: GPT-5.2 Instant'],
-    ['GPT-5.2 Chat', 'OpenAI: GPT-5.2 Instant'],
-    // GPT-5.1 Instant (chat)
-    ['OpenAI: GPT-5.1 Chat', 'OpenAI: GPT-5.1 Instant'],
-    ['GPT-5.1 Chat', 'OpenAI: GPT-5.1 Instant'],
-    // GPT-5 Instant (chat)
-    ['OpenAI: GPT-5 Chat', 'OpenAI: GPT-5 Instant'],
-    ['GPT-5 Chat', 'OpenAI: GPT-5 Instant'],
-]);
+const PREVIOUS_DEFAULT_MODEL_NAMES = [
+    'OpenAI: GPT-5.2 Instant',
+    'OpenAI: GPT-5.1 Instant'
+];
 
 function generateSessionId() {
     return generateUlid21();
@@ -103,6 +135,7 @@ class ChatApp {
             isLoadingSessions: false,
             sessionSearchResults: null,
             sessionSearchResultsQuery: '',
+            sessionSearchResultsKey: '',
             sessionSearchPending: false,
             currentSessionId: null,
             models: [],
@@ -115,6 +148,11 @@ class ChatApp {
             newChatBtn: document.getElementById('new-chat-btn'),
             sessionsList: document.getElementById('sessions-list'),
             searchRoomsInput: document.getElementById('search-rooms'),
+            sidebarFilterBtn: document.getElementById('sidebar-filter-btn'),
+            sidebarFilterMenu: document.getElementById('sidebar-filter-menu'),
+            sidebarFilterRangeSelect: document.getElementById('sidebar-filter-range'),
+            sidebarFilterDateInput: document.getElementById('sidebar-filter-date'),
+            clearSidebarFiltersBtn: document.getElementById('clear-sidebar-filters'),
             chatArea: document.getElementById('chat-area'),
             messagesContainer: document.getElementById('messages-container'),
             messageInput: document.getElementById('message-input'),
@@ -129,8 +167,7 @@ class ChatApp {
             settingsBtn: document.getElementById('settings-btn'),
             settingsMenu: document.getElementById('settings-menu'),
             searchToggle: document.getElementById('search-toggle'),
-            // clearChatBtn: document.getElementById('clear-chat-btn'), // Temporarily removed
-            // copyMarkdownBtn: document.getElementById('copy-markdown-btn'), // Temporarily removed
+            memoryToggle: document.getElementById('chat-mode-toggle'),
             toggleRightPanelBtn: document.getElementById('toggle-right-panel-btn'), // This might be legacy, but let's keep it for now.
             showRightPanelBtn: document.getElementById('show-right-panel-btn'),
             shareBtn: document.getElementById('share-btn'),
@@ -157,30 +194,52 @@ class ChatApp {
         };
 
         this.searchEnabled = true;
+        this.memoryFeatureEnabled = true;
+        this.memoryMode = false;
+        this.memoryAutoInclude = false;
+        this.memoryAgentModel = DEFAULT_MEMORY_AGENT_MODEL;
         this.reasoningEnabled = true;
         this.reasoningEffort = DEFAULT_REASONING_EFFORT;
         this.sessionSearchQuery = '';
         this.sessionSearchDebounce = null;
         this.sessionSearchRequestId = 0;
+        this.sessionFilters = {
+            starredOnly: false,
+            dateMode: 'all',
+            customDate: ''
+        };
+        this.sidebarFilterControlsAttached = false;
         this.uploadedFiles = [];
         this.fileUndoStack = []; // Track file paste operations for undo
         this.filePreviewRenderVersion = 0; // Guard async preview renders against stale overwrites
         this.rightPanel = null;
         this.floatingPanel = null;
         this.messageNavigation = null;
+        this.ui = null;
         this.sidebar = null;
         this.chatArea = null;
         this.chatInput = null;
         this.modelPicker = null;
+        this.memoryEditor = null;
         this.sessionStreamingStates = new Map(); // Track streaming state per session
+        this.accessAcquisitionInFlight = new Map(); // backend/session/model -> shared access acquisition
         this.sessionScrollPositions = new Map(); // Track scrollTop per session in-memory
         this.sessionChatbarStates = new Map(); // Track in-tab chatbar drafts per session
         this.chatScrollSaveFrame = null;
         this.isAutoScrollPaused = false; // Track if auto-scroll is paused during streaming
+        this.activePromptScroll = null; // Tracks the visible prompt's temporary scroll runway
+        this.sessionPromptScrollAnchors = new Map(); // Keeps prompt-slide anchors across session switches
         this.scrollToBottomButton = null; // Reference to the floating scroll-to-bottom button
         this.scrollButtonCheckInterval = null; // Interval for checking button visibility during streaming
         this.scrubberService = scrubberService;
         this.scrubberPending = null;
+        this.memoryApprovalRequests = new Map();
+        this.memoryExtractionInFlight = new Set();
+        this.memoryExtractionAbortControllers = new Map();
+        this.memoryAugmentAbortControllers = new Set();
+        this.memoryWorkGeneration = 0;
+        this._lastApiContent = null;
+        this._lastApiContentGeneration = null;
         this.deleteHistoryReturnFocusEl = null;
         this.isDeletingAllChats = false;
         this.appVersionSignature = null;
@@ -206,6 +265,7 @@ class ChatApp {
 
         // Edit mode state
         this.editingMessageId = null; // Track which message is being edited
+        this.editDrafts = new Map(); // messageId -> { content, files } for side-effect-free prompt edits
 
         this.init();
     }
@@ -255,30 +315,17 @@ class ChatApp {
     }
 
     filterDisabledModels(models) {
-        if (!Array.isArray(models) || models.length === 0) {
-            return [];
-        }
-
-        const disabledSet = this.getDisabledModelSet();
-        if (disabledSet.size === 0) {
-            return [...models];
-        }
-
-        return models.filter(model => model && !disabledSet.has(model.id));
+        return filterDisabledModelsValue(models, this.getDisabledModelSet());
     }
 
     getFallbackModelEntry(session) {
-        if (!Array.isArray(this.state.models) || this.state.models.length === 0) {
-            return null;
-        }
-
-        const defaultModelId = inferenceService.getDefaultModelId(session);
-        const defaultModel = this.state.models.find(m => m.id === defaultModelId);
-        if (defaultModel) {
-            return defaultModel;
-        }
-
-        return this.state.models[0] || null;
+        const usePinnedDefaults = !session?.inferenceBackend ||
+            session.inferenceBackend === inferenceService.getDefaultBackendId();
+        return getFallbackModelEntryValue(
+            this.state.models,
+            inferenceService.getDefaultModelId(session),
+            usePinnedDefaults ? getPinnedModels() : []
+        );
     }
 
     applyDisabledModelFilter() {
@@ -316,6 +363,7 @@ class ChatApp {
         try {
             await this.loadModels();
             this.applyDisabledModelFilter();
+            await this.refreshDefaultModelPreferenceForAvailabilityUpdate();
             this.renderCurrentModel();
             if (this.modelPicker) {
                 if (!this.elements.modelPickerModal.classList.contains('hidden')) {
@@ -426,7 +474,8 @@ class ChatApp {
 
         // Custom code block renderer with header (language + copy button)
         renderer.code = (code, language) => {
-            const lang = language || '';
+            const infoString = typeof language === 'string' ? language.trim() : '';
+            const lang = infoString.match(/^\S+/)?.[0] || '';
             const displayLang = lang ? this.formatLanguageName(lang) : '';
 
             // Apply syntax highlighting if available
@@ -448,18 +497,9 @@ class ChatApp {
                 highlightedCode = this.escapeHtml(code);
             }
 
-            return `<div class="code-block-wrapper">
-                <div class="code-block-header">
-                    <span class="code-block-lang">${displayLang}</span>
-                    <button class="code-block-copy-btn" data-code="${escapeHtmlAttribute(code)}">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="copy-icon">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
-                        </svg>
-                        <span class="copy-text">Copy code</span>
-                    </button>
-                </div>
-                <pre><code class="hljs${lang ? ` language-${lang}` : ''}">${highlightedCode}</code></pre>
-            </div>`;
+            // Compact HTML to avoid whitespace text nodes inside flex containers
+            // which can create anonymous flex items and cause layout edge cases
+            return `<div class="code-block-wrapper"><div class="code-block-header"><span class="code-block-lang">${escapeHtml(displayLang)}</span><button class="code-block-copy-btn" data-code="${escapeHtmlAttribute(code)}"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="copy-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" /></svg><span class="copy-text">Copy code</span></button></div><pre><code class="hljs${lang ? ` language-${escapeHtmlAttribute(lang)}` : ''}">${highlightedCode}</code></pre></div>`;
         };
 
         renderer.html = (html) => escapeHtml(html);
@@ -639,7 +679,7 @@ class ChatApp {
         const chatArea = this.elements.chatArea;
         if (!chatArea) return;
 
-        if (!force && this.isAutoScrollPaused) {
+        if (!this.shouldAutoScrollChat(force)) {
             return;
         }
 
@@ -665,6 +705,12 @@ class ChatApp {
                 });
             });
         });
+    }
+
+    shouldAutoScrollChat(force = false) {
+        if (force) return true;
+        if (this.isPromptSlideUpEffectActive()) return false;
+        return !this.isAutoScrollPaused;
     }
 
     /**
@@ -697,6 +743,279 @@ class ChatApp {
 
         const maxScrollTop = Math.max(0, chatArea.scrollHeight - chatArea.clientHeight);
         this.setChatAreaScrollTopInstant(maxScrollTop);
+    }
+
+    /**
+     * Starts the post-send prompt positioning effect. The sent prompt is placed
+     * around 25% from the top of the chat viewport while streaming remains
+     * paused so long responses do not pull the viewport downward.
+     * @param {string} messageId
+     */
+    startPromptSlideUpEffect(messageId) {
+        const sessionId = this.state.currentSessionId;
+        if (!sessionId || !messageId) return;
+
+        const existingSpacer = this.activePromptScroll?.sessionId === sessionId
+            ? this.activePromptScroll.spacerEl
+            : null;
+        if (this.activePromptScroll && this.activePromptScroll.sessionId !== sessionId) {
+            this.clearPromptSlideUpEffect();
+        }
+        this.setPromptSlideUpAnchor(sessionId, messageId);
+        this.activePromptScroll = {
+            sessionId,
+            messageId,
+            spacerEl: existingSpacer
+        };
+        this.elements.chatArea?.classList.add('prompt-slide-active');
+
+        setTimeout(() => {
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    this.updateActivePromptScrollSpacer({ scroll: true, behavior: 'smooth' });
+                });
+            });
+        }, 50);
+    }
+
+    detachPromptSlideUpEffect() {
+        if (this.activePromptScroll?.spacerEl?.isConnected) {
+            this.activePromptScroll.spacerEl.remove();
+        }
+        this.elements.chatArea?.classList.remove('prompt-slide-active');
+        this.activePromptScroll = null;
+    }
+
+    setPromptSlideUpAnchor(sessionId, messageId) {
+        if (!sessionId || !messageId) return;
+        this.sessionPromptScrollAnchors.set(sessionId, { messageId });
+
+        const session = this.state.sessionsById.get(sessionId) || this.state.sessions.find(s => s.id === sessionId);
+        if (!session) return;
+
+        session.promptSlideAnchorMessageId = messageId;
+        session.promptSlideAnchorUpdatedAt = Date.now();
+        chatDB.saveSession(session).catch(error => {
+            console.debug('Failed to persist prompt slide anchor:', error);
+        });
+    }
+
+    clearPromptSlideUpAnchor(sessionId) {
+        if (!sessionId) return;
+        this.sessionPromptScrollAnchors.delete(sessionId);
+
+        const session = this.state.sessionsById.get(sessionId) || this.state.sessions.find(s => s.id === sessionId);
+        if (!session) return;
+
+        if ('promptSlideAnchorMessageId' in session || 'promptSlideAnchorUpdatedAt' in session) {
+            delete session.promptSlideAnchorMessageId;
+            delete session.promptSlideAnchorUpdatedAt;
+            chatDB.saveSession(session).catch(error => {
+                console.debug('Failed to clear prompt slide anchor:', error);
+            });
+        }
+    }
+
+    detachStalePromptSlideUpEffect() {
+        if (this.activePromptScroll &&
+            this.activePromptScroll.sessionId !== this.state.currentSessionId) {
+            this.detachPromptSlideUpEffect();
+        }
+    }
+
+    clearPromptSlideUpEffect() {
+        const sessionId = this.activePromptScroll?.sessionId || this.state.currentSessionId;
+        this.detachPromptSlideUpEffect();
+        this.clearPromptSlideUpAnchor(sessionId);
+    }
+
+    isPromptSlideUpEffectActive() {
+        return Boolean(
+            this.activePromptScroll &&
+            this.activePromptScroll.sessionId === this.state.currentSessionId
+        );
+    }
+
+    ensureActivePromptSpacer() {
+        if (!this.isPromptSlideUpEffectActive()) return null;
+
+        const messagesContainer = this.elements.messagesContainer;
+        if (!messagesContainer) return null;
+
+        let spacer = this.activePromptScroll.spacerEl;
+        if (!spacer || !spacer.isConnected) {
+            spacer = document.createElement('div');
+            spacer.className = 'prompt-scroll-spacer';
+            spacer.setAttribute('aria-hidden', 'true');
+            this.activePromptScroll.spacerEl = spacer;
+        }
+
+        if (spacer.parentElement !== messagesContainer || messagesContainer.lastElementChild !== spacer) {
+            messagesContainer.appendChild(spacer);
+        }
+
+        return spacer;
+    }
+
+    getPromptSlideUpMessageIdForSession(sessionId, messages = [], { allowStreamingFallback = false } = {}) {
+        if (!sessionId || !Array.isArray(messages)) return null;
+
+        const anchor = this.sessionPromptScrollAnchors.get(sessionId);
+        if (anchor?.messageId && messages.some(message => message.id === anchor.messageId)) {
+            return anchor.messageId;
+        }
+        if (anchor?.messageId) {
+            this.clearPromptSlideUpAnchor(sessionId);
+        }
+
+        const session = this.state.sessionsById.get(sessionId) || this.state.sessions.find(s => s.id === sessionId);
+        const persistedMessageId = session?.promptSlideAnchorMessageId;
+        if (persistedMessageId && messages.some(message => message.id === persistedMessageId)) {
+            this.sessionPromptScrollAnchors.set(sessionId, { messageId: persistedMessageId });
+            return persistedMessageId;
+        }
+        if (persistedMessageId) {
+            this.clearPromptSlideUpAnchor(sessionId);
+        }
+
+        if (!allowStreamingFallback) return null;
+
+        for (let i = messages.length - 1; i >= 0; i--) {
+            const message = messages[i];
+            if (message?.role === 'user' && !message.isLocalOnly) {
+                this.setPromptSlideUpAnchor(sessionId, message.id);
+                return message.id;
+            }
+        }
+
+        return null;
+    }
+
+    restorePromptSlideUpEffectForSession(sessionId, messageId, { primeRunway = false } = {}) {
+        if (!sessionId || !messageId || sessionId !== this.state.currentSessionId) return false;
+
+        const alreadyActive = this.activePromptScroll?.sessionId === sessionId &&
+            this.activePromptScroll?.messageId === messageId;
+        if (!alreadyActive) {
+            this.detachPromptSlideUpEffect();
+            this.activePromptScroll = {
+                sessionId,
+                messageId,
+                spacerEl: null
+            };
+        }
+
+        this.setPromptSlideUpAnchor(sessionId, messageId);
+        this.elements.chatArea?.classList.add('prompt-slide-active');
+
+        const spacer = this.ensureActivePromptSpacer();
+        const chatArea = this.elements.chatArea;
+        if (primeRunway && spacer && chatArea) {
+            spacer.hidden = false;
+            spacer.style.height = `${Math.ceil(chatArea.clientHeight * 0.75)}px`;
+        }
+
+        return Boolean(spacer);
+    }
+
+    captureActivePromptScrollAnchor({ primeRunway = false } = {}) {
+        if (!this.isPromptSlideUpEffectActive()) return null;
+
+        const chatArea = this.elements.chatArea;
+        const messageId = this.activePromptScroll.messageId;
+        const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
+        if (!chatArea || !messageEl) return null;
+
+        const areaRect = chatArea.getBoundingClientRect();
+        const messageRect = messageEl.getBoundingClientRect();
+        const anchor = {
+            sessionId: this.activePromptScroll.sessionId,
+            messageId,
+            offsetTop: messageRect.top - areaRect.top
+        };
+
+        if (primeRunway) {
+            const spacer = this.ensureActivePromptSpacer();
+            if (spacer) {
+                const currentHeight = spacer.hidden ? 0 : spacer.getBoundingClientRect().height;
+                spacer.hidden = false;
+                spacer.style.height = `${Math.ceil(Math.max(currentHeight, chatArea.scrollHeight))}px`;
+            }
+        }
+
+        return anchor;
+    }
+
+    restoreActivePromptScrollAnchor(anchor) {
+        if (!anchor || !this.isPromptSlideUpEffectActive()) return false;
+        if (anchor.sessionId !== this.activePromptScroll.sessionId ||
+            anchor.messageId !== this.activePromptScroll.messageId) {
+            return false;
+        }
+
+        const chatArea = this.elements.chatArea;
+        const messageEl = document.querySelector(`[data-message-id="${anchor.messageId}"]`);
+        if (!chatArea || !messageEl) return false;
+
+        this.updateActivePromptScrollSpacer();
+
+        const areaRect = chatArea.getBoundingClientRect();
+        const messageRect = messageEl.getBoundingClientRect();
+        const currentOffset = messageRect.top - areaRect.top;
+        const delta = currentOffset - anchor.offsetTop;
+
+        if (Math.abs(delta) > 1) {
+            const maxScrollTop = Math.max(0, chatArea.scrollHeight - chatArea.clientHeight);
+            this.setChatAreaScrollTopInstant(Math.min(maxScrollTop, Math.max(0, chatArea.scrollTop + delta)));
+        }
+
+        this.updateActivePromptScrollSpacer();
+        this.saveCurrentSessionScrollPosition();
+        return true;
+    }
+
+    /**
+     * Maintains just enough temporary bottom runway to keep the active prompt
+     * at the target viewport position. As assistant output grows, the spacer
+     * shrinks to zero without auto-scrolling the chat area.
+     */
+    updateActivePromptScrollSpacer({ scroll = false, behavior = 'auto' } = {}) {
+        if (!this.isPromptSlideUpEffectActive()) return;
+
+        const chatArea = this.elements.chatArea;
+        const messageId = this.activePromptScroll.messageId;
+        const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
+        const spacer = this.ensureActivePromptSpacer();
+
+        if (!chatArea || !messageEl || !spacer) return;
+
+        const spacerHeight = spacer.getBoundingClientRect().height;
+        const areaRect = chatArea.getBoundingClientRect();
+        const messageRect = messageEl.getBoundingClientRect();
+        const promptTop = chatArea.scrollTop + messageRect.top - areaRect.top;
+        const targetOffset = Math.round(chatArea.clientHeight * 0.25);
+        const desiredScrollTop = Math.max(0, promptTop - targetOffset);
+        const contentEndWithoutSpacer = chatArea.scrollHeight - spacerHeight;
+        const requiredScrollHeight = desiredScrollTop + chatArea.clientHeight;
+        const nextSpacerHeight = Math.max(0, Math.ceil(requiredScrollHeight - contentEndWithoutSpacer));
+
+        spacer.style.height = `${nextSpacerHeight}px`;
+        spacer.hidden = nextSpacerHeight <= 0;
+
+        if (scroll) {
+            requestAnimationFrame(() => {
+                const maxScrollTop = Math.max(0, chatArea.scrollHeight - chatArea.clientHeight);
+                const targetTop = Math.min(desiredScrollTop, maxScrollTop);
+                chatArea.scrollTo({
+                    top: targetTop,
+                    behavior
+                });
+                setTimeout(() => {
+                    this.saveCurrentSessionScrollPosition();
+                    this.updateScrollButtonVisibility();
+                }, behavior === 'smooth' ? 350 : 0);
+            });
+        }
     }
 
     /**
@@ -816,32 +1135,6 @@ class ChatApp {
     }
 
     /**
-     * Scrolls a user message to the top of the chat area
-     * @param {string} messageId - The message ID to scroll to top
-     */
-    scrollUserMessageToTop(messageId) {
-        const chatArea = this.elements.chatArea;
-        const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
-
-        console.log('[Scroll To Top]', { messageId, chatArea: !!chatArea, messageEl: !!messageEl });
-
-        if (!chatArea || !messageEl) {
-            console.warn('[Scroll To Top] Failed - missing elements');
-            return;
-        }
-
-        const padding = 20;
-        const messageTop = messageEl.offsetTop - chatArea.offsetTop - padding;
-
-        console.log('[Scroll To Top] Scrolling to:', messageTop);
-
-        chatArea.scrollTo({
-            top: messageTop,
-            behavior: 'smooth'
-        });
-    }
-
-    /**
      * Creates the scroll-to-bottom button element
      */
     createScrollToBottomButton() {
@@ -863,6 +1156,7 @@ class ChatApp {
         button.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
+            this.clearPromptSlideUpEffect();
             this.isAutoScrollPaused = false;
             this._scrollButtonClickPending = true;
             this.hideScrollToBottomButton();
@@ -1018,18 +1312,39 @@ class ChatApp {
         // Don't re-show button while scroll-to-bottom click is still processing
         if (this._scrollButtonClickPending) return;
 
+        if (this.isPromptSlideUpEffectActive() && this.isCurrentSessionStreaming()) {
+            this.hideScrollToBottomButton();
+            return;
+        }
+
         const inputContainer = document.querySelector('.absolute.bottom-0.left-0.right-0');
-        const lastMessage = this.elements.messagesContainer ? this.elements.messagesContainer.lastElementChild : null;
+        const spacer = this.activePromptScroll?.spacerEl?.isConnected
+            ? this.activePromptScroll.spacerEl
+            : null;
+        let lastMessage = this.elements.messagesContainer ? this.elements.messagesContainer.lastElementChild : null;
+        if (lastMessage === spacer) {
+            lastMessage = spacer.previousElementSibling;
+        }
 
         if (!inputContainer || !lastMessage) {
             this.hideScrollToBottomButton();
             return;
         }
 
-        const hiddenDistance = chatArea.scrollHeight - chatArea.scrollTop - chatArea.clientHeight;
+        const spacerHeight = spacer && !spacer.hidden ? spacer.getBoundingClientRect().height : 0;
+        const effectiveScrollHeight = chatArea.scrollHeight - spacerHeight;
+        const hiddenDistance = Math.max(0, effectiveScrollHeight - chatArea.scrollTop - chatArea.clientHeight);
         const isAtBottom = hiddenDistance <= 4;
+        const realBottomDistance = Math.max(0, chatArea.scrollHeight - chatArea.scrollTop - chatArea.clientHeight);
+        const isAtRealBottom = realBottomDistance <= 4;
 
         if (isAtBottom) {
+            if (this.isPromptSlideUpEffectActive() &&
+                !this.isCurrentSessionStreaming() &&
+                isAtRealBottom &&
+                spacerHeight <= 4) {
+                this.clearPromptSlideUpEffect();
+            }
             this.isAutoScrollPaused = false;
             this.hideScrollToBottomButton();
             return;
@@ -1038,7 +1353,8 @@ class ChatApp {
         const inputTop = inputContainer.getBoundingClientRect().top;
         const lastMessageBottom = lastMessage.getBoundingClientRect().bottom;
         const overlapsInput = lastMessageBottom > inputTop - 8;
-        const shouldShow = overlapsInput || hiddenDistance > 12;
+        const messageHiddenDistance = Math.max(0, lastMessageBottom - chatArea.getBoundingClientRect().bottom);
+        const shouldShow = overlapsInput || (spacer ? messageHiddenDistance > 12 : hiddenDistance > 12);
 
         if (shouldShow) {
             this.showScrollToBottomButton();
@@ -1380,16 +1696,9 @@ class ChatApp {
         const dbReady = chatDB.init();
 
         // Initialize UI components immediately (sync, fast) - shows loading states
-        this.sidebar = new Sidebar(this);
-        this.chatArea = new ChatArea(this);
-        this.chatInput = new ChatInput(this);
-        this.modelPicker = new ModelPicker(this);
-        this.chatHistoryImportModal = new ChatHistoryImportModal(this);
-        this.accountModal = new AccountModal(this);
-        this.welcomePanel = new WelcomePanel(this);
-        this.thanksPanel = new ThanksPanel(this);
-        this.rightPanel = new RightPanel(this);
-        this.rightPanel.mount();
+        this.ui = new VanillaChatUi(this);
+        Object.assign(this, this.ui.mountShell());
+        this.setupSidebarFilterControls();
         this.selfHostedStationModeController.applyUiState();
 
         // Render core shell immediately so non-sidebar UI is never blank on startup.
@@ -1463,18 +1772,14 @@ class ChatApp {
             })
         ];
 
-        // FEATURE DISABLED: Status indicator and activity banner - uncomment to re-enable
-        // Initialize floating panel
-        // this.floatingPanel = new FloatingPanel(this);
-
         // Initialize message navigation
-        this.messageNavigation = new MessageNavigation(this);
+        this.messageNavigation = this.ui.mountMessageNavigation();
 
         // Initialize model tiers and model availability (loads cache, fetches fresh data in background)
         initModelTiers();
         initPinnedModels();
         onPinnedModelsUpdate(() => {
-            this.refreshModelsForAvailabilityUpdate();
+            void this.refreshModelsForAvailabilityUpdate();
         });
 
         // Keep slower service startup off the critical render path.
@@ -1518,6 +1823,10 @@ class ChatApp {
         const settingsPromise = Promise.all([
             chatDB.getSetting('selectedModel'),
             chatDB.getSetting('searchEnabled'),
+            chatDB.getSetting('memoryFeatureEnabled'),
+            chatDB.getSetting('memoryMode'),
+            chatDB.getSetting('memoryAutoInclude'),
+            chatDB.getSetting('memoryAgentModel'),
             chatDB.getSetting('reasoningEffort')
         ]);
 
@@ -1530,7 +1839,15 @@ class ChatApp {
             }
         }
 
-        const [storedModelPreference, savedSearchEnabled, savedReasoningEffort] = await settingsPromise;
+        const [
+            storedModelPreference,
+            savedSearchEnabled,
+            savedMemoryFeatureEnabled,
+            savedMemoryMode,
+            savedMemoryAutoInclude,
+            savedMemoryAgentModel,
+            savedReasoningEffort
+        ] = await settingsPromise;
 
         // Process model preference
         const normalizedModelName = this.upgradeDefaultModelPreference(
@@ -1546,6 +1863,22 @@ class ChatApp {
 
         // Restore search state
         this.searchEnabled = savedSearchEnabled !== undefined ? savedSearchEnabled : true;
+        const resolvedMemoryFeatureState = resolveMemoryFeatureStateValue({
+            savedMemoryFeatureEnabled,
+            savedMemoryMode
+        });
+        this.memoryFeatureEnabled = resolvedMemoryFeatureState.memoryFeatureEnabled;
+        this.memoryMode = resolvedMemoryFeatureState.memoryMode;
+        if (resolvedMemoryFeatureState.shouldPersistMemoryMode) {
+            chatDB.saveSetting('memoryMode', false).catch(() => {});
+        }
+        this.memoryAutoInclude = savedMemoryAutoInclude === true;
+        this.memoryAgentModel = isAllowedConfidentialModel(savedMemoryAgentModel)
+            ? String(savedMemoryAgentModel).trim()
+            : DEFAULT_MEMORY_AGENT_MODEL;
+        if (savedMemoryAgentModel && savedMemoryAgentModel !== this.memoryAgentModel) {
+            chatDB.saveSetting('memoryAgentModel', this.memoryAgentModel).catch(() => {});
+        }
 
         // Extended-thinking toggle is intentionally removed from UI for now.
         // Keep the legacy flag always enabled and persist it for import/export compatibility.
@@ -1557,6 +1890,8 @@ class ChatApp {
         this.renderMessages();
         this.renderCurrentModel();
         this.chatInput.updateSearchToggleUI();
+        this.chatInput.updateMemoryToggleUI();
+        this.chatInput.refreshMemorySettingsUI();
         this.chatInput.updateReasoningToggleUI();
         this.chatInput.updateReasoningEffortUI();
         this.updateShareButtonUI();
@@ -1603,7 +1938,14 @@ class ChatApp {
 
         // Load models from inference backend in background (non-blocking)
         // Updates model picker with icons once loaded
-        this.loadModels().then(() => {
+        this.loadModels().then(async () => {
+            await this.refreshDefaultModelPreferenceForAvailabilityUpdate();
+            if (this.pendingModelAvailabilityRefresh) {
+                this.pendingModelAvailabilityRefresh = false;
+                await this.refreshModelsForAvailabilityUpdate();
+                return;
+            }
+
             this.renderCurrentModel(); // Re-render button with model icons
             if (this.modelPicker) {
                 // Re-render model list if modal is open, otherwise warm it in idle time.
@@ -1637,7 +1979,10 @@ class ChatApp {
         let resizeDebounceTimer;
         window.addEventListener('resize', () => {
             clearTimeout(resizeDebounceTimer);
-            resizeDebounceTimer = setTimeout(() => this.updateToolbarDivider(), 350);
+            resizeDebounceTimer = setTimeout(() => {
+                this.updateWideModeButtonVisibility();
+                this.updateToolbarDivider();
+            }, 350);
         }, { passive: true });
 
         // Set up ResizeObserver to adjust chat area padding when input area expands
@@ -1872,7 +2217,7 @@ class ChatApp {
      * @returns {Promise<boolean>} True if user wants fresh import, false for their copy
      */
     showForkedSessionPrompt(forkedSession) {
-        return shareModals.showForkedPrompt(forkedSession);
+        return this.ui.shareModals.showForkedPrompt(forkedSession);
     }
 
     /**
@@ -1919,7 +2264,7 @@ class ChatApp {
      * @returns {Promise<boolean>} True if user wants to fetch latest, false for local copy
      */
     showImportUpdatePrompt(existingSession) {
-        return shareModals.showUpdatePrompt(existingSession);
+        return this.ui.shareModals.showUpdatePrompt(existingSession);
     }
 
     /**
@@ -1963,7 +2308,7 @@ class ChatApp {
      * @returns {Promise<string|null>} Password or null if cancelled
      */
     showImportPasswordPrompt(message) {
-        return shareModals.showImportPasswordPrompt(message);
+        return this.ui.shareModals.showImportPasswordPrompt(message);
     }
 
     /**
@@ -2021,7 +2366,7 @@ class ChatApp {
         const validation = inferenceService.validateSharedAccess(sharedAccess, backendId);
         if (!validation.ok) {
             console.warn('⚠️ Shared access missing signature fields, cannot verify');
-            const choice = await shareModals.showSharedKeyVerificationFailedPrompt({
+            const choice = await this.ui.shareModals.showSharedKeyVerificationFailedPrompt({
                 error: 'Shared key is missing cryptographic signatures (legacy share format)',
                 stationId: sharedAccess.stationId,
                 isBanned: false,
@@ -2078,7 +2423,7 @@ class ChatApp {
             const isBanned = !!verifyResult.bannedStation;
             const banReason = verifyResult.bannedStation?.reason;
 
-            const choice = await shareModals.showSharedKeyVerificationFailedPrompt({
+            const choice = await this.ui.shareModals.showSharedKeyVerificationFailedPrompt({
                 error: verifyResult.error?.message || 'Verification failed',
                 stationId: sharedAccess.stationId,
                 isBanned,
@@ -2150,6 +2495,7 @@ class ChatApp {
             existingSession.lastImportedAt = existingSession.updatedAt;
             existingSession.importedMessageCount = payload.messages.length;
             existingSession.importedCiphertext = encryptedData.ciphertext;
+            this.applySessionConversationSearchText(existingSession, messages);
 
             // Verify and apply shared access if present
             const sharedAccess = this.getSharedAccessFromPayload(payload);
@@ -2290,17 +2636,19 @@ class ChatApp {
                 () => this.generateId()
             );
 
-            // Save session to DB
-            this.state.sessions.unshift(session);
-            this.state.sessionsById.set(session.id, session);
-            await chatDB.saveSession(session);
-
             // Save messages with new session ID
             const messages = shareService.createMessagesFromPayload(
                 payload.messages,
                 session.id,
                 () => this.generateId()
             );
+            this.applySessionConversationSearchText(session, messages);
+
+            // Save session to DB
+            this.state.sessions.unshift(session);
+            this.state.sessionsById.set(session.id, session);
+            await chatDB.saveSession(session);
+
             for (const message of messages) {
                 await chatDB.saveMessage(message);
             }
@@ -2431,7 +2779,7 @@ class ChatApp {
         if (!session) return;
 
         const messages = await chatDB.getSessionMessages(session.id);
-        shareModals.showManagementModal(session, messages, {
+        this.ui.shareModals.showManagementModal(session, messages, {
             onShare: async (settings) => {
                 // Fork if imported
                 if (session.importedFrom) {
@@ -2974,6 +3322,8 @@ class ChatApp {
      *   backend display-name overrides when available.
      * - Legacy aliases (e.g. "OpenAI: GPT-5.1 Chat"), which are mapped to
      *   canonical display names.
+     * - Provider labels with date suffixes (e.g. "... 20260219"), normalized
+     *   by the shared model-name standardizer.
      *
      * Returns the original value when no conversion is necessary so that
      * newer/custom names remain untouched.
@@ -2982,20 +3332,10 @@ class ChatApp {
      * @returns {string|null}
      */
     normalizeModelName(modelIdOrName) {
-        if (!modelIdOrName) {
-            return modelIdOrName;
-        }
-
-        // If model ID, get display name from backend overrides
-        if (modelIdOrName.includes('/')) {
-            return inferenceService.getDisplayName(modelIdOrName, modelIdOrName, this.getCurrentSession());
-        }
-
-        if (MODEL_NAME_ALIASES.has(modelIdOrName)) {
-            return MODEL_NAME_ALIASES.get(modelIdOrName);
-        }
-
-        return modelIdOrName;
+        return normalizeModelNameValue(modelIdOrName, {
+            getStandardizedModelDisplayName,
+            getDisplayName: (modelId, fallback) => inferenceService.getDisplayName(modelId, fallback, this.getCurrentSession())
+        });
     }
 
     /**
@@ -3005,11 +3345,32 @@ class ChatApp {
      * @returns {string|null}
      */
     upgradeDefaultModelPreference(normalizedModelName) {
-        if (!normalizedModelName) return normalizedModelName;
-        if (normalizedModelName === PREVIOUS_DEFAULT_MODEL_NAME) {
-            return DEFAULT_MODEL_NAME;
+        return upgradeDefaultModelPreferenceValue(
+            normalizedModelName,
+            PREVIOUS_DEFAULT_MODEL_NAMES,
+            this.getDefaultModelName()
+        );
+    }
+
+    async refreshDefaultModelPreferenceForAvailabilityUpdate() {
+        const storedModelPreference = await chatDB.getSetting('selectedModel');
+        const update = resolveDefaultModelPreferenceUpdateValue({
+            storedModelPreference,
+            pendingModelName: this.state.pendingModelName,
+            hasCurrentSession: !!this.getCurrentSession(),
+            normalizeModelName: (modelName) => this.normalizeModelName(modelName),
+            upgradeDefaultModelPreference: (modelName) => this.upgradeDefaultModelPreference(modelName)
+        });
+
+        if (update.shouldSaveStoredPreference) {
+            await chatDB.saveSetting('selectedModel', update.upgradedStoredModelPreference);
         }
-        return normalizedModelName;
+
+        if (update.pendingChanged) {
+            this.state.pendingModelName = update.nextPendingModelName;
+        }
+
+        return update.changed;
     }
 
     /**
@@ -3043,6 +3404,9 @@ class ChatApp {
             apiKey: null,
             apiKeyInfo: null,
             expiresAt: null,
+            memoryKey: null,
+            memoryKeyInfo: null,
+            memoryRetrievedContext: { version: 1, entries: [] },
             scrubberKey: null,
             scrubberKeyInfo: null,
             searchEnabled: this.searchEnabled
@@ -3056,6 +3420,7 @@ class ChatApp {
         this.state.currentSessionId = session.id;
 
         this.chatInput.updateSearchToggleUI();
+        this.chatInput.updateMemoryToggleUI();
 
         await chatDB.saveSession(session);
         sessionStorage.setItem(SESSION_STORAGE_KEY, session.id);
@@ -3112,6 +3477,7 @@ class ChatApp {
 
         // Clear edit state when switching sessions
         this.editingMessageId = null;
+        this.editDrafts.clear();
 
         this.state.currentSessionId = sessionId;
         sessionStorage.setItem(SESSION_STORAGE_KEY, sessionId);
@@ -3193,7 +3559,8 @@ class ChatApp {
         if (!this.sessionStreamingStates.has(sessionId)) {
             this.sessionStreamingStates.set(sessionId, {
                 isStreaming: false,
-                abortController: null
+                abortController: null,
+                phase: 'requesting-key'
             });
         }
         return this.sessionStreamingStates.get(sessionId);
@@ -3205,10 +3572,60 @@ class ChatApp {
      * @param {boolean} isStreaming - Whether session is streaming
      * @param {AbortController} abortController - Abort controller for the stream
      */
-    setSessionStreamingState(sessionId, isStreaming, abortController = null) {
+    normalizePendingPhase(phase) {
+        return normalizeStreamingPendingPhase(phase);
+    }
+
+    advancePendingStateAfterAccessGranted(sessionId, typingId = null) {
+        this.updateSessionStreamingPhase(sessionId, 'waiting-response');
+        if (typingId) {
+            this.updateTypingIndicator(typingId, 'waiting-response');
+        }
+    }
+
+    isAccessCreditExhaustedError(error) {
+        return isAccessCreditExhaustedErrorValue(error);
+    }
+
+    async refreshAccessAfterCreditExhaustion(session, { typingId = null } = {}) {
+        if (!session) throw new Error('No active session found.');
+
+        const accessLabel = inferenceService.getAccessLabel(session);
+        this.showToast('Exhausted current ephemeral key, requesting a new key', 'success');
+
+        inferenceService.clearAccessInfo(session);
+        await chatDB.saveSession(session);
+        this.updateSessionStreamingPhase(session.id, 'requesting-key');
+        if (typingId) {
+            this.updateTypingIndicator(typingId, 'requesting-key');
+        }
+        if (this.rightPanel) {
+            this.rightPanel.onSessionChange(session);
+        }
+        if (this.floatingPanel) {
+            this.floatingPanel.showMessage(`Refreshing ${accessLabel}...`, 'info');
+        }
+
+        await this.acquireAndSetAccess(session, {
+            onGranted: () => {
+                this.advancePendingStateAfterAccessGranted(session.id, typingId);
+            }
+        });
+
+        if (this.floatingPanel) {
+            this.floatingPanel.showMessage(`${accessLabel} refreshed`, 'success', 2000);
+        }
+    }
+
+    setSessionStreamingState(sessionId, isStreaming, abortController = null, phase = 'requesting-key') {
+        const existingState = this.getSessionStreamingState(sessionId);
+        const normalizedPhase = this.normalizePendingPhase(phase);
         this.sessionStreamingStates.set(sessionId, {
             isStreaming,
-            abortController
+            abortController,
+            phase: isStreaming
+                ? (existingState.isStreaming ? this.normalizePendingPhase(existingState.phase) : normalizedPhase)
+                : 'requesting-key'
         });
 
         // Start periodic button visibility check when streaming starts
@@ -3229,6 +3646,14 @@ class ChatApp {
         this.updateInputState();
     }
 
+    updateSessionStreamingPhase(sessionId, phase) {
+        const state = this.getSessionStreamingState(sessionId);
+        this.sessionStreamingStates.set(sessionId, {
+            ...state,
+            phase: this.normalizePendingPhase(phase)
+        });
+    }
+
     /**
      * Checks if current session is streaming
      * @returns {boolean}
@@ -3238,6 +3663,13 @@ class ChatApp {
         if (!session) return false;
         const state = this.getSessionStreamingState(session.id);
         return state.isStreaming;
+    }
+
+    getCurrentSessionStreamingPhase() {
+        const session = this.getCurrentSession();
+        if (!session) return 'requesting-key';
+        const state = this.getSessionStreamingState(session.id);
+        return this.normalizePendingPhase(state.phase);
     }
 
     /**
@@ -3252,6 +3684,37 @@ class ChatApp {
             state.abortController.abort();
             // The finally block in sendMessage will handle cleanup
         }
+    }
+
+    /**
+     * Interrupts the current session stream and waits for cleanup to finish.
+     * Timeline-mutating actions use this so they can safely restart generation.
+     * @param {Object} options
+     * @param {number} options.timeoutMs - Max wait time before giving up
+     * @returns {Promise<boolean>} True if streaming is stopped or was already idle
+     */
+    async stopCurrentSessionStreamingAndWait(options = {}) {
+        const { timeoutMs = 10000 } = options;
+        const session = this.getCurrentSession();
+        if (!session) return true;
+
+        const state = this.getSessionStreamingState(session.id);
+        if (!state.isStreaming) {
+            return true;
+        }
+
+        this.stopCurrentSessionStreaming();
+
+        const startTime = Date.now();
+        while (this.getSessionStreamingState(session.id).isStreaming) {
+            if ((Date.now() - startTime) >= timeoutMs) {
+                this.showToast('Unable to stop the current response', 'error');
+                return false;
+            }
+            await new Promise(resolve => setTimeout(resolve, 50));
+        }
+
+        return true;
     }
 
     /**
@@ -3371,13 +3834,142 @@ class ChatApp {
         });
     }
 
-    async updateSessionTitle(sessionId, title) {
+    async updateSessionTitle(sessionId, title, options = {}) {
+        const { titleSource = 'manual', titleGenerationPending = false, titleSearchText = null } = options;
         const session = this.state.sessions.find(s => s.id === sessionId);
         if (session) {
             session.title = title;
+            session.titleSource = titleSource;
+            session.titleGenerationPending = Boolean(titleGenerationPending);
+            if (typeof titleSearchText === 'string') {
+                session.titleSearchText = titleSearchText;
+            }
             session.updatedAt = Date.now();
             await chatDB.saveSession(session);
             this.renderSessions();
+        }
+    }
+
+    buildLocalSessionTitle(content) {
+        return buildLocalSessionTitleText(content, {
+            fallbackLength: SESSION_TITLE_FALLBACK_LENGTH
+        });
+    }
+
+    buildSessionTitleSearchText(content) {
+        return buildSessionTitleSearchTextValue(content);
+    }
+
+    buildForkSessionTitleFields(sourceSession, firstUserContent) {
+        return buildForkSessionTitleFieldsValue(sourceSession, firstUserContent);
+    }
+
+    normalizeSessionSearchText(content) {
+        return normalizeSessionSearchTextValue(content);
+    }
+
+    getSearchableMessageText(message) {
+        return getSearchableMessageTextValue(message);
+    }
+
+    buildSessionConversationSearchText(messages) {
+        return buildSessionConversationSearchTextValue(messages, {
+            maxChars: SESSION_CONTENT_SEARCH_MAX_CHARS,
+            maxMessageChars: SESSION_CONTENT_SEARCH_MESSAGE_MAX_CHARS
+        });
+    }
+
+    buildSessionSearchIndexFields(messages) {
+        return buildSessionSearchIndexFieldsValue(messages, {
+            maxChars: SESSION_CONTENT_SEARCH_MAX_CHARS,
+            maxMessageChars: SESSION_CONTENT_SEARCH_MESSAGE_MAX_CHARS
+        });
+    }
+
+    applySessionConversationSearchText(session, messages) {
+        if (!session) return null;
+        const fields = this.buildSessionSearchIndexFields(messages);
+        Object.assign(session, fields);
+        const loadedSession = this.state.sessionsById.get(session.id);
+        if (loadedSession && loadedSession !== session) {
+            Object.assign(loadedSession, fields);
+        }
+        return fields;
+    }
+
+    async refreshSessionConversationSearchText(session, messages = null, options = {}) {
+        if (!session?.id) return null;
+        const sourceMessages = Array.isArray(messages)
+            ? messages
+            : await chatDB.getSessionMessages(session.id);
+        const fields = this.applySessionConversationSearchText(session, sourceMessages);
+        if (options.persist && typeof chatDB.updateSessionSearchIndex === 'function') {
+            await chatDB.updateSessionSearchIndex(session.id, fields);
+        }
+        return fields;
+    }
+
+    cleanGeneratedSessionTitle(title) {
+        return cleanGeneratedSessionTitleText(title, {
+            maxLength: SESSION_TITLE_MAX_LENGTH
+        });
+    }
+
+    async clearSessionTitleGenerationPending(sessionId) {
+        const session = this.state.sessionsById.get(sessionId) || this.state.sessions.find(s => s.id === sessionId);
+        if (!session?.titleGenerationPending || session.titleSource === 'manual') return;
+        session.titleGenerationPending = false;
+        session.updatedAt = Date.now();
+        await chatDB.saveSession(session);
+        this.renderSessions();
+    }
+
+    async generateSessionTitleIfNeeded(sessionId, userMessageId) {
+        const session = this.state.sessionsById.get(sessionId) || this.state.sessions.find(s => s.id === sessionId);
+        if (!session || session.titleSource === 'manual' || session.titleSource === 'generated' || !session.titleGenerationPending) return;
+        if (!inferenceService.getAccessToken(session) || inferenceService.isAccessExpired(session)) {
+            await this.clearSessionTitleGenerationPending(session.id);
+            return;
+        }
+
+        const messages = await chatDB.getSessionMessages(session.id);
+        const firstUserMessage = messages.find(message => message.role === 'user' && !message.isLocalOnly);
+        if (!firstUserMessage || firstUserMessage.id !== userMessageId) return;
+
+        const prompt = this.getMessageTextContent(firstUserMessage.content).trim();
+        if (!prompt) {
+            await this.clearSessionTitleGenerationPending(session.id);
+            return;
+        }
+
+        const expectedTitle = session.title;
+        const expectedSource = session.titleSource || 'local';
+
+        try {
+            const generated = await inferenceService.generateSessionTitle(session, prompt, { timeoutMs: 10000 });
+            const title = this.cleanGeneratedSessionTitle(generated);
+            if (!title) {
+                await this.clearSessionTitleGenerationPending(sessionId);
+                return;
+            }
+
+            const latestSession = this.state.sessionsById.get(sessionId) || this.state.sessions.find(s => s.id === sessionId);
+            if (!latestSession) return;
+            const latestSource = latestSession.titleSource || 'local';
+            if (latestSource !== expectedSource || latestSession.title !== expectedTitle) {
+                return;
+            }
+
+            latestSession.title = title;
+            latestSession.titleSource = 'generated';
+            latestSession.titleGenerationPending = false;
+            latestSession.titleGeneratedAt = Date.now();
+            latestSession.updatedAt = Date.now();
+            await chatDB.saveSession(latestSession);
+            this.renderSessions();
+        } catch (error) {
+            console.debug('Session title generation skipped:', error);
+            await this.clearSessionTitleGenerationPending(sessionId);
         }
     }
 
@@ -3391,6 +3983,9 @@ class ChatApp {
     async addMessage(role, content, metadata = {}) {
         const session = this.getCurrentSession();
         if (!session) return;
+        const extraFields = metadata.extra && typeof metadata.extra === 'object'
+            ? metadata.extra
+            : {};
 
         const message = {
             id: this.generateId(),
@@ -3405,21 +4000,27 @@ class ChatApp {
             searchEnabled: metadata.searchEnabled || false,
             citations: metadata.citations || null,
             isLocalOnly: Boolean(metadata.isLocalOnly),
-            scrubber: metadata.scrubber || null
+            scrubber: metadata.scrubber || null,
+            ...extraFields
         };
 
         await chatDB.saveMessage(message);
 
         // Update session's updatedAt timestamp
         session.updatedAt = Date.now();
+        const messages = await chatDB.getSessionMessages(session.id);
+        this.applySessionConversationSearchText(session, messages);
         await chatDB.saveSession(session);
 
         // Auto-generate title from first user message
         if (role === 'user') {
-            const messages = await chatDB.getSessionMessages(session.id);
             if (messages.length === 1) {
-                const title = content.substring(0, 50) + (content.length > 50 ? '...' : '');
-                await this.updateSessionTitle(session.id, title);
+                const title = this.buildLocalSessionTitle(content);
+                await this.updateSessionTitle(session.id, title, {
+                    titleSource: 'local',
+                    titleGenerationPending: Boolean(this.getMessageTextContent(content).trim()),
+                    titleSearchText: this.buildSessionTitleSearchText(content)
+                });
             }
         }
 
@@ -3429,6 +4030,982 @@ class ChatApp {
         }
         this.renderSessions(); // Re-render sessions to update sorting
         return message;
+    }
+
+    buildConversationText(messages) {
+        if (!Array.isArray(messages)) return '';
+        return messages
+            .filter((message) => !message.isLocalOnly)
+            .map((message) => {
+                const text = this.getMessageTextContent(message.content).trim();
+                if (!text) return '';
+                const role = message.role === 'assistant' ? 'Assistant' : 'User';
+                return `${role}: ${text}`;
+            })
+            .filter(Boolean)
+            .join('\n\n');
+    }
+
+    normalizeMessagesForMemory(messages) {
+        return normalizeMessagesForMemory(messages, {
+            getMessageTextContent: (content) => this.getMessageTextContent(content),
+            getScrubberMessageContent: (message, mode) => this.getScrubberMessageContent(message, mode)
+        });
+    }
+
+    createCancelledError(message = 'Request cancelled.') {
+        const error = new Error(message);
+        error.isCancelled = true;
+        return error;
+    }
+
+    throwIfAborted(signal) {
+        if (signal?.aborted) {
+            throw this.createCancelledError();
+        }
+    }
+
+    isCancelledError(error, signal = null) {
+        return error?.isCancelled === true
+            || error?.name === 'AbortError'
+            || error?.aborted === true
+            || signal?.aborted === true;
+    }
+
+    async persistLocalAssistantStatus(message) {
+        if (!message?.id) return;
+        await chatDB.saveMessage(message);
+        if (this.chatArea && this.isViewingSession(message.sessionId)) {
+            this.chatArea.updateMessage(message);
+        }
+    }
+
+    triggerPostTurnMemoryExtraction(session) {
+        if (!this.memoryFeatureEnabled) return;
+        if (!session?.id) return;
+        this.runPostTurnMemoryExtraction(session).catch((error) => {
+            console.warn('[App] Background memory extraction failed:', error);
+        });
+    }
+
+    async runPostTurnMemoryExtraction(session) {
+        if (!this.memoryFeatureEnabled) {
+            return { status: 'disabled', writeCalls: 0 };
+        }
+        const memoryRunGeneration = this.memoryWorkGeneration;
+        if (!session?.id) {
+            return { status: 'skipped', writeCalls: 0 };
+        }
+        if (this.memoryExtractionInFlight.has(session.id)) {
+            return { status: 'skipped', writeCalls: 0 };
+        }
+
+        this.memoryExtractionInFlight.add(session.id);
+        const abortController = new AbortController();
+        this.memoryExtractionAbortControllers.set(session.id, abortController);
+        try {
+            const messages = await chatDB.getSessionMessages(session.id);
+            const normalizedMessages = this.normalizeMessagesForMemory(messages);
+            if (normalizedMessages.length < 2) {
+                return { status: 'skipped', writeCalls: 0 };
+            }
+            if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+                return { status: 'disabled', writeCalls: 0 };
+            }
+
+            const previousMemoryKey = session.memoryKey || null;
+            const memoryKey = await ensureMemoryKey(session, ticketClient, {
+                signal: abortController.signal
+            });
+            if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+                invalidateMemoryKey(session);
+                try {
+                    await chatDB.saveSession(session);
+                } catch (persistError) {
+                    console.warn('[App] Failed to clear memory key after disabling memory extraction:', persistError);
+                }
+                return { status: 'disabled', writeCalls: 0 };
+            }
+            if (session.memoryKey && session.memoryKey !== previousMemoryKey) {
+                await chatDB.saveSession(session);
+            }
+            if (!memoryKey) {
+                return { status: 'no_key', writeCalls: 0 };
+            }
+
+            const result = await ingestMemoryMessages({
+                messages: normalizedMessages,
+                apiKey: memoryKey,
+                model: this.memoryAgentModel,
+                options: {
+                    signal: abortController.signal
+                }
+            });
+            if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+                return { status: 'disabled', writeCalls: 0 };
+            }
+
+            if (result?.status !== 'error') {
+                session.memoryProcessedAt = Date.now();
+                await chatDB.saveSession(session);
+            }
+
+            return result || { status: 'processed', writeCalls: 0 };
+        } catch (error) {
+            if (this.isCancelledError(error, abortController.signal) && !this.isMemoryFeatureActive(memoryRunGeneration)) {
+                return { status: 'disabled', writeCalls: 0 };
+            }
+            if (isMemoryAuthError(error)) {
+                invalidateMemoryKey(session);
+                try {
+                    await chatDB.saveSession(session);
+                } catch (persistError) {
+                    console.warn('[App] Failed to persist invalidated memory key after extraction auth error:', persistError);
+                }
+            }
+            throw error;
+        } finally {
+            this.memoryExtractionInFlight.delete(session.id);
+            if (this.memoryExtractionAbortControllers.get(session.id) === abortController) {
+                this.memoryExtractionAbortControllers.delete(session.id);
+            }
+        }
+    }
+
+    waitForMemoryApproval(messageId, signal = null) {
+        return new Promise((resolve, reject) => {
+            const cleanup = () => {
+                if (signal && abortHandler) {
+                    signal.removeEventListener('abort', abortHandler);
+                }
+                this.memoryApprovalRequests.delete(messageId);
+            };
+
+            const abortHandler = signal ? () => {
+                cleanup();
+                reject(this.createCancelledError());
+            } : null;
+
+            if (signal?.aborted) {
+                reject(this.createCancelledError());
+                return;
+            }
+
+            if (abortHandler) {
+                signal.addEventListener('abort', abortHandler, { once: true });
+            }
+
+            this.memoryApprovalRequests.set(messageId, {
+                resolve: (decision) => {
+                    cleanup();
+                    resolve(decision);
+                }
+            });
+        });
+    }
+
+    async setMemoryAutoInclude(enabled, options = {}) {
+        this.memoryAutoInclude = enabled === true;
+        if (this.chatInput?.refreshMemorySettingsUI) {
+            this.chatInput.refreshMemorySettingsUI();
+        }
+        if (options.persist === false) return;
+        await chatDB.saveSetting('memoryAutoInclude', this.memoryAutoInclude);
+    }
+
+    isMemoryFeatureActive(generation = this.memoryWorkGeneration) {
+        return this.memoryFeatureEnabled !== false && generation === this.memoryWorkGeneration;
+    }
+
+    clearMemoryApiOverrideContent() {
+        this._lastApiContent = null;
+        this._lastApiContentGeneration = null;
+    }
+
+    setMemoryApiOverrideContent(content, generation = this.memoryWorkGeneration) {
+        if (!this.isMemoryFeatureActive(generation)) {
+            this.clearMemoryApiOverrideContent();
+            return false;
+        }
+        const normalizedContent = typeof content === 'string' ? content.trim() : '';
+        if (!normalizedContent) {
+            this.clearMemoryApiOverrideContent();
+            return false;
+        }
+        this._lastApiContent = content;
+        this._lastApiContentGeneration = generation;
+        return true;
+    }
+
+    getMemoryApiOverrideContent() {
+        if (!this.isMemoryFeatureActive(this._lastApiContentGeneration)) {
+            this.clearMemoryApiOverrideContent();
+            return null;
+        }
+        return (typeof this._lastApiContent === 'string' && this._lastApiContent.trim().length > 0)
+            ? this._lastApiContent
+            : null;
+    }
+
+    async setMemoryFeatureEnabled(enabled, options = {}) {
+        const resolvedState = resolveMemoryFeatureToggleValue({
+            currentMemoryMode: this.memoryMode,
+            nextMemoryFeatureEnabled: enabled === true
+        });
+        this.memoryFeatureEnabled = resolvedState.memoryFeatureEnabled;
+        this.memoryMode = resolvedState.memoryMode;
+        if (!this.memoryFeatureEnabled) {
+            this.memoryWorkGeneration += 1;
+            this.clearMemoryApiOverrideContent();
+            for (const controller of this.memoryExtractionAbortControllers.values()) {
+                controller.abort();
+            }
+            for (const controller of this.memoryAugmentAbortControllers.values()) {
+                controller.abort();
+            }
+            this.resolvePendingMemoryApprovalsAsSkipped();
+            this.memoryEditor?.handleMemoryFeatureDisabled?.();
+            this.clearPendingMemoryApprovalPromptsForCurrentSession().catch((error) => {
+                console.warn('[App] Failed to clear pending memory approvals after disabling memory:', error);
+            });
+        }
+
+        if (this.chatInput?.updateMemoryToggleUI) {
+            this.chatInput.updateMemoryToggleUI();
+        }
+        if (this.chatInput?.refreshMemorySettingsUI) {
+            this.chatInput.refreshMemorySettingsUI();
+        }
+
+        if (options.persist === false) return;
+
+        const writes = [
+            chatDB.saveSetting('memoryFeatureEnabled', this.memoryFeatureEnabled)
+        ];
+        if (resolvedState.shouldPersistMemoryMode) {
+            writes.push(chatDB.saveSetting('memoryMode', false));
+        }
+        await Promise.all(writes);
+    }
+
+    resolvePendingMemoryApprovalsAsSkipped() {
+        for (const request of Array.from(this.memoryApprovalRequests.values())) {
+            request?.resolve?.({ approved: false, alwaysInclude: false });
+        }
+    }
+
+    async clearPendingMemoryApprovalPromptsForCurrentSession() {
+        const session = this.getCurrentSession();
+        if (!session?.id) return;
+
+        const messages = await chatDB.getSessionMessages(session.id);
+        const pendingMessages = messages.filter((message) =>
+            message?.memoryApprovalPrompt?.status === 'pending' || message?.ciPromptDraft?.status === 'pending'
+        );
+        if (pendingMessages.length === 0) return;
+
+        for (const message of pendingMessages) {
+            if (message.ciPromptDraft) {
+                message.ciPromptDraft = {
+                    ...message.ciPromptDraft,
+                    status: 'denied'
+                };
+            }
+            message.memoryApprovalPrompt = null;
+            if (message.isLocalOnly) {
+                message.content = 'Memory is off in settings. Sending without personal context.';
+            }
+            await chatDB.saveMessage(message);
+            if (this.chatArea && this.isViewingSession(message.sessionId)) {
+                this.chatArea.updateMessage(message);
+            }
+        }
+    }
+
+    async setMemoryAgentModel(modelId, options = {}) {
+        const nextModel = isAllowedConfidentialModel(modelId)
+            ? String(modelId).trim()
+            : DEFAULT_MEMORY_AGENT_MODEL;
+        this.memoryAgentModel = nextModel;
+        if (this.chatInput?.refreshMemorySettingsUI) {
+            this.chatInput.refreshMemorySettingsUI();
+        }
+        if (options.persist === false) return;
+        await chatDB.saveSetting('memoryAgentModel', nextModel);
+    }
+
+    async handleMemoryApprovalDecision(messageId, decision) {
+        if (!this.memoryFeatureEnabled) {
+            const request = this.memoryApprovalRequests.get(messageId);
+            if (request?.resolve) {
+                request.resolve({ approved: false, alwaysInclude: false });
+            } else {
+                await this.resolveStaleMemoryApproval(messageId, false, false);
+            }
+            return;
+        }
+
+        const alwaysInclude = decision === 'always';
+        const approved = decision === 'yes' || alwaysInclude;
+
+        if (alwaysInclude) {
+            try { await this.setMemoryAutoInclude(true); }
+            catch { this.memoryAutoInclude = true; }
+        }
+
+        // Live flow: resolver exists from active runMemoryAugmentFlow
+        const request = this.memoryApprovalRequests.get(messageId);
+        if (request?.resolve) {
+            request.resolve({ approved, alwaysInclude });
+            return;
+        }
+
+        // Stale flow: page reloaded while approval was pending — resolve directly
+        await this.resolveStaleMemoryApproval(messageId, approved, alwaysInclude);
+    }
+
+    async resolveStaleMemoryApproval(messageId, approved, alwaysInclude) {
+        const memoryRunGeneration = this.memoryWorkGeneration;
+        const session = this.getCurrentSession();
+        if (!session) return;
+
+        const messages = await chatDB.getSessionMessages(session.id);
+        const msg = messages.find(m => m.id === messageId);
+        if (!msg?.ciPromptDraft) return;
+
+        const draft = msg.ciPromptDraft;
+
+        if (approved) {
+            draft.status = 'approved';
+            const rawPrompt = (typeof draft.editedFullPrompt === 'string' && draft.editedFullPrompt.trim())
+                ? draft.editedFullPrompt : draft.fullPrompt;
+            const recordedContext = await this.recordApprovedMemoryContext(session, draft, memoryRunGeneration);
+            if (!this.isMemoryFeatureActive(memoryRunGeneration) || !recordedContext) {
+                this.clearMemoryApiOverrideContent();
+                msg.content = 'Memory is off in settings. Sending without personal context.';
+                msg.memoryApprovalPrompt = null;
+                await this.persistLocalAssistantStatus(msg);
+                return;
+            }
+            this.setMemoryApiOverrideContent(stripMemoryPromptUserData(rawPrompt), memoryRunGeneration);
+
+            const files = draft.memoryFiles || [];
+            if (draft.reusedPriorContext || typeof draft.newMemoryFileCount === 'number') {
+                msg.content = this.buildMemoryContextSummary({
+                    fileCount: draft.newMemoryFileCount || 0,
+                    reused: draft.reusedPriorContext === true,
+                    hasNewContext: draft.hasNewContext === true,
+                    pending: false,
+                    alwaysInclude
+                });
+            } else {
+                msg.content = alwaysInclude
+                    ? `Retrieved ${files.length} memory file${files.length === 1 ? '' : 's'}. Always include on. Sending now.`
+                    : `Retrieved ${files.length} memory file${files.length === 1 ? '' : 's'}. Sending approved prompt.`;
+            }
+            msg.memoryApprovalPrompt = { status: 'approved', linkedUserMessageId: draft.linkedUserMessageId, autoIncluded: alwaysInclude };
+        } else {
+            draft.status = 'denied';
+            this.clearMemoryApiOverrideContent();
+            msg.content = 'Memory skipped. Sending without personal context.';
+            msg.memoryApprovalPrompt = null;
+        }
+
+        await this.persistLocalAssistantStatus(msg);
+        await this.regenerateResponse({ skipMemoryAugment: true });
+    }
+
+    async removeLocalOnlyMessagesAfter(sessionId, messageId) {
+        if (!sessionId || !messageId) return;
+        const messages = await chatDB.getSessionMessages(sessionId);
+        const messageIndex = messages.findIndex((message) => message.id === messageId);
+        if (messageIndex === -1) return;
+
+        const localMessages = messages
+            .slice(messageIndex + 1)
+            .filter((message) => message.isLocalOnly);
+
+        if (localMessages.length === 0) return;
+
+        for (const message of localMessages) {
+            await chatDB.deleteMessage(message.id);
+            const messageEl = document.querySelector(`[data-message-id="${message.id}"]`);
+            if (messageEl) {
+                messageEl.remove();
+            }
+        }
+    }
+
+    normalizeMemoryContextText(text, maxChars = MEMORY_CONTEXT_MAX_CHARS) {
+        const normalized = String(text || '')
+            .replace(/\r\n/g, '\n')
+            .replace(/[ \t]+\n/g, '\n')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+        if (!normalized) return '';
+        if (normalized.length <= maxChars) return normalized;
+        return normalized.slice(0, maxChars).trimEnd() + '\n...(truncated)';
+    }
+
+    extractMemoryUserDataContext(reviewPrompt, fallbackText = '') {
+        const prompt = String(reviewPrompt || '');
+        const matches = [...prompt.matchAll(/\[\[user_data\]\]([\s\S]*?)\[\[\/user_data\]\]/g)]
+            .map((match) => this.normalizeMemoryContextText(match[1], MEMORY_CONTEXT_PROMPT_MAX_CHARS))
+            .filter(Boolean);
+        if (matches.length > 0) {
+            return this.normalizeMemoryContextText(matches.join('\n\n'), MEMORY_CONTEXT_PROMPT_MAX_CHARS);
+        }
+        return this.normalizeMemoryContextText(fallbackText, MEMORY_CONTEXT_PROMPT_MAX_CHARS);
+    }
+
+    getMemoryContextEntries(session) {
+        const entries = session?.memoryRetrievedContext?.entries;
+        if (!Array.isArray(entries)) return [];
+        return entries
+            .filter((entry) => typeof entry?.context === 'string' && entry.context.trim())
+            .map((entry) => ({
+                query: typeof entry.query === 'string' ? entry.query.trim() : '',
+                context: this.normalizeMemoryContextText(entry.context, MEMORY_CONTEXT_PROMPT_MAX_CHARS),
+                paths: Array.isArray(entry.paths)
+                    ? entry.paths.filter((path) => typeof path === 'string' && path.trim())
+                    : [],
+                linkedUserMessageId: typeof entry.linkedUserMessageId === 'string' ? entry.linkedUserMessageId : null,
+                createdAt: typeof entry.createdAt === 'number' ? entry.createdAt : 0
+            }))
+            .filter((entry) => entry.context);
+    }
+
+    buildPreviouslyRetrievedMemoryContext(session) {
+        const entries = this.getMemoryContextEntries(session);
+        if (entries.length === 0) return '';
+
+        const selected = [];
+        let usedChars = 0;
+        for (let i = entries.length - 1; i >= 0; i -= 1) {
+            const entry = entries[i];
+            const heading = entry.query ? `Previously retrieved for: ${entry.query}` : 'Previously retrieved memory';
+            const block = `${heading}\n${entry.context}`;
+            const separatorCost = selected.length ? 2 : 0;
+            if (usedChars + block.length + separatorCost > MEMORY_CONTEXT_MAX_CHARS) {
+                if (selected.length > 0) break;
+                selected.unshift(block.slice(0, MEMORY_CONTEXT_MAX_CHARS).trimEnd() + '\n...(truncated)');
+                break;
+            }
+            selected.unshift(block);
+            usedChars += block.length + separatorCost;
+        }
+
+        return selected.join('\n\n');
+    }
+
+    shouldReusePriorMemoryContext(result) {
+        if (result?.skipped !== true) return false;
+        const reason = String(result.skipReason || '').toLowerCase();
+        if (!reason) return false;
+        return /\b(already|covered|sufficient|existing|retrieved context)\b/.test(reason);
+    }
+
+    buildReusedMemoryApiPrompt(query, previouslyRetrievedContext) {
+        const cleanQuery = this.normalizeMemoryContextText(query, MEMORY_CONTEXT_PROMPT_MAX_CHARS);
+        const cleanContext = this.normalizeMemoryContextText(previouslyRetrievedContext, MEMORY_CONTEXT_PROMPT_MAX_CHARS);
+        if (!cleanQuery || !cleanContext) return '';
+
+        return `${cleanQuery}\n\nRelevant previously approved personal context for this chat:\n[[user_data]]\n${cleanContext}\n[[/user_data]]`;
+    }
+
+    buildMemoryContextSummary({ fileCount = 0, reused = false, hasNewContext = false, pending = true, alwaysInclude = false, autoIncluded = false }) {
+        if (reused && !hasNewContext) {
+            if (!pending) {
+                return 'No new retrieval. Using previously approved memory.';
+            }
+            return 'Using earlier memory. Review before sending.';
+        }
+
+        const retrieved = fileCount > 0
+            ? `Retrieved ${fileCount} new memory file${fileCount === 1 ? '' : 's'}`
+            : 'Retrieved new memory';
+        const prefix = reused ? `${retrieved} plus earlier memory` : retrieved;
+
+        if (!pending) {
+            if (autoIncluded) return `${prefix}. Sending automatically.`;
+            if (alwaysInclude) return `${prefix}. Always include on. Sending now.`;
+            return `${prefix}. Sending approved prompt.`;
+        }
+        return `${prefix}. Review before sending.`;
+    }
+
+    async recordApprovedMemoryContext(session, draft, generation = null) {
+        if (!session || !draft) return false;
+        if (generation !== null && !this.isMemoryFeatureActive(generation)) return false;
+        const sourceEntry = draft.memoryContextEntry || null;
+        if (!sourceEntry) return true;
+
+        const usedEditedPrompt = typeof draft.editedFullPrompt === 'string' && draft.editedFullPrompt.trim();
+        const approvedPrompt = usedEditedPrompt ? draft.editedFullPrompt : draft.fullPrompt;
+        const approvedContext = this.extractMemoryUserDataContext(approvedPrompt, usedEditedPrompt ? '' : sourceEntry.context);
+        if (!approvedContext) return true;
+
+        const existingEntries = this.getMemoryContextEntries(session)
+            .filter((entry) => entry.linkedUserMessageId !== sourceEntry.linkedUserMessageId);
+        const nextEntry = {
+            query: typeof sourceEntry.query === 'string' ? sourceEntry.query.slice(0, 1000) : '',
+            context: approvedContext,
+            paths: Array.isArray(sourceEntry.paths)
+                ? [...new Set(sourceEntry.paths.filter((path) => typeof path === 'string' && path.trim()))]
+                : [],
+            linkedUserMessageId: sourceEntry.linkedUserMessageId || draft.linkedUserMessageId || null,
+            createdAt: Date.now()
+        };
+
+        const nextEntries = [...existingEntries, nextEntry].slice(-MEMORY_CONTEXT_MAX_ENTRIES);
+        session.memoryRetrievedContext = {
+            version: 1,
+            entries: nextEntries
+        };
+        await chatDB.saveSession(session);
+        if (generation !== null && !this.isMemoryFeatureActive(generation)) {
+            session.memoryRetrievedContext = {
+                version: 1,
+                entries: existingEntries
+            };
+            await chatDB.saveSession(session);
+            return false;
+        }
+        return true;
+    }
+
+    async pruneMemoryRetrievedContextFromMessage(session, messages, messageIndex) {
+        const entries = session?.memoryRetrievedContext?.entries;
+        if (!session || !Array.isArray(entries) || entries.length === 0 || !Array.isArray(messages)) {
+            return false;
+        }
+
+        const priorUserExists = messages
+            .slice(0, Math.max(0, messageIndex))
+            .some((message) => message?.role === 'user');
+        const affectedUserIds = new Set(
+            messages
+                .slice(Math.max(0, messageIndex))
+                .filter((message) => message?.role === 'user' && typeof message.id === 'string')
+                .map((message) => message.id)
+        );
+
+        const nextEntries = priorUserExists
+            ? entries.filter((entry) => !affectedUserIds.has(entry?.linkedUserMessageId))
+            : [];
+
+        if (nextEntries.length === entries.length) {
+            return false;
+        }
+
+        session.memoryRetrievedContext = {
+            version: 1,
+            entries: nextEntries
+        };
+        await chatDB.saveSession(session);
+        return true;
+    }
+
+    async runMemoryAugmentFlow(query, userMessage, session, options = {}) {
+        if (!this.memoryFeatureEnabled || !this.memoryMode || !userMessage || !session) return null;
+        if (!query || !query.trim()) return null;
+
+        const { conversationText = '', signal = null } = options;
+        const memoryRunGeneration = this.memoryWorkGeneration;
+        const memoryAbortController = new AbortController();
+        const memorySignal = memoryAbortController.signal;
+        const parentAbortHandler = signal ? () => memoryAbortController.abort() : null;
+        if (signal?.aborted) {
+            memoryAbortController.abort();
+        } else if (signal && parentAbortHandler) {
+            signal.addEventListener('abort', parentAbortHandler, { once: true });
+        }
+        this.memoryAugmentAbortControllers.add(memoryAbortController);
+        const cleanupMemoryAbortController = () => {
+            this.memoryAugmentAbortControllers.delete(memoryAbortController);
+            if (signal && parentAbortHandler) {
+                signal.removeEventListener('abort', parentAbortHandler);
+            }
+        };
+        try {
+            this.throwIfAborted(memorySignal);
+        } catch (error) {
+            cleanupMemoryAbortController();
+            throw error;
+        }
+
+        const retrievalMessage = await this.addMessage('assistant', '', {
+            isLocalOnly: true,
+            model: 'memory agent',
+            extra: {
+                agentTrace: [],
+                agentTraceStreaming: true
+            }
+        });
+
+        if (!retrievalMessage) {
+            cleanupMemoryAbortController();
+            return null;
+        }
+
+        const agentTrace = retrievalMessage.agentTrace;
+        let traceRefreshTimer = null;
+        const summarizeToolTraceResult = (result) => typeof result === 'string'
+            ? result.slice(0, 320)
+            : JSON.stringify(result || {}).slice(0, 320);
+        const upsertToolTraceEntry = (progress) => {
+            const toolCallId = typeof progress.toolCallId === 'string' && progress.toolCallId
+                ? progress.toolCallId
+                : '';
+            const toolState = progress.toolState === 'started' ? 'started' : 'finished';
+            let entryIndex = toolCallId
+                ? agentTrace.findIndex((entry) => entry?.type === 'tool_call' && entry.toolCallId === toolCallId)
+                : -1;
+
+            if (entryIndex === -1 && toolState === 'finished') {
+                entryIndex = [...agentTrace]
+                    .reverse()
+                    .findIndex((entry) => entry?.type === 'tool_call' && entry.tool === progress.tool && entry.state === 'started');
+                if (entryIndex !== -1) {
+                    entryIndex = agentTrace.length - 1 - entryIndex;
+                }
+            }
+
+            const summarizedResult = toolState === 'finished'
+                ? summarizeToolTraceResult(progress.result)
+                : '';
+
+            if (entryIndex === -1) {
+                agentTrace.push({
+                    type: 'tool_call',
+                    tool: progress.tool,
+                    args: progress.args || {},
+                    result: summarizedResult,
+                    state: toolState,
+                    toolCallId
+                });
+                return;
+            }
+
+            agentTrace[entryIndex] = {
+                ...agentTrace[entryIndex],
+                type: 'tool_call',
+                tool: progress.tool,
+                args: progress.args || {},
+                result: summarizedResult,
+                state: toolState,
+                toolCallId: toolCallId || agentTrace[entryIndex].toolCallId || ''
+            };
+        };
+        const scheduleTraceRefresh = () => {
+            if (traceRefreshTimer) return;
+            traceRefreshTimer = setTimeout(() => {
+                traceRefreshTimer = null;
+                if (this.chatArea && this.isViewingSession(retrievalMessage.sessionId)) {
+                    this.chatArea.updateMessage(retrievalMessage);
+                }
+            }, 80);
+        };
+
+        const flushTraceRefresh = async () => {
+            if (!traceRefreshTimer) return;
+            clearTimeout(traceRefreshTimer);
+            traceRefreshTimer = null;
+            if (this.chatArea && this.isViewingSession(retrievalMessage.sessionId)) {
+                this.chatArea.updateMessage(retrievalMessage);
+            }
+        };
+        const handleMemoryProgress = (progress) => {
+            if (!progress?.stage) return;
+            if (progress.stage === 'tool_call') {
+                upsertToolTraceEntry(progress);
+            } else if (progress.stage === 'reasoning') {
+                const delta = typeof progress.message === 'string' ? progress.message : '';
+                const lastEntry = agentTrace[agentTrace.length - 1];
+                if (lastEntry?.type === 'reasoning') {
+                    lastEntry.text += delta;
+                } else {
+                    agentTrace.push({ type: 'reasoning', text: delta });
+                }
+            } else {
+                agentTrace.push({
+                    type: 'phase',
+                    label: progress.message || progress.stage
+                });
+            }
+            scheduleTraceRefresh();
+        };
+        const handleMemoryModelText = (text, iteration) => {
+            agentTrace.push({ type: 'model_text', text, iteration });
+            scheduleTraceRefresh();
+        };
+        const markMemoryDisabled = async () => {
+            this.clearMemoryApiOverrideContent();
+            retrievalMessage.agentTraceStreaming = false;
+            retrievalMessage.memoryApprovalPrompt = null;
+            retrievalMessage.ciPromptDraft = null;
+            retrievalMessage.content = 'Memory is off in settings. Sending original prompt.';
+            await this.persistLocalAssistantStatus(retrievalMessage);
+            return null;
+        };
+
+        try {
+            if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+                return await markMemoryDisabled();
+            }
+            const previousMemoryKey = session.memoryKey || null;
+            const memoryKey = await ensureMemoryKey(session, ticketClient, {
+                signal: memorySignal
+            });
+            if (memorySignal.aborted || !this.isMemoryFeatureActive(memoryRunGeneration)) {
+                if (session.memoryKey && session.memoryKey !== previousMemoryKey) {
+                    invalidateMemoryKey(session);
+                }
+                try {
+                    if (session.memoryKey !== previousMemoryKey || session.memoryKeyInfo) {
+                        await chatDB.saveSession(session);
+                    }
+                } catch (persistError) {
+                    console.warn('[App] Failed to clear memory key after disabling memory retrieval:', persistError);
+                }
+                return await markMemoryDisabled();
+            }
+            this.throwIfAborted(memorySignal);
+            if (session.memoryKey && session.memoryKey !== previousMemoryKey) {
+                await chatDB.saveSession(session);
+            }
+
+            if (!memoryKey) {
+                retrievalMessage.agentTraceStreaming = false;
+                retrievalMessage.content = `Memory retrieval needs ${CONFIDENTIAL_KEY_TICKETS} available inference ticket${CONFIDENTIAL_KEY_TICKETS === 1 ? '' : 's'}. Sending without personal context.`;
+                await this.persistLocalAssistantStatus(retrievalMessage);
+                return null;
+            }
+
+            const previouslyRetrievedContext = this.buildPreviouslyRetrievedMemoryContext(session);
+            const hasPriorMemoryContext = !!previouslyRetrievedContext;
+            const result = hasPriorMemoryContext
+                ? await runMemoryAugmentQueryAdaptive({
+                    query,
+                    alreadyRetrievedContext: previouslyRetrievedContext,
+                    conversationText,
+                    apiKey: memoryKey,
+                    model: this.memoryAgentModel,
+                    signal: memorySignal,
+                    onProgress: handleMemoryProgress,
+                    onModelText: handleMemoryModelText
+                })
+                : await runMemoryAugmentQuery({
+                    query,
+                    conversationText,
+                    apiKey: memoryKey,
+                    model: this.memoryAgentModel,
+                    signal: memorySignal,
+                    onProgress: handleMemoryProgress,
+                    onModelText: handleMemoryModelText
+                });
+            const memoryRetrievalAssessment = normalizeMemoryRetrievalAssessment(result || {}, {
+                treatConfidenceFieldAsExplicit: true
+            });
+            retrievalMessage.memoryRetrievalAssessment = memoryRetrievalAssessment;
+
+            await flushTraceRefresh();
+            this.throwIfAborted(memorySignal);
+            if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+                return await markMemoryDisabled();
+            }
+
+            retrievalMessage.agentTraceStreaming = false;
+
+            const memoryFiles = Array.isArray(result?.files)
+                ? result.files.filter((file) => typeof file?.path === 'string' && typeof file?.content === 'string' && file.content.trim())
+                : [];
+            const newMemoryFilePaths = [...new Set([
+                ...memoryFiles.map((file) => file.path),
+                ...(Array.isArray(result?.paths) ? result.paths.filter((path) => typeof path === 'string' && path.trim()) : [])
+            ])];
+            const fullPrompt = typeof result?.reviewPrompt === 'string' ? result.reviewPrompt : '';
+            const apiPrompt = typeof result?.apiPrompt === 'string' ? result.apiPrompt : '';
+            const memoryFilePaths = newMemoryFilePaths;
+            let memoryContextEntry = null;
+            let hasNewContext = false;
+
+            if (fullPrompt && apiPrompt) {
+                const storedContext = this.extractMemoryUserDataContext(result.reviewPrompt, result.assembledContext);
+                if (storedContext) {
+                    hasNewContext = true;
+                    memoryContextEntry = {
+                        query,
+                        context: storedContext,
+                        paths: newMemoryFilePaths,
+                        linkedUserMessageId: userMessage.id
+                    };
+                }
+            }
+
+            if (!fullPrompt || !apiPrompt) {
+                const shouldReusePriorContext = hasPriorMemoryContext && this.shouldReusePriorMemoryContext(result);
+                const reusedPrompt = shouldReusePriorContext
+                    ? this.buildReusedMemoryApiPrompt(query, previouslyRetrievedContext)
+                    : '';
+                if (reusedPrompt) {
+                    if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+                        return await markMemoryDisabled();
+                    }
+                    this.setMemoryApiOverrideContent(stripMemoryPromptUserData(reusedPrompt), memoryRunGeneration);
+                    retrievalMessage.content = 'No new retrieval. Using previously approved memory.';
+                } else {
+                    retrievalMessage.content = 'No added memory. Sending original prompt.';
+                }
+                retrievalMessage.memoryApprovalPrompt = null;
+                retrievalMessage.ciPromptDraft = null;
+                await this.persistLocalAssistantStatus(retrievalMessage);
+                if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+                    return await markMemoryDisabled();
+                }
+                return null;
+            }
+
+            retrievalMessage.content = this.buildMemoryContextSummary({
+                fileCount: newMemoryFilePaths.length,
+                reused: hasPriorMemoryContext,
+                hasNewContext,
+                pending: true
+            });
+            retrievalMessage.memoryApprovalPrompt = {
+                status: 'pending',
+                linkedUserMessageId: userMessage.id
+            };
+            retrievalMessage.ciPromptDraft = {
+                fullPrompt,
+                editedFullPrompt: null,
+                apiPrompt,
+                model: this.normalizeModelName(session.model) || session.model || this.state.pendingModelName || inferenceService.getDefaultModelName(session),
+                memoryFiles: memoryFilePaths,
+                memoryContextEntry,
+                memoryRetrievalAssessment,
+                reusedPriorContext: hasPriorMemoryContext,
+                hasNewContext,
+                newMemoryFileCount: newMemoryFilePaths.length,
+                linkedUserMessageId: userMessage.id,
+                status: 'pending'
+            };
+            await this.persistLocalAssistantStatus(retrievalMessage);
+
+            if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+                return await markMemoryDisabled();
+            }
+
+            if (this.memoryAutoInclude) {
+                const draft = retrievalMessage.ciPromptDraft;
+                draft.status = 'approved';
+                draft.model = this.normalizeModelName(session.model) || session.model || draft.model;
+                const recordedContext = await this.recordApprovedMemoryContext(session, draft, memoryRunGeneration);
+                if (!this.isMemoryFeatureActive(memoryRunGeneration) || !recordedContext) {
+                    return await markMemoryDisabled();
+                }
+                this.setMemoryApiOverrideContent(stripMemoryPromptUserData(draft.fullPrompt), memoryRunGeneration);
+                retrievalMessage.content = this.buildMemoryContextSummary({
+                    fileCount: draft.newMemoryFileCount || 0,
+                    reused: draft.reusedPriorContext === true,
+                    hasNewContext: draft.hasNewContext === true,
+                    pending: false,
+                    autoIncluded: true
+                });
+                retrievalMessage.memoryApprovalPrompt = {
+                    status: 'approved',
+                    linkedUserMessageId: userMessage.id,
+                    autoIncluded: true
+                };
+                await this.persistLocalAssistantStatus(retrievalMessage);
+                if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+                    return await markMemoryDisabled();
+                }
+                return draft;
+            }
+
+            const approval = await this.waitForMemoryApproval(retrievalMessage.id, memorySignal);
+            this.throwIfAborted(memorySignal);
+            if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+                return await markMemoryDisabled();
+            }
+
+            const latestMessages = await chatDB.getSessionMessages(retrievalMessage.sessionId);
+            const latestRetrievalMessage = latestMessages.find((message) => message.id === retrievalMessage.id);
+            if (latestRetrievalMessage?.ciPromptDraft) {
+                retrievalMessage.ciPromptDraft = latestRetrievalMessage.ciPromptDraft;
+            }
+
+            const draft = retrievalMessage.ciPromptDraft;
+            const approved = approval?.approved === true;
+            const alwaysInclude = approval?.alwaysInclude === true;
+            if (approved) {
+                draft.status = 'approved';
+                draft.model = this.normalizeModelName(session.model) || session.model || draft.model;
+                const rawPrompt = (typeof draft.editedFullPrompt === 'string' && draft.editedFullPrompt.trim())
+                    ? draft.editedFullPrompt
+                    : draft.fullPrompt;
+                const recordedContext = await this.recordApprovedMemoryContext(session, draft, memoryRunGeneration);
+                if (!this.isMemoryFeatureActive(memoryRunGeneration) || !recordedContext) {
+                    return await markMemoryDisabled();
+                }
+                this.setMemoryApiOverrideContent(stripMemoryPromptUserData(rawPrompt), memoryRunGeneration);
+                retrievalMessage.content = this.buildMemoryContextSummary({
+                    fileCount: draft.newMemoryFileCount || 0,
+                    reused: draft.reusedPriorContext === true,
+                    hasNewContext: draft.hasNewContext === true,
+                    pending: false,
+                    alwaysInclude
+                });
+                retrievalMessage.memoryApprovalPrompt = {
+                    status: 'approved',
+                    linkedUserMessageId: userMessage.id,
+                    autoIncluded: alwaysInclude
+                };
+            } else {
+                draft.status = 'denied';
+                this.clearMemoryApiOverrideContent();
+                retrievalMessage.content = 'Memory skipped. Sending without personal context.';
+                retrievalMessage.memoryApprovalPrompt = null;
+            }
+
+            await this.persistLocalAssistantStatus(retrievalMessage);
+            if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+                return await markMemoryDisabled();
+            }
+            return draft;
+        } catch (error) {
+            await flushTraceRefresh();
+            retrievalMessage.agentTraceStreaming = false;
+            retrievalMessage.memoryApprovalPrompt = null;
+            retrievalMessage.ciPromptDraft = retrievalMessage.ciPromptDraft || null;
+
+            if (isMemoryAuthError(error)) {
+                invalidateMemoryKey(session);
+                await chatDB.saveSession(session);
+            }
+
+            if (this.isCancelledError(error, memorySignal)) {
+                if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+                    return await markMemoryDisabled();
+                }
+                retrievalMessage.content = 'Memory retrieval cancelled.';
+                await this.persistLocalAssistantStatus(retrievalMessage);
+                throw this.createCancelledError();
+            }
+
+            console.error('Memory augment query failed:', error);
+            retrievalMessage.content = 'Memory retrieval unavailable. Sending without personal context.';
+            retrievalMessage.ciPromptDraft = null;
+            await this.persistLocalAssistantStatus(retrievalMessage);
+            return null;
+        } finally {
+            if (traceRefreshTimer) {
+                clearTimeout(traceRefreshTimer);
+            }
+            this.memoryApprovalRequests.delete(retrievalMessage.id);
+            cleanupMemoryAbortController();
+        }
     }
 
     /**
@@ -3469,20 +5046,7 @@ class ChatApp {
     }
 
     getMessageTextContent(content) {
-        if (typeof content === 'string') return content;
-        if (Array.isArray(content)) {
-            return content
-                .map(part => {
-                    if (!part) return '';
-                    if (typeof part.text === 'string') return part.text;
-                    if (typeof part.content === 'string') return part.content;
-                    return '';
-                })
-                .filter(Boolean)
-                .join('');
-        }
-        if (content && typeof content.text === 'string') return content.text;
-        return '';
+        return getMessageTextContentValue(content);
     }
 
     getScrubberMessageContent(message, mode) {
@@ -3563,108 +5127,39 @@ class ChatApp {
      * @returns {Array} Processed messages with multimodal content
      */
     processMessagesWithFiles(messages, currentModelId) {
-        const MAX_ATTACHED_IMAGES = 2; // Limit to avoid huge requests
-        const filteredMessages = messages.filter(msg => !msg.isLocalOnly);
-        const result = [];
-
-        // Helper: detect image-generating models (same pattern as modelTiers.js)
-        const isImageModel = (modelId) => modelId && /image/i.test(modelId);
-
-        // If current model is an image model, skip the attachment hack entirely
-        // Image models handle their own generated images natively
-        const shouldAttachImages = !isImageModel(currentModelId);
-
-        // Collect images ONLY from assistant messages generated by image models
-        let imagesToAttach = [];
-        if (shouldAttachImages) {
-            for (const msg of filteredMessages) {
-                if (msg.role === 'assistant' && msg.images?.length > 0 && isImageModel(msg.model)) {
-                    imagesToAttach.push(...msg.images);
-                }
+        const apiOverrideContent = this.getMemoryApiOverrideContent();
+        return processMessagesForApi(messages, currentModelId, {
+            apiOverrideContent,
+            onTextFileDecodeError: (error, file) => {
+                console.error('Failed to decode text file:', file.name, error);
             }
-            imagesToAttach = imagesToAttach.slice(-MAX_ATTACHED_IMAGES);
+        });
+    }
+
+    refreshProcessedMessagesIfMemoryOverrideChanged(processedMessages, sourceMessages, modelIdForRequest, memoryGenerationAtProcess) {
+        const currentGeneration = this._lastApiContentGeneration;
+        const shouldRebuild = currentGeneration !== memoryGenerationAtProcess ||
+            (currentGeneration !== null && !this.isMemoryFeatureActive(currentGeneration));
+        if (!shouldRebuild) {
+            return {
+                processedMessages,
+                memoryGenerationAtProcess
+            };
         }
-
-        // Build result, attaching images only to the LAST user message (if any)
-        const lastUserIndex = filteredMessages.map(m => m.role).lastIndexOf('user');
-
-        for (let i = 0; i < filteredMessages.length; i++) {
-            const msg = filteredMessages[i];
-            const isLastUserMessage = (i === lastUserIndex);
-
-            // For assistant messages: keep text only
-            if (msg.role === 'assistant') {
-                result.push({
-                    role: 'assistant',
-                    content: msg.content || (msg.images?.length ? '[Generated image]' : '')
-                });
-                continue;
-            }
-
-            // For user messages
-            if (msg.role === 'user') {
-                let textContent = msg.content || '';
-                const mediaContent = [];
-
-                // Only attach image-model outputs to the LAST user message
-                if (isLastUserMessage && imagesToAttach.length > 0) {
-                    mediaContent.push(...imagesToAttach);
-                }
-
-                // Process user's attached files (handled for every user message)
-                if (msg.files && msg.files.length > 0) {
-                    msg.files.forEach(file => {
-                        const isText = file.detectedType === 'text';
-                        if (isText) {
-                            try {
-                                const base64Data = file.dataUrl.split(',')[1];
-                                const decodedContent = atob(base64Data);
-                                textContent += `\n\n--- File: ${file.name} ---\n${decodedContent}`;
-                            } catch (e) {
-                                console.error('Failed to decode text file:', file.name, e);
-                                textContent += `\n\n--- File: ${file.name} ---\n[Error reading file content]`;
-                            }
-                        } else if (file.type.startsWith('image/') || file.detectedType === 'image') {
-                            mediaContent.push({
-                                type: 'image_url',
-                                image_url: { url: file.dataUrl }
-                            });
-                        } else {
-                            // For PDFs and audio files
-                            mediaContent.push({
-                                type: 'file',
-                                file: { filename: file.name, file_data: file.dataUrl }
-                            });
-                        }
-                    });
-                }
-
-                // Build content - use multimodal format only if there's media
-                if (mediaContent.length > 0) {
-                    result.push({
-                        role: 'user',
-                        content: [{ type: 'text', text: textContent }, ...mediaContent]
-                    });
-                } else {
-                    result.push({ role: 'user', content: textContent });
-                }
-                continue;
-            }
-
-            // Other roles (system, etc.)
-            result.push({ role: msg.role, content: msg.content });
-        }
-
-        return result;
+        return {
+            processedMessages: this.processMessagesWithFiles(sourceMessages, modelIdForRequest),
+            memoryGenerationAtProcess: this._lastApiContentGeneration
+        };
     }
 
     /**
      * Regenerates the last assistant response without creating a new user message.
      * Used when the regenerate button is clicked on an assistant message.
      */
-    async regenerateResponse() {
+    async regenerateResponse(options = {}) {
         let session = this.getCurrentSession();
         if (!session) return;
+        if (!options.skipMemoryAugment) this.clearMemoryApiOverrideContent();
 
         // Any local regeneration on an imported session forks it from upstream updates.
         if (session.importedFrom) {
@@ -3675,32 +5170,52 @@ class ChatApp {
         // Check if current session is already streaming
         const streamingState = this.getSessionStreamingState(session.id);
         if (streamingState.isStreaming) return;
+        this.reserveAccessAcquisitionHandoff(session);
+        this.chatArea?.closeQuickAskWindow?.();
 
-        // Get the last user message to scroll to top
+        // Get the last user message to anchor during regeneration
         const messages = await chatDB.getSessionMessages(session.id);
-        const lastUserMessage = messages.reverse().find(m => m.role === 'user');
+        const lastUserMessage = [...messages].reverse().find(m => m.role === 'user');
 
         // Create abort controller for this stream
         const abortController = new AbortController();
-        this.setSessionStreamingState(session.id, true, abortController);
+        const initialPendingPhase = this.resolvePendingPhaseForSession(session);
+        this.setSessionStreamingState(session.id, true, abortController, initialPendingPhase);
 
         // Pause auto-scroll for streaming (set immediately)
         this.isAutoScrollPaused = true;
 
-        // Scroll last user message to top after a brief delay
+        // Reposition the prompt while the regenerated response streams.
         if (lastUserMessage && lastUserMessage.id) {
-            setTimeout(() => {
-                requestAnimationFrame(() => {
-                    requestAnimationFrame(() => {
-                        this.scrollUserMessageToTop(lastUserMessage.id);
-                        // Check button visibility after scrolling
-                        setTimeout(() => this.updateScrollButtonVisibility(), 100);
-                    });
-                });
-            }, 50);
+            this.startPromptSlideUpEffect(lastUserMessage.id);
         }
 
         try {
+            if (lastUserMessage && !options.skipMemoryAugment) {
+                await this.removeLocalOnlyMessagesAfter(session.id, lastUserMessage.id);
+                const memoryMessages = await chatDB.getSessionMessages(session.id);
+                const conversationText = this.buildConversationText(memoryMessages);
+                try {
+                    await this.runMemoryAugmentFlow(lastUserMessage.content || '', lastUserMessage, session, {
+                        conversationText,
+                        signal: abortController.signal
+                    });
+                } catch (error) {
+                    if (error?.isCancelled) {
+                        return;
+                    }
+                    throw error;
+                }
+                if (abortController.signal.aborted) {
+                    return;
+                }
+            }
+
+            const typingModelName = this.normalizeModelName(session.model) || session.model || this.state.pendingModelName || inferenceService.getDefaultModelName(session);
+            const typingId = this.isViewingSession(session.id)
+                ? this.showTypingIndicator(typingModelName, initialPendingPhase)
+                : null;
+
             // Automatically acquire API key if needed
             const hasAccessToken = !!inferenceService.getAccessToken(session);
             const isAccessExpired = inferenceService.isAccessExpired(session);
@@ -3710,17 +5225,32 @@ class ChatApp {
                     if (this.floatingPanel) {
                         this.floatingPanel.showMessage(`Acquiring ${accessLabel}...`, 'info');
                     }
-                    await this.acquireAndSetAccess(session);
+                    await this.acquireAndSetAccess(session, {
+                        signal: abortController.signal,
+                        onGranted: () => {
+                            this.advancePendingStateAfterAccessGranted(session.id, typingId);
+                        }
+                    });
                     if (this.floatingPanel) {
                         this.floatingPanel.showMessage(`Successfully acquired ${accessLabel}!`, 'success', 2000);
                     }
                 } catch (error) {
+                    if (typingId) this.removeTypingIndicator(typingId);
                     if (this.floatingPanel) {
                         this.floatingPanel.showMessage(error.message, 'error', 5000);
+                    }
+                    if (lastUserMessage?.id) {
+                        await this.clearSessionTitleGenerationPending(session.id);
                     }
                     await this.addMessage('assistant', `**Error:** ${error.message}`, { isLocalOnly: true });
                     return;
                 }
+            }
+
+            if (lastUserMessage?.id) {
+                this.generateSessionTitleIfNeeded(session.id, lastUserMessage.id).catch(error => {
+                    console.debug('Session title generation failed:', error);
+                });
             }
 
             // Set current session for network logging
@@ -3759,9 +5289,6 @@ class ChatApp {
 
             const modelIdForRequest = selectedModelEntry.id;
 
-            // Show typing indicator (only if still viewing this session)
-            const typingId = this.isViewingSession(session.id) ? this.showTypingIndicator(modelNameToUse) : null;
-
             let streamingMessage = null;
             let streamedContent = '';
             let streamedReasoning = '';
@@ -3789,7 +5316,8 @@ class ChatApp {
                 });
 
                 // Process messages to include file content from stored metadata
-                const processedMessages = this.processMessagesWithFiles(sanitizedMessages, modelIdForRequest);
+                let processedMessages = this.processMessagesWithFiles(sanitizedMessages, modelIdForRequest);
+                let memoryGenerationAtProcess = this._lastApiContentGeneration;
 
                 // Create a placeholder message for streaming
                 const streamingMessageId = this.generateId();
@@ -3807,11 +5335,21 @@ class ChatApp {
                     streamingTokens: 0,
                     streamingReasoning: false,
                     streamingPending: true, // Indicates waiting for first chunk
+                    streamingPhase: this.getSessionStreamingState(session.id).phase || initialPendingPhase,
                     scrubber: scrubberMetadata
                 };
 
                 // Save placeholder immediately so switching sessions back can find it
                 await chatDB.saveMessage(streamingMessage);
+                ({
+                    processedMessages,
+                    memoryGenerationAtProcess
+                } = this.refreshProcessedMessagesIfMemoryOverrideChanged(
+                    processedMessages,
+                    sanitizedMessages,
+                    modelIdForRequest,
+                    memoryGenerationAtProcess
+                ));
 
                 let lastSaveLength = 0;
                 const SAVE_INTERVAL_CHARS = 100;
@@ -3826,10 +5364,10 @@ class ChatApp {
                         // On first chunk (of any kind), remove typing indicator and append message
                         if (!firstChunkReceived) {
                             firstChunkReceived = true;
-                            if (typingId) this.removeTypingIndicator(typingId);
 
                             // Clear pending flag now that we have actual content
                             streamingMessage.streamingPending = false;
+                            streamingMessage.streamingPhase = null;
 
                             // Handle text content
                             if (chunk) {
@@ -3881,23 +5419,26 @@ class ChatApp {
                         }
                     },
                     (tokenUpdate) => {
-                        // FEATURE DISABLED: Token count display - uncomment to re-enable
                         streamingTokenCount = tokenUpdate.completionTokens || 0;
-                        // if (tokenUpdate.isStreaming && this.chatArea) {
-                        //     this.chatArea.updateStreamingTokens(streamingMessageId, streamingTokenCount);
-                        // }
                     },
                     [], // No files for regeneration (files are included in processedMessages)
                     this.searchEnabled, // Use current search toggle state
                     abortController,
+                    async () => {
+                        this.updateSessionStreamingPhase(session.id, 'stream-open');
+                        streamingMessage.streamingPhase = this.getSessionStreamingState(session.id).phase;
+                        if (typingId) {
+                            this.updateTypingIndicator(typingId, 'stream-open');
+                        }
+                    },
                     async (reasoningChunk) => {
                         // Handle reasoning trace streaming
                         if (!firstChunkReceived) {
                             firstChunkReceived = true;
                             reasoningStartTime = Date.now();
-                            if (typingId) this.removeTypingIndicator(typingId);
                             // Clear pending flag now that we have actual content
                             streamingMessage.streamingPending = false;
+                            streamingMessage.streamingPhase = null;
                             streamingMessage.reasoning = reasoningChunk;
                             streamingMessage.streamingReasoning = true;
                             streamedReasoning = reasoningChunk;
@@ -3931,7 +5472,11 @@ class ChatApp {
                 // Parse and save the cleaned reasoning
                 streamingMessage.reasoning = rawReasoning ? parseReasoningContent(rawReasoning) : null;
                 streamingMessage.tokenCount = tokenData.totalTokens || tokenData.completionTokens || streamingTokenCount;
-                streamingMessage.model = tokenData.model || modelNameToUse;
+                const streamReportedModel = tokenData.model || modelIdForRequest;
+                const resolvedFinalModelName = this.normalizeModelName(
+                    inferenceService.getDisplayName(streamReportedModel, modelNameToUse, session)
+                ) || modelNameToUse;
+                streamingMessage.model = resolvedFinalModelName;
                 streamingMessage.streamingTokens = null;
                 streamingMessage.streamingReasoning = false;
                 streamingMessage.streamingPending = false;
@@ -3944,6 +5489,7 @@ class ChatApp {
                 }
 
                 await chatDB.saveMessage(streamingMessage);
+                await this.refreshSessionConversationSearchText(session, null, { persist: true });
 
                 // Fetch metadata for citations asynchronously and update UI
                 if (streamingMessage.citations && streamingMessage.citations.length > 0) {
@@ -3952,10 +5498,6 @@ class ChatApp {
 
                 // Only update UI if still viewing the same session
                 if (this.chatArea && this.isViewingSession(session.id)) {
-                    // FEATURE DISABLED: Token count display - uncomment to re-enable
-                    // if (streamingMessage.tokenCount) {
-                    //     this.chatArea.updateFinalTokens(streamingMessageId, streamingMessage.tokenCount);
-                    // }
                     // Finalize reasoning display with markdown processing and timing
                     if (streamingMessage.reasoning) {
                         this.chatArea.finalizeReasoningDisplay(streamingMessageId, streamingMessage.reasoning, streamingMessage.reasoningDuration);
@@ -3970,6 +5512,8 @@ class ChatApp {
                 if (streamingMessage.scrubber?.canRestore) {
                     this.preCacheScrubberRestore(streamingMessage);
                 }
+
+                this.triggerPostTurnMemoryExtraction(session);
 
             } catch (error) {
                 console.error('Error getting AI response:', error);
@@ -4047,6 +5591,7 @@ class ChatApp {
                 }
             }
         } finally {
+            this.clearMemoryApiOverrideContent();
             this.setSessionStreamingState(session.id, false, null);
             // Reset auto-scroll state and hide button
             this.isAutoScrollPaused = false;
@@ -4067,6 +5612,7 @@ class ChatApp {
         const content = rawContent.trim();
         const hasFiles = this.uploadedFiles.length > 0;
         if (!content && !hasFiles) return;
+        this.clearMemoryApiOverrideContent();
 
         // Create session if none exists (first message creates the session)
         if (!this.getCurrentSession()) {
@@ -4081,25 +5627,6 @@ class ChatApp {
             await this.markImportedSessionAsForked(session);
             this.updateUrlWithSession(session.id);
         }
-
-        // TODO: Re-enable verifier offline check later
-        // // Block if verifier is offline (unless user acknowledged)
-        // // This must be checked FIRST before any message is sent
-        // const verifierOffline = stationVerifier.isOffline();
-        // console.log(`🔍 Verifier status check: online=${stationVerifier.verifierOnline}, isOffline=${verifierOffline}, skipOfflineCheck=${skipOfflineCheck}`);
-        // if (verifierOffline && !skipOfflineCheck) {
-        //     console.log('⚠️ Blocking - showing verifier offline warning');
-        //     this.showVerifierOfflineWarningModal({
-        //         lastSuccessful: stationVerifier.lastSuccessfulBroadcast,
-        //         timeSince: stationVerifier.getTimeSinceLastBroadcast(),
-        //         error: 'Verifier unreachable',
-        //         onSendAnyway: () => {
-        //             // Re-call sendMessage with skip flag
-        //             this.sendMessage(true);
-        //         }
-        //     });
-        //     return; // Block until user acknowledges
-        // }
 
         // Block sending if station is banned (check both state and cached broadcast data)
         const verifier = inferenceService.getVerificationAdapter(session);
@@ -4129,10 +5656,13 @@ class ChatApp {
         // Check if current session is already streaming
         const streamingState = this.getSessionStreamingState(session.id);
         if (streamingState.isStreaming) return;
+        this.reserveAccessAcquisitionHandoff(session);
+        this.chatArea?.closeQuickAskWindow?.();
 
         // Create abort controller for this stream
         const abortController = new AbortController();
-        this.setSessionStreamingState(session.id, true, abortController);
+        const initialPendingPhase = this.resolvePendingPhaseForSession(session);
+        this.setSessionStreamingState(session.id, true, abortController, initialPendingPhase);
 
         // Store current files and search state before clearing
         const currentFiles = [...this.uploadedFiles];
@@ -4151,20 +5681,7 @@ class ChatApp {
             // Add user message with file metadata
             const metadata = {};
             if (hasFiles) {
-                // Store file data for preview rendering and include detected file type
-                const { getFileType } = await import('./services/fileUtils.js');
-                const fileData = await Promise.all(currentFiles.map(async (file) => {
-                    const dataUrl = await this.createImagePreview(file);
-                    const detectedType = await getFileType(file);
-                    return {
-                        name: file.name,
-                        type: file.type,
-                        size: file.size,
-                        dataUrl: dataUrl,
-                        detectedType: detectedType  // Store the detected type (image, pdf, audio, text)
-                    };
-                }));
-                metadata.files = fileData;
+                metadata.files = await this.buildMessageFileMetadata(currentFiles);
             }
             if (searchEnabled) {
                 metadata.searchEnabled = true;
@@ -4195,21 +5712,34 @@ class ChatApp {
             this.updateInputState();
             this.resetMessageInputLayout({ resetScroll: true });
 
-            // Auto-scroll remains paused while the response streams
-
-            // Scroll user message to top after a brief delay to ensure rendering
+            // Auto-scroll remains paused while the response streams.
             if (userMessage && userMessage.id) {
-                // Use setTimeout with RAF to ensure message is fully rendered
-                setTimeout(() => {
-                    requestAnimationFrame(() => {
-                        requestAnimationFrame(() => {
-                            this.scrollUserMessageToTop(userMessage.id);
-                            // Check button visibility after scrolling
-                            setTimeout(() => this.updateScrollButtonVisibility(), 100);
-                        });
-                    });
-                }, 50);
+                this.startPromptSlideUpEffect(userMessage.id);
             }
+
+            if (this.memoryFeatureEnabled && this.memoryMode && content && userMessage) {
+                const memoryMessages = await chatDB.getSessionMessages(session.id);
+                const conversationText = this.buildConversationText(memoryMessages);
+                try {
+                    await this.runMemoryAugmentFlow(content, userMessage, session, {
+                        conversationText,
+                        signal: abortController.signal
+                    });
+                } catch (error) {
+                    if (error?.isCancelled) {
+                        return;
+                    }
+                    throw error;
+                }
+                if (abortController.signal.aborted) {
+                    return;
+                }
+            }
+
+            const typingModelName = this.normalizeModelName(session.model) || session.model || this.state.pendingModelName || inferenceService.getDefaultModelName(session);
+            let typingId = this.isViewingSession(session.id)
+                ? this.showTypingIndicator(typingModelName, initialPendingPhase)
+                : null;
 
             // Automatically acquire API key if needed
             const hasAccessToken = !!inferenceService.getAccessToken(session);
@@ -4220,17 +5750,32 @@ class ChatApp {
                     if (this.floatingPanel) {
                         this.floatingPanel.showMessage(`Acquiring ${accessLabel}...`, 'info');
                     }
-                    await this.acquireAndSetAccess(session);
+                    await this.acquireAndSetAccess(session, {
+                        signal: abortController.signal,
+                        onGranted: () => {
+                            this.advancePendingStateAfterAccessGranted(session.id, typingId);
+                        }
+                    });
                     if (this.floatingPanel) {
                         this.floatingPanel.showMessage(`${accessLabel} ready`, 'success', 2000);
                     }
                 } catch (error) {
+                    if (typingId) this.removeTypingIndicator(typingId);
                     if (this.floatingPanel) {
                         this.floatingPanel.showMessage(error.message, 'error', 5000);
+                    }
+                    if (userMessage?.id) {
+                        await this.clearSessionTitleGenerationPending(session.id);
                     }
                     await this.addMessage('assistant', `**Error:** ${error.message}`, { isLocalOnly: true });
                     return; // Return early if key acquisition fails
                 }
+            }
+
+            if (userMessage?.id) {
+                this.generateSessionTitleIfNeeded(session.id, userMessage.id).catch(error => {
+                    console.debug('Session title generation failed:', error);
+                });
             }
 
             // Set current session for network logging
@@ -4269,9 +5814,6 @@ class ChatApp {
 
             const modelIdForRequest = selectedModelEntry.id;
 
-            // Show typing indicator (only if still viewing this session)
-            let typingId = this.isViewingSession(session.id) ? this.showTypingIndicator(modelNameToUse) : null;
-
             // Declare variables outside try block so they're accessible in catch
             let streamingMessage = null;
             let firstChunkReceived = false;
@@ -4281,6 +5823,7 @@ class ChatApp {
             // Retry configuration for transient errors
             const MAX_RETRIES = 2;
             let retryCount = 0;
+            let accessRefreshAttempted = false;
 
             // Helper to check if error is retryable (only before streaming starts)
             const isRetryableError = (error) => {
@@ -4309,7 +5852,8 @@ class ChatApp {
                 });
 
                 // Process messages to include file content from stored metadata
-                const processedMessages = this.processMessagesWithFiles(sanitizedMessages, modelIdForRequest);
+                let processedMessages = this.processMessagesWithFiles(sanitizedMessages, modelIdForRequest);
+                let memoryGenerationAtProcess = this._lastApiContentGeneration;
 
                 // Create a placeholder message for streaming
                 const streamingMessageId = this.generateId();
@@ -4329,6 +5873,8 @@ class ChatApp {
                     tokenCount: null,
                     streamingTokens: 0,
                     streamingReasoning: false,
+                    streamingPending: true,
+                    streamingPhase: this.getSessionStreamingState(session.id).phase || initialPendingPhase,
                     scrubber: scrubberMetadata
                 };
 
@@ -4339,6 +5885,15 @@ class ChatApp {
                 let firstContentChunk = true; // Track when content starts (after reasoning)
                 let reasoningStartTime = null;
                 let reasoningEndTime = null;
+                ({
+                    processedMessages,
+                    memoryGenerationAtProcess
+                } = this.refreshProcessedMessagesIfMemoryOverrideChanged(
+                    processedMessages,
+                    sanitizedMessages,
+                    modelIdForRequest,
+                    memoryGenerationAtProcess
+                ));
 
                 // Stream the response with token tracking
                 const tokenData = await inferenceService.streamCompletion(
@@ -4349,7 +5904,8 @@ class ChatApp {
                         // On first chunk (of any kind), remove typing indicator and append message
                         if (!firstChunkReceived) {
                             firstChunkReceived = true;
-                            if (typingId) this.removeTypingIndicator(typingId);
+                            streamingMessage.streamingPending = false;
+                            streamingMessage.streamingPhase = null;
 
                             // Handle text content
                             if (chunk) {
@@ -4433,22 +5989,25 @@ class ChatApp {
                         }
                     },
                     (tokenUpdate) => {
-                        // FEATURE DISABLED: Token count display - uncomment to re-enable
-                        // Update streaming token count in real-time
                         streamingTokenCount = tokenUpdate.completionTokens || 0;
-                        // if (tokenUpdate.isStreaming && this.chatArea) {
-                        //     this.chatArea.updateStreamingTokens(streamingMessageId, streamingTokenCount);
-                        // }
                     },
                     [], // Files are now included in processedMessages, not passed separately
                     searchEnabled,
                     abortController,
+                    async () => {
+                        this.updateSessionStreamingPhase(session.id, 'stream-open');
+                        streamingMessage.streamingPhase = this.getSessionStreamingState(session.id).phase;
+                        if (typingId) {
+                            this.updateTypingIndicator(typingId, 'stream-open');
+                        }
+                    },
                     async (reasoningChunk) => {
                         // Handle reasoning trace streaming
                         if (!firstChunkReceived) {
                             firstChunkReceived = true;
                             reasoningStartTime = Date.now();
-                            if (typingId) this.removeTypingIndicator(typingId);
+                            streamingMessage.streamingPending = false;
+                            streamingMessage.streamingPhase = null;
                             streamingMessage.reasoning = reasoningChunk;
                             streamingMessage.streamingReasoning = true;
                             streamedReasoning = reasoningChunk;
@@ -4480,7 +6039,11 @@ class ChatApp {
                 // Parse and save the cleaned reasoning
                 streamingMessage.reasoning = rawReasoning ? parseReasoningContent(rawReasoning) : null;
                 streamingMessage.tokenCount = tokenData.completionTokens || streamingTokenCount;
-                streamingMessage.model = tokenData.model || modelNameToUse;
+                const streamReportedModel = tokenData.model || modelIdForRequest;
+                const resolvedFinalModelName = this.normalizeModelName(
+                    inferenceService.getDisplayName(streamReportedModel, modelNameToUse, session)
+                ) || modelNameToUse;
+                streamingMessage.model = resolvedFinalModelName;
                 streamingMessage.streamingTokens = null; // Clear streaming tokens after completion
                 streamingMessage.streamingReasoning = false; // Clear streaming reasoning flag
                 streamingMessage.citations = tokenData.citations || null;
@@ -4493,6 +6056,7 @@ class ChatApp {
                 }
 
                 await chatDB.saveMessage(streamingMessage);
+                await this.refreshSessionConversationSearchText(session, null, { persist: true });
 
                 // Fetch metadata for citations asynchronously and update UI
                 if (streamingMessage.citations && streamingMessage.citations.length > 0) {
@@ -4512,6 +6076,8 @@ class ChatApp {
                 if (streamingMessage.scrubber?.canRestore) {
                     this.preCacheScrubberRestore(streamingMessage);
                 }
+
+                this.triggerPostTurnMemoryExtraction(session);
 
                 break retryLoop; // Success - exit retry loop
 
@@ -4556,6 +6122,23 @@ class ChatApp {
                     break retryLoop; // Don't retry cancelled requests
                 }
 
+                let terminalError = error;
+
+                if (!firstChunkReceived && !accessRefreshAttempted && this.isAccessCreditExhaustedError(error)) {
+                    accessRefreshAttempted = true;
+                    const refreshPendingPhase = 'requesting-key';
+                    this.updateSessionStreamingPhase(session.id, refreshPendingPhase);
+                    typingId = this.isViewingSession(session.id) ? this.showTypingIndicator(modelNameToUse, refreshPendingPhase) : null;
+
+                    try {
+                        await this.refreshAccessAfterCreditExhaustion(session, { typingId });
+                        continue retryLoop;
+                    } catch (refreshError) {
+                        console.error('Failed to refresh exhausted ephemeral key:', refreshError);
+                        terminalError = refreshError;
+                    }
+                }
+
                 // Check if we should retry (only if no content received yet)
                 if (!firstChunkReceived && retryCount < MAX_RETRIES && isRetryableError(error)) {
                     retryCount++;
@@ -4563,25 +6146,27 @@ class ChatApp {
                     // Small delay before retry (500ms * attempt number)
                     await new Promise(r => setTimeout(r, 500 * retryCount));
                     // Re-show typing indicator for retry
-                    typingId = this.isViewingSession(session.id) ? this.showTypingIndicator(modelNameToUse) : null;
+                    if (typingId) this.removeTypingIndicator(typingId);
+                    const retryPendingPhase = this.resolvePendingPhaseForSession(session);
+                    this.updateSessionStreamingPhase(session.id, retryPendingPhase);
+                    typingId = this.isViewingSession(session.id) ? this.showTypingIndicator(modelNameToUse, retryPendingPhase) : null;
                     continue retryLoop;
                 }
 
                 // Non-retryable or exhausted retries - show error to user
-                const errorMessage = error.message;
+                const errorMessage = terminalError.message;
 
                 // Customize messages for specific error types
                 let userFriendlyMessage = `Sorry, I encountered an error while processing your request. Try re-submitting the query. **Error**: ${errorMessage}`;
 
                 // The following are inference backend HTTP status codes, not OA infra
-                if (error.status === 402) {
+                if (terminalError.status === 402) {
                     // Credit/token limit errors
-                    // userFriendlyMessage = `Ephemeral key is out of credit limit. Renew or extend the key`;
                     userFriendlyMessage = `Sorry, I encountered an error while processing your request. Try submitting the query again. **Error**: ${errorMessage}`;
-                } else if (error.status === 401) {
+                } else if (terminalError.status === 401) {
                     // Authentication errors
                     userFriendlyMessage = `Authentication error. Please check the system panel (right side) and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor)!`;
-                } else if (error.status === 503 || error.status === 502 || error.status === 504) {
+                } else if (terminalError.status === 503 || terminalError.status === 502 || terminalError.status === 504) {
                     // Service unavailable / gateway errors (after retries exhausted)
                     userFriendlyMessage = `Gateway error (after ${retryCount} retries). Please take a look at the system panel and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor).`;
                 } else if (errorMessage.includes('proxy') || errorMessage.includes('Proxy')) {
@@ -4602,6 +6187,8 @@ class ChatApp {
                     streamingMessage.tokenCount = null;
                     streamingMessage.streamingTokens = null;
                     streamingMessage.streamingReasoning = false;
+                    streamingMessage.streamingPending = false;
+                    streamingMessage.streamingPhase = null;
                     streamingMessage.isLocalOnly = true;
                     await chatDB.saveMessage(streamingMessage);
                     // Only update UI if still viewing the same session
@@ -4609,6 +6196,7 @@ class ChatApp {
                         await this.chatArea.finalizeStreamingMessage(streamingMessage);
                     }
                 } else if (this.isViewingSession(session.id)) {
+                    if (typingId) this.removeTypingIndicator(typingId);
                     // Error before first chunk - message never added to UI, add new error message
                     await this.addMessage('assistant', userFriendlyMessage, { isLocalOnly: true });
                 }
@@ -4616,6 +6204,7 @@ class ChatApp {
             }
             } // End of retryLoop
         } finally {
+            this.clearMemoryApiOverrideContent();
             // Clear streaming state for this session
             this.setSessionStreamingState(session.id, false, null);
             // Reset auto-scroll state and hide button
@@ -4633,16 +6222,259 @@ class ChatApp {
      * @param {string} modelName - Display name of the model that's "typing"
      * @returns {string} ID of the typing indicator element
      */
-    showTypingIndicator(modelName) {
+    showTypingIndicator(modelName, phase = 'requesting-key') {
         const model = this.state.models.find(m => m.name === modelName);
         const providerName = model ? model.provider : 'OpenAI';
         const id = 'typing-' + Date.now();
-            const typingHtml = buildTypingIndicator(id, providerName);
+        const timestamp = Date.now();
+        const typingHtml = this.ui.buildTypingIndicator(id, providerName, modelName, timestamp, phase);
         this.elements.messagesContainer.insertAdjacentHTML('beforeend', typingHtml);
-        if (!this.isAutoScrollPaused) {
+        this.updateActivePromptScrollSpacer();
+        if (this.shouldAutoScrollChat()) {
             this.scrollToBottom(true);
         }
         return id;
+    }
+
+    resolvePendingPhaseForSession(session) {
+        if (!session) return 'requesting-key';
+        const hasAccessToken = !!inferenceService.getAccessToken(session);
+        const isAccessExpired = inferenceService.isAccessExpired(session);
+        return (!hasAccessToken || isAccessExpired) ? 'requesting-key' : 'waiting-response';
+    }
+
+    isQuickAskPinnedInstantModel(model, modelName = '') {
+        const id = String(model?.id || '').toLowerCase();
+        const name = String(modelName || model?.name || '').toLowerCase();
+        const isGpt = id.includes('openai/gpt') || name.includes('gpt');
+        const isInstant = name.includes('instant') || id.endsWith('-chat') || id.includes('-chat:');
+        return isGpt && isInstant;
+    }
+
+    getQuickAskPinnedInstantModel(defaults = {}) {
+        const pinnedModelIds = Array.isArray(defaults.pinnedModels) ? defaults.pinnedModels : [];
+        for (const modelId of pinnedModelIds) {
+            const model = this.state.models.find(entry => entry.id === modelId);
+            if (!model) continue;
+            const modelName = this.normalizeModelName(model.name || model.id) || model.name || model.id;
+            const modelNameFromId = this.normalizeModelName(modelId) || modelName;
+            if (this.isQuickAskPinnedInstantModel(model, modelName) ||
+                this.isQuickAskPinnedInstantModel({ id: modelId, name: modelNameFromId }, modelNameFromId)) {
+                return {
+                    model,
+                    modelName
+                };
+            }
+        }
+        return null;
+    }
+
+    async resolveModelForQuickAsk(session) {
+        const defaults = getDefaultModelConfig();
+        const defaultModelId = defaults.defaultModelId || inferenceService.getDefaultModelId(session);
+        const instantModel = this.getQuickAskPinnedInstantModel(defaults);
+        let modelNameToUse = instantModel?.modelName ||
+            this.normalizeModelName(defaults.defaultModelName || defaultModelId) ||
+            defaults.defaultModelName ||
+            inferenceService.getDefaultModelName(session);
+
+        let selectedModelEntry = instantModel?.model ||
+            (defaultModelId
+                ? this.state.models.find(m => m.id === defaultModelId)
+                : null);
+
+        if (!selectedModelEntry) {
+            selectedModelEntry = modelNameToUse
+                ? this.state.models.find(m => m.name === modelNameToUse)
+                : null;
+        }
+
+        if (!selectedModelEntry) {
+            const fallbackModel = this.getFallbackModelEntry(session);
+            if (fallbackModel) {
+                selectedModelEntry = fallbackModel;
+                modelNameToUse = this.normalizeModelName(fallbackModel.name);
+            }
+        }
+
+        if (!modelNameToUse || !selectedModelEntry) {
+            throw new Error('No models are available right now. Please add a model and try again.');
+        }
+
+        return {
+            modelId: selectedModelEntry.id,
+            modelName: modelNameToUse
+        };
+    }
+
+    async inlineQuickAsk(selectionText, options = {}) {
+        const selectedText = normalizeQuickAskSelection(selectionText);
+        const question = buildQuickAskQuestion(selectedText);
+        if (!question) {
+            throw new Error('Select text in a model response to ask about it.');
+        }
+
+        const session = this.getCurrentSession();
+        if (!session) {
+            throw new Error('Start a chat before using inline quick ask.');
+        }
+
+        if (this.getSessionStreamingState(session.id).isStreaming) {
+            throw new Error('Quick ask is unavailable while this chat is streaming.');
+        }
+
+        const verifier = inferenceService.getVerificationAdapter(session);
+        const accessInfo = inferenceService.getAccessInfo(session);
+        const accessId = verifier?.getAccessId(accessInfo?.info);
+        if (verifier?.supports && accessId) {
+            const stationState = verifier.getAccessState(accessId);
+            const isBannedInCache = verifier.isAccessBanned(accessId);
+            if (stationState?.banned || isBannedInCache) {
+                const broadcastData = verifier.getLastBroadcastData();
+                const bannedInfo = broadcastData?.banned_stations?.find(s => s.station_id === accessId);
+                this.showBannedStationWarningModal({
+                    stationId: accessId,
+                    reason: stationState?.banReason || bannedInfo?.reason || 'Unknown',
+                    bannedAt: stationState?.bannedAt || bannedInfo?.banned_at,
+                    sessionId: session.id
+                });
+                throw new Error('The current station is banned.');
+            }
+        }
+
+        const abortController = options.abortController || new AbortController();
+        if (abortController.signal.aborted) {
+            const error = new Error('Quick ask cancelled.');
+            error.isCancelled = true;
+            throw error;
+        }
+
+        const { modelId, modelName } = await this.resolveModelForQuickAsk(session);
+        const hasAccessToken = !!inferenceService.getAccessToken(session);
+        const isAccessExpired = inferenceService.isAccessExpired(session);
+        const accessLabel = inferenceService.getAccessLabel(session);
+        if (!hasAccessToken || isAccessExpired) {
+            options.onStatus?.('requesting-key');
+            try {
+                if (this.floatingPanel) {
+                    this.floatingPanel.showMessage(`Acquiring ${accessLabel}...`, 'info');
+                }
+                await this.acquireAndSetAccess(session, {
+                    modelIdOverride: modelId,
+                    modelNameOverride: modelName,
+                    signal: abortController.signal,
+                    onGranted: () => {
+                        options.onStatus?.('waiting-response');
+                    }
+                });
+                if (this.floatingPanel) {
+                    this.floatingPanel.showMessage(`${accessLabel} ready`, 'success', 2000);
+                }
+            } catch (error) {
+                if (this.floatingPanel) {
+                    this.floatingPanel.showMessage(error.message, 'error', 5000);
+                }
+                throw error;
+            }
+            if (abortController.signal.aborted) {
+                const error = new Error('Quick ask cancelled.');
+                error.isCancelled = true;
+                throw error;
+            }
+            if (this.getSessionStreamingState(session.id).isStreaming) {
+                throw new Error('Quick ask is unavailable while this chat is streaming.');
+            }
+        } else {
+            options.onStatus?.('waiting-response');
+        }
+
+        if (window.networkLogger) {
+            window.networkLogger.setCurrentSession(session.id);
+        }
+
+        const messages = await chatDB.getSessionMessages(session.id);
+        const filteredMessages = messages.filter(msg => !msg.isLocalOnly);
+        const sanitizedMessages = this.sanitizeMessagesForApi(filteredMessages);
+        const processedMessages = this.processMessagesWithFiles(sanitizedMessages, modelId);
+        const quickAskMessages = buildQuickAskMessages(processedMessages, selectedText);
+        if (this.getSessionStreamingState(session.id).isStreaming) {
+            throw new Error('Quick ask is unavailable while this chat is streaming.');
+        }
+        if (abortController.signal.aborted) {
+            const error = new Error('Quick ask cancelled.');
+            error.isCancelled = true;
+            throw error;
+        }
+
+        let content = '';
+        let reasoning = '';
+        let streamingTokenCount = 0;
+        let firstChunkReceived = false;
+        const tokenData = await inferenceService.streamCompletion(
+            quickAskMessages,
+            modelId,
+            session,
+            async (chunk) => {
+                if (!firstChunkReceived) {
+                    firstChunkReceived = true;
+                    options.onStatus?.('streaming');
+                }
+                if (!chunk) return;
+                content += chunk;
+                options.onChunk?.(content, chunk);
+            },
+            (tokenUpdate) => {
+                streamingTokenCount = tokenUpdate.completionTokens || streamingTokenCount;
+                options.onTokenUpdate?.(streamingTokenCount);
+            },
+            [],
+            this.searchEnabled,
+            abortController,
+            () => {
+                options.onStatus?.('stream-open');
+            },
+            async (reasoningChunk) => {
+                if (!firstChunkReceived) {
+                    firstChunkReceived = true;
+                    options.onStatus?.('streaming');
+                }
+                reasoning += reasoningChunk || '';
+                options.onReasoningChunk?.(reasoning, reasoningChunk);
+            },
+            this.reasoningEnabled,
+            this.reasoningEffort
+        );
+
+        const rawReasoning = tokenData.reasoning || reasoning || null;
+        const result = {
+            question,
+            selectedText,
+            content,
+            reasoning: rawReasoning ? parseReasoningContent(rawReasoning) : null,
+            tokenCount: tokenData.totalTokens || tokenData.completionTokens || streamingTokenCount || null,
+            model: this.normalizeModelName(
+                inferenceService.getDisplayName(tokenData.model || modelId, modelName, session)
+            ) || modelName,
+            citations: tokenData.citations || null
+        };
+        options.onDone?.(result);
+        return result;
+    }
+
+    updateTypingIndicator(id, phase) {
+        const indicator = document.getElementById(id);
+        if (!indicator) return;
+        const normalizedPhase = this.normalizePendingPhase(phase);
+        if (indicator.dataset.phase === normalizedPhase) return;
+
+        indicator.dataset.phase = normalizedPhase;
+        const label = indicator.querySelector('.pending-response-label');
+        if (label) {
+            label.textContent = normalizedPhase === 'waiting-response'
+                ? 'Waiting for response'
+                : 'Requesting ephemeral key';
+            label.classList.add('pending-response-streaming');
+        }
     }
 
     /**
@@ -4671,11 +6503,16 @@ class ChatApp {
             await chatDB.deleteSession(sessionId);
             await chatDB.deleteSessionMessages(sessionId);
             this.sessionScrollPositions.delete(sessionId);
+            this.sessionPromptScrollAnchors.delete(sessionId);
+            if (this.activePromptScroll?.sessionId === sessionId) {
+                this.detachPromptSlideUpEffect();
+            }
             this.clearChatbarStateForSession(sessionId);
 
             // Clear edit state if deleting current session
             if (deletedCurrentSession) {
                 this.editingMessageId = null;
+                this.editDrafts.clear();
             }
 
             // Switch to another session if we deleted the current one
@@ -4704,9 +6541,130 @@ class ChatApp {
      * @returns {Object} Template options
      */
     getMessageTemplateOptions(messageId) {
+        const editDraft = this.editDrafts.get(messageId) || null;
         return {
-            isEditing: this.editingMessageId === messageId
+            isEditing: this.editingMessageId === messageId,
+            editContent: editDraft?.content,
+            editFiles: editDraft?.files,
+            memoryFeatureEnabled: this.memoryFeatureEnabled !== false
         };
+    }
+
+    cloneMessageFiles(files) {
+        return Array.isArray(files)
+            ? files.map(file => ({ ...file }))
+            : [];
+    }
+
+    async buildMessageFileMetadata(files) {
+        const { getFileType, extractDocxText } = await import('./services/fileUtils.js');
+        return Promise.all(files.map(async (file) => {
+            const dataUrl = await this.createImagePreview(file);
+            const detectedType = await getFileType(file);
+            const metadata = {
+                name: file.name,
+                type: file.type,
+                size: file.size,
+                dataUrl,
+                detectedType
+            };
+            if (detectedType === 'docx') {
+                metadata.extractedText = await extractDocxText(file);
+            }
+            return metadata;
+        }));
+    }
+
+    updateEditDraftContent(messageId, content) {
+        const draft = this.editDrafts.get(messageId);
+        if (!draft) return;
+        draft.content = content;
+    }
+
+    async refreshEditMessage(messageId, { focusTextarea = false } = {}) {
+        const session = this.getCurrentSession();
+        if (!session || !this.chatArea) return;
+        const messages = await chatDB.getSessionMessages(session.id);
+        const message = messages.find(m => m.id === messageId);
+        if (!message) return;
+        this.chatArea.updateMessage(message);
+        this.chatArea.initializeEditForm?.();
+        if (focusTextarea) {
+            requestAnimationFrame(() => {
+                const textarea = document.querySelector(`.edit-prompt-textarea[data-message-id="${messageId}"]`);
+                textarea?.focus();
+            });
+        }
+    }
+
+    async handleEditFileUpload(messageId, files) {
+        const draft = this.editDrafts.get(messageId);
+        if (!draft || !files?.length) return;
+
+        const { validateFile } = await import('./services/fileUtils.js');
+        const validFiles = [];
+        const errors = [];
+
+        for (const file of files) {
+            const validation = await validateFile(file);
+            if (validation.valid) {
+                validFiles.push(file);
+            } else {
+                errors.push(validation.error);
+            }
+        }
+
+        if (validFiles.length > 0) {
+            const fileMetadata = await this.buildMessageFileMetadata(validFiles);
+            draft.files.push(...fileMetadata);
+            await this.refreshEditMessage(messageId, { focusTextarea: true });
+        }
+
+        if (errors.length > 0) {
+            this.showErrorNotification(errors.join('\n\n'));
+        }
+    }
+
+    async removeEditAttachment(messageId, index) {
+        const draft = this.editDrafts.get(messageId);
+        if (!draft || index < 0 || index >= draft.files.length) return;
+        draft.files.splice(index, 1);
+        await this.refreshEditMessage(messageId, { focusTextarea: true });
+    }
+
+    /**
+     * Normalizes a message into a static snapshot for forked sessions.
+     * Forks should capture visible content without carrying active streaming state.
+     * @param {Object} message - Source message
+     * @returns {Object|null} Snapshot message or null if it is only an empty pending placeholder
+     */
+    createForkMessageSnapshot(message) {
+        if (!message) return null;
+
+        const snapshot = { ...message };
+        if (snapshot.role !== 'assistant') {
+            return snapshot;
+        }
+
+        const hasText = typeof snapshot.content === 'string' && snapshot.content.trim().length > 0;
+        const hasReasoning = typeof snapshot.reasoning === 'string' && snapshot.reasoning.trim().length > 0;
+        const hasImages = Array.isArray(snapshot.images) && snapshot.images.length > 0;
+
+        // Ignore empty pending placeholders; they have no user-visible content yet.
+        if (snapshot.streamingPending && !hasText && !hasReasoning && !hasImages) {
+            return null;
+        }
+
+        if (snapshot.streamingReasoning && hasReasoning) {
+            snapshot.reasoning = parseReasoningContent(snapshot.reasoning);
+        }
+
+        snapshot.streamingPending = false;
+        snapshot.streamingPhase = null;
+        snapshot.streamingReasoning = false;
+        snapshot.streamingTokens = null;
+
+        return snapshot;
     }
 
     /**
@@ -4717,11 +6675,6 @@ class ChatApp {
         const session = this.getCurrentSession();
         if (!session) return;
 
-        // Prevent editing if streaming
-        if (this.isCurrentSessionStreaming()) {
-            return;
-        }
-
         const messages = await chatDB.getSessionMessages(session.id);
         const message = messages.find(m => m.id === messageId);
 
@@ -4729,6 +6682,11 @@ class ChatApp {
             return;
         }
 
+        this.editDrafts.clear();
+        this.editDrafts.set(messageId, {
+            content: message.content || '',
+            files: this.cloneMessageFiles(message.files)
+        });
         this.editingMessageId = messageId;
         await this.chatArea.render();
 
@@ -4750,6 +6708,7 @@ class ChatApp {
     cancelEditMode(messageId) {
         if (this.editingMessageId === messageId) {
             this.editingMessageId = null;
+            this.editDrafts.delete(messageId);
             this.chatArea.render();
         }
     }
@@ -4762,16 +6721,23 @@ class ChatApp {
         const session = this.getCurrentSession();
         if (!session) return;
 
-        if (session.importedFrom) {
-            await this.markImportedSessionAsForked(session);
-            this.updateUrlWithSession(session.id);
-        }
-
         const textarea = document.querySelector(`.edit-prompt-textarea[data-message-id="${messageId}"]`);
         if (!textarea) return;
 
         const newContent = textarea.value.trim();
-        if (!newContent) return;
+        const draft = this.editDrafts.get(messageId);
+        const draftFiles = this.cloneMessageFiles(draft?.files);
+        if (!newContent && draftFiles.length === 0) return;
+
+        if (this.isCurrentSessionStreaming()) {
+            const stopped = await this.stopCurrentSessionStreamingAndWait();
+            if (!stopped) return;
+        }
+
+        if (session.importedFrom) {
+            await this.markImportedSessionAsForked(session);
+            this.updateUrlWithSession(session.id);
+        }
 
         const messages = await chatDB.getSessionMessages(session.id);
         const messageIndex = messages.findIndex(m => m.id === messageId);
@@ -4780,8 +6746,9 @@ class ChatApp {
 
         const message = messages[messageIndex];
 
-        // Update the message content
+        // Update the message content and attachment set as one committed edit.
         message.content = newContent;
+        message.files = draftFiles.length > 0 ? draftFiles : null;
         message.timestamp = Date.now();
         await chatDB.saveMessage(message);
 
@@ -4796,14 +6763,22 @@ class ChatApp {
 
         // Update session title if this was the first message
         if (messageIndex === 0) {
-            const title = newContent.substring(0, 50) + (newContent.length > 50 ? '...' : '');
+            const title = this.buildLocalSessionTitle(newContent);
             session.title = title;
+            session.titleSource = 'local';
+            session.titleGenerationPending = Boolean(this.getMessageTextContent(newContent).trim());
+            session.titleSearchText = this.buildSessionTitleSearchText(newContent);
+            delete session.titleGeneratedAt;
         }
 
+        const remainingMessages = messages.slice(0, messageIndex + 1);
+        remainingMessages[messageIndex] = message;
+        this.applySessionConversationSearchText(session, remainingMessages);
         await chatDB.saveSession(session);
 
         // Clear edit mode
         this.editingMessageId = null;
+        this.editDrafts.delete(messageId);
 
         // Log the edit action
         if (window.networkLogger) {
@@ -4843,29 +6818,28 @@ class ChatApp {
         const session = this.getCurrentSession();
         if (!session) return;
 
-        // Prevent forking if streaming
-        if (this.isCurrentSessionStreaming()) {
-            return;
-        }
-
         const messages = await chatDB.getSessionMessages(session.id);
         const messageIndex = messages.findIndex(m => m.id === messageId);
 
         if (messageIndex === -1) return;
 
         // Copy messages up to and including the fork point
-        const messagesToCopy = messages.slice(0, messageIndex + 1);
+        const messagesToCopy = messages
+            .slice(0, messageIndex + 1)
+            .map(message => this.createForkMessageSnapshot(message))
+            .filter(Boolean);
 
         // Create new session with same model and access context
         const newSessionId = this.generateId();
         const firstUserMessage = messagesToCopy.find(m => m.role === 'user');
-        const title = firstUserMessage
-            ? firstUserMessage.content.substring(0, 50) + (firstUserMessage.content.length > 50 ? '...' : '')
-            : 'Forked Chat';
+        const titleFields = this.buildForkSessionTitleFields(session, firstUserMessage?.content);
 
         const newSession = {
             id: newSessionId,
-            title: `${title} (fork)`,
+            title: titleFields.title,
+            titleSource: titleFields.titleSource,
+            titleGenerationPending: false,
+            titleSearchText: titleFields.titleSearchText,
             createdAt: Date.now(),
             updatedAt: Date.now(),
             model: session.model,
@@ -4876,6 +6850,7 @@ class ChatApp {
             searchEnabled: this.searchEnabled,
             forkedFrom: session.id
         };
+        this.applySessionConversationSearchText(newSession, messagesToCopy);
 
         const accessInfo = inferenceService.getAccessInfo(session);
         if (accessInfo?.token) {
@@ -4926,7 +6901,8 @@ class ChatApp {
                 response: {
                     sourceSessionId: session.id,
                     messagesCopied: messagesToCopy.length,
-                    sharedAccess: !!accessInfo?.token
+                    sharedAccess: !!accessInfo?.token,
+                    sourceWasStreaming: this.getSessionStreamingState(session.id).isStreaming
                 }
             });
         }
@@ -4940,6 +6916,7 @@ class ChatApp {
 
         // Clear edit state
         this.editingMessageId = null;
+        this.editDrafts.clear();
 
         this.renderSessions();
         // Scroll sidebar to top to show the new session
@@ -4971,7 +6948,11 @@ class ChatApp {
         });
         this.sessionStreamingStates.clear();
         this.sessionScrollPositions.clear();
+        this.sessionPromptScrollAnchors.clear();
+        this.detachPromptSlideUpEffect();
         this.clearAllChatbarStates();
+        this.editingMessageId = null;
+        this.editDrafts.clear();
 
         this.state.sessions = [];
         this.state.sessionsById = new Map();
@@ -5192,7 +7173,7 @@ class ChatApp {
 
     async loadMoreSessions() {
         if (this.state.isLoadingSessions || !this.state.hasMoreSessions) return;
-        if (this.sessionSearchQuery.trim()) return;
+        if (this.hasActiveSessionListCriteria()) return;
 
         this.state.isLoadingSessions = true;
         try {
@@ -5226,10 +7207,15 @@ class ChatApp {
         this.state.hasMoreSessions = true;
         this.state.sessionSearchResults = null;
         this.state.sessionSearchResultsQuery = '';
+        this.state.sessionSearchResultsKey = '';
         this.state.sessionSearchPending = false;
         await this.loadInitialSessions();
         await this.ensureSessionLoaded(this.state.currentSessionId);
-        this.renderSessions();
+        if (this.hasActiveSessionListCriteria()) {
+            await this.updateSessionSearchResults();
+        } else {
+            this.renderSessions();
+        }
     }
 
     handleStorageEvent(type, payload) {
@@ -5280,19 +7266,234 @@ class ChatApp {
         return merged;
     }
 
+    getNormalizedSessionSearchQuery() {
+        return this.sessionSearchQuery.trim().toLowerCase();
+    }
+
+    hasActiveSessionFilters() {
+        return Boolean(
+            this.sessionFilters.starredOnly ||
+            this.sessionFilters.dateMode !== 'all' ||
+            this.sessionFilters.customDate
+        );
+    }
+
+    hasActiveSessionListCriteria() {
+        return Boolean(this.getNormalizedSessionSearchQuery() || this.hasActiveSessionFilters());
+    }
+
+    getSessionResultsKey() {
+        return JSON.stringify({
+            query: this.getNormalizedSessionSearchQuery(),
+            starredOnly: this.sessionFilters.starredOnly,
+            dateMode: this.sessionFilters.dateMode,
+            customDate: this.sessionFilters.customDate || ''
+        });
+    }
+
+    getSessionTimestamp(session) {
+        return Number(session?.updatedAt || session?.createdAt || 0);
+    }
+
+    getLocalDateKey(timestamp) {
+        const date = new Date(Number.isFinite(timestamp) ? timestamp : Date.now());
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    }
+
+    getStartOfLocalDay(date = new Date()) {
+        return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+    }
+
+    sessionMatchesDateFilter(session) {
+        const timestamp = this.getSessionTimestamp(session);
+        if (!timestamp) return false;
+
+        const mode = this.sessionFilters.dateMode;
+        if (this.sessionFilters.customDate) {
+            return this.getLocalDateKey(timestamp) === this.sessionFilters.customDate;
+        }
+        if (mode === 'all') return true;
+
+        const todayStart = this.getStartOfLocalDay();
+        const sessionDayStart = this.getStartOfLocalDay(new Date(timestamp));
+        const dayMs = 24 * 60 * 60 * 1000;
+
+        if (mode === 'today') {
+            return sessionDayStart === todayStart;
+        }
+        if (mode === 'yesterday') {
+            return sessionDayStart === todayStart - dayMs;
+        }
+        if (mode === '7d') {
+            return sessionDayStart >= todayStart - (6 * dayMs);
+        }
+        if (mode === '30d') {
+            return sessionDayStart >= todayStart - (29 * dayMs);
+        }
+        return true;
+    }
+
+    sessionMatchesSidebarFilters(session) {
+        if (!session) return false;
+        if (this.sessionFilters.starredOnly && !session.starred) return false;
+        return this.sessionMatchesDateFilter(session);
+    }
+
+    getSessionListEmptyText() {
+        if (!this.hasActiveSessionListCriteria()) {
+            return 'No chats yet';
+        }
+        if (this.sessionFilters.starredOnly && !this.getNormalizedSessionSearchQuery() &&
+            this.sessionFilters.dateMode === 'all' && !this.sessionFilters.customDate) {
+            return 'No starred chats';
+        }
+        return 'No matching chats';
+    }
+
+    resetSessionSearchResults() {
+        this.state.sessionSearchResults = null;
+        this.state.sessionSearchResultsQuery = '';
+        this.state.sessionSearchResultsKey = '';
+        this.state.sessionSearchPending = false;
+    }
+
+    async toggleSessionStar(sessionId) {
+        if (!sessionId) return;
+        await this.ensureSessionLoaded(sessionId);
+        const session = this.state.sessionsById.get(sessionId) || this.state.sessions.find(s => s.id === sessionId);
+        if (!session) return;
+
+        const nextStarred = !session.starred;
+        session.starred = nextStarred;
+        if (nextStarred) {
+            session.starredAt = Date.now();
+        } else {
+            delete session.starredAt;
+        }
+
+        await chatDB.saveSession(session);
+        this.resetSessionSearchResults();
+        this.renderSessions();
+        if (this.hasActiveSessionListCriteria()) {
+            void this.updateSessionSearchResults();
+        }
+    }
+
+    isValidSessionDateInput(value) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return false;
+        const date = new Date(`${value}T00:00:00`);
+        return !Number.isNaN(date.getTime()) && this.getLocalDateKey(date.getTime()) === value;
+    }
+
+    applySessionFilterChange(nextFilters = {}) {
+        const current = this.sessionFilters;
+        this.sessionFilters = {
+            starredOnly: Boolean(nextFilters.starredOnly ?? current.starredOnly),
+            dateMode: nextFilters.dateMode ?? current.dateMode,
+            customDate: nextFilters.customDate ?? current.customDate
+        };
+
+        if (this.sessionFilters.dateMode !== 'custom' && nextFilters.customDate === undefined) {
+            this.sessionFilters.customDate = '';
+        }
+        if (this.sessionFilters.customDate) {
+            this.sessionFilters.dateMode = 'custom';
+        }
+
+        this.resetSessionSearchResults();
+        this.renderSessions();
+        this.updateSidebarFilterUI();
+        if (this.sidebar) {
+            this.sidebar.scrollToTop();
+        }
+        void this.updateSessionSearchResults();
+    }
+
+    clearSidebarFilters() {
+        this.applySessionFilterChange({
+            starredOnly: false,
+            dateMode: 'all',
+            customDate: ''
+        });
+    }
+
+    updateSidebarFilterUI() {
+        const btn = this.elements.sidebarFilterBtn;
+        const menu = this.elements.sidebarFilterMenu;
+        const rangeSelect = this.elements.sidebarFilterRangeSelect;
+        const dateInput = this.elements.sidebarFilterDateInput;
+        const filtersActive = this.hasActiveSessionFilters();
+
+        if (btn) {
+            btn.dataset.active = filtersActive ? 'true' : 'false';
+            btn.setAttribute('aria-expanded', menu && !menu.classList.contains('hidden') ? 'true' : 'false');
+        }
+        if (!menu) return;
+
+        const starToggle = menu.querySelector('[data-session-star-filter-toggle]');
+        if (starToggle) {
+            starToggle.classList.toggle('active', this.sessionFilters.starredOnly);
+            starToggle.setAttribute('aria-pressed', this.sessionFilters.starredOnly ? 'true' : 'false');
+        }
+        if (rangeSelect && rangeSelect.value !== this.sessionFilters.dateMode) {
+            rangeSelect.value = this.sessionFilters.customDate ? 'all' : this.sessionFilters.dateMode;
+        }
+        if (dateInput && dateInput.value !== this.sessionFilters.customDate) {
+            dateInput.value = this.sessionFilters.customDate || '';
+        }
+        const clearBtn = this.elements.clearSidebarFiltersBtn;
+        if (clearBtn) {
+            clearBtn.disabled = !filtersActive;
+            clearBtn.classList.toggle('opacity-50', !filtersActive);
+        }
+    }
+
+    openSidebarFilterMenu() {
+        const menu = this.elements.sidebarFilterMenu;
+        if (!menu) return;
+        menu.classList.remove('hidden');
+        this.updateSidebarFilterUI();
+    }
+
+    closeSidebarFilterMenu() {
+        const menu = this.elements.sidebarFilterMenu;
+        if (!menu) return;
+        menu.classList.add('hidden');
+        this.updateSidebarFilterUI();
+    }
+
+    toggleSidebarFilterMenu() {
+        const menu = this.elements.sidebarFilterMenu;
+        if (!menu) return;
+        if (menu.classList.contains('hidden')) {
+            this.openSidebarFilterMenu();
+        } else {
+            this.closeSidebarFilterMenu();
+        }
+    }
+
     async updateSessionSearchResults() {
         const rawQuery = this.sessionSearchQuery.trim();
-        if (!rawQuery) {
+        const hasCriteria = this.hasActiveSessionListCriteria();
+        const resultsKey = this.getSessionResultsKey();
+        if (!hasCriteria) {
+            this.sessionSearchRequestId += 1;
             this.state.sessionSearchResults = null;
             this.state.sessionSearchResultsQuery = '';
+            this.state.sessionSearchResultsKey = '';
             this.state.sessionSearchPending = false;
             this.renderSessions();
             return;
         }
 
-        if (typeof chatDB.searchSessions !== 'function') {
+        if (typeof chatDB.getAllSessions !== 'function') {
+            this.sessionSearchRequestId += 1;
             this.state.sessionSearchResults = null;
             this.state.sessionSearchResultsQuery = '';
+            this.state.sessionSearchResultsKey = '';
             this.state.sessionSearchPending = false;
             this.renderSessions();
             return;
@@ -5301,11 +7502,45 @@ class ChatApp {
         const query = rawQuery.toLowerCase();
         const requestId = ++this.sessionSearchRequestId;
         this.state.sessionSearchPending = true;
+        this.renderSessions();
 
-        const results = await chatDB.searchSessions(session => {
-            const title = (session.title || '').toLowerCase();
-            return this.fuzzyMatch(query, title);
-        }, SESSION_SEARCH_LIMIT);
+        const results = [];
+        try {
+            const allSessions = await chatDB.getAllSessions();
+            allSessions.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
+
+            for (const session of allSessions) {
+                if (requestId !== this.sessionSearchRequestId) {
+                    return;
+                }
+
+                let sessionToMatch = session;
+                const filterMatches = this.sessionMatchesSidebarFilters(sessionToMatch);
+                let matches = filterMatches;
+                if (filterMatches && query) {
+                    matches = this.sessionMatchesSearchQuery(sessionToMatch, query);
+                }
+                if (filterMatches && !matches && query && typeof sessionToMatch.conversationSearchText !== 'string') {
+                    try {
+                        await this.refreshSessionConversationSearchText(sessionToMatch, null, { persist: true });
+                        matches = this.sessionMatchesSearchQuery(sessionToMatch, query);
+                    } catch (error) {
+                        console.warn('Failed to index session for sidebar search:', error);
+                    }
+                }
+
+                if (matches) {
+                    const loadedSession = this.state.sessionsById.get(sessionToMatch.id);
+                    sessionToMatch = loadedSession || sessionToMatch;
+                    results.push(sessionToMatch);
+                    if (query && results.length >= SESSION_SEARCH_LIMIT) {
+                        break;
+                    }
+                }
+            }
+        } catch (error) {
+            console.warn('Session search failed:', error);
+        }
 
         if (requestId !== this.sessionSearchRequestId) {
             return;
@@ -5313,52 +7548,77 @@ class ChatApp {
 
         this.state.sessionSearchResults = results;
         this.state.sessionSearchResultsQuery = query;
+        this.state.sessionSearchResultsKey = resultsKey;
         this.state.sessionSearchPending = false;
         this.cacheSessions(results);
         this.renderSessions();
     }
 
     /**
-     * Filters sessions based on search query using fuzzy subsequence matching.
+     * Filters sessions based on the sidebar search query.
      * @returns {Array} Filtered sessions array
      */
     getFilteredSessions() {
-        if (!this.sessionSearchQuery.trim()) {
+        if (!this.hasActiveSessionListCriteria()) {
             return this.state.sessions;
         }
 
-        const query = this.sessionSearchQuery.toLowerCase();
+        const query = this.getNormalizedSessionSearchQuery();
         const inMemory = this.state.sessions.filter(session => {
-            const title = (session.title || '').toLowerCase();
-            return this.fuzzyMatch(query, title);
+            if (!this.sessionMatchesSidebarFilters(session)) return false;
+            return !query || this.sessionMatchesSearchQuery(session, query);
         });
 
-        if (this.state.sessionSearchResults && this.state.sessionSearchResultsQuery === query) {
+        if (this.state.sessionSearchResults && this.state.sessionSearchResultsKey === this.getSessionResultsKey()) {
             return this.mergeSessionLists(inMemory, this.state.sessionSearchResults);
         }
 
         return inMemory;
     }
 
-    /**
-     * Performs fuzzy subsequence matching.
-     * Returns true if all characters in query appear in text in order.
-     * @param {string} query - Search query
-     * @param {string} text - Text to search in
-     * @returns {boolean} True if match found
-     */
-    fuzzyMatch(query, text) {
-        let queryIndex = 0;
-        let textIndex = 0;
+    sessionMatchesSearchQuery(session, query) {
+        if (!session || !query) return false;
+        return this.searchFieldMatches(query, session.title) ||
+            this.searchFieldMatches(query, session.titleSource !== 'manual' ? session.titleSearchText : '') ||
+            this.searchFieldMatches(query, session.conversationSearchText);
+    }
 
-        while (queryIndex < query.length && textIndex < text.length) {
-            if (query[queryIndex] === text[textIndex]) {
-                queryIndex++;
-            }
-            textIndex++;
+    normalizeSearchQueryText(value) {
+        return String(value || '')
+            .toLowerCase()
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    searchFieldMatches(query, field) {
+        const normalizedQuery = this.normalizeSearchQueryText(query);
+        const normalizedText = this.normalizeSearchQueryText(field);
+        if (!normalizedQuery || !normalizedText) return false;
+
+        if (normalizedText.includes(normalizedQuery)) {
+            return true;
         }
 
-        return queryIndex === query.length;
+        const queryTerms = normalizedQuery.split(' ').filter(Boolean);
+        if (queryTerms.length > 1) {
+            return queryTerms.every(term => this.searchTermMatchesText(term, normalizedText));
+        }
+
+        const [term] = queryTerms;
+        if (this.searchTermMatchesText(term, normalizedText)) {
+            return true;
+        }
+        return false;
+    }
+
+    searchTermMatchesText(term, text) {
+        if (!term || !text) return false;
+        const words = text.match(/[a-z0-9]+/g) || [];
+        return words.some(word => {
+            if (word === term) return true;
+            if (term.length >= 3 && word.includes(term)) return true;
+            return term.length >= 2 && word.startsWith(term);
+        });
     }
 
     /**
@@ -5414,12 +7674,12 @@ class ChatApp {
         const sidebarHidden = this.elements.sidebar?.classList.contains('sidebar-hidden');
         const isMobile = this.isMobileView();
 
-        if (hasSession) {
+        if (hasSession && !isMobile) {
             btn.classList.remove('hidden');
             btn.classList.add('flex');
-            // When sidebar hidden/mobile: show-sidebar-btn at left-4, wide-mode at left-14
+            // When sidebar hidden: show-sidebar-btn at left-4, wide-mode at left-14
             // When sidebar visible: wide-mode at left-4
-            if (sidebarHidden || isMobile) {
+            if (sidebarHidden) {
                 btn.classList.remove('left-4');
                 btn.classList.add('left-14');
             } else {
@@ -5500,6 +7760,14 @@ class ChatApp {
         }
     }
 
+    setSidebarClosingAttribute(isClosing) {
+        if (isClosing) {
+            document.documentElement.setAttribute('data-left-sidebar-closing', 'true');
+        } else {
+            document.documentElement.removeAttribute('data-left-sidebar-closing');
+        }
+    }
+
     getCurrentSidebarWidth() {
         const sidebar = this.elements.sidebar;
         if (!sidebar) return SIDEBAR_WIDTH;
@@ -5517,12 +7785,33 @@ class ChatApp {
         return SIDEBAR_WIDTH;
     }
 
+    toggleSidebar() {
+        const sidebar = this.elements.sidebar;
+        if (!sidebar) return;
+
+        const isHidden = sidebar.classList.contains('sidebar-hidden')
+            || (this.isMobileView() && !sidebar.classList.contains('mobile-visible'));
+
+        if (isHidden) {
+            this.showSidebar();
+        } else {
+            this.hideSidebar();
+        }
+    }
+
     hideSidebar(options = {}) {
         const shouldPersist = options.persist ?? !this.isMobileView();
         const shouldPredictToolbar = options.predictToolbar !== false;
         const sidebar = this.elements.sidebar;
         const showBtn = this.elements.showSidebarBtn;
         const backdrop = this.elements.mobileSidebarBackdrop;
+
+        clearTimeout(this.sidebarToggleButtonTimer);
+        this.setSidebarClosingAttribute(true);
+        if (showBtn) {
+            showBtn.classList.add('hidden');
+            showBtn.classList.remove('flex');
+        }
 
         if (sidebar) {
             // Use CSS class instead of inline styles
@@ -5531,8 +7820,11 @@ class ChatApp {
         }
         this.setSidebarHiddenAttribute(true);
         if (showBtn) {
-            showBtn.classList.remove('hidden');
-            showBtn.classList.add('flex');
+            this.sidebarToggleButtonTimer = setTimeout(() => {
+                this.setSidebarClosingAttribute(false);
+                showBtn.classList.remove('hidden');
+                showBtn.classList.add('flex');
+            }, SIDEBAR_CLOSE_DURATION_MS);
         }
         if (backdrop) {
             backdrop.classList.remove('visible');
@@ -5558,6 +7850,9 @@ class ChatApp {
         const sidebar = this.elements.sidebar;
         const showBtn = this.elements.showSidebarBtn;
         const backdrop = this.elements.mobileSidebarBackdrop;
+
+        clearTimeout(this.sidebarToggleButtonTimer);
+        this.setSidebarClosingAttribute(false);
 
         if (sidebar) {
             // Use CSS class instead of inline styles
@@ -5593,6 +7888,77 @@ class ChatApp {
 
     isMobileView() {
         return window.innerWidth <= 768;
+    }
+
+    setupSidebarFilterControls() {
+        if (this.sidebarFilterControlsAttached) return;
+        this.sidebarFilterControlsAttached = true;
+
+        if (this.elements.sidebarFilterBtn) {
+            this.elements.sidebarFilterBtn.addEventListener('click', (event) => {
+                event.stopPropagation();
+                this.toggleSidebarFilterMenu();
+            });
+        }
+
+        if (this.elements.sidebarFilterMenu) {
+            this.elements.sidebarFilterMenu.addEventListener('click', (event) => {
+                event.stopPropagation();
+
+                const starToggle = event.target.closest('[data-session-star-filter-toggle]');
+                if (starToggle) {
+                    this.applySessionFilterChange({
+                        starredOnly: !this.sessionFilters.starredOnly
+                    });
+                    return;
+                }
+
+                if (event.target.closest('#clear-sidebar-filters')) {
+                    this.clearSidebarFilters();
+                }
+            });
+        }
+
+        if (this.elements.sidebarFilterRangeSelect) {
+            this.elements.sidebarFilterRangeSelect.addEventListener('click', (event) => {
+                event.stopPropagation();
+            });
+            this.elements.sidebarFilterRangeSelect.addEventListener('change', (event) => {
+                this.applySessionFilterChange({
+                    dateMode: event.target.value || 'all',
+                    customDate: ''
+                });
+            });
+        }
+
+        if (this.elements.sidebarFilterDateInput) {
+            this.elements.sidebarFilterDateInput.addEventListener('click', (event) => {
+                event.stopPropagation();
+            });
+            this.elements.sidebarFilterDateInput.addEventListener('change', (event) => {
+                const value = event.target.value;
+                const isValidDate = this.isValidSessionDateInput(value);
+                this.applySessionFilterChange({
+                    dateMode: value && isValidDate ? 'custom' : 'all',
+                    customDate: isValidDate ? value : ''
+                });
+            });
+        }
+
+        document.addEventListener('click', (event) => {
+            const menu = this.elements.sidebarFilterMenu;
+            const button = this.elements.sidebarFilterBtn;
+            if (!menu || menu.classList.contains('hidden')) return;
+            if (menu.contains(event.target) || button?.contains(event.target)) return;
+            this.closeSidebarFilterMenu();
+        });
+
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') {
+                this.closeSidebarFilterMenu();
+            }
+        });
+        this.updateSidebarFilterUI();
     }
 
     /**
@@ -5700,12 +8066,14 @@ class ChatApp {
             });
         }
 
+        this.setupSidebarFilterControls();
+
         if (this.elements.sessionsScrollArea) {
             this.elements.sessionsScrollArea.addEventListener('scroll', () => {
                 if (this.sidebar) {
                     this.sidebar.handleScroll();
                 }
-                if (this.sessionSearchQuery.trim()) return;
+                if (this.hasActiveSessionListCriteria()) return;
                 const { scrollTop, scrollHeight, clientHeight } = this.elements.sessionsScrollArea;
                 if (scrollHeight - scrollTop - clientHeight < SESSION_SCROLL_LOAD_THRESHOLD) {
                     this.loadMoreSessions();
@@ -5745,6 +8113,24 @@ class ChatApp {
                 e.preventDefault();
                 if (this.modelPicker) {
                     this.modelPicker.toggle();
+                }
+            }
+
+            // Cmd/Ctrl + \ for sidebar collapse/expand
+            if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === '\\' || e.code === 'Backslash')) {
+                e.preventDefault();
+                this.toggleSidebar();
+            }
+
+            // Cmd/Ctrl + Shift + M for memory editor
+            if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'm' || e.key === 'M')) {
+                e.preventDefault();
+                if (this.memoryFeatureEnabled === false) {
+                    this.showToast?.('Memory is off in settings.', 'info', 3000);
+                    return;
+                }
+                if (this.memoryEditor) {
+                    this.memoryEditor.isOpen ? this.memoryEditor.close() : this.memoryEditor.open();
                 }
             }
 
@@ -5871,7 +8257,7 @@ class ChatApp {
                 !e.altKey &&
                 e.key.length === 1 &&
                 this.elements.modelPickerModal.classList.contains('hidden') &&
-                !shareModals.currentModal) {
+                !this.ui.shareModals.currentModal) {
                 this.elements.messageInput.focus();
             }
         });
@@ -5915,6 +8301,8 @@ class ChatApp {
                 try {
                     const { getExtensionFromMimeType, validateFile } = await import('./services/fileUtils.js');
                     const filesToUpload = [];
+                    const editTextarea = activeElement?.closest?.('.edit-prompt-textarea');
+                    const editMessageId = editTextarea?.dataset?.messageId || null;
 
                     for (const { blob } of fileBlobsData) {
                         let filename = blob.name;
@@ -5933,11 +8321,15 @@ class ChatApp {
                     }
 
                     if (filesToUpload.length > 0) {
-                        await this.handleFileUpload(filesToUpload);
-                        // Focus input after file upload
-                        requestAnimationFrame(() => {
-                            this.elements.messageInput.focus();
-                        });
+                        if (editMessageId && this.editDrafts.has(editMessageId)) {
+                            await this.handleEditFileUpload(editMessageId, filesToUpload);
+                        } else {
+                            await this.handleFileUpload(filesToUpload);
+                            // Focus input after file upload
+                            requestAnimationFrame(() => {
+                                this.elements.messageInput.focus();
+                            });
+                        }
                     }
                 } catch (error) {
                     console.error('Error handling pasted files:', error);
@@ -5969,41 +8361,104 @@ class ChatApp {
         if (!overlay) return;
 
         let dragCounter = 0;
+        let activeEditDropCard = null;
+
+        const isFileDrag = (event) => (
+            event.dataTransfer
+            && event.dataTransfer.types
+            && event.dataTransfer.types.includes('Files')
+        );
+
+        const getEditDropCard = (target) => {
+            const hoveredCard = target?.closest?.('.edit-prompt-input-card') || null;
+            if (hoveredCard) return hoveredCard;
+
+            const activeTextarea = document.activeElement?.closest?.('.edit-prompt-textarea') || null;
+            if (activeTextarea) return activeTextarea.closest?.('.edit-prompt-input-card') || null;
+
+            if (this.editingMessageId && this.editDrafts.has(this.editingMessageId)) {
+                const editingTextarea = Array.from(document.querySelectorAll('.edit-prompt-textarea'))
+                    .find(textarea => textarea.dataset.messageId === this.editingMessageId);
+                return editingTextarea?.closest?.('.edit-prompt-input-card') || null;
+            }
+
+            return null;
+        };
+
+        const clearEditDropCard = () => {
+            if (activeEditDropCard) {
+                activeEditDropCard.classList.remove('edit-prompt-drag-active');
+                activeEditDropCard = null;
+            }
+        };
+
+        const updateDragFeedback = (target) => {
+            const editDropCard = getEditDropCard(target);
+            if (editDropCard) {
+                overlay.classList.add('hidden');
+                if (activeEditDropCard && activeEditDropCard !== editDropCard) {
+                    activeEditDropCard.classList.remove('edit-prompt-drag-active');
+                }
+                activeEditDropCard = editDropCard;
+                activeEditDropCard.classList.add('edit-prompt-drag-active');
+                return;
+            }
+
+            clearEditDropCard();
+            overlay.classList.remove('hidden');
+        };
+
+        const clearDragFeedback = () => {
+            overlay.classList.add('hidden');
+            clearEditDropCard();
+        };
 
         window.addEventListener('dragenter', (e) => {
             e.preventDefault();
             // Check if dragging files
-            if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files')) {
+            if (isFileDrag(e)) {
                 dragCounter++;
                 if (dragCounter === 1) {
-                    overlay.classList.remove('hidden');
+                    updateDragFeedback(e.target);
                 }
             }
         });
 
         window.addEventListener('dragleave', (e) => {
             e.preventDefault();
-            if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files')) {
+            if (isFileDrag(e)) {
                 dragCounter--;
                 if (dragCounter <= 0) {
                     dragCounter = 0;
-                    overlay.classList.add('hidden');
+                    clearDragFeedback();
                 }
             }
         });
 
         window.addEventListener('dragover', (e) => {
             e.preventDefault(); // Necessary to allow dropping
+            if (isFileDrag(e)) {
+                updateDragFeedback(e.target);
+            }
         });
 
         window.addEventListener('drop', async (e) => {
             e.preventDefault();
             dragCounter = 0;
-            overlay.classList.add('hidden');
+            const editCard = getEditDropCard(e.target);
+            clearDragFeedback();
 
             if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
                 const files = Array.from(e.dataTransfer.files);
-                await this.handleFileUpload(files);
+                const droppedEditMessageId = editCard?.querySelector?.('.edit-prompt-textarea')?.dataset?.messageId || null;
+                const activeEditMessageId = document.activeElement?.closest?.('.edit-prompt-textarea')?.dataset?.messageId || null;
+                const editMessageId = droppedEditMessageId || activeEditMessageId;
+
+                if (editMessageId && this.editDrafts.has(editMessageId)) {
+                    await this.handleEditFileUpload(editMessageId, files);
+                } else {
+                    await this.handleFileUpload(files);
+                }
             }
         });
     }
@@ -6313,9 +8768,13 @@ Your API key has been cleared. A new key from a different station will be obtain
                 `;
             } else {
                 // For non-images, determine file type and use the appropriate SVG icon
-                const isPdf = file.type === 'application/pdf';
-                const isAudio = file.type.startsWith('audio/');
-                const isText = file.type.startsWith('text/') ||
+                const { getFileType } = await import('./services/fileUtils.js');
+                const detectedType = await getFileType(file);
+                const isPdf = detectedType === 'pdf' || file.type === 'application/pdf';
+                const isDocx = detectedType === 'docx';
+                const isAudio = detectedType === 'audio' || file.type.startsWith('audio/');
+                const isText = detectedType === 'text' ||
+                              file.type.startsWith('text/') ||
                               file.type.includes('json') ||
                               file.type.includes('javascript') ||
                               file.type.includes('xml') ||
@@ -6327,6 +8786,7 @@ Your API key has been cleared. A new key from a different station will be obtain
 
                 let fileTypeForIcon = null;
                 if (isPdf) fileTypeForIcon = 'pdf';
+                else if (isDocx) fileTypeForIcon = 'docx';
                 else if (isAudio) fileTypeForIcon = 'audio';
                 else if (isText) fileTypeForIcon = 'text';
 
@@ -6407,140 +8867,155 @@ Your API key has been cleared. A new key from a different station will be obtain
      * Stored on session.apiKeyInfo so it survives page refreshes.
      */
     buildVerifierSubmitKeyProof(verifyResult, accessInfo = null) {
-        const detail = verifyResult?.detail || verifyResult?.data?.detail || null;
-        const verifierResponse = verifyResult?.data || null;
-        const stationId = accessInfo?.stationId || accessInfo?.station_id || accessInfo?.station_name || null;
-        const keyHashFromOrg = accessInfo?.keyHash || accessInfo?.key_hash || null;
-        const keyHashFromVerifier = verifierResponse?.key_hash || null;
-
-        return {
-            recordedAt: new Date().toISOString(),
-            status: verifyResult?.status || 'unknown',
-            detail,
-            stationId,
-            keyHashFromOrg,
-            keyHashFromVerifier,
-            verifierResponse,
-            retryable: typeof verifierResponse?.retryable === 'boolean' ? verifierResponse.retryable : null,
-            error: verifyResult?.error?.message || null,
-            bannedStation: verifyResult?.bannedStation || null
-        };
+        return buildVerifierSubmitKeyProofValue(verifyResult, accessInfo);
     }
 
     /**
      * Persist verifier submit_key proof into the active session access record.
      */
     persistVerifierSubmitKeyProof(session, verifyResult) {
-        if (!session?.apiKeyInfo || !verifyResult) return;
-        session.apiKeyInfo.verifierSubmitKeyProof = this.buildVerifierSubmitKeyProof(verifyResult, session.apiKeyInfo);
+        persistVerifierSubmitKeyProofValue(session, verifyResult);
     }
 
-    async acquireAndSetAccess(session) {
-        if (!session) throw new Error("No active session found.");
+    getAccessAcquisitionKey(session, modelNameOverride = null, modelIdOverride = null) {
+        const backendId = session?.inferenceBackend || inferenceService.getDefaultBackendId();
+        const modelKey = modelIdOverride ||
+            this.normalizeModelName(modelNameOverride || session?.model) ||
+            modelNameOverride ||
+            session?.model ||
+            inferenceService.getDefaultModelName(session) ||
+            'default-model';
+        return `${backendId}:${session?.id || 'no-session'}:${modelKey}`;
+    }
 
-        const backend = inferenceService.getBackendForSession(session);
-        const availableTickets = ticketClient.getTicketCount();
-        if (availableTickets === 0) {
-            throw new Error("You have no inference tickets left. Please redeem an invite code for more tickets at the System Panel (right) or request invite code at [here](https://openanonymity.ai/beta/).");
-        }
+    reserveAccessAcquisitionHandoff(session, durationMs = 5000) {
+        const key = this.getAccessAcquisitionKey(session);
+        const entry = this.accessAcquisitionInFlight.get(key);
+        if (!entry) return;
+        entry.keepAliveUntil = Math.max(entry.keepAliveUntil || 0, Date.now() + durationMs);
+    }
 
-        // Determine model ID from session model name
-        const modelName = session.model || inferenceService.getDefaultModelName(session);
-        const modelEntry = this.state.models.find(m => m.name === modelName) || this.getFallbackModelEntry(session);
-        if (!modelEntry) {
-            throw new Error('No enabled models are currently available. Please try again later.');
-        }
-        const modelId = modelEntry.id;
+    abortAccessAcquisitionWhenUnclaimed(entry) {
+        if (!entry || entry.waiters > 0 || entry.controller.signal.aborted) return;
 
-        // Calculate ticket cost based on model tier and reasoning state
-        const ticketsRequired = getTicketCost(modelId, this.reasoningEnabled);
-
-        // Check if user has enough tickets
-        if (availableTickets < ticketsRequired) {
-            throw new Error(`Not enough tickets for this model. Need ${ticketsRequired}, but only ${availableTickets} available.`);
-        }
-
-        // Set current session for network logging
-        if (window.networkLogger) {
-            window.networkLogger.setCurrentSession(session.id);
-        }
-
-        // Retry loop for spent tickets (they get auto-archived on failure)
-        let result;
-        let retries = 0;
-        const maxRetries = Math.min(availableTickets, ticketsRequired + 10);
-
-        while (retries < maxRetries) {
-            try {
-                result = await inferenceService.requestAccess(session, {
-                    ticketsRequired
-                });
-                break;  // Success
-            } catch (error) {
-                if (error.code === 'TICKET_USED') {
-                    retries++;
-                    this.showToast(`Ticket already used, trying next available`);
-                    continue;
-                }
-                console.error('Failed to automatically acquire API access:', error);
-                throw error;  // Non-retryable error
+        const keepAliveDelay = Math.max(0, (entry.keepAliveUntil || 0) - Date.now());
+        if (keepAliveDelay > 0) {
+            if (entry.abortTimer) {
+                clearTimeout(entry.abortTimer);
             }
+            entry.abortTimer = window.setTimeout(() => {
+                entry.abortTimer = null;
+                if (entry.waiters === 0 && this.accessAcquisitionInFlight.get(entry.key) === entry) {
+                    entry.controller.abort();
+                }
+            }, keepAliveDelay);
+            return;
         }
 
-        if (!result) {
-            throw new Error('All available tickets were already spent');
+        entry.controller.abort();
+    }
+
+    async waitForAccessAcquisition(entry, options = {}) {
+        const signal = options.signal || null;
+        this.throwIfAborted(signal);
+
+        entry.waiters += 1;
+        if (entry.abortTimer) {
+            clearTimeout(entry.abortTimer);
+            entry.abortTimer = null;
         }
+        let abortHandler = null;
 
-        inferenceService.setAccessInfo(session, result);
+        try {
+            const token = signal
+                ? await Promise.race([
+                    entry.promise,
+                    new Promise((_, reject) => {
+                        abortHandler = () => reject(this.createCancelledError());
+                        signal.addEventListener('abort', abortHandler, { once: true });
+                    })
+                ])
+                : await entry.promise;
 
-        // Verify key with verifier
-        const verifier = inferenceService.getVerificationAdapter(session);
-        if (verifier?.supports) {
-            const accessInfo = inferenceService.getAccessInfo(session);
-            const verifyResult = await inferenceService.verifyAccess(session, accessInfo?.info);
-            this.persistVerifierSubmitKeyProof(session, verifyResult);
-
-            if (verifyResult?.status === 'unverified') {
-                const detail = verifyResult?.detail || verifyResult?.data?.detail;
-                if (detail === 'key_near_expiry') {
-                    console.warn('⚠️ Key expires too soon to verify, continuing without verification');
-                } else if (detail === 'ownership_check_error') {
-                    console.warn('⚠️ Ownership verification temporarily unavailable, continuing without verification');
-                } else {
-                    console.warn('⚠️ Key verification unverified, continuing without verification');
+            if (typeof options.onGranted === 'function') {
+                try {
+                    await options.onGranted(token);
+                } catch (error) {
+                    console.warn('Pending-state update after access grant failed:', error);
                 }
             }
 
-            if (verifyResult?.status === 'rejected') {
-                // Verification failed - clear the API key and throw
-                inferenceService.clearAccessInfo(session);
-                await chatDB.saveSession(session);
-
-                const errorMsg = verifyResult.error?.message || 'Verification failed';
-                if (verifyResult.bannedStation) {
-                    const bs = verifyResult.bannedStation;
-                    throw new Error(`Station ${bs.stationId} is banned: ${bs.reason || 'Unknown reason'}`);
-                }
-                throw new Error(`Key verification failed: ${errorMsg}`);
+            return token;
+        } finally {
+            if (signal && abortHandler) {
+                signal.removeEventListener('abort', abortHandler);
             }
+            entry.waiters = Math.max(0, entry.waiters - 1);
+            if (signal?.aborted && entry.waiters === 0) {
+                this.abortAccessAcquisitionWhenUnclaimed(entry);
+            }
+        }
+    }
 
-            // Set current station for verifier tracking
-            inferenceService.setCurrentAccess(session, accessInfo?.info);
+    async acquireAndSetAccess(session, options = {}) {
+        this.throwIfAborted(options.signal || null);
+        const key = this.getAccessAcquisitionKey(session, options.modelNameOverride, options.modelIdOverride);
+        let entry = this.accessAcquisitionInFlight.get(key);
+
+        if (!entry) {
+            const controller = new AbortController();
+            entry = {
+                key,
+                controller,
+                waiters: 0,
+                keepAliveUntil: 0,
+                abortTimer: null,
+                promise: null
+            };
+            entry.promise = acquireSessionAccess({
+                session,
+                models: this.state.models,
+                reasoningEnabled: this.reasoningEnabled,
+                inferenceService,
+                ticketClient,
+                chatDB,
+                getTicketCost,
+                getFallbackModelEntry: (targetSession) => this.getFallbackModelEntry(targetSession),
+                modelIdOverride: options.modelIdOverride,
+                modelNameOverride: options.modelNameOverride,
+                signal: controller.signal,
+                onTicketUsed: () => {
+                    this.showToast('Ticket already used, trying next available');
+                },
+                onNetworkSession: (sessionId) => {
+                    if (window.networkLogger) {
+                        window.networkLogger.setCurrentSession(sessionId);
+                    }
+                },
+                onAccessRequestError: (error) => {
+                    console.error('Failed to automatically acquire API access:', error);
+                },
+                onVerificationWarning: (...args) => {
+                    console.warn(...args);
+                },
+                onSessionChanged: (changedSession) => {
+                    if (this.rightPanel) {
+                        this.rightPanel.onSessionChange(changedSession);
+                    }
+                }
+            }).finally(() => {
+                if (entry.abortTimer) {
+                    clearTimeout(entry.abortTimer);
+                    entry.abortTimer = null;
+                }
+                if (this.accessAcquisitionInFlight.get(key) === entry) {
+                    this.accessAcquisitionInFlight.delete(key);
+                }
+            });
+            this.accessAcquisitionInFlight.set(key, entry);
         }
 
-        // Clear apiKeyShared flag - new key hasn't been shared yet
-        if (session.shareInfo?.apiKeyShared) {
-            session.shareInfo.apiKeyShared = false;
-        }
-
-        await chatDB.saveSession(session);
-
-        // Update the UI components
-        if (this.rightPanel) {
-            this.rightPanel.onSessionChange(session);
-        }
-
-        return inferenceService.getAccessToken(session);
+        return this.waitForAccessAcquisition(entry, options);
     }
 
     /**

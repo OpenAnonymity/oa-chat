@@ -1,0 +1,3 @@
+[submodule "nanomem"]
+	path = nanomem
+	url = https://github.com/OpenAnonymity/nanomem.git

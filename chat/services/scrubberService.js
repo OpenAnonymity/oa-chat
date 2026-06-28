@@ -1,25 +1,16 @@
 import { localInferenceService } from '../../local_inference/index.js';
 import { chatDB } from '../db.js';
 import ticketClient from './ticketClient.js';
+import {
+    ALLOWED_CONFIDENTIAL_MODELS,
+    DEFAULT_SCRUBBER_MODEL,
+    isSlowConfidentialModel
+} from './confidentialModelConfig.js';
 
 const SCRUBBER_BASE_URL = 'https://inference.tinfoil.sh';
 const SCRUBBER_BACKEND_ID = 'tinfoil';
-const DEFAULT_SCRUBBER_MODEL = 'gpt-oss-120b';
 const SCRUBBER_MODEL_SETTING_KEY = 'scrubberModel';
-const CONFIDENTIAL_KEY_TICKETS_REQUIRED = 2;
-
-// Allowed scrubber models (whitelist)
-const ALLOWED_SCRUBBER_MODELS = new Set([
-    'kimi-k2-5',
-    'gpt-oss-120b',
-    'gpt-oss-safeguard-120b',
-    'llama3-3-70b'
-]);
-
-// Models that are slow and should show a "slow" label
-const SLOW_SCRUBBER_MODELS = new Set([
-    'kimi-k2-5'
-]);
+const CONFIDENTIAL_KEY_TICKETS_REQUIRED = 1;
 
 const REDACT_OUTPUT_TAG = 'scrubbed_prompt';
 const RESTORE_OUTPUT_TAG = 'restored_response';
@@ -396,11 +387,16 @@ class ScrubberService {
         this.modelsPromise = (async () => {
             // Model list endpoint is public - no API key needed
             const allModels = await localInferenceService.fetchModels(SCRUBBER_BACKEND_ID);
-            // Filter to only allowed scrubber models
-            const filtered = Array.isArray(allModels)
-                ? allModels.filter(m => ALLOWED_SCRUBBER_MODELS.has(m.id))
-                : [];
-            this.models = filtered;
+            const byId = new Map(
+                Array.isArray(allModels)
+                    ? allModels
+                        .filter((model) => ALLOWED_CONFIDENTIAL_MODELS.has(model.id))
+                        .map((model) => [model.id, model])
+                    : []
+            );
+            this.models = Array.from(ALLOWED_CONFIDENTIAL_MODELS).map((modelId) => (
+                byId.get(modelId) || { id: modelId, name: modelId }
+            ));
             this.modelsLoaded = true;
             return this.models;
         })();
@@ -409,7 +405,7 @@ class ScrubberService {
     }
 
     isSlowModel(modelId) {
-        return SLOW_SCRUBBER_MODELS.has(modelId);
+        return isSlowConfidentialModel(modelId);
     }
 
     applyRedactionToMessages(messages, redactedText) {

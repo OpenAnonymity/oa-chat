@@ -4,7 +4,6 @@ import {
     getChatHistoryImporters,
     getChatHistoryImportAccept
 } from '../services/chatHistoryImporters.js';
-import { chatDB } from '../db.js';
 
 function formatBytes(bytes) {
     if (!Number.isFinite(bytes)) return '0 B';
@@ -447,28 +446,15 @@ class ChatHistoryImportModal {
             ? importer.getExternalId.bind(importer)
             : (session) => session.sourceId || null;
 
-        const knownIds = typeof chatDB.collectImportedSessionKeys === 'function'
-            ? await chatDB.collectImportedSessionKeys(source)
-            : new Set();
+        const knownIds = await this.app.data.collectImportedSessionKeys(source);
         let existingSessions = null;
-        if (knownIds.size === 0 && typeof chatDB.collectImportedSessionKeys !== 'function') {
-            existingSessions = await chatDB.getAllSessions();
-            existingSessions.forEach(session => {
-                if (session.importedSource && session.importedExternalId) {
-                    knownIds.add(`${session.importedSource}:${session.importedExternalId}`);
-                }
-                if (session.importedFrom && session.importedFrom.startsWith(`${source}:`)) {
-                    knownIds.add(session.importedFrom);
-                }
-            });
-        }
 
         if (source === 'oa-chat' || source === 'oa-fastchat') {
             const oaAliases = ['oa-chat', 'oa-fastchat'];
-            if (typeof chatDB.collectImportedSessionKeys === 'function') {
+            if (this.app.data.hasImportedSessionKeyIndex) {
                 for (const aliasSource of oaAliases) {
                     if (aliasSource === source) continue;
-                    const aliasKeys = await chatDB.collectImportedSessionKeys(aliasSource);
+                    const aliasKeys = await this.app.data.collectImportedSessionKeys(aliasSource);
                     aliasKeys.forEach(key => {
                         knownIds.add(key);
                         const prefix = `${aliasSource}:`;
@@ -480,7 +466,7 @@ class ChatHistoryImportModal {
             }
 
             if (!existingSessions) {
-                existingSessions = await chatDB.getAllSessions();
+                existingSessions = await this.app.data.getAllSessions();
             }
             existingSessions.forEach(session => {
                 const candidateIds = [];
@@ -551,28 +537,12 @@ class ChatHistoryImportModal {
                 importedAt: Date.now(),
                 importedMessageCount: messages.length
             };
+            if (typeof this.app.applySessionConversationSearchText === 'function') {
+                this.app.applySessionConversationSearchText(session, messages);
+            }
 
             try {
-                if (typeof chatDB.saveSessionWithMessages === 'function') {
-                    await chatDB.saveSessionWithMessages(session, messages);
-                } else if (chatDB.db) {
-                    await new Promise((resolve, reject) => {
-                        const transaction = chatDB.db.transaction(['sessions', 'messages'], 'readwrite');
-                        const sessionsStore = transaction.objectStore('sessions');
-                        const messagesStore = transaction.objectStore('messages');
-
-                        transaction.oncomplete = () => resolve();
-                        transaction.onerror = () => reject(transaction.error);
-
-                        sessionsStore.put(session);
-                        messages.forEach(message => messagesStore.put(message));
-                    });
-                } else {
-                    await chatDB.saveSession(session);
-                    for (const message of messages) {
-                        await chatDB.saveMessage(message);
-                    }
-                }
+                await this.app.data.saveSessionWithMessages(session, messages);
             } catch (error) {
                 this.state.progress.errors += 1;
                 this.state.progress.processed += 1;

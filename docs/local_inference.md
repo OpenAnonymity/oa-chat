@@ -7,6 +7,7 @@ The module implements a simple Open Responses–style API and provides swappable
 - **Ollama** (local server)
 - **vLLM** (local server)
 - **OpenAI‑compatible HTTP servers** (generic adapter)
+- **Tinfoil** (hosted OpenAI‑compatible endpoint)
 
 ## 2. Why this exists
 Local inference is meant for **secondary tasks** where end‑to‑end confidentiality is desired, such as:
@@ -28,6 +29,7 @@ local_inference/
     webllmBackend.js
     ollamaBackend.js
     vllmBackend.js
+    tinfoilBackend.js
     httpOpenAIBackend.js
   vendor/
     webllm/
@@ -248,6 +250,11 @@ WebLLM uses the browser Cache Storage by default (on disk). You can delete model
 ### 6.4 Generic OpenAI‑compatible
 - Implemented in `httpOpenAIBackend.js`
 - Use `createOpenAICompatibleBackend(...)` to add custom endpoints
+
+### 6.5 Tinfoil (hosted OpenAI-compatible)
+- Built with the same OpenAI-compatible adapter
+- Default base URL: `https://inference.tinfoil.sh`
+- Default model: `gpt-oss-120b`
 
 ---
 

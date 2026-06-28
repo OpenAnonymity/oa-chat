@@ -112,7 +112,9 @@
                     } catch { return false; }
                 })();
 
-                if (dismissed || hasTickets || selfHostedMode) {
+                const hasSharedSession = new URLSearchParams(window.location.search).has('s');
+
+                if (dismissed || hasTickets || selfHostedMode || hasSharedSession) {
                     document.documentElement.setAttribute('data-welcome-hidden', 'true');
                 }
             } catch (error) {
@@ -276,8 +278,9 @@
 
     <!-- Page View Analytics -->
     <script type="module">
-        import { ORG_API_BASE } from './config.js';
-        fetch(`${ORG_API_BASE}/chat/v1/analytics/pageview`, { method: 'POST' }).catch(() => {});
+        import('./config.js').then(({ ORG_API_BASE }) => {
+            fetch(`${ORG_API_BASE}/chat/v1/analytics/pageview`, { method: 'POST' }).catch(() => {});
+        });
     </script>
 
     <link rel="stylesheet" href="styles.css">
@@ -298,17 +301,24 @@
                             <span class="opacity-60">/</span>
                         </div>
                     </button>
-                    <button id="delete-history-btn" class="inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-9 w-9 flex-shrink-0" aria-label="Delete all local chat history">
+                    <button id="delete-history-btn" class="inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-9 w-9 flex-shrink-0" aria-label="Delete all local chat history" data-tooltip="Delete chat history" data-tooltip-position="right">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
                         </svg>
                     </button>
-                    <button id="hide-sidebar-btn" class="inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-9 w-9 flex-shrink-0 -ml-0.5" aria-label="Hide sidebar">
+                    <button id="hide-sidebar-btn" class="sidebar-toggle-btn inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-9 w-9 flex-shrink-0 -ml-0.5" aria-label="Collapse sidebar">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
                             <rect x="4" y="4" width="16" height="16" rx="2"/>
                             <path d="M4 4h6v16H4a2 2 0 01-2-2V6a2 2 0 012-2z" fill="currentColor" fill-opacity="0.15" stroke="none"/>
                             <path d="M10 4v16"/>
                         </svg>
+                        <span class="sidebar-toggle-tooltip sidebar-toggle-tooltip-right" role="tooltip">
+                            <span>Collapse sidebar</span>
+                            <span class="sidebar-toggle-shortcut" aria-hidden="true">
+                                <span>⌘</span>
+                                <span>\</span>
+                            </span>
+                        </span>
                     </button>
                 </div>
 
@@ -317,17 +327,51 @@
                         <div class="relative shrink-0">
                             <input
                                 id="search-rooms"
-                                class="input-focus-clean appearance-none px-3 py-2 pr-16 text-sm text-foreground transition duration-150 ease-in-out rounded-lg placeholder:text-muted-foreground shadow-sm h-9 w-full border bg-background border-border focus:bg-background"
+                                class="input-focus-clean appearance-none px-3 py-2 pr-24 text-sm text-foreground transition duration-150 ease-in-out rounded-lg placeholder:text-muted-foreground shadow-sm h-9 w-full border bg-background border-border focus:bg-background"
                                 autocomplete="off"
                                 autocorrect="off"
                                 autocapitalize="off"
                                 spellcheck="false"
                                 placeholder="Search chats..."
                                 value="">
-                            <div class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5 pointer-events-none text-muted-foreground text-xs">
+                            <div class="sidebar-search-shortcut">
                                 <span class="opacity-60">⌘</span>
                                 <span class="opacity-60">⇧</span>
                                 <span class="opacity-60">F</span>
+                            </div>
+                            <button
+                                id="sidebar-filter-btn"
+                                class="sidebar-filter-btn text-muted-foreground transition-colors hover-highlight hover:text-foreground"
+                                type="button"
+                                aria-label="Filter chats"
+                                aria-haspopup="menu"
+                                aria-expanded="false">
+                                <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <path d="M3 5h18" />
+                                    <path d="M6 12h12" />
+                                    <path d="M10 19h4" />
+                                </svg>
+                            </button>
+                            <div id="sidebar-filter-menu" class="sidebar-filter-menu hidden" role="menu" aria-label="Chat filters">
+                                <button class="sidebar-filter-toggle-row" type="button" data-session-star-filter-toggle aria-pressed="false">
+                                    <span>Starred only</span>
+                                    <span class="sidebar-filter-check" aria-hidden="true"></span>
+                                </button>
+                                <label class="sidebar-filter-field">
+                                    <span>Updated</span>
+                                    <select id="sidebar-filter-range" autocomplete="off">
+                                        <option value="all">Any time</option>
+                                        <option value="today">Today</option>
+                                        <option value="yesterday">Yesterday</option>
+                                        <option value="7d">Past 7 days</option>
+                                        <option value="30d">Past 30 days</option>
+                                    </select>
+                                </label>
+                                <label class="sidebar-filter-field">
+                                    <span>Date</span>
+                                    <input id="sidebar-filter-date" type="date" autocomplete="off">
+                                </label>
+                                <button id="clear-sidebar-filters" class="sidebar-filter-clear" type="button">Clear filters</button>
                             </div>
                         </div>
 
@@ -361,12 +405,19 @@
                     <!-- Left toolbar buttons -->
                     <div class="flex items-center gap-1">
                         <!-- Show Sidebar Button (hidden by default, shown when sidebar is hidden) -->
-                        <button id="show-sidebar-btn" class="hidden inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-9 w-9 cursor-pointer select-none">
+                        <button id="show-sidebar-btn" class="sidebar-toggle-btn hidden inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-9 w-9 cursor-pointer select-none" aria-label="Expand sidebar">
                             <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
                                 <rect x="4" y="4" width="16" height="16" rx="2"/>
                                 <path d="M4 4h6v16H4a2 2 0 01-2-2V6a2 2 0 012-2z" fill="currentColor" fill-opacity="0.15" stroke="none"/>
                                 <path d="M10 4v16"/>
                             </svg>
+                            <span class="sidebar-toggle-tooltip" role="tooltip">
+                                <span>Expand sidebar</span>
+                                <span class="sidebar-toggle-shortcut" aria-hidden="true">
+                                    <span>⌘</span>
+                                    <span>\</span>
+                                </span>
+                            </span>
                         </button>
 
                         <!-- Wide Mode Button -->
@@ -493,7 +544,7 @@
                                         </button>
                                         <!-- File Upload Button -->
                                         <span class="inline-flex relative">
-                                            <input type="file" id="file-upload-input" multiple accept="image/*,.pdf,audio/*" class="hidden">
+                                            <input type="file" id="file-upload-input" multiple accept="image/*,.pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,audio/*" class="hidden">
                                             <button id="file-upload-btn" class="inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-7 w-7 relative" data-tooltip="Attach files" data-tooltip-position="top">
                                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                                                     <path stroke-linecap="round" stroke-linejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 0 1-6.364-6.364l10.94-10.94A3 3 0 1 1 19.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 0 0 2.112 2.13" />
@@ -582,6 +633,7 @@
                                                     <!-- Hidden file inputs -->
                                                     <input type="file" id="global-import-input" accept="application/json,.json" class="hidden" />
                                                     <input type="file" id="tickets-import-input" accept="application/json,.json" class="hidden" />
+                                                    <input type="file" id="memory-import-input" accept=".json,application/json" class="hidden" />
                                                 </div>
 
                                                 <!-- Scrubber Section -->
@@ -592,6 +644,36 @@
                                                         <select id="scrubber-model-select" class="flex-1 min-w-0 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-popover-foreground focus:outline-none focus:ring-1 focus:ring-ring truncate">
                                                             <option value="" disabled selected>Loading…</option>
                                                         </select>
+                                                    </div>
+                                                </div>
+
+                                                <!-- Memory Section -->
+                                                <div id="memory-settings-section" class="mt-2 border-t border-border pt-2">
+                                                    <p class="px-3 pb-1 text-xs font-light tracking-wide text-muted-foreground">Memory</p>
+                                                    <div class="px-3 py-1.5 flex items-center justify-between gap-2">
+                                                        <span class="text-xs font-medium text-popover-foreground">Memory feature</span>
+                                                        <button id="memory-feature-toggle" type="button" role="switch" aria-checked="true" class="switch-toggle switch-toggle-sm switch-active" data-tooltip="Enable memory mode and background memory extraction" data-tooltip-position="left">
+                                                            <span class="switch-toggle-indicator"></span>
+                                                        </button>
+                                                    </div>
+                                                    <div class="mt-1">
+                                                        <div class="px-3 py-1.5 flex items-center justify-between gap-3">
+                                                            <span class="text-xs text-muted-foreground leading-tight min-w-0 flex-1">Always attach retrieval</span>
+                                                            <button id="memory-auto-include-toggle" type="button" role="switch" aria-checked="false" class="switch-toggle switch-toggle-sm switch-inactive shrink-0" data-tooltip="Automatically attach retrieval without per-message approval" data-tooltip-position="left">
+                                                                <span class="switch-toggle-indicator"></span>
+                                                            </button>
+                                                        </div>
+                                                        <div class="px-3 py-1 flex items-center gap-2">
+                                                            <span class="text-xs text-muted-foreground w-12 shrink-0">Model</span>
+                                                            <select id="memory-agent-model-select" class="flex-1 min-w-0 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-popover-foreground focus:outline-none focus:ring-1 focus:ring-ring truncate">
+                                                                <option value="" disabled selected>Loading…</option>
+                                                            </select>
+                                                        </div>
+                                                        <div class="px-3 py-1 flex items-center gap-2">
+                                                            <span class="text-xs text-muted-foreground w-12 shrink-0">Data</span>
+                                                            <button data-action="export-memory" data-memory-requires-feature data-enabled-title="Export memories" class="flex-1 px-2 py-1 text-[11px] text-popover-foreground hover-highlight rounded transition-colors border border-border text-center">Export</button>
+                                                            <button data-action="import-memory" data-memory-requires-feature data-enabled-title="Import memories" class="flex-1 px-2 py-1 text-[11px] text-popover-foreground hover-highlight rounded transition-colors border border-border text-center">Import</button>
+                                                        </div>
                                                     </div>
                                                 </div>
 
@@ -709,6 +791,20 @@
                                                 <path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 0 0 8.716-6.747M12 21a9.004 9.004 0 0 1-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 0 1 7.843 4.582M12 3a8.997 8.997 0 0 0-7.843 4.582m15.686 0A11.953 11.953 0 0 1 12 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0 1 21 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0 1 12 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 0 1 3 12c0-1.605.42-3.113 1.157-4.418" />
                                             </svg>
                                         </button>
+                                        <div id="chat-mode-toggle" class="chat-mode-toggle-container ml-2" role="radiogroup" aria-label="Chat mode" data-mode="chat" style="visibility: hidden;">
+                                            <div class="chat-mode-toggle-indicator"></div>
+                                            <button type="button" class="chat-mode-toggle-btn" data-mode-option="chat" aria-checked="true" data-tooltip="Chat" data-tooltip-position="top">
+                                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.76c0 1.6 1.123 2.994 2.707 3.227 1.087.16 2.185.283 3.293.369V21l4.076-4.076a1.526 1.526 0 0 1 1.037-.443 48.282 48.282 0 0 0 5.68-.494c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z" />
+                                                </svg>
+                                            </button>
+                                            <button type="button" class="chat-mode-toggle-btn" data-mode-option="memory" aria-checked="false" data-tooltip-position="top">
+                                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
+                                                </svg>
+                                                <span class="chat-mode-html-tooltip"><span data-memory-tooltip-text>Auto-attach relevant context</span> <span data-memory-tooltip-beta class="px-1 py-0.5 rounded text-[8px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 uppercase tracking-wide">Beta</span></span>
+                                            </button>
+                                        </div>
                                     </div>
 
                                     <button
@@ -789,6 +885,9 @@
     <!-- Account Modal -->
     <div id="account-modal" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"></div>
 
+    <!-- Memory Editor Modal -->
+    <div id="memory-editor-modal" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"></div>
+
     <!-- Welcome Panel Modal -->
     <div id="welcome-panel" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"></div>
 
@@ -821,12 +920,12 @@
 
     <!-- Prerender landing content early (skip if restoring a session) -->
     <!-- BUNDLE:PRELUDE -->
-    <script type="module" src="prelude.js"></script>
+    <script type="module" src="prelude.js?v=dev"></script>
     <!-- /BUNDLE:PRELUDE -->
 
     <!-- Single entry point - app bootstraps -->
     <!-- BUNDLE:APP -->
-    <script type="module" src="app.js"></script>
+    <script type="module" src="app.js?v=dev"></script>
     <!-- /BUNDLE:APP -->
 </body>
 </html>

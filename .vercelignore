@@ -2,6 +2,10 @@
 # Keep package.json + build scripts so Vercel can run npm install/build.
 
 /*
+!/.git
+!/.git/**
+!/.gitmodules
+!/nanomem
 !/chat
 !/chat/**
 !/local_inference

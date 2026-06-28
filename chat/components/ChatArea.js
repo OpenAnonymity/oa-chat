@@ -4,10 +4,10 @@
  * scroll behaviors, and LaTeX rendering.
  */
 
-import { buildMessageHTML, buildEmptyState, buildSharedIndicator, buildImportedIndicator, buildTypingIndicator, RAW_CLIPBOARD_ATTRIBUTE_ENABLED } from './MessageTemplates.js';
+import { buildMessageHTML, buildEmptyState, buildSharedIndicator, buildImportedIndicator, buildTypingIndicator, buildReasoningTrace, RAW_CLIPBOARD_ATTRIBUTE_ENABLED } from './MessageTemplates.js';
 import { exportChats, exportTickets } from '../services/globalExport.js';
 import { parseStreamingReasoningContent, parseReasoningContent } from '../services/reasoningParser.js';
-import { chatDB } from '../db.js';
+import { buildQuickAskQuestion, normalizeQuickAskSelection } from '../domain/quickAsk.js';
 
 export default class ChatArea {
     /**
@@ -30,8 +30,26 @@ export default class ChatArea {
         this.reasoningAutoScrollPaused = false;
         // Pending animation frame for debounced auto-grow
         this.pendingAutoGrowFrame = null;
+        // Pointer-down copy is used for streaming code blocks because token updates
+        // can replace the DOM before a normal click event fires.
+        this.streamingCodeCopyPointerWindowMs = 1200;
         // Render generation counter - used to cancel stale renders during rapid session switching
         this.renderGeneration = 0;
+        this.memoryPromptModal = null;
+        this.memoryPromptModalKeyHandler = null;
+        this.quickAsk = {
+            popover: null,
+            window: null,
+            selectedText: '',
+            question: '',
+            messageId: '',
+            activeKey: '',
+            selectionRect: null,
+            windowAnchor: null,
+            abortController: null,
+            activeRequestId: 0,
+            requestInFlight: false
+        };
         this.setupEventListeners();
     }
 
@@ -42,8 +60,41 @@ export default class ChatArea {
     setupEventListeners() {
         const messagesContainer = this.app.elements.messagesContainer;
 
+        messagesContainer.addEventListener('pointerdown', (e) => {
+            const codeBlockCopyBtn = e.target.closest('.code-block-copy-btn');
+            if (!codeBlockCopyBtn) return;
+            if (typeof e.button === 'number' && e.button !== 0) return;
+
+            const messageEl = codeBlockCopyBtn.closest('[data-message-id]');
+            const messageId = messageEl?.dataset.messageId;
+            if (!messageId || !this.isMessageStreamingInDOM(messageId)) {
+                return;
+            }
+
+            e.preventDefault();
+            this.handleCopyCodeBlock(codeBlockCopyBtn);
+            codeBlockCopyBtn.dataset.pointerCopyHandledAt = String(Date.now());
+        });
+
         // Event delegation for message action buttons
         messagesContainer.addEventListener('click', async (e) => {
+            const removeEditAttachmentBtn = e.target.closest('.remove-edit-attachment-btn');
+            if (removeEditAttachmentBtn) {
+                e.preventDefault();
+                const messageId = removeEditAttachmentBtn.dataset.messageId;
+                const index = Number(removeEditAttachmentBtn.dataset.attachmentIndex);
+                await this.app.removeEditAttachment?.(messageId, index);
+                return;
+            }
+
+            const addEditFilesBtn = e.target.closest('.edit-add-files-btn, .edit-add-files-label');
+            if (addEditFilesBtn) {
+                e.preventDefault();
+                const input = addEditFilesBtn.closest('.edit-prompt-form')?.querySelector('.edit-file-input');
+                input?.click();
+                return;
+            }
+
             // User message show more/less toggle
             const showMoreBtn = e.target.closest('.user-message-show-more');
             if (showMoreBtn) {
@@ -82,6 +133,13 @@ export default class ChatArea {
             // Code block copy button
             const codeBlockCopyBtn = e.target.closest('.code-block-copy-btn');
             if (codeBlockCopyBtn) {
+                const pointerCopyHandledAt = Number(codeBlockCopyBtn.dataset.pointerCopyHandledAt || 0);
+                if (pointerCopyHandledAt &&
+                    (Date.now() - pointerCopyHandledAt) < this.streamingCodeCopyPointerWindowMs) {
+                    delete codeBlockCopyBtn.dataset.pointerCopyHandledAt;
+                    e.preventDefault();
+                    return;
+                }
                 e.preventDefault();
                 this.handleCopyCodeBlock(codeBlockCopyBtn);
                 return;
@@ -108,6 +166,40 @@ export default class ChatArea {
                 return;
             }
 
+            const memoryApprovalBtn = e.target.closest('.memory-approval-btn');
+            if (memoryApprovalBtn) {
+                if (this.app.memoryFeatureEnabled === false) {
+                    this.app.showToast?.('Memory is off in settings.', 'info', 3000);
+                    return;
+                }
+                const messageId = memoryApprovalBtn.dataset.messageId;
+                const decision = memoryApprovalBtn.dataset.decision;
+                await this.app.handleMemoryApprovalDecision(messageId, decision);
+                return;
+            }
+
+            const memoryPreviewBtn = e.target.closest('.memory-preview-btn');
+            if (memoryPreviewBtn) {
+                if (this.app.memoryFeatureEnabled === false) {
+                    this.app.showToast?.('Memory is off in settings.', 'info', 3000);
+                    return;
+                }
+                const messageId = memoryPreviewBtn.dataset.messageId;
+                const userMessageId = memoryPreviewBtn.dataset.userMessageId;
+                await this.handleMemoryPromptPreview(messageId, userMessageId);
+                return;
+            }
+
+            const memFileLink = e.target.closest('.mem-prompt-file[data-mem-file]');
+            if (memFileLink) {
+                e.preventDefault();
+                const filePath = memFileLink.dataset.memFile;
+                if (filePath && this.app.memoryEditor) {
+                    await this.app.memoryEditor.openToFile(filePath);
+                }
+                return;
+            }
+
             const scrubberBtn = e.target.closest('.scrubber-restore-btn');
             if (scrubberBtn) {
                 const messageId = scrubberBtn.dataset.messageId;
@@ -125,7 +217,7 @@ export default class ChatArea {
             const resendBtn = e.target.closest('.resend-prompt-btn');
             if (resendBtn) {
                 const messageId = resendBtn.dataset.messageId;
-                await this.handleResendMessage(messageId);
+                await this.handleResendMessage(messageId, resendBtn);
                 return;
             }
 
@@ -174,7 +266,19 @@ export default class ChatArea {
         messagesContainer.addEventListener('input', (e) => {
             const textarea = e.target.closest('.edit-prompt-textarea');
             if (textarea) {
+                this.app.updateEditDraftContent?.(textarea.dataset.messageId, textarea.value);
                 this.scheduleAutoGrow(textarea);
+            }
+        });
+
+        messagesContainer.addEventListener('change', async (e) => {
+            const input = e.target.closest('.edit-file-input');
+            if (!input) return;
+            const messageId = input.dataset.messageId;
+            const files = Array.from(input.files || []);
+            input.value = '';
+            if (files.length > 0) {
+                await this.app.handleEditFileUpload?.(messageId, files);
             }
         });
 
@@ -196,6 +300,534 @@ export default class ChatArea {
                 }
             }
         });
+
+        messagesContainer.addEventListener('mouseup', () => {
+            window.setTimeout(() => this.maybeShowQuickAskPopover(), 0);
+        });
+
+        messagesContainer.addEventListener('keyup', (e) => {
+            if (e.key === 'Shift' || e.key.startsWith('Arrow') || e.key === 'Home' || e.key === 'End') {
+                window.setTimeout(() => this.maybeShowQuickAskPopover(), 0);
+            }
+        });
+
+        messagesContainer.addEventListener('touchend', () => {
+            window.setTimeout(() => this.maybeShowQuickAskPopover(), 0);
+        });
+
+        document.addEventListener('selectionchange', () => {
+            const selection = window.getSelection();
+            if (!selection || selection.isCollapsed || !selection.toString().trim()) {
+                this.hideQuickAskPopover();
+            }
+        });
+
+        document.addEventListener('pointerdown', (e) => {
+            if (e.target.closest?.('.quick-ask-popover, .quick-ask-window')) return;
+            if (this.quickAsk.window && !this.quickAsk.window.classList.contains('hidden')) {
+                this.closeQuickAskWindow();
+            }
+            if (!e.target.closest?.('#messages-container .message-content')) {
+                this.hideQuickAskPopover();
+            }
+        }, true);
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                this.hideQuickAskPopover();
+                if (this.quickAsk.window) {
+                    this.closeQuickAskWindow();
+                }
+            }
+        });
+
+        window.addEventListener('resize', () => this.hideQuickAskPopover());
+        this.app.elements.chatArea?.addEventListener('scroll', () => {
+            this.hideQuickAskPopover();
+            this.syncQuickAskWindowToScroll();
+        }, { passive: true });
+    }
+
+    getAssistantSelectionData() {
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return null;
+
+        const selectedText = normalizeQuickAskSelection(selection.toString());
+        if (!selectedText) return null;
+
+        const range = selection.getRangeAt(0);
+        const commonNode = range.commonAncestorContainer;
+        const commonEl = commonNode.nodeType === Node.ELEMENT_NODE
+            ? commonNode
+            : commonNode.parentElement;
+        const contentEl = commonEl?.closest?.('.message-content');
+        if (!contentEl || contentEl.closest('.quick-ask-window')) return null;
+
+        const messageEl = contentEl.closest('[data-message-id]');
+        if (!messageEl || !messageEl.querySelector('.message-assistant')) return null;
+        if (messageEl.dataset.scrubberRestored === 'true') return null;
+
+        let rect = range.getBoundingClientRect();
+        if (!rect || (rect.width === 0 && rect.height === 0)) {
+            rect = range.getClientRects()[0];
+        }
+        if (!rect) return null;
+
+        return {
+            selectedText,
+            messageId: messageEl.dataset.messageId || '',
+            rect: {
+                top: rect.top,
+                right: rect.right,
+                bottom: rect.bottom,
+                left: rect.left,
+                width: rect.width,
+                height: rect.height
+            }
+        };
+    }
+
+    maybeShowQuickAskPopover() {
+        if (this.quickAsk.window &&
+            !this.quickAsk.window.classList.contains('hidden') &&
+            this.quickAsk.window.contains(document.activeElement)) return;
+
+        const selectionData = this.getAssistantSelectionData();
+        if (!selectionData) {
+            this.hideQuickAskPopover();
+            return;
+        }
+
+        this.quickAsk.selectedText = selectionData.selectedText;
+        this.quickAsk.question = buildQuickAskQuestion(selectionData.selectedText);
+        this.quickAsk.messageId = selectionData.messageId;
+        this.quickAsk.selectionRect = selectionData.rect;
+
+        const popover = this.ensureQuickAskPopover();
+        popover.classList.remove('hidden');
+        popover.setAttribute('aria-hidden', 'false');
+        this.positionQuickAskPopover(popover, selectionData.rect);
+        this.updateQuickAskLayerState();
+    }
+
+    ensureQuickAskPopover() {
+        if (this.quickAsk.popover) return this.quickAsk.popover;
+
+        const popover = document.createElement('div');
+        popover.className = 'quick-ask-popover hidden';
+        popover.setAttribute('aria-hidden', 'true');
+        popover.innerHTML = `
+            <button type="button" class="quick-ask-popover-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor" class="w-3.5 h-3.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.178-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M12 17.25h.008v.008H12v-.008Z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z" />
+                </svg>
+                <span>Ask</span>
+            </button>
+        `;
+        popover.querySelector('.quick-ask-popover-btn')?.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            this.openQuickAskWindow();
+        });
+        document.body.appendChild(popover);
+        this.quickAsk.popover = popover;
+        return popover;
+    }
+
+    positionQuickAskPopover(popover, rect) {
+        const margin = 8;
+        const width = popover.offsetWidth || 76;
+        const height = popover.offsetHeight || 36;
+        const centerX = rect.left + (rect.width / 2);
+        const left = Math.min(
+            Math.max(margin, centerX - (width / 2)),
+            window.innerWidth - width - margin
+        );
+        const top = rect.top - height - margin > margin
+            ? rect.top - height - margin
+            : rect.bottom + margin;
+
+        Object.assign(popover.style, {
+            left: `${left}px`,
+            top: `${Math.min(Math.max(margin, top), window.innerHeight - height - margin)}px`
+        });
+    }
+
+    hideQuickAskPopover() {
+        const popover = this.quickAsk.popover;
+        if (!popover) return;
+        popover.classList.add('hidden');
+        popover.setAttribute('aria-hidden', 'true');
+        this.updateQuickAskLayerState();
+    }
+
+    getQuickAskKey(selectedText = this.quickAsk.selectedText, messageId = this.quickAsk.messageId) {
+        const sessionId = this.app.getCurrentSession?.()?.id || '';
+        return [sessionId, messageId || '', selectedText || ''].join('::');
+    }
+
+    openQuickAskWindow() {
+        const selectedText = this.quickAsk.selectedText;
+        if (!selectedText) return;
+
+        this.hideQuickAskPopover();
+        window.getSelection()?.removeAllRanges();
+        const key = this.getQuickAskKey(selectedText);
+        const panel = this.ensureQuickAskWindow();
+        if (this.quickAsk.activeKey && this.quickAsk.activeKey === key) {
+            panel.classList.remove('hidden');
+            panel.setAttribute('aria-hidden', 'false');
+            this.positionQuickAskWindow(panel, this.quickAsk.selectionRect);
+            this.updateQuickAskLayerState();
+            return;
+        }
+
+        this.quickAsk.abortController?.abort();
+        this.quickAsk.abortController = new AbortController();
+        this.quickAsk.activeRequestId += 1;
+        const requestId = this.quickAsk.activeRequestId;
+        this.quickAsk.question = buildQuickAskQuestion(selectedText);
+        this.quickAsk.activeKey = key;
+
+        panel.classList.remove('hidden');
+        panel.setAttribute('aria-hidden', 'false');
+        this.updateQuickAskLayerState();
+        panel.querySelector('.quick-ask-user-bubble').textContent = this.quickAsk.question;
+        panel.querySelector('.quick-ask-status').textContent = '';
+        this.updateQuickAskReasoning('');
+        this.updateQuickAskCitations(null);
+        this.updateQuickAskAnswer('', { pending: true, status: 'Waiting for response' });
+        this.positionQuickAskWindow(panel, this.quickAsk.selectionRect);
+        this.startQuickAskRequest(requestId);
+    }
+
+    ensureQuickAskWindow() {
+        if (this.quickAsk.window) {
+            if (!this.quickAsk.window.isConnected ||
+                this.quickAsk.window.parentElement !== document.body) {
+                document.body.appendChild(this.quickAsk.window);
+            }
+            return this.quickAsk.window;
+        }
+
+        const panel = document.createElement('section');
+        panel.className = 'quick-ask-window hidden';
+        panel.setAttribute('role', 'dialog');
+        panel.setAttribute('aria-label', 'Inline quick ask');
+        panel.setAttribute('aria-hidden', 'true');
+        panel.innerHTML = `
+            <div class="quick-ask-mini-chat" tabindex="-1">
+                <div class="quick-ask-turn quick-ask-turn-user">
+                    <div class="quick-ask-user-bubble message-user py-3 px-4 font-normal max-w-full"></div>
+                </div>
+                <div class="quick-ask-turn quick-ask-turn-assistant">
+                    <div class="quick-ask-assistant-bubble message-assistant">
+                        <div class="quick-ask-status"></div>
+                        <div class="quick-ask-reasoning hidden"></div>
+                        <div class="quick-ask-answer message-content prose"></div>
+                        <div class="quick-ask-sources hidden"></div>
+                    </div>
+                </div>
+            </div>
+        `;
+        panel.addEventListener('click', (e) => {
+            const codeBlockCopyBtn = e.target.closest('.code-block-copy-btn');
+            if (!codeBlockCopyBtn) return;
+            e.preventDefault();
+            this.handleCopyCodeBlock(codeBlockCopyBtn);
+        });
+        document.body.appendChild(panel);
+        this.quickAsk.window = panel;
+        return panel;
+    }
+
+    syncQuickAskWindowToScroll() {
+        if (!this.quickAsk.window ||
+            this.quickAsk.window.classList.contains('hidden') ||
+            !this.quickAsk.windowAnchor) return;
+        this.positionQuickAskWindow(this.quickAsk.window, null, { preserveAnchor: true });
+    }
+
+    positionQuickAskWindow(panel, rect, options = {}) {
+        const margin = 16;
+        const chatArea = this.app.elements.chatArea;
+        const scrollTop = chatArea?.scrollTop || 0;
+        const scrollLeft = chatArea?.scrollLeft || 0;
+        const chatAreaRect = chatArea?.getBoundingClientRect();
+        const panelRect = panel.getBoundingClientRect();
+        const width = panelRect.width || Math.min(520, window.innerWidth - (margin * 2));
+        const height = panelRect.height || 360;
+
+        if (options.preserveAnchor && this.quickAsk.windowAnchor) {
+            const anchoredLeft = (chatAreaRect?.left || 0) + this.quickAsk.windowAnchor.left - scrollLeft;
+            const anchoredTop = (chatAreaRect?.top || 0) + this.quickAsk.windowAnchor.top - scrollTop;
+            const isInChatViewport = !chatAreaRect ||
+                (anchoredTop + height > chatAreaRect.top && anchoredTop < chatAreaRect.bottom);
+
+            Object.assign(panel.style, {
+                left: `${anchoredLeft}px`,
+                top: `${anchoredTop}px`,
+                visibility: isInChatViewport ? '' : 'hidden'
+            });
+            return;
+        }
+
+        const sourceRect = rect || {
+            left: window.innerWidth / 2,
+            right: window.innerWidth / 2,
+            top: window.innerHeight / 3,
+            bottom: window.innerHeight / 3,
+            width: 0,
+            height: 0
+        };
+        const centerX = sourceRect.left + ((sourceRect.width || 0) / 2);
+        const left = Math.min(
+            Math.max(margin, centerX - (width / 2)),
+            window.innerWidth - width - margin
+        );
+        const belowTop = sourceRect.bottom + margin;
+        const aboveTop = sourceRect.top - height - margin;
+        const top = belowTop + height <= window.innerHeight - margin
+            ? belowTop
+            : Math.max(margin, aboveTop);
+        const clampedTop = Math.min(Math.max(margin, top), window.innerHeight - height - margin);
+
+        Object.assign(panel.style, {
+            left: `${left}px`,
+            top: `${clampedTop}px`,
+            visibility: ''
+        });
+        this.quickAsk.windowAnchor = {
+            left: left - (chatAreaRect?.left || 0) + scrollLeft,
+            top: clampedTop - (chatAreaRect?.top || 0) + scrollTop
+        };
+    }
+
+    async startQuickAskRequest(requestId) {
+        this.quickAsk.requestInFlight = true;
+        try {
+            await this.app.inlineQuickAsk(this.quickAsk.selectedText, {
+                abortController: this.quickAsk.abortController,
+                onStatus: (status) => {
+                    if (requestId !== this.quickAsk.activeRequestId) return;
+                    this.updateQuickAskStatus(status);
+                },
+                onChunk: (content) => {
+                    if (requestId !== this.quickAsk.activeRequestId) return;
+                    this.updateQuickAskAnswer(content);
+                },
+                onReasoningChunk: (reasoning) => {
+                    if (requestId !== this.quickAsk.activeRequestId) return;
+                    this.updateQuickAskReasoning(reasoning, { streaming: true });
+                },
+                onDone: (result) => {
+                    if (requestId !== this.quickAsk.activeRequestId) return;
+                    this.updateQuickAskReasoning(result.reasoning || '');
+                    this.updateQuickAskAnswer(result.content || '[Model provider returned no response.]');
+                    this.updateQuickAskCitations(result.citations || null);
+                }
+            });
+        } catch (error) {
+            if (requestId !== this.quickAsk.activeRequestId) return;
+            if (error?.isCancelled || this.quickAsk.abortController?.signal.aborted) {
+                this.updateQuickAskStatus('stopped');
+                return;
+            }
+            this.updateQuickAskError(error?.message || 'Quick ask failed.');
+        } finally {
+            if (requestId === this.quickAsk.activeRequestId) {
+                this.quickAsk.requestInFlight = false;
+            }
+        }
+    }
+
+    updateQuickAskStatus(status) {
+        const labelByStatus = {
+            'requesting-key': 'Requesting ephemeral key',
+            'waiting-response': 'Waiting for response',
+            'stream-open': 'Waiting for response',
+            streaming: '',
+            stopped: ''
+        };
+        const label = labelByStatus[status] ?? status ?? '';
+        const statusEl = this.quickAsk.window?.querySelector('.quick-ask-status');
+        if (statusEl) {
+            statusEl.textContent = '';
+            statusEl.classList.remove('pending-response-streaming');
+        }
+        if (label) {
+            const answerEl = this.quickAsk.window?.querySelector('.quick-ask-answer');
+            const hasAnswerContent = answerEl && answerEl.textContent.trim() && !answerEl.querySelector('.pending-response-line');
+            if (!hasAnswerContent) {
+                this.updateQuickAskAnswer('', { pending: true, status: label });
+            }
+        }
+    }
+
+    updateQuickAskAnswer(content, options = {}) {
+        const answerEl = this.quickAsk.window?.querySelector('.quick-ask-answer');
+        if (!answerEl) return;
+        const assistantBubble = answerEl.closest('.quick-ask-assistant-bubble');
+
+        if (options.pending && !content) {
+            assistantBubble?.classList.add('quick-ask-assistant-pending');
+            answerEl.innerHTML = `
+                <div class="pending-response-line">
+                    <span class="pending-response-label pending-response-streaming">${this.escapeHtml(options.status || 'Waiting for response')}</span>
+                </div>
+            `;
+            return;
+        }
+
+        assistantBubble?.classList.remove('quick-ask-assistant-pending');
+        this.updateQuickAskStatus(content ? '' : options.status);
+        answerEl.innerHTML = this.app.processContentWithLatex(content || '');
+        renderMathInElement(answerEl, {
+            delimiters: [
+                {left: '$$', right: '$$', display: true},
+                {left: '\\[', right: '\\]', display: true},
+                {left: '\\(', right: '\\)', display: false}
+            ],
+            throwOnError: false
+        });
+        const miniChat = this.quickAsk.window?.querySelector('.quick-ask-mini-chat');
+        if (miniChat) {
+            miniChat.scrollTop = miniChat.scrollHeight;
+        }
+    }
+
+    updateQuickAskReasoning(reasoning, options = {}) {
+        const reasoningEl = this.quickAsk.window?.querySelector('.quick-ask-reasoning');
+        if (!reasoningEl) return;
+        const text = typeof reasoning === 'string' ? reasoning.trim() : '';
+        if (!text) {
+            reasoningEl.classList.add('hidden');
+            reasoningEl.innerHTML = '';
+            return;
+        }
+
+        reasoningEl.classList.remove('hidden');
+        reasoningEl.innerHTML = buildReasoningTrace(
+            text,
+            `quick-ask-inline-${this.quickAsk.activeRequestId}`,
+            !!options.streaming,
+            this.app.processContentWithLatex.bind(this.app)
+        );
+        renderMathInElement(reasoningEl, {
+            delimiters: [
+                {left: '$$', right: '$$', display: true},
+                {left: '\\[', right: '\\]', display: true},
+                {left: '\\(', right: '\\)', display: false}
+            ],
+            throwOnError: false
+        });
+    }
+
+    updateQuickAskCitations(citations) {
+        const sourcesEl = this.quickAsk.window?.querySelector('.quick-ask-sources');
+        if (!sourcesEl) return;
+        const items = Array.isArray(citations) ? citations.filter(citation => citation?.url) : [];
+        if (items.length === 0) {
+            sourcesEl.classList.add('hidden');
+            sourcesEl.innerHTML = '';
+            return;
+        }
+
+        const links = items.slice(0, 5).map((citation, index) => {
+            let safeUrl = '';
+            try {
+                const parsed = new URL(citation.url);
+                if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+                    safeUrl = parsed.href;
+                }
+            } catch {
+                safeUrl = '';
+            }
+            const label = citation.title || citation.domain || citation.url;
+            const prefix = `${index + 1}. `;
+            if (!safeUrl) {
+                return `<span class="quick-ask-source">${this.escapeHtml(prefix + label)}</span>`;
+            }
+            return `<a class="quick-ask-source" href="${this.escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer">${this.escapeHtml(prefix + label)}</a>`;
+        }).join('');
+
+        sourcesEl.classList.remove('hidden');
+        sourcesEl.innerHTML = `
+            <div class="quick-ask-sources-label">${items.length} source${items.length === 1 ? '' : 's'}</div>
+            <div class="quick-ask-sources-list">${links}</div>
+        `;
+    }
+
+    updateQuickAskError(message) {
+        const answerEl = this.quickAsk.window?.querySelector('.quick-ask-answer');
+        if (!answerEl) return;
+        this.updateQuickAskStatus('');
+        this.updateQuickAskReasoning('');
+        this.updateQuickAskCitations(null);
+        answerEl.closest('.quick-ask-assistant-bubble')?.classList.remove('quick-ask-assistant-pending');
+        answerEl.innerHTML = `<p><strong>Error:</strong> ${this.escapeHtml(message)}</p>`;
+    }
+
+    closeQuickAskWindow(options = {}) {
+        const { abort = false, reset = false } = options;
+        if (abort) {
+            this.quickAsk.abortController?.abort();
+            this.quickAsk.abortController = null;
+            this.quickAsk.activeRequestId += 1;
+            this.quickAsk.requestInFlight = false;
+        }
+        if (this.quickAsk.window) {
+            this.quickAsk.window.classList.add('hidden');
+            this.quickAsk.window.setAttribute('aria-hidden', 'true');
+            this.updateQuickAskLayerState();
+        }
+        if (reset) {
+            this.quickAsk.selectedText = '';
+            this.quickAsk.question = '';
+            this.quickAsk.messageId = '';
+            this.quickAsk.activeKey = '';
+            this.quickAsk.selectionRect = null;
+            this.quickAsk.windowAnchor = null;
+        }
+    }
+
+    updateQuickAskLayerState() {
+        const popoverVisible = this.quickAsk.popover && !this.quickAsk.popover.classList.contains('hidden');
+        const windowVisible = this.quickAsk.window && !this.quickAsk.window.classList.contains('hidden');
+        document.body.classList.toggle('quick-ask-layer-active', Boolean(popoverVisible || windowVisible));
+    }
+
+    getQuickAskActiveSessionId() {
+        return this.quickAsk.activeKey ? this.quickAsk.activeKey.split('::')[0] || '' : '';
+    }
+
+    shouldPreserveQuickAskWindowForRender(sessionId) {
+        return Boolean(
+            sessionId &&
+            this.quickAsk.window &&
+            this.quickAsk.activeKey &&
+            this.getQuickAskActiveSessionId() === sessionId
+        );
+    }
+
+    detachQuickAskWindowForRender(sessionId) {
+        if (!this.shouldPreserveQuickAskWindowForRender(sessionId)) return null;
+        const panel = this.quickAsk.window;
+        if (panel.isConnected) {
+            panel.remove();
+        }
+        return panel;
+    }
+
+    restoreQuickAskWindowAfterRender(panel, sessionId) {
+        if (!panel || panel !== this.quickAsk.window) return;
+        if (!this.shouldPreserveQuickAskWindowForRender(sessionId)) return;
+
+        if (!panel.isConnected ||
+            panel.parentElement !== document.body) {
+            document.body.appendChild(panel);
+        }
     }
 
     /**
@@ -245,9 +877,26 @@ export default class ChatArea {
 
         const contentEl = messageEl.querySelector('.message-content');
         if (contentEl) {
-            return contentEl.innerText || contentEl.textContent;
+            const contentClone = contentEl.cloneNode(true);
+            contentClone.querySelectorAll('.code-block-copy-btn').forEach(el => el.remove());
+            return contentClone.innerText || contentClone.textContent;
         }
         return null;
+    }
+
+    /**
+     * Checks whether a message is actively streaming in the current DOM.
+     * @param {string} messageId - The message ID
+     * @returns {boolean} True when the DOM is still in a streaming state
+     */
+    isMessageStreamingInDOM(messageId) {
+        const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
+        if (!messageEl) return false;
+
+        return !!(
+            messageEl.querySelector('.message-content.streaming, .reasoning-content.streaming') ||
+            messageEl.querySelector('.pending-response-label')
+        );
     }
 
     /**
@@ -267,6 +916,91 @@ export default class ChatArea {
         return null;
     }
 
+    isStreamingCodeBlockNode(node) {
+        return node?.nodeType === Node.ELEMENT_NODE &&
+            node.classList.contains('code-block-wrapper');
+    }
+
+    areStreamingNodesEquivalent(currentNode, nextNode) {
+        if (!currentNode || !nextNode || currentNode.nodeType !== nextNode.nodeType) {
+            return false;
+        }
+
+        if (currentNode.nodeType === Node.TEXT_NODE) {
+            return currentNode.textContent === nextNode.textContent;
+        }
+
+        return currentNode.outerHTML === nextNode.outerHTML;
+    }
+
+    syncStreamingCodeBlock(currentNode, nextNode) {
+        const currentLang = currentNode.querySelector('.code-block-lang');
+        const nextLang = nextNode.querySelector('.code-block-lang');
+        if (currentLang && nextLang) {
+            currentLang.textContent = nextLang.textContent;
+        }
+
+        const currentCopyBtn = currentNode.querySelector('.code-block-copy-btn');
+        const nextCopyBtn = nextNode.querySelector('.code-block-copy-btn');
+        if (currentCopyBtn && nextCopyBtn) {
+            currentCopyBtn.dataset.code = nextCopyBtn.dataset.code || '';
+
+            const isShowingCopyFeedback = currentCopyBtn.dataset.copyFeedbackActive === 'true';
+            if (!isShowingCopyFeedback) {
+                const currentText = currentCopyBtn.querySelector('.copy-text');
+                const nextText = nextCopyBtn.querySelector('.copy-text');
+                if (currentText && nextText) {
+                    currentText.textContent = nextText.textContent;
+                }
+
+                const currentIcon = currentCopyBtn.querySelector('.copy-icon');
+                const nextIcon = nextCopyBtn.querySelector('.copy-icon');
+                if (currentIcon && nextIcon) {
+                    currentIcon.innerHTML = nextIcon.innerHTML;
+                }
+            }
+        }
+
+        const currentCode = currentNode.querySelector('pre code');
+        const nextCode = nextNode.querySelector('pre code');
+        if (currentCode && nextCode) {
+            currentCode.className = nextCode.className;
+            currentCode.innerHTML = nextCode.innerHTML;
+        }
+    }
+
+    patchStreamingContent(contentEl, processedContent) {
+        const tempContainer = document.createElement('div');
+        tempContainer.innerHTML = processedContent;
+        const nextChildren = Array.from(tempContainer.childNodes);
+
+        for (let index = 0; index < nextChildren.length; index++) {
+            const nextNode = nextChildren[index];
+            const currentNode = contentEl.childNodes[index];
+
+            if (!currentNode) {
+                contentEl.appendChild(nextNode);
+                continue;
+            }
+
+            if (this.isStreamingCodeBlockNode(currentNode) && this.isStreamingCodeBlockNode(nextNode)) {
+                this.syncStreamingCodeBlock(currentNode, nextNode);
+                continue;
+            }
+
+            if (this.areStreamingNodesEquivalent(currentNode, nextNode)) {
+                continue;
+            }
+
+            contentEl.insertBefore(nextNode, currentNode);
+            currentNode.remove();
+        }
+
+        while (contentEl.childNodes.length > nextChildren.length) {
+            contentEl.lastChild?.remove();
+        }
+    }
+
     /**
      * Handles copying the content of a message.
      * Prioritizes Safari-safe raw DOM data when enabled, else DB-first.
@@ -275,6 +1009,26 @@ export default class ChatArea {
     async handleCopyMessage(messageId) {
         const session = this.app.getCurrentSession();
         if (!session) return;
+
+        const isLiveStreamingMessage = this.isMessageStreamingInDOM(messageId);
+
+        // During streaming, the DOM can be ahead of the latest IndexedDB save.
+        // Prefer the live DOM snapshot so copy matches what the user can see.
+        if (isLiveStreamingMessage) {
+            const rawContent = this.getMessageRawFromDOM(messageId);
+            if (rawContent && rawContent.trim()) {
+                this.copyToClipboard(rawContent);
+                this.showCopySuccess(messageId);
+                return;
+            }
+
+            const domContent = this.getMessageTextFromDOM(messageId);
+            if (domContent && domContent.trim()) {
+                this.copyToClipboard(domContent);
+                this.showCopySuccess(messageId);
+                return;
+            }
+        }
 
         if (RAW_CLIPBOARD_ATTRIBUTE_ENABLED) {
             // Try raw content from DOM data attributes (sync, preserves Safari user activation).
@@ -295,7 +1049,7 @@ export default class ChatArea {
         }
 
         // Default path (non-Safari): DB-first to preserve raw markdown/LaTeX.
-        const messages = await chatDB.getSessionMessages(session.id);
+        const messages = await this.app.data.getSessionMessages(session.id);
         const message = messages.find(m => m.id === messageId);
 
         if (message && message.content && message.content.trim()) {
@@ -395,11 +1149,11 @@ export default class ChatArea {
         if (messageId) {
             const session = this.app.getCurrentSession();
             if (session) {
-                const messages = await chatDB.getSessionMessages(session.id);
+                const messages = await this.app.data.getSessionMessages(session.id);
                 const message = messages.find(m => m.id === messageId);
                 if (message?.scrubber) {
                     message.scrubber.isCollapsed = !isCollapsed; // New state after toggle
-                    await chatDB.saveMessage(message);
+                    await this.app.data.saveMessage(message);
                 }
             }
         }
@@ -411,20 +1165,36 @@ export default class ChatArea {
      */
     handleCopyCodeBlock(btn) {
         // Get code from data attribute (preserves original formatting)
+        let decodedCode;
         const code = btn.dataset.code;
-        if (!code) return;
-
-        // Decode HTML entities that were escaped for the attribute
-        const tempEl = document.createElement('textarea');
-        tempEl.innerHTML = code;
-        const decodedCode = tempEl.value;
+        if (code) {
+            // Decode HTML entities that were escaped for the attribute
+            const tempEl = document.createElement('textarea');
+            tempEl.innerHTML = code;
+            decodedCode = tempEl.value;
+        } else {
+            // Fallback: extract from the <pre><code> sibling (handles cases where
+            // data-code attribute was lost during HTML round-tripping e.g. DOMParser)
+            const wrapper = btn.closest('.code-block-wrapper');
+            const codeEl = wrapper && wrapper.querySelector('pre code');
+            decodedCode = codeEl ? codeEl.textContent : '';
+        }
+        if (!decodedCode) return;
 
         // Get button elements for animation
         const svg = btn.querySelector('.copy-icon');
         const textEl = btn.querySelector('.copy-text');
         if (!svg) return;
 
+        const messageEl = btn.closest('[data-message-id]');
+        const messageId = messageEl?.dataset.messageId || null;
+        const isStreamingMessage = messageId ? this.isMessageStreamingInDOM(messageId) : false;
+
         this.copyToClipboard(decodedCode);
+        btn.dataset.copyFeedbackActive = 'true';
+        if (isStreamingMessage && typeof this.app.showToast === 'function') {
+            this.app.showToast('Code copied', 'success');
+        }
 
         // Animate button to show success
         const originalSvgContent = svg.innerHTML;
@@ -435,6 +1205,7 @@ export default class ChatArea {
         setTimeout(() => {
             svg.innerHTML = originalSvgContent;
             if (textEl) textEl.textContent = originalText;
+            delete btn.dataset.copyFeedbackActive;
         }, 2000);
     }
 
@@ -446,12 +1217,12 @@ export default class ChatArea {
         const session = this.app.getCurrentSession();
         if (!session) return;
 
-        // Check if currently streaming
         if (this.app.isCurrentSessionStreaming()) {
-            return;
+            const stopped = await this.app.stopCurrentSessionStreamingAndWait();
+            if (!stopped) return;
         }
 
-        const messages = await chatDB.getSessionMessages(session.id);
+        const messages = await this.app.data.getSessionMessages(session.id);
         const messageIndex = messages.findIndex(m => m.id === messageId);
 
         if (messageIndex === -1 || messages[messageIndex].role !== 'assistant') {
@@ -467,7 +1238,7 @@ export default class ChatArea {
         // Delete the assistant message and all messages after it
         const messagesToDelete = messages.slice(messageIndex);
         for (const msg of messagesToDelete) {
-            await chatDB.deleteMessage(msg.id);
+            await this.app.data.deleteMessage(msg.id);
         }
 
         // Re-render messages to remove deleted messages from UI
@@ -485,25 +1256,298 @@ export default class ChatArea {
         await this.app.toggleScrubberRestore(messageId);
     }
 
+    async handleMemoryPromptPreview(messageId, userMessageId = null) {
+        const session = this.app.getCurrentSession();
+        if (!session) return;
+
+        const messages = await this.app.data.getSessionMessages(session.id);
+        let message = messageId
+            ? messages.find((entry) => entry.id === messageId)
+            : null;
+
+        if (!message && userMessageId) {
+            message = messages.find((entry) => entry?.ciPromptDraft?.linkedUserMessageId === userMessageId);
+        }
+
+        if (!message?.ciPromptDraft) return;
+        await this.showCiPromptEditor(message.id, message.ciPromptDraft);
+    }
+
+    renderTaggedPromptEditable(text) {
+        let html = this.escapeHtml(text || '');
+        html = html.replace(
+            /\[\[user_data\]\]([\s\S]*?)\[\[\/user_data\]\]/g,
+            '<mark class="user-data-highlight">$1</mark>'
+        );
+        html = html.replace(/\[\[user_data\]\]/g, '');
+        html = html.replace(/\[\[\/user_data\]\]/g, '');
+        html = html.replace(/\n/g, '<br>');
+        return html;
+    }
+
+    extractTaggedPromptText(container) {
+        let text = '';
+        const walk = (node) => {
+            if (node.nodeType === Node.TEXT_NODE) {
+                text += node.textContent;
+                return;
+            }
+            if (node.nodeType !== Node.ELEMENT_NODE) {
+                return;
+            }
+
+            const tag = node.tagName;
+            if (tag === 'BR') {
+                text += '\n';
+                return;
+            }
+            if (tag === 'MARK' && node.classList.contains('user-data-highlight')) {
+                text += '[[user_data]]';
+                for (const child of node.childNodes) {
+                    walk(child);
+                }
+                text += '[[/user_data]]';
+                return;
+            }
+            if (tag === 'DIV' || tag === 'P') {
+                if (text.length > 0 && !text.endsWith('\n')) {
+                    text += '\n';
+                }
+                for (const child of node.childNodes) {
+                    walk(child);
+                }
+                return;
+            }
+            for (const child of node.childNodes) {
+                walk(child);
+            }
+        };
+
+        for (const child of container.childNodes) {
+            walk(child);
+        }
+        return text;
+    }
+
+    async showTaggedPromptEditor({
+        title = 'Prompt',
+        modelName = 'frontier model',
+        fullPrompt = '',
+        isReadOnly = false,
+        onSave = null
+    } = {}) {
+        const currentPrompt = typeof fullPrompt === 'string' ? fullPrompt : '';
+        const hasUserDataTags = /\[\[user_data\]\]/.test(currentPrompt);
+        const userDataBadge = hasUserDataTags
+            ? `<span class="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground/60">
+                <span class="inline-block rounded-sm flex-shrink-0 user-data-highlight" style="width:14px;height:8px"></span>
+                from private local memory
+               </span>`
+            : '';
+        const subtitle = `${title} to ${modelName || 'frontier model'}`;
+
+        const modal = document.createElement('div');
+        modal.className = 'escalation-prompt-overlay';
+        modal.innerHTML = `
+            <div role="dialog" aria-modal="true"
+                 class="memory-editor-dialog w-full max-w-2xl mx-4 overflow-hidden flex flex-col rounded-2xl"
+                 style="max-height: min(85vh, 780px)">
+                <div class="flex items-center justify-between px-4 py-3 shrink-0" style="border-bottom: 1px solid hsl(var(--color-border) / 0.5)">
+                    <div class="flex items-center gap-2">
+                        <div class="flex h-7 w-7 items-center justify-center rounded-lg bg-muted/50">
+                            <svg class="w-3.5 h-3.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
+                            </svg>
+                        </div>
+                        <h2 class="text-sm font-semibold text-foreground">${this.escapeHtml(title)}</h2>
+                    </div>
+                    <button id="close-tagged-prompt-editor" class="text-muted-foreground hover:text-foreground transition-colors p-1.5 rounded-lg hover:bg-muted/50 ml-1" aria-label="Close">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+                <div class="flex items-center justify-between px-3 py-2 shrink-0" style="border-bottom: 1px solid hsl(var(--color-border) / 0.35); background: hsl(var(--color-muted) / 0.08)">
+                    <div class="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <svg class="w-3.5 h-3.5 flex-shrink-0 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" />
+                        </svg>
+                        <span>${this.escapeHtml(subtitle)}</span>
+                        <span class="text-muted-foreground/40">— ${isReadOnly ? 'sent' : 'editable'}</span>
+                    </div>
+                    <div class="flex items-center gap-1.5 flex-shrink-0">
+                        ${userDataBadge}
+                        <span id="tagged-prompt-save-indicator" class="text-[10px] text-muted-foreground/40"></span>
+                    </div>
+                </div>
+                <div id="tagged-prompt-editable"
+                     class="escalation-prompt-editable${isReadOnly ? ' read-only' : ''}"
+                     contenteditable="${isReadOnly ? 'false' : 'true'}" role="textbox" aria-multiline="true"
+                     spellcheck="false">${this.renderTaggedPromptEditable(currentPrompt)}</div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        const editable = modal.querySelector('#tagged-prompt-editable');
+        const closeBtn = modal.querySelector('#close-tagged-prompt-editor');
+        const saveIndicator = modal.querySelector('#tagged-prompt-save-indicator');
+
+        if (!isReadOnly && editable) {
+            editable.addEventListener('paste', (event) => {
+                event.preventDefault();
+                const text = event.clipboardData?.getData('text/plain') || '';
+                document.execCommand('insertText', false, text);
+            });
+
+            editable.addEventListener('keydown', (event) => {
+                if (event.key === 'Escape') return;
+                event.stopPropagation();
+                if (event.key === 'Enter' && !event.shiftKey) {
+                    event.preventDefault();
+                    document.execCommand('insertLineBreak');
+                }
+            });
+        }
+
+        let hasEdits = false;
+        let saveTimer = null;
+
+        const saveEdits = async () => {
+            if (isReadOnly || !hasEdits || typeof onSave !== 'function' || !editable) return;
+            const edited = this.extractTaggedPromptText(editable);
+            await onSave(edited);
+            if (saveIndicator) {
+                saveIndicator.textContent = 'saved';
+                setTimeout(() => {
+                    saveIndicator.textContent = '';
+                }, 1200);
+            }
+            hasEdits = false;
+        };
+
+        if (!isReadOnly && editable && typeof onSave === 'function') {
+            editable.addEventListener('input', () => {
+                hasEdits = true;
+                clearTimeout(saveTimer);
+                saveTimer = setTimeout(() => {
+                    saveEdits().catch((error) => {
+                        console.warn('[ChatArea] Failed to save tagged prompt edits:', error);
+                    });
+                }, 500);
+            });
+        }
+
+        const closeModal = async () => {
+            clearTimeout(saveTimer);
+            if (hasEdits) {
+                await saveEdits();
+            }
+            modal.remove();
+            document.removeEventListener('keydown', handleKeydown);
+        };
+
+        closeBtn.addEventListener('click', () => {
+            closeModal().catch((error) => {
+                console.warn('[ChatArea] Failed to close tagged prompt editor:', error);
+            });
+        });
+        modal.addEventListener('click', (event) => {
+            if (event.target === modal) {
+                closeModal().catch((error) => {
+                    console.warn('[ChatArea] Failed to close tagged prompt editor:', error);
+                });
+            }
+        });
+
+        const handleKeydown = (event) => {
+            if (event.key === 'Escape') {
+                closeModal().catch((error) => {
+                    console.warn('[ChatArea] Failed to close tagged prompt editor:', error);
+                });
+            }
+        };
+        document.addEventListener('keydown', handleKeydown);
+
+        if (isReadOnly) {
+            closeBtn.focus();
+        } else {
+            editable.focus();
+        }
+    }
+
+    async showCiPromptEditor(messageId, draftOverride = null) {
+        if (this.app.memoryFeatureEnabled === false) {
+            this.app.showToast?.('Memory is off in settings.', 'info', 3000);
+            return;
+        }
+        const session = this.app.getCurrentSession();
+        if (!session) return;
+
+        const messages = await this.app.data.getSessionMessages(session.id);
+        const message = messages.find((entry) => entry.id === messageId);
+        const draft = draftOverride || message?.ciPromptDraft;
+        if (!message?.ciPromptDraft || !draft) return;
+
+        const draftStatus = draft.status || 'pending';
+        const isReadOnly = draftStatus !== 'pending';
+        const modelName = draft.model
+            || this.app.normalizeModelName(session.model)
+            || session.model
+            || this.app.state.pendingModelName
+            || 'frontier model';
+
+        await this.showTaggedPromptEditor({
+            title: 'Full Prompt',
+            modelName,
+            fullPrompt: draft.editedFullPrompt || draft.fullPrompt || '',
+            isReadOnly,
+            onSave: isReadOnly ? null : async (editedPrompt) => {
+                if (this.app.memoryFeatureEnabled === false) {
+                    this.app.showToast?.('Memory is off in settings.', 'info', 3000);
+                    return;
+                }
+                message.ciPromptDraft = {
+                    ...message.ciPromptDraft,
+                    editedFullPrompt: editedPrompt
+                };
+                await this.app.data.saveMessage(message);
+            }
+        });
+    }
+
     /**
      * Resends a user message - deletes any responses after it and regenerates
      * @param {string} messageId - User message ID to resend
      */
-    async handleResendMessage(messageId) {
+    async handleResendMessage(messageId, triggerButton = null) {
         const session = this.app.getCurrentSession();
         if (!session) return;
 
-        if (this.app.isCurrentSessionStreaming()) return;
+        if (this.app.isCurrentSessionStreaming()) {
+            const stopped = await this.app.stopCurrentSessionStreamingAndWait();
+            if (!stopped) return;
+        }
 
-        const messages = await chatDB.getSessionMessages(session.id);
+        const messages = await this.app.data.getSessionMessages(session.id);
         const messageIndex = messages.findIndex(m => m.id === messageId);
 
         if (messageIndex === -1 || messages[messageIndex].role !== 'user') return;
 
+        if (triggerButton) {
+            triggerButton.classList.add('is-processing');
+            triggerButton.setAttribute('aria-busy', 'true');
+            triggerButton.blur();
+        }
+
+        if (typeof this.app.pruneMemoryRetrievedContextFromMessage === 'function') {
+            await this.app.pruneMemoryRetrievedContextFromMessage(session, messages, messageIndex);
+        }
+
         // Delete all messages after this user message
         const messagesToDelete = messages.slice(messageIndex + 1);
         for (const msg of messagesToDelete) {
-            await chatDB.deleteMessage(msg.id);
+            await this.app.data.deleteMessage(msg.id);
         }
 
         await this.render();
@@ -518,7 +1562,7 @@ export default class ChatArea {
         const session = this.app.getCurrentSession();
         if (!session) return;
 
-        const messages = await chatDB.getSessionMessages(session.id);
+        const messages = await this.app.data.getSessionMessages(session.id);
         const message = messages.find(m => m.id === messageId);
         if (!message || message.role !== 'user' || !message.scrubber) return;
 
@@ -533,7 +1577,7 @@ export default class ChatArea {
         }
 
         // Save to database
-        await chatDB.saveMessage(message);
+        await this.app.data.saveMessage(message);
 
         // Re-render just this message - collapsed state is persisted in message.scrubber.isCollapsed
         // and will be automatically applied by the template
@@ -564,6 +1608,14 @@ export default class ChatArea {
     async render() {
         // Increment render generation - used to cancel stale renders during rapid session switching
         const currentGeneration = ++this.renderGeneration;
+        const session = this.app.getCurrentSession();
+        const sessionId = session?.id || '';
+        const messagesContainer = this.app.elements.messagesContainer;
+        const preserveQuickAskWindow = this.shouldPreserveQuickAskWindowForRender(sessionId);
+        this.hideQuickAskPopover();
+        if (!preserveQuickAskWindow) {
+            this.closeQuickAskWindow({ abort: true, reset: true });
+        }
 
         // Clear debounce timer but DON'T clear buffer content - it persists across
         // session switches to enable seamless restoration of streaming state
@@ -577,9 +1629,6 @@ export default class ChatArea {
             this.typewriter.interval = null;
         }
 
-        const session = this.app.getCurrentSession();
-        const messagesContainer = this.app.elements.messagesContainer;
-
         // Check if empty state is already rendered (by prelude.js) to avoid re-render flash
         const hasEmptyState = messagesContainer.querySelector('.welcome-landing') !== null;
 
@@ -592,7 +1641,7 @@ export default class ChatArea {
         }
 
         // Load messages from IndexedDB
-        const messages = await chatDB.getSessionMessages(session.id);
+        const messages = await this.app.data.getSessionMessages(session.id);
 
         // Check if this render is stale (a newer render was triggered while we were loading messages)
         if (currentGeneration !== this.renderGeneration) {
@@ -601,6 +1650,7 @@ export default class ChatArea {
 
         if (messages.length === 0) {
             if (!hasEmptyState) {
+                this.app.detachStalePromptSlideUpEffect?.();
                 messagesContainer.innerHTML = buildEmptyState();
             }
             this.attachDownloadHandler();
@@ -615,6 +1665,9 @@ export default class ChatArea {
 
         // Check if this session is currently streaming
         const isSessionStreaming = this.app.isCurrentSessionStreaming();
+        const streamingPhase = this.app.getCurrentSessionStreamingPhase
+            ? this.app.getCurrentSessionStreamingPhase()
+            : 'waiting';
 
         // Check if this is an imported (or forked from import) session with new messages added
         // importedFrom = share import (can still receive updates)
@@ -639,6 +1692,7 @@ export default class ChatArea {
             const options = this.app.getMessageTemplateOptions ? this.app.getMessageTemplateOptions(message.id) : {};
             // Pass session streaming state to template
             options.isSessionStreaming = isSessionStreaming;
+            options.pendingPhase = streamingPhase;
             // Normalize streaming state for messages loaded from DB.
             // If streamingReasoning/streamingTokens are set AND session is NOT currently streaming,
             // it means streaming was interrupted (e.g., browser closed, network error).
@@ -681,10 +1735,21 @@ export default class ChatArea {
             // Get provider from session model for the typing indicator
             const sessionModel = this.app.state.models?.find(m => m.name === session.model);
             const providerName = sessionModel?.provider || 'OpenAI';
-            messagesHtml += buildTypingIndicator('typing-restore-' + Date.now(), providerName);
+            messagesHtml += buildTypingIndicator('typing-restore-' + Date.now(), providerName, session.model, Date.now(), streamingPhase);
         }
 
+        this.app.detachStalePromptSlideUpEffect?.();
+        const detachedQuickAskWindow = this.detachQuickAskWindowForRender(session.id);
         messagesContainer.innerHTML = messagesHtml;
+        this.restoreQuickAskWindowAfterRender(detachedQuickAskWindow, session.id);
+        const promptSlideMessageId = this.app.getPromptSlideUpMessageIdForSession?.(
+            session.id,
+            messages,
+            { allowStreamingFallback: isSessionStreaming }
+        );
+        const restoredPromptSlide = promptSlideMessageId
+            ? this.app.restorePromptSlideUpEffectForSession?.(session.id, promptSlideMessageId, { primeRunway: true })
+            : false;
 
         // For streaming sessions, initialize typewriter state from live buffer OR DB content
         // Priority: live buffer > DB (because DB saves may lag behind the live stream)
@@ -752,8 +1817,14 @@ export default class ChatArea {
         // Restore last seen scroll position or snap to bottom
         const restored = this.app.restoreSessionScrollPosition(session.id);
         if (!restored) {
-            this.app.scrollChatAreaToBottomInstant();
-            this.app.saveCurrentSessionScrollPosition();
+            if (restoredPromptSlide) {
+                this.app.updateActivePromptScrollSpacer({ scroll: true, behavior: 'auto' });
+            } else {
+                this.app.scrollChatAreaToBottomInstant();
+                this.app.saveCurrentSessionScrollPosition();
+            }
+        } else if (restoredPromptSlide) {
+            this.app.updateActivePromptScrollSpacer();
         }
 
         // Defer button visibility check to allow DOM to settle after render
@@ -804,6 +1875,9 @@ export default class ChatArea {
                 formatTime: this.app.formatTime.bind(this.app)
             };
             const options = this.app.getMessageTemplateOptions ? this.app.getMessageTemplateOptions(message.id) : {};
+            options.pendingPhase = this.app.getCurrentSessionStreamingPhase
+                ? this.app.getCurrentSessionStreamingPhase()
+                : 'waiting';
 
             // Build new HTML
             const newHtml = buildMessageHTML(message, helpers, this.app.state.models, session.model, options);
@@ -820,6 +1894,12 @@ export default class ChatArea {
                 // Re-setup listeners if needed (delegated listeners cover most)
             }
         }
+    }
+
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text || '';
+        return div.innerHTML;
     }
 
     /**
@@ -936,7 +2016,7 @@ export default class ChatArea {
      * Uses requestAnimationFrame to ensure rendering is complete.
      */
     scrollToBottom(force = false) {
-        if (!force && this.app.isAutoScrollPaused) {
+        if (!this.app.shouldAutoScrollChat(force)) {
             return;
         }
         requestAnimationFrame(() => {
@@ -966,20 +2046,19 @@ export default class ChatArea {
         if (!contentEl) {
             const groupEl = messageEl.querySelector('.group.flex.w-full.flex-col');
             if (groupEl) {
-                // Find the reasoning trace element to insert after it
-                const reasoningEl = groupEl.querySelector('.reasoning-trace');
-                const actionButtons = groupEl.querySelector('.flex.items-center.justify-between');
+                // The action anchor may be either the real toolbar row or the placeholder
+                // that reserves its footprint during reasoning-only streaming.
+                const actionAnchor = groupEl.querySelector(':scope > .assistant-actions-anchor');
 
                 // Create the text bubble
                 const textBubble = document.createElement('div');
                 textBubble.className = 'py-3 px-4 font-normal message-assistant w-full flex items-center';
                 textBubble.innerHTML = '<div class="min-w-0 w-full overflow-hidden message-content prose"></div>';
 
-                // Insert after reasoning trace but before action buttons
-                if (reasoningEl && actionButtons) {
-                    groupEl.insertBefore(textBubble, actionButtons);
-                } else if (actionButtons) {
-                    groupEl.insertBefore(textBubble, actionButtons);
+                // Keep streamed content above the action row placeholder so reasoning
+                // does not leave a temporary gap before the answer.
+                if (actionAnchor) {
+                    groupEl.insertBefore(textBubble, actionAnchor);
                 } else {
                     groupEl.appendChild(textBubble);
                 }
@@ -998,7 +2077,7 @@ export default class ChatArea {
             // Enhance inline links into styled buttons during streaming
             processedContent = window.MessageTemplates.enhanceInlineLinks(processedContent, messageId);
 
-            contentEl.innerHTML = processedContent;
+            this.patchStreamingContent(contentEl, processedContent);
             // Re-render LaTeX for the updated content
             renderMathInElement(contentEl, {
                 delimiters: [
@@ -1008,6 +2087,7 @@ export default class ChatArea {
                 ],
                 throwOnError: false
             });
+            this.app.updateActivePromptScrollSpacer();
         }
     }
 
@@ -1249,6 +2329,7 @@ export default class ChatArea {
         }
 
         // Update scroll button visibility
+        this.app.updateActivePromptScrollSpacer();
         this.app.updateScrollButtonVisibility();
     }
 
@@ -1408,6 +2489,7 @@ export default class ChatArea {
 
         if (!reasoning) return;
 
+        const promptSlideAnchor = this.app.captureActivePromptScrollAnchor?.({ primeRunway: true });
         const reasoningContentEl = document.getElementById(`reasoning-content-${messageId}`);
         if (reasoningContentEl) {
             // Parse the reasoning content to fix formatting issues from the provider
@@ -1462,6 +2544,8 @@ export default class ChatArea {
             }
             // If already updated, we skip the re-render to avoid redundancy
         }
+
+        this.app.restoreActivePromptScrollAnchor?.(promptSlideAnchor);
     }
 
     /**
@@ -1485,9 +2569,8 @@ export default class ChatArea {
         let imageBubble = messageEl.querySelector('.message-assistant-images');
 
         if (!imageBubble) {
-            // Create the image bubble after text bubble but before action buttons wrapper
-            // Use the outer wrapper selector (justify-between) to get a direct child of groupEl
-            const actionButtonsWrapper = groupEl.querySelector(':scope > .flex.items-center.justify-between');
+            // Create the image bubble after text bubble but before the shared action anchor.
+            const actionButtonsWrapper = groupEl.querySelector(':scope > .assistant-actions-anchor');
 
             imageBubble = document.createElement('div');
             imageBubble.className = 'font-normal message-assistant-images w-full';
@@ -1506,6 +2589,7 @@ export default class ChatArea {
         }
 
         // Update scroll button visibility based on content overflow
+        this.app.updateActivePromptScrollSpacer();
         this.app.updateScrollButtonVisibility();
     }
 
@@ -1519,9 +2603,6 @@ export default class ChatArea {
         const session = this.app.getCurrentSession();
 
         if (!session) return;
-
-        // Remove any typing indicators (including restored ones from render())
-        messagesContainer.querySelectorAll('[id^="typing-"]').forEach(el => el.remove());
 
         // Check if we need to clear the empty state
         const emptyState = messagesContainer.querySelector('.text-center.text-muted-foreground');
@@ -1559,6 +2640,7 @@ export default class ChatArea {
                     });
                 }
                 // Update scroll button visibility (no auto-scroll for appended messages)
+                this.app.updateActivePromptScrollSpacer();
                 this.app.updateScrollButtonVisibility();
                 if (this.app.messageNavigation) {
                     this.app.messageNavigation.update();
@@ -1567,8 +2649,45 @@ export default class ChatArea {
             }
         }
 
-        // Append the message (normal case - no existing element)
-        messagesContainer.insertAdjacentHTML('beforeend', messageHtml);
+        const existingTypingIndicator = messagesContainer.querySelector('[id^="typing-"]');
+        if (existingTypingIndicator) {
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = messageHtml;
+            const newMessageEl = tempDiv.firstElementChild;
+            if (newMessageEl) {
+                existingTypingIndicator.replaceWith(newMessageEl);
+                messagesContainer.querySelectorAll('[id^="typing-"]').forEach(el => el.remove());
+
+                const contentEl = newMessageEl.querySelector('.message-content');
+                if (contentEl) {
+                    renderMathInElement(contentEl, {
+                        delimiters: [
+                            {left: '$$', right: '$$', display: true},
+                            {left: '\\[', right: '\\]', display: true},
+                            {left: '\\(', right: '\\)', display: false}
+                        ],
+                        throwOnError: false
+                    });
+                }
+                this.app.updateActivePromptScrollSpacer();
+                this.app.updateScrollButtonVisibility();
+                if (this.app.messageNavigation) {
+                    this.app.messageNavigation.update();
+                }
+                return;
+            }
+        }
+
+        // Append before the prompt-slide spacer when it exists so new prompts do
+        // not briefly drop the viewport before the spacer is retargeted.
+        const promptSpacer = messagesContainer.lastElementChild?.classList?.contains('prompt-scroll-spacer')
+            ? messagesContainer.lastElementChild
+            : null;
+        if (promptSpacer) {
+            promptSpacer.insertAdjacentHTML('beforebegin', messageHtml);
+        } else {
+            messagesContainer.insertAdjacentHTML('beforeend', messageHtml);
+        }
 
         // Render LaTeX only for the new message and add fade-in animation
         const newMessageEl = messagesContainer.querySelector(`[data-message-id="${message.id}"]`);
@@ -1595,6 +2714,7 @@ export default class ChatArea {
         }
 
         // Update scroll button visibility (no auto-scroll for appended messages)
+        this.app.updateActivePromptScrollSpacer();
         this.app.updateScrollButtonVisibility();
 
         // Update message navigation
@@ -1636,6 +2756,8 @@ export default class ChatArea {
     async finalizeStreamingMessage(message) {
         const messageEl = document.querySelector(`[data-message-id="${message.id}"]`);
         if (!messageEl) return;
+
+        const promptSlideAnchor = this.app.captureActivePromptScrollAnchor?.({ primeRunway: true });
 
         // Check if reasoning trace is already finalized (subtitle shows duration, not streaming)
         const existingReasoningTrace = messageEl.querySelector('.reasoning-trace');
@@ -1692,6 +2814,7 @@ export default class ChatArea {
             if (this.app.messageNavigation) {
                 this.app.messageNavigation.update();
             }
+            this.app.restoreActivePromptScrollAnchor?.(promptSlideAnchor);
             return;
         }
 
@@ -1724,6 +2847,7 @@ export default class ChatArea {
         if (this.app.messageNavigation) {
             this.app.messageNavigation.update();
         }
+        this.app.restoreActivePromptScrollAnchor?.(promptSlideAnchor);
     }
 
     /**

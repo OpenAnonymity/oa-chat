@@ -7,6 +7,7 @@ import ticketStore from './ticketStore.js';
 import preferencesStore, { PREF_KEYS } from './preferencesStore.js';
 import { chatDB } from '../db.js';
 import { normalizeReasoningEffort } from './reasoningConfig.js';
+import { resolveImportedMemoryPreferences } from '../domain/memorySettings.js';
 
 const SUPPORTED_FORMAT_VERSIONS = ['1.0'];
 
@@ -241,6 +242,31 @@ async function applyPreferences(preferences) {
         if ('searchEnabled' in preferences) {
             await chatDB.saveSetting('searchEnabled', preferences.searchEnabled);
             applied.push('searchEnabled');
+        }
+
+        const importedMemoryState = resolveImportedMemoryPreferences({
+            preferences,
+            currentMemoryFeatureEnabled: await chatDB.getSetting('memoryFeatureEnabled'),
+            currentMemoryMode: await chatDB.getSetting('memoryMode')
+        });
+        if (importedMemoryState.shouldApplyMemoryFeatureEnabled) {
+            await chatDB.saveSetting('memoryFeatureEnabled', importedMemoryState.memoryFeatureEnabled);
+            applied.push('memoryFeatureEnabled');
+        }
+
+        if (importedMemoryState.shouldApplyMemoryMode) {
+            await chatDB.saveSetting('memoryMode', importedMemoryState.memoryMode);
+            applied.push('memoryMode');
+        }
+
+        if ('memoryAutoInclude' in preferences) {
+            await chatDB.saveSetting('memoryAutoInclude', preferences.memoryAutoInclude === true);
+            applied.push('memoryAutoInclude');
+        }
+
+        if ('memoryAgentModel' in preferences) {
+            await chatDB.saveSetting('memoryAgentModel', preferences.memoryAgentModel);
+            applied.push('memoryAgentModel');
         }
 
         if ('reasoningEnabled' in preferences) {
