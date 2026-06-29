@@ -103,6 +103,10 @@
         // Apply welcome panel state immediately to prevent flash
         (function () {
             try {
+                // zkAPI integrated build: onboarding is the zkAPI panel (fund via
+                // MetaMask), not the OpenRouter invite/ticket flow — so suppress
+                // the OpenRouter welcome modal.
+                localStorage.setItem('oa-welcome-dismissed', 'true');
                 const dismissed = localStorage.getItem('oa-welcome-dismissed') === 'true';
                 const selfHostedMode = localStorage.getItem('oa-self-hosted-station-enabled') === 'true';
                 const hasTickets = (() => {
@@ -927,5 +931,8 @@
     <!-- BUNDLE:APP -->
     <script type="module" src="app.js?v=dev"></script>
     <!-- /BUNDLE:APP -->
+
+    <!-- zkAPI integration: mounts the wallet + request-inspector panel -->
+    <script type="module" src="services/zkapi/zkapiBootstrap.js?v=dev"></script>
 </body>
 </html>

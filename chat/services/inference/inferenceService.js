@@ -1,16 +1,20 @@
 import openRouterBackend from './backends/openRouterBackend.js';
 import enclaveStationBackend from './backends/enclaveStationBackend.js';
 import providerDirectBackend from './backends/providerDirectBackend.js';
+import zkApiBackend from './backends/zkApiBackend.js';
 import transportHints from './transportHints.js';
 import { getDefaultModelConfig } from '../modelConfig.js';
 
 const backends = new Map([
+    [zkApiBackend.id, zkApiBackend],
     [openRouterBackend.id, openRouterBackend],
     [enclaveStationBackend.id, enclaveStationBackend],
     [providerDirectBackend.id, providerDirectBackend]
 ]);
 
-const DEFAULT_BACKEND_ID = openRouterBackend.id;
+// The integrated client is zkAPI-first: every session pays via an unlinkable,
+// funded zkAPI note instead of OpenRouter tickets.
+const DEFAULT_BACKEND_ID = zkApiBackend.id;
 
 function getBackend(backendId) {
     if (backendId && backends.has(backendId)) {
@@ -62,7 +66,9 @@ function getWelcomeContent(backend = getBackend()) {
 }
 
 function getBackendDefaultModelConfig(backend) {
-    if (backend?.id === DEFAULT_BACKEND_ID) {
+    // Only the OpenRouter backend draws its default from the org pinned-models
+    // config; zkAPI (and the stubs) use their own declared default.
+    if (backend?.id === openRouterBackend.id) {
         return getDefaultModelConfig();
     }
 
