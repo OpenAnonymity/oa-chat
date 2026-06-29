@@ -27,12 +27,138 @@ import {
 const ACCESS_SENTINEL = 'zkapi-note';
 
 // One ephemeral OpenRouter key per tab, reused across messages until exhausted.
-const ephemeralState = {
-    key: null,
-    keyHash: null,
-    baseUrl: null,
-    limitUsd: null
+// One ephemeral OpenRouter key at a time. It's reused for follow-up prompts
+// until it expires (server-set TTL, default 60s); usage accumulates and is
+// settled against the zkAPI balance ONCE when the key expires. The key auto-
+// expires on OpenRouter too, so exposure is bounded by its credit limit.
+const ephemeral = {
+    current: null, // see issueEphemeralKey() for the shape
+    listeners: new Set()
 };
+
+/** Subscribe to ephemeral-key state changes (for the panel countdown). */
+export function onEphemeralChange(fn) {
+    ephemeral.listeners.add(fn);
+    return () => ephemeral.listeners.delete(fn);
+}
+function notifyEphemeral() {
+    const status = getEphemeralStatus();
+    for (const fn of ephemeral.listeners) {
+        try { fn(status); } catch (_) { /* ignore */ }
+    }
+}
+
+/** Current ephemeral-key status for the UI (null if none active). */
+export function getEphemeralStatus() {
+    const c = ephemeral.current;
+    if (!c || c.settled) return null;
+    return {
+        keyHash: c.keyHash,
+        model: c.model,
+        expiresAtMs: c.expiresAtMs,
+        ttlSeconds: c.ttlSeconds,
+        limitUsd: c.limitUsd,
+        accumCostUsd: c.accumCostUsd,
+        accumPromptTokens: c.accumPrompt,
+        accumCompletionTokens: c.accumCompletion,
+        requestCount: c.requestCount
+    };
+}
+
+/** Settle the accumulated usage of the current key (idempotent) and clear it. */
+export async function settleCurrentEphemeral() {
+    const c = ephemeral.current;
+    if (!c || c.settled) return;
+    c.settled = true;
+    if (c.timer) { clearTimeout(c.timer); c.timer = null; }
+    try {
+        const settle = await zkapiClient.ephemeralSettle({
+            keyHash: c.keyHash,
+            reportedCostUsd: c.accumCostUsd,
+            promptTokens: c.accumPrompt,
+            completionTokens: c.accumCompletion,
+            model: c.model
+        });
+        zkapiLedger.record(settle, {
+            mode: 'ephemeral',
+            kind: 'ephemeral_settle',
+            label: `Usage settled (${c.requestCount} request${c.requestCount === 1 ? '' : 's'} on expired key)`,
+            model: c.model,
+            usage: {
+                prompt_tokens: c.accumPrompt,
+                completion_tokens: c.accumCompletion,
+                total_tokens: c.accumPrompt + c.accumCompletion,
+                cost: c.accumCostUsd
+            },
+            extra: { keyHash: c.keyHash }
+        });
+    } catch (err) {
+        zkapiLedger.recordError({ mode: 'ephemeral', kind: 'ephemeral_settle', model: c.model, label: 'Settle failed', error: err.message });
+    } finally {
+        if (ephemeral.current === c) ephemeral.current = null;
+        notifyEphemeral();
+    }
+}
+
+/** Mint a fresh ephemeral key (settling the previous one first if needed). */
+async function issueEphemeralKey(modelId) {
+    if (ephemeral.current && !ephemeral.current.settled) {
+        await settleCurrentEphemeral();
+    }
+    const config = zkapiLedger.getConfig();
+    const limitUsd = config?.request_charge_cap_usd || 0.25;
+    const issue = await zkapiClient.ephemeralIssue({ limitUsd, model: modelId });
+    const p = issue?.response?.payload || {};
+    const nowSec = Math.floor(Date.now() / 1000);
+    const ttl = p.ttl_seconds || 60;
+    const expiresAtUnix = p.expires_at_unix || (nowSec + ttl);
+    const cur = {
+        key: p.ephemeral_key,
+        keyHash: p.key_hash,
+        baseUrl: p.base_url,
+        ttlSeconds: ttl,
+        expiresAtMs: expiresAtUnix * 1000,
+        limitUsd: p.limit_usd,
+        model: modelId,
+        accumCostUsd: 0,
+        accumPrompt: 0,
+        accumCompletion: 0,
+        requestCount: 0,
+        settled: false,
+        timer: null
+    };
+    // Auto-settle shortly after expiry (a small grace lets OpenRouter's
+    // aggregate usage propagate so the server bills the authoritative total).
+    cur.timer = setTimeout(() => { settleCurrentEphemeral().catch(() => {}); }, Math.max(0, cur.expiresAtMs - Date.now()) + 1500);
+    ephemeral.current = cur;
+    zkapiLedger.record(issue, {
+        mode: 'ephemeral',
+        kind: 'ephemeral_issue',
+        label: 'Ephemeral key issued',
+        model: modelId,
+        extra: { keyHash: cur.keyHash, limitUsd: cur.limitUsd, expiresAt: p.expires_at }
+    });
+    notifyEphemeral();
+    return cur;
+}
+
+/** Get a usable (non-expired) ephemeral key, minting one if needed. */
+async function ensureEphemeralKey(modelId) {
+    const c = ephemeral.current;
+    if (c && !c.settled && Date.now() < c.expiresAtMs) return c;
+    return issueEphemeralKey(modelId);
+}
+
+/** Fold a generation's usage into the current key's running total. */
+function accumulateEphemeralUsage(usage) {
+    const c = ephemeral.current;
+    if (!c) return;
+    if (typeof usage.cost === 'number') c.accumCostUsd += usage.cost;
+    c.accumPrompt += usage.prompt_tokens || 0;
+    c.accumCompletion += usage.completion_tokens || 0;
+    c.requestCount += 1;
+    notifyEphemeral();
+}
 
 function fallbackModels() {
     return [
@@ -135,32 +261,6 @@ async function streamPassthrough(messages, modelId, callbacks, abortController) 
     };
 }
 
-/**
- * Ensure a usable ephemeral OpenRouter key, minting one via clientd if needed.
- * Returns an immutable SNAPSHOT (not the shared singleton) so a concurrent
- * re-mint can't swap the key/hash out from under an in-flight stream or settle.
- */
-async function ensureEphemeralKey(modelId, forceNew = false) {
-    if (!forceNew && ephemeralState.key) return { ...ephemeralState };
-    const config = zkapiLedger.getConfig();
-    const limitUsd = config?.request_charge_cap_usd || 0.25;
-    const issue = await zkapiClient.ephemeralIssue({ limitUsd, model: modelId });
-    const payload = issue?.response?.payload || {};
-    ephemeralState.key = payload.ephemeral_key;
-    ephemeralState.keyHash = payload.key_hash;
-    ephemeralState.baseUrl = payload.base_url;
-    ephemeralState.limitUsd = payload.limit_usd;
-    // Record the issuance (charge 0) so the ledger shows the full Mode 2 flow.
-    zkapiLedger.record(issue, {
-        mode: 'ephemeral',
-        kind: 'ephemeral_issue',
-        label: 'Ephemeral key issued',
-        model: modelId,
-        extra: { keyHash: payload.key_hash, limitUsd: payload.limit_usd }
-    });
-    return { ...ephemeralState };
-}
-
 /** Stream a completion straight from OpenRouter using the ephemeral key. */
 async function streamFromOpenRouter(eph, modelId, messages, callbacks, abortController) {
     const { onChunk, onStreamOpen } = callbacks;
@@ -221,19 +321,23 @@ async function streamFromOpenRouter(eph, modelId, messages, callbacks, abortCont
     return { content, usage };
 }
 
-/** Mode 2: ephemeral-key flow — issue, stream direct, settle. */
+/**
+ * Mode 2: ephemeral-key flow. Reuse one credit-limited key across follow-up
+ * prompts; accumulate usage; settle ONCE when the key expires (server-set TTL).
+ * The browser streams from OpenRouter directly — the server never sees prompts.
+ */
 async function streamEphemeral(messages, modelId, callbacks, abortController) {
     const { onTokenUpdate } = callbacks;
-    const startedAt = Date.now();
 
     let eph = await ensureEphemeralKey(modelId);
     let streamed;
     try {
         streamed = await streamFromOpenRouter(eph, modelId, messages, callbacks, abortController);
     } catch (err) {
-        // Key likely exhausted/expired — re-mint once and retry.
+        // Key expired/exhausted mid-use — settle it, mint a fresh one, retry once.
         if (err.status === 401 || err.status === 402 || err.status === 403) {
-            eph = await ensureEphemeralKey(modelId, true);
+            await settleCurrentEphemeral();
+            eph = await issueEphemeralKey(modelId);
             streamed = await streamFromOpenRouter(eph, modelId, messages, callbacks, abortController);
         } else {
             zkapiLedger.recordError({ mode: 'ephemeral', kind: 'direct_stream', model: modelId, label: 'Ephemeral stream', error: err.message });
@@ -242,35 +346,9 @@ async function streamEphemeral(messages, modelId, callbacks, abortController) {
     }
 
     const usage = streamed.usage || {};
-    const costUsd = typeof usage.cost === 'number' ? usage.cost : 0;
-
-    // Settle the real usage cost against the zkAPI note.
-    let settle = null;
-    try {
-        settle = await zkapiClient.ephemeralSettle({
-            keyHash: eph.keyHash,
-            reportedCostUsd: costUsd,
-            promptTokens: usage.prompt_tokens,
-            completionTokens: usage.completion_tokens,
-            model: modelId
-        });
-        zkapiLedger.record(settle, {
-            mode: 'ephemeral',
-            kind: 'ephemeral_settle',
-            label: 'Usage settled',
-            model: modelId,
-            latencyMs: Date.now() - startedAt,
-            usage: {
-                prompt_tokens: usage.prompt_tokens || 0,
-                completion_tokens: usage.completion_tokens || 0,
-                total_tokens: usage.total_tokens || 0,
-                cost: costUsd
-            },
-            extra: { keyHash: eph.keyHash }
-        });
-    } catch (err) {
-        zkapiLedger.recordError({ mode: 'ephemeral', kind: 'ephemeral_settle', model: modelId, label: 'Settle failed', error: err.message });
-    }
+    // Fold this generation into the key's running total. Settlement happens when
+    // the key expires (the timer set in issueEphemeralKey), not per request.
+    accumulateEphemeralUsage(usage);
 
     if (onTokenUpdate && usage) {
         onTokenUpdate({
@@ -287,7 +365,7 @@ async function streamEphemeral(messages, modelId, callbacks, abortController) {
         model: modelId,
         reasoning: null,
         citations: null,
-        zkapiEntryId: settle ? `settle` : null
+        zkapiEntryId: null
     };
 }
 
@@ -382,10 +460,13 @@ const zkApiBackend = {
 
 export default zkApiBackend;
 
+// Test/inspection hook: expose ephemeral-key state (never the secret key).
+if (typeof window !== 'undefined') {
+    window.zkapiEphemeral = { status: getEphemeralStatus, settle: settleCurrentEphemeral };
+}
+
 // Expose ephemeral-key reset for the panel (e.g. on mode switch / re-fund).
-export function resetEphemeralKey() {
-    ephemeralState.key = null;
-    ephemeralState.keyHash = null;
-    ephemeralState.baseUrl = null;
-    ephemeralState.limitUsd = null;
+// Settles any accumulated usage on the current key first so nothing is dropped.
+export async function resetEphemeralKey() {
+    await settleCurrentEphemeral();
 }

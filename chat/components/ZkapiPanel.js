@@ -13,7 +13,8 @@
 
 import zkapiClient from '../services/zkapi/zkapiClient.js';
 import zkapiLedger from '../services/zkapi/zkapiLedger.js';
-import zkApiBackend, { resetEphemeralKey } from '../services/inference/backends/zkApiBackend.js';
+import zkApiBackend, { resetEphemeralKey, getEphemeralStatus, onEphemeralChange } from '../services/inference/backends/zkApiBackend.js';
+import { describeField } from '../services/zkapi/zkapiGlossary.js';
 import {
     BILLING_MODES,
     getBillingMode,
@@ -88,11 +89,22 @@ function hashEl(value) {
     </span>`;
 }
 
-function row(label, valueHtml) {
-    return `<div class="flex items-start justify-between gap-3 py-1 border-b border-border/40 last:border-0">
-        <span class="text-[11px] text-muted-foreground shrink-0">${esc(label)}</span>
+// A detail row. Pass `infoKey` to attach a click-to-expand "?" that reveals the
+// glossary explanation for that field (hidden by default).
+function row(label, valueHtml, infoKey) {
+    const g = infoKey ? describeField(infoKey) : null;
+    const btn = g
+        ? `<button class="zk-info" data-info aria-label="What is this?" title="What is this?">?</button>`
+        : '';
+    const desc = g
+        ? `<div class="zk-info-desc hidden text-[10px] text-muted-foreground leading-relaxed bg-muted/40 border border-border/60 rounded p-2 mt-1 mb-1">
+               <span class="font-semibold text-foreground">${esc(g.title)}.</span> ${esc(g.desc)}
+           </div>`
+        : '';
+    return `<div class="zk-row flex items-start justify-between gap-3 py-1 border-b border-border/40 last:border-0">
+        <span class="text-[11px] text-muted-foreground shrink-0 inline-flex items-center gap-1">${esc(label)}${btn}</span>
         <span class="text-[11px] text-right break-all">${valueHtml}</span>
-    </div>`;
+    </div>${desc}`;
 }
 
 const MODE_BADGE = {
@@ -120,8 +132,14 @@ class ZkapiPanel {
         this.refresh();
         // Periodic wallet refresh while open.
         setInterval(() => { if (this.open) this.refreshWallet(); }, 5000);
-        // Tick the escape-withdrawal countdown while one is pending.
-        setInterval(() => { if (this.open && this.getPendingEscape()) this.renderWithdraw(); }, 1000);
+        // Tick the escape-withdrawal + ephemeral-key countdowns every second.
+        setInterval(() => {
+            if (!this.open) return;
+            if (this.getPendingEscape()) this.renderWithdraw();
+            if (getEphemeralStatus()) this.renderEphemeral();
+        }, 1000);
+        // Re-render the ephemeral card immediately on issue/usage/settle.
+        onEphemeralChange(() => { if (this.open) this.renderEphemeral(); });
     }
 
     mount() {
@@ -143,6 +161,12 @@ class ZkapiPanel {
             .zk-seg button{flex:1;padding:6px 8px;font-size:12px;background:transparent;color:hsl(var(--color-muted-foreground));cursor:pointer;border:0;}
             .zk-seg button.active{background:hsl(var(--color-primary));color:hsl(var(--color-primary-foreground));}
             .zk-card{border:1px solid hsl(var(--color-border));border-radius:12px;}
+            .zk-info{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;
+                border-radius:9999px;border:1px solid hsl(var(--color-border));background:transparent;
+                color:hsl(var(--color-muted-foreground));font-size:9px;line-height:1;font-weight:700;cursor:pointer;
+                flex:none;padding:0;transition:background .12s ease,color .12s ease;}
+            .zk-info:hover{background:hsl(var(--color-primary));color:hsl(var(--color-primary-foreground));border-color:transparent;}
+            .zk-info--active{background:hsl(var(--color-primary));color:hsl(var(--color-primary-foreground));border-color:transparent;}
         `;
         document.head.appendChild(style);
 
@@ -226,6 +250,27 @@ class ZkapiPanel {
     }
 
     handleClick(e) {
+        // Click-to-expand field explanation ("?"). Toggle the glossary blurb for
+        // this field; works for detail rows (desc is the row's next sibling) and
+        // the ephemeral card (desc lives inside the same card).
+        const infoBtn = e.target.closest('.zk-info');
+        if (infoBtn) {
+            e.preventDefault();
+            e.stopPropagation();
+            const rowEl = infoBtn.closest('.zk-row');
+            let desc = null;
+            if (rowEl && rowEl.nextElementSibling && rowEl.nextElementSibling.classList.contains('zk-info-desc')) {
+                desc = rowEl.nextElementSibling;
+            } else {
+                const card = infoBtn.closest('.zk-card');
+                desc = card ? card.querySelector('.zk-info-desc') : null;
+            }
+            if (desc) {
+                desc.classList.toggle('hidden');
+                infoBtn.classList.toggle('zk-info--active', !desc.classList.contains('hidden'));
+            }
+            return;
+        }
         const hashVal = e.target.closest('.zk-hash-val');
         if (hashVal) {
             const expanded = hashVal.dataset.expanded === '1';
@@ -270,7 +315,7 @@ class ZkapiPanel {
             <div class="flex items-center justify-between px-4 py-3 border-b border-border" style="min-height:calc(3rem + 1px)">
                 <div class="flex items-center gap-2">
                     <span class="font-semibold text-sm">zkAPI</span>
-                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">unlinkable inference + payment</span>
+                    <span class="text-[10px] leading-none px-2 py-1 rounded-md bg-muted text-muted-foreground">unlinkable inference + payment</span>
                 </div>
                 <button id="zkapi-close" class="text-muted-foreground hover:text-foreground" aria-label="Close">✕</button>
             </div>
@@ -279,6 +324,7 @@ class ZkapiPanel {
                 <div id="zkapi-deposit"></div>
                 <div id="zkapi-withdraw"></div>
                 <div id="zkapi-mode"></div>
+                <div id="zkapi-ephemeral"></div>
                 <div id="zkapi-ledger-wrap">
                     <div class="flex items-center justify-between mb-2">
                         <span class="text-xs font-medium text-muted-foreground uppercase tracking-wide">Request inspector</span>
@@ -294,7 +340,50 @@ class ZkapiPanel {
         this.renderDeposit();
         this.renderWithdraw();
         this.renderModeAndInfo();
+        this.renderEphemeral();
         this.renderLedger();
+    }
+
+    /**
+     * Mode-2 ephemeral-key status card: shows the active short-lived key, a live
+     * expiry countdown, and the usage accumulated so far (settled in one shot
+     * when the key expires). Hidden when there's no active key.
+     */
+    renderEphemeral() {
+        const el = this.drawer.querySelector('#zkapi-ephemeral');
+        if (!el) return;
+        const s = getEphemeralStatus();
+        if (!s) { el.innerHTML = ''; return; }
+        const remainMs = Math.max(0, s.expiresAtMs - Date.now());
+        const secs = Math.ceil(remainMs / 1000);
+        const usd = s.accumCostUsd || 0;
+        const credits = Math.max(0, Math.ceil(usd * getCreditsPerUsd()));
+        const pct = s.ttlSeconds ? Math.max(0, Math.min(100, (remainMs / (s.ttlSeconds * 1000)) * 100)) : 0;
+        const expiring = secs <= 10;
+        const g = describeField('ephemeral_key');
+        el.innerHTML = `
+            <div class="zk-card p-3 space-y-2">
+                <div class="flex items-center justify-between">
+                    <span class="text-xs font-medium inline-flex items-center gap-1">
+                        Ephemeral key
+                        <button class="zk-info" data-info data-info-key="ephemeral_key" aria-label="What is this?" title="What is this?">?</button>
+                    </span>
+                    <span class="text-[11px] ${expiring ? 'text-red-500' : 'text-status-success'} tabular-nums">
+                        ${secs > 0 ? `expires in ${secs}s` : 'expired — settling…'}
+                    </span>
+                </div>
+                <div class="h-1 rounded bg-muted overflow-hidden">
+                    <div class="h-full ${expiring ? 'bg-red-500' : 'bg-primary'}" style="width:${pct}%;transition:width .5s linear"></div>
+                </div>
+                <div class="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
+                    <div>${s.requestCount} request${s.requestCount === 1 ? '' : 's'} on this key</div>
+                    <div class="text-right">accrued ${formatCredits(credits)} cr · ${formatUsd(usd)}</div>
+                    <div class="col-span-2">key ${hashEl(s.keyHash)}</div>
+                </div>
+                <div class="zk-info-desc hidden text-[10px] text-muted-foreground leading-relaxed bg-muted/40 border border-border/60 rounded p-2">
+                    <span class="font-semibold text-foreground">${esc(g.title)}.</span> ${esc(g.desc)}
+                </div>
+            </div>`;
     }
 
     renderWallet() {
@@ -458,7 +547,7 @@ class ZkapiPanel {
         const head = `
             <div class="flex items-center justify-between gap-2 cursor-pointer" data-entry="${e.id}">
                 <div class="flex items-center gap-2 min-w-0">
-                    <span class="text-[10px] px-1.5 py-0.5 rounded ${badge}">${esc(e.mode)}:${esc(KIND_LABEL[e.kind] || e.kind)}</span>
+                    <span class="text-[10px] leading-none px-2.5 py-1 rounded-md whitespace-nowrap ${badge}">${esc(e.mode)}:${esc(KIND_LABEL[e.kind] || e.kind)}</span>
                     <span class="text-[11px] truncate">${esc(e.model || '')}</span>
                 </div>
                 <div class="flex items-center gap-2 shrink-0">
@@ -481,32 +570,33 @@ class ZkapiPanel {
 
         // Billing
         sections.push(this.section('Billing', [
-            row('Charge', `${formatCredits(e.chargeApplied)} cr · ${formatUsd(creditsToUsd(e.chargeApplied))}`),
-            row('Remaining balance', e.remainingBalance != null ? formatCreditsUsd(e.remainingBalance) : '—'),
-            u.cost != null ? row('Provider cost', formatUsd(u.cost)) : '',
-            (u.prompt_tokens != null || u.completion_tokens != null) ? row('Tokens', `${u.prompt_tokens || 0} in / ${u.completion_tokens || 0} out / ${u.total_tokens || 0} total`) : '',
-            e.latencyMs != null ? row('Latency', `${e.latencyMs} ms`) : ''
+            row('Charge', `${formatCredits(e.chargeApplied)} cr · ${formatUsd(creditsToUsd(e.chargeApplied))}`, 'charge'),
+            row('Remaining balance', e.remainingBalance != null ? formatCreditsUsd(e.remainingBalance) : '—', 'remaining_balance'),
+            u.cost != null ? row('Provider cost', formatUsd(u.cost), 'cost_usd') : '',
+            (u.prompt_tokens != null || u.completion_tokens != null) ? row('Tokens', `${u.prompt_tokens || 0} in / ${u.completion_tokens || 0} out / ${u.total_tokens || 0} total`, 'tokens') : '',
+            u.cost_source ? row('Cost source', esc(u.cost_source), 'cost_source') : '',
+            e.latencyMs != null ? row('Latency', `${e.latencyMs} ms`, 'latency') : ''
         ]));
 
         // Auth & proof (what the client computed/sent)
         sections.push(this.section('Authentication & proof', [
-            row('Request nullifier', hashEl(e.requestNullifier)),
-            row('Payload hash', hashEl(e.payloadHash)),
-            row('Solvency bound', e.solvencyBound != null ? formatCreditsUsd(e.solvencyBound) : '—'),
-            row('Active root', hashEl(e.activeRoot)),
-            row('State sig epoch', e.stateSigEpoch ?? '—'),
-            row('Proof backend', esc(e.runtimeProofBackend || '—')),
-            e.merkleSiblingsCount != null ? row('Merkle siblings', `${e.merkleSiblingsCount}`) : ''
+            row('Request nullifier', hashEl(e.requestNullifier), 'request_nullifier'),
+            row('Payload hash', hashEl(e.payloadHash), 'payload_hash'),
+            row('Solvency bound', e.solvencyBound != null ? formatCreditsUsd(e.solvencyBound) : '—', 'solvency_bound'),
+            row('Active root', hashEl(e.activeRoot), 'active_root'),
+            row('State sig epoch', e.stateSigEpoch ?? '—', 'state_sig_epoch'),
+            row('Proof backend', esc(e.runtimeProofBackend || '—'), 'proof_backend'),
+            e.merkleSiblingsCount != null ? row('Merkle siblings', `${e.merkleSiblingsCount}`, 'merkle_siblings') : ''
         ]));
 
         // Next state (server-signed)
         sections.push(this.section('Next state (server-signed)', [
-            row('Next anchor', hashEl(e.nextAnchor)),
-            row('Next commitment x', hashEl(e.nextCommitmentX)),
-            row('Next commitment y', hashEl(e.nextCommitmentY)),
-            row('Blind delta (srv)', hashEl(e.blindDeltaSrv)),
-            row('Next state sig epoch', e.nextStateSigEpoch ?? '—'),
-            row('Response hash', hashEl(e.responseHash))
+            row('Next anchor', hashEl(e.nextAnchor), 'next_anchor'),
+            row('Next commitment x', hashEl(e.nextCommitmentX), 'next_commitment'),
+            row('Next commitment y', hashEl(e.nextCommitmentY), 'next_commitment'),
+            row('Blind delta (srv)', hashEl(e.blindDeltaSrv), 'blind_delta_srv'),
+            row('Next state sig epoch', e.nextStateSigEpoch ?? '—', 'next_state_sig_epoch'),
+            row('Response hash', hashEl(e.responseHash), 'response_hash')
         ]));
 
         // Request content (collapsed raw)
