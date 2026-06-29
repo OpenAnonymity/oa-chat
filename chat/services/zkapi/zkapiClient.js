@@ -124,12 +124,17 @@ const zkapiClient = {
         });
     },
 
-    /** Build a withdrawal plan (mutual close) for on-chain settlement. */
+    /** Build a withdrawal plan (mutual close or escape) for on-chain settlement. */
     withdraw({ mode = 'mutual', destination }) {
         return request('/funding/api/withdraw', {
             method: 'POST',
             body: JSON.stringify({ mode, destination })
         });
+    },
+
+    /** Clear the active note after its on-chain settlement (close/finalize). */
+    resetWallet() {
+        return request('/wallet/reset', { method: 'POST' });
     }
 };
 

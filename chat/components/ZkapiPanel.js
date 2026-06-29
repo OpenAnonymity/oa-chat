@@ -19,6 +19,7 @@ import {
     getBillingMode,
     setBillingMode,
     setCreditsPerUsd,
+    getCreditsPerUsd,
     creditsToUsd,
     formatUsd,
     formatCredits,
@@ -27,11 +28,22 @@ import {
 } from '../services/zkapi/zkapiConfig.js';
 
 const ETHERS_CDN = 'https://cdn.jsdelivr.net/npm/ethers@6.13.2/dist/ethers.umd.min.js';
+// 15-field WithdrawalPublicInputs tuple (matches Types.WithdrawalPublicInputs).
+const WD_TUPLE = '(uint8,uint16,uint64,address,uint256,uint32,uint128,address,uint256,bool,bool,uint32,uint256,uint32,uint256)';
 const VAULT_ABI = [
     'function deposit(bytes32 commitment, uint128 amount, uint256[32] siblings)',
+    'function currentRoot() view returns (uint256)',
+    `function mutualClose(${WD_TUPLE} inputs, bytes proof, uint256[32] siblings)`,
+    `function initiateEscapeWithdrawal(${WD_TUPLE} inputs, bytes proof, uint256[32] siblings)`,
+    'function finalizeEscapeWithdrawal(uint32 noteId)',
     'event NoteDeposited(uint32 indexed noteId, bytes32 indexed commitment, uint128 amount, uint64 expiryTs, uint256 newRoot)'
 ];
-const ERC20_ABI = ['function approve(address spender, uint256 amount) returns (bool)'];
+const ERC20_ABI = [
+    'function approve(address spender, uint256 amount) returns (bool)',
+    'function decimals() view returns (uint8)'
+];
+const CHALLENGE_PERIOD_SECONDS = 24 * 60 * 60;
+const PENDING_ESCAPE_KEY = 'zkapi-pending-escape';
 
 let ethersPromise = null;
 function loadEthers() {
@@ -49,6 +61,16 @@ function loadEthers() {
 
 function toBytes32(felt) {
     return '0x' + String(felt).replace(/^0x/, '').padStart(64, '0');
+}
+
+function fmtDuration(seconds) {
+    const s = Math.max(0, Math.floor(seconds));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m ${sec}s`;
+    return `${sec}s`;
 }
 
 function esc(s) {
@@ -91,11 +113,15 @@ class ZkapiPanel {
         this.wallet = null;
         this.expanded = new Set();
         this.depositBusy = false;
+        this.withdrawBusy = false;
+        this.tokenDecimals = 6; // demo token; refined from chain on connect
         this.mount();
         zkapiLedger.subscribe(evt => this.onLedgerEvent(evt));
         this.refresh();
         // Periodic wallet refresh while open.
         setInterval(() => { if (this.open) this.refreshWallet(); }, 5000);
+        // Tick the escape-withdrawal countdown while one is pending.
+        setInterval(() => { if (this.open && this.getPendingEscape()) this.renderWithdraw(); }, 1000);
     }
 
     mount() {
@@ -133,7 +159,26 @@ class ZkapiPanel {
         document.body.appendChild(this.drawer);
 
         this.drawer.addEventListener('click', e => this.handleClick(e));
+        this.drawer.addEventListener('input', e => this.handleInput(e));
         this.render();
+    }
+
+    handleInput(e) {
+        if (e.target.closest('#zkapi-deposit-usd')) {
+            const preview = this.drawer.querySelector('#zkapi-deposit-preview');
+            if (preview) preview.textContent = this.depositPreview();
+        }
+    }
+
+    // --- pending-escape persistence (survives reloads) ---
+    getPendingEscape() {
+        try { return JSON.parse(localStorage.getItem(PENDING_ESCAPE_KEY) || 'null'); } catch (_) { return null; }
+    }
+    setPendingEscape(p) {
+        try { localStorage.setItem(PENDING_ESCAPE_KEY, JSON.stringify(p)); } catch (_) { /* ignore */ }
+    }
+    clearPendingEscape() {
+        try { localStorage.removeItem(PENDING_ESCAPE_KEY); } catch (_) { /* ignore */ }
     }
 
     toggle() {
@@ -214,6 +259,10 @@ class ZkapiPanel {
         if (e.target.closest('#zkapi-refresh')) { this.refresh(); return; }
         if (e.target.closest('#zkapi-clear')) { zkapiLedger.clear(); return; }
         if (e.target.closest('#zkapi-deposit-btn')) { this.handleDeposit(); return; }
+        if (e.target.closest('#zkapi-withdraw-mutual-btn')) { this.handleWithdrawMutual(); return; }
+        if (e.target.closest('#zkapi-withdraw-escape-btn')) { this.handleEscapeInitiate(); return; }
+        if (e.target.closest('#zkapi-escape-finalize-btn')) { this.handleEscapeFinalize(); return; }
+        if (e.target.closest('#zkapi-escape-cancel-btn')) { this.clearPendingEscape(); this.renderWithdraw(); return; }
     }
 
     render() {
@@ -228,6 +277,7 @@ class ZkapiPanel {
             <div class="zk-scroll px-4 py-3 space-y-4">
                 <div id="zkapi-wallet"></div>
                 <div id="zkapi-deposit"></div>
+                <div id="zkapi-withdraw"></div>
                 <div id="zkapi-mode"></div>
                 <div id="zkapi-ledger-wrap">
                     <div class="flex items-center justify-between mb-2">
@@ -242,6 +292,7 @@ class ZkapiPanel {
             </div>`;
         this.renderWallet();
         this.renderDeposit();
+        this.renderWithdraw();
         this.renderModeAndInfo();
         this.renderLedger();
     }
@@ -279,22 +330,91 @@ class ZkapiPanel {
             </div>`;
     }
 
+    /** Credits for a USD amount (1 credit = 1 micro-USD). */
+    usdToCredits(usd) {
+        return Math.max(0, Math.round((Number(usd) || 0) * getCreditsPerUsd()));
+    }
+
+    /** How many whole ZKAPI tokens MetaMask will move for `credits` base units. */
+    creditsToTokens(credits) {
+        const dec = this.tokenDecimals ?? 6;
+        return (Number(credits) || 0) / Math.pow(10, dec);
+    }
+
+    depositPreview() {
+        const usd = Number(this.drawer.querySelector('#zkapi-deposit-usd')?.value || 0);
+        const credits = this.usdToCredits(usd);
+        const tokens = this.creditsToTokens(credits);
+        return `${formatCredits(credits)} credits · MetaMask will transfer ${tokens.toLocaleString('en-US', { maximumFractionDigits: 6 })} ZKAPI`;
+    }
+
     renderDeposit() {
         const el = this.drawer.querySelector('#zkapi-deposit');
         if (!el) return;
         el.innerHTML = `
             <details class="zk-card p-3" ${this.wallet ? '' : 'open'}>
-                <summary class="text-xs font-medium cursor-pointer flex items-center gap-2">
-                    <span>💳 Fund wallet via MetaMask</span>
-                </summary>
+                <summary class="text-xs font-medium cursor-pointer">💳 Fund wallet via MetaMask</summary>
                 <div class="mt-3 space-y-2">
-                    <label class="text-[11px] text-muted-foreground">Amount (credits — 1,000,000 = $1.00)</label>
-                    <input id="zkapi-deposit-amount" type="number" value="5000000" min="1"
-                        class="w-full px-2 py-1.5 text-sm rounded-md border border-border bg-background"/>
+                    <label class="text-[11px] text-muted-foreground">Deposit amount (USD)</label>
+                    <div class="flex items-center gap-2">
+                        <span class="text-sm text-muted-foreground">$</span>
+                        <input id="zkapi-deposit-usd" type="number" value="5" min="0" step="0.01"
+                            class="w-full px-2 py-1.5 text-sm rounded-md border border-border bg-background"/>
+                    </div>
+                    <div id="zkapi-deposit-preview" class="text-[11px] text-muted-foreground">${this.depositPreview()}</div>
                     <button id="zkapi-deposit-btn" class="w-full px-3 py-2 text-sm rounded-md bg-primary text-primary-foreground hover:opacity-90">
                         Deposit with MetaMask
                     </button>
                     <div id="zkapi-deposit-status" class="text-[11px] text-muted-foreground"></div>
+                </div>
+            </details>`;
+    }
+
+    renderWithdraw() {
+        const el = this.drawer.querySelector('#zkapi-withdraw');
+        if (!el) return;
+        const pending = this.getPendingEscape();
+        if (!this.wallet && !pending) { el.innerHTML = ''; return; }
+        const bal = this.wallet?.current_balance ?? 0;
+
+        // An escape-in-progress takes over the section until finalized.
+        if (pending) {
+            const now = Math.floor(Date.now() / 1000);
+            const ready = now >= pending.deadline;
+            const remaining = Math.max(0, pending.deadline - now);
+            el.innerHTML = `
+                <div class="zk-card p-3 space-y-2">
+                    <div class="text-xs font-medium">⏳ Escape withdrawal in progress</div>
+                    <div class="text-[11px] text-muted-foreground">Note #${esc(pending.noteId)} · ${formatCreditsUsd(pending.finalBalance)} to ${esc(shortenHash(pending.destination))}</div>
+                    <div class="text-[11px] ${ready ? 'text-status-success' : 'text-muted-foreground'}">
+                        ${ready ? 'Challenge window elapsed — ready to finalize.' : `Finalize available in ${fmtDuration(remaining)} (24h challenge window).`}
+                    </div>
+                    <button id="zkapi-escape-finalize-btn" ${ready ? '' : 'disabled'}
+                        class="w-full px-3 py-2 text-sm rounded-md ${ready ? 'bg-primary text-primary-foreground hover:opacity-90' : 'bg-muted text-muted-foreground cursor-not-allowed'}">
+                        Finalize escape withdrawal
+                    </button>
+                    <button id="zkapi-escape-cancel-btn" class="w-full text-[11px] text-muted-foreground hover:text-foreground">Forget this pending escape</button>
+                    <div id="zkapi-withdraw-status" class="text-[11px] text-muted-foreground"></div>
+                </div>`;
+            return;
+        }
+
+        el.innerHTML = `
+            <details class="zk-card p-3">
+                <summary class="text-xs font-medium cursor-pointer">💸 Withdraw (close note)</summary>
+                <div class="mt-3 space-y-2">
+                    <div class="text-[11px] text-muted-foreground">Pays your unspent ${formatCreditsUsd(bal)} back to you; the spent amount goes to the operator. Closes the note.</div>
+                    <label class="text-[11px] text-muted-foreground">Destination (defaults to your connected wallet)</label>
+                    <input id="zkapi-withdraw-dest" type="text" placeholder="0x… (leave blank for your wallet)"
+                        class="w-full px-2 py-1.5 text-[11px] font-mono rounded-md border border-border bg-background"/>
+                    <button id="zkapi-withdraw-mutual-btn" class="w-full px-3 py-2 text-sm rounded-md bg-primary text-primary-foreground hover:opacity-90">
+                        Withdraw (mutual close — instant)
+                    </button>
+                    <button id="zkapi-withdraw-escape-btn" class="w-full px-3 py-2 text-sm rounded-md border border-border hover:bg-muted">
+                        Escape hatch (unilateral, 24h)
+                    </button>
+                    <div class="text-[10px] text-muted-foreground">Mutual close asks the server for a clearance signature and settles immediately. The escape hatch needs no server but opens a 24-hour challenge window before you can finalize.</div>
+                    <div id="zkapi-withdraw-status" class="text-[11px] text-muted-foreground"></div>
                 </div>
             </details>`;
     }
@@ -409,44 +529,74 @@ class ZkapiPanel {
         if (el) { el.textContent = msg; el.className = `text-[11px] ${isError ? 'text-red-500' : 'text-muted-foreground'}`; }
     }
 
+    setWithdrawStatus(msg, isError = false) {
+        const el = this.drawer.querySelector('#zkapi-withdraw-status');
+        if (el) { el.textContent = msg; el.className = `text-[11px] ${isError ? 'text-red-500' : 'text-muted-foreground'}`; }
+    }
+
+    /** Connect MetaMask, switch to the demo chain, and read the token decimals. */
+    async connectWallet() {
+        const ethers = await loadEthers();
+        if (!window.ethereum) throw new Error('No browser wallet detected. Install MetaMask.');
+        const overview = await zkapiClient.getDemoOverview();
+        const funding = overview?.funding || {};
+        const vault = funding.contract_address;
+        const token = funding.demo_billing_token_address;
+        const wantChain = Number(funding.chain_id);
+        if (!vault) throw new Error('Daemon is missing demo chain config (vault). Start it with --demo-* flags.');
+        const provider = new ethers.BrowserProvider(window.ethereum);
+        await provider.send('eth_requestAccounts', []);
+        const net = await provider.getNetwork();
+        if (Number(net.chainId) !== wantChain) {
+            await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x' + wantChain.toString(16) }] });
+        }
+        const signer = await provider.getSigner();
+        const account = await signer.getAddress();
+        if (token) {
+            try { this.tokenDecimals = Number(await new ethers.Contract(token, ERC20_ABI, provider).decimals()); } catch (_) { /* keep default */ }
+        }
+        return { ethers, provider, signer, account, vault, token };
+    }
+
+    /**
+     * Build the 15-field WithdrawalPublicInputs tuple for the vault call.
+     * NB: the plan's `pi.destination` is a [u8;20] byte array; the on-chain
+     * tuple needs the 0x address, so we pass `destination` (the address we
+     * requested the withdrawal to) explicitly.
+     */
+    buildWithdrawTuple(pi, vault, currentRoot, destination) {
+        return [
+            pi.statement_type, pi.protocol_version, BigInt(pi.chain_id), vault, currentRoot,
+            pi.note_id, BigInt(pi.final_balance), destination, BigInt(pi.withdrawal_nullifier),
+            pi.is_genesis, pi.has_clearance, pi.state_sig_epoch, BigInt(pi.state_sig_root),
+            pi.clear_sig_epoch, BigInt(pi.clear_sig_root)
+        ];
+    }
+
     async handleDeposit() {
         if (this.depositBusy) return;
         this.depositBusy = true;
         try {
-            const amount = parseInt(this.drawer.querySelector('#zkapi-deposit-amount')?.value || '0', 10);
+            const usd = Number(this.drawer.querySelector('#zkapi-deposit-usd')?.value || 0);
+            const amount = this.usdToCredits(usd); // credits == on-chain base units
             if (!amount || amount <= 0) { this.setDepositStatus('Enter a positive amount.', true); return; }
 
-            const ethers = await loadEthers();
-            if (!window.ethereum) { this.setDepositStatus('No browser wallet detected. Install MetaMask.', true); return; }
-
-            const overview = await zkapiClient.getDemoOverview();
-            const funding = overview?.funding || {};
-            const vault = funding.contract_address;
-            const token = funding.demo_billing_token_address;
-            const wantChain = Number(funding.chain_id);
-            if (!vault || !token) { this.setDepositStatus('Daemon is missing demo chain config (vault/token). Start it with --demo-* flags.', true); return; }
+            this.setDepositStatus('Connecting wallet…');
+            const { ethers, signer, vault, token } = await this.connectWallet();
+            if (!token) { this.setDepositStatus('Daemon is missing the billing-token address (--demo-billing-token-address).', true); return; }
 
             this.setDepositStatus('Preparing commitment…');
             const prep = await zkapiClient.prepareDeposit(amount);
 
-            this.setDepositStatus('Connecting wallet…');
-            const provider = new ethers.BrowserProvider(window.ethereum);
-            await provider.send('eth_requestAccounts', []);
-            const net = await provider.getNetwork();
-            if (Number(net.chainId) !== wantChain) {
-                await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x' + wantChain.toString(16) }] });
-            }
-            const signer = await provider.getSigner();
-
             const erc20 = new ethers.Contract(token, ERC20_ABI, signer);
-            this.setDepositStatus('Approving the vault… confirm in MetaMask.');
+            this.setDepositStatus(`Approving ${formatUsd(usd)}… confirm in MetaMask.`);
             await (await erc20.approve(vault, BigInt(amount))).wait();
 
             const vaultContract = new ethers.Contract(vault, VAULT_ABI, signer);
             this.setDepositStatus('Depositing… confirm in MetaMask.');
-            const commitment = toBytes32(prep.commitment);
-            const siblings = prep.zero_path.map(s => BigInt(s));
-            const receipt = await (await vaultContract.deposit(commitment, BigInt(amount), siblings)).wait();
+            const receipt = await (await vaultContract.deposit(
+                toBytes32(prep.commitment), BigInt(amount), prep.zero_path.map(s => BigInt(s))
+            )).wait();
 
             let noteId, expiryTs;
             for (const log of receipt.logs) {
@@ -459,12 +609,92 @@ class ZkapiPanel {
 
             this.setDepositStatus(`Activating note #${noteId}…`);
             await zkapiClient.confirmDeposit({ secret: prep.secret, noteId, amount, expiryTs });
-            this.setDepositStatus(`Note #${noteId} active. Balance updated.`);
-            await this.refreshWallet();
+            this.setDepositStatus(`Deposited ${formatUsd(usd)} → note #${noteId} active.`);
+            await this.refresh();
         } catch (err) {
             this.setDepositStatus(`Deposit failed: ${err.shortMessage || err.message || err}`, true);
         } finally {
             this.depositBusy = false;
+        }
+    }
+
+    async handleWithdrawMutual() {
+        if (this.withdrawBusy) return;
+        this.withdrawBusy = true;
+        try {
+            this.setWithdrawStatus('Connecting wallet…');
+            const { ethers, signer, vault, account } = await this.connectWallet();
+            const destination = this.drawer.querySelector('#zkapi-withdraw-dest')?.value?.trim() || account;
+
+            this.setWithdrawStatus('Requesting clearance + building proof…');
+            const plan = await zkapiClient.withdraw({ mode: 'mutual', destination });
+            const pi = plan.public_inputs;
+            const vaultContract = new ethers.Contract(vault, VAULT_ABI, signer);
+            const currentRoot = await vaultContract.currentRoot();
+            const inputs = this.buildWithdrawTuple(pi, vault, currentRoot, destination);
+            const siblings = plan.siblings.map(s => BigInt(s));
+
+            this.setWithdrawStatus('Submitting mutualClose… confirm in MetaMask.');
+            await (await vaultContract.mutualClose(inputs, '0x', siblings)).wait();
+            await zkapiClient.resetWallet().catch(() => {});
+            this.setWithdrawStatus(`Withdrawn ${formatCreditsUsd(pi.final_balance)} to ${shortenHash(destination)}. Note closed.`);
+            await this.refresh();
+        } catch (err) {
+            this.setWithdrawStatus(`Withdraw failed: ${err.shortMessage || err.message || err}`, true);
+        } finally {
+            this.withdrawBusy = false;
+        }
+    }
+
+    async handleEscapeInitiate() {
+        if (this.withdrawBusy) return;
+        this.withdrawBusy = true;
+        try {
+            this.setWithdrawStatus('Connecting wallet…');
+            const { ethers, signer, vault, account } = await this.connectWallet();
+            const destination = this.drawer.querySelector('#zkapi-withdraw-dest')?.value?.trim() || account;
+
+            this.setWithdrawStatus('Building escape proof…');
+            const plan = await zkapiClient.withdraw({ mode: 'escape', destination });
+            const pi = plan.public_inputs;
+            const vaultContract = new ethers.Contract(vault, VAULT_ABI, signer);
+            const currentRoot = await vaultContract.currentRoot();
+            const inputs = this.buildWithdrawTuple(pi, vault, currentRoot, destination);
+            const siblings = plan.siblings.map(s => BigInt(s));
+
+            this.setWithdrawStatus('Submitting initiateEscapeWithdrawal… confirm in MetaMask.');
+            const receipt = await (await vaultContract.initiateEscapeWithdrawal(inputs, '0x', siblings)).wait();
+            const block = await signer.provider.getBlock(receipt.blockNumber);
+            const deadline = Number(block.timestamp) + CHALLENGE_PERIOD_SECONDS;
+            this.setPendingEscape({ noteId: pi.note_id, destination: pi.destination, finalBalance: pi.final_balance, deadline });
+            this.setWithdrawStatus('Escape initiated — finalize after the 24h challenge window.');
+            await this.refresh();
+        } catch (err) {
+            this.setWithdrawStatus(`Escape failed: ${err.shortMessage || err.message || err}`, true);
+        } finally {
+            this.withdrawBusy = false;
+        }
+    }
+
+    async handleEscapeFinalize() {
+        if (this.withdrawBusy) return;
+        this.withdrawBusy = true;
+        try {
+            const pending = this.getPendingEscape();
+            if (!pending) return;
+            this.setWithdrawStatus('Connecting wallet…');
+            const { ethers, signer, vault } = await this.connectWallet();
+            const vaultContract = new ethers.Contract(vault, VAULT_ABI, signer);
+            this.setWithdrawStatus('Submitting finalizeEscapeWithdrawal… confirm in MetaMask.');
+            await (await vaultContract.finalizeEscapeWithdrawal(pending.noteId)).wait();
+            this.clearPendingEscape();
+            await zkapiClient.resetWallet().catch(() => {});
+            this.setWithdrawStatus(`Escape finalized: ${formatCreditsUsd(pending.finalBalance)} paid to ${shortenHash(pending.destination)}.`);
+            await this.refresh();
+        } catch (err) {
+            this.setWithdrawStatus(`Finalize failed: ${err.shortMessage || err.message || err}`, true);
+        } finally {
+            this.withdrawBusy = false;
         }
     }
 }
