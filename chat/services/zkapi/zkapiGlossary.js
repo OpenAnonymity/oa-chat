@@ -72,7 +72,7 @@ const GLOSSARY = {
     },
     proof_backend: {
         title: 'Proof backend',
-        desc: 'Which proving system generated the zero-knowledge proof. stwo_cairo is the STARK proof system; in this development build the server replays a "witness envelope" and re-checks the circuit locally (mock_envelope) instead of verifying a full STARK — it exercises all the plumbing without the heavy proving cost. Production swaps in real STARK verification.'
+        desc: 'Which proving system stands behind the request. `dev_witness_envelope` is this development build: the client sends the circuit WITNESS itself (base64-wrapped JSON) and the server re-runs the Merkle / Pedersen / XMSS / solvency constraints over it in Rust. That faithfully checks the circuit LOGIC, but note the trade-off — in this mode the witness includes your secret, so it is NOT a STARK and NOT zero-knowledge: the secret reaches the server. The real backend (`stwo_cairo` — a Cairo circuit proved + verified with the STWO STARK prover) exists in the codebase and is unit-tested end to end, but isn\'t wired into the demo daemons (it needs the Scarb/Stwo toolchain and adds seconds of proving per request). Production swaps in that real STARK proving + verification, which keeps your secret on your machine.'
     },
     proof_public_output_hash: {
         title: 'Proof public-output hash',

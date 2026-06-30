@@ -409,8 +409,8 @@ class ZkapiPanel {
                         ${connected ? 'Funded note' : 'No active note'}
                     </span>
                 </div>
-                <div class="text-2xl font-semibold tabular-nums">${formatCredits(bal)} <span class="text-sm text-muted-foreground">credits</span></div>
-                <div class="text-xs text-muted-foreground mb-2">${formatUsd(creditsToUsd(bal))} · deposited ${formatCredits(dep)} (${formatUsd(creditsToUsd(dep))})</div>
+                <div class="text-2xl font-semibold tabular-nums">${formatUsd(creditsToUsd(bal))} <span class="text-sm font-normal text-muted-foreground">≈ ${this.creditsToTokens(bal).toLocaleString('en-US', { maximumFractionDigits: 2 })} ZKAPI</span></div>
+                <div class="text-xs text-muted-foreground mb-2">${formatCredits(bal)} credits · deposited ${formatUsd(creditsToUsd(dep))} (1 ZKAPI = $1)</div>
                 ${note ? `<div class="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
                     <div>Note #${esc(note.note_id)}</div>
                     <div>${note.is_genesis ? 'genesis' : 'active chain'}</div>
@@ -434,7 +434,7 @@ class ZkapiPanel {
         const usd = Number(this.drawer.querySelector('#zkapi-deposit-usd')?.value || 0);
         const credits = this.usdToCredits(usd);
         const tokens = this.creditsToTokens(credits);
-        return `${formatCredits(credits)} credits · MetaMask will transfer ${tokens.toLocaleString('en-US', { maximumFractionDigits: 6 })} ZKAPI`;
+        return `${formatUsd(usd)} = ${tokens.toLocaleString('en-US', { maximumFractionDigits: 6 })} ZKAPI · ${formatCredits(credits)} credits`;
     }
 
     renderDeposit() {
@@ -455,6 +455,10 @@ class ZkapiPanel {
                         Deposit with MetaMask
                     </button>
                     <div id="zkapi-deposit-status" class="text-[11px] text-muted-foreground"></div>
+                    <div class="text-[10px] text-muted-foreground/80 leading-snug border-t border-border/40 pt-1.5">
+                        1 ZKAPI = $1. If MetaMask shows an amount ~1000× off, it cached this token's old decimals —
+                        remove &amp; re-import the ZKAPI token (it now uses 6 decimals) to fix the display.
+                    </div>
                 </div>
             </details>`;
     }
