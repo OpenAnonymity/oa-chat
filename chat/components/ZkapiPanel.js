@@ -541,7 +541,7 @@ class ZkapiPanel {
                 </div>
                 <p class="text-[11px] text-muted-foreground leading-snug">${esc(blurb)}</p>
                 ${mode === 'ephemeral' && !ephemeralAvailable ? `<p class="text-[11px] text-amber-600">⚠ The server isn't configured for ephemeral keys; requests will fall back to an error. Use pass-through.</p>` : ''}
-                ${this.config ? `<div class="text-[10px] text-muted-foreground">upstream: <b>${esc(this.config.upstream_kind || '—')}</b> · cap ${formatUsd(this.config.request_charge_cap_usd)} / request</div>` : ''}
+                ${this.config ? `<div class="text-[10px] text-muted-foreground">cap ${formatUsd(this.config.request_charge_cap_usd)} / request</div>` : ''}
             </div>`;
     }
 
