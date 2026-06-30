@@ -455,10 +455,6 @@ class ZkapiPanel {
                         Deposit with MetaMask
                     </button>
                     <div id="zkapi-deposit-status" class="text-[11px] text-muted-foreground"></div>
-                    <div class="text-[10px] text-muted-foreground/80 leading-snug border-t border-border/40 pt-1.5">
-                        1 ZKAPI = $1. If MetaMask shows an amount ~1000× off, it cached this token's old decimals —
-                        remove &amp; re-import the ZKAPI token (it now uses 6 decimals) to fix the display.
-                    </div>
                 </div>
             </details>`;
     }
@@ -589,7 +585,6 @@ class ZkapiPanel {
             row('Solvency bound', e.solvencyBound != null ? formatCreditsUsd(e.solvencyBound) : '—', 'solvency_bound'),
             row('Active root', hashEl(e.activeRoot), 'active_root'),
             row('State sig epoch', e.stateSigEpoch ?? '—', 'state_sig_epoch'),
-            row('Proof backend', esc(e.runtimeProofBackend || '—'), 'proof_backend'),
             e.merkleSiblingsCount != null ? row('Merkle siblings', `${e.merkleSiblingsCount}`, 'merkle_siblings') : ''
         ]));
 

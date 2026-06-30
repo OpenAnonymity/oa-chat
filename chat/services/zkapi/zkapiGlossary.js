@@ -70,10 +70,6 @@ const GLOSSARY = {
         title: 'State-sig root',
         desc: 'The public root of the server\'s XMSS signing key-tree for this epoch, published on-chain. Your client verifies the server\'s signature on your next state against this trusted root, so a malicious server can\'t forge a state transition or charge.'
     },
-    proof_backend: {
-        title: 'Proof backend',
-        desc: 'Which proving system actually ran for this request — set by the daemon\'s proof mode (ZKAPI_PROOF_MODE). `stwo_cairo` is the PRODUCTION default: a real Cairo circuit proved and verified with the STWO STARK prover, so your secret never leaves your machine and the server verifies a genuine zero-knowledge STARK (this needs the Scarb/Stwo toolchain and costs seconds of proving per request). `dev_witness_envelope` is an explicit dev-only fallback used when Scarb isn\'t installed: the client sends the circuit WITNESS itself (base64-wrapped JSON) and the server re-runs the Merkle / Pedersen / XMSS / solvency constraints over it in Rust — fast and faithful to the circuit LOGIC, but it ships your secret to the server, so it is NOT a STARK and NOT zero-knowledge. The label tells you which one this request used.'
-    },
     proof_public_output_hash: {
         title: 'Proof public-output hash',
         desc: 'A hash (Keccak over the proof\'s canonical public output felts) that binds the proof blob to its public inputs. It stops a valid proof from being reused with different inputs — the server checks it equals the hash of the public inputs you submitted.'
