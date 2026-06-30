@@ -107,9 +107,11 @@ function row(label, valueHtml, infoKey) {
     </div>${desc}`;
 }
 
-const MODE_BADGE = {
-    passthrough: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
-    ephemeral: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300'
+// Mode is signalled by a small colored dot inside a neutral pill (Linear-style),
+// not a loud filled badge.
+const MODE_DOT = {
+    passthrough: '#3b82f6',
+    ephemeral: '#8b5cf6'
 };
 const KIND_LABEL = {
     inference: 'inference',
@@ -117,6 +119,12 @@ const KIND_LABEL = {
     ephemeral_settle: 'settled',
     direct_stream: 'stream'
 };
+
+/** Drop a trailing -YYYY-MM-DD model-version suffix for a clean display name
+ *  (e.g. "gpt-4o-mini-2024-07-18" -> "gpt-4o-mini"). */
+function prettyModel(m) {
+    return m ? String(m).replace(/-\d{4}-\d{2}-\d{2}$/, '') : '';
+}
 
 class ZkapiPanel {
     constructor() {
@@ -160,7 +168,17 @@ class ZkapiPanel {
             .zk-seg{display:flex;border:1px solid hsl(var(--color-border));border-radius:8px;overflow:hidden;}
             .zk-seg button{flex:1;padding:6px 8px;font-size:12px;background:transparent;color:hsl(var(--color-muted-foreground));cursor:pointer;border:0;}
             .zk-seg button.active{background:hsl(var(--color-primary));color:hsl(var(--color-primary-foreground));}
-            .zk-card{border:1px solid hsl(var(--color-border));border-radius:12px;}
+            .zk-card{border:1px solid hsl(var(--color-border));border-radius:12px;transition:border-color .14s ease,background .14s ease;}
+            .zk-entry{cursor:pointer;}
+            .zk-entry:hover{background:hsl(var(--color-muted) / 0.45);border-color:hsl(var(--color-border));}
+            .zk-pill{display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:9999px;
+                font-size:10px;font-weight:500;line-height:1.45;letter-spacing:.02em;white-space:nowrap;
+                background:hsl(var(--color-muted) / 0.7);color:hsl(var(--color-foreground));
+                border:1px solid hsl(var(--color-border) / 0.55);}
+            .zk-dot{width:6px;height:6px;border-radius:9999px;flex:none;}
+            .zk-chev{color:hsl(var(--color-muted-foreground));font-size:9px;line-height:1;display:inline-block;
+                flex:none;opacity:.55;transition:transform .15s ease;}
+            .zk-chev--open{transform:rotate(90deg);}
             .zk-info{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;
                 border-radius:9999px;border:1px solid hsl(var(--color-border));background:transparent;
                 color:hsl(var(--color-muted-foreground));font-size:9px;line-height:1;font-weight:700;cursor:pointer;
@@ -538,27 +556,30 @@ class ZkapiPanel {
         el.innerHTML = entries.map(e => this.renderEntry(e)).join('');
     }
 
+    /** Charge as split-colored HTML (credits foreground, USD muted) — shared by
+     *  the entry summary and the Billing detail row so the value reads identical. */
+    chargeHtml(credits) {
+        if (credits == null) return '—';
+        return `<span class="font-medium">${formatCredits(credits)} cr</span> <span class="text-muted-foreground">· ${formatUsd(creditsToUsd(credits))}</span>`;
+    }
+
     renderEntry(e) {
         const expanded = this.expanded.has(e.id);
-        const badge = MODE_BADGE[e.mode] || MODE_BADGE.passthrough;
-        const chargeTxt = e.chargeApplied != null
-            ? `${formatCredits(e.chargeApplied)} cr · ${formatUsd(creditsToUsd(e.chargeApplied))}`
-            : '—';
+        const dot = MODE_DOT[e.mode] || MODE_DOT.passthrough;
+        const sub = [KIND_LABEL[e.kind] || e.kind, prettyModel(e.model)].filter(Boolean).join(' · ');
+        // Chevron leads on the left (disclosure idiom) so the summary charge sits
+        // flush-right in the same column as the Billing rows below.
         const head = `
-            <div class="flex items-center justify-between gap-2 cursor-pointer" data-entry="${e.id}">
-                <div class="flex items-center gap-2 min-w-0">
-                    <span class="text-[10px] leading-none px-2.5 py-1 rounded-md whitespace-nowrap ${badge}">${esc(e.mode)}:${esc(KIND_LABEL[e.kind] || e.kind)}</span>
-                    <span class="text-[11px] truncate">${esc(e.model || '')}</span>
-                </div>
-                <div class="flex items-center gap-2 shrink-0">
-                    ${e.error ? `<span class="text-[10px] text-red-500">error</span>` : `<span class="text-[11px] font-medium">${chargeTxt}</span>`}
-                    <span class="text-muted-foreground text-[10px]">${expanded ? '▾' : '▸'}</span>
-                </div>
+            <div class="flex items-center gap-2.5 cursor-pointer" data-entry="${e.id}">
+                <span class="zk-chev ${expanded ? 'zk-chev--open' : ''}">▸</span>
+                <span class="zk-pill"><span class="zk-dot" style="background:${dot}"></span>${esc(e.mode)}</span>
+                <span class="text-[11px] text-muted-foreground truncate flex-1 min-w-0">${esc(sub)}</span>
+                <span class="shrink-0 text-[11px] tabular-nums whitespace-nowrap">${e.error ? '<span class="font-medium text-red-500">error</span>' : this.chargeHtml(e.chargeApplied)}</span>
             </div>`;
         if (!expanded) {
-            return `<div class="zk-card p-2.5">${head}</div>`;
+            return `<div class="zk-card zk-entry px-3 py-2.5" data-entry="${e.id}">${head}</div>`;
         }
-        return `<div class="zk-card p-2.5 space-y-2">${head}${this.renderEntryDetail(e)}</div>`;
+        return `<div class="zk-card px-3 py-2.5 space-y-2.5">${head}${this.renderEntryDetail(e)}</div>`;
     }
 
     renderEntryDetail(e) {
@@ -570,7 +591,7 @@ class ZkapiPanel {
 
         // Billing
         sections.push(this.section('Billing', [
-            row('Charge', `${formatCredits(e.chargeApplied)} cr · ${formatUsd(creditsToUsd(e.chargeApplied))}`, 'charge'),
+            row('Charge', this.chargeHtml(e.chargeApplied), 'charge'),
             row('Remaining balance', e.remainingBalance != null ? formatCreditsUsd(e.remainingBalance) : '—', 'remaining_balance'),
             u.cost != null ? row('Provider cost', formatUsd(u.cost), 'cost_usd') : '',
             (u.prompt_tokens != null || u.completion_tokens != null) ? row('Tokens', `${u.prompt_tokens || 0} in / ${u.completion_tokens || 0} out / ${u.total_tokens || 0} total`, 'tokens') : '',
