@@ -262,9 +262,10 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     secondary lane.
   - The Council synthesis prompt lives in `chat/domain/councilPrompts.js`. It
     asks the synthesis model to act as an independent reviewer over anonymous
-    `Response A` / `Response B` drafts, then produce a clear final answer to
-    the original request. The review should be fair, critical, concise, and
-    evidence-oriented, but avoid generic praise, model/provider identities,
+    `Response A` / `Response B` drafts, briefly compare only material
+    differences, errors, missing caveats, and useful synthesis, then produce a
+    concise final answer to the original request. The review should be fair,
+    critical, concise, and evidence-oriented, but avoid generic praise, model/provider identities,
     scores/grades/ranked lists, chatty phrasing, and generic follow-up offers.
     Partial synthesis is supported when only one draft response is available.
   - `chat/application/councilController.js` runs the selected models in
@@ -399,9 +400,12 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     recompute the transcript hint after pruning, but they do not clear the
     user's sticky layout preference. The manual wide-screen toggle uses the
     same message width as Parallel/Council (`min(92vw, 82rem)`) so switching
-    modes does not make Chat wide feel narrower. Background saves may mark a
-    non-visible session as having a council transcript, but root layout classes
-    should only update for the currently viewed session. Composer controls are
+    modes does not make Chat wide feel narrower. The top-left manual wide-mode
+    button is hidden whenever the current session is using Parallel/Council
+    layout, because that layout already owns the wider transcript width.
+    Background saves may mark a non-visible session as having a council
+    transcript, but root layout classes should only update for the currently
+    viewed session. Composer controls are
     stable independently: the default composer keeps attachment and Settings
     visible inline, while Web search moves to the bottom of the existing
     Settings menu; there is no separate `+` menu. File upload, settings, and
@@ -451,6 +455,12 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     left margin (`0.9rem`) so the Memory-to-send gap is wider without changing
     spacing between Memory and the other right-side controls. This targets only
     `.composer-right-actions #send-btn`, not the shared right-side control gap.
+    The Chat/Parallel slider also has a small left margin so it breathes after
+    the Memory/book button without changing spacing between the other tool
+    buttons. The Memory book tooltip is two-line copy: the first line names
+    auto-attach, and the second line says double-click opens Memory with the
+    Beta badge. If the global Memory feature switch is off, only the Memory
+    book is marked disabled; the Chat/Parallel slider remains interactive.
     OpenRouter catalog display names are trimmed on live ingest and cache
     load/save, and model selection helpers compare by id plus trimmed display
     name so provider catalog quirks
@@ -481,9 +491,9 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     partial synthesis, and synthesis fallback behavior with small stubs.
   - `chat/domain/councilPrompts.js` defines the Council synthesis prompt. It
     intentionally omits Stage 2 peer-ranking inputs, anonymizes first-opinion
-    drafts as `Response A`, `Response B`, and asks the Council model to compare
-    the anonymous drafts, call out strengths, misses, unsupported claims, and
-    then write a concise final answer. It avoids model/provider identities,
+    drafts as `Response A`, `Response B`, and asks the Council model to briefly
+    compare only material differences, errors, missing caveats, and useful
+    synthesis before writing a concise final answer. It avoids model/provider identities,
     scores/grades/ranked lists, chatty phrasing, and generic follow-up offers.
 - 2026-05-26: Prompt edit file drag feedback is scoped to the inline editor.
   - While a prompt edit draft is open, file drags highlight the edit prompt card

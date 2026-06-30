@@ -29,11 +29,11 @@ test('buildCouncilSynthesisPrompt asks for concise anonymous review', () => {
     assert.match(prompt, /independent reviewer/i);
     assert.match(prompt, /one or two anonymous models produced available draft answers/i);
     assert.match(prompt, /Read Response A and Response B/i);
-    assert.match(prompt, /what each response gets right/i);
-    assert.match(prompt, /unsupported or incorrect/i);
+    assert.match(prompt, /Briefly compare the drafts/i);
+    assert.match(prompt, /material differences, errors, missing caveats, and useful synthesis/i);
+    assert.match(prompt, /concise final answer/i);
     assert.match(prompt, /Do not mention model names, provider names, or hidden identities/i);
     assert.match(prompt, /If one response is clearly stronger/i);
-    assert.match(prompt, /clear final answer/i);
     assert.match(prompt, /Do not assign scores, grades, or ranked lists/i);
     assert.match(prompt, /Do not use chatty phrasing/i);
     assert.match(prompt, /Keep the review concise and useful/i);

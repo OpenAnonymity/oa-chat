@@ -33,7 +33,7 @@ export function buildCouncilSynthesisPrompt(options = {}) {
 
 The user asked a question, and one or two anonymous models produced available draft answers. Read Response A and Response B fairly, critically, concisely, and with attention to evidence.
 
-Identify what each response gets right, what each misses, and where either response is unsupported or incorrect. Then give a clear final answer to the user's original request.
+Briefly compare the drafts, focusing only on material differences, errors, missing caveats, and useful synthesis. Then give the user a concise final answer.
 
 Rules:
 - Refer only to Response A and Response B.

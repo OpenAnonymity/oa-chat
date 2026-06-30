@@ -2047,12 +2047,23 @@ export default class ChatInput {
     }
 
     async setMemoryContextEnabled(enabled) {
+        if (enabled === true && this.app.memoryFeatureEnabled === false) {
+            this.app.memoryMode = false;
+            this.updateMemoryToggleUI();
+            await this.app.data.saveSetting('memoryMode', false);
+            return;
+        }
         this.app.memoryMode = enabled === true;
         this.updateMemoryToggleUI();
         await this.app.data.saveSetting('memoryMode', this.app.memoryMode);
     }
 
     async openMemoryContextPanel() {
+        if (this.app.memoryFeatureEnabled === false) {
+            this.updateMemoryToggleUI();
+            this.app.showToast?.('Memory is off in settings.', 'info', 3000);
+            return;
+        }
         await this.setMemoryContextEnabled(true);
         this.app.memoryEditor?.open?.();
     }
@@ -2060,6 +2071,12 @@ export default class ChatInput {
     handleMemoryContextToggleClick(event) {
         event.preventDefault();
         event.stopPropagation();
+
+        if (this.app.memoryFeatureEnabled === false) {
+            this.updateMemoryToggleUI();
+            this.app.showToast?.('Memory is off in settings.', 'info', 3000);
+            return;
+        }
 
         if (event.detail >= 2) {
             this.openMemoryContextPanel().catch(error => {
@@ -2094,38 +2111,42 @@ export default class ChatInput {
         } else {
             container.dataset.mode = mode;
         }
-        container.setAttribute('aria-disabled', String(!memoryFeatureEnabled));
-        container.classList.toggle('is-disabled', !memoryFeatureEnabled);
+        container.removeAttribute('aria-disabled');
+        container.classList.remove('is-disabled');
 
         container.querySelectorAll('.chat-mode-toggle-btn').forEach((button) => {
             button.setAttribute('aria-checked', String(button.dataset.modeOption === mode));
-            const isMemoryButton = button.dataset.modeOption === 'memory';
-            const isDisabledMemoryButton = isMemoryButton && !memoryFeatureEnabled;
-            button.setAttribute('aria-disabled', String(isDisabledMemoryButton));
-            button.tabIndex = isDisabledMemoryButton ? -1 : 0;
-            if (isMemoryButton) {
-                button.title = memoryFeatureEnabled ? 'Memory mode' : 'Memory is off in settings';
-                const tooltipText = button.querySelector('[data-memory-tooltip-text]');
-                const tooltipBeta = button.querySelector('[data-memory-tooltip-beta]');
-                if (tooltipText) {
-                    tooltipText.textContent = memoryFeatureEnabled
-                        ? 'Auto-attach relevant context'
-                        : 'Memory is off in settings';
-                }
-                if (tooltipBeta) {
-                    tooltipBeta.classList.toggle('hidden', !memoryFeatureEnabled);
-                }
-            }
+            button.setAttribute('aria-disabled', 'false');
+            button.tabIndex = 0;
         });
 
         const memoryButton = this.app.elements.memoryContextToggle;
         if (memoryButton) {
-            const memoryEnabled = this.app.memoryMode === true;
+            const memoryEnabled = memoryFeatureEnabled && this.app.memoryMode === true;
             memoryButton.setAttribute('aria-checked', String(memoryEnabled));
+            memoryButton.setAttribute('aria-disabled', String(!memoryFeatureEnabled));
             memoryButton.classList.toggle('memory-active', memoryEnabled);
-            memoryButton.title = memoryEnabled
-                ? 'Auto-attach memory is on. Double-click to open memory.'
-                : 'Auto-attach memory is off. Double-click to open memory.';
+            memoryButton.classList.toggle('memory-disabled', !memoryFeatureEnabled);
+            memoryButton.title = memoryFeatureEnabled
+                ? (memoryEnabled
+                    ? 'Auto-attach memory is on. Double-click to open memory.'
+                    : 'Auto-attach memory is off. Double-click to open memory.')
+                : 'Memory is off in settings.';
+
+            const tooltipText = memoryButton.querySelector('[data-memory-tooltip-text]');
+            const tooltipDetail = memoryButton.querySelector('[data-memory-tooltip-detail]');
+            const tooltipBeta = memoryButton.querySelector('[data-memory-tooltip-beta]');
+            if (tooltipText) {
+                tooltipText.textContent = memoryFeatureEnabled
+                    ? 'Auto-attach relevant context'
+                    : 'Memory is off in settings';
+            }
+            if (tooltipDetail) {
+                tooltipDetail.classList.toggle('hidden', !memoryFeatureEnabled);
+            }
+            if (tooltipBeta) {
+                tooltipBeta.classList.toggle('hidden', !memoryFeatureEnabled);
+            }
         }
     }
 

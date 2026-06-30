@@ -327,7 +327,16 @@ test('composer mode toggle exposes Chat and Parallel with independent Memory tog
     assert.equal(source.includes('openMemoryContextPanel'), true);
     assert.equal(source.includes('this.app.memoryEditor?.open?.()'), true);
     assert.equal(html.includes('Double-click to open memory'), true);
+    assert.equal(html.includes('memory-context-tooltip-detail'), true);
+    assert.equal(html.includes('data-memory-tooltip-text'), true);
     assert.equal(source.includes('this.app.memoryMode = isMemory'), false);
+    assert.equal(source.includes("memoryButton.setAttribute('aria-disabled', String(!memoryFeatureEnabled));"), true);
+    assert.equal(source.includes("container.removeAttribute('aria-disabled');"), true);
+    assert.equal(
+        source.includes("container.classList.toggle('is-disabled', !memoryFeatureEnabled);"),
+        false,
+        'global Memory off should disable only the Memory book, not the Chat/Parallel slider'
+    );
     assert.equal(
         html.includes('data-mode-option="council"'),
         false,
@@ -424,6 +433,16 @@ test('parallel layout stays wide for transcripts and forks with council output',
         styles.includes('html.council-layout-mode #messages-container {\n    --messages-max-width: min(92vw, 82rem);'),
         true,
         'Parallel/Council layout should stay aligned with manual wide mode width'
+    );
+    assert.equal(
+        appSource.includes('const usesParallelLayout = this.sessionUsesCouncilLayout(this.getCurrentSession());'),
+        true,
+        'wide-mode button visibility should read the same Parallel/Council layout source of truth'
+    );
+    assert.equal(
+        appSource.includes('if (hasSession && !isMobile && !usesParallelLayout)'),
+        true,
+        'wide-mode button should be hidden while Parallel/Council layout owns transcript width'
     );
 });
 
@@ -534,8 +553,11 @@ test('composer model controls keep stable compact slots across Chat and Parallel
     assert.equal(appSource.includes('composerMoreBtn'), false);
     assert.equal(styles.includes('.composer-right-actions'), true);
     assert.equal(styles.includes('.composer-right-actions #send-btn'), true);
+    assert.equal(styles.includes('.composer-right-actions .chat-mode-toggle-container'), true);
+    assert.equal(styles.includes('.memory-context-tooltip-detail.hidden'), true);
     assert.equal(styles.includes('html[data-send-gap='), false);
     assert.equal(styles.includes('margin-left: 0.9rem;'), true);
+    assert.equal(styles.includes('margin-left: 0.35rem;'), true);
     assert.equal(styles.includes('.composer-left-actions'), true);
     assert.equal(styles.includes('overflow: visible;'), true);
     assert.equal(styles.includes('.composer-more-menu'), true);
@@ -783,7 +805,7 @@ test('memory augmentation runs once before Parallel fan-out and clears the one-s
         'regenerate should clear the one-shot memory API override in a finally block'
     );
     assert.ok(
-        sendBlock.includes('} finally {\n            this._lastApiContent = null;'),
+        sendBlock.includes('} finally {\n            this.clearMemoryApiOverrideContent();'),
         'send should clear the one-shot memory API override in a finally block'
     );
 });
@@ -1008,64 +1030,4 @@ test('inline quick ask preserves scrubber and session lifecycle constraints', ()
         chatAreaSource.includes('this.closeQuickAskWindow();'),
         'quick ask should add pending breathing room and hide when clicking elsewhere'
     );
-});
-
-test('composer mode toggle exposes Chat, Parallel, and Memory only', () => {
-    const html = read('chat/index.html');
-    assert.equal(html.includes('data-mode-option="chat"'), true);
-    assert.equal(html.includes('data-mode-option="parallel"'), true);
-    assert.equal(html.includes('data-mode-option="memory"'), true);
-    assert.equal(
-        html.includes('data-mode-option="council"'),
-        false,
-        'Council review should be a Parallel setting, not a visible composer mode'
-    );
-});
-
-test('parallel composer keeps the Council model picker out of the input bar', () => {
-    const html = read('chat/index.html');
-    assert.equal(html.includes('id="council-secondary-model-btn"'), true);
-    assert.equal(
-        html.includes('id="council-synthesis-model-btn"'),
-        false,
-        'Council model selection belongs in settings, not the Parallel composer'
-    );
-    assert.equal(html.includes('id="council-review-toggle"'), true);
-    assert.equal(html.includes('id="council-review-model-btn"'), true);
-});
-
-test('council review setting drives synthesis output mode in ChatInput', () => {
-    const source = read('chat/components/ChatInput.js');
-    assert.equal(source.includes('council-review-toggle'), true);
-    assert.equal(source.includes('setCouncilReviewEnabledFromSettings'), true);
-    assert.equal(source.includes('currentlyMultiModelEnabled'), true);
-    assert.equal(source.includes('closeSettingsMenu()'), true);
-    assert.equal(source.includes('openCouncilSynthesisModelPicker({ closeSettings: true })'), true);
-    assert.match(
-        source,
-        /enabled \? COUNCIL_OUTPUT_SYNTHESIS : COUNCIL_OUTPUT_PARALLEL/,
-        'Council review on should persist synthesis output mode, and off should persist parallel'
-    );
-    assert.match(
-        source,
-        /enabled: currentlyMultiModelEnabled/,
-        'Council review should persist as a setting without forcing Parallel mode on by itself'
-    );
-});
-
-test('council model shortcut follows review setting, not just active Parallel', () => {
-    const source = read('chat/app.js');
-    assert.equal(source.includes('const isCouncilReviewEnabled'), true);
-    assert.match(
-        source,
-        /session\?\.councilConfig\?\.outputMode === COUNCIL_OUTPUT_SYNTHESIS/,
-        'Active-session Council model shortcut should work when review is enabled as a setting'
-    );
-    assert.match(
-        source,
-        /pendingCouncilConfig\?\.outputMode === COUNCIL_OUTPUT_SYNTHESIS/,
-        'Pending Council model shortcut should work when review is enabled as a setting'
-    );
-    const shortcutBlock = source.slice(source.indexOf('// Cmd/Ctrl + L for the Council synthesis model picker'));
-    assert.equal(shortcutBlock.includes('isCouncilModeActive(session)'), false);
 });

@@ -8287,6 +8287,7 @@ class ChatApp {
             'council-synthesis-layout-mode',
             isCouncilLayoutMode && outputMode === COUNCIL_OUTPUT_SYNTHESIS
         );
+        this.updateWideModeButtonVisibility();
     }
 
     /**
@@ -8310,8 +8311,9 @@ class ChatApp {
         const hasSession = !!this.getCurrentSession();
         const sidebarHidden = this.elements.sidebar?.classList.contains('sidebar-hidden');
         const isMobile = this.isMobileView();
+        const usesParallelLayout = this.sessionUsesCouncilLayout(this.getCurrentSession());
 
-        if (hasSession && !isMobile) {
+        if (hasSession && !isMobile && !usesParallelLayout) {
             btn.classList.remove('hidden');
             btn.classList.add('flex');
             // When sidebar hidden: show-sidebar-btn at left-4, wide-mode at left-14

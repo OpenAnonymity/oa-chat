@@ -228,9 +228,11 @@ forwarding its details into the final prompt.
   `memoryFeatureEnabled` and defaults on for existing users. When it is off,
   the app forces `memoryMode` false, skips live post-turn extraction, skips
   memory retrieval, aborts active memory retrieval/extraction work, blocks the
-  memory editor/backfill/import/export entry points, and disables the Memory
-  book toggle beside the Chat/Parallel slider. Confidential memory-key redemption is passed
-  the same abort signal, and returned keys are not stored if Memory is disabled
+  memory editor/backfill/import/export entry points, and disables only the
+  Memory book toggle beside the Chat/Parallel slider. The Chat/Parallel slider
+  remains interactive while Memory is globally off. Confidential memory-key
+  redemption is passed the same abort signal, and returned keys are not stored
+  if Memory is disabled
   during redemption. Memory-editor saves, imports, clean-up, and folder
   mutations also use an operation generation guard so stale local operations do
   not complete their UI path after the feature is turned off. The memory bridge,

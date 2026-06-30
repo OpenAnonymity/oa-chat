@@ -4901,6 +4901,10 @@ html.council-synthesis-layout-mode .council-secondary-model-btn .model-name-cont
     position: relative;
 }
 
+.composer-right-actions .chat-mode-toggle-container {
+    margin-left: 0.35rem;
+}
+
 .composer-right-actions #send-btn {
     margin-left: 0.9rem;
 }
@@ -4927,6 +4931,16 @@ html.council-synthesis-layout-mode .council-secondary-model-btn .model-name-cont
     box-shadow: inset 0 0 0 1px hsl(var(--color-foreground) / 0.15);
 }
 
+.memory-context-toggle.memory-disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.memory-context-toggle.memory-disabled:hover {
+    color: hsl(var(--color-muted-foreground));
+    background: transparent;
+}
+
 .chat-mode-html-tooltip {
     display: none;
     position: absolute;
@@ -4946,6 +4960,24 @@ html.council-synthesis-layout-mode .council-secondary-model-btn .model-name-cont
     pointer-events: none;
     align-items: center;
     gap: 4px;
+}
+
+.memory-context-tooltip {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    line-height: 1.2;
+}
+
+.memory-context-tooltip-detail {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: hsl(var(--color-muted-foreground));
+}
+
+.memory-context-tooltip-detail.hidden {
+    display: none;
 }
 
 .chat-mode-html-tooltip::before {
