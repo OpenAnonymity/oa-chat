@@ -38,15 +38,6 @@ import {
 const MESSAGE_INPUT_MAX_HEIGHT_PX = 300;
 const MESSAGE_INPUT_PREVIEW_EXPANDED_MIN_HEIGHT_PX = 384;
 const SETTINGS_MENU_WIDTH_PX = 260;
-const DEFAULT_COMPOSER_VARIANT = '3';
-const COMPOSER_VARIANTS = {
-    '1': { parallelModels: 'icons', tools: 'inline' },
-    '2': { parallelModels: 'names', tools: 'inline' },
-    '3': { parallelModels: 'names', tools: 'settings' },
-    '4': { parallelModels: 'icons', tools: 'settings' }
-};
-const DEFAULT_COMPOSER_WIDTH = 'combined';
-const COMPOSER_WIDTH_MODES = new Set(['matched', 'combined']);
 
 export default class ChatInput {
     /**
@@ -93,36 +84,10 @@ export default class ChatInput {
         this.councilSynthesisInlineButton = null;
         this.councilReviewToggle = null;
         this.councilReviewModelSelect = null;
-        this.composerVariant = this.resolveComposerVariant();
-        this.composerWidth = this.resolveComposerWidth();
         onModelTiersUpdate(() => this.refreshMultiModelSettingsUI());
-        this.applyComposerVariant();
+        this.applyComposerLayout();
         // Store undone scrubber state for redo functionality
         this.scrubberUndoState = null;
-    }
-
-    resolveComposerVariant() {
-        if (typeof window === 'undefined') return DEFAULT_COMPOSER_VARIANT;
-        const requestedVariant = new URLSearchParams(window.location.search).get('composerVariant');
-        return Object.prototype.hasOwnProperty.call(COMPOSER_VARIANTS, requestedVariant)
-            ? requestedVariant
-            : DEFAULT_COMPOSER_VARIANT;
-    }
-
-    resolveComposerWidth() {
-        if (typeof window === 'undefined') return DEFAULT_COMPOSER_WIDTH;
-        const requestedWidth = new URLSearchParams(window.location.search).get('composerWidth');
-        return COMPOSER_WIDTH_MODES.has(requestedWidth)
-            ? requestedWidth
-            : DEFAULT_COMPOSER_WIDTH;
-    }
-
-    getComposerVariantConfig() {
-        return COMPOSER_VARIANTS[this.composerVariant] || COMPOSER_VARIANTS[DEFAULT_COMPOSER_VARIANT];
-    }
-
-    isComposerToolsInline() {
-        return this.getComposerVariantConfig().tools === 'inline';
     }
 
     getComposerToolElements() {
@@ -146,21 +111,12 @@ export default class ChatInput {
         } = this.getComposerToolElements();
         if (!toolsContainer || !fileAction || !settingsControl || !settingsActions || !searchToggle) return;
 
-        if (this.isComposerToolsInline()) {
-            toolsContainer.append(fileAction, settingsControl, searchToggle);
-        } else {
-            toolsContainer.append(fileAction, settingsControl);
-            settingsActions.append(searchToggle);
-        }
+        toolsContainer.append(fileAction, settingsControl);
+        settingsActions.append(searchToggle);
     }
 
-    applyComposerVariant() {
+    applyComposerLayout() {
         if (typeof document === 'undefined') return;
-        const config = this.getComposerVariantConfig();
-        document.documentElement.dataset.composerVariant = this.composerVariant;
-        document.documentElement.dataset.composerTools = config.tools;
-        document.documentElement.dataset.composerParallelModels = config.parallelModels;
-        document.documentElement.dataset.composerWidth = this.composerWidth;
         if (!document.documentElement.dataset.composerMode) {
             document.documentElement.dataset.composerMode = 'chat';
         }

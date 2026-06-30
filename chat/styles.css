@@ -4737,7 +4737,7 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
     flex: 0 0 auto;
 }
 
-html[data-composer-width="combined"][data-composer-mode="chat"] #model-picker-btn.composer-model-chip {
+html[data-composer-mode="chat"] #model-picker-btn.composer-model-chip {
     width: max-content;
     max-width: calc(var(--composer-model-chip-max-width) + var(--composer-model-chip-max-width) + var(--composer-model-chip-gap));
 }
@@ -4746,27 +4746,6 @@ html[data-composer-width="combined"][data-composer-mode="chat"] #model-picker-bt
 .council-secondary-model-btn.composer-model-chip[data-tooltip]:hover::after {
     white-space: nowrap;
     text-align: center;
-}
-
-html[data-composer-parallel-models="icons"][data-composer-mode="parallel"] #model-picker-btn.composer-model-chip,
-html[data-composer-parallel-models="icons"][data-composer-mode="parallel"] .council-secondary-model-btn.composer-model-chip {
-    flex: 0 0 1.75rem;
-    width: 1.75rem;
-    min-width: 1.75rem;
-    max-width: 1.75rem;
-    height: 1.75rem;
-    min-height: 1.75rem;
-    padding-left: 0;
-    padding-right: 0;
-    justify-content: center;
-    gap: 0;
-}
-
-html[data-composer-parallel-models="icons"][data-composer-mode="parallel"] #model-picker-btn.composer-model-chip .model-name-container,
-html[data-composer-parallel-models="icons"][data-composer-mode="parallel"] #model-picker-btn.composer-model-chip .model-shortcut,
-html[data-composer-parallel-models="icons"][data-composer-mode="parallel"] .council-secondary-model-btn.composer-model-chip .model-name-container,
-html[data-composer-parallel-models="icons"][data-composer-mode="parallel"] .council-secondary-model-btn.composer-model-chip .model-shortcut {
-    display: none;
 }
 
 .council-secondary-model-btn.hidden {

@@ -419,8 +419,8 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     a shared responsive max width (`12.25rem` on desktop, `8.75rem` on small
     screens) so short model names produce short buttons while long names cap
     cleanly. The root `data-composer-mode` is refreshed from both the mode
-    toggle and the multi-model settings refresh so URL-based width variants
-    apply immediately after switching Chat/Parallel. The composer label is the
+    toggle and the multi-model settings refresh so Chat/Parallel layout rules
+    apply immediately after switching modes. The composer label is the
     full provider-stripped catalog name; JavaScript does not apply a character
     budget or semantic/family-name rewrite. CSS owns the
     visual ellipsis via the label span (`overflow: hidden`, `white-space:
@@ -442,16 +442,13 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     chips from the composer chips. Full provider names remain visible in the shared model picker. Run
     `npm run audit:model-labels` to check the current live OpenRouter catalog
     for labels that fail providerless normalization and to inspect the longest
-    CSS-truncated label. `combined` is the default composer width mode: Chat
-    mode primary chips use natural width and can grow up to the same width as
-    two Parallel chips plus their gap; Parallel stays unchanged. The comparison link
-    `?composerWidth=matched` keeps Chat and Parallel chips at the same one-chip
-    max width, while `?composerWidth=combined` explicitly selects the default.
-    In combined mode, Chat max width is calculated as two Parallel chip maxes
-    plus `--composer-model-chip-gap`, the same variable used for the actual
-    Parallel model-chip gap. Short model names still use natural button width in both width modes. Keep
-    the combined width selector at ID-level specificity because the base
-    composer chip width rule is also ID-scoped. The send button has a small
+    CSS-truncated label. Chat mode primary chips use natural width and can grow
+    up to the same width as two Parallel chips plus their gap; Parallel stays
+    unchanged. Chat max width is calculated as two Parallel chip maxes plus
+    `--composer-model-chip-gap`, the same variable used for the actual Parallel
+    model-chip gap. Short model names still use natural button width. Keep the
+    Chat width selector at ID-level specificity because the base composer chip
+    width rule is also ID-scoped. The send button has a small
     left margin (`0.9rem`) so the Memory-to-send gap is wider without changing
     spacing between Memory and the other right-side controls. This targets only
     `.composer-right-actions #send-btn`, not the shared right-side control gap.
@@ -471,17 +468,10 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     primary/secondary lane entries with separate lane access records. If both
     lanes need fresh access, they are still charged independently even when the
     selected model is the same.
-  - Composer design comparisons are available through `?composerVariant=1..4`
-    on the same branch/deployment. Variant 1 uses icon-only Parallel model
-    chips and visible inline file/settings/web buttons. Variant 2 uses full
-    Parallel model names and visible inline file/settings/web buttons. Variant
-    3 is the default/current direction: full model names with attachment and
-    Settings visible inline, and Web search inside Settings. Variant 4 uses
-    icon-only Parallel model chips with attachment and Settings visible inline,
-    and Web search inside Settings. The variants are implemented with
-    `data-composer-variant`, `data-composer-tools`, and
-    `data-composer-parallel-models` on `<html>` so the behavior can be compared
-    without maintaining separate branches.
+  - The old `?composerVariant=...` and `?composerWidth=...` design comparison
+    knobs were removed after the composer direction settled. The fixed behavior
+    is full model-name chips, attachment and Settings visible inline, Web
+    search inside Settings, and wider Chat-mode model-chip capacity by default.
   - `CouncilController` receives `chatDB`, `inferenceService`, and
     `ticketClient` from `ChatApp` instead of importing the service singletons
     directly. This keeps browser storage/network singleton initialization out
