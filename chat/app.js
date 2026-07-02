@@ -3794,6 +3794,9 @@ class ChatApp {
         if (this.pendingCouncilConfig.enabled === true) {
             this.pendingCouncilLayoutPreference = true;
         }
+        if (!this.state.currentSessionId) {
+            this.rightPanel?.onSessionChange?.(null);
+        }
         return this.pendingCouncilConfig;
     }
 
@@ -3838,6 +3841,9 @@ class ChatApp {
     applyPersistedParallelPendingConfig(fallbackModelName = null) {
         this.pendingCouncilConfig = this.buildPersistedParallelCouncilConfig(fallbackModelName);
         this.pendingCouncilLayoutPreference = this.parallelModeEnabled === true;
+        if (!this.state.currentSessionId) {
+            this.rightPanel?.onSessionChange?.(null);
+        }
         return this.pendingCouncilConfig;
     }
 
@@ -5832,13 +5838,12 @@ class ChatApp {
 
                 // Only update UI if still viewing the same session
                 if (this.chatArea && this.isViewingSession(session.id)) {
+                    // Re-render the completed message so partial streaming markdown/citation DOM
+                    // is replaced by the final render pipeline.
+                    await this.chatArea.finalizeStreamingMessage(streamingMessage);
                     // Finalize reasoning display with markdown processing and timing
                     if (streamingMessage.reasoning) {
                         this.chatArea.finalizeReasoningDisplay(streamingMessageId, streamingMessage.reasoning, streamingMessage.reasoningDuration);
-                    }
-                    // Re-render message if no content (to show "no response" notice and clean up empty bubbles)
-                    if (!streamingMessage.content && (!streamingMessage.images || streamingMessage.images.length === 0)) {
-                        await this.chatArea.finalizeStreamingMessage(streamingMessage);
                     }
                 }
 
@@ -9179,7 +9184,7 @@ class ChatApp {
 
             // Re-render the message to show updated citations
             if (this.chatArea) {
-                await this.chatArea.finalizeStreamingMessage(message);
+                await this.chatArea.finalizeStreamingMessage(message, { forceFullRender: true });
             }
         } catch (error) {
             console.debug('Error enriching citations:', error);

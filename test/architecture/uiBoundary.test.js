@@ -217,6 +217,48 @@ test('parallel aggregate messages omit redundant visible mode and completion lab
         'Council synthesis should render its own citation controls'
     );
     assert.equal(
+        source.includes('entry.reasoning'),
+        true,
+        'Parallel lanes should render the same reasoning trace UI when a lane returns thinking content'
+    );
+    assert.equal(
+        source.includes('synthesis.reasoning'),
+        true,
+        'Council synthesis should render the same reasoning trace UI when the synthesis model returns thinking content'
+    );
+    assert.equal(
+        source.includes('buildReasoningTrace('),
+        true,
+        'Council/Parallel reasoning should reuse the normal assistant reasoning trace component'
+    );
+    assert.equal(
+        source.includes('entry.streamingReasoning'),
+        true,
+        'Parallel lanes should render live reasoning state while a lane stream is running'
+    );
+    const controllerSource = read('chat/application/councilController.js');
+    const chatAreaSource = read('chat/components/ChatArea.js');
+    assert.equal(
+        controllerSource.includes('this.inferenceService.streamCompletion('),
+        true,
+        'Parallel/Council lanes should use the streaming inference path'
+    );
+    assert.equal(
+        chatAreaSource.includes('this.councilReasoningStreams = new Map();'),
+        true,
+        'Parallel/Council reasoning needs lane-scoped buffers for concurrent streams'
+    );
+    assert.equal(
+        chatAreaSource.includes('clearAllCouncilReasoningStreams()'),
+        true,
+        'Parallel/Council reasoning timers should be cleared when the chat area rerenders'
+    );
+    assert.equal(
+        chatAreaSource.includes('this.clearCouncilReasoningStream(reasoningId);'),
+        true,
+        'Parallel/Council reasoning timers should self-clear if their DOM target disappears'
+    );
+    assert.equal(
         source.includes('council-response-sources-row'),
         true,
         'Council/Parallel sources should appear inside the lane or synthesis block'
@@ -641,6 +683,71 @@ test('prompt edit model chips mirror active Parallel model lanes', () => {
     assert.equal(appSource.includes('this.chatArea?.updateEditModelPickerButton?.();'), true);
     assert.equal(styles.includes('.edit-prompt-model-group'), true);
     assert.equal(styles.includes('.edit-prompt-model-chip'), true);
+});
+
+test('right panel shows lane-scoped ephemeral keys for Parallel and Council', () => {
+    const source = read('chat/components/RightPanel.js');
+    const appSource = read('chat/app.js');
+
+    assert.equal(source.includes('getCouncilAccessRows()'), true);
+    assert.equal(source.includes('getPendingCouncilAccessConfig()'), true);
+    assert.equal(source.includes('this.app.getPendingCouncilConfig?.()'), true);
+    assert.equal(source.includes('this.app.buildPersistedParallelCouncilConfig?.()'), true);
+    assert.equal(source.includes("label: 'Model 1'"), true);
+    assert.equal(source.includes("label: 'Model 2'"), true);
+    assert.equal(source.includes("label: 'Council'"), true);
+    assert.equal(source.includes('session?.councilAccess'), true);
+    assert.equal(source.includes('generateCouncilAccessKeyPanelHTML'), true);
+    assert.equal(source.includes('Ephemeral Access Keys'), true);
+    assert.equal(source.includes('Keys persist until expiry or exhaustion.'), true);
+    assert.equal(source.includes('this.generateAccessKeyPanelHTML(hasApiKey)'), true);
+    assert.equal(source.includes('hasAnyActiveAccessKey()'), true);
+    assert.equal(source.includes("if (config.outputMode === 'council')"), true);
+    assert.equal(source.includes("|| access?.synthesis?.apiKey"), false);
+    assert.equal(source.includes('model: members'), false);
+    assert.equal(source.includes('row.model'), false);
+    assert.equal(source.includes('maskCouncilAccessToken(access)'), true);
+    assert.equal(source.includes('currentEphemeralKeyId: null'), true);
+    assert.equal(source.includes('getLaneAttestationAccessInfo(access)'), true);
+    assert.equal(source.includes('data-council-attestation-lane'), true);
+    assert.equal(source.includes('button.dataset.councilAttestationLane'), true);
+    assert.equal(source.includes('ensureLaneExpirationTimer()'), true);
+    assert.equal(source.includes('refreshLaneExpiryPanelIfNeeded()'), true);
+    assert.equal(source.includes('this.refreshLaneExpiryPanelIfNeeded(true);'), true);
+    assert.equal(source.includes('(this.expiresAt && !this.isExpired)'), true);
+    assert.equal(source.includes("document.getElementById('api-key-expiry')"), true);
+    assert.equal(source.includes('setInterval(() =>'), true);
+    assert.equal(appSource.includes('this.rightPanel?.onSessionChange?.(null);'), true);
+});
+
+test('completed assistant content uses shared markdown finalization path', () => {
+    const source = read('chat/components/ChatArea.js');
+    const appSource = read('chat/app.js');
+
+    assert.equal(source.includes('renderCompletedAssistantContent(message, scopeId = message?.id)'), true);
+    assert.equal(source.includes('async finalizeStreamingMessage(message, options = {})'), true);
+    assert.equal(source.includes('const forceFullRender = options.forceFullRender === true;'), true);
+    assert.equal(source.includes('if (isReasoningFinalized && !forceFullRender)'), true);
+    assert.equal(source.includes('window.MessageTemplates.insertRawCitationMarkers'), true);
+    assert.equal(source.includes('this.app.processContentWithLatex(processedContent)'), true);
+    assert.equal(source.includes('window.MessageTemplates.addInlineCitationMarkers'), true);
+    assert.equal(source.includes('window.MessageTemplates.enhanceInlineLinks(processedContent, scopeId)'), true);
+    assert.equal(source.includes('contentEl.innerHTML = this.renderCompletedAssistantContent(message, message.id);'), true);
+    assert.equal(
+        /Re-render the completed message[\s\S]*?await this\.chatArea\.finalizeStreamingMessage\(streamingMessage\);[\s\S]*?Finalize reasoning display/.test(appSource),
+        true,
+        'normal send completion should run the final render pass before reasoning finalization'
+    );
+    assert.equal(
+        appSource.includes('Re-render message if no content (to show "no response" notice and clean up empty bubbles)'),
+        false,
+        'completed text responses must not be left on partial streaming markdown DOM'
+    );
+    assert.equal(
+        appSource.includes('this.chatArea.finalizeStreamingMessage(message, { forceFullRender: true });'),
+        true,
+        'citation enrichment should rebuild Sources UI even when reasoning was already finalized'
+    );
 });
 
 test('council review setting drives synthesis output mode in ChatInput', () => {

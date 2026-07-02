@@ -269,8 +269,10 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     scores/grades/ranked lists, chatty phrasing, and generic follow-up offers.
     Partial synthesis is supported when only one draft response is available.
   - `chat/application/councilController.js` runs the selected models in
-    parallel through `inferenceService.sendCompletionStrict(...)`, preserving
-    the browser-only OpenRouter path and the existing ephemeral access flow.
+    parallel through `inferenceService.streamCompletion(...)`, preserving the
+    browser-only OpenRouter path and the existing ephemeral access flow. Strict
+    completion remains only as a fallback for tests or future backends that do
+    not expose streaming.
   - Council access is lane-scoped under `session.councilAccess.primary` and
     `session.councilAccess.secondary`, plus `session.councilAccess.synthesis`
     for the Council answer. Each lane stores its own ephemeral key, access
@@ -279,6 +281,29 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     `councilAccess.secondary`, and synthesis only uses
     `councilAccess.synthesis`, but a valid same-lane key can be tried after
     that lane switches models. There is no cross-lane key pooling.
+    `RightPanel` renders these lane records as separate Ephemeral Access Key
+    rows when Parallel/Council is active: `Model 1`, `Model 2`, and `Council`
+    only when synthesis/Council review is enabled. This is display-only and
+    does not change key acquisition, ticket preflight, or lane isolation. The
+    RHS panel intentionally shows lane roles, not model names, because lane
+    keys can persist after a user switches models; the current model choice
+    belongs in the composer/settings while the RHS panel represents access-key
+    state. The multi-lane panel includes the hint `Keys persist until expiry or
+    exhaustion.` to make that persistence explicit. When there is no active
+    session, the RHS panel mirrors `pendingCouncilConfig` or the persisted
+    Parallel defaults and shows pending `Model 1` / `Model 2` / optional
+    `Council` rows for the mode that a new chat will use. These no-session rows
+    are a preview only: they do not create a session, redeem tickets, or acquire
+    access until the first send.
+    Lane rows mask the actual lane token rather than the session's primary
+    ephemeral alias, and use their own lightweight expiry refresh when there is
+    no single-chat key timer active. If a single-chat key timer is active while
+    lane rows are displayed, that timer refreshes the lane panel instead of
+    looking for the single-key expiry chip; when the single key expires, it
+    forces one lane-panel refresh and lets the lane timer take over. Each lane
+    row owns its own verifier-attestation button and passes that lane token and
+    access metadata to the modal; do not reuse the single-session key
+    attestation context for the multi-lane panel.
   - If a lane key is missing, expires, is banned, or OpenRouter reports credit
     exhaustion, only that lane is cleared and refreshed. Reused lane keys are
     also checked against the verifier's live/cached banned-station state before
@@ -294,6 +319,17 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     lanes. Changing the Council model or toggling Council review does not
     proactively clear `councilAccess.synthesis`; synthesis access refreshes only
     when that lane actually needs a fresh key.
+  - Parallel/Council reasoning uses the same collapsed reasoning trace UI as
+    normal chat. Stage 1 lanes render `entry.reasoning` above each lane
+    response with lane-specific IDs, and Council synthesis stores and renders
+    `council.synthesis.reasoning` above the Council answer. Lane responses now
+    stream through lane-scoped DOM targets (`primary`, `secondary`, and
+    `synthesis`), so content and reasoning can appear token-by-token without
+    clobbering the other lane. `ChatArea` keeps a separate
+    `councilReasoningStreams` map for those concurrent traces while the normal
+    single-chat `reasoningBuffer` remains unchanged. Final lane/synthesis
+    completion still saves parsed reasoning, duration, citations, and canonical
+    message content as before.
   - Persisted Memory mode can remain enabled globally, and send/regenerate now
     run memory augmentation once before a Parallel/Council turn fans out to
     model lanes. The approved `_lastApiContent` override is applied by
@@ -472,6 +508,20 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     knobs were removed after the composer direction settled. The fixed behavior
     is full model-name chips, attachment and Settings visible inline, Web
     search inside Settings, and wider Chat-mode model-chip capacity by default.
+  - Completed assistant Markdown finalization now funnels in-place content
+    updates through `ChatArea.renderCompletedAssistantContent(...)`, the same
+    citation -> Markdown/LaTeX -> inline-citation -> link-enhancement pipeline
+    used by the normal full render path. This guards the single-chat path where
+    finalized reasoning can otherwise update only `.message-content` in place.
+    Normal send completion must always call `finalizeStreamingMessage(...)`,
+    even when text content exists, because the streaming DOM may contain only a
+    partial Markdown render from the last chunk; regenerate already followed
+    this final-render pattern. Run that final message render before
+    `finalizeReasoningDisplay(...)` so the final action row and Sources UI are
+    rebuilt before the reasoning trace is polished. Citation metadata
+    enrichment must call `finalizeStreamingMessage(message, { forceFullRender:
+    true })`, because enriched source cards live outside `.message-content` and
+    would otherwise be skipped by the no-flash finalized-reasoning branch.
   - `CouncilController` receives `chatDB`, `inferenceService`, and
     `ticketClient` from `ChatApp` instead of importing the service singletons
     directly. This keeps browser storage/network singleton initialization out

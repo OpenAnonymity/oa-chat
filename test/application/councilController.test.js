@@ -880,6 +880,280 @@ test('sendLaneMessagesCompletion retries synthesis credit exhaustion without cle
     assert.equal(savedSessions[0].councilAccess.synthesis.apiKey, null);
 });
 
+test('sendLaneCompletion streams content and reasoning into the selected lane', async () => {
+    const uiCalls = [];
+    const persisted = [];
+    const controller = createController({
+        reasoningEnabled: true,
+        inferenceService: {
+            streamCompletion: async (
+                _messages,
+                modelId,
+                laneSession,
+                onChunk,
+                onTokenUpdate,
+                _files,
+                _searchEnabled,
+                _abortController,
+                onStreamOpen,
+                onReasoningChunk,
+                reasoningEnabled,
+                reasoningEffort
+            ) => {
+                assert.equal(modelId, 'anthropic/claude');
+                assert.equal(laneSession.apiKey, 'secondary-key');
+                assert.equal(reasoningEnabled, true);
+                assert.equal(reasoningEffort, 'medium');
+                onStreamOpen();
+                onReasoningChunk('thinking ');
+                onTokenUpdate({ completionTokens: 2 });
+                onChunk('hello ');
+                onReasoningChunk('through lane');
+                onChunk('world');
+                return {
+                    totalTokens: 12,
+                    promptTokens: 4,
+                    completionTokens: 8,
+                    model: modelId,
+                    reasoning: 'thinking through lane',
+                    citations: [{ url: 'https://example.com', title: 'Example', index: 1 }]
+                };
+            }
+        }
+    });
+    Object.assign(controller.app, {
+        isViewingSession: () => true,
+        chatArea: {
+            updateCouncilLaneContent: (...args) => uiCalls.push(['content', ...args]),
+            updateCouncilLaneReasoning: (...args) => uiCalls.push(['reasoning', ...args]),
+            updateCouncilLaneReasoningSubtitleToDuration: (...args) => uiCalls.push(['duration', ...args]),
+            finalizeCouncilLaneReasoning: (...args) => uiCalls.push(['finalize', ...args])
+        }
+    });
+    const session = {
+        id: 'session-1',
+        councilAccess: {
+            secondary: {
+                apiKey: 'secondary-key',
+                apiKeyInfo: {},
+                expiresAt: new Date(Date.now() + 60_000).toISOString()
+            }
+        }
+    };
+    const assistantMessage = { id: 'assistant-1' };
+    const laneState = { status: 'pending', response: '' };
+
+    const result = await controller.sendLaneCompletion({
+        session,
+        entry: { laneId: 'secondary', id: 'anthropic/claude', name: 'Claude' },
+        sanitizedMessages: [{ role: 'user', content: 'hello' }],
+        searchEnabled: false,
+        abortController: new AbortController(),
+        streamTarget: {
+            assistantMessage,
+            laneState,
+            persistProgress: () => persisted.push(JSON.parse(JSON.stringify(laneState)))
+        }
+    });
+
+    assert.equal(result.content, 'hello world');
+    assert.equal(result.reasoning, 'thinking through lane');
+    assert.equal(result.totalTokens, 12);
+    assert.deepEqual(result.citations, [{ url: 'https://example.com', title: 'Example', index: 1 }]);
+    assert.equal(laneState.status, 'running');
+    assert.equal(laneState.response, 'hello world');
+    assert.equal(laneState.reasoning, 'thinking through lane');
+    assert.equal(laneState.streamingReasoning, false);
+    assert.equal(laneState.streamingTokens, null);
+    assert.ok(laneState.reasoningDuration >= 0);
+    assert.deepEqual(
+        uiCalls.filter((call) => call[0] === 'content').map((call) => call.slice(1, 4)),
+        [
+            ['assistant-1', 'secondary', 'hello '],
+            ['assistant-1', 'secondary', 'hello world']
+        ]
+    );
+    assert.deepEqual(
+        uiCalls.filter((call) => call[0] === 'reasoning').map((call) => call.slice(1, 4)),
+        [
+            ['assistant-1', 'secondary', 'thinking '],
+            ['assistant-1', 'secondary', 'thinking through lane']
+        ]
+    );
+    assert.equal(uiCalls.some((call) => call[0] === 'finalize' && call[1] === 'assistant-1' && call[2] === 'secondary'), true);
+    assert.equal(persisted.length > 0, true);
+});
+
+test('simultaneous streamed lanes use separate UI targets', async () => {
+    const contentTargets = [];
+    const reasoningTargets = [];
+    const controller = createController({
+        reasoningEnabled: true,
+        inferenceService: {
+            streamCompletion: async (_messages, modelId, laneSession, onChunk, _onTokenUpdate, _files, _searchEnabled, _abortController, _onStreamOpen, onReasoningChunk) => {
+                onReasoningChunk(`${laneSession.apiKey} thinks`);
+                onChunk(`${modelId} answer`);
+                return {
+                    completionTokens: 3,
+                    model: modelId,
+                    reasoning: `${laneSession.apiKey} thinks`
+                };
+            }
+        }
+    });
+    Object.assign(controller.app, {
+        isViewingSession: () => true,
+        chatArea: {
+            updateCouncilLaneContent: (messageId, laneId, content) => contentTargets.push({ messageId, laneId, content }),
+            updateCouncilLaneReasoning: (messageId, laneId, reasoning) => reasoningTargets.push({ messageId, laneId, reasoning }),
+            updateCouncilLaneReasoningSubtitleToDuration: () => {},
+            finalizeCouncilLaneReasoning: () => {}
+        }
+    });
+    const session = {
+        id: 'session-1',
+        councilAccess: {
+            primary: {
+                apiKey: 'primary-key',
+                apiKeyInfo: {},
+                expiresAt: new Date(Date.now() + 60_000).toISOString()
+            },
+            secondary: {
+                apiKey: 'secondary-key',
+                apiKeyInfo: {},
+                expiresAt: new Date(Date.now() + 60_000).toISOString()
+            }
+        }
+    };
+    const assistantMessage = { id: 'assistant-1' };
+
+    await Promise.all([
+        controller.sendLaneCompletion({
+            session,
+            entry: { laneId: 'primary', id: 'openai/gpt', name: 'GPT' },
+            sanitizedMessages: [{ role: 'user', content: 'hello' }],
+            searchEnabled: false,
+            abortController: new AbortController(),
+            streamTarget: {
+                assistantMessage,
+                laneState: { status: 'pending', response: '' },
+                persistProgress: () => {}
+            }
+        }),
+        controller.sendLaneCompletion({
+            session,
+            entry: { laneId: 'secondary', id: 'anthropic/claude', name: 'Claude' },
+            sanitizedMessages: [{ role: 'user', content: 'hello' }],
+            searchEnabled: false,
+            abortController: new AbortController(),
+            streamTarget: {
+                assistantMessage,
+                laneState: { status: 'pending', response: '' },
+                persistProgress: () => {}
+            }
+        })
+    ]);
+
+    assert.deepEqual(contentTargets.map((target) => target.laneId).sort(), ['primary', 'secondary']);
+    assert.deepEqual(reasoningTargets.map((target) => target.laneId).sort(), ['primary', 'secondary']);
+    assert.equal(contentTargets.find((target) => target.laneId === 'primary').content, 'openai/gpt answer');
+    assert.equal(contentTargets.find((target) => target.laneId === 'secondary').content, 'anthropic/claude answer');
+});
+
+test('streamed lane cleanup runs after reasoning chunk then request error', async () => {
+    const clearCalls = [];
+    const persisted = [];
+    const controller = createController({
+        reasoningEnabled: true,
+        inferenceService: {
+            streamCompletion: async (_messages, _modelId, _laneSession, _onChunk, _onTokenUpdate, _files, _searchEnabled, _abortController, _onStreamOpen, onReasoningChunk) => {
+                onReasoningChunk('partial thinking');
+                throw new Error('provider failed mid-stream');
+            }
+        }
+    });
+    Object.assign(controller.app, {
+        isViewingSession: () => true,
+        chatArea: {
+            updateCouncilLaneReasoning: () => {},
+            clearCouncilLaneReasoning: (...args) => clearCalls.push(args)
+        }
+    });
+    const session = {
+        id: 'session-1',
+        councilAccess: {
+            primary: {
+                apiKey: 'primary-key',
+                apiKeyInfo: {},
+                expiresAt: new Date(Date.now() + 60_000).toISOString()
+            }
+        }
+    };
+    const laneState = { status: 'pending', response: '' };
+
+    await assert.rejects(
+        controller.sendLaneCompletion({
+            session,
+            entry: { laneId: 'primary', id: 'openai/gpt', name: 'GPT' },
+            sanitizedMessages: [{ role: 'user', content: 'hello' }],
+            searchEnabled: false,
+            abortController: new AbortController(),
+            streamTarget: {
+                assistantMessage: { id: 'assistant-1' },
+                laneState,
+                persistProgress: () => persisted.push(JSON.parse(JSON.stringify(laneState)))
+            }
+        }),
+        /provider failed mid-stream/
+    );
+
+    assert.equal(laneState.streamingReasoning, false);
+    assert.equal(laneState.streamingTokens, null);
+    assert.equal(laneState.reasoning, 'partial thinking');
+    assert.deepEqual(clearCalls, [
+        ['assistant-1', 'primary', { label: 'Reasoning interrupted' }]
+    ]);
+    assert.equal(persisted.at(-1).streamingReasoning, false);
+});
+
+test('sendLaneMessagesCompletion falls back to strict completion when streaming is unsupported', async () => {
+    const calls = [];
+    const controller = createController({
+        inferenceService: {
+            streamCompletion: async () => {
+                throw new Error('Backend does not support streaming completions');
+            },
+            sendCompletionStrict: async (_messages, modelId, laneSession, options) => {
+                calls.push({ modelId, token: laneSession.apiKey, searchEnabled: options.searchEnabled });
+                return { content: 'strict response' };
+            }
+        }
+    });
+    const session = {
+        id: 'session-1',
+        councilAccess: {
+            secondary: {
+                apiKey: 'secondary-key',
+                apiKeyInfo: {},
+                expiresAt: new Date(Date.now() + 60_000).toISOString()
+            }
+        }
+    };
+
+    const result = await controller.sendLaneCompletion({
+        session,
+        entry: { laneId: 'secondary', id: 'anthropic/claude', name: 'Claude' },
+        sanitizedMessages: [{ role: 'user', content: 'hello' }],
+        searchEnabled: true,
+        abortController: new AbortController()
+    });
+
+    assert.equal(result.content, 'strict response');
+    assert.deepEqual(calls, [
+        { modelId: 'anthropic/claude', token: 'secondary-key', searchEnabled: true }
+    ]);
+});
+
 function createRunTurnHarness({ councilConfig = {}, sendLaneCompletion, runSynthesisCompletion, messages = null } = {}) {
     const savedMessages = [];
     const savedSessions = [];

@@ -46,11 +46,15 @@ function extractResponseContent(result) {
 
 function extractReasoning(result) {
     const message = result?.data?.choices?.[0]?.message;
-    const reasoning = message?.reasoning || message?.reasoning_details || null;
+    const reasoning = result?.reasoning || message?.reasoning || message?.reasoning_details || null;
     return typeof reasoning === 'string' ? parseReasoningContent(reasoning) : null;
 }
 
 function extractCitations(result) {
+    if (Array.isArray(result?.citations) && result.citations.length > 0) {
+        return result.citations;
+    }
+
     const annotations = result?.data?.choices?.[0]?.message?.annotations;
     if (!Array.isArray(annotations)) return null;
 
@@ -72,7 +76,9 @@ function extractCitations(result) {
 }
 
 function extractTokenCount(result) {
-    return result?.usage?.total_tokens
+    return result?.totalTokens
+        || result?.total_tokens
+        || result?.usage?.total_tokens
         || result?.usage?.totalTokens
         || result?.data?.usage?.total_tokens
         || result?.data?.usage?.totalTokens
@@ -157,6 +163,9 @@ export default class CouncilController {
         stageEntry.response = '';
         stageEntry.error = null;
         stageEntry.reasoning = null;
+        stageEntry.reasoningDuration = null;
+        stageEntry.streamingReasoning = false;
+        stageEntry.streamingTokens = null;
         stageEntry.citations = null;
         stageEntry.startedAt = Date.now();
         stageEntry.completedAt = null;
@@ -182,10 +191,18 @@ export default class CouncilController {
                 sanitizedMessages,
                 searchEnabled,
                 abortController,
-                typingId: null
+                typingId: null,
+                streamTarget: {
+                    assistantMessage,
+                    laneState: stageEntry,
+                    persistProgress: () => this.persistStreamingMessageSnapshot(assistantMessage)
+                }
             });
             stageEntry.response = extractResponseContent(result);
             stageEntry.reasoning = extractReasoning(result);
+            stageEntry.reasoningDuration = result?.reasoningDuration || null;
+            stageEntry.streamingReasoning = false;
+            stageEntry.streamingTokens = null;
             stageEntry.citations = extractCitations(result);
             stageEntry.status = 'complete';
             stageEntry.completedAt = Date.now();
@@ -195,6 +212,13 @@ export default class CouncilController {
                 selectedLaneWasCanonical ? stageEntry.label : null
             );
         } catch (error) {
+            stageEntry.streamingReasoning = false;
+            stageEntry.streamingTokens = null;
+            if (this.app.chatArea && this.app.isViewingSession(session.id)) {
+                this.app.chatArea.clearCouncilLaneReasoning?.(assistantMessage.id, laneId, {
+                    label: isAbortError(error) ? 'Reasoning stopped' : 'Reasoning interrupted'
+                });
+            }
             if (isAbortError(error)) {
                 stageEntry.status = 'cancelled';
                 stageEntry.cancelledAt = Date.now();
@@ -698,7 +722,13 @@ export default class CouncilController {
                     model: entry.name,
                     modelId: entry.id,
                     status: 'pending',
-                    response: ''
+                    response: '',
+                    reasoning: null,
+                    reasoningDuration: null,
+                    streamingReasoning: false,
+                    streamingTokens: null,
+                    citations: null,
+                    error: null
                 })),
                 errors: [],
                 canonicalStage1Label: buildCouncilLabel(0),
@@ -708,6 +738,11 @@ export default class CouncilController {
                     modelId: synthesisEntry.id,
                     status: 'waiting',
                     response: '',
+                    reasoning: null,
+                    reasoningDuration: null,
+                    streamingReasoning: false,
+                    streamingTokens: null,
+                    citations: null,
                     error: null,
                     fallbackUsed: false
                 } : null,
@@ -732,6 +767,13 @@ export default class CouncilController {
         if (!options.skipSessionsRender) {
             this.app.renderSessions();
         }
+    }
+
+    persistStreamingMessageSnapshot(message) {
+        if (!message?.id) return;
+        this.chatDB.saveMessage(message).catch((error) => {
+            console.debug('Unable to persist streaming council snapshot:', error);
+        });
     }
 
     buildSynthesisConversationContext(sanitizedMessages = []) {
@@ -871,7 +913,8 @@ export default class CouncilController {
         userMessage,
         stageEntries,
         abortController,
-        typingId = null
+        typingId = null,
+        streamTarget = null
     }) {
         const userQuery = getMessageTextContent(userMessage?.content).trim()
             || getMessageTextContent(sanitizedMessages[sanitizedMessages.length - 1]?.content).trim();
@@ -886,7 +929,8 @@ export default class CouncilController {
             messages,
             searchEnabled: false,
             abortController,
-            typingId
+            typingId,
+            streamTarget
         });
     }
 
@@ -966,10 +1010,18 @@ export default class CouncilController {
                         sanitizedMessages: laneSanitizedMessages.get(entry.laneId) || sanitizedMessages,
                         searchEnabled,
                         abortController,
-                        typingId: null
+                        typingId: null,
+                        streamTarget: {
+                            assistantMessage,
+                            laneState: stageEntry,
+                            persistProgress: () => this.persistStreamingMessageSnapshot(assistantMessage)
+                        }
                     });
                     stageEntry.response = extractResponseContent(result);
                     stageEntry.reasoning = extractReasoning(result);
+                    stageEntry.reasoningDuration = result?.reasoningDuration || null;
+                    stageEntry.streamingReasoning = false;
+                    stageEntry.streamingTokens = null;
                     stageEntry.citations = extractCitations(result);
                     stageEntry.status = 'complete';
                     stageEntry.completedAt = Date.now();
@@ -986,10 +1038,14 @@ export default class CouncilController {
                     if (isAbortError(error)) {
                         stageEntry.status = 'cancelled';
                         stageEntry.cancelledAt = Date.now();
+                        stageEntry.streamingReasoning = false;
+                        stageEntry.streamingTokens = null;
                         return;
                     }
                     stageEntry.status = 'error';
                     stageEntry.error = error?.message || 'Request failed';
+                    stageEntry.streamingReasoning = false;
+                    stageEntry.streamingTokens = null;
                     assistantMessage.council.errors.push({
                         model: entry.name,
                         message: stageEntry.error
@@ -1036,7 +1092,12 @@ export default class CouncilController {
                             userMessage,
                             stageEntries: assistantMessage.council.stage1,
                             abortController,
-                            typingId: null
+                            typingId: null,
+                            streamTarget: {
+                                assistantMessage,
+                                laneState: assistantMessage.council.synthesis,
+                                persistProgress: () => this.persistStreamingMessageSnapshot(assistantMessage)
+                            }
                         });
                         const synthesisResponse = extractResponseContent(synthesisResult);
                         if (!synthesisResponse) {
@@ -1044,9 +1105,11 @@ export default class CouncilController {
                         }
                         const synthesisCitations = extractCitations(synthesisResult);
                         const synthesisStatus = completed.length === entries.length ? 'complete' : 'partial';
+                        const synthesisReasoning = extractReasoning(synthesisResult);
                         assistantMessage.content = synthesisResponse;
                         assistantMessage.model = 'Council';
-                        assistantMessage.reasoning = extractReasoning(synthesisResult);
+                        assistantMessage.reasoning = synthesisReasoning;
+                        assistantMessage.reasoningDuration = synthesisResult?.reasoningDuration || null;
                         assistantMessage.tokenCount = extractTokenCount(synthesisResult);
                         assistantMessage.citations = synthesisCitations || null;
                         assistantMessage.council.synthesis = {
@@ -1054,6 +1117,10 @@ export default class CouncilController {
                             modelId: synthesisEntry.id,
                             status: synthesisStatus,
                             response: synthesisResponse,
+                            reasoning: synthesisReasoning,
+                            reasoningDuration: synthesisResult?.reasoningDuration || null,
+                            streamingReasoning: false,
+                            streamingTokens: null,
                             citations: synthesisCitations,
                             error: null,
                             fallbackUsed: false,
@@ -1067,6 +1134,8 @@ export default class CouncilController {
                         if (isAbortError(error)) {
                             assistantMessage.council.synthesis.status = 'cancelled';
                             assistantMessage.council.synthesis.cancelledAt = Date.now();
+                            assistantMessage.council.synthesis.streamingReasoning = false;
+                            assistantMessage.council.synthesis.streamingTokens = null;
                             assistantMessage.council.statusMessage = 'Stopped after first opinions.';
                         } else {
                             const errorMessage = error?.message || 'Council synthesis failed.';
@@ -1078,6 +1147,10 @@ export default class CouncilController {
                                 modelId: synthesisEntry.id,
                                 status: 'error',
                                 response: '',
+                                reasoning: assistantMessage.council.synthesis.reasoning || null,
+                                reasoningDuration: assistantMessage.council.synthesis.reasoningDuration || null,
+                                streamingReasoning: false,
+                                streamingTokens: null,
                                 error: errorMessage,
                                 fallbackUsed: true,
                                 fallbackLabel: canonical.label,
@@ -1170,7 +1243,8 @@ export default class CouncilController {
         searchEnabled,
         abortController,
         typingId = null,
-        hasRetriedAfterCredit = false
+        hasRetriedAfterCredit = false,
+        streamTarget = null
     }) {
         const processedMessages = this.app.processMessagesWithFiles(sanitizedMessages, entry.id);
         return this.sendLaneMessagesCompletion({
@@ -1180,7 +1254,8 @@ export default class CouncilController {
             searchEnabled,
             abortController,
             typingId,
-            hasRetriedAfterCredit
+            hasRetriedAfterCredit,
+            streamTarget
         });
     }
 
@@ -1191,29 +1266,41 @@ export default class CouncilController {
         searchEnabled,
         abortController,
         typingId = null,
-        hasRetriedAfterCredit = false
+        hasRetriedAfterCredit = false,
+        streamTarget = null
     }) {
         const laneSession = this.buildLaneSession(session, entry.laneId);
         try {
-            return await this.inferenceService.sendCompletionStrict(
-                messages,
-                entry.id,
-                laneSession,
-                {
-                    context: entry.laneId === SYNTHESIS_LANE_ID
-                        ? `Council synthesis (${entry.name})`
-                        : `Parallel response (${entry.name})`,
-                    signal: abortController?.signal || null,
-                    searchEnabled,
-                    reasoningEnabled: this.app.reasoningEnabled,
-                    reasoningEffort: this.app.reasoningEffort
+            if (typeof this.inferenceService.streamCompletion === 'function') {
+                try {
+                    return await this.streamLaneMessagesCompletion({
+                        session,
+                        entry,
+                        laneSession,
+                        messages,
+                        searchEnabled,
+                        abortController,
+                        streamTarget
+                    });
+                } catch (error) {
+                    if (!this.isStreamingUnsupportedError(error)) {
+                        throw error;
+                    }
                 }
-            );
+            }
+
+            return await this.sendLaneMessagesStrictCompletion({
+                entry,
+                laneSession,
+                messages,
+                searchEnabled,
+                abortController
+            });
         } catch (error) {
             if (!hasRetriedAfterCredit && this.app.isAccessCreditExhaustedError(error)) {
                 this.clearLaneAccess(session, entry.laneId);
                 await this.chatDB.saveSession(session);
-            await this.requestLaneAccess(session, entry, typingId, abortController?.signal || null);
+                await this.requestLaneAccess(session, entry, typingId, abortController?.signal || null);
                 return this.sendLaneMessagesCompletion({
                     session,
                     entry,
@@ -1221,10 +1308,216 @@ export default class CouncilController {
                     searchEnabled,
                     abortController,
                     typingId,
-                    hasRetriedAfterCredit: true
+                    hasRetriedAfterCredit: true,
+                    streamTarget
                 });
             }
             throw error;
         }
+    }
+
+    isStreamingUnsupportedError(error) {
+        const message = typeof error?.message === 'string' ? error.message : '';
+        return /streamCompletion|streaming/i.test(message)
+            && /not implemented|not supported|does not support/i.test(message);
+    }
+
+    async sendLaneMessagesStrictCompletion({
+        entry,
+        laneSession,
+        messages,
+        searchEnabled,
+        abortController
+    }) {
+        return this.inferenceService.sendCompletionStrict(
+            messages,
+            entry.id,
+            laneSession,
+            {
+                context: entry.laneId === SYNTHESIS_LANE_ID
+                    ? `Council synthesis (${entry.name})`
+                    : `Parallel response (${entry.name})`,
+                signal: abortController?.signal || null,
+                searchEnabled,
+                reasoningEnabled: this.app.reasoningEnabled,
+                reasoningEffort: this.app.reasoningEffort
+            }
+        );
+    }
+
+    async streamLaneMessagesCompletion({
+        session,
+        entry,
+        laneSession,
+        messages,
+        searchEnabled,
+        abortController,
+        streamTarget = null
+    }) {
+        const laneState = streamTarget?.laneState || null;
+        const assistantMessage = streamTarget?.assistantMessage || null;
+        const persistProgress = typeof streamTarget?.persistProgress === 'function'
+            ? streamTarget.persistProgress
+            : null;
+        const laneId = entry.laneId || null;
+        let content = '';
+        let reasoning = '';
+        let streamingTokenCount = 0;
+        let reasoningStartTime = null;
+        let reasoningEndTime = null;
+        let firstContentChunk = true;
+        let lastPersistAt = 0;
+
+        const markRunning = () => {
+            if (!laneState) return;
+            if (laneState.status === 'pending' || laneState.status === 'waiting') {
+                laneState.status = 'running';
+            }
+            laneState.startedAt = laneState.startedAt || Date.now();
+        };
+        const persistSnapshot = (force = false) => {
+            if (!persistProgress) return;
+            const now = Date.now();
+            if (!force && now - lastPersistAt < SAVE_INTERVAL_MS) return;
+            lastPersistAt = now;
+            persistProgress();
+        };
+        const updateContent = () => {
+            if (!assistantMessage?.id || !laneId) return;
+            if (this.app.chatArea && this.app.isViewingSession(session.id)) {
+                this.app.chatArea.updateCouncilLaneContent(assistantMessage.id, laneId, content);
+            }
+        };
+        const updateReasoning = () => {
+            if (!assistantMessage?.id || !laneId) return;
+            if (this.app.chatArea && this.app.isViewingSession(session.id)) {
+                this.app.chatArea.updateCouncilLaneReasoning(assistantMessage.id, laneId, reasoning);
+            }
+        };
+        const updateReasoningDuration = (duration) => {
+            if (!assistantMessage?.id || !laneId) return;
+            if (this.app.chatArea && this.app.isViewingSession(session.id)) {
+                this.app.chatArea.updateCouncilLaneReasoningSubtitleToDuration(assistantMessage.id, laneId, duration);
+            }
+        };
+
+        let tokenData;
+        try {
+            tokenData = await this.inferenceService.streamCompletion(
+                messages,
+                entry.id,
+                laneSession,
+                (chunk) => {
+                    markRunning();
+                    if (!chunk) return;
+                    content += chunk;
+                    if (laneState) {
+                        laneState.response = content;
+                        laneState.streamingTokens = Math.ceil(content.length / 4);
+                    }
+                    if (firstContentChunk && reasoningStartTime && reasoning.length > 0) {
+                        firstContentChunk = false;
+                        reasoningEndTime = Date.now();
+                        const reasoningDuration = reasoningEndTime - reasoningStartTime;
+                        if (laneState) {
+                            laneState.reasoningDuration = reasoningDuration;
+                        }
+                        updateReasoningDuration(reasoningDuration);
+                    }
+                    updateContent();
+                    persistSnapshot();
+                },
+                (tokenUpdate) => {
+                    streamingTokenCount = tokenUpdate?.completionTokens || streamingTokenCount || 0;
+                },
+                [],
+                searchEnabled,
+                abortController,
+                () => {
+                    markRunning();
+                    persistSnapshot(true);
+                },
+                (reasoningChunk) => {
+                    markRunning();
+                    if (!reasoningChunk) return;
+                    if (!reasoningStartTime) {
+                        reasoningStartTime = Date.now();
+                    }
+                    reasoning += reasoningChunk;
+                    if (laneState) {
+                        laneState.reasoning = reasoning;
+                        laneState.streamingReasoning = true;
+                    }
+                    updateReasoning();
+                    persistSnapshot();
+                },
+                this.app.reasoningEnabled,
+                this.app.reasoningEffort
+            );
+        } catch (error) {
+            if (laneState) {
+                laneState.streamingReasoning = false;
+                laneState.streamingTokens = null;
+            }
+            if (assistantMessage?.id && laneId && this.app.chatArea && this.app.isViewingSession(session.id)) {
+                this.app.chatArea.clearCouncilLaneReasoning?.(assistantMessage.id, laneId, {
+                    label: isAbortError(error) ? 'Reasoning stopped' : 'Reasoning interrupted'
+                });
+            }
+            persistSnapshot(true);
+            throw error;
+        }
+
+        if (laneState) {
+            laneState.response = content;
+            laneState.reasoning = tokenData.reasoning || reasoning || null;
+            laneState.streamingReasoning = false;
+            laneState.streamingTokens = null;
+            if (laneState.reasoning && reasoningStartTime) {
+                const finalReasoningEndTime = reasoningEndTime || Date.now();
+                laneState.reasoningDuration = finalReasoningEndTime - reasoningStartTime;
+            }
+        }
+        if (assistantMessage?.id && laneId && laneState?.reasoning && this.app.chatArea && this.app.isViewingSession(session.id)) {
+            this.app.chatArea.finalizeCouncilLaneReasoning(
+                assistantMessage.id,
+                laneId,
+                laneState.reasoning,
+                laneState.reasoningDuration
+            );
+        }
+        persistSnapshot(true);
+
+        return {
+            content,
+            totalTokens: tokenData.totalTokens,
+            promptTokens: tokenData.promptTokens,
+            completionTokens: tokenData.completionTokens || streamingTokenCount || null,
+            usage: {
+                total_tokens: tokenData.totalTokens,
+                prompt_tokens: tokenData.promptTokens,
+                completion_tokens: tokenData.completionTokens || streamingTokenCount || null
+            },
+            model: tokenData.model || entry.id,
+            reasoning: tokenData.reasoning || reasoning || null,
+            reasoningDuration: laneState?.reasoningDuration || null,
+            citations: tokenData.citations || null,
+            data: {
+                choices: [
+                    {
+                        message: {
+                            content,
+                            reasoning: tokenData.reasoning || reasoning || null,
+                            annotations: tokenData.citations || null
+                        }
+                    }
+                ],
+                usage: {
+                    total_tokens: tokenData.totalTokens,
+                    prompt_tokens: tokenData.promptTokens,
+                    completion_tokens: tokenData.completionTokens || streamingTokenCount || null
+                }
+            }
+        };
     }
 }

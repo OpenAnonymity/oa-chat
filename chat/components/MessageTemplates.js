@@ -1482,25 +1482,49 @@ function buildCouncilLaneActionRow(entry, messageId) {
 
 function buildCouncilStage1EntryBody(entry, processContentWithLatex, messageId, options = {}) {
     const { showLaneActions = false } = options;
-    if (entry?.status === 'complete' && entry.response) {
+    const status = typeof entry?.status === 'string' ? entry.status : 'pending';
+    const hasRenderableOutput = !!(
+        entry?.response ||
+        entry?.reasoning ||
+        entry?.streamingReasoning
+    );
+    if ((status === 'complete' || status === 'running') && hasRenderableOutput) {
         const citations = Array.isArray(entry.citations) ? entry.citations : [];
         const citationScopeId = buildCitationScopeId(messageId, entry.laneId || entry.label || 'lane');
         const citationsToggle = buildCitationsToggleButton(citations, citationScopeId);
         const citationsSection = buildCitationsSection(citations, citationScopeId);
-        let rawContent = entry.response;
+        let processedContent = '';
+        let rawContent = entry.response || '';
         if (citations.length > 0) {
             rawContent = insertRawCitationMarkers(rawContent, citations);
         }
-        let processedContent = processContentWithLatex(rawContent);
-        if (citations.length > 0) {
-            processedContent = addInlineCitationMarkers(processedContent, citationScopeId);
+        if (entry.response) {
+            processedContent = processContentWithLatex(rawContent);
+            if (citations.length > 0) {
+                processedContent = addInlineCitationMarkers(processedContent, citationScopeId);
+            }
+            processedContent = enhanceInlineLinks(processedContent, `${messageId}-${entry.label}`);
         }
-        processedContent = enhanceInlineLinks(processedContent, `${messageId}-${entry.label}`);
-        return `
-            <div class="${CLASSES.assistantBubble}">
-                <div class="${CLASSES.assistantContent}">
-                    ${processedContent}
+        const reasoningHtml = buildReasoningTrace(
+            entry.reasoning,
+            `${messageId}-${entry.laneId || entry.label || 'lane'}`,
+            entry.streamingReasoning || false,
+            processContentWithLatex,
+            entry.reasoningDuration
+        );
+        const contentHtml = entry.response
+            ? `
+                <div class="${CLASSES.assistantBubble} council-lane-content-shell">
+                    <div class="${CLASSES.assistantContent} council-lane-content">
+                        ${processedContent}
+                    </div>
                 </div>
+            `
+            : '';
+        return `
+            <div class="council-response-body" data-council-lane-body="${escapeHtmlAttribute(entry.laneId || entry.label || 'lane')}">
+                ${reasoningHtml}
+                ${contentHtml}
             </div>
             ${showLaneActions ? buildCouncilLaneActionRow(entry, messageId) : ''}
             ${citationsToggle ? `<div class="council-response-sources-row">${citationsToggle}</div>` : ''}
@@ -1525,8 +1549,10 @@ function buildCouncilStage1EntryBody(entry, processContentWithLatex, messageId, 
     }
 
     return `
-        <div class="px-2 py-1">
+        <div class="council-response-body" data-council-lane-body="${escapeHtmlAttribute(entry?.laneId || entry?.label || 'lane')}">
+        <div class="council-response-pending px-2 py-1">
             ${buildPendingIndicatorContent('waiting-response')}
+        </div>
         </div>
     `;
 }
@@ -1551,25 +1577,48 @@ function buildCouncilSynthesisSection(synthesis, processContentWithLatex, messag
         `
         : '';
 
-    if ((status === 'complete' || status === 'partial') && synthesis.response) {
+    const hasRenderableOutput = !!(
+        synthesis.response ||
+        synthesis.reasoning ||
+        synthesis.streamingReasoning
+    );
+    if ((status === 'complete' || status === 'partial' || status === 'running') && hasRenderableOutput) {
         const citations = Array.isArray(synthesis.citations) ? synthesis.citations : [];
         const citationScopeId = buildCitationScopeId(messageId, 'synthesis');
         const citationsToggle = buildCitationsToggleButton(citations, citationScopeId);
         const citationsSection = buildCitationsSection(citations, citationScopeId);
-        let rawContent = synthesis.response;
+        let processedContent = '';
+        let rawContent = synthesis.response || '';
         if (citations.length > 0) {
             rawContent = insertRawCitationMarkers(rawContent, citations);
         }
-        let processedContent = processContentWithLatex(rawContent);
-        if (citations.length > 0) {
-            processedContent = addInlineCitationMarkers(processedContent, citationScopeId);
+        if (synthesis.response) {
+            processedContent = processContentWithLatex(rawContent);
+            if (citations.length > 0) {
+                processedContent = addInlineCitationMarkers(processedContent, citationScopeId);
+            }
+            processedContent = enhanceInlineLinks(processedContent, `${messageId}-synthesis`);
         }
-        processedContent = enhanceInlineLinks(processedContent, `${messageId}-synthesis`);
-        bodyHtml = `
-            <div class="${CLASSES.assistantBubble}">
-                <div class="${CLASSES.assistantContent}">
-                    ${processedContent}
+        const reasoningHtml = buildReasoningTrace(
+            synthesis.reasoning,
+            `${messageId}-synthesis`,
+            synthesis.streamingReasoning || false,
+            processContentWithLatex,
+            synthesis.reasoningDuration
+        );
+        const contentHtml = synthesis.response
+            ? `
+                <div class="${CLASSES.assistantBubble} council-lane-content-shell">
+                    <div class="${CLASSES.assistantContent} council-lane-content">
+                        ${processedContent}
+                    </div>
                 </div>
+            `
+            : '';
+        bodyHtml = `
+            <div class="council-response-body" data-council-lane-body="synthesis">
+                ${reasoningHtml}
+                ${contentHtml}
             </div>
             ${citationsToggle ? `<div class="council-response-sources-row">${citationsToggle}</div>` : ''}
             ${citationsSection}
@@ -1589,14 +1638,16 @@ function buildCouncilSynthesisSection(synthesis, processContentWithLatex, messag
         `;
     } else {
         bodyHtml = `
-            <div class="px-2 py-1">
+            <div class="council-response-body" data-council-lane-body="synthesis">
+            <div class="council-response-pending px-2 py-1">
                 ${buildPendingIndicatorContent('waiting-response')}
+            </div>
             </div>
         `;
     }
 
     return `
-        <div class="council-synthesis-block">
+        <div class="council-synthesis-block" data-council-lane-id="synthesis">
             ${metaHtml}
             ${bodyHtml}
         </div>

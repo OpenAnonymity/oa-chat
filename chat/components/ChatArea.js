@@ -18,6 +18,7 @@ export default class ChatArea {
         this.app = app;
         // Buffer for debounced reasoning updates during streaming
         this.reasoningBuffer = { content: '', timeout: null, messageId: null };
+        this.councilReasoningStreams = new Map();
         // Typewriter state for gradual content reveal
         this.typewriter = {
             targetContent: '',      // Full content to display
@@ -1052,6 +1053,22 @@ export default class ChatArea {
         }
     }
 
+    renderCompletedAssistantContent(message, scopeId = message?.id) {
+        let processedContent = message?.content || '';
+
+        if (message?.citations && message.citations.length > 0) {
+            processedContent = window.MessageTemplates.insertRawCitationMarkers(processedContent, message.citations);
+        }
+
+        processedContent = this.app.processContentWithLatex(processedContent);
+
+        if (message?.citations && message.citations.length > 0) {
+            processedContent = window.MessageTemplates.addInlineCitationMarkers(processedContent, scopeId);
+        }
+
+        return window.MessageTemplates.enhanceInlineLinks(processedContent, scopeId);
+    }
+
     /**
      * Handles copying the content of a message.
      * Prioritizes Safari-safe raw DOM data when enabled, else DB-first.
@@ -1737,6 +1754,7 @@ export default class ChatArea {
             clearInterval(this.typewriter.interval);
             this.typewriter.interval = null;
         }
+        this.clearAllCouncilReasoningStreams();
 
         // Check if empty state is already rendered (by prelude.js) to avoid re-render flash
         const hasEmptyState = messagesContainer.querySelector('.welcome-landing') !== null;
@@ -2206,6 +2224,262 @@ export default class ChatArea {
             });
             this.app.updateActivePromptScrollSpacer();
         }
+    }
+
+    getCouncilLaneReasoningId(messageId, laneId) {
+        return `${messageId}-${laneId || 'lane'}`;
+    }
+
+    getCouncilLaneBody(messageId, laneId) {
+        const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
+        if (!messageEl) return null;
+
+        if (laneId === 'synthesis') {
+            const synthesisBlock = messageEl.querySelector('.council-synthesis-block');
+            return synthesisBlock?.querySelector('.council-response-body') || null;
+        }
+
+        const panels = Array.from(messageEl.querySelectorAll('.council-response-panel'));
+        const panel = panels.find((entry) => entry.dataset.councilLaneId === laneId);
+        return panel?.querySelector('.council-response-body') || null;
+    }
+
+    removeCouncilLanePending(bodyEl) {
+        bodyEl?.querySelector('.council-response-pending')?.remove();
+    }
+
+    ensureCouncilLaneContentElement(messageId, laneId) {
+        const bodyEl = this.getCouncilLaneBody(messageId, laneId);
+        if (!bodyEl) return null;
+        this.removeCouncilLanePending(bodyEl);
+
+        let contentEl = bodyEl.querySelector('.council-lane-content');
+        if (contentEl) return contentEl;
+
+        const contentShell = document.createElement('div');
+        contentShell.className = 'py-3 px-4 font-normal message-assistant w-full flex items-center council-lane-content-shell';
+        contentShell.innerHTML = '<div class="min-w-0 w-full overflow-hidden message-content prose council-lane-content"></div>';
+        bodyEl.appendChild(contentShell);
+        return contentShell.querySelector('.council-lane-content');
+    }
+
+    updateCouncilLaneContent(messageId, laneId, content) {
+        const contentEl = this.ensureCouncilLaneContentElement(messageId, laneId);
+        if (!contentEl) return;
+
+        contentEl.classList.add('streaming');
+        let processedContent = this.app.processContentWithLatex(content || '');
+        processedContent = window.MessageTemplates.enhanceInlineLinks(
+            processedContent,
+            `${messageId}-${laneId || 'lane'}`
+        );
+        this.patchStreamingContent(contentEl, processedContent);
+        renderMathInElement(contentEl, {
+            delimiters: [
+                {left: '$$', right: '$$', display: true},
+                {left: '\\[', right: '\\]', display: true},
+                {left: '\\(', right: '\\)', display: false}
+            ],
+            throwOnError: false
+        });
+        this.app.updateActivePromptScrollSpacer();
+        this.app.updateScrollButtonVisibility();
+    }
+
+    ensureCouncilLaneReasoningTrace(messageId, laneId) {
+        const reasoningId = this.getCouncilLaneReasoningId(messageId, laneId);
+        const existingContentEl = document.getElementById(`reasoning-content-${reasoningId}`);
+        if (existingContentEl) return existingContentEl;
+
+        const bodyEl = this.getCouncilLaneBody(messageId, laneId);
+        if (!bodyEl) return null;
+        this.removeCouncilLanePending(bodyEl);
+
+        const traceWrapper = document.createElement('div');
+        traceWrapper.innerHTML = buildReasoningTrace(
+            '',
+            reasoningId,
+            true,
+            this.app.processContentWithLatex.bind(this.app)
+        );
+        const traceEl = traceWrapper.firstElementChild;
+        if (!traceEl) return null;
+
+        const firstContentShell = bodyEl.querySelector('.council-lane-content-shell');
+        if (firstContentShell) {
+            bodyEl.insertBefore(traceEl, firstContentShell);
+        } else {
+            bodyEl.appendChild(traceEl);
+        }
+        return document.getElementById(`reasoning-content-${reasoningId}`);
+    }
+
+    getCouncilReasoningStreamState(reasoningId) {
+        if (!this.councilReasoningStreams.has(reasoningId)) {
+            this.councilReasoningStreams.set(reasoningId, {
+                content: '',
+                timeout: null,
+                targetContent: '',
+                displayedLength: 0,
+                interval: null,
+                charsPerTick: 3,
+                tickMs: 16,
+                autoScrollPaused: false
+            });
+        }
+        return this.councilReasoningStreams.get(reasoningId);
+    }
+
+    updateCouncilLaneReasoning(messageId, laneId, reasoning) {
+        const reasoningId = this.getCouncilLaneReasoningId(messageId, laneId);
+        this.ensureCouncilLaneReasoningTrace(messageId, laneId);
+        const state = this.getCouncilReasoningStreamState(reasoningId);
+        state.content = reasoning || '';
+
+        if (!state.timeout) {
+            state.timeout = setTimeout(() => {
+                this.flushCouncilReasoningBuffer(reasoningId);
+            }, 80);
+        }
+    }
+
+    flushCouncilReasoningBuffer(reasoningId) {
+        const state = this.getCouncilReasoningStreamState(reasoningId);
+        state.timeout = null;
+        if (!state.content) return;
+
+        const parsedReasoning = parseStreamingReasoningContent(state.content);
+        state.targetContent = parsedReasoning;
+
+        if (!state.interval) {
+            state.interval = setInterval(() => {
+                this.councilReasoningTypewriterTick(reasoningId);
+            }, state.tickMs);
+        }
+
+        const subtitleEl = document.getElementById(`reasoning-subtitle-${reasoningId}`);
+        if (subtitleEl) {
+            subtitleEl.textContent = this.extractReasoningSubtitle(state.content);
+            if (!subtitleEl.classList.contains('reasoning-subtitle-streaming')) {
+                subtitleEl.classList.add('reasoning-subtitle-streaming');
+            }
+        }
+    }
+
+    setupCouncilReasoningScrollTracking(el, state) {
+        if (!el || el._councilReasoningScrollTracked) return;
+        el._councilReasoningScrollTracked = true;
+        el.addEventListener('wheel', (e) => {
+            if (e.deltaY < 0) {
+                state.autoScrollPaused = true;
+            } else if (e.deltaY > 0 && state.autoScrollPaused) {
+                const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+                if (distanceFromBottom <= 5) {
+                    state.autoScrollPaused = false;
+                }
+            }
+        }, { passive: true });
+    }
+
+    councilReasoningTypewriterTick(reasoningId) {
+        const state = this.getCouncilReasoningStreamState(reasoningId);
+        const reasoningContentEl = document.getElementById(`reasoning-content-${reasoningId}`);
+        if (!reasoningContentEl) {
+            this.clearCouncilReasoningStream(reasoningId);
+            return;
+        }
+
+        this.setupCouncilReasoningScrollTracking(reasoningContentEl, state);
+        reasoningContentEl.classList.add('streaming');
+
+        let loadingIndicator = reasoningContentEl.querySelector('.reasoning-loading-indicator');
+        if (!loadingIndicator) {
+            loadingIndicator = document.createElement('span');
+            loadingIndicator.className = 'reasoning-loading-indicator reasoning-subtitle-streaming';
+            loadingIndicator.textContent = 'Thinking...';
+            reasoningContentEl.appendChild(loadingIndicator);
+        }
+
+        const updateContentPreservingIndicator = (html) => {
+            const children = Array.from(reasoningContentEl.childNodes);
+            for (const child of children) {
+                if (child !== loadingIndicator) {
+                    child.remove();
+                }
+            }
+            const wrapper = document.createElement('div');
+            wrapper.innerHTML = html;
+            while (wrapper.firstChild) {
+                reasoningContentEl.insertBefore(wrapper.firstChild, loadingIndicator);
+            }
+        };
+
+        const targetLength = state.targetContent.length;
+        if (state.displayedLength < targetLength) {
+            state.displayedLength = Math.min(state.displayedLength + state.charsPerTick, targetLength);
+        }
+        const displayContent = state.targetContent.substring(0, state.displayedLength);
+        updateContentPreservingIndicator(this.convertBasicMarkdownToHtml(displayContent));
+
+        if (!state.autoScrollPaused) {
+            reasoningContentEl.scrollTop = reasoningContentEl.scrollHeight;
+        }
+        this.app.updateActivePromptScrollSpacer();
+        this.app.updateScrollButtonVisibility();
+    }
+
+    clearCouncilReasoningStream(reasoningId) {
+        const state = this.councilReasoningStreams.get(reasoningId);
+        if (!state) return;
+        if (state.timeout) {
+            clearTimeout(state.timeout);
+        }
+        if (state.interval) {
+            clearInterval(state.interval);
+        }
+        this.councilReasoningStreams.delete(reasoningId);
+    }
+
+    clearAllCouncilReasoningStreams() {
+        Array.from(this.councilReasoningStreams.keys()).forEach(reasoningId => {
+            this.clearCouncilReasoningStream(reasoningId);
+        });
+    }
+
+    clearCouncilLaneReasoning(messageId, laneId, options = {}) {
+        const reasoningId = this.getCouncilLaneReasoningId(messageId, laneId);
+        this.clearCouncilReasoningStream(reasoningId);
+
+        const reasoningContentEl = document.getElementById(`reasoning-content-${reasoningId}`);
+        if (reasoningContentEl) {
+            reasoningContentEl.querySelector('.reasoning-loading-indicator')?.remove();
+            reasoningContentEl.classList.remove('streaming');
+        }
+
+        const subtitleEl = document.getElementById(`reasoning-subtitle-${reasoningId}`);
+        if (subtitleEl) {
+            subtitleEl.classList.remove('reasoning-subtitle-streaming');
+            if (options.label && subtitleEl.textContent.trim() === 'Thinking...') {
+                subtitleEl.textContent = options.label;
+            }
+        }
+    }
+
+    updateCouncilLaneReasoningSubtitleToDuration(messageId, laneId, reasoningDuration) {
+        const reasoningId = this.getCouncilLaneReasoningId(messageId, laneId);
+        this.updateReasoningSubtitleToDuration(reasoningId, reasoningDuration);
+    }
+
+    finalizeCouncilLaneReasoning(messageId, laneId, reasoning, reasoningDuration) {
+        const reasoningId = this.getCouncilLaneReasoningId(messageId, laneId);
+        const state = this.councilReasoningStreams.get(reasoningId);
+        if (state?.timeout) {
+            clearTimeout(state.timeout);
+            state.timeout = null;
+            this.flushCouncilReasoningBuffer(reasoningId);
+        }
+        this.clearCouncilReasoningStream(reasoningId);
+        this.finalizeReasoningDisplay(reasoningId, reasoning, reasoningDuration);
     }
 
     /**
@@ -2869,12 +3143,15 @@ export default class ChatArea {
      * This ensures reasoning traces are collapsed and tokens are correctly displayed.
      * When reasoning is already finalized, does targeted updates to avoid flash.
      * @param {Object} message - The completed message object
+     * @param {Object} options
+     * @param {boolean} options.forceFullRender - Rebuild all message chrome even if reasoning is finalized
      */
-    async finalizeStreamingMessage(message) {
+    async finalizeStreamingMessage(message, options = {}) {
         const messageEl = document.querySelector(`[data-message-id="${message.id}"]`);
         if (!messageEl) return;
 
         const promptSlideAnchor = this.app.captureActivePromptScrollAnchor?.({ primeRunway: true });
+        const forceFullRender = options.forceFullRender === true;
 
         // Check if reasoning trace is already finalized (subtitle shows duration, not streaming)
         const existingReasoningTrace = messageEl.querySelector('.reasoning-trace');
@@ -2885,33 +3162,13 @@ export default class ChatArea {
 
         // If reasoning is finalized, do targeted updates instead of full replacement
         // This prevents flash by not touching the reasoning trace DOM at all
-        if (isReasoningFinalized) {
+        if (isReasoningFinalized && !forceFullRender) {
             // Just update the content element if it exists
             const contentEl = messageEl.querySelector('.message-content');
             if (contentEl && message.content) {
                 // Remove streaming class to re-enable hover effects
                 contentEl.classList.remove('streaming');
-
-                // Process content with the full pipeline (same as buildAssistantMessage)
-                let processedContent = message.content;
-
-                // Insert raw citation markers before LaTeX processing
-                if (message.citations && message.citations.length > 0) {
-                    processedContent = window.MessageTemplates.insertRawCitationMarkers(processedContent, message.citations);
-                }
-
-                // Process LaTeX/Markdown
-                processedContent = this.app.processContentWithLatex(processedContent);
-
-                // Style citation markers into clickable elements
-                if (message.citations && message.citations.length > 0) {
-                    processedContent = window.MessageTemplates.addInlineCitationMarkers(processedContent, message.id);
-                }
-
-                // Enhance inline links into styled buttons
-                processedContent = window.MessageTemplates.enhanceInlineLinks(processedContent, message.id);
-
-                contentEl.innerHTML = processedContent;
+                contentEl.innerHTML = this.renderCompletedAssistantContent(message, message.id);
                 renderMathInElement(contentEl, {
                     delimiters: [
                         {left: '$$', right: '$$', display: true},
