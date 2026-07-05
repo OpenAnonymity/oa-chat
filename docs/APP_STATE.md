@@ -402,10 +402,14 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     Answer` header copy and completed-status text stay hidden. On synthesis failure it shows `Council synthesis failed.
     Continuing from Response A.` (or the actual fallback label). Council
     review suppresses the aggregate copy/regenerate/fork action row while
-    synthesis is waiting/pending/running, then restores it once synthesis
-    reaches a final or fallback state; plain Parallel keeps normal actions
-    inside each completed lane card instead of on the aggregate message, because
-    aggregate copy/regenerate/fork is ambiguous when two drafts are visible.
+    synthesis is waiting/pending/running, then restores copy/regenerate inside
+    the Council synthesis block once synthesis reaches a final or fallback
+    state; fork stays disabled. Plain Parallel keeps normal actions directly
+    under each completed lane response instead of on the aggregate message,
+    because aggregate copy/regenerate/fork is ambiguous when two drafts are
+    visible. Both the synthesis and lane action rows reuse the normal
+    `assistant-actions-row` anchor so their spacing matches single-chat
+    assistant actions.
     Web-search sources are also lane-local: each Stage 1 lane renders its own
     Sources button and citation carousel at the bottom of that response only
     when that lane produced citations. Council synthesis renders its own

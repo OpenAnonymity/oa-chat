@@ -202,7 +202,7 @@ test('parallel aggregate messages omit redundant visible mode and completion lab
         'Council review should define the synthesis states that hide aggregate message actions'
     );
     assert.equal(
-        source.includes('const assistantActionsRow = hasSynthesis && shouldShowCouncilAssistantActions(synthesis)'),
+        source.includes('const synthesisActionsRow = shouldShowCouncilAssistantActions(synthesis)'),
         true,
         'Council review should hide aggregate copy/regenerate/fork while synthesis is still pending and plain Parallel should not use aggregate actions'
     );
@@ -269,9 +269,19 @@ test('parallel aggregate messages omit redundant visible mode and completion lab
         'Council/Parallel messages should not render aggregate citation controls for lane-specific sources'
     );
     assert.equal(
-        source.includes("? buildAssistantActionRow(message, '', '', '', { includeFork: false })"),
+        source.includes("buildAssistantActionRow(message, citationsToggle, '', '', { includeFork: false })"),
         true,
-        'Council review should restore aggregate copy/regenerate after final states while keeping fork disabled and sources local to the response that produced them'
+        'Council review should restore copy/regenerate under the synthesis response after final states while keeping fork disabled and sources local to the response that produced them'
+    );
+    assert.equal(
+        source.includes('buildCouncilSynthesisSection(synthesis, processContentWithLatex, message)'),
+        true,
+        'Council synthesis actions should be rendered inside the synthesis block, not below the whole Parallel/Council aggregate'
+    );
+    assert.equal(
+        source.includes('assistant-actions-anchor assistant-actions-row council-response-actions'),
+        true,
+        'Parallel lane actions should reuse the same action-row anchor as single-chat assistant messages'
     );
     assert.equal(
         source.includes('const { includeFork = true } = options;'),
@@ -284,7 +294,7 @@ test('parallel aggregate messages omit redundant visible mode and completion lab
         'fork button rendering should be opt-in for council aggregate rows'
     );
     assert.equal(
-        source.includes('function buildCouncilLaneActionRow(entry, messageId)'),
+        source.includes("function buildCouncilLaneActionRow(entry, messageId, citationsToggle = '')"),
         true,
         'Plain Parallel should render lane-scoped response actions'
     );

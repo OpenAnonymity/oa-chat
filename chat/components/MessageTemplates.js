@@ -1445,7 +1445,7 @@ function inferProvider(name) {
     return null;
 }
 
-function buildCouncilLaneActionRow(entry, messageId) {
+function buildCouncilLaneActionRow(entry, messageId, citationsToggle = '') {
     if (entry?.status !== 'complete' || !entry.response) {
         return '';
     }
@@ -1459,23 +1459,26 @@ function buildCouncilLaneActionRow(entry, messageId) {
     `;
 
     return `
-        <div class="council-response-actions" aria-label="${escapeHtmlAttribute(`${label} actions`)}">
-            <button
-                class="message-action-btn council-lane-action-btn copy-council-lane-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
-                ${laneAttributes}
-                data-tooltip="Copy response">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
-                </svg>
-            </button>
-            <button
-                class="message-action-btn council-lane-action-btn regenerate-council-lane-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
-                ${laneAttributes}
-                data-tooltip="Regenerate this response">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
-                </svg>
-            </button>
+        <div class="assistant-actions-anchor assistant-actions-row council-response-actions flex items-center justify-between gap-2 w-full -mt-1" aria-label="${escapeHtmlAttribute(`${label} actions`)}">
+            <div class="flex items-center gap-1">
+                <button
+                    class="message-action-btn council-lane-action-btn copy-council-lane-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+                    ${laneAttributes}
+                    data-tooltip="Copy response">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
+                    </svg>
+                </button>
+                <button
+                    class="message-action-btn council-lane-action-btn regenerate-council-lane-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+                    ${laneAttributes}
+                    data-tooltip="Regenerate this response">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                    </svg>
+                </button>
+            </div>
+            ${citationsToggle}
         </div>
     `;
 }
@@ -1526,8 +1529,8 @@ function buildCouncilStage1EntryBody(entry, processContentWithLatex, messageId, 
                 ${reasoningHtml}
                 ${contentHtml}
             </div>
-            ${showLaneActions ? buildCouncilLaneActionRow(entry, messageId) : ''}
-            ${citationsToggle ? `<div class="council-response-sources-row">${citationsToggle}</div>` : ''}
+            ${showLaneActions ? buildCouncilLaneActionRow(entry, messageId, citationsToggle) : ''}
+            ${!showLaneActions && citationsToggle ? `<div class="council-response-sources-row">${citationsToggle}</div>` : ''}
             ${citationsSection}
         `;
     }
@@ -1557,9 +1560,10 @@ function buildCouncilStage1EntryBody(entry, processContentWithLatex, messageId, 
     `;
 }
 
-function buildCouncilSynthesisSection(synthesis, processContentWithLatex, messageId) {
+function buildCouncilSynthesisSection(synthesis, processContentWithLatex, message) {
     if (!synthesis || ['skipped', 'waiting', 'pending'].includes(synthesis.status)) return '';
 
+    const messageId = message.id;
     const status = synthesis.status || 'pending';
     const statusHtml = buildCouncilResponseStatus(status);
     let bodyHtml = '';
@@ -1582,11 +1586,15 @@ function buildCouncilSynthesisSection(synthesis, processContentWithLatex, messag
         synthesis.reasoning ||
         synthesis.streamingReasoning
     );
+    const citations = Array.isArray(synthesis.citations) ? synthesis.citations : [];
+    const citationScopeId = buildCitationScopeId(messageId, 'synthesis');
+    const citationsToggle = buildCitationsToggleButton(citations, citationScopeId);
+    const citationsSection = buildCitationsSection(citations, citationScopeId);
+    const synthesisActionsRow = shouldShowCouncilAssistantActions(synthesis)
+        ? buildAssistantActionRow(message, citationsToggle, '', '', { includeFork: false })
+        : '';
+
     if ((status === 'complete' || status === 'partial' || status === 'running') && hasRenderableOutput) {
-        const citations = Array.isArray(synthesis.citations) ? synthesis.citations : [];
-        const citationScopeId = buildCitationScopeId(messageId, 'synthesis');
-        const citationsToggle = buildCitationsToggleButton(citations, citationScopeId);
-        const citationsSection = buildCitationsSection(citations, citationScopeId);
         let processedContent = '';
         let rawContent = synthesis.response || '';
         if (citations.length > 0) {
@@ -1620,7 +1628,8 @@ function buildCouncilSynthesisSection(synthesis, processContentWithLatex, messag
                 ${reasoningHtml}
                 ${contentHtml}
             </div>
-            ${citationsToggle ? `<div class="council-response-sources-row">${citationsToggle}</div>` : ''}
+            ${synthesisActionsRow}
+            ${!synthesisActionsRow && citationsToggle ? `<div class="council-response-sources-row">${citationsToggle}</div>` : ''}
             ${citationsSection}
         `;
     } else if (status === 'error') {
@@ -1629,12 +1638,14 @@ function buildCouncilSynthesisSection(synthesis, processContentWithLatex, messag
             <div class="council-response-placeholder council-response-placeholder-error">
                 Council synthesis failed. Continuing from ${escapeHtml(fallbackLabel)}.
             </div>
+            ${synthesisActionsRow}
         `;
     } else if (status === 'cancelled') {
         bodyHtml = `
             <div class="council-response-placeholder">
                 Council synthesis was stopped. Continuing from the completed first response.
             </div>
+            ${synthesisActionsRow}
         `;
     } else {
         bodyHtml = `
@@ -1806,10 +1817,6 @@ function buildCouncilAssistantMessage({
         : 0;
     const synthesis = council.synthesis || null;
     const showLaneActions = !hasSynthesis;
-    const assistantActionsRow = hasSynthesis && shouldShowCouncilAssistantActions(synthesis)
-        ? buildAssistantActionRow(message, '', '', '', { includeFork: false })
-        : '';
-
     const useSideBySide = stage1Entries.length > 1 && stage1Entries.length <= 2;
     const stage1Tabs = stage1Entries.length > 1 && !useSideBySide
         ? `
@@ -1875,7 +1882,7 @@ function buildCouncilAssistantMessage({
     const stageNoteRow = stage1Summary
         ? `<div class="council-stage-note">${escapeHtml(stage1Summary)}</div>`
         : '';
-    const synthesisSection = buildCouncilSynthesisSection(synthesis, processContentWithLatex, message.id);
+    const synthesisSection = buildCouncilSynthesisSection(synthesis, processContentWithLatex, message);
 
     return `
         <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}"${getRawContentAttribute(message.content)}>
@@ -1890,7 +1897,6 @@ function buildCouncilAssistantMessage({
                     </div>
                     ${synthesisSection}
                 </div>
-                ${assistantActionsRow}
             </div>
         </div>
     `;

@@ -984,10 +984,6 @@ a.quick-ask-source:focus-visible {
 }
 
 .council-response-actions {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 0.15rem;
     margin-top: -0.15rem;
 }
 
