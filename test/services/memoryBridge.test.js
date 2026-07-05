@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ensureMemoryKey } from '../../chat/services/memoryBridge.js';
+import { ensureMemoryKey, isMemoryAuthError } from '../../chat/services/memoryBridge.js';
 
 test('ensureMemoryKey does not redeem a key when the signal is already aborted', async () => {
     const controller = new AbortController();
@@ -47,4 +47,11 @@ test('ensureMemoryKey does not store a key when the signal aborts during redempt
     assert.equal(capturedOptions?.signal, controller.signal);
     assert.equal(session.memoryKey, undefined);
     assert.equal(session.memoryKeyInfo, undefined);
+});
+
+test('isMemoryAuthError recognizes nested response status values', () => {
+    assert.equal(isMemoryAuthError({ response: { status: 401 } }), true);
+    assert.equal(isMemoryAuthError({ cause: { status: 403 } }), true);
+    assert.equal(isMemoryAuthError({ cause: { response: { statusCode: 401 } } }), true);
+    assert.equal(isMemoryAuthError({ response: { status: 500 } }), false);
 });

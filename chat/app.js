@@ -33,6 +33,10 @@ import { DEFAULT_MEMORY_AGENT_MODEL, isAllowedConfidentialModel } from './servic
 import { normalizeMessagesForMemory } from './services/memoryMessageNormalization.js';
 import { normalizeMemoryRetrievalAssessment } from './services/memoryRetrievalAssessment.js';
 import {
+    createMemoryRetrievalFailure,
+    isExplicitMemoryRetrievalCancellation
+} from './services/memoryRetrievalError.js';
+import {
     buildLocalSessionTitle as buildLocalSessionTitleText,
     buildForkSessionTitleFields as buildForkSessionTitleFieldsValue,
     buildSessionTitleSearchText as buildSessionTitleSearchTextValue,
@@ -4972,7 +4976,7 @@ class ChatApp {
                 await chatDB.saveSession(session);
             }
 
-            if (this.isCancelledError(error, memorySignal)) {
+            if (isExplicitMemoryRetrievalCancellation(error, memorySignal)) {
                 if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
                     return await markMemoryDisabled();
                 }
@@ -4982,7 +4986,9 @@ class ChatApp {
             }
 
             console.error('Memory augment query failed:', error);
-            retrievalMessage.content = 'Memory retrieval unavailable. Sending without personal context.';
+            const failure = createMemoryRetrievalFailure(error);
+            retrievalMessage.content = failure.content;
+            retrievalMessage.memoryRetrievalFailure = failure.reason;
             retrievalMessage.ciPromptDraft = null;
             await this.persistLocalAssistantStatus(retrievalMessage);
             return null;

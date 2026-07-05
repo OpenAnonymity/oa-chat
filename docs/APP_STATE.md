@@ -25,6 +25,23 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
+- 2026-07-02: Memory retrieval fallback now shows a safe, calm note in-chat.
+  - `runMemoryAugmentFlow(...)` still logs the raw exception to the browser
+    console as `Memory augment query failed:`, but the persisted local Memory
+    Agent message now also carries `memoryRetrievalFailure`.
+  - The failure note is classified by `chat/services/memoryRetrievalError.js`
+    into safe categories such as auth, network, timeout, service, request,
+    storage, runtime, and unknown. User-facing copy should stay calm and avoid
+    scary diagnostic wording such as raw HTTP statuses or provider exception
+    strings. Do not render raw provider error bodies, prompts, memory file
+    contents, URLs with secrets, or API keys in the chat.
+  - `MessageTemplates` renders the note as a compact sub-row under the Memory
+    Agent status, but only shows the short title by default to keep the chat
+    low-noise. The main fallback copy stays one line:
+    `Memory context was not added this time. Sending without it.`
+  - `buildSharePayload(...)` now routes through `chat/services/sharePayload.js`
+    so shared Memory Agent messages preserve this safe reason metadata without
+    pulling share-service network side effects into payload tests.
 - 2026-06-27: Memory now has a global feature gate.
   - IndexedDB setting `memoryFeatureEnabled` defaults on. When false, app
     initialization and `setMemoryFeatureEnabled(false)` force `memoryMode` false
@@ -420,7 +437,7 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - Confidential retrieval keys are cached per session on `memoryKey` / `memoryKeyInfo` and must be invalidated on `401` / `403` auth failures.
   - Root `oa-chat` currently does not use that attested SDK path for memory mode. `chat/services/memoryBridge.js` intentionally forces the confidential memory client onto the plain OpenAI-compatible HTTPS path against `https://inference.tinfoil.sh/v1` (`provider: 'openai'`, not `provider: 'tinfoil'`).
   - `nanomem` still supports the SDK-backed, attested Tinfoil transport, but the root app is not opting into it right now.
-  - The generic root-app fallback text `Memory retrieval unavailable. Sending without personal context.` now logs the underlying exception to the browser console as `Memory augment query failed:`. Check that before assuming the failure is in the retrieval prompt itself.
+  - The generic root-app fallback text `Memory context was not added this time. Sending without it.` logs the underlying exception to the browser console as `Memory augment query failed:`. Check that before assuming the failure is in the retrieval prompt itself.
   - Root `oa-chat` now also has the memory filesystem modal shell from `memory-chat`, opened by `Cmd/Ctrl+Shift+M`. Storage editing and local-chat backfill are ported there, but the old `memory-chat` extractor/cancel UI is still not.
   - The settings menu `Data Controls` section now has a dedicated `Memory` row. `Export` uses the same OMF exporter as the memory panel header. `Import` uses a hidden settings-menu file input, then opens the memory panel and hands the selected file into the same OMF preview/merge flow as the panel header import button.
   - The root memory panel now also uses `memory-chat`'s OMF import/export UX, but the actual OMF logic has been moved into `nanomem`. `Export` now goes through `memoryBank.exportOmf()`, and import preview/merge go through `memoryBank.previewOmfImport()` / `memoryBank.importOmf()` instead of app-local format logic.

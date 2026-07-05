@@ -1,4 +1,5 @@
 import { DEFAULT_MEMORY_AGENT_MODEL, isAllowedConfidentialModel } from './confidentialModelConfig.js';
+import { getMemoryRetrievalErrorStatus } from './memoryRetrievalError.js';
 
 const TINFOIL_BASE_URL = 'https://inference.tinfoil.sh/v1';
 const MEMORY_KEY_GRACE_MS = 60_000;
@@ -65,7 +66,8 @@ export function invalidateMemoryKey(session) {
 
 export function isMemoryAuthError(error) {
     if (!error) return false;
-    if (error.status === 401 || error.status === 403) return true;
+    const status = getMemoryRetrievalErrorStatus(error);
+    if (status === 401 || status === 403) return true;
     const message = String(error.message || error);
     return message.includes('401') || message.includes('403');
 }
