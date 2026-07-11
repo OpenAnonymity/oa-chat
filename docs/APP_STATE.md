@@ -29,6 +29,8 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   self-hosted assets only. Image load failures are handled by one capture-phase
   delegated listener, which swaps the failed image for its neutral initial badge;
   keep this fallback free of inline event handlers for strict-CSP compatibility.
+  The image-failure badge uses an explicit dark foreground because known-provider
+  consumers retain their white icon-circle background after the image is hidden.
 
 - 2026-07-02: Memory retrieval fallback now shows a safe, calm note in-chat.
   - `runMemoryAugmentFlow(...)` still logs the raw exception to the browser

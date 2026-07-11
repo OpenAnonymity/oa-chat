@@ -48,8 +48,9 @@ test('unknown and malformed providers use escaped neutral badges', () => {
 test('image markup includes a local failure fallback', () => {
     const icon = getProviderIcon('xAI');
     assert.match(icon.html, /data-provider-icon/);
-    assert.match(icon.html, /data-provider-icon-fallback/);
+    assert.match(icon.html, /data-provider-icon-fallback class="[^"]*\btext-gray-700\b/);
     assert.doesNotMatch(icon.html, /onerror=/);
+    assert.doesNotMatch(getProviderIcon('Future Lab').html, /\btext-gray-700\b/);
 });
 
 test('one capture-phase listener reveals the fallback after an image error', () => {

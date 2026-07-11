@@ -2,6 +2,7 @@ import { getProviderAsset, resolveProvider } from './providerRegistry.js';
 
 const DEFAULT_CLASSES = 'w-3.5 h-3.5';
 const FALLBACK_CLASSES = 'text-[10px] font-semibold';
+const IMAGE_FAILURE_FOREGROUND_CLASS = 'text-gray-700';
 let listenerDocument = null;
 
 function escapeHtmlAttribute(value) {
@@ -18,8 +19,8 @@ function getProviderInitial(provider) {
     return match ? match[0].toUpperCase() : 'A';
 }
 
-function buildFallback(provider, hidden = false, classes = '') {
-    const className = [classes, FALLBACK_CLASSES].filter(Boolean).join(' ');
+function buildFallback(provider, hidden = false, classes = '', foregroundClass = '') {
+    const className = [classes, FALLBACK_CLASSES, foregroundClass].filter(Boolean).join(' ');
     return `<span${hidden ? ' hidden' : ''} data-provider-icon-fallback class="${escapeHtmlAttribute(className)}">${escapeHtmlAttribute(getProviderInitial(provider))}</span>`;
 }
 
@@ -67,7 +68,7 @@ export function getProviderIcon(provider, classes = DEFAULT_CLASSES) {
     const escapedAsset = escapeHtmlAttribute(asset);
     const escapedAlt = escapeHtmlAttribute(metadata.displayName);
     return {
-        html: `<img data-provider-icon src="${escapedAsset}" class="${escapedClasses}" alt="${escapedAlt}" />${buildFallback(provider, true, classes)}`,
+        html: `<img data-provider-icon src="${escapedAsset}" class="${escapedClasses}" alt="${escapedAlt}" />${buildFallback(provider, true, classes, IMAGE_FAILURE_FOREGROUND_CLASS)}`,
         hasIcon: true
     };
 }
