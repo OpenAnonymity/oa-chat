@@ -204,25 +204,25 @@ Expected: all tests PASS.
 - Consumes: completed registry, catalog adapter, icon renderer, and local assets.
 - Produces: verified production build and local preview instance.
 
-- [ ] **Step 1: Document the provider-logo boundary**
+- [x] **Step 1: Document the provider-logo boundary**
 
 Add an APP_STATE entry stating that OpenRouter latest aliases normalize in the catalog
 adapter, provider display/icon metadata lives in the registry, all runtime assets are
 local, and unknown/missing providers fall back to neutral initials.
 
-- [ ] **Step 2: Run the complete unit suite**
+- [x] **Step 2: Run the complete unit suite**
 
 Run: `npm test`
 
 Expected: exit code 0 with all unit tests passing.
 
-- [ ] **Step 3: Run the production build**
+- [x] **Step 3: Run the production build**
 
 Run: `npm run build`
 
 Expected: exit code 0 and a populated `dist/` without build errors.
 
-- [ ] **Step 4: Inspect the final diff for accidental remote logo URLs and asset errors**
+- [x] **Step 4: Inspect the final diff for accidental remote logo URLs and asset errors**
 
 Run: `rg -n "https?://" chat/services/providerIcons.js chat/services/providerRegistry.js`
 
@@ -232,7 +232,7 @@ Run: `find chat/img -maxdepth 1 -type f -print0 | xargs -0 file`
 
 Expected: every new asset is identified as valid SVG, PNG, or icon data.
 
-- [ ] **Step 5: Start the local UI for user review**
+- [x] **Step 5: Start the local UI for user review**
 
 Run: `npm run dev`
 

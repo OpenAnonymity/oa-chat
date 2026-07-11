@@ -25,8 +25,10 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
-- 2026-07-11: Provider icons resolve through the shared provider registry and use
-  self-hosted assets only. Image load failures are handled by one capture-phase
+- 2026-07-11: OpenRouter `~author/*-latest` aliases normalize in the catalog adapter,
+  while provider display/icon metadata resolves through the shared provider registry;
+  all runtime provider assets are self-hosted. Unknown or missing providers fall back
+  to neutral initial badges. Image load failures are handled by one capture-phase
   delegated listener, which swaps the failed image for its neutral initial badge;
   keep this fallback free of inline event handlers for strict-CSP compatibility.
   The image-failure badge uses an explicit dark foreground because known-provider
