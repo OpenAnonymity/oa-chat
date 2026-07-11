@@ -16,6 +16,7 @@ import { getDefaultModelConfig } from './services/modelConfig.js';
 import { resolveModelDisplayName } from './services/modelNames.js';
 import apiKeyStore from './services/apiKeyStore.js';
 import { loadModelCatalog, saveModelCatalog } from './services/modelCatalogCache.js';
+import { resolveProviderFromModelId } from './services/providerRegistry.js';
 import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort } from './services/reasoningConfig.js';
 
 const OPENROUTER_BACKEND_ID = 'openrouter';
@@ -129,9 +130,7 @@ class OpenRouterAPI {
                 return null;
             }
 
-            // Extract provider from model ID (e.g., "openai/gpt-4" -> "OpenAI")
-            const provider = model.id.split('/')[0];
-            const providerName = this.capitalizeProvider(provider);
+            const providerName = resolveProviderFromModelId(model.id).displayName;
 
             // Categorize models
             let category = 'Other models';
@@ -177,23 +176,6 @@ class OpenRouterAPI {
             const priceB = b.pricing?.prompt || 0;
             return priceA - priceB;
         });
-    }
-
-    capitalizeProvider(provider) {
-        const providerMap = {
-            'openai': 'OpenAI',
-            'anthropic': 'Anthropic',
-            'google': 'Google',
-            'meta-llama': 'Meta',
-            'mistralai': 'Mistral',
-            'deepseek': 'DeepSeek',
-            'cohere': 'Cohere',
-            'perplexity': 'Perplexity',
-            'qwen': 'Qwen',
-            'nvidia': 'Nvidia',
-            'alibaba': 'Qwen'  // Alibaba models are Qwen
-        };
-        return providerMap[provider] || provider.charAt(0).toUpperCase() + provider.slice(1);
     }
 
     isReasoningDetailImage(detail) {
