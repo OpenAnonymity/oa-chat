@@ -49,6 +49,10 @@ test('model references resolve only documented provider identities', () => {
         displayName: 'Future Lab'
     });
     assert.equal(resolveProviderFromModelReference('Anthropic: Claude Sonnet').displayName, 'Anthropic');
+    assert.deepEqual(resolveProviderFromModelReference('Future Lab: Model/Variant'), {
+        slug: null,
+        displayName: 'Future Lab'
+    });
     assert.deepEqual(resolveProviderFromModelReference('llama-model'), {
         slug: null,
         displayName: 'Unknown'

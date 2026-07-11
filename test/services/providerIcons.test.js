@@ -37,6 +37,9 @@ test('catalog provider aliases resolve to canonical local assets', () => {
 test('unknown and malformed providers use escaped neutral badges', () => {
     assert.deepEqual(getProviderIcon('Future Lab').hasIcon, false);
     assert.match(getProviderIcon('Future Lab').html, />F<\/span>/);
+    assert.match(getProviderIcon('École AI').html, />É<\/span>/);
+    assert.match(getProviderIcon('ßeta Labs').html, />S<\/span>/);
+    assert.doesNotMatch(getProviderIcon('ßeta Labs').html, />SS<\/span>/);
     assert.match(getProviderIcon('<script>').html, />A<\/span>/);
     assert.match(getProviderIcon('Unknown').html, />A<\/span>/);
     assert.match(getProviderIcon('').html, />A<\/span>/);

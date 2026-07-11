@@ -118,13 +118,12 @@ export function resolveProviderFromModelReference(modelReference) {
     }
 
     const candidate = modelReference.trim();
-    if (candidate.includes('/')) {
-        return resolveProviderFromModelId(candidate);
-    }
-
     const separatorIndex = candidate.indexOf(': ');
     if (separatorIndex > 0) {
         return resolveProvider(candidate.slice(0, separatorIndex));
+    }
+    if (candidate.includes('/')) {
+        return resolveProviderFromModelId(candidate);
     }
 
     return unknownProvider();

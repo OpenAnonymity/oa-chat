@@ -18,8 +18,8 @@ function getProviderInitial(provider) {
     if (provider === 'Unknown') {
         return 'A';
     }
-    const match = typeof provider === 'string' ? provider.match(/[a-z0-9]/i) : null;
-    return match ? match[0].toUpperCase() : 'A';
+    const match = typeof provider === 'string' ? provider.match(/[\p{L}\p{N}]/u) : null;
+    return match ? Array.from(match[0].toUpperCase())[0] : 'A';
 }
 
 function buildFallback(provider, hidden = false, classes = '', foregroundClass = '') {
