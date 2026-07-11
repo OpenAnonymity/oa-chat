@@ -25,6 +25,11 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
+- 2026-07-11: Provider icons resolve through the shared provider registry and use
+  self-hosted assets only. Image load failures are handled by one capture-phase
+  delegated listener, which swaps the failed image for its neutral initial badge;
+  keep this fallback free of inline event handlers for strict-CSP compatibility.
+
 - 2026-07-02: Memory retrieval fallback now shows a safe, calm note in-chat.
   - `runMemoryAugmentFlow(...)` still logs the raw exception to the browser
     console as `Memory augment query failed:`, but the persisted local Memory

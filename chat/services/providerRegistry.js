@@ -10,8 +10,30 @@ const PROVIDERS = {
     qwen: { displayName: 'Qwen', asset: 'img/qwen.svg' },
     alibaba: { displayName: 'Qwen', asset: 'img/qwen.svg' },
     nvidia: { displayName: 'Nvidia', asset: 'img/nvidia.svg' },
-    openrouter: { displayName: 'OpenRouter', asset: null },
-    'x-ai': { displayName: 'xAI', asset: null }
+    openrouter: { displayName: 'OpenRouter', asset: 'img/openrouter.svg' },
+    'x-ai': { displayName: 'xAI', asset: 'img/xai.svg' },
+    'z-ai': { displayName: 'Z.ai', asset: 'img/zai.svg' },
+    minimax: { displayName: 'MiniMax', asset: 'img/minimax.svg' },
+    moonshotai: { displayName: 'Moonshot AI', asset: 'img/moonshot.svg' },
+    nousresearch: { displayName: 'Nous Research', asset: 'img/nousresearch.svg' },
+    amazon: { displayName: 'AWS', asset: 'img/aws.svg' },
+    tencent: { displayName: 'Tencent', asset: 'img/tencent.svg' },
+    'bytedance-seed': { displayName: 'ByteDance', asset: 'img/bytedance.svg' },
+    bytedance: { displayName: 'ByteDance', asset: 'img/bytedance.svg' },
+    microsoft: { displayName: 'Microsoft', asset: 'img/microsoft.svg' },
+    'ibm-granite': { displayName: 'IBM', asset: 'img/ibm.svg' },
+    ai21: { displayName: 'AI21', asset: 'img/ai21.svg' },
+    'aion-labs': { displayName: 'AionLabs', asset: 'img/aionlabs.svg' },
+    'arcee-ai': { displayName: 'Arcee AI', asset: 'img/arcee.svg' },
+    xiaomi: { displayName: 'Xiaomi', asset: 'img/xiaomi.svg' },
+    stepfun: { displayName: 'StepFun', asset: 'img/stepfun.svg' },
+    relace: { displayName: 'Relace', asset: 'img/relace.svg' },
+    morph: { displayName: 'Morph', asset: 'img/morph.svg' },
+    liquid: { displayName: 'Liquid', asset: 'img/liquid.svg' },
+    inflection: { displayName: 'Inflection', asset: 'img/inflection.svg' },
+    inception: { displayName: 'Inception', asset: 'img/inception.svg' },
+    baidu: { displayName: 'Baidu', asset: 'img/baidu.svg' },
+    upstage: { displayName: 'Upstage', asset: 'img/upstage.svg' }
 };
 
 const VALID_PROVIDER_SLUG = /^[a-z0-9][a-z0-9._-]*$/;

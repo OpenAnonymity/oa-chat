@@ -1,125 +1,75 @@
-/**
- * Provider Icons Module
- * Supports both inline SVG and image URLs for provider icons
- *
- * To add a new icon:
- * 1. Option A - Use an image URL (recommended):
- *    'ProviderName': { type: 'url', url: 'https://example.com/icon.png' }
- *
- * 2. Option B - Use inline SVG:
- *    'ProviderName': { type: 'svg', data: '<path d="..."/>' }
- *
- * 3. Option C - Download and use local file:
- *    'ProviderName': { type: 'url', url: '/path/to/icon.png' }
- */
+import { getProviderAsset, resolveProvider } from './providerRegistry.js';
 
-// Icon configuration - easy to add new providers!
-const PROVIDER_ICONS = {
-    'OpenAI': {
-        type: 'url',
-        url: 'img/openai.svg'
-    },
+const DEFAULT_CLASSES = 'w-3.5 h-3.5';
+const FALLBACK_CLASSES = 'text-[10px] font-semibold';
+let listenerDocument = null;
 
-    'Anthropic': {
-        type: 'url',
-        url: 'img/claude.svg'
-    },
+function escapeHtmlAttribute(value) {
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
 
-    'Google': {
-        type: 'url',
-        url: 'img/gemini.svg'
-    },
+function getProviderInitial(provider) {
+    const match = typeof provider === 'string' ? provider.match(/[a-z0-9]/i) : null;
+    return match ? match[0].toUpperCase() : 'A';
+}
 
-    'Meta': {
-        type: 'url',
-        url: 'img/meta.svg'
-    },
+function buildFallback(provider, hidden = false, classes = '') {
+    const className = [classes, FALLBACK_CLASSES].filter(Boolean).join(' ');
+    return `<span${hidden ? ' hidden' : ''} data-provider-icon-fallback class="${escapeHtmlAttribute(className)}">${escapeHtmlAttribute(getProviderInitial(provider))}</span>`;
+}
 
-    'Mistral': {
-        type: 'url',
-        url: 'img/mistral.svg'
-    },
-
-    'DeepSeek': {
-        type: 'url',
-        url: 'img/deepseek.svg'
-    },
-
-    'Qwen': {
-        type: 'url',
-        url: 'img/qwen.svg'
-    },
-
-    'Cohere': {
-        type: 'url',
-        url: 'img/cohere.ico'
-    },
-
-    'Perplexity': {
-        type: 'url',
-        url: 'img/perplexity.png'
-    },
-
-    'OpenRouter': {
-        type: 'url',
-        url: 'https://openrouter.ai/favicon.ico'
-    },
-
-    'Nvidia': {
-        type: 'url',
-        url: 'img/nvidia.svg'
+function installProviderIconErrorFallback() {
+    if (typeof document === 'undefined'
+        || typeof document.addEventListener !== 'function'
+        || document === listenerDocument) {
+        return;
     }
 
-    // Or use local files (download icons to img/ folder):
-    // 'ProviderName': {
-    //     type: 'url',
-    //     url: 'img/provider-icon.png'
-    // }
-};
+    document.addEventListener('error', (event) => {
+        const image = event.target;
+        if (!image?.matches?.('img[data-provider-icon]')) {
+            return;
+        }
+
+        image.hidden = true;
+        const fallback = image.nextElementSibling;
+        if (fallback?.matches?.('[data-provider-icon-fallback]')) {
+            fallback.hidden = false;
+        }
+    }, true);
+    listenerDocument = document;
+}
 
 /**
- * Gets an icon for a provider
- * @param {string} provider - Provider name (e.g., "OpenAI", "Anthropic")
- * @param {string} classes - Optional CSS classes for the icon
- * @returns {Object} Object with html (icon HTML) and hasIcon (boolean)
+ * Gets an icon for a provider.
+ * @param {string} provider - Provider name or registered author slug.
+ * @param {string} classes - Optional CSS classes for the icon.
+ * @returns {{ html: string, hasIcon: boolean }}
  */
-export function getProviderIcon(provider, classes = 'w-3.5 h-3.5') {
-    const iconConfig = PROVIDER_ICONS[provider];
+export function getProviderIcon(provider, classes = DEFAULT_CLASSES) {
+    installProviderIconErrorFallback();
 
-    if (!iconConfig) {
-        // Fallback: return a generic icon with the first letter
-        const initial = provider ? provider.charAt(0) : 'A';
+    const metadata = resolveProvider(provider);
+    const asset = getProviderAsset(metadata.displayName);
+    if (!asset || !asset.startsWith('img/')) {
         return {
-            html: `<span class="text-[10px] font-semibold">${initial}</span>`,
+            html: buildFallback(provider),
             hasIcon: false
         };
     }
 
-    // Handle SVG type
-    if (iconConfig.type === 'svg') {
-        return {
-            html: `<svg class="${classes}" viewBox="0 0 24 24" fill="currentColor">
-                ${iconConfig.data}
-            </svg>`,
-            hasIcon: true
-        };
-    }
-
-    // Handle URL type (image)
-    // Note: Don't invert - logos should remain as-is
-    // Background color is handled by the parent container
-    if (iconConfig.type === 'url') {
-        return {
-            html: `<img src="${iconConfig.url}" class="${classes}" alt="${provider}" />`,
-            hasIcon: true
-        };
-    }
-
-    // Fallback
-    const initial = provider ? provider.charAt(0) : 'A';
+    const escapedClasses = escapeHtmlAttribute(classes);
+    const escapedAsset = escapeHtmlAttribute(asset);
+    const escapedAlt = escapeHtmlAttribute(metadata.displayName);
     return {
-        html: `<span class="text-[10px] font-semibold">${initial}</span>`,
-        hasIcon: false
+        html: `<img data-provider-icon src="${escapedAsset}" class="${escapedClasses}" alt="${escapedAlt}" />${buildFallback(provider, true, classes)}`,
+        hasIcon: true
     };
 }
 
+installProviderIconErrorFallback();
