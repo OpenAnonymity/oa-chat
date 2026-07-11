@@ -76,3 +76,32 @@ A fresh review subagent approved the final Task 1 diff with no findings. It
 independently confirmed the required parsing behavior, catalog integration,
 privacy/scope boundaries, focused test result, clean diff, and existence of every
 configured non-null local asset.
+
+## Follow-up fix: colliding unknown provider names
+
+An Important follow-up review found that an unknown valid slug could humanize to
+a registered display name and incorrectly inherit its asset. For example,
+`meta/model` originally resolved to `{ slug: 'meta', displayName: 'Meta' }`, so a
+later `getProviderAsset('Meta')` call returned the registered Meta logo.
+
+The unknown-slug path now checks whether its humanized display name collides with
+a registered provider name. Only collisions receive a slug qualifier, so
+`meta/model` becomes `Meta (meta)` while ordinary unknowns such as `future-lab`
+remain `Future Lab`. This preserves the existing result shape and gives the icon
+layer an unambiguous string that resolves to no asset.
+
+Regression coverage now imports `getProviderAsset` and verifies:
+
+- a known provider resolves its configured asset;
+- the colliding unknown `meta/model` remains distinct and resolves no asset;
+- an ordinary unknown resolves no asset;
+- malformed input resolves no asset.
+
+TDD and command evidence:
+
+1. RED: `node --test test/services/providerRegistry.test.js` failed 1 of 4 tests
+   because the colliding unknown returned `Meta` instead of `Meta (meta)`.
+2. GREEN: `node --test test/services/providerRegistry.test.js test/domain/modelSelection.test.js`
+   passed 12 of 12 tests with 0 failures.
+3. `git diff --check` passed with no whitespace errors.
+4. A fresh adversarial review approved the follow-up diff with no findings.

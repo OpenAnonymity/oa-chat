@@ -41,9 +41,14 @@ function resolveSlug(slug) {
         return unknownProvider();
     }
 
+    const registeredProvider = PROVIDERS[slug];
+    const humanizedDisplayName = humanizeSlug(slug);
+    const displayNameCollides = DISPLAY_NAME_TO_SLUG.has(humanizedDisplayName.toLowerCase());
+
     return {
         slug,
-        displayName: PROVIDERS[slug]?.displayName || humanizeSlug(slug)
+        displayName: registeredProvider?.displayName
+            || (displayNameCollides ? `${humanizedDisplayName} (${slug})` : humanizedDisplayName)
     };
 }
 

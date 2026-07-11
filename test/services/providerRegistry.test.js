@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+    getProviderAsset,
     resolveProvider,
     resolveProviderFromModelId
 } from '../../chat/services/providerRegistry.js';
@@ -38,4 +39,22 @@ test('unknown and malformed authors degrade to safe provider names', () => {
         slug: null,
         displayName: 'Unknown'
     });
+});
+
+test('provider assets resolve only for registered provider identities', () => {
+    const known = resolveProviderFromModelId('meta-llama/llama-4');
+    assert.equal(getProviderAsset(known.displayName), 'img/meta.svg');
+
+    const collidingUnknown = resolveProviderFromModelId('meta/model');
+    assert.deepEqual(collidingUnknown, {
+        slug: 'meta',
+        displayName: 'Meta (meta)'
+    });
+    assert.equal(getProviderAsset(collidingUnknown.displayName), null);
+
+    const ordinaryUnknown = resolveProviderFromModelId('future-lab/model');
+    assert.equal(getProviderAsset(ordinaryUnknown.displayName), null);
+
+    const malformed = resolveProviderFromModelId('~/broken');
+    assert.equal(getProviderAsset(malformed.displayName), null);
 });
