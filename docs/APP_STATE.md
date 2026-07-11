@@ -27,7 +27,13 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 - 2026-07-11: OpenRouter `~author/*-latest` aliases normalize in the catalog adapter,
   while provider display/icon metadata resolves through the shared provider registry;
-  all runtime provider assets are self-hosted. Unknown or missing providers fall back
+  cached OpenRouter catalog entries also recompute provider metadata from their model
+  IDs when used as a network fallback. Legacy UI paths must prefer catalog metadata,
+  then resolve model IDs by author or explicit `Provider: Model` prefixes; do not infer
+  a company from family keywords such as `llama`, and do not default unresolved names
+  to OpenAI. Clean unknown display names keep their initial, while malformed/empty or
+  explicitly `Unknown` providers use the generic `A` badge. All runtime provider
+  assets are self-hosted. Unknown or missing providers fall back
   to neutral initial badges. Image load failures are handled by one capture-phase
   delegated listener, which swaps the failed image for its neutral initial badge;
   keep this fallback free of inline event handlers for strict-CSP compatibility.

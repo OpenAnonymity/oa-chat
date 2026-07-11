@@ -80,3 +80,21 @@ test('memory agent failure messages render safe retrieval failure reason', async
         console.error = originalError;
     }
 });
+
+test('assistant model IDs use author providers without family-logo guessing', async () => {
+    installTemplateGlobals();
+    const { buildMessageHTML } = await import('../../chat/components/MessageTemplates.js');
+    const helpers = { processContentWithLatex: escapeHtml, formatTime: () => '18:15:12' };
+
+    const downstream = buildMessageHTML({
+        id: 'downstream', role: 'assistant', model: 'future-lab/llama-model', content: 'hello'
+    }, helpers, [], 'future-lab/llama-model');
+    assert.match(downstream, /data-provider-icon-fallback[^>]*>F<\/span>/);
+    assert.doesNotMatch(downstream, /img\/meta\.svg/);
+
+    const unresolved = buildMessageHTML({
+        id: 'unresolved', role: 'assistant', model: 'arbitrary model', content: 'hello'
+    }, helpers, [], 'arbitrary model');
+    assert.match(unresolved, /data-provider-icon-fallback[^>]*>A<\/span>/);
+    assert.doesNotMatch(unresolved, /img\/openai\.svg/);
+});

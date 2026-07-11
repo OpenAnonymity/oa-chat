@@ -15,6 +15,9 @@ function escapeHtmlAttribute(value) {
 }
 
 function getProviderInitial(provider) {
+    if (provider === 'Unknown') {
+        return 'A';
+    }
     const match = typeof provider === 'string' ? provider.match(/[a-z0-9]/i) : null;
     return match ? match[0].toUpperCase() : 'A';
 }
@@ -59,7 +62,7 @@ export function getProviderIcon(provider, classes = DEFAULT_CLASSES) {
     const asset = getProviderAsset(metadata.displayName);
     if (!asset || !asset.startsWith('img/')) {
         return {
-            html: buildFallback(provider),
+            html: buildFallback(metadata.displayName),
             hasIcon: false
         };
     }
@@ -68,7 +71,7 @@ export function getProviderIcon(provider, classes = DEFAULT_CLASSES) {
     const escapedAsset = escapeHtmlAttribute(asset);
     const escapedAlt = escapeHtmlAttribute(metadata.displayName);
     return {
-        html: `<img data-provider-icon src="${escapedAsset}" class="${escapedClasses}" alt="${escapedAlt}" />${buildFallback(provider, true, classes, IMAGE_FAILURE_FOREGROUND_CLASS)}`,
+        html: `<img data-provider-icon src="${escapedAsset}" class="${escapedClasses}" alt="${escapedAlt}" />${buildFallback(metadata.displayName, true, classes, IMAGE_FAILURE_FOREGROUND_CLASS)}`,
         hasIcon: true
     };
 }

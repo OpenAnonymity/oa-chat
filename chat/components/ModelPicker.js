@@ -8,6 +8,7 @@
  */
 
 import { getProviderIcon } from '../services/providerIcons.js';
+import { resolveProvider, resolveProviderFromModelReference } from '../services/providerRegistry.js';
 import { getDefaultModelConfig, onPinnedModelsUpdate } from '../services/modelConfig.js';
 import { getTicketCost, onModelTiersUpdate } from '../services/modelTiers.js';
 
@@ -426,34 +427,14 @@ export default class ModelPicker {
             </div>
         `;
 
-        // Extract provider from model name - try multiple strategies
-        // This allows showing icons immediately without waiting for the models API
-        const inferProvider = (name) => {
-            if (!name) return null;
-            // Strategy 1: "Provider: Model" format (our custom names)
-            if (name.includes(': ')) {
-                return name.split(': ')[0];
-            }
-            // Strategy 2: Keyword matching for common model names
-            const lowerName = name.toLowerCase();
-            if (lowerName.includes('gpt') || lowerName.includes('o1-') || lowerName.includes('o3-') || lowerName.includes('o4-')) return 'OpenAI';
-            if (lowerName.includes('claude')) return 'Anthropic';
-            if (lowerName.includes('gemini')) return 'Google';
-            if (lowerName.includes('llama')) return 'Meta';
-            if (lowerName.includes('mistral')) return 'Mistral';
-            if (lowerName.includes('deepseek')) return 'DeepSeek';
-            if (lowerName.includes('qwen')) return 'Qwen';
-            if (lowerName.includes('command')) return 'Cohere';
-            if (lowerName.includes('sonar')) return 'Perplexity';
-            if (lowerName.includes('nemotron')) return 'Nvidia';
-            return null;
-        };
-
-        // Try to get provider from model lookup first, then infer from name
-        const model = this.app.state.models.find(m => m.name === currentModelName);
-        const provider = model?.provider || inferProvider(currentModelName);
+        // Prefer catalog metadata; persisted IDs and explicit provider prefixes are
+        // resolved centrally without guessing a company from model-family keywords.
+        const model = this.app.state.models.find(m => m.name === currentModelName || m.id === currentModelName);
+        const provider = model?.provider
+            ? resolveProvider(model.provider).displayName
+            : resolveProviderFromModelReference(currentModelName).displayName;
         // getProviderIcon returns first letter fallback when no icon configured
-        const iconData = provider ? getProviderIcon(provider, 'w-3 h-3') : { html: '', hasIcon: false };
+        const iconData = getProviderIcon(provider, 'w-3 h-3');
 
         // Use icon HTML directly - getProviderIcon already provides first letter fallback
         // Only show spinner if provider is completely unknown (very rare)

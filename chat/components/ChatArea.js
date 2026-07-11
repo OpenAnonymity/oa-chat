@@ -8,6 +8,7 @@ import { buildMessageHTML, buildEmptyState, buildSharedIndicator, buildImportedI
 import { exportChats, exportTickets } from '../services/globalExport.js';
 import { parseStreamingReasoningContent, parseReasoningContent } from '../services/reasoningParser.js';
 import { buildQuickAskQuestion, normalizeQuickAskSelection } from '../domain/quickAsk.js';
+import { resolveProvider, resolveProviderFromModelReference } from '../services/providerRegistry.js';
 
 export default class ChatArea {
     /**
@@ -1733,8 +1734,10 @@ export default class ChatArea {
         const needsTypingIndicator = isSessionStreaming && (!lastMsg || lastMsg.role === 'user');
         if (needsTypingIndicator) {
             // Get provider from session model for the typing indicator
-            const sessionModel = this.app.state.models?.find(m => m.name === session.model);
-            const providerName = sessionModel?.provider || 'OpenAI';
+            const sessionModel = this.app.state.models?.find(m => m.name === session.model || m.id === session.model);
+            const providerName = sessionModel?.provider
+                ? resolveProvider(sessionModel.provider).displayName
+                : resolveProviderFromModelReference(session.model).displayName;
             messagesHtml += buildTypingIndicator('typing-restore-' + Date.now(), providerName, session.model, Date.now(), streamingPhase);
         }
 

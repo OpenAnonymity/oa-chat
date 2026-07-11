@@ -37,12 +37,21 @@ test('catalog provider aliases resolve to canonical local assets', () => {
 test('unknown and malformed providers use escaped neutral badges', () => {
     assert.deepEqual(getProviderIcon('Future Lab').hasIcon, false);
     assert.match(getProviderIcon('Future Lab').html, />F<\/span>/);
-    assert.match(getProviderIcon('<script>').html, />S<\/span>/);
+    assert.match(getProviderIcon('<script>').html, />A<\/span>/);
+    assert.match(getProviderIcon('Unknown').html, />A<\/span>/);
     assert.match(getProviderIcon('').html, />A<\/span>/);
 
     const hostileClasses = getProviderIcon('xAI', 'w-4" data-injected="true');
     assert.match(hostileClasses.html, /w-4&quot; data-injected=&quot;true/);
     assert.doesNotMatch(hostileClasses.html, /class="w-4" data-injected=/);
+});
+
+test('a malformed latest alias resolves through the registry to the generic badge', async () => {
+    const { resolveProviderFromModelId } = await import('../../chat/services/providerRegistry.js');
+    const provider = resolveProviderFromModelId('~/broken');
+
+    assert.equal(provider.displayName, 'Unknown');
+    assert.match(getProviderIcon(provider.displayName).html, />A<\/span>/);
 });
 
 test('image markup includes a local failure fallback', () => {

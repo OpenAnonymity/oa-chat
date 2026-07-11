@@ -31,7 +31,7 @@
 - Produces: `getProviderAsset(displayName: string): string|null`
 - Consumed by: `chat/api.js` and `chat/services/providerIcons.js`
 
-- [ ] **Step 1: Write failing provider normalization tests**
+- [x] **Step 1: Write failing provider normalization tests**
 
 ```js
 import test from 'node:test';
@@ -73,13 +73,13 @@ test('unknown and malformed authors degrade to safe provider names', () => {
 });
 ```
 
-- [ ] **Step 2: Run the focused test and confirm the module is missing**
+- [x] **Step 2: Run the focused test and confirm the module is missing**
 
 Run: `node --test test/services/providerRegistry.test.js`
 
 Expected: FAIL with `ERR_MODULE_NOT_FOUND` for `providerRegistry.js`.
 
-- [ ] **Step 3: Implement the registry and safe slug parsing**
+- [x] **Step 3: Implement the registry and safe slug parsing**
 
 Create a registry of canonical catalog author slugs with display names and optional
 asset paths. Validate author slugs with `^[a-z0-9][a-z0-9._-]*$`; remove one leading
@@ -87,13 +87,13 @@ asset paths. Validate author slugs with `^[a-z0-9][a-z0-9._-]*$`; remove one lea
 hyphens/underscores with spaces and title-casing words. Return `{ slug: null,
 displayName: 'Unknown' }` for invalid input.
 
-- [ ] **Step 4: Route OpenRouter model formatting through the registry**
+- [x] **Step 4: Route OpenRouter model formatting through the registry**
 
 Import `resolveProviderFromModelId` in `chat/api.js`, replace `capitalizeProvider`, and
 set `provider` from the returned `displayName`. Keep cached/fallback model shapes
 unchanged.
 
-- [ ] **Step 5: Run focused and catalog-related tests**
+- [x] **Step 5: Run focused and catalog-related tests**
 
 Run: `node --test test/services/providerRegistry.test.js test/domain/modelSelection.test.js`
 
@@ -112,7 +112,7 @@ Expected: all tests PASS.
 - Consumes: `resolveProvider(value)` and `getProviderAsset(displayName)` from Task 1
 - Produces: existing `getProviderIcon(provider, classes): { html: string, hasIcon: boolean }`
 
-- [ ] **Step 1: Write failing icon resolution tests**
+- [x] **Step 1: Write failing icon resolution tests**
 
 ```js
 import test from 'node:test';
@@ -147,14 +147,14 @@ test('image markup includes a local failure fallback', () => {
 });
 ```
 
-- [ ] **Step 2: Run the focused test and confirm missing coverage**
+- [x] **Step 2: Run the focused test and confirm missing coverage**
 
 Run: `node --test test/services/providerIcons.test.js`
 
 Expected: FAIL because xAI has no configured local asset and OpenRouter still uses a
 remote favicon.
 
-- [ ] **Step 3: Acquire and document self-hosted assets**
+- [x] **Step 3: Acquire and document self-hosted assets**
 
 Download SVGs from official brand repositories or Simple Icons' versioned GitHub
 sources; use official favicons only when no suitable vector mark exists. Save assets
@@ -168,7 +168,7 @@ Use the pinned MIT-licensed `@lobehub/icons-static-svg@1.91.0` source for
 Icons `16.21.0` for `xiaomi`. Record the upstream project licenses and brand/trademark
 notice; these URLs are acquisition provenance only and must not appear in runtime code.
 
-- [ ] **Step 4: Populate major-provider asset entries**
+- [x] **Step 4: Populate major-provider asset entries**
 
 Add local asset paths for the existing providers plus these catalog mappings:
 `x-ai → xAI`, `z-ai → Z.ai`, `moonshotai → Moonshot AI`, `amazon → AWS`,
@@ -179,7 +179,7 @@ Map naming aliases to the same canonical asset; do not map downstream publishers
 architecture vendor. This target raises recognizable coverage to roughly 90% of the
 current live catalog while leaving obscure community publishers on initials.
 
-- [ ] **Step 5: Make image failures fall back to the neutral badge**
+- [x] **Step 5: Make image failures fall back to the neutral badge**
 
 Update `getProviderIcon` to obtain metadata from the registry, emit only local `img/`
 URLs, escape provider-derived attribute text, and render a hidden sibling initial
@@ -188,7 +188,7 @@ that hides a failed image and reveals that sibling. Do not use inline `onerror`,
 the fallback remains compatible with a future strict `script-src 'self'` CSP. Preserve
 the existing return shape so all picker/message consumers remain unchanged.
 
-- [ ] **Step 6: Run icon and message-template tests**
+- [x] **Step 6: Run icon and message-template tests**
 
 Run: `node --test test/services/providerIcons.test.js test/components/messageTemplates.test.js`
 

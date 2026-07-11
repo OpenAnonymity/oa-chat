@@ -8,6 +8,7 @@ import { exportChats, exportTickets } from './services/globalExport.js';
 import { parseReasoningContent } from './services/reasoningParser.js';
 import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort } from './services/reasoningConfig.js';
 import { fetchUrlMetadata } from './services/urlMetadata.js';
+import { resolveProvider, resolveProviderFromModelReference } from './services/providerRegistry.js';
 import networkProxy from './services/networkProxy.js';
 import inferenceService from './services/inference/inferenceService.js';
 import ticketClient from './services/ticketClient.js';
@@ -6216,8 +6217,10 @@ class ChatApp {
      * @returns {string} ID of the typing indicator element
      */
     showTypingIndicator(modelName, phase = 'requesting-key') {
-        const model = this.state.models.find(m => m.name === modelName);
-        const providerName = model ? model.provider : 'OpenAI';
+        const model = this.state.models.find(m => m.name === modelName || m.id === modelName);
+        const providerName = model?.provider
+            ? resolveProvider(model.provider).displayName
+            : resolveProviderFromModelReference(modelName).displayName;
         const id = 'typing-' + Date.now();
         const timestamp = Date.now();
         const typingHtml = this.ui.buildTypingIndicator(id, providerName, modelName, timestamp, phase);

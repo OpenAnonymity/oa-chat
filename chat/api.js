@@ -16,7 +16,7 @@ import { getDefaultModelConfig } from './services/modelConfig.js';
 import { resolveModelDisplayName } from './services/modelNames.js';
 import apiKeyStore from './services/apiKeyStore.js';
 import { loadModelCatalog, saveModelCatalog } from './services/modelCatalogCache.js';
-import { resolveProviderFromModelId } from './services/providerRegistry.js';
+import { normalizeOpenRouterModelProviders, resolveProviderFromModelId } from './services/providerRegistry.js';
 import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort } from './services/reasoningConfig.js';
 
 const OPENROUTER_BACKEND_ID = 'openrouter';
@@ -102,7 +102,7 @@ class OpenRouterAPI {
             const cachedModels = loadModelCatalog(OPENROUTER_BACKEND_ID);
             if (Array.isArray(cachedModels) && cachedModels.length > 0) {
                 console.warn('Using cached model catalog for OpenRouter.');
-                return cachedModels;
+                return normalizeOpenRouterModelProviders(cachedModels);
             }
 
             // Return a fallback list of models
