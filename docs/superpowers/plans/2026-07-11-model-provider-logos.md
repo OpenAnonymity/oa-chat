@@ -141,8 +141,9 @@ test('unknown and malformed providers use escaped neutral badges', () => {
 
 test('image markup includes a local failure fallback', () => {
     const icon = getProviderIcon('xAI');
-    assert.match(icon.html, /onerror=/);
+    assert.match(icon.html, /data-provider-icon/);
     assert.match(icon.html, /data-provider-icon-fallback/);
+    assert.doesNotMatch(icon.html, /onerror=/);
 });
 ```
 
@@ -169,9 +170,11 @@ same canonical entry; do not map downstream publishers to an architecture vendor
 - [ ] **Step 5: Make image failures fall back to the neutral badge**
 
 Update `getProviderIcon` to obtain metadata from the registry, emit only local `img/`
-URLs, escape provider-derived attribute text, and include an image `onerror` path that
-hides the failed image and reveals a sibling initial badge. Preserve the existing
-return shape so all picker/message consumers remain unchanged.
+URLs, escape provider-derived attribute text, and render a hidden sibling initial
+badge. Install one capture-phase `error` listener for `[data-provider-icon]` images
+that hides a failed image and reveals that sibling. Do not use inline `onerror`, so
+the fallback remains compatible with a future strict `script-src 'self'` CSP. Preserve
+the existing return shape so all picker/message consumers remain unchanged.
 
 - [ ] **Step 6: Run icon and message-template tests**
 
