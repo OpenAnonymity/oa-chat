@@ -161,11 +161,23 @@ sources; use official favicons only when no suitable vector mark exists. Save as
 with lowercase stable filenames, inspect that each is a valid image, and record brand,
 filename, source URL, and source/license note in `chat/img/PROVIDER_ASSETS.md`.
 
+Use the pinned MIT-licensed `@lobehub/icons-static-svg@1.91.0` source for
+`openrouter`, `xai`, `zai`, `minimax`, `moonshot`, `nousresearch`, `aws`, `tencent`,
+`bytedance`, `microsoft`, `ibm`, `ai21`, `aionlabs`, `arcee`, `stepfun`, `relace`,
+`morph`, `liquid`, `inflection`, `inception`, `baidu`, and `upstage`. Use Simple
+Icons `16.21.0` for `xiaomi`. Record the upstream project licenses and brand/trademark
+notice; these URLs are acquisition provenance only and must not appear in runtime code.
+
 - [ ] **Step 4: Populate major-provider asset entries**
 
-Add local asset paths for the existing providers plus major missing catalog publishers
-identified from the live catalog and asset research. Map provider naming aliases to the
-same canonical entry; do not map downstream publishers to an architecture vendor.
+Add local asset paths for the existing providers plus these catalog mappings:
+`x-ai → xAI`, `z-ai → Z.ai`, `moonshotai → Moonshot AI`, `amazon → AWS`,
+`ibm-granite → IBM`, `bytedance-seed|bytedance → ByteDance`, `aion-labs → AionLabs`,
+and direct entries for MiniMax, Nous Research, Tencent, Microsoft, AI21, Arcee AI,
+Xiaomi, StepFun, Relace, Morph, Liquid, Inflection, Inception, Baidu, and Upstage.
+Map naming aliases to the same canonical asset; do not map downstream publishers to an
+architecture vendor. This target raises recognizable coverage to roughly 90% of the
+current live catalog while leaving obscure community publishers on initials.
 
 - [ ] **Step 5: Make image failures fall back to the neutral badge**
 
