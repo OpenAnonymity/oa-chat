@@ -148,6 +148,7 @@ class ChatApp {
             modelsVersion: 0,
             pendingModelName: null // Model selected before session is created (display name)
         };
+        this.cachedModelDisplayMetadata = [];
 
         this.elements = {
             newChatBtn: document.getElementById('new-chat-btn'),
@@ -1878,6 +1879,10 @@ class ChatApp {
         chatDB.saveSetting('reasoningEnabled', true).catch(() => {});
         this.reasoningEffort = normalizeReasoningEffort(savedReasoningEffort);
 
+        // This cache is display-only: request-time selection continues to use
+        // state.models after the active backend's live catalog has loaded.
+        this.cachedModelDisplayMetadata = inferenceService.getCachedModels(this.getCurrentSession());
+
         // Render local data immediately (session from sessionStorage + model/settings from DB).
         this.renderMessages();
         this.renderCurrentModel();
@@ -3477,6 +3482,7 @@ class ChatApp {
 
         // Keep current search state (global setting)
         const session = this.state.sessionsById.get(sessionId) || this.state.sessions.find(s => s.id === sessionId);
+        this.cachedModelDisplayMetadata = inferenceService.getCachedModels(session);
         if (session) {
             this.chatInput.updateSearchToggleUI();
         }
@@ -3784,6 +3790,7 @@ class ChatApp {
             await chatDB.saveSetting('selectedModel', normalizedSelectedModelName);
         }
         this.state.pendingModelName = normalizedSelectedModelName || null;
+        this.cachedModelDisplayMetadata = inferenceService.getCachedModels();
 
         // Update UI to reflect no session selected
         this.renderSessions();

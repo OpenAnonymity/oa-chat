@@ -61,6 +61,13 @@ class OpenRouterAPI {
         return key;
     }
 
+    getCachedModels() {
+        const cachedModels = loadModelCatalog(OPENROUTER_BACKEND_ID);
+        return Array.isArray(cachedModels)
+            ? normalizeOpenRouterModelProviders(cachedModels)
+            : [];
+    }
+
     // Fetch available models from OpenRouter
     async fetchModels() {
         const url = `${this.baseUrl}/models`;
@@ -99,10 +106,10 @@ class OpenRouterAPI {
         } catch (error) {
             console.error('Error fetching models from OpenRouter:', error);
 
-            const cachedModels = loadModelCatalog(OPENROUTER_BACKEND_ID);
-            if (Array.isArray(cachedModels) && cachedModels.length > 0) {
+            const cachedModels = this.getCachedModels();
+            if (cachedModels.length > 0) {
                 console.warn('Using cached model catalog for OpenRouter.');
-                return normalizeOpenRouterModelProviders(cachedModels);
+                return cachedModels;
             }
 
             // Return a fallback list of models

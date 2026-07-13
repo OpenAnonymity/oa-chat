@@ -40,6 +40,16 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   The image-failure badge uses an explicit dark foreground because known-provider
   consumers retain their white icon-circle background after the image is hidden.
 
+- 2026-07-13: Provider logos hydrate from the local model-catalog cache before a saved
+  model choice is rendered. `inferenceService.getCachedModels(...)` delegates to the
+  restored session's backend; OpenRouter normalizes cached provider metadata before
+  returning it. The result lives in `cachedModelDisplayMetadata`, not `state.models`, so
+  stale cache entries cannot influence request-time availability or model selection.
+  Session switches refresh this display-only cache for the new backend, and clearing the
+  current session restores the default backend's cached metadata.
+  Keep the live catalog fetch as a background refresh so saved choices such as `Auto
+  Router` never flash an unknown initial while waiting on the network.
+
 - 2026-07-02: Memory retrieval fallback now shows a safe, calm note in-chat.
   - `runMemoryAugmentFlow(...)` still logs the raw exception to the browser
     console as `Memory augment query failed:`, but the persisted local Memory

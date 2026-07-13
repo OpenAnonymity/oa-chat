@@ -103,6 +103,9 @@ export function createModelPickerInterface(app, options = {}) {
         get reasoningEnabled() {
             return app.reasoningEnabled;
         },
+        get cachedModelDisplayMetadata() {
+            return app.cachedModelDisplayMetadata;
+        },
         getCurrentSession: () => app.getCurrentSession(),
         getDefaultModelName: () => app.getDefaultModelName(),
         normalizeModelName: (modelName) => app.normalizeModelName(modelName),

@@ -27,6 +27,7 @@ const openRouterBackend = {
         verifyUrl: OPENROUTER_MODELS_URL,
         displayName: 'OpenRouter'
     },
+    getCachedModels: () => openRouterAPI.getCachedModels(),
     fetchModels: () => openRouterAPI.fetchModels(),
     getDisplayName: (modelId, fallback) => openRouterAPI.getDisplayName(modelId, fallback),
     sendCompletion: (messages, modelId, token) => openRouterAPI.sendCompletion(messages, modelId, token),

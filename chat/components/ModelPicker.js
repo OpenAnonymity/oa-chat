@@ -429,7 +429,9 @@ export default class ModelPicker {
 
         // Prefer catalog metadata; persisted IDs and explicit provider prefixes are
         // resolved centrally without guessing a company from model-family keywords.
-        const model = this.app.state.models.find(m => m.name === currentModelName || m.id === currentModelName);
+        const matchesCurrentModel = (model) => model.name === currentModelName || model.id === currentModelName;
+        const model = this.app.state.models.find(matchesCurrentModel)
+            || this.app.cachedModelDisplayMetadata.find(matchesCurrentModel);
         const provider = model?.provider
             ? resolveProvider(model.provider).displayName
             : resolveProviderFromModelReference(currentModelName).displayName;

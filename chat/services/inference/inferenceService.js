@@ -99,6 +99,12 @@ const inferenceService = {
         const backend = getBackendForSession(session);
         return backend.accessShortLabel || backend.accessLabel;
     },
+    getCachedModels(session) {
+        const backend = getBackendForSession(session);
+        return typeof backend.getCachedModels === 'function'
+            ? backend.getCachedModels()
+            : [];
+    },
     getTlsDisplayName(session) {
         const backend = getBackendForSession(session);
         return backend.tls?.displayName || backend.label;

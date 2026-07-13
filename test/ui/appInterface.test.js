@@ -30,6 +30,7 @@ function createMockApp(overrides = {}) {
             pendingModelName: null,
             currentSessionId: session?.id || null
         },
+        cachedModelDisplayMetadata: overrides.cachedModelDisplayMetadata || [],
         reasoningEnabled: true,
         memoryFeatureEnabled: true,
         sessionSearchQuery: 'query',
@@ -55,7 +56,8 @@ function createMockApp(overrides = {}) {
 }
 
 test('model picker interface exposes only model-picker elements and state selectors', () => {
-    const { app } = createMockApp();
+    const cachedModel = { id: 'openrouter/auto', name: 'Auto Router', provider: 'OpenRouter' };
+    const { app } = createMockApp({ cachedModelDisplayMetadata: [cachedModel] });
     const ui = createModelPickerInterface(app, {
         chatDBImpl: { saveSetting: async () => {}, saveSession: async () => {} }
     });
@@ -64,9 +66,13 @@ test('model picker interface exposes only model-picker elements and state select
     assert.equal(ui.elements.sessionsList, undefined);
     assert.equal(ui.state, app.state);
     assert.equal(ui.reasoningEnabled, true);
+    assert.deepEqual(ui.cachedModelDisplayMetadata, [cachedModel]);
     assert.equal(ui.getCurrentSession(), null);
     assert.equal(ui.getDefaultModelName(), 'Default Model');
     assert.equal(ui.normalizeModelName('Model A'), 'Model A normalized');
+
+    app.cachedModelDisplayMetadata = [];
+    assert.deepEqual(ui.cachedModelDisplayMetadata, [], 'cache exposure should remain a live read-only view');
 });
 
 test('model picker selectModel stores pending model when there is no session', async () => {
@@ -108,6 +114,54 @@ test('model picker selectModel updates active session through injected persisten
     assert.deepEqual(savedSettings, [['selectedModel', 'Model A normalized']]);
     assert.deepEqual(savedSessions, [[activeSession]]);
     assert.deepEqual(calls, [['renderCurrentModel']]);
+});
+
+test('model picker renders cached provider metadata through its narrowed interface', async () => {
+    const originalDocument = globalThis.document;
+    const originalLocalStorage = globalThis.localStorage;
+    globalThis.document = {
+        addEventListener() {},
+        getElementById() {
+            return null;
+        }
+    };
+    globalThis.localStorage = {
+        getItem() {
+            return null;
+        },
+        setItem() {}
+    };
+
+    try {
+        const { default: ModelPicker } = await import('../../chat/components/ModelPicker.js');
+        const cachedModel = { id: 'openrouter/auto', name: 'Auto Router', provider: 'OpenRouter' };
+        const { app } = createMockApp({ cachedModelDisplayMetadata: [cachedModel] });
+        app.state.models = [];
+        app.state.pendingModelName = 'Auto Router';
+        app.elements.modelPickerBtn = {
+            innerHTML: '',
+            classList: { add() {} }
+        };
+        const ui = createModelPickerInterface(app, {
+            chatDBImpl: { saveSetting: async () => {}, saveSession: async () => {} }
+        });
+
+        new ModelPicker(ui).renderCurrentModel();
+
+        assert.match(app.elements.modelPickerBtn.innerHTML, /src="img\/openrouter\.svg"/);
+        assert.match(app.elements.modelPickerBtn.innerHTML, /alt="OpenRouter"/);
+    } finally {
+        if (originalDocument === undefined) {
+            delete globalThis.document;
+        } else {
+            globalThis.document = originalDocument;
+        }
+        if (originalLocalStorage === undefined) {
+            delete globalThis.localStorage;
+        } else {
+            globalThis.localStorage = originalLocalStorage;
+        }
+    }
 });
 
 test('sidebar interface exposes sidebar-only elements and proxies actions', async () => {

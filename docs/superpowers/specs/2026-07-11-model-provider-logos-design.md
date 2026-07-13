@@ -35,6 +35,13 @@ assets; use stable, reputable SVG repositories when an official downloadable mar
 not available. Record asset sources and licenses where required. Do not add runtime
 requests to provider websites or icon CDNs.
 
+The last successful model catalog is also read synchronously from local storage before
+the saved model choice is rendered. Provider metadata from that cache must be normalized
+in the same way as a live catalog response, so a hard refresh can show the correct local
+logo immediately while a fresh catalog request continues in the background. Cached
+catalog entries are display-only during startup; request-time model selection continues
+to use the active backend's live catalog.
+
 Initial coverage targets the major recognizable publishers in the current catalog,
 including xAI, Z.ai, Moonshot AI, MiniMax, Microsoft, Amazon, Nous Research, Tencent,
 ByteDance, IBM, AI21, and other publishers for which a trustworthy small-format mark

@@ -129,6 +129,52 @@ test('initial model load drains pinned availability refreshes', () => {
     );
 });
 
+test('cached provider metadata stays display-only and hydrates before the saved-model render', () => {
+    const appSource = read('chat/app.js');
+    const modelPickerSource = read('chat/components/ModelPicker.js');
+    const serviceSource = read('chat/services/inference/inferenceService.js');
+    const backendSource = read('chat/services/inference/backends/openRouterBackend.js');
+    const initSource = appSource.slice(
+        appSource.indexOf('    async init() {'),
+        appSource.indexOf('    setupInputAreaObserver()')
+    );
+    const switchSessionSource = appSource.slice(
+        appSource.indexOf('    async switchSession(sessionId) {'),
+        appSource.indexOf('    async clearCurrentSession(options = {})')
+    );
+    const clearSessionSource = appSource.slice(
+        appSource.indexOf('    async clearCurrentSession(options = {})'),
+        appSource.indexOf('    async updateSessionTitle(')
+    );
+    const hydrationIndex = initSource.indexOf('this.cachedModelDisplayMetadata = inferenceService.getCachedModels(this.getCurrentSession())');
+    const savedModelRenderIndex = initSource.lastIndexOf('this.renderCurrentModel();');
+
+    assert.ok(backendSource.includes('getCachedModels:'), 'OpenRouter backend should expose its local catalog cache');
+    assert.ok(serviceSource.includes('getCachedModels(session)'), 'inference service should expose backend cache reads');
+    assert.equal(
+        /this\.state\.models\s*=\s*[^;]*getCachedModels/.test(initSource),
+        false,
+        'cached display metadata must not become request-authoritative state.models'
+    );
+    assert.ok(hydrationIndex >= 0, 'app initialization should hydrate display-only cached metadata');
+    assert.ok(
+        hydrationIndex < savedModelRenderIndex,
+        'cached provider metadata must be available before the saved-model render'
+    );
+    assert.ok(
+        modelPickerSource.includes('this.app.cachedModelDisplayMetadata'),
+        'current-model provider lookup should use display-only cached metadata as a fallback'
+    );
+    assert.ok(
+        switchSessionSource.includes('this.cachedModelDisplayMetadata = inferenceService.getCachedModels(session);'),
+        'switching sessions should refresh display metadata for the restored backend'
+    );
+    assert.ok(
+        clearSessionSource.includes('this.cachedModelDisplayMetadata = inferenceService.getCachedModels();'),
+        'clearing a session should restore default-backend display metadata'
+    );
+});
+
 test('inline quick ask preserves scrubber and session lifecycle constraints', () => {
     const appSource = read('chat/app.js');
     const apiSource = read('chat/api.js');
