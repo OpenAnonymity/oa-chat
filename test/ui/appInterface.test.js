@@ -139,13 +139,15 @@ test('model picker renders cached provider metadata through its narrowed interfa
 
     try {
         const { default: ModelPicker } = await import('../../chat/components/ModelPicker.js');
-        const cachedModel = { id: 'openrouter/auto', name: 'Auto Router', provider: 'OpenRouter' };
+        const cachedModel = { id: 'openrouter/auto', name: 'Auto Router normalized', provider: 'OpenRouter' };
         const { app } = createMockApp({ cachedModelDisplayMetadata: [cachedModel] });
         app.state.models = [];
         app.state.pendingModelName = 'Auto Router';
         app.elements.modelPickerBtn = {
             innerHTML: '',
-            classList: { add() {} }
+            title: '',
+            classList: { add() {} },
+            setAttribute() {}
         };
         const ui = createModelPickerInterface(app, {
             chatDBImpl: { saveSetting: async () => {}, saveSession: async () => {} }
