@@ -51,3 +51,27 @@ test('buildBaseSharePayload normalizes pending memory approval for shared views'
 
     assert.deepEqual(payload.messages[0].memoryApprovalPrompt, { status: 'approved' });
 });
+
+test('buildBaseSharePayload serializes council response mode and config for shared imports', () => {
+    const payload = buildBaseSharePayload({
+        title: 'Shared council chat',
+        model: 'OpenAI: GPT-5 Instant',
+        responseMode: 'council',
+        councilConfig: {
+            enabled: true,
+            members: ['OpenAI: GPT-5 Instant', 'Anthropic: Claude Sonnet'],
+            synthesisModel: 'Google: Gemini Flash',
+            outputMode: 'council',
+            reviewEnabled: true
+        }
+    }, []);
+
+    assert.equal(payload.session.responseMode, 'council');
+    assert.deepEqual(payload.session.councilConfig, {
+        enabled: true,
+        members: ['OpenAI: GPT-5 Instant', 'Anthropic: Claude Sonnet'],
+        synthesisModel: 'Google: Gemini Flash',
+        outputMode: 'council',
+        reviewEnabled: true
+    });
+});

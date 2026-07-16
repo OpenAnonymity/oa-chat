@@ -18,6 +18,7 @@ import {
 } from '../services/editableDiffRenderer.js';
 import { normalizeReasoningEffort } from '../services/reasoningConfig.js';
 import { getProviderIcon } from '../services/providerIcons.js';
+import { resolveProvider, resolveProviderFromModelReference } from '../services/providerRegistry.js';
 import { onModelTiersUpdate } from '../services/modelTiers.js';
 import {
     RESPONSE_MODE_COUNCIL,
@@ -2398,23 +2399,6 @@ export default class ChatInput {
         );
     }
 
-    inferProviderFromModelName(modelName) {
-        if (!modelName) return null;
-        if (modelName.includes(': ')) return modelName.split(': ')[0];
-        const lowerName = modelName.toLowerCase();
-        if (lowerName.includes('gpt') || lowerName.includes('o1-') || lowerName.includes('o3-') || lowerName.includes('o4-')) return 'OpenAI';
-        if (lowerName.includes('claude')) return 'Anthropic';
-        if (lowerName.includes('gemini')) return 'Google';
-        if (lowerName.includes('llama')) return 'Meta';
-        if (lowerName.includes('mistral')) return 'Mistral';
-        if (lowerName.includes('deepseek')) return 'DeepSeek';
-        if (lowerName.includes('qwen')) return 'Qwen';
-        if (lowerName.includes('command')) return 'Cohere';
-        if (lowerName.includes('sonar')) return 'Perplexity';
-        if (lowerName.includes('nemotron')) return 'Nvidia';
-        return null;
-    }
-
     getShortModelName(modelName) {
         return getComposerModelDisplayName(modelName);
     }
@@ -2425,7 +2409,10 @@ export default class ChatInput {
 
     buildModelIconHtml(modelName, sizeClass = 'w-3 h-3') {
         const model = this.getModelEntryByName(modelName);
-        const provider = model?.provider || this.inferProviderFromModelName(modelName);
+        const resolvedProvider = model?.provider
+            ? resolveProvider(model.provider).displayName
+            : resolveProviderFromModelReference(modelName).displayName;
+        const provider = resolvedProvider && resolvedProvider !== 'Unknown' ? resolvedProvider : null;
         const iconData = provider ? getProviderIcon(provider, sizeClass) : { html: '', hasIcon: false };
         const shortName = this.getShortModelName(modelName);
         const iconHtml = iconData.html || `<span class="text-[10px] font-semibold">${this.escapeOptionText((shortName || '?').charAt(0).toUpperCase())}</span>`;

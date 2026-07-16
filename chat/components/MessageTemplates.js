@@ -1394,54 +1394,18 @@ function extractShortModelName(fullName) {
     return fullName;
 }
 
-// Provider slug to display name mapping (module-level constant for efficiency)
-const PROVIDER_SLUG_MAP = {
-    'openai': 'OpenAI',
-    'anthropic': 'Anthropic',
-    'google': 'Google',
-    'meta': 'Meta',
-    'meta-llama': 'Meta',
-    'mistral': 'Mistral',
-    'mistralai': 'Mistral',
-    'deepseek': 'DeepSeek',
-    'qwen': 'Qwen',
-    'alibaba': 'Qwen',
-    'cohere': 'Cohere',
-    'perplexity': 'Perplexity',
-    'nvidia': 'Nvidia'
-};
+function resolveCouncilProviderName(modelName, modelId = '') {
+    const candidates = [modelId, modelName].filter(candidate =>
+        typeof candidate === 'string' && candidate.trim()
+    );
 
-/**
- * Infers provider name from model name when models list is unavailable.
- * Uses the "Provider: Model" format, model ID format, or keyword matching as fallback.
- * @param {string} name - Model name (e.g., "OpenAI: GPT-5.1 Thinking", "openai/gpt-5.2-chat", or "GPT-4")
- * @returns {string|null} Provider name or null if unknown
- */
-function inferProvider(name) {
-    if (!name || typeof name !== 'string') return null;
-    // Strategy 1: "Provider: Model" format (our custom names)
-    const colonIdx = name.indexOf(': ');
-    if (colonIdx !== -1) {
-        return name.slice(0, colonIdx);
+    for (const candidate of candidates) {
+        const resolved = resolveProviderFromModelReference(candidate);
+        if (resolved.displayName && resolved.displayName !== 'Unknown') {
+            return resolved.displayName;
+        }
     }
-    // Strategy 2: "provider/model-id" format (model IDs)
-    const slashIdx = name.indexOf('/');
-    if (slashIdx !== -1) {
-        const provider = name.slice(0, slashIdx).toLowerCase();
-        return PROVIDER_SLUG_MAP[provider] || provider.charAt(0).toUpperCase() + provider.slice(1);
-    }
-    // Strategy 3: Keyword matching for common model names
-    const lowerName = name.toLowerCase();
-    if (lowerName.includes('gpt') || lowerName.includes('o1-') || lowerName.includes('o3-') || lowerName.includes('o4-')) return 'OpenAI';
-    if (lowerName.includes('claude')) return 'Anthropic';
-    if (lowerName.includes('gemini')) return 'Google';
-    if (lowerName.includes('llama')) return 'Meta';
-    if (lowerName.includes('mistral')) return 'Mistral';
-    if (lowerName.includes('deepseek')) return 'DeepSeek';
-    if (lowerName.includes('qwen')) return 'Qwen';
-    if (lowerName.includes('command')) return 'Cohere';
-    if (lowerName.includes('sonar')) return 'Perplexity';
-    if (lowerName.includes('nemotron')) return 'Nvidia';
+
     return null;
 }
 
@@ -1569,7 +1533,7 @@ function buildCouncilSynthesisSection(synthesis, processContentWithLatex, messag
     let bodyHtml = '';
     const synthesisModel = synthesis.model || synthesis.modelId || '';
     const synthesisModelHtml = synthesisModel
-        ? buildCouncilModelLabel(synthesisModel, { roleLabel: 'Council' })
+        ? buildCouncilModelLabel(synthesisModel, { roleLabel: 'Council', modelId: synthesis.modelId || '' })
         : '';
     const showMeta = !!(synthesisModelHtml || statusHtml);
     const metaHtml = showMeta
@@ -1679,17 +1643,17 @@ function formatCouncilModelDisplayName(modelName, options = {}) {
         return standardized;
     }
 
-    const provider = inferProvider(standardized);
+    const provider = resolveCouncilProviderName(standardized, options.modelId || '');
     return provider && shortName
         ? `${provider}: ${shortName}`
         : standardized;
 }
 
 function buildCouncilModelLabel(modelName, options = {}) {
-    const { roleLabel = '' } = options;
+    const { roleLabel = '', modelId = '' } = options;
     const displayName = formatCouncilModelDisplayName(modelName || '', options);
     const shortName = extractShortModelName(modelName || '');
-    const provider = inferProvider(modelName || '');
+    const provider = resolveCouncilProviderName(modelName || '', modelId);
     const iconData = provider ? getProviderIcon(provider, 'w-3 h-3') : { html: '', hasIcon: false };
     const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
     const iconHtml = iconData.html || `<span class="text-[10px] font-semibold">${escapeHtml((shortName || displayName || '?').charAt(0).toUpperCase())}</span>`;
@@ -1857,7 +1821,7 @@ function buildCouncilAssistantMessage({
                 data-council-lane-id="${escapeHtmlAttribute(entry.laneId || '')}"
             >
                 <div class="council-response-meta">
-                    <span class="council-response-model">${buildCouncilModelLabel(entry.model || entry.modelId || '')}</span>
+                    <span class="council-response-model">${buildCouncilModelLabel(entry.model || entry.modelId || '', { modelId: entry.modelId || '' })}</span>
                     ${buildCouncilResponseStatus(entry.status || 'pending', {
                         isFallbackContext: synthesis?.status === 'error' && canonicalLabel === entry.label
                     })}

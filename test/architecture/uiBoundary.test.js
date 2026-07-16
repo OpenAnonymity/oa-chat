@@ -112,6 +112,32 @@ test('component templates do not reach through backend globals', () => {
     );
 });
 
+test('share imports preserve Parallel and Council session state', () => {
+    const shareServiceSource = read('chat/services/shareService.js');
+    const appSource = read('chat/app.js');
+
+    assert.equal(
+        shareServiceSource.includes('responseMode: normalizeResponseMode(payload.session.responseMode)'),
+        true,
+        'createSessionFromPayload should restore shared responseMode'
+    );
+    assert.equal(
+        shareServiceSource.includes('councilConfig: normalizeCouncilConfig(payload.session.councilConfig, payload.session.model)'),
+        true,
+        'createSessionFromPayload should restore shared councilConfig'
+    );
+    assert.equal(
+        appSource.includes('existingSession.responseMode = normalizeResponseMode(payload.session.responseMode)'),
+        true,
+        'shared session updates should preserve responseMode'
+    );
+    assert.equal(
+        appSource.includes('existingSession.councilConfig = normalizeCouncilConfig(payload.session.councilConfig, existingSession.model)'),
+        true,
+        'shared session updates should preserve councilConfig'
+    );
+});
+
 test('parallel aggregate messages omit redundant visible mode and completion labels', () => {
     const source = read('chat/components/MessageTemplates.js');
     const styles = read('chat/styles.css');
@@ -172,14 +198,24 @@ test('parallel aggregate messages omit redundant visible mode and completion lab
         'Council synthesis model labels should match lane labels by omitting provider prefixes'
     );
     assert.equal(
-        source.includes("buildCouncilModelLabel(synthesisModel, { roleLabel: 'Council' })"),
+        source.includes("buildCouncilModelLabel(synthesisModel, { roleLabel: 'Council', modelId: synthesis.modelId || '' })"),
         true,
-        'Council synthesis should identify the selected synthesis model as the Council model'
+        'Council synthesis should identify the selected synthesis model as the Council model and pass provider metadata'
     );
     assert.equal(
-        source.includes("buildCouncilModelLabel(entry.model || entry.modelId || '')"),
+        source.includes("buildCouncilModelLabel(entry.model || entry.modelId || '', { modelId: entry.modelId || '' })"),
         true,
-        'Stage 1 lane labels should remain plain model labels without Council role text'
+        'Stage 1 lane labels should remain plain model labels and pass provider metadata'
+    );
+    assert.equal(
+        source.includes('function inferProvider'),
+        false,
+        'Council labels should not guess providers from model-family keywords'
+    );
+    assert.equal(
+        source.includes("lowerName.includes('llama')"),
+        false,
+        'Council labels should not infer provider icons from bare family names'
     );
     assert.equal(
         source.includes('council-response-role-label'),

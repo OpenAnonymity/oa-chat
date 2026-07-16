@@ -2557,6 +2557,8 @@ class ChatApp {
             existingSession.model = payload.session.model;
             existingSession.searchEnabled = payload.session.searchEnabled ?? true;
             existingSession.inferenceBackend = payload.session.inferenceBackend || existingSession.inferenceBackend || inferenceService.getDefaultBackendId();
+            existingSession.responseMode = normalizeResponseMode(payload.session.responseMode);
+            existingSession.councilConfig = normalizeCouncilConfig(payload.session.councilConfig, existingSession.model);
             existingSession.updatedAt = Date.now();
             existingSession.lastImportedAt = existingSession.updatedAt;
             existingSession.importedMessageCount = payload.messages.length;

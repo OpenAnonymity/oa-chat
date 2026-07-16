@@ -25,6 +25,17 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
+- 2026-07-16: Parallel/Council share and provider-display rebase notes.
+  - Shared chat payloads serialize `responseMode` and `councilConfig`, and both
+    first import plus update-import paths restore those fields. Otherwise imported
+    Parallel/Council transcripts render old aggregate messages but silently continue
+    as single-model chats.
+  - Parallel/Council composer and response labels should use catalog provider
+    metadata or `resolveProviderFromModelReference(...)` for explicit provider
+    prefixes/model IDs. Do not infer providers from bare model-family words such
+    as Llama, Gemini, Claude, or Nemotron; bare names should fall back to neutral
+    initials when catalog metadata is unavailable.
+
 - 2026-07-11: OpenRouter `~author/*-latest` aliases normalize in the catalog adapter,
   while provider display/icon metadata resolves through the shared provider registry;
   cached OpenRouter catalog entries also recompute provider metadata from their model
