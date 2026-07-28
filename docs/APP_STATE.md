@@ -25,6 +25,33 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
+- 2026-07-28: Account authentication supports GitHub OAuth in addition to
+  passkeys; see [GITHUB_SIGN_IN.md](GITHUB_SIGN_IN.md).
+  - `accountService.authenticateWithGithub(...)` uses a popup and the org's
+    HttpOnly refresh cookie. OAuth/access tokens never travel through the popup
+    message or app URL.
+  - GitHub authenticates the OA account but cannot unlock encrypted sync. New or
+    logged-out browsers must enter the five-word recovery code; browsers with a
+    persisted local master key restore normally.
+  - A passkey-authenticated account can connect one GitHub identity. GitHub-first
+    accounts can later use the existing account-number/recovery flow to add a
+    passkey.
+  - Connecting GitHub is an authenticator-enrollment operation and requires a
+    fresh passkey step-up; a refresh-restored session is not sufficient.
+  - Keep `githubSetupRequired` (new account must save recovery material) distinct
+    from `githubRecoveryRequired` (existing account authenticated, encrypted key
+    still locked). The account modal intentionally cannot close during the
+    OAuth popup wait or while a new recovery code is unsaved.
+  - Opting into GitHub makes the sync account identifiable to the org, but does
+    not put identity into blinded ticket redemption or inference traffic.
+  - Syncable tickets and preferences are still browser-global rather than
+    account-namespaced. The GitHub flow refuses an implicit account switch when
+    another local account is unlocked, but an explicit logout followed by a
+    different account can intentionally carry the browser's existing wallet
+    into that account's sync data. Supporting shared-browser multi-user
+    isolation requires account-namespaced local sync stores or an explicit
+    wallet-transfer step.
+
 - 2026-07-11: OpenRouter `~author/*-latest` aliases normalize in the catalog adapter,
   while provider display/icon metadata resolves through the shared provider registry;
   cached OpenRouter catalog entries also recompute provider metadata from their model

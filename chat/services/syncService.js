@@ -163,9 +163,11 @@ class SyncService {
         this.masterKey = null;
         this.accessToken = null;
         this.refreshTokenCallback = null;
+        this.credentialGeneration = 0;
 
         // Cache: opaque ID -> logical ID mapping (computed on init)
         this.idMapping = null;
+        this.idMappingGeneration = null;
 
         // Debounce for local change sync
         this.localChangeDebounceTimer = null;
@@ -174,10 +176,12 @@ class SyncService {
     }
 
     setCredentials(masterKey, accessToken, refreshCallback) {
+        this.credentialGeneration += 1;
         this.masterKey = masterKey;
         this.accessToken = accessToken;
         this.refreshTokenCallback = refreshCallback;
         this.idMapping = null; // Reset mapping when credentials change
+        this.idMappingGeneration = null;
     }
 
     updateAccessToken(accessToken) {
@@ -185,10 +189,12 @@ class SyncService {
     }
 
     clearCredentials() {
+        this.credentialGeneration += 1;
         this.masterKey = null;
         this.accessToken = null;
         this.refreshTokenCallback = null;
         this.idMapping = null;
+        this.idMappingGeneration = null;
     }
 
     async init() {
@@ -202,8 +208,13 @@ class SyncService {
      * Build the mapping of opaque IDs to logical IDs.
      * This lets us identify what a blob is when we pull it.
      */
-    async _buildIdMapping(masterKey) {
-        if (this.idMapping) return this.idMapping;
+    async _buildIdMapping(masterKey, credentialGeneration) {
+        if (
+            this.idMapping &&
+            this.idMappingGeneration === credentialGeneration
+        ) {
+            return this.idMapping;
+        }
 
         const mapping = new Map();
         
@@ -219,7 +230,9 @@ class SyncService {
             mapping.set(opaqueId, key);
         }
 
+        this.assertCredentialsCurrent(credentialGeneration);
         this.idMapping = mapping;
+        this.idMappingGeneration = credentialGeneration;
         return mapping;
     }
 
@@ -270,6 +283,8 @@ class SyncService {
         if (!this.isEnabled()) {
             return false;
         }
+        const credentialGeneration = this.credentialGeneration;
+        const accessToken = this.accessToken;
 
         try {
             const response = await fetch(
@@ -277,17 +292,20 @@ class SyncService {
                 {
                     method: 'GET',
                     headers: {
-                        'Authorization': `Bearer ${this.accessToken}`,
+                        'Authorization': `Bearer ${accessToken}`,
                         'Content-Type': 'application/json'
                     },
                     credentials: 'include'
                 }
             );
+            if (!this.credentialsAreCurrent(credentialGeneration)) return false;
 
             if (!response.ok) return false;
 
             const { last_sync: serverLastSync } = await response.json();
+            if (!this.credentialsAreCurrent(credentialGeneration)) return false;
             const localLastSync = await chatDB.getSetting(SYNC_LAST_TIME_KEY) || 0;
+            if (!this.credentialsAreCurrent(credentialGeneration)) return false;
 
             const hasChanges = serverLastSync > localLastSync;
             
@@ -356,11 +374,22 @@ class SyncService {
         return Math.floor(timestamp);
     }
 
-    async refreshAccessToken() {
+    credentialsAreCurrent(generation) {
+        return generation === this.credentialGeneration;
+    }
+
+    assertCredentialsCurrent(generation) {
+        if (!this.credentialsAreCurrent(generation)) {
+            throw new Error('Sync credentials changed');
+        }
+    }
+
+    async refreshAccessToken(generation = this.credentialGeneration) {
+        if (!this.credentialsAreCurrent(generation)) return false;
         if (!this.refreshTokenCallback) return false;
         try {
             const result = await this.refreshTokenCallback();
-            if (result?.accessToken) {
+            if (this.credentialsAreCurrent(generation) && result?.accessToken) {
                 this.accessToken = result.accessToken;
                 return true;
             }
@@ -398,6 +427,7 @@ class SyncService {
         if (!accessToken) {
             return { success: false, error: 'No access token' };
         }
+        const credentialGeneration = this.credentialGeneration;
 
         // Set syncing state immediately for UI feedback
         this.syncInProgress = true;
@@ -405,21 +435,37 @@ class SyncService {
 
         if (navigator.locks) {
             return navigator.locks.request(SYNC_LOCK_NAME, { mode: 'exclusive' },
-                () => this._doSync(masterKey, accessToken)
+                () => this._doSync(masterKey, accessToken, credentialGeneration)
             );
         }
 
-        return this._doSync(masterKey, accessToken);
+        return this._doSync(masterKey, accessToken, credentialGeneration);
     }
 
-    async _doSync(masterKey, accessToken) {
+    async _doSync(masterKey, accessToken, credentialGeneration) {
 
         try {
+            this.assertCredentialsCurrent(credentialGeneration);
             // Build ID mapping first
-            await this._buildIdMapping(masterKey);
+            const idMapping = await this._buildIdMapping(
+                masterKey,
+                credentialGeneration
+            );
+            this.assertCredentialsCurrent(credentialGeneration);
 
-            const pullResult = await this._pull(masterKey, accessToken);
-            const pushResult = await this._push(masterKey, accessToken);
+            const pullResult = await this._pull(
+                masterKey,
+                accessToken,
+                credentialGeneration,
+                idMapping
+            );
+            this.assertCredentialsCurrent(credentialGeneration);
+            const pushResult = await this._push(
+                masterKey,
+                accessToken,
+                credentialGeneration
+            );
+            this.assertCredentialsCurrent(credentialGeneration);
 
             const result = {
                 success: true,
@@ -433,6 +479,13 @@ class SyncService {
 
             return result;
         } catch (error) {
+            if (!this.credentialsAreCurrent(credentialGeneration)) {
+                return {
+                    success: false,
+                    error: 'Sync credentials changed',
+                    stale: true
+                };
+            }
             console.error('[SyncService] Sync failed:', error);
             const result = { success: false, error: error.message };
             this.lastSyncResult = result;
@@ -440,12 +493,16 @@ class SyncService {
             return result;
         } finally {
             this.syncInProgress = false;
-            this.notify('sync_end');  // Always notify UI to update
+            if (this.credentialsAreCurrent(credentialGeneration)) {
+                this.notify('sync_end');
+            }
         }
     }
 
-    async _pull(masterKey, accessToken) {
+    async _pull(masterKey, accessToken, credentialGeneration, idMapping) {
+        this.assertCredentialsCurrent(credentialGeneration);
         const lastSync = await chatDB.getSetting(SYNC_LAST_TIME_KEY) || 0;
+        this.assertCredentialsCurrent(credentialGeneration);
 
         const response = await this.fetchWithRetry(
             `${ORG_API_BASE}/auth/sync?since=${lastSync}`,
@@ -459,68 +516,102 @@ class SyncService {
             },
             'Sync pull'
         );
+        this.assertCredentialsCurrent(credentialGeneration);
 
         if (!response.ok) {
             if (response.status === 401) {
-                const refreshed = await this.refreshAccessToken();
+                const refreshed = await this.refreshAccessToken(credentialGeneration);
                 if (!refreshed) throw new Error('Authentication failed');
-                return this._pull(masterKey, this.getAccessToken());
+                return this._pull(
+                    masterKey,
+                    this.getAccessToken(),
+                    credentialGeneration,
+                    idMapping
+                );
             }
             throw new Error(`Pull failed: ${response.status}`);
         }
 
         const { blobs, server_time } = await response.json();
+        this.assertCredentialsCurrent(credentialGeneration);
         let mergedCount = 0;
 
         for (const serverBlob of blobs || []) {
-            const applied = await this._applyServerBlob(masterKey, serverBlob);
+            this.assertCredentialsCurrent(credentialGeneration);
+            const applied = await this._applyServerBlob(
+                masterKey,
+                serverBlob,
+                credentialGeneration,
+                idMapping
+            );
+            this.assertCredentialsCurrent(credentialGeneration);
             if (applied) mergedCount++;
         }
 
         if (server_time) {
+            this.assertCredentialsCurrent(credentialGeneration);
             await chatDB.saveSetting(SYNC_LAST_TIME_KEY, server_time);
+            this.assertCredentialsCurrent(credentialGeneration);
         }
 
         return { count: mergedCount };
     }
 
-    async _applyServerBlob(masterKey, serverBlob) {
+    async _applyServerBlob(
+        masterKey,
+        serverBlob,
+        credentialGeneration,
+        idMapping
+    ) {
+        this.assertCredentialsCurrent(credentialGeneration);
         if (!serverBlob.ciphertext || !serverBlob.iv) return false;
 
         // Find the logical ID for this opaque ID
-        const logicalId = this.idMapping?.get(serverBlob.id);
+        const logicalId = idMapping.get(serverBlob.id);
         if (!logicalId) {
             // Unknown blob - might be from a newer client version, skip
             console.warn('[SyncService] Unknown blob ID:', serverBlob.id);
             return false;
         }
 
+        let payload;
         try {
             // Decrypt - the payload contains type and data
-            const payload = await decryptBlob(
+            payload = await decryptBlob(
                 masterKey,
                 logicalId,
                 serverBlob.ciphertext,
                 serverBlob.iv
             );
-
-            // Apply based on type (stored inside encrypted payload)
-            let applied = false;
-            if (payload.type === 'tickets') {
-                await this._mergeTickets(logicalId, payload.data);
-                applied = true;
-            } else if (payload.type === 'preference') {
-                applied = await this._mergePreference(payload.key, payload.value, payload.updatedAt);
-            }
-
-            if (applied) {
-                this.notify('blob_received', { type: payload.type, logicalId });
-            }
-            return applied;
         } catch (error) {
             console.warn('[SyncService] Failed to decrypt blob:', serverBlob.id, error);
             return false;
         }
+        this.assertCredentialsCurrent(credentialGeneration);
+
+        // Apply based on type (stored inside encrypted payload)
+        let applied = false;
+        if (payload.type === 'tickets') {
+            await this._mergeTickets(
+                logicalId,
+                payload.data,
+                credentialGeneration
+            );
+            applied = true;
+        } else if (payload.type === 'preference') {
+            applied = await this._mergePreference(
+                payload.key,
+                payload.value,
+                payload.updatedAt,
+                credentialGeneration
+            );
+        }
+        this.assertCredentialsCurrent(credentialGeneration);
+
+        if (applied) {
+            this.notify('blob_received', { type: payload.type, logicalId });
+        }
+        return applied;
     }
 
     /**
@@ -528,13 +619,15 @@ class SyncService {
      * Key principle: consumed state ALWAYS wins.
      * If a ticket is in archive (consumed) anywhere, it's consumed everywhere.
      */
-    async _mergeTickets(logicalId, serverTickets) {
+    async _mergeTickets(logicalId, serverTickets, credentialGeneration) {
+        this.assertCredentialsCurrent(credentialGeneration);
         const isArchive = logicalId === LOGICAL_IDS.TICKETS_ARCHIVE;
         const tickets = serverTickets || [];
 
         // Get both local lists
         const localActive = await chatDB.getSetting(TICKETS_ACTIVE_KEY) || [];
         const localArchive = await chatDB.getSetting(TICKETS_ARCHIVE_KEY) || [];
+        this.assertCredentialsCurrent(credentialGeneration);
 
         if (isArchive) {
             // Merging archive (consumed tickets) - union of all consumed
@@ -553,10 +646,15 @@ class SyncService {
                 !consumedIds.has(t.finalized_ticket)
             );
 
-            await chatDB.saveSetting(TICKETS_ARCHIVE_KEY, mergedArchive);
+            const entries = [
+                { key: TICKETS_ARCHIVE_KEY, value: mergedArchive }
+            ];
             if (filteredActive.length !== localActive.length) {
-                await chatDB.saveSetting(TICKETS_ACTIVE_KEY, filteredActive);
+                entries.push({ key: TICKETS_ACTIVE_KEY, value: filteredActive });
             }
+            this.assertCredentialsCurrent(credentialGeneration);
+            await chatDB.saveSettings(entries);
+            this.assertCredentialsCurrent(credentialGeneration);
         } else {
             // Merging active tickets - add new ones, but respect consumed state
             const consumedIds = new Set(localArchive.map(t => t.finalized_ticket));
@@ -573,17 +671,26 @@ class SyncService {
                 }
             }
 
+            this.assertCredentialsCurrent(credentialGeneration);
             await chatDB.saveSetting(TICKETS_ACTIVE_KEY, mergedActive);
+            this.assertCredentialsCurrent(credentialGeneration);
         }
     }
 
-    async _mergePreference(key, value, incomingUpdatedAt = null) {
+    async _mergePreference(
+        key,
+        value,
+        incomingUpdatedAt = null,
+        credentialGeneration
+    ) {
+        this.assertCredentialsCurrent(credentialGeneration);
         if (!key) return false;
 
         const timestampKey = this.getPreferenceTimestampKey(key);
         const [localUpdatedAtRaw] = await Promise.all([
             chatDB.getSetting(timestampKey)
         ]);
+        this.assertCredentialsCurrent(credentialGeneration);
 
         const localUpdatedAt = this.normalizeTimestamp(localUpdatedAtRaw);
         const remoteUpdatedAt = this.normalizeTimestamp(incomingUpdatedAt);
@@ -599,6 +706,7 @@ class SyncService {
 
         const resolvedUpdatedAt = remoteUpdatedAt || Date.now();
 
+        this.assertCredentialsCurrent(credentialGeneration);
         if (typeof chatDB.saveSettings === 'function') {
             await chatDB.saveSettings([
                 { key, value },
@@ -606,14 +714,22 @@ class SyncService {
             ]);
         } else {
             await chatDB.saveSetting(key, value);
+            this.assertCredentialsCurrent(credentialGeneration);
             await chatDB.saveSetting(timestampKey, resolvedUpdatedAt);
         }
+        this.assertCredentialsCurrent(credentialGeneration);
 
         return true;
     }
 
-    async _push(masterKey, accessToken) {
+    async _push(masterKey, accessToken, credentialGeneration) {
+        if (!this.credentialsAreCurrent(credentialGeneration)) {
+            throw new Error('Sync credentials changed');
+        }
         const blobs = await this._collectLocalBlobs(masterKey);
+        if (!this.credentialsAreCurrent(credentialGeneration)) {
+            throw new Error('Sync credentials changed');
+        }
         if (blobs.length === 0) {
             return { count: 0 };
         }
@@ -631,17 +747,25 @@ class SyncService {
             },
             'Sync push'
         );
+        if (!this.credentialsAreCurrent(credentialGeneration)) {
+            throw new Error('Sync credentials changed');
+        }
 
         if (!response.ok) {
             if (response.status === 401) {
-                const refreshed = await this.refreshAccessToken();
+                const refreshed = await this.refreshAccessToken(credentialGeneration);
                 if (!refreshed) throw new Error('Authentication failed');
-                return this._push(masterKey, this.getAccessToken());
+                return this._push(
+                    masterKey,
+                    this.getAccessToken(),
+                    credentialGeneration
+                );
             }
             throw new Error(`Push failed: ${response.status}`);
         }
 
         const { accepted } = await response.json();
+        this.assertCredentialsCurrent(credentialGeneration);
         return { count: accepted?.length || 0 };
     }
 
