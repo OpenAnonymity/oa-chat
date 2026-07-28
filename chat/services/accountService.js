@@ -102,6 +102,17 @@ function decodeBase64String(input) {
     return hasUrlChars ? base64UrlToBytes(input) : base64ToBytes(input);
 }
 
+function getAccessTokenAccountId(token) {
+    try {
+        const payload = token?.split('.')?.[1];
+        if (!payload) return null;
+        const json = textDecoder.decode(base64UrlToBytes(payload));
+        return normalizeAccountId(JSON.parse(json)?.sub);
+    } catch (error) {
+        return null;
+    }
+}
+
 function encodeWrappedKey(payload) {
     const json = JSON.stringify(payload);
     return bytesToBase64(textEncoder.encode(json));
@@ -374,15 +385,33 @@ let onTokenInvalidated = null;
  * Fetch JSON from the auth API.
  * CSRF protection provided by SameSite=Strict cookie + WebAuthn challenge-response.
  */
-async function fetchJson(path, body, { timeoutMs = ACCOUNT_REQUEST_TIMEOUT_MS } = {}) {
+async function fetchJson(
+    path,
+    body,
+    {
+        timeoutMs = ACCOUNT_REQUEST_TIMEOUT_MS,
+        method = 'POST',
+        accessToken = null
+    } = {}
+) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
+    const headers = {
+        'Content-Type': 'application/json',
+        'X-Client-Platform': PLATFORM
+    };
+    if (accessToken) {
+        headers.Authorization = `Bearer ${accessToken}`;
+    }
+
     const response = await fetch(`${ORG_API_BASE}${path}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Client-Platform': PLATFORM },
+        method,
+        headers,
         credentials: 'include',
-        body: JSON.stringify(body || {}),
+        body: method === 'GET' || method === 'HEAD'
+            ? undefined
+            : JSON.stringify(body || {}),
         signal: controller.signal
     });
     clearTimeout(timeoutId);
@@ -400,10 +429,62 @@ async function fetchJson(path, body, { timeoutMs = ACCOUNT_REQUEST_TIMEOUT_MS } 
             }
             throw new TokenInvalidatedError(data?.error || data?.message);
         }
-        const message = data?.error || data?.message || response.statusText || 'Request failed';
-        throw new Error(message);
+        const detail = data?.detail;
+        const message = data?.error ||
+            data?.message ||
+            (typeof detail === 'object' ? detail?.error || detail?.message : detail) ||
+            response.statusText ||
+            'Request failed';
+        const requestError = new Error(message);
+        requestError.status = response.status;
+        throw requestError;
     }
     return data || {};
+}
+
+function waitForGithubPopup(popup, timeoutMs = 5 * 60 * 1000) {
+    const orgOrigin = new URL(ORG_API_BASE, window.location.href).origin;
+
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        const finish = (callback) => {
+            if (settled) return;
+            settled = true;
+            window.removeEventListener('message', handleMessage);
+            clearInterval(closePoll);
+            clearTimeout(timeout);
+            callback();
+        };
+        const handleMessage = (event) => {
+            if (
+                event.origin !== orgOrigin ||
+                event.source !== popup ||
+                event.data?.type !== 'oa-github-auth'
+            ) {
+                return;
+            }
+            if (event.data.ok) {
+                finish(() => resolve());
+            } else {
+                finish(() => reject(new Error(event.data.error || 'GitHub sign in failed')));
+            }
+        };
+        const closePoll = setInterval(() => {
+            if (popup.closed) {
+                finish(() => reject(new Error('GitHub sign in was cancelled')));
+            }
+        }, 500);
+        const timeout = setTimeout(() => {
+            try {
+                popup.close();
+            } catch (error) {
+                // The popup may already have navigated or closed.
+            }
+            finish(() => reject(new Error('GitHub sign in timed out')));
+        }, timeoutMs);
+
+        window.addEventListener('message', handleMessage);
+    });
 }
 
 function toFriendlyError(error) {
@@ -430,6 +511,9 @@ class AccountService {
             error: null,
             status: 'none',
             sessionVerified: false,  // True only after /refresh confirms session is valid
+            githubLinked: false,
+            githubSetupRequired: false,
+            githubRecoveryRequired: false,
             passkeySupported: typeof window !== 'undefined' && !!window.PublicKeyCredential,
             prfSupported: null,
             rateLimited: false,
@@ -446,6 +530,8 @@ class AccountService {
         // Pending account for multi-step creation flow
         // Holds { accountId, masterKey, credential, prfBytes, recoveryCode } during creation
         this.pendingAccount = null;
+        // Holds { accountId, masterKey, recoveryCode } during GitHub-only setup.
+        this.pendingGithubAccount = null;
 
         // Session persistence: access token (memory) and CryptoKey (IndexedDB)
         this.accessToken = null;
@@ -640,7 +726,7 @@ class AccountService {
      * Called during init() to restore session, and when access token expires.
      * @returns {Promise<boolean>} True if token was refreshed, false otherwise
      */
-    async refreshAccessToken() {
+    async refreshAccessToken({ expectedAccountId = this.state.accountId } = {}) {
         try {
             const headers = {
                 'Content-Type': 'application/json',
@@ -668,6 +754,14 @@ class AccountService {
             
             const data = await response.json();
             if (data.accessToken) {
+                const tokenAccountId = getAccessTokenAccountId(data.accessToken);
+                if (
+                    expectedAccountId &&
+                    tokenAccountId !== normalizeAccountId(expectedAccountId)
+                ) {
+                    this.accessToken = null;
+                    return false;
+                }
                 this.accessToken = data.accessToken;
                 return true;
             }
@@ -734,6 +828,7 @@ class AccountService {
             this.state.accountId = settings.accountId;
             this.state.credentialId = settings.credentialId || null;
             this.state.recoveryConfirmed = !!settings.recoveryConfirmed;
+            this.state.githubLinked = !!settings.githubLinked;
             
             // Try to restore session from persisted CryptoKey
             const hasKey = await this.loadMasterKey();
@@ -759,6 +854,10 @@ class AccountService {
         this.state.isReady = true;
         this.updateStatus();
         this.notify();
+
+        if (this.state.accountId && this.state.githubLinked) {
+            this.restoreGithubLockedSession().catch(() => {});
+        }
     }
 
     /**
@@ -785,12 +884,62 @@ class AccountService {
         }
     }
 
+    async restoreGithubLockedSession() {
+        if (!this.state.accountId || !this.state.githubLinked || this.masterKey) {
+            return false;
+        }
+        if (!await this.refreshAccessToken()) {
+            return false;
+        }
+
+        try {
+            const session = await fetchJson('/auth/github/session', null, {
+                method: 'GET',
+                accessToken: this.accessToken
+            });
+            if (
+                normalizeAccountId(session.accountId) !== this.state.accountId ||
+                session.setupRequired ||
+                !session.wrappedKeyRecovery
+            ) {
+                return false;
+            }
+            this.recoveryPayload = normalizeWrappedKeyPayload(session.wrappedKeyRecovery);
+            this.setState({
+                sessionVerified: true,
+                githubRecoveryRequired: true,
+                error: null
+            });
+            return true;
+        } catch (error) {
+            return false;
+        }
+    }
+
+    async refreshGithubLinkStatus() {
+        if (!this.accessToken || !this.state.accountId) return false;
+        try {
+            const session = await fetchJson('/auth/github/session', null, {
+                method: 'GET',
+                accessToken: this.accessToken
+            });
+            this.state.githubLinked = !!session.githubLinked;
+            return this.state.githubLinked;
+        } catch (error) {
+            if (error?.status === 404) {
+                this.state.githubLinked = false;
+            }
+            return this.state.githubLinked;
+        }
+    }
+
     async persistSettings() {
         if (!chatDB) return;
         const payload = {
             accountId: this.state.accountId,
             credentialId: this.state.credentialId,
             recoveryConfirmed: this.state.recoveryConfirmed,
+            githubLinked: this.state.githubLinked,
             updatedAt: Date.now()
         };
         await chatDB.saveSetting(ACCOUNT_SETTINGS_KEY, payload);
@@ -1062,6 +1211,334 @@ class AccountService {
     }
 
     // =========================================================================
+    // GitHub OAuth Authentication
+    // =========================================================================
+
+    async authenticateWithGithub({ link = false } = {}) {
+        if (this.state.busy) return null;
+        if (PLATFORM !== 'web') {
+            this.setError('GitHub sign in is currently available in the web app');
+            return null;
+        }
+
+        if (link && !this.state.accountId) {
+            this.setError('Sign in to your OA account before connecting GitHub');
+            return null;
+        }
+
+        // Open synchronously from the click handler so popup blockers allow it,
+        // before the optional asynchronous passkey step-up.
+        let popup = window.open('', 'oa-github-auth', 'popup,width=600,height=720');
+        if (!popup) {
+            this.setError('Allow popups to continue with GitHub');
+            return null;
+        }
+        popup.document.title = 'Connecting to GitHub...';
+        popup.document.body.textContent = link
+            ? 'Confirm your passkey to connect GitHub...'
+            : 'Connecting to GitHub...';
+
+        if (link) {
+            const steppedUp = await this.unlockWithPasskey(
+                this.state.accountId,
+                { action: 'github_link' }
+            );
+            if (!steppedUp) {
+                popup.close();
+                return null;
+            }
+        }
+
+        const previousAccountId = this.state.accountId;
+        const previousCredentialId = this.state.credentialId;
+        const previousGithubLinked = this.state.githubLinked;
+        const syncSuspended = !link && !!previousAccountId;
+
+        this.setState({
+            busy: true,
+            action: link ? 'github_link' : 'github_login',
+            error: null,
+            githubSetupRequired: false,
+            githubRecoveryRequired: false
+        });
+
+        try {
+            if (syncSuspended) {
+                await syncService.clearAll();
+            }
+            if (link && !this.accessToken) {
+                const refreshed = await this.refreshAccessToken();
+                if (!refreshed) {
+                    throw new Error('Your session expired. Sign in with your passkey first.');
+                }
+            }
+
+            popup.document.title = 'Connecting to GitHub...';
+            popup.document.body.textContent = 'Connecting to GitHub...';
+
+            const startData = await fetchJson('/auth/github/start', {
+                mode: link ? 'link' : 'login',
+                returnOrigin: window.location.origin,
+                expectedAccountId: link ? undefined : previousAccountId || undefined
+            }, {
+                accessToken: link ? this.accessToken : null
+            });
+            if (!startData.authorizationUrl) {
+                throw new Error('GitHub authorization URL was missing');
+            }
+
+            popup.location.replace(startData.authorizationUrl);
+            await waitForGithubPopup(popup);
+
+            if (!await this.refreshAccessToken({
+                expectedAccountId: link ? previousAccountId : null
+            })) {
+                throw new Error('GitHub session could not be established');
+            }
+            const session = await fetchJson('/auth/github/session', null, {
+                method: 'GET',
+                accessToken: this.accessToken
+            });
+            const accountId = normalizeAccountId(session.accountId);
+            if (!accountId) {
+                throw new Error('GitHub session did not include an OA account');
+            }
+            if (!link && previousAccountId && accountId !== previousAccountId) {
+                throw new Error(
+                    'This GitHub login belongs to a different OA account. Log out locally before switching accounts.'
+                );
+            }
+
+            if (link) {
+                if (accountId !== this.state.accountId) {
+                    throw new Error('GitHub was connected to a different OA account');
+                }
+                this.state.githubLinked = true;
+                this.state.busy = false;
+                this.state.action = null;
+                this.state.sessionVerified = true;
+                await this.persistSettings();
+                this.updateStatus();
+                this.notify();
+                return { status: 'linked', accountId };
+            }
+
+            this.state.accountId = accountId;
+            this.state.githubLinked = true;
+            this.state.sessionVerified = true;
+            this.state.busy = false;
+            this.state.action = null;
+            this.state.error = null;
+
+            if (session.setupRequired) {
+                const masterKey = crypto.getRandomValues(new Uint8Array(32));
+                const recoveryCode = generateRecoveryCode();
+                this.pendingGithubAccount = { accountId, masterKey, recoveryCode };
+                this.state.githubSetupRequired = true;
+                this.state.githubRecoveryRequired = false;
+                this.updateStatus();
+                this.notify();
+                return { status: 'setup', accountId, recoveryCode };
+            }
+
+            this.recoveryPayload = normalizeWrappedKeyPayload(session.wrappedKeyRecovery);
+            if (!this.recoveryPayload) {
+                throw new Error('Encrypted account key was missing');
+            }
+
+            const localSettings = await chatDB.getSetting(ACCOUNT_SETTINGS_KEY).catch(() => null);
+            const hasLocalKey = localSettings?.accountId === accountId
+                ? await this.loadMasterKey()
+                : false;
+            if (hasLocalKey) {
+                this.state.credentialId = localSettings?.credentialId || null;
+                this.state.recoveryConfirmed = !!localSettings?.recoveryConfirmed;
+                this.state.githubSetupRequired = false;
+                this.state.githubRecoveryRequired = false;
+                await this.persistSettings();
+                this.updateStatus();
+                this.notify();
+                await this.initializeSync(false);
+                return { status: 'unlocked', accountId };
+            }
+
+            await this.clearPersistedMasterKey();
+            this.state.credentialId = null;
+            this.state.githubSetupRequired = false;
+            this.state.githubRecoveryRequired = true;
+            await this.persistSettings();
+            this.updateStatus();
+            this.notify();
+            return { status: 'recovery', accountId };
+        } catch (error) {
+            try {
+                popup?.close();
+            } catch (closeError) {
+                // Ignore popup cleanup failures.
+            }
+            const restorePreviousAccount = !link &&
+                this.state.accountId &&
+                this.state.accountId !== previousAccountId &&
+                !this.masterKey;
+            let previousSessionRestored = false;
+            if (syncSuspended && this.masterKey) {
+                previousSessionRestored = await this.refreshAccessToken({
+                    expectedAccountId: previousAccountId
+                });
+            }
+            this.setState({
+                accountId: restorePreviousAccount ? previousAccountId : this.state.accountId,
+                credentialId: restorePreviousAccount
+                    ? previousCredentialId
+                    : this.state.credentialId,
+                githubLinked: restorePreviousAccount
+                    ? previousGithubLinked
+                    : this.state.githubLinked,
+                sessionVerified: syncSuspended
+                    ? previousSessionRestored
+                    : restorePreviousAccount
+                        ? false
+                        : this.state.sessionVerified,
+                busy: false,
+                action: null,
+                githubSetupRequired: false,
+                githubRecoveryRequired: false,
+                error: toFriendlyError(error)
+            });
+            if (syncSuspended && this.masterKey && previousSessionRestored) {
+                await this.initializeSync(false);
+            }
+            return null;
+        }
+    }
+
+    async completeGithubAccountSetup() {
+        const pending = this.pendingGithubAccount;
+        if (!pending) {
+            throw new Error('No GitHub account setup is in progress');
+        }
+
+        this.setState({ busy: true, action: 'github_setup', error: null });
+        try {
+            if (!await this.refreshAccessToken({
+                expectedAccountId: pending.accountId
+            })) {
+                throw new Error('Your GitHub session expired. Sign in again.');
+            }
+            const recoverySalt = crypto.getRandomValues(new Uint8Array(16));
+            const recoveryKey = await deriveRecoveryKey(
+                pending.recoveryCode,
+                recoverySalt
+            );
+            const recoveryPayload = await encryptBytes(recoveryKey, pending.masterKey);
+            const wrappedRecovery = encodeWrappedKey({
+                ...recoveryPayload,
+                salt: bytesToBase64(recoverySalt)
+            });
+            const recoveryCodeHash = await computeRecoveryCodeHash(
+                pending.recoveryCode,
+                pending.accountId
+            );
+
+            await fetchJson('/auth/github/setup', {
+                wrappedKeyRecovery: wrappedRecovery,
+                recoveryCodeHash
+            }, {
+                accessToken: this.accessToken
+            });
+
+            this.masterKey = pending.masterKey;
+            this.recoveryPayload = wrappedRecovery;
+            this.state.accountId = pending.accountId;
+            this.state.credentialId = null;
+            this.state.recoveryConfirmed = true;
+            this.state.githubLinked = true;
+            this.state.githubSetupRequired = false;
+            this.state.githubRecoveryRequired = false;
+            this.state.sessionVerified = true;
+            this.state.busy = false;
+            this.state.action = null;
+            this.state.error = null;
+
+            await this.persistMasterKey(pending.masterKey);
+            this.pendingGithubAccount = null;
+            await this.persistSettings();
+            this.updateStatus();
+            this.notify();
+            await this.initializeSync(true);
+            return true;
+        } catch (error) {
+            this.setState({
+                busy: false,
+                action: null,
+                error: toFriendlyError(error)
+            });
+            return false;
+        }
+    }
+
+    async unlockGithubWithRecoveryCode(recoveryCodeInput) {
+        if (this.state.busy || !this.state.githubRecoveryRequired) return false;
+
+        const rateLimitError = this.checkRateLimit();
+        if (rateLimitError) {
+            this.setError(rateLimitError);
+            return false;
+        }
+
+        const recoveryCode = normalizeRecoveryCode(recoveryCodeInput);
+        if (!isValidRecoveryCode(recoveryCode)) {
+            this.setError('Enter the 5-word recovery code for this account');
+            return false;
+        }
+        if (!this.recoveryPayload || !this.state.accountId || !this.accessToken) {
+            this.setError('GitHub sign in must be completed before unlocking data');
+            return false;
+        }
+
+        this.setState({ busy: true, action: 'github_unlock', error: null });
+        try {
+            const decoded = decodeWrappedKey(this.recoveryPayload);
+            const saltBytes = base64ToBytes(decoded.salt);
+            const recoveryKey = await deriveRecoveryKey(recoveryCode, saltBytes);
+            const masterKey = await decryptBytes(recoveryKey, decoded);
+
+            this.clearRateLimit();
+            this.masterKey = masterKey;
+            this.state.recoveryConfirmed = true;
+            this.state.githubSetupRequired = false;
+            this.state.githubRecoveryRequired = false;
+            this.state.busy = false;
+            this.state.action = null;
+            this.state.error = null;
+            this.state.sessionVerified = true;
+
+            await this.persistMasterKey(masterKey);
+            await this.persistSettings();
+            this.updateStatus();
+            this.notify();
+            await this.initializeSync(false);
+            return true;
+        } catch (error) {
+            this.recordFailedAttempt();
+            this.setState({
+                busy: false,
+                action: null,
+                error: 'Invalid recovery code, please check and try again'
+            });
+            return false;
+        }
+    }
+
+    cancelPendingGithubAccount() {
+        if (this.pendingGithubAccount?.masterKey) {
+            this.pendingGithubAccount.masterKey.fill(0);
+        }
+        this.pendingGithubAccount = null;
+        this.state.githubSetupRequired = false;
+    }
+
+    // =========================================================================
     // Legacy Account Creation (single-step, kept for compatibility)
     // =========================================================================
 
@@ -1149,7 +1626,7 @@ class AccountService {
             
             // Persist master key as non-extractable CryptoKey for session restoration
             await this.persistMasterKey(masterKey);
-            
+
             await this.persistSettings();
             this.updateStatus();
             this.notify();
@@ -1165,7 +1642,10 @@ class AccountService {
         }
     }
 
-    async unlockWithPasskey(accountIdInput, { mediation, silent = false } = {}) {
+    async unlockWithPasskey(
+        accountIdInput,
+        { mediation, silent = false, action = 'unlock' } = {}
+    ) {
         if (this.state.busy) return false;
         if (!this.state.passkeySupported) {
             if (!silent) this.setError('Passkeys are not supported in this browser');
@@ -1187,7 +1667,7 @@ class AccountService {
             return false;
         }
 
-        this.setState({ busy: true, action: 'unlock', error: null, recoveryRequired: false });
+        this.setState({ busy: true, action, error: null, recoveryRequired: false });
         try {
             const challengeData = await fetchJson('/auth/challenge', {
                 accountId,
@@ -1262,7 +1742,8 @@ class AccountService {
             
             // Persist master key as non-extractable CryptoKey for session restoration
             await this.persistMasterKey(masterKey);
-            
+
+            await this.refreshGithubLinkStatus();
             await this.persistSettings();
             this.updateStatus();
             this.notify();
@@ -1401,7 +1882,8 @@ class AccountService {
             
             // Persist master key as non-extractable CryptoKey for session restoration
             await this.persistMasterKey(masterKey);
-            
+
+            await this.refreshGithubLinkStatus();
             await this.persistSettings();
             this.updateStatus();
             this.notify();
@@ -1532,11 +2014,15 @@ class AccountService {
 
     async clearLocalAccount() {
         await this.logout();  // Use logout instead of lock for full cleanup
+        this.cancelPendingGithubAccount();
         this.state.accountId = null;
         this.state.credentialId = null;
         this.state.recoveryConfirmed = false;
         this.state.recoveryCode = null;
         this.state.recoveryRequired = false;
+        this.state.githubLinked = false;
+        this.state.githubSetupRequired = false;
+        this.state.githubRecoveryRequired = false;
         this.recoveryPayload = null;
         // Delete account settings from IndexedDB (not just set to null)
         if (chatDB) {

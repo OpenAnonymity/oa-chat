@@ -113,7 +113,6 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     prefixes/model IDs. Do not infer providers from bare model-family words such
     as Llama, Gemini, Claude, or Nemotron; bare names should fall back to neutral
     initials when catalog metadata is unavailable.
-
 - 2026-07-11: OpenRouter `~author/*-latest` aliases normalize in the catalog adapter,
   while provider display/icon metadata resolves through the shared provider registry;
   cached OpenRouter catalog entries also recompute provider metadata from their model

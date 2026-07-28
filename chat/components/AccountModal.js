@@ -162,7 +162,9 @@ class AccountModal {
         const settingsBtn = document.getElementById('account-settings-btn');
         if (!tabBtn) return;
         // Only show logged-in (green) after session is verified with server
-        const isLoggedIn = this.accountState?.accountId && this.accountState?.sessionVerified;
+        const isLoggedIn = this.accountState?.accountId &&
+            this.accountState?.sessionVerified &&
+            this.accountState?.status === 'unlocked';
         tabBtn.dataset.status = isLoggedIn ? 'logged-in' : 'none';
         tabBtn.title = isLoggedIn ? 'Account (logged in)' : 'Account';
         const accountEmail = this.accountState?.oauthEmail || this.accountState?.email;
@@ -198,7 +200,11 @@ class AccountModal {
 
     handleCloseAttempt() {
         // Don't allow closing during recovery step - user must save their codes
-        if (this.creationStep === 'recovery') {
+        if (
+            this.creationStep === 'recovery' ||
+            this.creationStep === 'github_recovery' ||
+            this.creationStep === 'github_authorizing'
+        ) {
             return;
         }
         if (this.creationStep !== 'idle' && this.creationStep !== 'complete') {
@@ -288,6 +294,42 @@ class AccountModal {
             this.creationError = error.message || 'Failed to create account. Please try again.';
             this.isLoadingAccountId = false;
             this.render();
+        }
+    }
+
+    async handleGithubAuthentication() {
+        this.creationStep = 'github_authorizing';
+        this.creationError = null;
+        this.render();
+
+        const result = await this.accountService.authenticateWithGithub();
+        if (!result) {
+            this.creationStep = 'idle';
+            this.render();
+            return;
+        }
+
+        if (result.status === 'setup') {
+            this.generatedAccountId = result.accountId;
+            this.generatedRecoveryCode = result.recoveryCode;
+            this.accountIdCopied = false;
+            this.recoveryCodeCopied = false;
+            this.creationStep = 'github_recovery';
+            this.render();
+            return;
+        }
+
+        this.creationStep = 'idle';
+        this.render();
+        if (result.status === 'unlocked') {
+            this.app?.showToast?.('Signed in with GitHub', 'success');
+        }
+    }
+
+    async handleConnectGithub() {
+        const result = await this.accountService.authenticateWithGithub({ link: true });
+        if (result?.status === 'linked') {
+            this.app?.showToast?.('GitHub connected', 'success');
         }
     }
 
@@ -401,13 +443,38 @@ class AccountModal {
         }
     }
 
-    handleCancelCreation() {
+    async handleConfirmGithubRecoverySaved() {
+        this.creationStep = 'github_confirming';
+        this.creationError = null;
+        this.render();
+
+        const success = await this.accountService.completeGithubAccountSetup();
+        if (success) {
+            this.creationStep = 'complete';
+            this.render();
+            this.app?.showToast?.('GitHub account created successfully', 'success');
+        } else {
+            this.creationStep = 'error';
+            this.creationError = this.accountService.getState().error || 'Account setup failed.';
+            this.render();
+        }
+    }
+
+    async handleCancelCreation() {
+        if (this.creationStep.startsWith('github_') || this.accountState?.githubSetupRequired) {
+            this.accountService.cancelPendingGithubAccount();
+            await this.accountService.clearLocalAccount();
+        }
         this.accountService.cancelPendingAccount();
         this.resetCreationFlow();
         this.render();
     }
 
-    handleStartOver() {
+    async handleStartOver() {
+        if (this.accountState?.githubSetupRequired) {
+            this.accountService.cancelPendingGithubAccount();
+            await this.accountService.clearLocalAccount();
+        }
         this.accountService.cancelPendingAccount();
         this.resetCreationFlow();
         this.render();
@@ -463,6 +530,16 @@ class AccountModal {
         }
     }
 
+    async handleGithubRecoveryUnlock() {
+        const success = await this.accountService.unlockGithubWithRecoveryCode(
+            this.recoveryInputValue
+        );
+        if (success) {
+            this.recoveryInputValue = '';
+            this.app?.showToast?.('Signed in with GitHub', 'success');
+        }
+    }
+
     async handleAccountCopyId() {
         if (!this.accountState?.accountId) return;
         try {
@@ -499,7 +576,9 @@ class AccountModal {
         const state = this.accountState || {};
         const accountId = state.accountId;
 
-        const isCreationFlow = this.creationStep !== 'idle' && !accountId;
+        const oauthCreationInProgress = this.creationStep.startsWith('github_');
+        const isCreationFlow = this.creationStep !== 'idle' &&
+            (oauthCreationInProgress || !accountId);
         const isRecoveryFlow = this.recoveryStep !== 'idle';
 
         if (isCreationFlow) {
@@ -539,7 +618,7 @@ class AccountModal {
 
         return `
             <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}">
-                ${this.renderHeader(step === 'complete' ? 'Account Created' : step === 'error' ? 'Error' : 'Create Account')}
+                ${this.renderHeader(step === 'complete' ? 'Account Created' : step === 'error' ? 'Error' : step.startsWith('github_') ? 'Continue with GitHub' : 'Create Account')}
                 <div class="flex-1 flex items-center justify-center">
                     ${this.renderCreationBody(step)}
                 </div>
@@ -552,6 +631,45 @@ class AccountModal {
 
     renderCreationBody(step) {
         switch (step) {
+            case 'github_authorizing':
+                return `
+                    <div class="w-full text-center py-6">
+                        <div class="w-10 h-10 border-2 border-foreground border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
+                        <p class="text-sm font-medium text-foreground mb-1">Waiting for GitHub...</p>
+                        <p class="text-xs text-muted-foreground">Complete sign in in the popup window.</p>
+                    </div>
+                `;
+
+            case 'github_recovery':
+                return `
+                    <div class="w-full">
+                        <p class="text-xs text-muted-foreground mb-4">
+                            GitHub verifies your account. This recovery code encrypts your sync key, so the org and GitHub still cannot read your data.
+                        </p>
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-xs text-muted-foreground">Your account number</span>
+                            <button id="copy-account-btn" class="text-xs text-blue-600 dark:text-blue-400 hover:underline" type="button">
+                                ${this.accountIdCopied ? 'Copied!' : 'Copy'}
+                            </button>
+                        </div>
+                        <div class="account-number-text font-mono text-xl tracking-widest text-foreground mb-4 whitespace-nowrap text-center">
+                            ${this.formatAccountId(this.generatedAccountId)}
+                        </div>
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-xs text-muted-foreground">Recovery code</span>
+                            <button id="copy-recovery-btn" class="text-xs text-blue-600 dark:text-blue-400 hover:underline" type="button">
+                                ${this.recoveryCodeCopied ? 'Copied!' : 'Copy'}
+                            </button>
+                        </div>
+                        <code class="block font-mono text-sm text-foreground select-all text-center mb-4">
+                            ${this.escapeHtml(this.generatedRecoveryCode || '')}
+                        </code>
+                        <p class="text-[11px] text-muted-foreground mt-4 text-center">
+                            <button id="copy-both-btn" class="text-blue-600 dark:text-blue-400 hover:underline" type="button">${this.accountIdCopied && this.recoveryCodeCopied ? 'Both copied' : 'Copy both'}</button> to continue
+                        </p>
+                    </div>
+                `;
+
             case 'passkey':
             case 'passkey_retry': {
                 const isWaiting = this.isLoadingAccountId || this.revealedDigits < 16;
@@ -617,6 +735,7 @@ class AccountModal {
                 `;
 
             case 'confirming':
+            case 'github_confirming':
                 return `
                     <div class="w-full text-center py-6">
                         <div class="w-10 h-10 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
@@ -657,6 +776,22 @@ class AccountModal {
 
     renderCreationActions(step) {
         switch (step) {
+            case 'github_authorizing':
+                return `
+                    <button class="w-full h-9 rounded-lg text-sm bg-muted text-muted-foreground cursor-not-allowed" type="button" disabled>
+                        Complete sign in in the popup
+                    </button>
+                `;
+
+            case 'github_recovery': {
+                const bothCopied = this.accountIdCopied && this.recoveryCodeCopied;
+                return `
+                    <button id="confirm-github-saved-btn" class="w-full h-9 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" type="button" ${bothCopied ? '' : 'disabled'}>
+                        I've saved both
+                    </button>
+                `;
+            }
+
             case 'passkey':
                 return `
                     <button id="cancel-creation-btn" class="btn-ghost-hover w-full h-9 rounded-lg text-sm border border-border bg-background text-foreground transition-colors" type="button">
@@ -686,6 +821,7 @@ class AccountModal {
             }
 
             case 'confirming':
+            case 'github_confirming':
                 return `
                     <button class="w-full h-9 rounded-lg text-sm bg-muted text-muted-foreground cursor-not-allowed" type="button" disabled>
                         Creating account...
@@ -729,8 +865,16 @@ class AccountModal {
             return this.renderRecoveryCompleteUI();
         }
 
+        if (state.githubRecoveryRequired) {
+            return this.renderGithubUnlockUI();
+        }
+
         // Logged in state - don't show errors here since login was successful
-        if (accountId) {
+        if (
+            accountId &&
+            state.sessionVerified &&
+            (state.status === 'unlocked' || action === 'github_link')
+        ) {
             // Always get fresh status
             const syncStatus = this.syncService.getStatus();
             const isSyncing = syncStatus.syncing;
@@ -790,11 +934,27 @@ class AccountModal {
 
                     <p class="text-[11px] text-muted-foreground text-center mb-3">Chat history sync coming soon</p>
 
+                    ${state.githubLinked ? `
+                        <div class="flex items-center justify-center gap-1.5 text-xs text-muted-foreground mb-3">
+                            <svg class="w-3.5 h-3.5 text-foreground" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                                <path d="M12 .7a11.5 11.5 0 00-3.64 22.41c.58.1.79-.25.79-.56v-2.02c-3.22.7-3.9-1.37-3.9-1.37-.52-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.04 1.78 2.72 1.27 3.38.97.1-.75.4-1.27.74-1.56-2.57-.29-5.28-1.29-5.28-5.69 0-1.26.45-2.28 1.2-3.09-.12-.3-.52-1.47.11-3.05 0 0 .98-.31 3.16 1.18a10.98 10.98 0 015.75 0c2.18-1.49 3.16-1.18 3.16-1.18.63 1.58.23 2.75.11 3.05.75.81 1.2 1.83 1.2 3.09 0 4.41-2.72 5.4-5.3 5.69.42.36.79 1.07.79 2.16v3.03c0 .31.21.67.8.56A11.5 11.5 0 0012 .7z"></path>
+                            </svg>
+                            GitHub connected
+                        </div>
+                    ` : `
+                        <button id="account-connect-github-btn" class="btn-ghost-hover w-full h-9 rounded-lg text-sm border border-border bg-background text-foreground transition-colors flex items-center justify-center gap-2 mb-3" type="button" ${isBusy ? 'disabled' : ''}>
+                            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                                <path d="M12 .7a11.5 11.5 0 00-3.64 22.41c.58.1.79-.25.79-.56v-2.02c-3.22.7-3.9-1.37-3.9-1.37-.52-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.04 1.78 2.72 1.27 3.38.97.1-.75.4-1.27.74-1.56-2.57-.29-5.28-1.29-5.28-5.69 0-1.26.45-2.28 1.2-3.09-.12-.3-.52-1.47.11-3.05 0 0 .98-.31 3.16 1.18a10.98 10.98 0 015.75 0c2.18-1.49 3.16-1.18 3.16-1.18.63 1.58.23 2.75.11 3.05.75.81 1.2 1.83 1.2 3.09 0 4.41-2.72 5.4-5.3 5.69.42.36.79 1.07.79 2.16v3.03c0 .31.21.67.8.56A11.5 11.5 0 0012 .7z"></path>
+                            </svg>
+                            ${action === 'github_link' ? 'Connecting GitHub...' : 'Connect GitHub'}
+                        </button>
+                    `}
+
                     <div class="flex gap-3">
-                        <button id="account-clear-btn" class="btn-ghost-hover flex-1 h-9 rounded-lg text-sm border border-border bg-background text-foreground transition-colors" type="button">
+                        <button id="account-clear-btn" class="btn-ghost-hover flex-1 h-9 rounded-lg text-sm border border-border bg-background text-foreground transition-colors disabled:opacity-50" type="button" ${isBusy ? 'disabled' : ''}>
                             Log out
                         </button>
-                        <button id="account-sync-btn" class="btn-ghost-hover flex-1 h-9 rounded-lg text-sm border border-border bg-background transition-colors disabled:opacity-50 flex items-center justify-center gap-2" type="button" ${isSyncing ? 'disabled' : ''}>
+                        <button id="account-sync-btn" class="btn-ghost-hover flex-1 h-9 rounded-lg text-sm border border-border bg-background transition-colors disabled:opacity-50 flex items-center justify-center gap-2" type="button" ${isSyncing || isBusy ? 'disabled' : ''}>
                             <svg class="w-4 h-4 ${isSyncing ? 'animate-spin' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"></path>
                             </svg>
@@ -806,7 +966,9 @@ class AccountModal {
         }
 
         // No account - show create/login
-        const accountValue = this.escapeHtml(this.accountInputValue || '');
+        const accountValue = this.escapeHtml(
+            this.accountInputValue || this.formatAccountId(accountId)
+        );
         const recoveryValue = this.escapeHtml(this.recoveryInputValue || '');
         const showRecovery = this.showRecoveryInput;
 
@@ -876,7 +1038,7 @@ class AccountModal {
 
                 <p class="text-xs text-muted-foreground" style="margin-bottom:20px">${showRecovery
                     ? 'Recover your account with the recovery code saved at account creation time.'
-                    : 'Account enables sync across browsers &amp; devices. Your data is locally encrypted with Passkey (<a href="https://www.w3.org/TR/webauthn-3/" target="_blank" rel="noopener noreferrer" class="account-link">WebAuthn</a> with <a href="https://w3c.github.io/webauthn/#prf-extension" target="_blank" rel="noopener noreferrer" class="account-link">PRF extension</a>), so no one but you can decrypt it.'
+                    : 'Account enables encrypted sync across browsers &amp; devices. Sign in with GitHub or use a passkey; only your passkey or recovery code can unlock the data.'
                 }</p>
 
                 ${!passkeySupported ? `
@@ -886,8 +1048,22 @@ class AccountModal {
                 ` : ''}
 
                 ${!showRecovery ? `
+                    <!-- GitHub sign in -->
+                    <button id="account-github-btn" class="w-full h-10 rounded-lg text-sm font-medium border border-border bg-foreground text-background hover:opacity-90 transition-opacity disabled:opacity-50 flex items-center justify-center gap-2" type="button" ${isBusy ? 'disabled' : ''}>
+                        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                            <path d="M12 .7a11.5 11.5 0 00-3.64 22.41c.58.1.79-.25.79-.56v-2.02c-3.22.7-3.9-1.37-3.9-1.37-.52-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.04 1.78 2.72 1.27 3.38.97.1-.75.4-1.27.74-1.56-2.57-.29-5.28-1.29-5.28-5.69 0-1.26.45-2.28 1.2-3.09-.12-.3-.52-1.47.11-3.05 0 0 .98-.31 3.16 1.18a10.98 10.98 0 015.75 0c2.18-1.49 3.16-1.18 3.16-1.18.63 1.58.23 2.75.11 3.05.75.81 1.2 1.83 1.2 3.09 0 4.41-2.72 5.4-5.3 5.69.42.36.79 1.07.79 2.16v3.03c0 .31.21.67.8.56A11.5 11.5 0 0012 .7z"></path>
+                        </svg>
+                        Continue with GitHub
+                    </button>
+
+                    <div class="flex items-center gap-3" style="margin:16px 0">
+                        <div class="flex-1 h-px bg-border"></div>
+                        <span class="text-xs text-muted-foreground">or use a passkey</span>
+                        <div class="flex-1 h-px bg-border"></div>
+                    </div>
+
                     <!-- Create account -->
-                    <button id="generate-account-btn" class="account-btn-create w-full h-10 rounded-lg text-sm font-medium text-white transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5" type="button" ${!passkeySupported ? 'disabled' : ''}>
+                    <button id="generate-account-btn" class="account-btn-create w-full h-10 rounded-lg text-sm font-medium text-white transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5" type="button" ${isBusy || !passkeySupported ? 'disabled' : ''}>
                         <svg class="w-3.5 h-3.5 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
                         </svg>
@@ -897,7 +1073,7 @@ class AccountModal {
                     <!-- Divider -->
                     <div class="flex items-center gap-3" style="margin:16px 0">
                         <div class="flex-1 h-px bg-border"></div>
-                        <span class="text-xs text-muted-foreground">or log in</span>
+                        <span class="text-xs text-muted-foreground">passkey login</span>
                         <div class="flex-1 h-px bg-border"></div>
                     </div>
                 ` : ''}
@@ -959,6 +1135,45 @@ class AccountModal {
                     `}
                 </div>
 
+                ${state.error ? `<p class="text-xs text-destructive mt-3 text-center">${this.escapeHtml(state.error)}</p>` : ''}
+            </div>
+        `;
+    }
+
+    renderGithubUnlockUI() {
+        const state = this.accountState || {};
+        const formattedAccountId = this.formatAccountId(state.accountId);
+        const recoveryValue = this.escapeHtml(this.recoveryInputValue || '');
+
+        return `
+            <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}">
+                ${this.renderHeader('Unlock encrypted data')}
+                <div class="flex items-center justify-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 mb-3">
+                    <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+                    GitHub sign in complete
+                </div>
+                <p class="account-number-text font-mono text-base tracking-widest text-foreground text-center whitespace-nowrap mb-3">
+                    ${this.escapeHtml(formattedAccountId)}
+                </p>
+                <p class="text-xs text-muted-foreground text-center mb-4">
+                    On a new browser, your recovery code unlocks the encrypted sync key. It is never sent to GitHub or the org.
+                </p>
+                <div class="account-input-wrap flex items-center w-full h-10 rounded-lg mb-3 border border-border bg-muted/25">
+                    <input
+                        id="github-recovery-code-input"
+                        type="text"
+                        placeholder="5-word recovery code"
+                        class="flex-1 h-full px-3 text-sm bg-transparent text-foreground placeholder:text-muted-foreground/40 focus:outline-none"
+                        value="${recoveryValue}"
+                        ${state.busy ? 'disabled' : ''}
+                    />
+                </div>
+                <button id="github-recovery-submit-btn" class="w-full h-9 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50" type="button" ${state.busy ? 'disabled' : ''}>
+                    ${state.busy ? 'Unlocking...' : 'Unlock encrypted data'}
+                </button>
+                <button id="account-clear-btn" class="w-full text-xs text-muted-foreground hover:text-foreground mt-3" type="button">
+                    Cancel and log out
+                </button>
                 ${state.error ? `<p class="text-xs text-destructive mt-3 text-center">${this.escapeHtml(state.error)}</p>` : ''}
             </div>
         `;
@@ -1038,6 +1253,12 @@ class AccountModal {
         const generateBtn = document.getElementById('generate-account-btn');
         if (generateBtn) generateBtn.onclick = () => this.handleGenerateAccountNumber();
 
+        const githubBtn = document.getElementById('account-github-btn');
+        if (githubBtn) githubBtn.onclick = () => this.handleGithubAuthentication();
+
+        const connectGithubBtn = document.getElementById('account-connect-github-btn');
+        if (connectGithubBtn) connectGithubBtn.onclick = () => this.handleConnectGithub();
+
         const cancelCreationBtn = document.getElementById('cancel-creation-btn');
         if (cancelCreationBtn) cancelCreationBtn.onclick = () => this.handleCancelCreation();
 
@@ -1055,6 +1276,11 @@ class AccountModal {
 
         const confirmSavedBtn = document.getElementById('confirm-saved-btn');
         if (confirmSavedBtn) confirmSavedBtn.onclick = () => this.handleConfirmRecoverySaved();
+
+        const confirmGithubSavedBtn = document.getElementById('confirm-github-saved-btn');
+        if (confirmGithubSavedBtn) {
+            confirmGithubSavedBtn.onclick = () => this.handleConfirmGithubRecoverySaved();
+        }
 
         const startOverBtn = document.getElementById('start-over-btn');
         if (startOverBtn) startOverBtn.onclick = () => this.handleStartOver();
@@ -1084,6 +1310,22 @@ class AccountModal {
 
         const recoverySubmitBtn = document.getElementById('account-recovery-submit-btn');
         if (recoverySubmitBtn) recoverySubmitBtn.onclick = () => this.handleAccountRecoveryUnlock();
+
+        const githubRecoveryInput = document.getElementById('github-recovery-code-input');
+        if (githubRecoveryInput) {
+            githubRecoveryInput.oninput = (e) => { this.recoveryInputValue = e.target.value; };
+            githubRecoveryInput.onkeydown = (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    this.handleGithubRecoveryUnlock();
+                }
+            };
+        }
+
+        const githubRecoverySubmitBtn = document.getElementById('github-recovery-submit-btn');
+        if (githubRecoverySubmitBtn) {
+            githubRecoverySubmitBtn.onclick = () => this.handleGithubRecoveryUnlock();
+        }
 
         const copyIdBtn = document.getElementById('account-copy-id-btn');
         if (copyIdBtn) copyIdBtn.onclick = () => this.handleAccountCopyId();
