@@ -4,7 +4,8 @@
  */
 
 import { encrypt, decrypt } from './shareEncryption.js';
-import { ORG_API_BASE, SHARE_BASE_URL } from '../config.js';
+import { SHARE_BASE_URL } from '../config.js';
+import { ORG_API_BASE } from './orgEndpoints.js';
 import inferenceService from './inference/inferenceService.js';
 import networkProxy from './networkProxy.js';
 import { buildBaseSharePayload } from './sharePayload.js';

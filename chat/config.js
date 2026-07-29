@@ -9,24 +9,7 @@
 // signatures), and it is never in the inference data path (never sees prompts
 // or responses). Being closed-source is irrelevant -- its worst case is denial
 // of service, not privacy breach. See docs/PRIVACY_MODEL.md.
-const PRODUCTION_ORG_API_BASE = 'https://org.openanonymity.ai';
-const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
-
-export function isLoopbackHostname(hostname) {
-    return LOOPBACK_HOSTNAMES.has(hostname || '');
-}
-
-export function resolveOrgApiBase(locationLike = null) {
-    const hostname = locationLike?.hostname;
-    if (isLoopbackHostname(hostname)) {
-        return `http://${hostname}:8005`;
-    }
-    return PRODUCTION_ORG_API_BASE;
-}
-
-export const ORG_API_BASE = resolveOrgApiBase(
-    typeof window !== 'undefined' ? window.location : null
-);
+export { ORG_API_BASE, ORG_AUTH_ORIGIN } from './services/orgEndpoints.js';
 
 // Verifier service -- hardware-attested (AMD SEV-SNP) station compliance
 // enforcer. Open-source and auditable. Enforces privacy toggles and key

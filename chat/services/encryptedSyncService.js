@@ -1,5 +1,5 @@
 /**
- * Sync Service
+ * Encrypted Sync Service
  * E2E encrypted sync for tickets and preferences across devices.
  * 
  * TRUE E2E ARCHITECTURE - Server sees NOTHING but opaque blobs
@@ -12,7 +12,7 @@
  * - Web Locks prevent multi-tab race conditions
  */
 
-import { ORG_API_BASE } from '../config.js';
+import { ORG_API_BASE } from './orgEndpoints.js';
 import { chatDB } from '../db.js';
 import { fetchRetry } from './fetchRetry.js';
 

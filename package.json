@@ -22,7 +22,7 @@
     "test": "node scripts/run-unit-tests.mjs",
     "audit:model-labels": "node --no-warnings scripts/audit-model-labels.mjs",
     "predev": "npm run prepare:nanomem",
-    "dev": "python3 -m http.server 8080 -d chat",
+    "dev": "node scripts/dev-server.mjs",
     "tailwind:build": "tailwindcss -c tailwind.config.js -i chat/tailwind.input.css -o chat/tailwind.generated.css --minify",
     "tailwind:watch": "tailwindcss -c tailwind.config.js -i chat/tailwind.input.css -o chat/tailwind.generated.css --watch",
     "fonts:sync": "node scripts/sync-fonts.mjs"
