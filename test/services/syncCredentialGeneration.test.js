@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { chatDB } from '../../chat/db.js';
-import syncService from '../../chat/services/syncService.js';
+import syncService from '../../chat/services/encryptedSyncService.js';
 
 test('an in-flight sync cannot refresh with a replacement account session', async () => {
     const originalCollect = syncService._collectLocalBlobs;

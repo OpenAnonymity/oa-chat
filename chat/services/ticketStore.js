@@ -5,7 +5,7 @@
 
 import storageEvents from './storageEvents.js';
 import { chatDB } from '../db.js';
-import syncService from './syncService.js';
+import syncService from './encryptedSyncService.js';
 import preferencesStore, { PREF_KEYS } from './preferencesStore.js';
 
 const STORAGE_KEY = 'inference_tickets';

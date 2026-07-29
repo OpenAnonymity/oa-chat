@@ -30,6 +30,7 @@ class AccountModal {
         this.recoveryCodeCopied = false;
         this.creationError = null;
         this.isLoadingAccountId = false;
+        this.oauthProvider = null;
 
         // Animation state
         this.revealedDigits = 0;
@@ -103,8 +104,8 @@ class AccountModal {
         // Don't allow closing during recovery step - user must save their codes
         if (
             this.creationStep === 'recovery' ||
-            this.creationStep === 'github_recovery' ||
-            this.creationStep === 'github_authorizing'
+            this.creationStep === 'oauth_recovery' ||
+            this.creationStep === 'oauth_authorizing'
         ) {
             return;
         }
@@ -139,6 +140,7 @@ class AccountModal {
         this.recoveryCodeCopied = false;
         this.creationError = null;
         this.isLoadingAccountId = false;
+        this.oauthProvider = null;
         this.revealedDigits = 0;
         this.clearAnimationTimeouts();
     }
@@ -198,14 +200,20 @@ class AccountModal {
         }
     }
 
-    async handleGithubAuthentication() {
-        this.creationStep = 'github_authorizing';
+    getOAuthProviderLabel(provider = this.oauthProvider) {
+        return provider === 'google' ? 'Google' : 'GitHub';
+    }
+
+    async handleOAuthAuthentication(provider) {
+        this.oauthProvider = provider;
+        this.creationStep = 'oauth_authorizing';
         this.creationError = null;
         this.render();
 
-        const result = await this.accountService.authenticateWithGithub();
+        const result = await this.accountService.authenticateWithOAuth(provider);
         if (!result) {
             this.creationStep = 'idle';
+            this.oauthProvider = null;
             this.render();
             return;
         }
@@ -215,22 +223,27 @@ class AccountModal {
             this.generatedRecoveryCode = result.recoveryCode;
             this.accountIdCopied = false;
             this.recoveryCodeCopied = false;
-            this.creationStep = 'github_recovery';
+            this.creationStep = 'oauth_recovery';
             this.render();
             return;
         }
 
+        const providerLabel = this.getOAuthProviderLabel(provider);
         this.creationStep = 'idle';
         this.render();
         if (result.status === 'unlocked') {
-            this.app?.showToast?.('Signed in with GitHub', 'success');
+            this.app?.showToast?.(`Signed in with ${providerLabel}`, 'success');
         }
     }
 
-    async handleConnectGithub() {
-        const result = await this.accountService.authenticateWithGithub({ link: true });
+    async handleConnectOAuth(provider) {
+        const providerLabel = this.getOAuthProviderLabel(provider);
+        const result = await this.accountService.authenticateWithOAuth(
+            provider,
+            { link: true }
+        );
         if (result?.status === 'linked') {
-            this.app?.showToast?.('GitHub connected', 'success');
+            this.app?.showToast?.(`${providerLabel} connected`, 'success');
         }
     }
 
@@ -344,16 +357,20 @@ class AccountModal {
         }
     }
 
-    async handleConfirmGithubRecoverySaved() {
-        this.creationStep = 'github_confirming';
+    async handleConfirmOAuthRecoverySaved() {
+        const providerLabel = this.getOAuthProviderLabel();
+        this.creationStep = 'oauth_confirming';
         this.creationError = null;
         this.render();
 
-        const success = await this.accountService.completeGithubAccountSetup();
+        const success = await this.accountService.completeOAuthAccountSetup();
         if (success) {
             this.creationStep = 'complete';
             this.render();
-            this.app?.showToast?.('GitHub account created successfully', 'success');
+            this.app?.showToast?.(
+                `${providerLabel} account created successfully`,
+                'success'
+            );
         } else {
             this.creationStep = 'error';
             this.creationError = this.accountService.getState().error || 'Account setup failed.';
@@ -362,8 +379,8 @@ class AccountModal {
     }
 
     async handleCancelCreation() {
-        if (this.creationStep.startsWith('github_') || this.accountState?.githubSetupRequired) {
-            this.accountService.cancelPendingGithubAccount();
+        if (this.creationStep.startsWith('oauth_') || this.accountState?.oauthSetupRequired) {
+            this.accountService.cancelPendingOAuthAccount();
             await this.accountService.clearLocalAccount();
         }
         this.accountService.cancelPendingAccount();
@@ -372,8 +389,8 @@ class AccountModal {
     }
 
     async handleStartOver() {
-        if (this.accountState?.githubSetupRequired) {
-            this.accountService.cancelPendingGithubAccount();
+        if (this.accountState?.oauthSetupRequired) {
+            this.accountService.cancelPendingOAuthAccount();
             await this.accountService.clearLocalAccount();
         }
         this.accountService.cancelPendingAccount();
@@ -431,13 +448,16 @@ class AccountModal {
         }
     }
 
-    async handleGithubRecoveryUnlock() {
-        const success = await this.accountService.unlockGithubWithRecoveryCode(
+    async handleOAuthRecoveryUnlock() {
+        const providerLabel = this.getOAuthProviderLabel(
+            this.accountState?.oauthProvider
+        );
+        const success = await this.accountService.unlockOAuthWithRecoveryCode(
             this.recoveryInputValue
         );
         if (success) {
             this.recoveryInputValue = '';
-            this.app?.showToast?.('Signed in with GitHub', 'success');
+            this.app?.showToast?.(`Signed in with ${providerLabel}`, 'success');
         }
     }
 
@@ -476,8 +496,8 @@ class AccountModal {
         const state = this.accountState || {};
         const accountId = state.accountId;
 
-        const githubCreationInProgress = this.creationStep.startsWith('github_');
-        if (this.creationStep !== 'idle' && (githubCreationInProgress || !accountId)) {
+        const oauthCreationInProgress = this.creationStep.startsWith('oauth_');
+        if (this.creationStep !== 'idle' && (oauthCreationInProgress || !accountId)) {
             this.overlay.innerHTML = this.renderCreationFlow();
         } else {
             this.overlay.innerHTML = this.renderAccountUI();
@@ -503,10 +523,11 @@ class AccountModal {
 
     renderCreationFlow() {
         const step = this.creationStep;
+        const providerLabel = this.getOAuthProviderLabel();
 
         return `
             <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}">
-                ${this.renderHeader(step === 'complete' ? 'Account Created' : step === 'error' ? 'Error' : step.startsWith('github_') ? 'Continue with GitHub' : 'Create Account')}
+                ${this.renderHeader(step === 'complete' ? 'Account Created' : step === 'error' ? 'Error' : step.startsWith('oauth_') ? `Continue with ${providerLabel}` : 'Create Account')}
                 <div class="flex-1 flex items-center justify-center">
                     ${this.renderCreationBody(step)}
                 </div>
@@ -518,21 +539,22 @@ class AccountModal {
     }
 
     renderCreationBody(step) {
+        const providerLabel = this.getOAuthProviderLabel();
         switch (step) {
-            case 'github_authorizing':
+            case 'oauth_authorizing':
                 return `
                     <div class="w-full text-center py-6">
                         <div class="w-10 h-10 border-2 border-foreground border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
-                        <p class="text-sm font-medium text-foreground mb-1">Waiting for GitHub...</p>
+                        <p class="text-sm font-medium text-foreground mb-1">Waiting for ${providerLabel}...</p>
                         <p class="text-xs text-muted-foreground">Complete sign in in the popup window.</p>
                     </div>
                 `;
 
-            case 'github_recovery':
+            case 'oauth_recovery':
                 return `
                     <div class="w-full">
                         <p class="text-xs text-muted-foreground mb-4">
-                            GitHub verifies your account. This recovery code encrypts your sync key, so the org and GitHub still cannot read your data.
+                            ${providerLabel} verifies your account. This recovery code encrypts your sync key, so the org and ${providerLabel} still cannot read your data.
                         </p>
                         <div class="flex items-center justify-between mb-2">
                             <span class="text-xs text-muted-foreground">Your account number</span>
@@ -623,7 +645,7 @@ class AccountModal {
                 `;
 
             case 'confirming':
-            case 'github_confirming':
+            case 'oauth_confirming':
                 return `
                     <div class="w-full text-center py-6">
                         <div class="w-10 h-10 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
@@ -664,17 +686,17 @@ class AccountModal {
 
     renderCreationActions(step) {
         switch (step) {
-            case 'github_authorizing':
+            case 'oauth_authorizing':
                 return `
                     <button class="w-full h-9 rounded-lg text-sm bg-muted text-muted-foreground cursor-not-allowed" type="button" disabled>
                         Complete sign in in the popup
                     </button>
                 `;
 
-            case 'github_recovery': {
+            case 'oauth_recovery': {
                 const bothCopied = this.accountIdCopied && this.recoveryCodeCopied;
                 return `
-                    <button id="confirm-github-saved-btn" class="w-full h-9 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" type="button" ${bothCopied ? '' : 'disabled'}>
+                    <button id="confirm-oauth-saved-btn" class="w-full h-9 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" type="button" ${bothCopied ? '' : 'disabled'}>
                         I've saved both
                     </button>
                 `;
@@ -709,7 +731,7 @@ class AccountModal {
             }
 
             case 'confirming':
-            case 'github_confirming':
+            case 'oauth_confirming':
                 return `
                     <button class="w-full h-9 rounded-lg text-sm bg-muted text-muted-foreground cursor-not-allowed" type="button" disabled>
                         Creating account...
@@ -735,6 +757,42 @@ class AccountModal {
         }
     }
 
+    renderOAuthProviderIcon(provider, className = 'w-4 h-4') {
+        if (provider === 'google') {
+            return `
+                <svg class="${className}" viewBox="0 0 24 24" aria-hidden="true">
+                    <path fill="#4285F4" d="M21.6 12.23c0-.71-.06-1.4-.19-2.07H12v3.91h5.38a4.6 4.6 0 01-2 3.02v2.54h3.24c1.9-1.75 2.98-4.33 2.98-7.4z"></path>
+                    <path fill="#34A853" d="M12 22c2.7 0 4.98-.9 6.63-2.37l-3.24-2.54c-.9.6-2.05.96-3.39.96-2.61 0-4.82-1.76-5.61-4.13H3.04v2.62A10 10 0 0012 22z"></path>
+                    <path fill="#FBBC05" d="M6.39 13.92A6.02 6.02 0 016.08 12c0-.67.11-1.32.31-1.92V7.46H3.04A10 10 0 002 12c0 1.61.39 3.14 1.04 4.54l3.35-2.62z"></path>
+                    <path fill="#EA4335" d="M12 5.95c1.47 0 2.79.51 3.83 1.5l2.87-2.88A9.63 9.63 0 0012 2a10 10 0 00-8.96 5.46l3.35 2.62C7.18 7.71 9.39 5.95 12 5.95z"></path>
+                </svg>
+            `;
+        }
+        return `
+            <svg class="${className}" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M12 .7a11.5 11.5 0 00-3.64 22.41c.58.1.79-.25.79-.56v-2.02c-3.22.7-3.9-1.37-3.9-1.37-.52-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.04 1.78 2.72 1.27 3.38.97.1-.75.4-1.27.74-1.56-2.57-.29-5.28-1.29-5.28-5.69 0-1.26.45-2.28 1.2-3.09-.12-.3-.52-1.47.11-3.05 0 0 .98-.31 3.16 1.18a10.98 10.98 0 015.75 0c2.18-1.49 3.16-1.18 3.16-1.18.63 1.58.23 2.75.11 3.05.75.81 1.2 1.83 1.2 3.09 0 4.41-2.72 5.4-5.3 5.69.42.36.79 1.07.79 2.16v3.03c0 .31.21.67.8.56A11.5 11.5 0 0012 .7z"></path>
+            </svg>
+        `;
+    }
+
+    renderOAuthConnection(provider, state, isBusy, action) {
+        const providerLabel = this.getOAuthProviderLabel(provider);
+        if (state[`${provider}Linked`]) {
+            return `
+                <div class="flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
+                    ${this.renderOAuthProviderIcon(provider, 'w-3.5 h-3.5')}
+                    ${providerLabel} connected
+                </div>
+            `;
+        }
+        return `
+            <button id="account-connect-${provider}-btn" class="btn-ghost-hover w-full h-9 rounded-lg text-sm border border-border bg-background text-foreground transition-colors flex items-center justify-center gap-2" type="button" ${isBusy ? 'disabled' : ''}>
+                ${this.renderOAuthProviderIcon(provider)}
+                ${action === `${provider}_link` ? `Connecting ${providerLabel}...` : `Connect ${providerLabel}`}
+            </button>
+        `;
+    }
+
     renderAccountUI() {
         const state = this.accountState || {};
         const accountId = state.accountId;
@@ -753,15 +811,19 @@ class AccountModal {
             return this.renderRecoveryCompleteUI();
         }
 
-        if (state.githubRecoveryRequired) {
-            return this.renderGithubUnlockUI();
+        if (state.oauthRecoveryRequired) {
+            return this.renderOAuthUnlockUI();
         }
 
         // Logged in state - don't show errors here since login was successful
         if (
             accountId &&
             state.sessionVerified &&
-            (state.status === 'unlocked' || action === 'github_link')
+            (
+                state.status === 'unlocked' ||
+                action === 'github_link' ||
+                action === 'google_link'
+            )
         ) {
             // Always get fresh status
             const syncStatus = this.syncService.getStatus();
@@ -822,21 +884,10 @@ class AccountModal {
 
                     <p class="text-[11px] text-muted-foreground text-center mb-3">Chat history sync coming soon</p>
 
-                    ${state.githubLinked ? `
-                        <div class="flex items-center justify-center gap-1.5 text-xs text-muted-foreground mb-3">
-                            <svg class="w-3.5 h-3.5 text-foreground" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                                <path d="M12 .7a11.5 11.5 0 00-3.64 22.41c.58.1.79-.25.79-.56v-2.02c-3.22.7-3.9-1.37-3.9-1.37-.52-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.04 1.78 2.72 1.27 3.38.97.1-.75.4-1.27.74-1.56-2.57-.29-5.28-1.29-5.28-5.69 0-1.26.45-2.28 1.2-3.09-.12-.3-.52-1.47.11-3.05 0 0 .98-.31 3.16 1.18a10.98 10.98 0 015.75 0c2.18-1.49 3.16-1.18 3.16-1.18.63 1.58.23 2.75.11 3.05.75.81 1.2 1.83 1.2 3.09 0 4.41-2.72 5.4-5.3 5.69.42.36.79 1.07.79 2.16v3.03c0 .31.21.67.8.56A11.5 11.5 0 0012 .7z"></path>
-                            </svg>
-                            GitHub connected
-                        </div>
-                    ` : `
-                        <button id="account-connect-github-btn" class="btn-ghost-hover w-full h-9 rounded-lg text-sm border border-border bg-background text-foreground transition-colors flex items-center justify-center gap-2 mb-3" type="button" ${isBusy ? 'disabled' : ''}>
-                            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                                <path d="M12 .7a11.5 11.5 0 00-3.64 22.41c.58.1.79-.25.79-.56v-2.02c-3.22.7-3.9-1.37-3.9-1.37-.52-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.04 1.78 2.72 1.27 3.38.97.1-.75.4-1.27.74-1.56-2.57-.29-5.28-1.29-5.28-5.69 0-1.26.45-2.28 1.2-3.09-.12-.3-.52-1.47.11-3.05 0 0 .98-.31 3.16 1.18a10.98 10.98 0 015.75 0c2.18-1.49 3.16-1.18 3.16-1.18.63 1.58.23 2.75.11 3.05.75.81 1.2 1.83 1.2 3.09 0 4.41-2.72 5.4-5.3 5.69.42.36.79 1.07.79 2.16v3.03c0 .31.21.67.8.56A11.5 11.5 0 0012 .7z"></path>
-                            </svg>
-                            ${action === 'github_link' ? 'Connecting GitHub...' : 'Connect GitHub'}
-                        </button>
-                    `}
+                    <div class="grid gap-2 mb-3">
+                        ${this.renderOAuthConnection('github', state, isBusy, action)}
+                        ${this.renderOAuthConnection('google', state, isBusy, action)}
+                    </div>
 
                     <div class="flex gap-3">
                         <button id="account-clear-btn" class="btn-ghost-hover flex-1 h-9 rounded-lg text-sm border border-border bg-background text-foreground transition-colors disabled:opacity-50" type="button" ${isBusy ? 'disabled' : ''}>
@@ -926,7 +977,7 @@ class AccountModal {
 
                 <p class="text-xs text-muted-foreground" style="margin-bottom:20px">${showRecovery
                     ? 'Recover your account with the recovery code saved at account creation time.'
-                    : 'Account enables encrypted sync across browsers &amp; devices. Sign in with GitHub or use a passkey; only your passkey or recovery code can unlock the data.'
+                    : 'Account enables encrypted sync across browsers &amp; devices. Sign in with Google, GitHub, or a passkey; only your passkey or recovery code can unlock the data.'
                 }</p>
 
                 ${!passkeySupported ? `
@@ -936,11 +987,13 @@ class AccountModal {
                 ` : ''}
 
                 ${!showRecovery ? `
-                    <!-- GitHub sign in -->
+                    <!-- OAuth sign in -->
+                    <button id="account-google-btn" class="w-full h-10 rounded-lg text-sm font-medium border border-border bg-background text-foreground hover:bg-accent transition-colors disabled:opacity-50 flex items-center justify-center gap-2 mb-2" type="button" ${isBusy ? 'disabled' : ''}>
+                        ${this.renderOAuthProviderIcon('google')}
+                        Continue with Google
+                    </button>
                     <button id="account-github-btn" class="w-full h-10 rounded-lg text-sm font-medium border border-border bg-foreground text-background hover:opacity-90 transition-opacity disabled:opacity-50 flex items-center justify-center gap-2" type="button" ${isBusy ? 'disabled' : ''}>
-                        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                            <path d="M12 .7a11.5 11.5 0 00-3.64 22.41c.58.1.79-.25.79-.56v-2.02c-3.22.7-3.9-1.37-3.9-1.37-.52-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.04 1.78 2.72 1.27 3.38.97.1-.75.4-1.27.74-1.56-2.57-.29-5.28-1.29-5.28-5.69 0-1.26.45-2.28 1.2-3.09-.12-.3-.52-1.47.11-3.05 0 0 .98-.31 3.16 1.18a10.98 10.98 0 015.75 0c2.18-1.49 3.16-1.18 3.16-1.18.63 1.58.23 2.75.11 3.05.75.81 1.2 1.83 1.2 3.09 0 4.41-2.72 5.4-5.3 5.69.42.36.79 1.07.79 2.16v3.03c0 .31.21.67.8.56A11.5 11.5 0 0012 .7z"></path>
-                        </svg>
+                        ${this.renderOAuthProviderIcon('github')}
                         Continue with GitHub
                     </button>
 
@@ -1028,8 +1081,9 @@ class AccountModal {
         `;
     }
 
-    renderGithubUnlockUI() {
+    renderOAuthUnlockUI() {
         const state = this.accountState || {};
+        const providerLabel = this.getOAuthProviderLabel(state.oauthProvider);
         const formattedAccountId = this.formatAccountId(state.accountId);
         const recoveryValue = this.escapeHtml(this.recoveryInputValue || '');
 
@@ -1038,17 +1092,17 @@ class AccountModal {
                 ${this.renderHeader('Unlock encrypted data')}
                 <div class="flex items-center justify-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 mb-3">
                     <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
-                    GitHub sign in complete
+                    ${providerLabel} sign in complete
                 </div>
                 <p class="account-number-text font-mono text-base tracking-widest text-foreground text-center whitespace-nowrap mb-3">
                     ${this.escapeHtml(formattedAccountId)}
                 </p>
                 <p class="text-xs text-muted-foreground text-center mb-4">
-                    On a new browser, your recovery code unlocks the encrypted sync key. It is never sent to GitHub or the org.
+                    On a new browser, your recovery code unlocks the encrypted sync key. It is never sent to ${providerLabel} or the org.
                 </p>
                 <div class="account-input-wrap flex items-center w-full h-10 rounded-lg mb-3 border border-border bg-muted/25">
                     <input
-                        id="github-recovery-code-input"
+                        id="oauth-recovery-code-input"
                         type="text"
                         placeholder="5-word recovery code"
                         class="flex-1 h-full px-3 text-sm bg-transparent text-foreground placeholder:text-muted-foreground/40 focus:outline-none"
@@ -1056,7 +1110,7 @@ class AccountModal {
                         ${state.busy ? 'disabled' : ''}
                     />
                 </div>
-                <button id="github-recovery-submit-btn" class="w-full h-9 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50" type="button" ${state.busy ? 'disabled' : ''}>
+                <button id="oauth-recovery-submit-btn" class="w-full h-9 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50" type="button" ${state.busy ? 'disabled' : ''}>
                     ${state.busy ? 'Unlocking...' : 'Unlock encrypted data'}
                 </button>
                 <button id="account-clear-btn" class="w-full text-xs text-muted-foreground hover:text-foreground mt-3" type="button">
@@ -1142,10 +1196,24 @@ class AccountModal {
         if (generateBtn) generateBtn.onclick = () => this.handleGenerateAccountNumber();
 
         const githubBtn = document.getElementById('account-github-btn');
-        if (githubBtn) githubBtn.onclick = () => this.handleGithubAuthentication();
+        if (githubBtn) {
+            githubBtn.onclick = () => this.handleOAuthAuthentication('github');
+        }
 
         const connectGithubBtn = document.getElementById('account-connect-github-btn');
-        if (connectGithubBtn) connectGithubBtn.onclick = () => this.handleConnectGithub();
+        if (connectGithubBtn) {
+            connectGithubBtn.onclick = () => this.handleConnectOAuth('github');
+        }
+
+        const googleBtn = document.getElementById('account-google-btn');
+        if (googleBtn) {
+            googleBtn.onclick = () => this.handleOAuthAuthentication('google');
+        }
+
+        const connectGoogleBtn = document.getElementById('account-connect-google-btn');
+        if (connectGoogleBtn) {
+            connectGoogleBtn.onclick = () => this.handleConnectOAuth('google');
+        }
 
         const cancelCreationBtn = document.getElementById('cancel-creation-btn');
         if (cancelCreationBtn) cancelCreationBtn.onclick = () => this.handleCancelCreation();
@@ -1165,9 +1233,9 @@ class AccountModal {
         const confirmSavedBtn = document.getElementById('confirm-saved-btn');
         if (confirmSavedBtn) confirmSavedBtn.onclick = () => this.handleConfirmRecoverySaved();
 
-        const confirmGithubSavedBtn = document.getElementById('confirm-github-saved-btn');
-        if (confirmGithubSavedBtn) {
-            confirmGithubSavedBtn.onclick = () => this.handleConfirmGithubRecoverySaved();
+        const confirmOAuthSavedBtn = document.getElementById('confirm-oauth-saved-btn');
+        if (confirmOAuthSavedBtn) {
+            confirmOAuthSavedBtn.onclick = () => this.handleConfirmOAuthRecoverySaved();
         }
 
         const startOverBtn = document.getElementById('start-over-btn');
@@ -1199,20 +1267,20 @@ class AccountModal {
         const recoverySubmitBtn = document.getElementById('account-recovery-submit-btn');
         if (recoverySubmitBtn) recoverySubmitBtn.onclick = () => this.handleAccountRecoveryUnlock();
 
-        const githubRecoveryInput = document.getElementById('github-recovery-code-input');
-        if (githubRecoveryInput) {
-            githubRecoveryInput.oninput = (e) => { this.recoveryInputValue = e.target.value; };
-            githubRecoveryInput.onkeydown = (e) => {
+        const oauthRecoveryInput = document.getElementById('oauth-recovery-code-input');
+        if (oauthRecoveryInput) {
+            oauthRecoveryInput.oninput = (e) => { this.recoveryInputValue = e.target.value; };
+            oauthRecoveryInput.onkeydown = (e) => {
                 if (e.key === 'Enter') {
                     e.preventDefault();
-                    this.handleGithubRecoveryUnlock();
+                    this.handleOAuthRecoveryUnlock();
                 }
             };
         }
 
-        const githubRecoverySubmitBtn = document.getElementById('github-recovery-submit-btn');
-        if (githubRecoverySubmitBtn) {
-            githubRecoverySubmitBtn.onclick = () => this.handleGithubRecoveryUnlock();
+        const oauthRecoverySubmitBtn = document.getElementById('oauth-recovery-submit-btn');
+        if (oauthRecoverySubmitBtn) {
+            oauthRecoverySubmitBtn.onclick = () => this.handleOAuthRecoveryUnlock();
         }
 
         const copyIdBtn = document.getElementById('account-copy-id-btn');

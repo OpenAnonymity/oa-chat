@@ -31,7 +31,7 @@ import privacyPassProvider from './privacyPass.js';
 import networkLogger from './networkLogger.js';
 import networkProxy from './networkProxy.js';
 import ticketStore from './ticketStore.js';
-import { ORG_API_BASE } from '../config.js';
+import { ORG_API_BASE } from './orgEndpoints.js';
 
 class TicketClient {
     constructor() {

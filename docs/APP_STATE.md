@@ -25,27 +25,45 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
-- 2026-07-28: Account authentication supports GitHub OAuth in addition to
-  passkeys; see [GITHUB_SIGN_IN.md](GITHUB_SIGN_IN.md).
-  - `accountService.authenticateWithGithub(...)` uses a popup and the org's
-    HttpOnly refresh cookie. OAuth/access tokens never travel through the popup
-    message or app URL.
-  - GitHub authenticates the OA account but cannot unlock encrypted sync. New or
-    logged-out browsers must enter the five-word recovery code; browsers with a
-    persisted local master key restore normally.
-  - A passkey-authenticated account can connect one GitHub identity. GitHub-first
-    accounts can later use the existing account-number/recovery flow to add a
-    passkey.
-  - Connecting GitHub is an authenticator-enrollment operation and requires a
-    fresh passkey step-up; a refresh-restored session is not sufficient.
-  - Keep `githubSetupRequired` (new account must save recovery material) distinct
-    from `githubRecoveryRequired` (existing account authenticated, encrypted key
-    still locked). The account modal intentionally cannot close during the
-    OAuth popup wait or while a new recovery code is unsaved.
-  - Opting into GitHub makes the sync account identifiable to the org, but does
-    not put identity into blinded ticket redemption or inference traffic.
+- 2026-07-28: Account authentication supports Google and GitHub OAuth in
+  addition to passkeys; see [GOOGLE_SIGN_IN.md](GOOGLE_SIGN_IN.md) and
+  [GITHUB_SIGN_IN.md](GITHUB_SIGN_IN.md).
+  - `accountService.authenticateWithOAuth(provider, ...)` owns the shared popup,
+    setup, recovery-unlock, account-mismatch, and local-key restoration flow.
+    Provider-specific linked flags plus `lastOAuthProvider` are persisted so a
+    locked browser can recover through the most recently used provider.
+  - Google requests only `openid`; the org retains only the OpenID Connect
+    `sub`. OAuth/access tokens and Google email/profile fields are discarded.
+  - `npm run dev` serves static assets and proxies non-static requests to the
+    local org on port `8005`. The browser therefore uses its own origin for
+    passkey, OAuth, ticket, and sync API calls, avoiding local-network/CORS
+    restrictions. OAuth callbacks still come directly from port `8005`, so
+    `ORG_AUTH_ORIGIN` remains separate from the local `ORG_API_BASE`.
+    The dev server injects a runtime-only proxy marker, so `npm run preview` on
+    localhost still uses `https://org.openanonymity.ai`. The callback host is
+    canonical `localhost`; requests to the dev server via `127.0.0.1` redirect
+    there before the app loads.
+  - Provider wrappers such as `authenticateWithGithub(...)` use the shared popup
+    flow and the org's HttpOnly refresh cookie. OAuth/access tokens never travel
+    through the popup message or app URL.
+  - Google or GitHub authenticates the OA account but cannot unlock encrypted
+    sync. New or logged-out browsers must enter the five-word recovery code;
+    browsers with a persisted local master key restore normally.
+  - A passkey-authenticated account can connect one identity per provider.
+    OAuth-first accounts can later use the existing account-number/recovery flow
+    to add a passkey.
+  - Connecting either OAuth provider is an authenticator-enrollment operation
+    and requires a fresh passkey step-up; a refresh-restored session is not
+    sufficient.
+  - Keep `oauthSetupRequired` (new account must save recovery material) distinct
+    from `oauthRecoveryRequired` (existing account authenticated, encrypted key
+    still locked). The account modal intentionally cannot close during the OAuth
+    popup wait or while a new recovery code is unsaved.
+  - Opting into Google or GitHub makes the sync account identifiable to the org,
+    but does not put identity into blinded ticket redemption or inference
+    traffic.
   - Syncable tickets and preferences are still browser-global rather than
-    account-namespaced. The GitHub flow refuses an implicit account switch when
+    account-namespaced. The OAuth flow refuses an implicit account switch when
     another local account is unlocked, but an explicit logout followed by a
     different account can intentionally carry the browser's existing wallet
     into that account's sync data. Supporting shared-browser multi-user

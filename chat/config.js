@@ -9,7 +9,7 @@
 // signatures), and it is never in the inference data path (never sees prompts
 // or responses). Being closed-source is irrelevant -- its worst case is denial
 // of service, not privacy breach. See docs/PRIVACY_MODEL.md.
-export const ORG_API_BASE = 'https://org.openanonymity.ai';
+export { ORG_API_BASE, ORG_AUTH_ORIGIN } from './services/orgEndpoints.js';
 
 // Verifier service -- hardware-attested (AMD SEV-SNP) station compliance
 // enforcer. Open-source and auditable. Enforces privacy toggles and key

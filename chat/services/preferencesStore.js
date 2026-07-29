@@ -1,6 +1,6 @@
 import storageEvents from './storageEvents.js';
 import { chatDB } from '../db.js';
-import syncService from './syncService.js';
+import syncService from './encryptedSyncService.js';
 
 const PREF_KEYS = {
     theme: 'pref-theme',

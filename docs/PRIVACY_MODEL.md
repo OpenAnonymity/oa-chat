@@ -111,31 +111,34 @@ because the key was issued through blind signatures with no user identity attach
 ### 5. Optional account sign-in and encrypted sync
 
 Passkeys remain the identity-free account option. A user may alternatively connect
-GitHub to an OA sync account. In that opt-in flow:
+GitHub or Google to an OA sync account. In that opt-in flow:
 
-1. The org completes GitHub OAuth with PKCE, uses the access token once to call
-   GitHub's `/user` endpoint, retains only the stable numeric user ID, and
-   immediately discards the token and all other response fields.
-2. The org stores a mapping from that numeric ID to the random 16-digit OA account
-   ID. It does not request GitHub scopes or retain email/profile fields.
+1. The org completes OAuth with PKCE, uses the access token once to obtain the
+   provider's stable subject (GitHub's numeric `/user.id` or Google's OpenID
+   Connect `sub`), and immediately discards the token and all other response
+   fields.
+2. The org stores a mapping from that provider subject to the random 16-digit OA
+   account ID. GitHub is requested with no scopes; Google is requested with only
+   `openid`. The org does not retain email or profile fields.
 3. The browser continues to generate and hold the 256-bit sync master key. The org
    receives only encrypted sync blobs and a recovery-code-wrapped copy of that key.
 4. A returning browser can use its locally persisted key. A new browser must enter
-   the recovery code after GitHub sign-in; GitHub authentication alone cannot
+   the recovery code after provider sign-in; OAuth authentication alone cannot
    decrypt sync data.
 
-This opt-in creates a GitHub-identity-to-sync-account relationship at the org. It
+This opt-in creates a provider-identity-to-sync-account relationship at the org. It
 does **not** create an identity-to-inference relationship: account authentication
 is not present in ticket redemption or inference requests, tickets remain blinded,
 ephemeral provider keys remain anonymous, and no OA component enters the prompt or
-response path. See [GitHub Sign-In](GITHUB_SIGN_IN.md) for implementation details.
+response path. See [GitHub Sign-In](GITHUB_SIGN_IN.md) and
+[Google Sign-In](GOOGLE_SIGN_IN.md) for implementation details.
 
 ## What Each Component Can and Cannot See
 
 
 | Actor | What it sees | Can it identify the user? | Why not? |
 |---|---|---|---|
-| **Org / Station** | Blinded requests at issuance, finalized tickets + issued API keys at redemption, station governance events; the org also sees a numeric GitHub ID for users who opt into GitHub account login | For optional account login only; not for inference activity | Blind signatures make blinded requests (issuance) cryptographically unlinkable to finalized tickets (redemption). The GitHub mapping authorizes only opaque encrypted sync data and is absent from redemption and inference. Never sees inference content. |
+| **Org / Station** | Blinded requests at issuance, finalized tickets + issued API keys at redemption, station governance events; the org also sees a provider subject for users who opt into GitHub or Google account login | For optional account login only; not for inference activity | Blind signatures make blinded requests (issuance) cryptographically unlinkable to finalized tickets (redemption). External identity mappings authorize only opaque encrypted sync data and are absent from redemption and inference. Never sees inference content. |
 | **Verifier** | API key hash (transient), station signatures, broadcast status | No | Raw key used transiently and immediately hashed. Key carries no user identity (blind signatures). |
 | **Inference provider** | API key + inference content (prompts/responses) | No | Key is ephemeral and anonymous. No user identity binding. Even a malicious provider cannot link prompts to a user or across sessions. |
 | **User** | Everything (their own tickets, keys, prompts, responses) | N/A | The user is the only party who can link all steps together. |
@@ -225,7 +228,7 @@ is measured by hardware and verifiable by anyone.
 APIs. A station cannot cheat on privacy toggles or use shadow accounts without
 being caught and banned.
 - The **org/registry** are governance infrastructure. The org may see an
-opt-in GitHub identity for account authentication, but it never sees inference
+opt-in GitHub or Google identity for account authentication, but it never sees inference
 content or the identity-to-inference linkage.
 - Even a compromised OA operator cannot deanonymize inference activity because
 no OA component possesses the identity-to-inference linkage.
@@ -256,7 +259,7 @@ availability concern, not a trust concern:
 - No centralized OA component possesses the identity-to-inference linkage needed
 for deanonymization.
 - The registry gates station admission (not user identity).
-- The org backend receives station governance events and, for opted-in GitHub
+- The org backend receives station governance events and, for opted-in OAuth
 accounts, the external identity mapping plus encrypted sync ciphertext. Neither
 is present in the inference data path.
 - Future roadmap: multiple verifier instances and stations operated by
@@ -299,7 +302,7 @@ inference requests?** For the formal threat model and collusion analysis, see bl
 | "The org handles both issuance and redemption, so it can correlate them."    | False. At issuance the org sees blinded requests; at redemption it sees finalized (unblinded) tickets for the first time. These are cryptographically unlinkable -- that is the core guarantee of blind signatures. The org knows "credential X -> N blinded requests" but cannot determine which finalized tickets those became.                                                                                                                                                     |
 | "The org knows the invitation code/email, so it knows who redeemed tickets." | False. The org knows identity -> credential -> N blinded requests. But it cannot link blinded requests to finalized tickets (blind signatures). The finalized tickets at redemption are unlinkable to any prior issuance step.                                                                                                                                                                                                                                                        |
 | "The provider sees prompts, so zero-trust is violated."                      | False. OA's claim is unlinkable inference, not invisible inference. Prompts reach the provider (they must for inference to work), but they are unlinkable to the user's identity and to each other. The provider sees anonymous requests from ephemeral keys.                                                                                                                                                                                                                         |
-| "GitHub login lets the org link prompts to a GitHub user."                   | False. GitHub OAuth authorizes an OA sync account and the org stores the numeric GitHub subject, so the account itself is no longer identity-free. But that account credential is never attached to finalized tickets, ephemeral provider keys, or inference calls. Blind issuance/redemption and direct browser-to-provider inference preserve the identity-to-inference separation. |
+| "GitHub or Google login lets the org link prompts to that user."             | False. OAuth authorizes an OA sync account and the org stores the provider's stable subject, so the account itself is no longer identity-free. But that account credential is never attached to finalized tickets, ephemeral provider keys, or inference calls. Blind issuance/redemption and direct browser-to-provider inference preserve the identity-to-inference separation. |
 | "Station operator cookies stored in verifier memory affect user privacy."    | False. Station operator credentials are governance data for compliance checks on the operator's provider account. They are not end-user data. The verifier never receives or stores any end-user identity material.                                                                                                                                                                                                                                                                   |
 | "Side-channel attacks (timing, IP, batch size) break unlinkability."         | IP is mitigated by the built-in in-browser VPN proxy (on by default), and users can additionally use their own VPN/Tor. Timing correlation is weakened by the large volume of tickets issued across many users -- individual redemption events are lost in the mix. Even if these side channels were somehow exploited, inference remains unlinkable: no OA system sees prompts/responses (direct browser-to-provider), the provider sees anonymous ephemeral keys, and the worst case is the org learning "some user obtained an API key" -- but never what was sent with it. |
 | "The org is closed-source, so it's an unauditable trust anchor."             | False. The org does not need to be trusted for unlinkability. Blinding/unblinding runs client-side in open-source JS (@cloudflare/privacypass-ts). The org only sees blinded requests (issuance) and finalized tickets (redemption) which are cryptographically unlinkable. Its worst case is denial of service, not privacy breach. See [UNLINKABILITY_PROOF.md](UNLINKABILITY_PROOF.md) for the formal proof. |
