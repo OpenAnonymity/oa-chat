@@ -104,7 +104,6 @@ class AccountModal {
         // Don't allow closing during recovery step - user must save their codes
         if (
             this.creationStep === 'recovery' ||
-            this.creationStep === 'oauth_recovery' ||
             this.creationStep === 'oauth_authorizing'
         ) {
             return;
@@ -214,16 +213,6 @@ class AccountModal {
         if (!result) {
             this.creationStep = 'idle';
             this.oauthProvider = null;
-            this.render();
-            return;
-        }
-
-        if (result.status === 'setup') {
-            this.generatedAccountId = result.accountId;
-            this.generatedRecoveryCode = result.recoveryCode;
-            this.accountIdCopied = false;
-            this.recoveryCodeCopied = false;
-            this.creationStep = 'oauth_recovery';
             this.render();
             return;
         }
@@ -357,27 +346,6 @@ class AccountModal {
         }
     }
 
-    async handleConfirmOAuthRecoverySaved() {
-        const providerLabel = this.getOAuthProviderLabel();
-        this.creationStep = 'oauth_confirming';
-        this.creationError = null;
-        this.render();
-
-        const success = await this.accountService.completeOAuthAccountSetup();
-        if (success) {
-            this.creationStep = 'complete';
-            this.render();
-            this.app?.showToast?.(
-                `${providerLabel} account created successfully`,
-                'success'
-            );
-        } else {
-            this.creationStep = 'error';
-            this.creationError = this.accountService.getState().error || 'Account setup failed.';
-            this.render();
-        }
-    }
-
     async handleCancelCreation() {
         if (this.creationStep.startsWith('oauth_') || this.accountState?.oauthSetupRequired) {
             this.accountService.cancelPendingOAuthAccount();
@@ -458,6 +426,21 @@ class AccountModal {
         if (success) {
             this.recoveryInputValue = '';
             this.app?.showToast?.(`Signed in with ${providerLabel}`, 'success');
+        }
+    }
+
+    async handleOAuthKeyringUnlock() {
+        const state = this.accountService.getState();
+        const success = state.oauthLegacyPasskeyRequired
+            ? await this.accountService.unlockWithPasskey(
+                state.accountId,
+                { action: 'oauth_legacy_passkey' }
+            )
+            : state.oauthSetupRequired
+                ? await this.accountService.setupOAuthKeyring()
+                : await this.accountService.unlockOAuthKeyring();
+        if (success) {
+            this.app?.showToast?.('Encrypted data unlocked', 'success');
         }
     }
 
@@ -550,36 +533,6 @@ class AccountModal {
                     </div>
                 `;
 
-            case 'oauth_recovery':
-                return `
-                    <div class="w-full">
-                        <p class="text-xs text-muted-foreground mb-4">
-                            ${providerLabel} verifies your account. This recovery code encrypts your sync key, so the org and ${providerLabel} still cannot read your data.
-                        </p>
-                        <div class="flex items-center justify-between mb-2">
-                            <span class="text-xs text-muted-foreground">Your account number</span>
-                            <button id="copy-account-btn" class="text-xs text-blue-600 dark:text-blue-400 hover:underline" type="button">
-                                ${this.accountIdCopied ? 'Copied!' : 'Copy'}
-                            </button>
-                        </div>
-                        <div class="account-number-text font-mono text-xl tracking-widest text-foreground mb-4 whitespace-nowrap text-center">
-                            ${this.formatAccountId(this.generatedAccountId)}
-                        </div>
-                        <div class="flex items-center justify-between mb-2">
-                            <span class="text-xs text-muted-foreground">Recovery code</span>
-                            <button id="copy-recovery-btn" class="text-xs text-blue-600 dark:text-blue-400 hover:underline" type="button">
-                                ${this.recoveryCodeCopied ? 'Copied!' : 'Copy'}
-                            </button>
-                        </div>
-                        <code class="block font-mono text-sm text-foreground select-all text-center mb-4">
-                            ${this.escapeHtml(this.generatedRecoveryCode || '')}
-                        </code>
-                        <p class="text-[11px] text-muted-foreground mt-4 text-center">
-                            <button id="copy-both-btn" class="text-blue-600 dark:text-blue-400 hover:underline" type="button">${this.accountIdCopied && this.recoveryCodeCopied ? 'Both copied' : 'Copy both'}</button> to continue
-                        </p>
-                    </div>
-                `;
-
             case 'passkey':
             case 'passkey_retry': {
                 const isWaiting = this.isLoadingAccountId || this.revealedDigits < 16;
@@ -645,7 +598,6 @@ class AccountModal {
                 `;
 
             case 'confirming':
-            case 'oauth_confirming':
                 return `
                     <div class="w-full text-center py-6">
                         <div class="w-10 h-10 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
@@ -693,15 +645,6 @@ class AccountModal {
                     </button>
                 `;
 
-            case 'oauth_recovery': {
-                const bothCopied = this.accountIdCopied && this.recoveryCodeCopied;
-                return `
-                    <button id="confirm-oauth-saved-btn" class="w-full h-9 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" type="button" ${bothCopied ? '' : 'disabled'}>
-                        I've saved both
-                    </button>
-                `;
-            }
-
             case 'passkey':
                 return `
                     <button id="cancel-creation-btn" class="btn-ghost-hover w-full h-9 rounded-lg text-sm border border-border bg-background text-foreground transition-colors" type="button">
@@ -731,7 +674,6 @@ class AccountModal {
             }
 
             case 'confirming':
-            case 'oauth_confirming':
                 return `
                     <button class="w-full h-9 rounded-lg text-sm bg-muted text-muted-foreground cursor-not-allowed" type="button" disabled>
                         Creating account...
@@ -800,6 +742,9 @@ class AccountModal {
         const passkeySupported = state.passkeySupported;
         const isBusy = state.busy;
         const action = state.action;
+        const usesIdentityLogin =
+            (state.githubLinked || state.googleLinked) &&
+            state.encryptionMode !== 'LEGACY_PASSKEY';
 
         // Recovery flow UI (verifying/adding passkey)
         if (this.recoveryStep === 'verifying' || this.recoveryStep === 'adding_passkey') {
@@ -811,7 +756,12 @@ class AccountModal {
             return this.renderRecoveryCompleteUI();
         }
 
-        if (state.oauthRecoveryRequired) {
+        if (
+            state.oauthRecoveryRequired ||
+            state.oauthKeyringRequired ||
+            state.oauthSetupRequired ||
+            state.oauthLegacyPasskeyRequired
+        ) {
             return this.renderOAuthUnlockUI();
         }
 
@@ -876,18 +826,35 @@ class AccountModal {
                                 <span class="text-xs ${syncStatusColor}">${syncStatusText}</span>
                             </div>
                         </div>
-                        <button id="account-copy-id-btn" class="account-number-text font-mono text-lg tracking-widest text-foreground mb-1 whitespace-nowrap hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer bg-transparent border-none p-0" type="button" title="Copy account ID">
-                            ${this.escapeHtml(formattedAccountId)}
-                        </button>
-                        <p class="text-[11px] text-muted-foreground">Encrypted sync for tickets & preferences</p>
+                        ${usesIdentityLogin ? `
+                            <p class="text-sm font-medium text-foreground mb-1">Encrypted with your passkey</p>
+                        ` : `
+                            <button id="account-copy-id-btn" class="account-number-text font-mono text-lg tracking-widest text-foreground mb-1 whitespace-nowrap hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer bg-transparent border-none p-0" type="button" title="Copy account ID">
+                                ${this.escapeHtml(formattedAccountId)}
+                            </button>
+                        `}
+                        <p class="text-[11px] text-muted-foreground">
+                            ${usesIdentityLogin
+                                ? 'Encrypted sync for preferences; inference tickets stay device-only'
+                                : 'Encrypted sync for tickets & preferences'
+                            }
+                        </p>
                     </div>
 
                     <p class="text-[11px] text-muted-foreground text-center mb-3">Chat history sync coming soon</p>
 
-                    <div class="grid gap-2 mb-3">
-                        ${this.renderOAuthConnection('github', state, isBusy, action)}
-                        ${this.renderOAuthConnection('google', state, isBusy, action)}
-                    </div>
+                    ${(state.githubLinked || state.googleLinked) ? `
+                        <div class="grid gap-2 mb-3">
+                            ${state.githubLinked
+                                ? this.renderOAuthConnection('github', state, isBusy, action)
+                                : ''
+                            }
+                            ${state.googleLinked
+                                ? this.renderOAuthConnection('google', state, isBusy, action)
+                                : ''
+                            }
+                        </div>
+                    ` : ''}
 
                     <div class="flex gap-3">
                         <button id="account-clear-btn" class="btn-ghost-hover flex-1 h-9 rounded-lg text-sm border border-border bg-background text-foreground transition-colors disabled:opacity-50" type="button" ${isBusy ? 'disabled' : ''}>
@@ -977,7 +944,7 @@ class AccountModal {
 
                 <p class="text-xs text-muted-foreground" style="margin-bottom:20px">${showRecovery
                     ? 'Recover your account with the recovery code saved at account creation time.'
-                    : 'Account enables encrypted sync across browsers &amp; devices. Sign in with Google, GitHub, or a passkey; only your passkey or recovery code can unlock the data.'
+                    : 'Google or GitHub authenticates your account. Your passkey separately encrypts synced data so the org cannot read it.'
                 }</p>
 
                 ${!passkeySupported ? `
@@ -1084,35 +1051,67 @@ class AccountModal {
     renderOAuthUnlockUI() {
         const state = this.accountState || {};
         const providerLabel = this.getOAuthProviderLabel(state.oauthProvider);
-        const formattedAccountId = this.formatAccountId(state.accountId);
         const recoveryValue = this.escapeHtml(this.recoveryInputValue || '');
+        const isLegacyMigration = state.oauthRecoveryRequired;
+        const isSetup = state.oauthSetupRequired;
+        const isLegacyPasskey = state.oauthLegacyPasskeyRequired;
 
         return `
             <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}">
-                ${this.renderHeader('Unlock encrypted data')}
+                ${this.renderHeader(
+                    isLegacyMigration
+                        ? 'Upgrade encrypted data'
+                        : isLegacyPasskey
+                            ? 'Unlock legacy encrypted data'
+                        : isSetup
+                            ? 'Encrypt your data'
+                            : 'Unlock encrypted data'
+                )}
                 <div class="flex items-center justify-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 mb-3">
                     <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
                     ${providerLabel} sign in complete
                 </div>
-                <p class="account-number-text font-mono text-base tracking-widest text-foreground text-center whitespace-nowrap mb-3">
-                    ${this.escapeHtml(formattedAccountId)}
-                </p>
+                ${isLegacyPasskey ? `
+                    <p class="account-number-text font-mono text-base tracking-widest text-foreground text-center whitespace-nowrap mb-3">
+                        ${this.escapeHtml(this.formatAccountId(state.accountId))}
+                    </p>
+                ` : ''}
                 <p class="text-xs text-muted-foreground text-center mb-4">
-                    On a new browser, your recovery code unlocks the encrypted sync key. It is never sent to ${providerLabel} or the org.
+                    ${isLegacyMigration
+                        ? 'Enter the recovery code from the previous account system once. OA will replace it with a PRF encryption passkey.'
+                        : isLegacyPasskey
+                            ? 'This account predates encryption-only passkeys. Use its existing passkey to unlock it; its account number and recovery path remain available.'
+                        : isSetup
+                            ? 'Create an encryption passkey. Its PRF output wraps your data key locally and never reaches the org.'
+                            : 'Use your encryption passkey. Its PRF output unlocks your data locally and never reaches the org.'
+                    }
                 </p>
-                <div class="account-input-wrap flex items-center w-full h-10 rounded-lg mb-3 border border-border bg-muted/25">
-                    <input
-                        id="oauth-recovery-code-input"
-                        type="text"
-                        placeholder="5-word recovery code"
-                        class="flex-1 h-full px-3 text-sm bg-transparent text-foreground placeholder:text-muted-foreground/40 focus:outline-none"
-                        value="${recoveryValue}"
-                        ${state.busy ? 'disabled' : ''}
-                    />
-                </div>
-                <button id="oauth-recovery-submit-btn" class="w-full h-9 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50" type="button" ${state.busy ? 'disabled' : ''}>
-                    ${state.busy ? 'Unlocking...' : 'Unlock encrypted data'}
-                </button>
+                ${isLegacyMigration ? `
+                    <div class="account-input-wrap flex items-center w-full h-10 rounded-lg mb-3 border border-border bg-muted/25">
+                        <input
+                            id="oauth-recovery-code-input"
+                            type="text"
+                            placeholder="Legacy 5-word recovery code"
+                            class="flex-1 h-full px-3 text-sm bg-transparent text-foreground placeholder:text-muted-foreground/40 focus:outline-none"
+                            value="${recoveryValue}"
+                            ${state.busy ? 'disabled' : ''}
+                        />
+                    </div>
+                    <button id="oauth-recovery-submit-btn" class="w-full h-9 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50" type="button" ${state.busy ? 'disabled' : ''}>
+                        ${state.busy ? 'Upgrading...' : 'Upgrade with passkey'}
+                    </button>
+                ` : `
+                    <button id="oauth-keyring-submit-btn" class="w-full h-9 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50" type="button" ${state.busy ? 'disabled' : ''}>
+                        ${state.busy
+                            ? isSetup ? 'Creating passkey...' : 'Unlocking...'
+                            : isSetup
+                                ? 'Create encryption passkey'
+                                : isLegacyPasskey
+                                    ? 'Use legacy passkey'
+                                    : 'Unlock with passkey'
+                        }
+                    </button>
+                `}
                 <button id="account-clear-btn" class="w-full text-xs text-muted-foreground hover:text-foreground mt-3" type="button">
                     Cancel and log out
                 </button>
@@ -1233,11 +1232,6 @@ class AccountModal {
         const confirmSavedBtn = document.getElementById('confirm-saved-btn');
         if (confirmSavedBtn) confirmSavedBtn.onclick = () => this.handleConfirmRecoverySaved();
 
-        const confirmOAuthSavedBtn = document.getElementById('confirm-oauth-saved-btn');
-        if (confirmOAuthSavedBtn) {
-            confirmOAuthSavedBtn.onclick = () => this.handleConfirmOAuthRecoverySaved();
-        }
-
         const startOverBtn = document.getElementById('start-over-btn');
         if (startOverBtn) startOverBtn.onclick = () => this.handleStartOver();
 
@@ -1281,6 +1275,11 @@ class AccountModal {
         const oauthRecoverySubmitBtn = document.getElementById('oauth-recovery-submit-btn');
         if (oauthRecoverySubmitBtn) {
             oauthRecoverySubmitBtn.onclick = () => this.handleOAuthRecoveryUnlock();
+        }
+
+        const oauthKeyringSubmitBtn = document.getElementById('oauth-keyring-submit-btn');
+        if (oauthKeyringSubmitBtn) {
+            oauthKeyringSubmitBtn.onclick = () => this.handleOAuthKeyringUnlock();
         }
 
         const copyIdBtn = document.getElementById('account-copy-id-btn');

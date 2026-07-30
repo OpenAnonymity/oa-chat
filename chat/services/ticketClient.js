@@ -38,8 +38,7 @@ class TicketClient {
         console.log('🚀 Initializing TicketClient');
         this.ppExtension = privacyPassProvider;
         this.ticketStore = ticketStore;
-
-        console.log(`📊 TicketClient ready with ${this.ticketStore.getCount()} tickets`);
+        console.log('📊 TicketClient ready');
     }
 
     getNextTicket() {

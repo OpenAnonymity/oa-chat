@@ -1,47 +1,51 @@
 # Google Sign-In
 
-Google OAuth/OpenID Connect is an optional account authentication method
-alongside passkeys and GitHub. It authorizes access to an OA sync account
-without changing the encrypted-sync or unlinkable-inference boundaries.
+Google OAuth/OpenID Connect is an optional OA account authenticator. It
+authorizes access to opaque account records without becoming the encryption key
+or entering the unlinkable-inference path. See
+[Encryption Passkeys](ENCRYPTION_PASSKEYS.md) for the shared keyring design.
 
 ## User flows
 
-- **New account:** Continue with Google, authorize the app, then save the
-  generated OA account number and five-word recovery code. The browser
-  generates the master key and uploads only its recovery-code-wrapped
-  ciphertext.
-- **Existing account:** Sign in with a passkey, choose **Connect Google**,
-  confirm the passkey again, and authorize Google. Existing passkey and
-  recovery wrappers remain unchanged.
-- **Returning browser:** A browser with its locally persisted master key
-  unlocks normally. A new or explicitly logged-out browser must enter the
-  recovery code after Google authentication.
-- **Recovery/add a passkey:** Google-first accounts retain a normal OA account
-  number and recovery code. The existing recovery flow can add a passkey.
+- **New SSO account:** Continue with Google, authorize the app, then create an
+  encryption passkey. No OA account number or recovery code is shown.
+- **Returning browser:** Google authenticates first. A logged-out or new browser
+  then uses the synced PRF passkey to decrypt the account master key locally.
+  A browser that retains the non-extractable local keys restores without another
+  passkey prompt.
+- **Legacy SSO migration:** Accounts created by the recovery-wrapper build enter
+  their five-word code once, then replace that unlock path with an encryption
+  passkey.
+- **Existing passkey-only account:** The legacy account-number/recovery system
+  remains compatible, but Google cannot be attached to it. OAuth uses a
+  separate identity account partition.
 
-Google authentication cannot be the encryption key. OAuth credentials are
-server-visible and replaceable, so the browser continues to own all sync-key
-generation and decryption.
+Google credentials are server-visible and replaceable, so they cannot be the
+encryption key. Losing every copy of the encryption passkey makes new SSO
+accounts' encrypted data unrecoverable even when Google authentication succeeds.
 
 ## OAuth boundary
 
 - `POST /auth/google/start` creates a single-use, ten-minute Redis state record,
-  PKCE verifier/challenge, and a state-specific HttpOnly `SameSite=Lax` browser
+  PKCE verifier/challenge, and state-specific HttpOnly `SameSite=Lax` browser
   nonce.
-- Google is requested with only the `openid` scope. The callback exchanges the
-  code on the org, calls the OpenID Connect userinfo endpoint, retains only
-  `sub`, and immediately discards the access token and all other fields.
-- The org stores only `(provider=google, provider_subject=sub, account_id)`.
-- The callback returns no OAuth or OA token to JavaScript. It sets the existing
-  HttpOnly OA refresh cookie and posts a fixed completion message to the exact
-  allowlisted app origin.
-- `POST /auth/google/setup` accepts only the client-encrypted recovery wrapper
-  and Argon2id recovery verifier. `GET /auth/google/session` returns the opaque
-  recovery wrapper only to the authenticated linked account.
-- Linking requires an access JWT minted by a fresh passkey/recovery step-up;
-  refresh-derived JWTs are rejected.
-- Login with a locally remembered account is resolve-only, so an account
-  mismatch cannot create a new Google mapping.
+- Google is requested with only the `openid` scope. The org exchanges the code,
+  calls the OpenID Connect userinfo endpoint, retains only `sub`, and discards
+  the access token and all other fields.
+- The callback stores only `(provider=google, provider_subject=sub, account_id)`.
+  It returns no token to JavaScript; it sets the HttpOnly OA refresh cookie and
+  posts a fixed result to the exact allowlisted app origin.
+- `GET /auth/keyring` returns opaque PRF-passkey wrappers only to the
+  authenticated account. `POST /auth/keyring` appends a client-produced wrapper;
+  it never receives WebAuthn registration or assertion data.
+- Refresh sessions preserve the original authentication method and time.
+- `link` mode is rejected. A provider identity cannot be attached to a legacy
+  account namespace that may contain historical inference-ticket sync metadata.
+- If the browser remembers a different local OA account, login carries it as an
+  expected account and is resolve-only. The callback cannot create a new Google
+  mapping before the client rejects an account mismatch.
+- Identity-backed accounts sync encrypted preferences only. Inference tickets
+  remain device-local, are absent from sync blobs/IDs, and do not trigger sync.
 
 ## Deployment configuration
 
@@ -64,17 +68,17 @@ For local development use `http://localhost:8005/auth/google/callback` as the
 authorized redirect URI. The org—not browser JavaScript—performs the code
 exchange, so a JavaScript origin is not required for the Google client.
 `npm run dev` proxies browser API calls to the local org, while the OAuth popup
-callback remains on canonical `localhost:8005` so its origin can be validated.
-Requests made to the development server via `127.0.0.1` are redirected to
-`localhost` before the app loads.
+callback remains on canonical `localhost:8005`.
 
 ## Regression checks
 
-1. Create, log out, and sign back into a passkey account.
-2. Connect Google to that unlocked account; verify passkey login still works.
-3. Log in with Google without a local key; verify the recovery code is required
-   and encrypted sync succeeds after unlock.
-4. Create a Google-first account, save both recovery values, complete setup,
-   and verify an encrypted sync blob is present.
+1. Create a Google-first account; verify the only post-OAuth secret step is
+   creating a PRF passkey and encrypted sync succeeds.
+2. Log out, sign in with Google, unlock with the passkey, and verify no account
+   number or recovery code is requested.
+3. Exercise the legacy SSO recovery migration and verify later unlocks use only
+   the new encryption passkey.
+4. Switch accounts through explicit logout and verify tickets/preferences do not
+   cross account scopes; verify Google ticket mutations make no sync request.
 5. Reject an unallowlisted return origin, missing/mismatched nonce, replayed
-   OAuth state, cross-account link, and setup without a linked JWT.
+   OAuth state, every link request, and a keyring overwrite.

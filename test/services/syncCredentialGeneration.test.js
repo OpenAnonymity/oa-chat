@@ -17,7 +17,8 @@ test('an in-flight sync cannot refresh with a replacement account session', asyn
             async () => {
                 refreshCalled = true;
                 return { accessToken: 'account-b-token' };
-            }
+            },
+            'account-a'
         );
         const generation = syncService.credentialGeneration;
         syncService._collectLocalBlobs = async () => [{
@@ -55,14 +56,24 @@ test('an invalidated ID mapping build cannot populate the replacement account ca
         const accountAKey = new Uint8Array(32).fill(1);
         const accountBKey = new Uint8Array(32).fill(2);
 
-        syncService.setCredentials(accountAKey, 'account-a-token', async () => null);
+        syncService.setCredentials(
+            accountAKey,
+            'account-a-token',
+            async () => null,
+            'account-a'
+        );
         const accountAGeneration = syncService.credentialGeneration;
         const pendingAccountAMapping = syncService._buildIdMapping(
             accountAKey,
             accountAGeneration
         );
 
-        syncService.setCredentials(accountBKey, 'account-b-token', async () => null);
+        syncService.setCredentials(
+            accountBKey,
+            'account-b-token',
+            async () => null,
+            'account-b'
+        );
         const accountBGeneration = syncService.credentialGeneration;
 
         await assert.rejects(
@@ -94,7 +105,12 @@ test('an invalidated pull cannot apply parsed blobs or publish sync metadata', a
 
     try {
         const accountAKey = new Uint8Array(32).fill(1);
-        syncService.setCredentials(accountAKey, 'account-a-token', async () => null);
+        syncService.setCredentials(
+            accountAKey,
+            'account-a-token',
+            async () => null,
+            'account-a'
+        );
         const generation = syncService.credentialGeneration;
 
         syncService.fetchWithRetry = async () => ({
@@ -140,13 +156,19 @@ test('an invalidated pull cannot apply parsed blobs or publish sync metadata', a
 
 test('an invalidated sync does not overwrite replacement-account UI state', async () => {
     const originalBuild = syncService._buildIdMapping;
+    const originalScopeCheck = syncService.isAccountScopeActive;
     const originalNotify = syncService.notify;
     let finishBuild;
     const events = [];
 
     try {
         const accountAKey = new Uint8Array(32).fill(1);
-        syncService.setCredentials(accountAKey, 'account-a-token', async () => null);
+        syncService.setCredentials(
+            accountAKey,
+            'account-a-token',
+            async () => null,
+            'account-a'
+        );
         const generation = syncService.credentialGeneration;
         syncService.lastSyncResult = { success: true, account: 'replacement' };
         syncService.syncInProgress = true;
@@ -154,10 +176,12 @@ test('an invalidated sync does not overwrite replacement-account UI state', asyn
         syncService._buildIdMapping = async () => new Promise(resolve => {
             finishBuild = resolve;
         });
+        syncService.isAccountScopeActive = async () => true;
 
         const pendingSync = syncService._doSync(
             accountAKey,
             'account-a-token',
+            'account-a',
             generation
         );
         while (!finishBuild) {
@@ -167,7 +191,8 @@ test('an invalidated sync does not overwrite replacement-account UI state', asyn
         syncService.setCredentials(
             new Uint8Array(32).fill(2),
             'account-b-token',
-            async () => null
+            async () => null,
+            'account-b'
         );
         finishBuild(new Map());
 
@@ -181,6 +206,7 @@ test('an invalidated sync does not overwrite replacement-account UI state', asyn
         assert.equal(syncService.syncInProgress, false);
     } finally {
         syncService._buildIdMapping = originalBuild;
+        syncService.isAccountScopeActive = originalScopeCheck;
         syncService.notify = originalNotify;
         syncService.lastSyncResult = null;
         syncService.syncInProgress = false;

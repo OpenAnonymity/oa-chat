@@ -632,6 +632,31 @@ class ChatDatabase {
         });
     }
 
+    /**
+     * Atomically apply settings puts and deletes in one IndexedDB transaction.
+     * This is used for account-scope transitions where a partial commit could
+     * otherwise associate one account's live data with another account marker.
+     */
+    async updateSettings(entries = [], deleteKeys = []) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['settings'], 'readwrite');
+            const store = transaction.objectStore('settings');
+
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = () => reject(transaction.error);
+            transaction.onabort = () => reject(
+                transaction.error || new Error('Settings transaction aborted')
+            );
+
+            entries.forEach(({ key, value }) => {
+                store.put({ key, value });
+            });
+            deleteKeys.forEach(key => {
+                store.delete(key);
+            });
+        });
+    }
+
     async getSetting(key) {
         return new Promise((resolve, reject) => {
             const transaction = this.db.transaction(['settings'], 'readonly');

@@ -25,6 +25,58 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
+- 2026-07-29: SSO uses a Confer-style authentication/encryption split; see
+  [ENCRYPTION_PASSKEYS.md](ENCRYPTION_PASSKEYS.md).
+  - Google/GitHub authenticates and authorizes opaque account storage. A
+    separate client-only WebAuthn PRF passkey wraps the random sync master key.
+    The org stores `credentialId` plus the versioned AES-GCM wrapper and never
+    receives a WebAuthn assertion, PRF output, or plaintext key.
+  - New SSO users are no longer shown an OA account number or recovery code.
+    The required post-OAuth step is create/unlock encryption passkey. Losing all
+    copies of that passkey is unrecoverable by design.
+  - `oauthSetupRequired` means the authenticated account has no keyring and must
+    create its first encryption passkey. `oauthKeyringRequired` means wrappers
+    exist and a passkey must unlock one. `oauthRecoveryRequired` is only the
+    one-time migration path for SSO accounts from the recovery-wrapper build.
+    `oauthLegacyPasskeyRequired` is distinct: a legacy linked account still
+    authenticates through its original WebAuthn credential.
+  - `encryptionPasskey.js` handles the PRF-specific WebAuthn flow. Keep the
+    follow-up `credentials.get()` after creation: some authenticators report
+    PRF support at creation but return output only from an assertion.
+  - IndexedDB persists non-extractable AES-GCM, HKDF, and HMAC `CryptoKey`
+    objects in one account-bound `account-key-bundle-v1`, never new raw
+    master-key bytes. Loading rejects a bundle for any other account. A
+    one-time migration imports and deletes the old independent key values.
+    Logout/token invalidation deletes the bundle.
+  - Syncable tickets/preferences and their metadata now have per-account local
+    snapshots (`sync-account-data:<accountId>`). OAuth reauthentication and
+    logout must deactivate the active scope before clearing sync credentials,
+    or unsynced local wallet state can be lost. Clear credentials first to
+    invalidate in-flight work. Scope transitions and sync share the `oa-sync`
+    Web Lock, and sync verifies its account against the persisted active marker
+    before reading live values. Ticket mutations and syncable-preference writes
+    also take this lock; scope snapshot/live-key/marker changes commit through
+    one settings transaction, and stale store caches are cleared.
+  - Identity-backed accounts do not sync inference tickets. Ticket opaque IDs
+    and blobs are omitted, and ticket mutations do not schedule sync; only
+    preferences sync under an identity credential. GitHub/Google linking is
+    rejected so identity cannot be attached retroactively to a legacy
+    namespace with historical ticket-sync metadata.
+  - Legacy unscoped values are adopted only when persisted account settings
+    prove continuity with the same account. Otherwise they are preserved under
+    `sync-unclaimed-data` and restored on logout; canceling setup before scope
+    activation leaves them untouched.
+  - Keep the legacy server-authentication `credentialId` separate from the
+    client-only `encryptionCredentialId`. A linked legacy account still needs
+    its original ID as the `/auth/challenge` hint and still displays its account
+    number.
+  - The sync blob format itself remains version 1. The service accepts the new
+    non-extractable key bundle while retaining raw-byte input only for existing
+    tests/compatibility.
+  - An OAuth refresh token records its original auth method and time. Refresh
+    preserves those claims, so a stale cookie cannot become a fresh provider-
+    linking step-up merely by calling `/auth/refresh`.
+
 - 2026-07-28: Account authentication supports Google and GitHub OAuth in
   addition to passkeys; see [GOOGLE_SIGN_IN.md](GOOGLE_SIGN_IN.md) and
   [GITHUB_SIGN_IN.md](GITHUB_SIGN_IN.md).
@@ -46,29 +98,18 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - Provider wrappers such as `authenticateWithGithub(...)` use the shared popup
     flow and the org's HttpOnly refresh cookie. OAuth/access tokens never travel
     through the popup message or app URL.
-  - Google or GitHub authenticates the OA account but cannot unlock encrypted
-    sync. New or logged-out browsers must enter the five-word recovery code;
-    browsers with a persisted local master key restore normally.
-  - A passkey-authenticated account can connect one identity per provider.
-    OAuth-first accounts can later use the existing account-number/recovery flow
-    to add a passkey.
-  - Connecting either OAuth provider is an authenticator-enrollment operation
-    and requires a fresh passkey step-up; a refresh-restored session is not
-    sufficient.
-  - Keep `oauthSetupRequired` (new account must save recovery material) distinct
-    from `oauthRecoveryRequired` (existing account authenticated, encrypted key
-    still locked). The account modal intentionally cannot close during the OAuth
-    popup wait or while a new recovery code is unsaved.
+  - Superseded by the 2026-07-29 encryption-passkey entry above: new or
+    logged-out SSO browsers now unlock with WebAuthn PRF, not a recovery code.
+  - Superseded by the 2026-07-29 identity-partition rule above: provider linking
+    is rejected. A legacy passkey account and an OAuth identity account remain
+    separate namespaces.
+  - Refresh preserves the original provider/passkey method and authentication
+    time; refresh does not manufacture newer authentication provenance.
   - Opting into Google or GitHub makes the sync account identifiable to the org,
     but does not put identity into blinded ticket redemption or inference
     traffic.
-  - Syncable tickets and preferences are still browser-global rather than
-    account-namespaced. The OAuth flow refuses an implicit account switch when
-    another local account is unlocked, but an explicit logout followed by a
-    different account can intentionally carry the browser's existing wallet
-    into that account's sync data. Supporting shared-browser multi-user
-    isolation requires account-namespaced local sync stores or an explicit
-    wallet-transfer step.
+  - Superseded by the 2026-07-29 account-scope entry above: syncable local state
+    is now snapshotted and restored per account.
 
 - 2026-07-11: OpenRouter `~author/*-latest` aliases normalize in the catalog adapter,
   while provider display/icon metadata resolves through the shared provider registry;
