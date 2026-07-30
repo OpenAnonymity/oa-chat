@@ -48,3 +48,50 @@ test('legacy linked account uses its existing passkey unlock path', async () => 
         globalThis.document = originalDocument;
     }
 });
+
+test('identity account describes ticket and preference sync', () => {
+    const originalDocument = globalThis.document;
+    globalThis.document = {
+        getElementById() {
+            return null;
+        }
+    };
+    const state = {
+        accountId: '1234567890123456',
+        githubLinked: true,
+        googleLinked: false,
+        encryptionMode: 'PRF',
+        sessionVerified: true,
+        status: 'unlocked',
+        busy: false,
+        action: null,
+        passkeySupported: true
+    };
+    const modal = new AccountModal({
+        services: {
+            account: {
+                getState: () => state,
+                subscribe: () => () => {}
+            },
+            sync: {
+                getStatus: () => ({
+                    syncing: false,
+                    lastSyncTime: null,
+                    lastSyncResult: null
+                }),
+                subscribe: () => () => {}
+            }
+        }
+    });
+    modal.accountState = state;
+    modal.escapeHtml = value => String(value ?? '');
+
+    try {
+        const html = modal.renderAccountUI();
+        assert.match(html, /Encrypted sync for tickets & preferences/);
+        assert.doesNotMatch(html, /device-only/);
+    } finally {
+        modal.destroy();
+        globalThis.document = originalDocument;
+    }
+});

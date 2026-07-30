@@ -40,12 +40,17 @@ accounts' encrypted data unrecoverable even when GitHub authentication succeeds.
   it never receives WebAuthn registration or assertion data.
 - Refresh sessions preserve the original authentication method and time.
 - `link` mode is rejected. A provider identity cannot be attached to a legacy
-  account namespace that may contain historical inference-ticket sync metadata.
+  account namespace with different identity and recovery semantics.
 - If the browser remembers a different local OA account, login carries it as an
   expected account and is resolve-only. The callback cannot create a new GitHub
   mapping before the client rejects an account mismatch.
-- Identity-backed accounts sync encrypted preferences only. Inference tickets
-  remain device-local, are absent from sync blobs/IDs, and do not trigger sync.
+- Identity-backed accounts sync encrypted active/archived ticket wallets and
+  preferences using the same opaque blob format as legacy accounts. Existing
+  device tickets are adopted when the GitHub account is first created.
+- Ticket redemption does not trigger an immediate identity-authenticated sync.
+  Consumed-state tombstones propagate on the next initial/periodic sync. This
+  reduces direct timing correlation, but identity-bound sync timing and blob
+  sizes remain observable metadata.
 
 ## Deployment configuration
 
@@ -75,7 +80,10 @@ For local development use `http://localhost:8080` as the homepage and
    number or recovery code is requested.
 3. Exercise the legacy SSO recovery migration and verify later unlocks use only
    the new encryption passkey.
-4. Switch accounts through explicit logout and verify tickets/preferences do not
-   cross account scopes; verify GitHub ticket mutations make no sync request.
+4. Create an account with an existing local wallet, then verify that wallet and
+   later ticket additions/clears restore on a second passkey-unlocked browser.
+   Verify redemption itself schedules no immediate sync, its consumed state
+   restores after a periodic/next-login sync, and tickets/preferences do not
+   cross account scopes.
 5. Reject an unallowlisted return origin, missing/mismatched nonce, replayed
    OAuth state, every link request, and a keyring overwrite.

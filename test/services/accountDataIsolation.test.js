@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import { chatDB } from '../../chat/db.js';
 import syncService from '../../chat/services/encryptedSyncService.js';
+import storageEvents from '../../chat/services/storageEvents.js';
 import ticketStore from '../../chat/services/ticketStore.js';
 import preferencesStore, {
     PREF_KEYS
@@ -217,36 +218,294 @@ test('delayed preference broadcast cannot repopulate a stale tab cache', async (
     }
 });
 
-test('identity-backed sync omits tickets and ticket changes schedule no sync', async () => {
+test('stale remote ticket notification cannot clear the next account cache', async () => {
     const fixture = installSettingsMap([
-        ['tickets-active', [{ finalized_ticket: 'identity-ticket' }]],
-        ['tickets-archive', [{ finalized_ticket: 'spent-ticket' }]]
+        ['sync-account-scope', 'account-b'],
+        ['tickets-active', [{ finalized_ticket: 'account-b-ticket' }]]
+    ]);
+    syncService.setLocalAccountScope('account-b');
+    ticketStore.tickets = [{ finalized_ticket: 'account-b-ticket' }];
+
+    try {
+        await ticketStore.handleAccountScopeChange(
+            { accountId: 'account-a' },
+            { external: true, ignoreMismatched: true }
+        );
+        assert.deepEqual(ticketStore.tickets, [
+            { finalized_ticket: 'account-b-ticket' }
+        ]);
+    } finally {
+        fixture.restore();
+    }
+});
+
+test('queued stale ticket notification preserves cache after scope changes', async () => {
+    const fixture = installSettingsMap([
+        ['sync-account-scope', 'account-a'],
+        ['tickets-active', [{ finalized_ticket: 'account-a-ticket' }]]
+    ]);
+    const originalWithLock = ticketStore.withLock;
+    syncService.setLocalAccountScope('account-a');
+    ticketStore.tickets = [{ finalized_ticket: 'account-a-ticket' }];
+    ticketStore.withLock = async handler => {
+        syncService.setLocalAccountScope('account-b');
+        fixture.settings.set('sync-account-scope', 'account-b');
+        fixture.settings.set('tickets-active', [
+            { finalized_ticket: 'account-b-ticket' }
+        ]);
+        ticketStore.tickets = [{ finalized_ticket: 'account-b-ticket' }];
+        return handler();
+    };
+
+    try {
+        await ticketStore.handleAccountScopeChange(
+            { accountId: 'account-a' },
+            { external: true, ignoreMismatched: true }
+        );
+        assert.deepEqual(ticketStore.tickets, [
+            { finalized_ticket: 'account-b-ticket' }
+        ]);
+    } finally {
+        ticketStore.withLock = originalWithLock;
+        fixture.restore();
+    }
+});
+
+test('identity-backed sync pushes encrypted tickets and restores them on a fresh device', async () => {
+    const fixture = installSettingsMap([
+        ['sync-account-scope', 'identity-account'],
+        ['tickets-active', [
+            { finalized_ticket: 'identity-active-ticket' },
+            { finalized_ticket: 'identity-spent-ticket' }
+        ]],
+        ['tickets-archive', [{
+            finalized_ticket: 'identity-spent-ticket',
+            consumed_at: '2026-07-30T12:00:00.000Z'
+        }]]
     ]);
     const key = new Uint8Array(32).fill(7);
-    syncService.setCredentials(
-        key,
-        'anonymous-token',
-        async () => null,
-        'anonymous-account'
-    );
-    syncService.triggerTicketSync(60000);
-    assert.ok(syncService.localChangeDebounceTimer);
-    syncService.clearCredentials();
+    const originalFetchWithRetry = syncService.fetchWithRetry;
+    const originalBroadcast = storageEvents.broadcast;
+    let remoteBlobs = [];
+    let serveRemoteBlobs = false;
+    const broadcasts = [];
+
+    syncService.fetchWithRetry = async (_url, options) => {
+        if (options.method === 'GET') {
+            return {
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    blobs: serveRemoteBlobs ? remoteBlobs : [],
+                    server_time: serveRemoteBlobs ? 200 : 100
+                })
+            };
+        }
+
+        assert.equal(options.method, 'POST');
+        assert.equal(
+            options.headers.Authorization,
+            'Bearer identity-token'
+        );
+        remoteBlobs = JSON.parse(options.body).blobs;
+        return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+                accepted: remoteBlobs.map(blob => blob.id)
+            })
+        };
+    };
+    storageEvents.broadcast = (...args) => {
+        broadcasts.push(args);
+    };
     syncService.setCredentials(
         key,
         'identity-token',
         async () => null,
         'identity-account',
-        { syncTickets: false }
+        { identityBacked: true }
     );
 
     try {
-        assert.equal(syncService.localChangeDebounceTimer, null);
-        const blobs = await syncService._collectLocalBlobs(key);
-        assert.deepEqual(blobs, []);
-        syncService.triggerTicketSync(1);
-        assert.equal(syncService.localChangeDebounceTimer, null);
+        const pushResult = await syncService.sync();
+        assert.equal(pushResult.success, true);
+        assert.equal(remoteBlobs.length, 2);
+        assert.ok(remoteBlobs.every(blob =>
+            typeof blob.id === 'string' &&
+            typeof blob.ciphertext === 'string' &&
+            typeof blob.iv === 'string'
+        ));
+        assert.doesNotMatch(
+            JSON.stringify(remoteBlobs),
+            /identity-(?:active|spent)-ticket/
+        );
+
+        fixture.settings.delete('tickets-active');
+        fixture.settings.delete('tickets-archive');
+        fixture.settings.delete('sync-lastSyncTime');
+        serveRemoteBlobs = true;
+
+        const pullResult = await syncService.sync();
+        assert.equal(pullResult.success, true);
+        assert.deepEqual(
+            fixture.settings.get('tickets-active'),
+            [{ finalized_ticket: 'identity-active-ticket' }]
+        );
+        assert.deepEqual(
+            fixture.settings.get('tickets-archive'),
+            [{
+                finalized_ticket: 'identity-spent-ticket',
+                consumed_at: '2026-07-30T12:00:00.000Z'
+            }]
+        );
+        assert.ok(broadcasts.some(([type, payload]) =>
+            type === 'tickets-updated' &&
+            payload.accountId === 'identity-account'
+        ));
     } finally {
+        syncService.fetchWithRetry = originalFetchWithRetry;
+        storageEvents.broadcast = originalBroadcast;
+        syncService.clearCredentials();
+        fixture.restore();
+    }
+});
+
+test('cash-style ticket removal syncs hash tombstones without retaining secrets', async () => {
+    const keep = { finalized_ticket: 'keep-ticket-secret' };
+    const exported = { finalized_ticket: 'exported-ticket-secret' };
+    const archived = {
+        finalized_ticket: 'archived-ticket-secret',
+        consumed_at: '2026-07-30T12:00:00.000Z'
+    };
+    const fixture = installSettingsMap([
+        ['sync-account-scope', 'identity-account'],
+        ['tickets-active', [keep, exported]],
+        ['tickets-archive', [archived]]
+    ]);
+    const originalTriggerTicketSync = syncService.triggerTicketSync;
+    syncService.triggerTicketSync = () => {};
+    syncService.setCredentials(
+        new Uint8Array(32).fill(12),
+        'identity-token',
+        async () => null,
+        'identity-account',
+        { identityBacked: true }
+    );
+
+    try {
+        await ticketStore.setActiveTickets([keep]);
+        assert.deepEqual(fixture.settings.get('tickets-active'), [keep]);
+        assert.equal(fixture.settings.get('tickets-tombstones').length, 1);
+        assert.doesNotMatch(
+            JSON.stringify(fixture.settings.get('tickets-tombstones')),
+            /exported-ticket-secret/
+        );
+
+        await syncService._mergeTickets(
+            'tickets-active',
+            [exported],
+            syncService.credentialGeneration
+        );
+        assert.deepEqual(fixture.settings.get('tickets-active'), [keep]);
+
+        await ticketStore.clearAllTickets();
+        assert.deepEqual(fixture.settings.get('tickets-active'), []);
+        assert.deepEqual(fixture.settings.get('tickets-archive'), []);
+        assert.deepEqual(ticketStore.tickets, []);
+        assert.deepEqual(ticketStore.archive, []);
+        assert.equal(fixture.settings.get('tickets-tombstones').length, 3);
+        assert.doesNotMatch(
+            JSON.stringify(fixture.settings.get('tickets-tombstones')),
+            /(?:keep|exported|archived)-ticket-secret/
+        );
+
+        await syncService._mergeTickets(
+            'tickets-active',
+            [keep, exported],
+            syncService.credentialGeneration
+        );
+        await syncService._mergeTickets(
+            'tickets-archive',
+            [archived],
+            syncService.credentialGeneration
+        );
+        assert.deepEqual(fixture.settings.get('tickets-active'), []);
+        assert.deepEqual(fixture.settings.get('tickets-archive'), []);
+    } finally {
+        syncService.triggerTicketSync = originalTriggerTicketSync;
+        syncService.clearCredentials();
+        fixture.restore();
+    }
+});
+
+test('empty ticket wallets are encrypted so the remote snapshot can be cleared', async () => {
+    const fixture = installSettingsMap([
+        ['tickets-active', []],
+        ['tickets-archive', []]
+    ]);
+    const key = new Uint8Array(32).fill(8);
+
+    try {
+        const blobs = await syncService._collectLocalBlobs(key);
+        assert.equal(blobs.length, 2);
+        assert.ok(blobs.every(blob =>
+            typeof blob.id === 'string' &&
+            typeof blob.ciphertext === 'string' &&
+            typeof blob.iv === 'string'
+        ));
+    } finally {
+        fixture.restore();
+    }
+});
+
+test('SSO redemption defers sync while other mutations and legacy redemption sync', async () => {
+    const fixture = installSettingsMap([
+        ['sync-account-scope', 'identity-account'],
+        ['tickets-active', [{ finalized_ticket: 'identity-ticket' }]],
+        ['tickets-archive', []]
+    ]);
+    const originalTriggerTicketSync = syncService.triggerTicketSync;
+    let syncTriggerCount = 0;
+    syncService.triggerTicketSync = () => {
+        syncTriggerCount += 1;
+    };
+    syncService.setCredentials(
+        new Uint8Array(32).fill(10),
+        'identity-token',
+        async () => null,
+        'identity-account',
+        { identityBacked: true }
+    );
+    ticketStore.hasMarkedTicketHistory = true;
+
+    try {
+        await ticketStore.consumeTickets(1, async () => 'redeemed');
+        assert.equal(syncTriggerCount, 0);
+        assert.deepEqual(fixture.settings.get('tickets-active'), []);
+        assert.equal(
+            fixture.settings.get('tickets-archive')[0].finalized_ticket,
+            'identity-ticket'
+        );
+
+        await ticketStore.addTickets([
+            { finalized_ticket: 'new-identity-ticket' }
+        ]);
+        assert.equal(syncTriggerCount, 1);
+
+        syncTriggerCount = 0;
+        syncService.clearCredentials();
+        syncService.setCredentials(
+            new Uint8Array(32).fill(11),
+            'legacy-token',
+            async () => null,
+            'identity-account'
+        );
+        await ticketStore.consumeTickets(1, async () => 'redeemed');
+        assert.equal(syncTriggerCount, 1);
+    } finally {
+        syncService.triggerTicketSync = originalTriggerTicketSync;
+        syncService.clearCredentials();
         fixture.restore();
     }
 });

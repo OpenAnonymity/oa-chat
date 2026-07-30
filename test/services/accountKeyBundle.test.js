@@ -3,6 +3,63 @@ import test from 'node:test';
 
 import { chatDB } from '../../chat/db.js';
 import accountService from '../../chat/services/accountService.js';
+import syncService from '../../chat/services/encryptedSyncService.js';
+
+test('new SSO keyring setup adopts the existing device wallet', async () => {
+    const originals = {
+        getSyncKeyMaterial: accountService.getSyncKeyMaterial,
+        getAccessToken: accountService.getAccessToken,
+        activateAccountScope: syncService.activateAccountScope,
+        setCredentials: syncService.setCredentials,
+        init: syncService.init,
+        sync: syncService.sync,
+        startPeriodicSync: syncService.startPeriodicSync
+    };
+    let activation = null;
+    let credentialOptions = null;
+    accountService.getSyncKeyMaterial = () => new Uint8Array(32).fill(9);
+    accountService.getAccessToken = () => 'identity-token';
+    accountService.state.accountId = '4444444444444444';
+    accountService.state.githubLinked = true;
+    accountService.localAccountContinuity = false;
+    syncService.activateAccountScope = async (accountId, options) => {
+        activation = { accountId, options };
+    };
+    syncService.setCredentials = (
+        _keyMaterial,
+        _accessToken,
+        _refreshCallback,
+        _accountId,
+        options
+    ) => {
+        credentialOptions = options;
+    };
+    syncService.init = async () => {};
+    syncService.sync = async () => ({ success: true });
+    syncService.startPeriodicSync = () => {};
+
+    try {
+        await accountService.initializeSync(true);
+        assert.deepEqual(activation, {
+            accountId: '4444444444444444',
+            options: { adoptUnscoped: true }
+        });
+        assert.deepEqual(credentialOptions, {
+            identityBacked: true
+        });
+    } finally {
+        accountService.getSyncKeyMaterial = originals.getSyncKeyMaterial;
+        accountService.getAccessToken = originals.getAccessToken;
+        syncService.activateAccountScope = originals.activateAccountScope;
+        syncService.setCredentials = originals.setCredentials;
+        syncService.init = originals.init;
+        syncService.sync = originals.sync;
+        syncService.startPeriodicSync = originals.startPeriodicSync;
+        accountService.state.accountId = null;
+        accountService.state.githubLinked = false;
+        accountService.localAccountContinuity = false;
+    }
+});
 
 test('persisted non-extractable keys are bound to their account', async () => {
     const originals = {
