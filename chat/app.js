@@ -1767,10 +1767,6 @@ class ChatApp {
         // Initialize theme FIRST (sync, fast, prevents flash)
         themeManager.init();
 
-        // Initialize wide mode state from persistent storage (async).
-        void this.initWideMode();
-        void this.initSidebarVisibility();
-
         // Start DB init in background - components can show skeleton state
         const dbReady = chatDB.init();
         this.dbReadyPromise = dbReady;
@@ -1823,6 +1819,18 @@ class ChatApp {
         if (chatDB.compatMode) {
             this.showToast('Chat storage is running in compatibility mode. Close other tabs and reload to finish the upgrade.', 'error');
         }
+
+        // Establish this tab's account context before any account-scoped stores
+        // read the shared live settings keys.
+        try {
+            await accountService.init();
+        } catch (error) {
+            console.warn('Account init failed:', error);
+        }
+
+        // Initialize preference-backed layout only after account context exists.
+        void this.initWideMode();
+        void this.initSidebarVisibility();
 
         window.addEventListener('oa-db-versionchange', () => {
             this.showToast('Chat storage updated in another tab. Reload to continue.', 'error');
@@ -1896,15 +1904,10 @@ class ChatApp {
                 console.warn('Scrubber init failed:', error);
             });
 
-            try {
-                await accountService.init();
-                if (typeof requestIdleCallback === 'function') {
-                    requestIdleCallback(() => accountService.maybeAutoUnlock());
-                } else {
-                    setTimeout(() => accountService.maybeAutoUnlock(), 800);
-                }
-            } catch (error) {
-                console.warn('Account init failed:', error);
+            if (typeof requestIdleCallback === 'function') {
+                requestIdleCallback(() => accountService.maybeAutoUnlock());
+            } else {
+                setTimeout(() => accountService.maybeAutoUnlock(), 800);
             }
 
             await networkProxy.syncWithPreferences().catch(err => console.warn('Proxy pref sync failed:', err));

@@ -15,10 +15,15 @@
 import { ORG_API_BASE } from './orgEndpoints.js';
 import { chatDB } from '../db.js';
 import { fetchRetry } from './fetchRetry.js';
+import storageEvents from './storageEvents.js';
+import { withAccountDataLock } from './accountDataLock.js';
 
-const SYNC_LOCK_NAME = 'oa-sync';
 const SYNC_SALT = 'oa-sync-v1';
 const HMAC_SALT = 'oa-sync-id-v1';
+const SYNC_ACCOUNT_SCOPE_KEY = 'sync-account-scope';
+const SYNC_ACCOUNT_SCOPE_PREFIX = 'sync-account-data:';
+const SYNC_UNCLAIMED_SCOPE_KEY = 'sync-unclaimed-data';
+const ACCOUNT_SETTINGS_KEY = 'account-settings';
 
 // Settings keys for sync metadata (local only)
 const SYNC_LAST_TIME_KEY = 'sync-lastSyncTime';
@@ -68,14 +73,16 @@ function base64ToBytes(base64) {
  * Derive an opaque blob ID using HMAC.
  * Server sees only this hash, not the logical ID.
  */
-async function deriveOpaqueBlobId(masterKey, logicalId) {
-    const key = await crypto.subtle.importKey(
-        'raw',
-        masterKey,
-        { name: 'HMAC', hash: 'SHA-256' },
-        false,
-        ['sign']
-    );
+async function deriveOpaqueBlobId(keyMaterial, logicalId) {
+    const key = keyMaterial?.idKey instanceof CryptoKey
+        ? keyMaterial.idKey
+        : await crypto.subtle.importKey(
+            'raw',
+            keyMaterial,
+            { name: 'HMAC', hash: 'SHA-256' },
+            false,
+            ['sign']
+        );
 
     const signature = await crypto.subtle.sign(
         'HMAC',
@@ -91,14 +98,16 @@ async function deriveOpaqueBlobId(masterKey, logicalId) {
 /**
  * Derive a unique AES-256 key for a specific blob using HKDF.
  */
-async function deriveItemKey(masterKey, logicalId) {
-    const baseKey = await crypto.subtle.importKey(
-        'raw',
-        masterKey,
-        { name: 'HKDF' },
-        false,
-        ['deriveKey']
-    );
+async function deriveItemKey(keyMaterial, logicalId) {
+    const baseKey = keyMaterial?.derivationKey instanceof CryptoKey
+        ? keyMaterial.derivationKey
+        : await crypto.subtle.importKey(
+            'raw',
+            keyMaterial,
+            { name: 'HKDF' },
+            false,
+            ['deriveKey']
+        );
 
     return crypto.subtle.deriveKey(
         {
@@ -117,8 +126,8 @@ async function deriveItemKey(masterKey, logicalId) {
 /**
  * Encrypt data. Type and all metadata go INSIDE the ciphertext.
  */
-async function encryptBlob(masterKey, logicalId, payload) {
-    const itemKey = await deriveItemKey(masterKey, logicalId);
+async function encryptBlob(keyMaterial, logicalId, payload) {
+    const itemKey = await deriveItemKey(keyMaterial, logicalId);
     const iv = crypto.getRandomValues(new Uint8Array(12));
 
     // Everything is inside the encrypted payload - server sees nothing
@@ -139,8 +148,8 @@ async function encryptBlob(masterKey, logicalId, payload) {
 /**
  * Decrypt data. Returns the full payload including type.
  */
-async function decryptBlob(masterKey, logicalId, ciphertext, iv) {
-    const itemKey = await deriveItemKey(masterKey, logicalId);
+async function decryptBlob(keyMaterial, logicalId, ciphertext, iv) {
+    const itemKey = await deriveItemKey(keyMaterial, logicalId);
     const ivBytes = base64ToBytes(iv);
     const ciphertextBytes = base64ToBytes(ciphertext);
 
@@ -160,9 +169,12 @@ class SyncService {
         this.syncTimer = null;
         
         // Credentials (set by accountService)
-        this.masterKey = null;
+        this.keyMaterial = null;
         this.accessToken = null;
         this.refreshTokenCallback = null;
+        this.accountId = null;
+        this.localScopeAccountId = null;
+        this.syncTickets = true;
         this.credentialGeneration = 0;
 
         // Cache: opaque ID -> logical ID mapping (computed on init)
@@ -175,11 +187,20 @@ class SyncService {
         this.lastSyncResult = null;
     }
 
-    setCredentials(masterKey, accessToken, refreshCallback) {
+    setCredentials(
+        keyMaterial,
+        accessToken,
+        refreshCallback,
+        accountId,
+        { syncTickets = true } = {}
+    ) {
         this.credentialGeneration += 1;
-        this.masterKey = masterKey;
+        this.keyMaterial = keyMaterial;
         this.accessToken = accessToken;
         this.refreshTokenCallback = refreshCallback;
+        this.accountId = accountId;
+        this.localScopeAccountId = accountId;
+        this.syncTickets = syncTickets;
         this.idMapping = null; // Reset mapping when credentials change
         this.idMappingGeneration = null;
     }
@@ -190,11 +211,18 @@ class SyncService {
 
     clearCredentials() {
         this.credentialGeneration += 1;
-        this.masterKey = null;
+        if (this.localChangeDebounceTimer) {
+            clearTimeout(this.localChangeDebounceTimer);
+            this.localChangeDebounceTimer = null;
+        }
+        this.keyMaterial = null;
         this.accessToken = null;
         this.refreshTokenCallback = null;
+        this.accountId = null;
+        this.syncTickets = true;
         this.idMapping = null;
         this.idMappingGeneration = null;
+        this.stopPeriodicSync();
     }
 
     async init() {
@@ -204,11 +232,254 @@ class SyncService {
         // No separate enabled flag - sync is enabled when we have credentials
     }
 
+    getAccountScopedSettingKeys() {
+        return [
+            TICKETS_ACTIVE_KEY,
+            TICKETS_ARCHIVE_KEY,
+            SYNC_LAST_TIME_KEY,
+            ...SYNCABLE_PREF_KEYS,
+            ...SYNCABLE_PREF_KEYS.map(key => this.getPreferenceTimestampKey(key))
+        ];
+    }
+
+    getAccountScopeStorageKey(accountId) {
+        return `${SYNC_ACCOUNT_SCOPE_PREFIX}${accountId}`;
+    }
+
+    async readActiveAccountData() {
+        const snapshot = {};
+        for (const key of this.getAccountScopedSettingKeys()) {
+            const value = await chatDB.getSetting(key);
+            if (value !== undefined) {
+                snapshot[key] = value;
+            }
+        }
+        return snapshot;
+    }
+
+    buildActiveAccountDataChanges(snapshot = {}) {
+        const entries = [];
+        const deleteKeys = [];
+        for (const key of this.getAccountScopedSettingKeys()) {
+            if (Object.prototype.hasOwnProperty.call(snapshot, key)) {
+                entries.push({ key, value: snapshot[key] });
+            } else {
+                deleteKeys.push(key);
+            }
+        }
+        return { entries, deleteKeys };
+    }
+
+    snapshotHasValues(snapshot) {
+        return Object.keys(snapshot || {}).length > 0;
+    }
+
+    async withSyncLock(callback) {
+        return withAccountDataLock(callback);
+    }
+
+    setLocalAccountScope(accountId) {
+        this.localScopeAccountId = accountId || null;
+    }
+
+    async bootstrapLocalAccountScope() {
+        if (this.localScopeAccountId) {
+            return this.localScopeAccountId;
+        }
+        const settings = await chatDB.getSetting(ACCOUNT_SETTINGS_KEY)
+            .catch(() => null);
+        this.setLocalAccountScope(settings?.accountId || null);
+        return this.localScopeAccountId;
+    }
+
+    async assertAccountDataAccess() {
+        const persistedAccountId = await chatDB.getSetting(
+            SYNC_ACCOUNT_SCOPE_KEY
+        );
+        const localAccountId = this.localScopeAccountId;
+        if (persistedAccountId !== localAccountId) {
+            throw new Error('Account data scope changed in another tab');
+        }
+        return persistedAccountId;
+    }
+
+    canAccessAccountScope(accountId) {
+        return (accountId || null) === this.localScopeAccountId;
+    }
+
+    getLocalAccountScope() {
+        return this.localScopeAccountId;
+    }
+
+    async notifyLocalAccountScopeInvalidated() {
+        const notifications = [];
+        this.listeners.forEach(handler => {
+            try {
+                notifications.push(
+                    Promise.resolve(handler({
+                        event: 'account_scope_invalidated',
+                        data: null,
+                        timestamp: Date.now()
+                    }))
+                );
+            } catch (error) {
+                console.warn('Sync listener error:', error);
+            }
+        });
+        await Promise.allSettled(notifications);
+    }
+
+    async notifyAccountScopeChanged(accountId) {
+        const payload = { accountId: accountId || null };
+        const notifications = [];
+        this.listeners.forEach(handler => {
+            try {
+                notifications.push(
+                    Promise.resolve(handler({
+                        event: 'account_scope_changed',
+                        data: payload,
+                        timestamp: Date.now()
+                    }))
+                );
+            } catch (error) {
+                console.warn('Sync listener error:', error);
+            }
+        });
+        await Promise.allSettled(notifications);
+        storageEvents.init();
+        storageEvents.broadcast('account-scope-changed', payload);
+    }
+
+    /**
+     * Put the account's tickets/preferences into the shared live settings keys.
+     *
+     * Older builds had no scope marker. On the first activation after upgrade,
+     * existing live values are adopted by the already-authenticated account.
+     */
+    async activateAccountScope(accountId, { adoptUnscoped = false } = {}) {
+        if (!accountId) throw new Error('Cannot activate an empty account scope');
+        return this.withSyncLock(async () => {
+            const currentAccountId = await chatDB.getSetting(
+                SYNC_ACCOUNT_SCOPE_KEY
+            );
+            if (currentAccountId === accountId) {
+                this.setLocalAccountScope(accountId);
+                await this.notifyAccountScopeChanged(accountId);
+                return;
+            }
+
+            const liveSnapshot = await this.readActiveAccountData();
+            const targetSnapshot = await chatDB.getSetting(
+                this.getAccountScopeStorageKey(accountId)
+            );
+            const entries = [];
+            const deleteKeys = [];
+            if (currentAccountId) {
+                entries.push({
+                    key: this.getAccountScopeStorageKey(currentAccountId),
+                    value: liveSnapshot
+                });
+            }
+
+            let nextSnapshot = {};
+            if (targetSnapshot && typeof targetSnapshot === 'object') {
+                if (!currentAccountId && this.snapshotHasValues(liveSnapshot)) {
+                    entries.push({
+                        key: SYNC_UNCLAIMED_SCOPE_KEY,
+                        value: liveSnapshot
+                    });
+                }
+                nextSnapshot = targetSnapshot;
+            } else if (!currentAccountId && adoptUnscoped) {
+                nextSnapshot = liveSnapshot;
+                if (this.snapshotHasValues(liveSnapshot)) {
+                    deleteKeys.push(SYNC_UNCLAIMED_SCOPE_KEY);
+                }
+            } else if (!currentAccountId && this.snapshotHasValues(liveSnapshot)) {
+                entries.push({
+                    key: SYNC_UNCLAIMED_SCOPE_KEY,
+                    value: liveSnapshot
+                });
+            }
+
+            const liveChanges = this.buildActiveAccountDataChanges(nextSnapshot);
+            entries.push(
+                ...liveChanges.entries,
+                { key: SYNC_ACCOUNT_SCOPE_KEY, value: accountId }
+            );
+            deleteKeys.push(...liveChanges.deleteKeys);
+            await chatDB.updateSettings(entries, [...new Set(deleteKeys)]);
+            this.setLocalAccountScope(accountId);
+            await this.notifyAccountScopeChanged(accountId);
+        });
+    }
+
+    /**
+     * Snapshot and hide account-bound data at logout. A later login to the same
+     * account restores it before remote sync begins.
+     */
+    async deactivateAccountScope(accountId) {
+        return this.withSyncLock(async () => {
+            const currentAccountId = await chatDB.getSetting(
+                SYNC_ACCOUNT_SCOPE_KEY
+            );
+            if (!currentAccountId) {
+                if (
+                    accountId &&
+                    this.localScopeAccountId === accountId
+                ) {
+                    this.setLocalAccountScope(null);
+                    await this.notifyLocalAccountScopeInvalidated();
+                }
+                return;
+            }
+            if (accountId && currentAccountId !== accountId) {
+                if (this.localScopeAccountId === accountId) {
+                    this.setLocalAccountScope(null);
+                    await this.notifyLocalAccountScopeInvalidated();
+                }
+                return;
+            }
+
+            const liveSnapshot = await this.readActiveAccountData();
+            const unclaimedSnapshot = await chatDB.getSetting(
+                SYNC_UNCLAIMED_SCOPE_KEY
+            );
+            const nextSnapshot =
+                unclaimedSnapshot && typeof unclaimedSnapshot === 'object'
+                    ? unclaimedSnapshot
+                    : {};
+            const liveChanges = this.buildActiveAccountDataChanges(nextSnapshot);
+            await chatDB.updateSettings(
+                [
+                    {
+                        key: this.getAccountScopeStorageKey(currentAccountId),
+                        value: liveSnapshot
+                    },
+                    ...liveChanges.entries
+                ],
+                [
+                    ...liveChanges.deleteKeys,
+                    SYNC_ACCOUNT_SCOPE_KEY
+                ]
+            );
+            if (this.localScopeAccountId === currentAccountId) {
+                this.setLocalAccountScope(null);
+            }
+            await this.notifyAccountScopeChanged(null);
+        });
+    }
+
+    async isAccountScopeActive(accountId = this.accountId) {
+        if (!accountId) return false;
+        return await chatDB.getSetting(SYNC_ACCOUNT_SCOPE_KEY) === accountId;
+    }
+
     /**
      * Build the mapping of opaque IDs to logical IDs.
      * This lets us identify what a blob is when we pull it.
      */
-    async _buildIdMapping(masterKey, credentialGeneration) {
+    async _buildIdMapping(keyMaterial, credentialGeneration) {
         if (
             this.idMapping &&
             this.idMappingGeneration === credentialGeneration
@@ -218,15 +489,19 @@ class SyncService {
 
         const mapping = new Map();
         
-        // Tickets
-        const ticketsActiveId = await deriveOpaqueBlobId(masterKey, LOGICAL_IDS.TICKETS_ACTIVE);
-        const ticketsArchiveId = await deriveOpaqueBlobId(masterKey, LOGICAL_IDS.TICKETS_ARCHIVE);
-        mapping.set(ticketsActiveId, LOGICAL_IDS.TICKETS_ACTIVE);
-        mapping.set(ticketsArchiveId, LOGICAL_IDS.TICKETS_ARCHIVE);
+        // Identity-backed accounts deliberately never map or sync inference
+        // tickets. Otherwise redemption-triggered blob updates would let the org
+        // correlate a real identity with anonymous inference activity.
+        if (this.syncTickets) {
+            const ticketsActiveId = await deriveOpaqueBlobId(keyMaterial, LOGICAL_IDS.TICKETS_ACTIVE);
+            const ticketsArchiveId = await deriveOpaqueBlobId(keyMaterial, LOGICAL_IDS.TICKETS_ARCHIVE);
+            mapping.set(ticketsActiveId, LOGICAL_IDS.TICKETS_ACTIVE);
+            mapping.set(ticketsArchiveId, LOGICAL_IDS.TICKETS_ARCHIVE);
+        }
 
         // Preferences
         for (const key of SYNCABLE_PREF_KEYS) {
-            const opaqueId = await deriveOpaqueBlobId(masterKey, key);
+            const opaqueId = await deriveOpaqueBlobId(keyMaterial, key);
             mapping.set(opaqueId, key);
         }
 
@@ -241,7 +516,7 @@ class SyncService {
      * No separate flag needed.
      */
     isEnabled() {
-        return !!(this.masterKey && this.accessToken);
+        return !!(this.keyMaterial && this.accessToken && this.accountId);
     }
 
     /**
@@ -275,12 +550,20 @@ class SyncService {
         }, delayMs);
     }
 
+    triggerTicketSync(delayMs = 2000) {
+        if (!this.syncTickets) return;
+        this.triggerSync(delayMs);
+    }
+
     /**
      * Quick check if server has newer data than local.
      * Returns true if we need to pull, false if up-to-date.
      */
     async hasRemoteChanges() {
         if (!this.isEnabled()) {
+            return false;
+        }
+        if (!await this.isAccountScopeActive()) {
             return false;
         }
         const credentialGeneration = this.credentialGeneration;
@@ -355,7 +638,7 @@ class SyncService {
     }
 
     getMasterKey() {
-        return this.masterKey;
+        return this.keyMaterial;
     }
 
     getAccessToken() {
@@ -427,24 +710,35 @@ class SyncService {
         if (!accessToken) {
             return { success: false, error: 'No access token' };
         }
+        const accountId = this.accountId;
         const credentialGeneration = this.credentialGeneration;
 
         // Set syncing state immediately for UI feedback
         this.syncInProgress = true;
         this.notify('sync_start');
 
-        if (navigator.locks) {
-            return navigator.locks.request(SYNC_LOCK_NAME, { mode: 'exclusive' },
-                () => this._doSync(masterKey, accessToken, credentialGeneration)
-            );
-        }
-
-        return this._doSync(masterKey, accessToken, credentialGeneration);
+        return this.withSyncLock(
+            () => this._doSync(
+                masterKey,
+                accessToken,
+                accountId,
+                credentialGeneration
+            )
+        );
     }
 
-    async _doSync(masterKey, accessToken, credentialGeneration) {
+    async _doSync(
+        masterKey,
+        accessToken,
+        accountId,
+        credentialGeneration
+    ) {
 
         try {
+            this.assertCredentialsCurrent(credentialGeneration);
+            if (!await this.isAccountScopeActive(accountId)) {
+                throw new Error('Sync account scope changed');
+            }
             this.assertCredentialsCurrent(credentialGeneration);
             // Build ID mapping first
             const idMapping = await this._buildIdMapping(
@@ -775,28 +1069,30 @@ class SyncService {
     async _collectLocalBlobs(masterKey) {
         const blobs = [];
 
-        // Tickets (active)
-        const activeTickets = await chatDB.getSetting(TICKETS_ACTIVE_KEY);
-        if (activeTickets && activeTickets.length > 0) {
-            const opaqueId = await deriveOpaqueBlobId(masterKey, LOGICAL_IDS.TICKETS_ACTIVE);
-            const { ciphertext, iv } = await encryptBlob(
-                masterKey,
-                LOGICAL_IDS.TICKETS_ACTIVE,
-                { type: 'tickets', data: activeTickets }  // Type is INSIDE
-            );
-            blobs.push({ id: opaqueId, ciphertext, iv, version: 1 });
-        }
+        if (this.syncTickets) {
+            // Tickets (active)
+            const activeTickets = await chatDB.getSetting(TICKETS_ACTIVE_KEY);
+            if (activeTickets && activeTickets.length > 0) {
+                const opaqueId = await deriveOpaqueBlobId(masterKey, LOGICAL_IDS.TICKETS_ACTIVE);
+                const { ciphertext, iv } = await encryptBlob(
+                    masterKey,
+                    LOGICAL_IDS.TICKETS_ACTIVE,
+                    { type: 'tickets', data: activeTickets }  // Type is INSIDE
+                );
+                blobs.push({ id: opaqueId, ciphertext, iv, version: 1 });
+            }
 
-        // Tickets (archived)
-        const archivedTickets = await chatDB.getSetting(TICKETS_ARCHIVE_KEY);
-        if (archivedTickets && archivedTickets.length > 0) {
-            const opaqueId = await deriveOpaqueBlobId(masterKey, LOGICAL_IDS.TICKETS_ARCHIVE);
-            const { ciphertext, iv } = await encryptBlob(
-                masterKey,
-                LOGICAL_IDS.TICKETS_ARCHIVE,
-                { type: 'tickets', data: archivedTickets }  // Type is INSIDE
-            );
-            blobs.push({ id: opaqueId, ciphertext, iv, version: 1 });
+            // Tickets (archived)
+            const archivedTickets = await chatDB.getSetting(TICKETS_ARCHIVE_KEY);
+            if (archivedTickets && archivedTickets.length > 0) {
+                const opaqueId = await deriveOpaqueBlobId(masterKey, LOGICAL_IDS.TICKETS_ARCHIVE);
+                const { ciphertext, iv } = await encryptBlob(
+                    masterKey,
+                    LOGICAL_IDS.TICKETS_ARCHIVE,
+                    { type: 'tickets', data: archivedTickets }  // Type is INSIDE
+                );
+                blobs.push({ id: opaqueId, ciphertext, iv, version: 1 });
+            }
         }
 
         // Preferences
@@ -887,7 +1183,6 @@ class SyncService {
     async clearAll() {
         this.stopPeriodicSync();
         this.clearCredentials();
-        await chatDB.deleteSetting(SYNC_LAST_TIME_KEY);
         this.lastSyncTime = null;
         this.lastSyncResult = null;
         this.notify('cleared');

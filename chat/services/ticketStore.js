@@ -6,7 +6,8 @@
 import storageEvents from './storageEvents.js';
 import { chatDB } from '../db.js';
 import syncService from './encryptedSyncService.js';
-import preferencesStore, { PREF_KEYS } from './preferencesStore.js';
+import { PREF_KEYS } from './preferencesStore.js';
+import { withAccountDataLock } from './accountDataLock.js';
 
 const STORAGE_KEY = 'inference_tickets';
 const ARCHIVE_KEY = 'inference_tickets_archive';
@@ -22,6 +23,7 @@ class TicketStore {
         this.archive = [];
         this.initPromise = null;
         this.storageUnsubscribe = null;
+        this.scopeStorageUnsubscribe = null;
         this.syncUnsubscribe = null;
         this.hasMarkedTicketHistory = false;
     }
@@ -34,21 +36,49 @@ class TicketStore {
         this.initPromise = (async () => {
             storageEvents.init();
             await this.ensureDbReady();
-            await this.migrateFromLocalStorage();
-            await this.loadFromDatabase({ emitUpdate: false });
-            await this.cleanLegacyTickets();
-
-            if (!this.storageUnsubscribe) {
-                this.storageUnsubscribe = storageEvents.on('tickets-updated', () => {
-                    this.loadFromDatabase({ emitUpdate: true, skipBroadcast: true });
+            await syncService.bootstrapLocalAccountScope();
+            try {
+                await this.withLock(async () => {
+                    await this.migrateFromLocalStorage();
+                    await this.loadFromDatabase({ emitUpdate: false });
                 });
+            } catch (error) {
+                this.tickets = [];
+                this.archive = [];
             }
 
-            // Reload from database when sync completes (sync writes directly to settings)
+            if (!this.storageUnsubscribe) {
+                this.storageUnsubscribe = storageEvents.on('tickets-updated', payload => {
+                    this.handleAccountScopeChange(payload, {
+                        external: true
+                    }).catch(() => {});
+                });
+            }
+            if (!this.scopeStorageUnsubscribe) {
+                this.scopeStorageUnsubscribe = storageEvents.on(
+                    'account-scope-changed',
+                    payload => this.handleAccountScopeChange(payload, {
+                        external: true
+                    })
+                );
+            }
+
             if (!this.syncUnsubscribe) {
                 this.syncUnsubscribe = syncService.subscribe((payload) => {
+                    if (payload.event === 'account_scope_invalidated') {
+                        this.tickets = [];
+                        this.archive = [];
+                        this.emitUpdate();
+                        return;
+                    }
+                    if (payload.event === 'account_scope_changed') {
+                        return this.handleAccountScopeChange(payload.data);
+                    }
                     if (payload.event === 'blob_received' && payload.data?.type === 'tickets') {
-                        this.loadFromDatabase({ emitUpdate: true, skipBroadcast: true });
+                        return this.loadFromDatabase({
+                            emitUpdate: true,
+                            skipBroadcast: true
+                        });
                     }
                 });
             }
@@ -82,9 +112,11 @@ class TicketStore {
         if (total <= 0) return;
 
         try {
-            const alreadyMarked = !!await preferencesStore.getPreference(PREF_KEYS.hadTicketsBefore);
+            const alreadyMarked = !!await chatDB.getSetting(
+                PREF_KEYS.hadTicketsBefore
+            );
             if (!alreadyMarked) {
-                await preferencesStore.savePreference(PREF_KEYS.hadTicketsBefore, true);
+                await chatDB.saveSetting(PREF_KEYS.hadTicketsBefore, true);
             }
             this.hasMarkedTicketHistory = true;
         } catch (error) {
@@ -114,16 +146,52 @@ class TicketStore {
         marker.setAttribute('content', JSON.stringify(this.getRedactedAuditSummary()));
     }
 
-    async withLock(handler) {
+    async withLock(handler, { guardScope = true } = {}) {
+        const runWithAccountLock = () => withAccountDataLock(async () => {
+            if (guardScope) {
+                await syncService.assertAccountDataAccess();
+            }
+            return handler();
+        });
         if (typeof navigator !== 'undefined' &&
             navigator.locks &&
             typeof navigator.locks.request === 'function') {
-            return navigator.locks.request(LOCK_NAME, { mode: 'exclusive' }, () => handler());
+            return navigator.locks.request(
+                LOCK_NAME,
+                { mode: 'exclusive' },
+                runWithAccountLock
+            );
         }
 
-        const run = this.lockQueue.then(handler, handler);
+        const run = this.lockQueue.then(runWithAccountLock, runWithAccountLock);
         this.lockQueue = run.catch(() => {});
         return run;
+    }
+
+    async handleAccountScopeChange(payload, { external = false } = {}) {
+        const accountId = payload?.accountId || null;
+        if (external) {
+            try {
+                await this.withLock(async () => {
+                    if (!syncService.canAccessAccountScope(accountId)) {
+                        throw new Error('Stale account-scoped ticket update');
+                    }
+                    await this.loadFromDatabase({
+                        emitUpdate: true,
+                        skipBroadcast: true
+                    });
+                });
+            } catch (error) {
+                this.tickets = [];
+                this.archive = [];
+                this.emitUpdate();
+            }
+            return;
+        }
+        await this.loadFromDatabase({
+            emitUpdate: true,
+            skipBroadcast: true
+        });
     }
 
     splitTicketsByStatus(tickets) {
@@ -318,12 +386,15 @@ class TicketStore {
             this.emitUpdate();
         }
         if (!options.skipBroadcast) {
-            storageEvents.broadcast('tickets-updated', { updatedAt: Date.now() });
+            storageEvents.broadcast('tickets-updated', {
+                accountId: syncService.getLocalAccountScope(),
+                updatedAt: Date.now()
+            });
         }
 
         // Trigger sync on local changes (debounced)
         if (!options.skipSync) {
-            syncService.triggerSync();
+            syncService.triggerTicketSync();
         }
 
         return persisted;
@@ -398,12 +469,6 @@ class TicketStore {
             this.tickets = filteredActive;
             this.archive = combinedArchive;
         }
-    }
-
-    async cleanLegacyTickets() {
-        await this.withLock(async () => {
-            await this.loadFromDatabase({ emitUpdate: false, skipBroadcast: true });
-        });
     }
 
     getTickets() {
@@ -518,18 +583,20 @@ class TicketStore {
     }
 
     async archiveTickets(tickets, consumedAt = null) {
-        const timestamp = consumedAt || new Date().toISOString();
-        const normalized = tickets
-            .filter(ticket => ticket && ticket.finalized_ticket)
-            .map(ticket => ({
-                ...ticket,
-                consumed_at: ticket.consumed_at || timestamp
-            }));
+        return this.withLock(async () => {
+            const timestamp = consumedAt || new Date().toISOString();
+            const normalized = tickets
+                .filter(ticket => ticket && ticket.finalized_ticket)
+                .map(ticket => ({
+                    ...ticket,
+                    consumed_at: ticket.consumed_at || timestamp
+                }));
 
-        const { active, archived } = await this.readFromDatabase();
-        const merged = this.mergeTickets(archived, normalized);
-        await this.persistTickets(active, merged);
-        return merged.length;
+            const { active, archived } = await this.readFromDatabase();
+            const merged = this.mergeTickets(archived, normalized);
+            await this.persistTickets(active, merged);
+            return merged.length;
+        });
     }
 
     async consumeTickets(count, handler, options = {}) {
