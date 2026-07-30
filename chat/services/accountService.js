@@ -1426,7 +1426,10 @@ class AccountService {
             };
             
             await syncService.activateAccountScope(this.state.accountId, {
-                adoptUnscoped: !enableForNewAccount &&
+                // Match the legacy account flow: creating an account from a
+                // device with an existing wallet adopts that wallet. Returning
+                // accounts adopt only when local continuity proves ownership.
+                adoptUnscoped: enableForNewAccount ||
                     this.localAccountContinuity
             });
             this.localAccountContinuity = true;
@@ -1436,7 +1439,7 @@ class AccountService {
                 refreshCallback,
                 this.state.accountId,
                 {
-                    syncTickets: !(
+                    identityBacked: !!(
                         this.state.githubLinked ||
                         this.state.googleLinked ||
                         ['PRF', 'PRF_PENDING', 'LEGACY_SSO'].includes(

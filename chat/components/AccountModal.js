@@ -834,10 +834,7 @@ class AccountModal {
                             </button>
                         `}
                         <p class="text-[11px] text-muted-foreground">
-                            ${usesIdentityLogin
-                                ? 'Encrypted sync for preferences; inference tickets stay device-only'
-                                : 'Encrypted sync for tickets & preferences'
-                            }
+                            Encrypted sync for tickets & preferences
                         </p>
                     </div>
 

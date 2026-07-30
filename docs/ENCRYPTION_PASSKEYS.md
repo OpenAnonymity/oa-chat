@@ -89,23 +89,40 @@ use account-scoped local snapshots. Logout snapshots and hides the active
 account's values; signing into another account cannot expose the previous
 account's wallet or preferences.
 
-Identity-backed accounts deliberately exclude inference tickets from encrypted
-sync. Ticket blobs and their opaque IDs are never built, pushed, or applied for
-those accounts, and ticket changes do not schedule an identity-authenticated
-sync request. Tickets remain device-local while preferences can sync. This
-prevents encrypted-sync timing or blob-size metadata from joining a provider
-identity to ticket activity.
+Identity-backed accounts use the same encrypted ticket sync as legacy
+account-number accounts. Active and archived ticket wallets are encrypted
+client-side with per-blob AES-GCM keys and stored under HMAC-derived opaque IDs;
+the org receives ciphertext, not finalized ticket contents. Add/import/clear
+mutations schedule sync. Redemption consumption is persisted locally without an
+immediate sync for identity-backed accounts; its encrypted archive record is
+uploaded by the next
+initial/periodic sync so redemption is not followed by a deterministic
+identity-authenticated request. Identity-free legacy accounts retain immediate
+consumption sync. Empty arrays are encrypted. Clear/export operations erase the
+redeemable secrets locally and sync encrypted SHA-256 deletion tombstones;
+remote merges honor those hashes and immediately invalidate other tabs without
+letting stale account notifications clear the current cache.
 
-For the same reason, GitHub or Google cannot be attached to an existing legacy
-account. OAuth login creates or resolves a dedicated identity account partition;
-`link` mode is rejected by both client and server. This avoids retroactively
-joining an identity to a namespace that may contain historical ticket-sync
-metadata.
+Because OAuth authorizes that opaque store, the org can associate sync request
+timing, blob sizes, and stable opaque blob IDs with the identity account. It
+still cannot decrypt the blobs or determine which finalized tickets they
+contain. Ticket redemption remains a separate, identity-free protocol request.
+However, ticket-wallet sync makes the strongest identity-unlinkability claim
+inapplicable to sync metadata: a malicious org can attempt to correlate a later
+identity-authenticated sync with redemption timing or wallet-size changes.
+Deferring redemption-triggered sync reduces that signal but does not
+cryptographically eliminate it.
 
-Unscoped values from an older build are adopted only when the browser already
-remembers the same account. Otherwise they are preserved in an explicit
-`sync-unclaimed-data` snapshot and restored on logout; canceling setup before a
-scope is activated leaves them untouched.
+GitHub or Google cannot be attached to an existing legacy account. OAuth login
+creates or resolves a dedicated identity account partition; `link` mode is
+rejected by both client and server. This avoids silently changing the identity
+and recovery semantics of an existing account namespace.
+
+Unscoped values from an older build are adopted when a new account is created
+on that device, matching legacy account creation. Returning accounts adopt only
+when the browser already remembers the same account. Otherwise values are
+preserved in an explicit `sync-unclaimed-data` snapshot and restored on logout;
+canceling setup before a scope is activated leaves them untouched.
 
 Scope transitions, ticket mutations, and syncable-preference writes use the same
 origin-wide Web Lock. A scope switch updates the saved snapshot, live values,

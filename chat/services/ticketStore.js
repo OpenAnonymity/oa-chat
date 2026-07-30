@@ -8,11 +8,16 @@ import { chatDB } from '../db.js';
 import syncService from './encryptedSyncService.js';
 import { PREF_KEYS } from './preferencesStore.js';
 import { withAccountDataLock } from './accountDataLock.js';
+import {
+    createTicketTombstones,
+    mergeTicketTombstones
+} from './ticketTombstones.js';
 
 const STORAGE_KEY = 'inference_tickets';
 const ARCHIVE_KEY = 'inference_tickets_archive';
 const DB_ACTIVE_KEY = 'tickets-active';
 const DB_ARCHIVE_KEY = 'tickets-archive';
+const DB_TOMBSTONES_KEY = 'tickets-tombstones';
 const LOCK_NAME = 'oa-inference-tickets';
 const TICKETS_UPDATED_EVENT = 'tickets-updated';
 
@@ -50,7 +55,8 @@ class TicketStore {
             if (!this.storageUnsubscribe) {
                 this.storageUnsubscribe = storageEvents.on('tickets-updated', payload => {
                     this.handleAccountScopeChange(payload, {
-                        external: true
+                        external: true,
+                        ignoreMismatched: true
                     }).catch(() => {});
                 });
             }
@@ -152,9 +158,18 @@ class TicketStore {
         return run;
     }
 
-    async handleAccountScopeChange(payload, { external = false } = {}) {
+    async handleAccountScopeChange(
+        payload,
+        { external = false, ignoreMismatched = false } = {}
+    ) {
         const accountId = payload?.accountId || null;
         if (external) {
+            if (
+                ignoreMismatched &&
+                !syncService.canAccessAccountScope(accountId)
+            ) {
+                return;
+            }
             try {
                 await this.withLock(async () => {
                     if (!syncService.canAccessAccountScope(accountId)) {
@@ -166,6 +181,15 @@ class TicketStore {
                     });
                 });
             } catch (error) {
+                // The scope can change while this update waits behind the
+                // account lock. A stale ticket notification must never clear
+                // the newly activated account's cache.
+                if (
+                    ignoreMismatched &&
+                    !syncService.canAccessAccountScope(accountId)
+                ) {
+                    return;
+                }
                 this.tickets = [];
                 this.archive = [];
                 this.emitUpdate();
@@ -316,22 +340,24 @@ class TicketStore {
 
     async readFromDatabase() {
         if (typeof chatDB === 'undefined' || !chatDB.db) {
-            return { active: [], archived: [] };
+            return { active: [], archived: [], tombstones: [] };
         }
 
         try {
-            const [active, archived] = await Promise.all([
+            const [active, archived, tombstones] = await Promise.all([
                 chatDB.getSetting(DB_ACTIVE_KEY),
-                chatDB.getSetting(DB_ARCHIVE_KEY)
+                chatDB.getSetting(DB_ARCHIVE_KEY),
+                chatDB.getSetting(DB_TOMBSTONES_KEY)
             ]);
 
             return {
                 active: Array.isArray(active) ? active : [],
-                archived: Array.isArray(archived) ? archived : []
+                archived: Array.isArray(archived) ? archived : [],
+                tombstones: Array.isArray(tombstones) ? tombstones : []
             };
         } catch (error) {
             console.warn('Failed to load tickets from IndexedDB:', error);
-            return { active: [], archived: [] };
+            return { active: [], archived: [], tombstones: [] };
         }
     }
 
@@ -340,13 +366,26 @@ class TicketStore {
         if (typeof chatDB !== 'undefined' && chatDB.db) {
             try {
                 if (typeof chatDB.saveSettings === 'function') {
-                    await chatDB.saveSettings([
+                    const entries = [
                         { key: DB_ACTIVE_KEY, value: activeTickets },
                         { key: DB_ARCHIVE_KEY, value: archivedTickets }
-                    ]);
+                    ];
+                    if (Array.isArray(options.tombstones)) {
+                        entries.push({
+                            key: DB_TOMBSTONES_KEY,
+                            value: options.tombstones
+                        });
+                    }
+                    await chatDB.saveSettings(entries);
                 } else {
                     await chatDB.saveSetting(DB_ACTIVE_KEY, activeTickets);
                     await chatDB.saveSetting(DB_ARCHIVE_KEY, archivedTickets);
+                    if (Array.isArray(options.tombstones)) {
+                        await chatDB.saveSetting(
+                            DB_TOMBSTONES_KEY,
+                            options.tombstones
+                        );
+                    }
                 }
                 persisted = true;
             } catch (error) {
@@ -367,7 +406,9 @@ class TicketStore {
             });
         }
 
-        // Trigger sync on local changes (debounced)
+        // Trigger sync on local changes (debounced). Redemption paths opt out:
+        // an immediate identity-authenticated request after anonymous ticket
+        // redemption would create a direct timing correlation.
         if (!options.skipSync) {
             syncService.triggerTicketSync();
         }
@@ -490,24 +531,61 @@ class TicketStore {
     async clearTickets() {
         return this.withLock(async () => {
             await this.ensureDbReady();
-            const { archived } = await this.readFromDatabase();
-            await this.persistTickets([], archived);
+            const {
+                active,
+                archived,
+                tombstones
+            } = await this.readFromDatabase();
+            const nextTombstones = mergeTicketTombstones(
+                tombstones,
+                await createTicketTombstones(active)
+            );
+            await this.persistTickets([], archived, {
+                tombstones: nextTombstones
+            });
         });
     }
 
     async clearAllTickets() {
         return this.withLock(async () => {
             await this.ensureDbReady();
-            await this.persistTickets([], []);
+            const {
+                active,
+                archived,
+                tombstones
+            } = await this.readFromDatabase();
+            const nextTombstones = mergeTicketTombstones(
+                tombstones,
+                await createTicketTombstones([...active, ...archived])
+            );
+            await this.persistTickets([], [], {
+                tombstones: nextTombstones
+            });
         });
     }
 
     async setActiveTickets(newActiveTickets) {
         return this.withLock(async () => {
             await this.ensureDbReady();
-            const { archived } = await this.readFromDatabase();
+            const {
+                active,
+                archived,
+                tombstones
+            } = await this.readFromDatabase();
             const { tickets: normalized } = this.normalizeTickets(newActiveTickets);
-            await this.persistTickets(normalized, archived);
+            const retainedIds = new Set(
+                normalized.map(ticket => ticket.finalized_ticket)
+            );
+            const removed = active.filter(
+                ticket => !retainedIds.has(ticket.finalized_ticket)
+            );
+            const nextTombstones = mergeTicketTombstones(
+                tombstones,
+                await createTicketTombstones(removed)
+            );
+            await this.persistTickets(normalized, archived, {
+                tombstones: nextTombstones
+            });
             return normalized.length;
         });
     }
@@ -577,7 +655,9 @@ class TicketStore {
                     ...ticket,
                     consumed_at: ticket.consumed_at || new Date().toISOString()
                 })));
-                await this.persistTickets(remaining, updatedArchive);
+                await this.persistTickets(remaining, updatedArchive, {
+                    skipSync: syncService.shouldDeferRedemptionSync()
+                });
                 return {
                     tickets: selected,
                     totalCount: active.length,
@@ -605,13 +685,23 @@ class TicketStore {
                             consumed_at: ticket.consumed_at || new Date().toISOString()
                         })));
                         const updatedActive = active.filter(ticket => !usedTokenSet.has(ticket.finalized_ticket));
-                        await this.persistTickets(updatedActive, updatedArchive);
+                        await this.persistTickets(
+                            updatedActive,
+                            updatedArchive,
+                            {
+                                skipSync:
+                                    syncService.shouldDeferRedemptionSync()
+                            }
+                        );
                     } else {
                         const updatedArchive = this.mergeTickets(archived, selected.map(ticket => ({
                             ...ticket,
                             consumed_at: ticket.consumed_at || new Date().toISOString()
                         })));
-                        await this.persistTickets(remaining, updatedArchive);
+                        await this.persistTickets(remaining, updatedArchive, {
+                            skipSync:
+                                syncService.shouldDeferRedemptionSync()
+                        });
                     }
                 }
                 throw error;

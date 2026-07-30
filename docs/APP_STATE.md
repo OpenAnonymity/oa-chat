@@ -25,6 +25,33 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
+- 2026-07-30: SSO accounts now sync encrypted inference tickets across devices.
+  - The SSO-only `syncTickets` gate was removed. Active and archived tickets,
+    preferences, and their timestamps use the same version-1 encrypted blob
+    format for identity-backed and legacy account-number accounts.
+  - Ticket additions/imports/clears schedule the normal debounced sync.
+    Redemption consumption deliberately does not for identity-backed accounts:
+    its encrypted archive record is uploaded by the next initial/periodic sync,
+    avoiding a deterministic
+    identity-authenticated request two seconds after anonymous redemption.
+    Legacy identity-free accounts retain immediate consumption sync.
+  - Empty wallet arrays are encrypted too. Cash-style clear/export removes
+    redeemable ticket secrets locally and syncs a separate encrypted SHA-256
+    deletion-tombstone blob so stale devices cannot resurrect them. Remote
+    active/archive merges always apply those tombstones.
+  - A new device must authenticate with Google/GitHub and unlock the shared
+    master key with the PRF passkey before it can decrypt the restored wallet.
+    A newly created SSO account adopts and uploads tickets already on that
+    device, matching legacy account creation. Remote ticket merges immediately
+    broadcast a cache invalidation to other tabs; stale notifications for a
+    prior account are ignored instead of clearing the current account cache.
+  - The org sees identity-bound sync metadata (request timing, ciphertext size,
+    and stable opaque blob IDs), but not ticket plaintext or the HMAC-derived
+    logical IDs. Redemption remains separate from account authentication, but
+    optional identity-backed ticket sync weakens the strict metadata-level
+    unlinkability claim: a malicious org can still attempt timing/size
+    correlation around later syncs.
+
 - 2026-07-29: SSO uses a Confer-style authentication/encryption split; see
   [ENCRYPTION_PASSKEYS.md](ENCRYPTION_PASSKEYS.md).
   - Google/GitHub authenticates and authorizes opaque account storage. A
@@ -57,15 +84,15 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     before reading live values. Ticket mutations and syncable-preference writes
     also take this lock; scope snapshot/live-key/marker changes commit through
     one settings transaction, and stale store caches are cleared.
-  - Identity-backed accounts do not sync inference tickets. Ticket opaque IDs
-    and blobs are omitted, and ticket mutations do not schedule sync; only
-    preferences sync under an identity credential. GitHub/Google linking is
-    rejected so identity cannot be attached retroactively to a legacy
-    namespace with historical ticket-sync metadata.
-  - Legacy unscoped values are adopted only when persisted account settings
-    prove continuity with the same account. Otherwise they are preserved under
-    `sync-unclaimed-data` and restored on logout; canceling setup before scope
-    activation leaves them untouched.
+  - Superseded by the 2026-07-30 entry above: identity-backed accounts now sync
+    encrypted ticket wallets as well as preferences. GitHub/Google linking
+    remains rejected to preserve dedicated account identity/recovery semantics.
+  - Legacy unscoped values are adopted when the user creates a new account on
+    that device, matching the original account-number flow. For a returning
+    account, adoption requires persisted settings proving continuity with the
+    same account. Otherwise values are preserved under `sync-unclaimed-data`
+    and restored on logout; canceling setup before scope activation leaves them
+    untouched.
   - Keep the legacy server-authentication `credentialId` separate from the
     client-only `encryptionCredentialId`. A linked legacy account still needs
     its original ID as the `/auth/challenge` hint and still displays its account
