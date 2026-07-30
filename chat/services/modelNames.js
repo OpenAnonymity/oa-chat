@@ -27,6 +27,15 @@ function isDisplayName(value) {
     return isNonEmptyString(value) && !value.includes('/');
 }
 
+function ensureAnthropicPrefix(displayName, providerDisplayName) {
+    if (providerDisplayName !== 'Anthropic' || !isNonEmptyString(displayName)) {
+        return displayName;
+    }
+    return /^anthropic:\s*/i.test(displayName)
+        ? displayName
+        : `Anthropic: ${displayName.trim()}`;
+}
+
 function toModelIdWithoutRouting(modelReference) {
     if (!isNonEmptyString(modelReference)) return null;
     return modelReference.trim().split(':')[0];
@@ -156,27 +165,29 @@ export function standardizeModelDisplayName(modelReference, options = {}) {
  * @param {Object} params
  * @param {string} params.modelId
  * @param {string} params.fallbackDisplayName
+ * @param {string} [params.providerDisplayName]
  * @param {Record<string, string>} [params.displayNameOverrides]
  * @returns {string}
  */
 export function resolveModelDisplayName({
     modelId,
     fallbackDisplayName,
+    providerDisplayName,
     displayNameOverrides = {}
 }) {
     const standardizedFromId = standardizeModelDisplayName(modelId, { displayNameOverrides });
     if (isDisplayName(standardizedFromId)) {
-        return standardizedFromId;
+        return ensureAnthropicPrefix(standardizedFromId, providerDisplayName);
     }
 
     const standardizedFromFallback = standardizeModelDisplayName(fallbackDisplayName, { displayNameOverrides });
     if (isDisplayName(standardizedFromFallback)) {
-        return standardizedFromFallback;
+        return ensureAnthropicPrefix(standardizedFromFallback, providerDisplayName);
     }
 
     if (isNonEmptyString(modelId) && isNonEmptyString(displayNameOverrides[modelId])) {
-        return displayNameOverrides[modelId];
+        return ensureAnthropicPrefix(displayNameOverrides[modelId], providerDisplayName);
     }
 
-    return fallbackDisplayName || modelId || '';
+    return ensureAnthropicPrefix(fallbackDisplayName || modelId || '', providerDisplayName);
 }

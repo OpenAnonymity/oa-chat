@@ -63,9 +63,13 @@ class OpenRouterAPI {
 
     getCachedModels() {
         const cachedModels = loadModelCatalog(OPENROUTER_BACKEND_ID);
-        return Array.isArray(cachedModels)
-            ? normalizeOpenRouterModelProviders(cachedModels)
-            : [];
+        if (!Array.isArray(cachedModels)) {
+            return [];
+        }
+        return normalizeOpenRouterModelProviders(cachedModels).map(model => ({
+            ...model,
+            name: this.getDisplayName(model.id, model.name, model.provider)
+        }));
     }
 
     // Fetch available models from OpenRouter
@@ -118,10 +122,11 @@ class OpenRouterAPI {
     }
 
     // Get custom display name for a model, or return the default name
-    getDisplayName(modelId, defaultName) {
+    getDisplayName(modelId, defaultName, providerDisplayName) {
         return resolveModelDisplayName({
             modelId,
             fallbackDisplayName: defaultName,
+            providerDisplayName,
             displayNameOverrides: this.displayNameOverrides
         });
     }
@@ -159,7 +164,7 @@ class OpenRouterAPI {
 
             // Apply custom display name if one exists
             const defaultName = model.name || model.id;
-            const displayName = this.getDisplayName(model.id, defaultName);
+            const displayName = this.getDisplayName(model.id, defaultName, providerName);
 
             return {
                 id: model.id,

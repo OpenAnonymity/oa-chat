@@ -30,6 +30,12 @@ test('OpenRouter exposes cached provider metadata before a network refresh', asy
             provider: 'Unknown',
             category: 'Other models',
             categoryPriority: 5
+        }, {
+            id: 'anthropic/claude-opus-5',
+            name: 'Claude Opus 5',
+            provider: 'Anthropic',
+            category: 'Flagship models',
+            categoryPriority: 1
         }]);
 
         assert.equal(typeof openRouterAPI.getCachedModels, 'function');
@@ -39,6 +45,12 @@ test('OpenRouter exposes cached provider metadata before a network refresh', asy
             provider: 'OpenRouter',
             category: 'Other models',
             categoryPriority: 5
+        }, {
+            id: 'anthropic/claude-opus-5',
+            name: 'Anthropic: Claude Opus 5',
+            provider: 'Anthropic',
+            category: 'Flagship models',
+            categoryPriority: 1
         }]);
     } finally {
         if (originalLocalStorage === undefined) {

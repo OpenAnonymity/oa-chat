@@ -25,6 +25,10 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
+- 2026-07-31: OpenRouter catalog labels for Anthropic models are normalized to
+  include the `Anthropic:` prefix when upstream omits it. Already-prefixed names
+  remain unchanged.
+
 - 2026-07-11: OpenRouter `~author/*-latest` aliases normalize in the catalog adapter,
   while provider display/icon metadata resolves through the shared provider registry;
   cached OpenRouter catalog entries also recompute provider metadata from their model
