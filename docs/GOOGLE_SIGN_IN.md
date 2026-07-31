@@ -29,12 +29,14 @@ accounts' encrypted data unrecoverable even when Google authentication succeeds.
 - `POST /auth/google/start` creates a single-use, ten-minute Redis state record,
   PKCE verifier/challenge, and state-specific HttpOnly `SameSite=Lax` browser
   nonce.
-- Google is requested with only the `openid` scope. The org exchanges the code,
-  calls the OpenID Connect userinfo endpoint, retains only `sub`, and discards
-  the access token and all other fields.
-- The callback stores only `(provider=google, provider_subject=sub, account_id)`.
-  It returns no token to JavaScript; it sets the HttpOnly OA refresh cookie and
-  posts a fixed result to the exact allowlisted app origin.
+- Google is requested with `openid email`. The org exchanges the code, calls
+  the OpenID Connect userinfo endpoint, and retains `sub` plus the verified
+  email before discarding the access token.
+- The callback stores `(provider=google, provider_subject=sub, email,
+  account_id)`. The authenticated session returns the email so the browser can
+  use it as the encryption passkey's WebAuthn username. The popup returns no
+  token or profile data to JavaScript; it sets the HttpOnly OA refresh cookie
+  and posts a fixed result to the exact allowlisted app origin.
 - `GET /auth/keyring` returns opaque PRF-passkey wrappers only to the
   authenticated account. `POST /auth/keyring` appends a client-produced wrapper;
   it never receives WebAuthn registration or assertion data.

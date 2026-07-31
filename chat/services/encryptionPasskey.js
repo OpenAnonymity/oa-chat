@@ -164,12 +164,22 @@ export function isEncryptionPasskeySupported() {
  * PRF result. In that case a follow-up get() evaluates the PRF, as required by
  * WebAuthn Level 3.
  */
-export async function createEncryptionKeyWrapper(masterKey, existingCredentialIds = []) {
+export async function createEncryptionKeyWrapper(
+    masterKey,
+    userEmail,
+    existingCredentialIds = []
+) {
     if (!isEncryptionPasskeySupported()) {
         throw new Error('Passkeys are not supported in this browser');
     }
     if (!(masterKey instanceof Uint8Array) || masterKey.length !== MASTER_KEY_LENGTH) {
         throw new Error('Invalid account master key');
+    }
+    const passkeyUsername = typeof userEmail === 'string'
+        ? userEmail.trim()
+        : '';
+    if (!passkeyUsername) {
+        throw new Error('Sign in again so OA can label the passkey with your email');
     }
 
     const credential = await navigator.credentials.create({
@@ -180,8 +190,8 @@ export async function createEncryptionKeyWrapper(masterKey, existingCredentialId
             },
             user: {
                 id: randomBytes(32),
-                name: 'Encrypted OA data',
-                displayName: 'Open Anonymity encrypted data'
+                name: passkeyUsername,
+                displayName: passkeyUsername
             },
             pubKeyCredParams: [
                 { type: 'public-key', alg: -7 },

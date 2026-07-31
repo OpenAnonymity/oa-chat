@@ -144,11 +144,11 @@ GitHub or Google to an OA sync account. In that opt-in flow:
 
 1. The org completes OAuth with PKCE, uses the access token once to obtain the
    provider's stable subject (GitHub's numeric `/user.id` or Google's OpenID
-   Connect `sub`), and immediately discards the token and all other response
-   fields.
+   Connect `sub`) and verified email, and immediately discards the token.
 2. The org stores a mapping from that provider subject to the random 16-digit OA
-   account ID. GitHub is requested with no scopes; Google is requested with only
-   `openid`. The org does not retain email or profile fields.
+   account ID and provider email. GitHub is requested with `user:email`; Google
+   is requested with `openid email`. The email is returned to the authenticated
+   browser and used as the encryption passkey's recognizable WebAuthn username.
 3. The browser generates a random 256-bit sync master key. A separate WebAuthn
    PRF passkey produces an AES-GCM wrapping key locally; the org receives only
    the passkey credential ID and encrypted master-key wrapper.

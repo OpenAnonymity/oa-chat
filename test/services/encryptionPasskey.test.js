@@ -75,7 +75,10 @@ test('PRF passkey wrapper round-trips a random account master key', async () => 
     try {
         const masterKey = webcrypto.getRandomValues(new Uint8Array(32));
         const expected = new Uint8Array(masterKey);
-        const wrapper = await createEncryptionKeyWrapper(masterKey);
+        const wrapper = await createEncryptionKeyWrapper(
+            masterKey,
+            'person@example.com'
+        );
         const unlocked = await unlockEncryptionKeyring([wrapper]);
 
         assert.equal(wrapper.credentialId, CREDENTIAL_ID);
@@ -98,9 +101,58 @@ test('passkey creation fails when the authenticator does not enable PRF', async 
 
     try {
         await assert.rejects(
-            createEncryptionKeyWrapper(new Uint8Array(32)),
+            createEncryptionKeyWrapper(
+                new Uint8Array(32),
+                'person@example.com'
+            ),
             /does not support encrypted data/
         );
+    } finally {
+        restore();
+    }
+});
+
+test('passkey creation labels the WebAuthn user with the SSO email', async () => {
+    const prf = new Uint8Array(32).fill(11);
+    let creationOptions = null;
+    const restore = installBrowserCredentials({
+        create: async ({ publicKey }) => {
+            creationOptions = publicKey;
+            return credential(CREDENTIAL_ID, prf, true);
+        },
+        get: async () => {
+            throw new Error('get should not run');
+        }
+    });
+
+    try {
+        await createEncryptionKeyWrapper(
+            new Uint8Array(32),
+            '  person@example.com  '
+        );
+        assert.equal(creationOptions.user.name, 'person@example.com');
+        assert.equal(creationOptions.user.displayName, 'person@example.com');
+    } finally {
+        restore();
+    }
+});
+
+test('passkey creation requires an SSO email label', async () => {
+    let createCalls = 0;
+    const restore = installBrowserCredentials({
+        create: async () => {
+            createCalls += 1;
+            return null;
+        },
+        get: async () => null
+    });
+
+    try {
+        await assert.rejects(
+            createEncryptionKeyWrapper(new Uint8Array(32), ''),
+            /label the passkey with your email/
+        );
+        assert.equal(createCalls, 0);
     } finally {
         restore();
     }

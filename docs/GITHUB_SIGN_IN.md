@@ -29,11 +29,13 @@ accounts' encrypted data unrecoverable even when GitHub authentication succeeds.
 - `POST /auth/github/start` creates a single-use, ten-minute Redis state record,
   PKCE verifier/challenge, and state-specific HttpOnly `SameSite=Lax` browser
   nonce.
-- GitHub is asked for no scopes. The org exchanges the code, calls `/user`,
-  retains only the numeric `id`, and discards the access token and all other
-  response fields.
-- The callback stores only `(provider=github, provider_subject=numeric_id,
-  account_id)`. It returns no token to JavaScript; it sets the HttpOnly OA
+- GitHub is asked for `user:email`. The org exchanges the code, calls `/user`
+  for the numeric `id` and `/user/emails` for the verified primary email, then
+  discards the access token.
+- The callback stores `(provider=github, provider_subject=numeric_id,
+  email, account_id)`. The authenticated session returns the email so the
+  browser can use it as the encryption passkey's WebAuthn username. The popup
+  returns no token or profile data to JavaScript; it sets the HttpOnly OA
   refresh cookie and posts a fixed result to the exact allowlisted app origin.
 - `GET /auth/keyring` returns opaque PRF-passkey wrappers only to the
   authenticated account. `POST /auth/keyring` appends a client-produced wrapper;

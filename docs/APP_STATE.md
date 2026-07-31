@@ -62,6 +62,20 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - Bypassed access cannot enter a shared-chat payload. Deployed clients remain
     fail-closed and require an explicit `verified` response.
 
+- 2026-07-30: SSO encryption passkeys use the provider email as their WebAuthn
+  username and display name.
+  - Google requests `openid email`; GitHub requests `user:email` and resolves
+    the verified primary email. The org stores that email with the provider
+    identity and returns it from the authenticated provider session.
+  - `accountService.oauthEmail` is populated by both provider session paths and
+    is passed explicitly into every SSO encryption-passkey creation, including
+    legacy SSO migration. `encryptionPasskey.js` has no generic label fallback;
+    missing email requires a fresh SSO sign-in.
+  - Existing identity rows gain a nullable email column. If an older refresh
+    session restores `PRF_PENDING` or `LEGACY_SSO` before a new OAuth callback
+     has populated it, the client returns to the provider sign-in screen instead
+     of entering a passkey flow that cannot be labeled.
+
 - 2026-07-30: SSO accounts now sync encrypted inference tickets across devices.
   - The SSO-only `syncTickets` gate was removed. Active and archived tickets,
     preferences, and their timestamps use the same version-1 encrypted blob
@@ -148,8 +162,9 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     setup, recovery-unlock, account-mismatch, and local-key restoration flow.
     Provider-specific linked flags plus `lastOAuthProvider` are persisted so a
     locked browser can recover through the most recently used provider.
-  - Google requests only `openid`; the org retains only the OpenID Connect
-    `sub`. OAuth/access tokens and Google email/profile fields are discarded.
+  - Superseded by the 2026-07-30 passkey-label entry above: Google now requests
+    `openid email`, and the org retains the verified email with `sub` so it can
+    label the user's encryption passkey.
   - `npm run dev` serves static assets and proxies non-static requests to the
     local org on port `8005`. The browser therefore uses its own origin for
     passkey, OAuth, ticket, and sync API calls, avoiding local-network/CORS
