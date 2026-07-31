@@ -15,6 +15,11 @@
 import { ORG_API_BASE } from '../config.js';
 import { chatDB } from '../db.js';
 import { fetchRetry } from './fetchRetry.js';
+import { withTicketStorageLock } from './ticketStorageLock.js';
+import {
+    filterTicketsByInvalidatedKeyIds,
+    normalizeInvalidatedTicketKeyIds
+} from '../domain/ticketKeys.js';
 
 const SYNC_LOCK_NAME = 'oa-sync';
 const SYNC_SALT = 'oa-sync-v1';
@@ -22,10 +27,13 @@ const HMAC_SALT = 'oa-sync-id-v1';
 
 // Settings keys for sync metadata (local only)
 const SYNC_LAST_TIME_KEY = 'sync-lastSyncTime';
+const SYNC_SCHEMA_VERSION_KEY = 'sync-schema-version';
+const CURRENT_SYNC_SCHEMA_VERSION = 2;
 
 // Settings keys for syncable data
 const TICKETS_ACTIVE_KEY = 'tickets-active';
 const TICKETS_ARCHIVE_KEY = 'tickets-archive';
+const TICKETS_INVALIDATED_KEYS_KEY = 'tickets-invalidated-key-ids';
 
 // Preference keys to sync
 const SYNCABLE_PREF_KEYS = [
@@ -41,8 +49,11 @@ const SYNC_PREF_UPDATED_AT_PREFIX = 'sync-pref-updated-at:';
 const LOGICAL_IDS = {
     TICKETS_ACTIVE: 'tickets-active',
     TICKETS_ARCHIVE: 'tickets-archive',
+    TICKETS_INVALIDATED_KEYS: 'tickets-invalidated-key-ids',
+    TICKET_INVALIDATION_ITEM: 'ticket-invalidation-item',
     // Preferences use their key as logical ID
 };
+const MAX_SYNC_BLOBS_PER_REQUEST = 100;
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -153,7 +164,7 @@ async function decryptBlob(masterKey, logicalId, ciphertext, iv) {
     return JSON.parse(textDecoder.decode(plaintext));
 }
 
-class SyncService {
+export class SyncService {
     constructor() {
         this.syncInProgress = false;
         this.listeners = new Set();
@@ -210,8 +221,13 @@ class SyncService {
         // Tickets
         const ticketsActiveId = await deriveOpaqueBlobId(masterKey, LOGICAL_IDS.TICKETS_ACTIVE);
         const ticketsArchiveId = await deriveOpaqueBlobId(masterKey, LOGICAL_IDS.TICKETS_ARCHIVE);
+        const invalidatedKeysId = await deriveOpaqueBlobId(
+            masterKey,
+            LOGICAL_IDS.TICKETS_INVALIDATED_KEYS
+        );
         mapping.set(ticketsActiveId, LOGICAL_IDS.TICKETS_ACTIVE);
         mapping.set(ticketsArchiveId, LOGICAL_IDS.TICKETS_ARCHIVE);
+        mapping.set(invalidatedKeysId, LOGICAL_IDS.TICKETS_INVALIDATED_KEYS);
 
         // Preferences
         for (const key of SYNCABLE_PREF_KEYS) {
@@ -445,7 +461,15 @@ class SyncService {
     }
 
     async _pull(masterKey, accessToken) {
-        const lastSync = await chatDB.getSetting(SYNC_LAST_TIME_KEY) || 0;
+        const localSchemaVersion = Number(
+            await chatDB.getSetting(SYNC_SCHEMA_VERSION_KEY)
+        ) || 0;
+        // Version 2 introduced dynamically addressed per-generation
+        // tombstones. A one-time full pull lets upgraded clients reconsider
+        // records that an older version skipped as unknown.
+        const lastSync = localSchemaVersion < CURRENT_SYNC_SCHEMA_VERSION
+            ? 0
+            : await chatDB.getSetting(SYNC_LAST_TIME_KEY) || 0;
 
         const response = await this.fetchWithRetry(
             `${ORG_API_BASE}/auth/sync?since=${lastSync}`,
@@ -477,8 +501,24 @@ class SyncService {
             if (applied) mergedCount++;
         }
 
+        const syncMetadata = [
+            {
+                key: SYNC_SCHEMA_VERSION_KEY,
+                value: CURRENT_SYNC_SCHEMA_VERSION
+            }
+        ];
         if (server_time) {
-            await chatDB.saveSetting(SYNC_LAST_TIME_KEY, server_time);
+            syncMetadata.push({
+                key: SYNC_LAST_TIME_KEY,
+                value: server_time
+            });
+        }
+        if (typeof chatDB.saveSettings === 'function') {
+            await chatDB.saveSettings(syncMetadata);
+        } else {
+            for (const entry of syncMetadata) {
+                await chatDB.saveSetting(entry.key, entry.value);
+            }
         }
 
         return { count: mergedCount };
@@ -487,13 +527,12 @@ class SyncService {
     async _applyServerBlob(masterKey, serverBlob) {
         if (!serverBlob.ciphertext || !serverBlob.iv) return false;
 
-        // Find the logical ID for this opaque ID
-        const logicalId = this.idMapping?.get(serverBlob.id);
-        if (!logicalId) {
-            // Unknown blob - might be from a newer client version, skip
-            console.warn('[SyncService] Unknown blob ID:', serverBlob.id);
-            return false;
-        }
+        // Fixed records can be mapped directly. Per-generation invalidation
+        // records deliberately use distinct opaque IDs so concurrent devices
+        // cannot overwrite one another; unknown IDs are therefore probed with
+        // the shared invalidation-item encryption key.
+        const mappedLogicalId = this.idMapping?.get(serverBlob.id);
+        let logicalId = mappedLogicalId || LOGICAL_IDS.TICKET_INVALIDATION_ITEM;
 
         try {
             // Decrypt - the payload contains type and data
@@ -503,11 +542,24 @@ class SyncService {
                 serverBlob.ciphertext,
                 serverBlob.iv
             );
+            if (
+                !mappedLogicalId &&
+                payload.type !== 'ticket-invalidation'
+            ) {
+                console.warn('[SyncService] Unknown blob ID:', serverBlob.id);
+                return false;
+            }
 
             // Apply based on type (stored inside encrypted payload)
             let applied = false;
             if (payload.type === 'tickets') {
                 await this._mergeTickets(logicalId, payload.data);
+                applied = true;
+            } else if (payload.type === 'ticket-invalidations') {
+                await this._mergeTicketInvalidations(payload.data);
+                applied = true;
+            } else if (payload.type === 'ticket-invalidation') {
+                await this._mergeTicketInvalidations([payload.key_id]);
                 applied = true;
             } else if (payload.type === 'preference') {
                 applied = await this._mergePreference(payload.key, payload.value, payload.updatedAt);
@@ -518,7 +570,13 @@ class SyncService {
             }
             return applied;
         } catch (error) {
-            console.warn('[SyncService] Failed to decrypt blob:', serverBlob.id, error);
+            if (mappedLogicalId) {
+                console.warn('[SyncService] Failed to decrypt blob:', serverBlob.id, error);
+            } else {
+                // Unknown records may belong to a newer client version. A
+                // failed invalidation-key probe is expected and is skipped.
+                console.warn('[SyncService] Unknown blob ID:', serverBlob.id);
+            }
             return false;
         }
     }
@@ -529,52 +587,107 @@ class SyncService {
      * If a ticket is in archive (consumed) anywhere, it's consumed everywhere.
      */
     async _mergeTickets(logicalId, serverTickets) {
-        const isArchive = logicalId === LOGICAL_IDS.TICKETS_ARCHIVE;
-        const tickets = serverTickets || [];
+        return withTicketStorageLock(async () => {
+            const isArchive = logicalId === LOGICAL_IDS.TICKETS_ARCHIVE;
 
-        // Get both local lists
-        const localActive = await chatDB.getSetting(TICKETS_ACTIVE_KEY) || [];
-        const localArchive = await chatDB.getSetting(TICKETS_ARCHIVE_KEY) || [];
-
-        if (isArchive) {
-            // Merging archive (consumed tickets) - union of all consumed
-            const consumedIds = new Set(localArchive.map(t => t.finalized_ticket));
-            const mergedArchive = [...localArchive];
-
-            for (const ticket of tickets) {
-                if (ticket.finalized_ticket && !consumedIds.has(ticket.finalized_ticket)) {
-                    mergedArchive.push(ticket);
-                    consumedIds.add(ticket.finalized_ticket);
-                }
-            }
-
-            // CRDT: Remove any newly-consumed tickets from active
-            const filteredActive = localActive.filter(t => 
-                !consumedIds.has(t.finalized_ticket)
+            // Get both local lists
+            const localActive = await chatDB.getSetting(TICKETS_ACTIVE_KEY) || [];
+            const localArchive = await chatDB.getSetting(TICKETS_ARCHIVE_KEY) || [];
+            const invalidatedKeyIds = normalizeInvalidatedTicketKeyIds(
+                await chatDB.getSetting(TICKETS_INVALIDATED_KEYS_KEY)
+            );
+            const tickets = filterTicketsByInvalidatedKeyIds(
+                serverTickets,
+                invalidatedKeyIds
+            );
+            const filteredLocalActive = filterTicketsByInvalidatedKeyIds(
+                localActive,
+                invalidatedKeyIds
+            );
+            const filteredLocalArchive = filterTicketsByInvalidatedKeyIds(
+                localArchive,
+                invalidatedKeyIds
             );
 
-            await chatDB.saveSetting(TICKETS_ARCHIVE_KEY, mergedArchive);
-            if (filteredActive.length !== localActive.length) {
-                await chatDB.saveSetting(TICKETS_ACTIVE_KEY, filteredActive);
-            }
-        } else {
-            // Merging active tickets - add new ones, but respect consumed state
-            const consumedIds = new Set(localArchive.map(t => t.finalized_ticket));
-            const activeIds = new Set(localActive.map(t => t.finalized_ticket));
-            const mergedActive = [...localActive];
+            if (isArchive) {
+                // Merging archive (consumed tickets) - union of all consumed
+                const consumedIds = new Set(filteredLocalArchive.map(t => t.finalized_ticket));
+                const mergedArchive = [...filteredLocalArchive];
 
-            for (const ticket of tickets) {
-                // Only add if not already active AND not consumed
-                if (ticket.finalized_ticket && 
-                    !activeIds.has(ticket.finalized_ticket) &&
-                    !consumedIds.has(ticket.finalized_ticket)) {
-                    mergedActive.push(ticket);
-                    activeIds.add(ticket.finalized_ticket);
+                for (const ticket of tickets) {
+                    if (ticket.finalized_ticket && !consumedIds.has(ticket.finalized_ticket)) {
+                        mergedArchive.push(ticket);
+                        consumedIds.add(ticket.finalized_ticket);
+                    }
+                }
+
+                // CRDT: Remove any newly-consumed tickets from active
+                const filteredActive = filteredLocalActive.filter(t =>
+                    !consumedIds.has(t.finalized_ticket)
+                );
+
+                await chatDB.saveSetting(TICKETS_ARCHIVE_KEY, mergedArchive);
+                if (filteredActive.length !== localActive.length) {
+                    await chatDB.saveSetting(TICKETS_ACTIVE_KEY, filteredActive);
+                }
+            } else {
+                // Merging active tickets - add new ones, but respect consumed state
+                const consumedIds = new Set(filteredLocalArchive.map(t => t.finalized_ticket));
+                const activeIds = new Set(filteredLocalActive.map(t => t.finalized_ticket));
+                const mergedActive = [...filteredLocalActive];
+
+                for (const ticket of tickets) {
+                    // Only add if not already active AND not consumed
+                    if (ticket.finalized_ticket &&
+                        !activeIds.has(ticket.finalized_ticket) &&
+                        !consumedIds.has(ticket.finalized_ticket)) {
+                        mergedActive.push(ticket);
+                        activeIds.add(ticket.finalized_ticket);
+                    }
+                }
+
+                await chatDB.saveSetting(TICKETS_ACTIVE_KEY, mergedActive);
+                if (filteredLocalArchive.length !== localArchive.length) {
+                    await chatDB.saveSetting(TICKETS_ARCHIVE_KEY, filteredLocalArchive);
                 }
             }
+        });
+    }
 
-            await chatDB.saveSetting(TICKETS_ACTIVE_KEY, mergedActive);
-        }
+    async _mergeTicketInvalidations(serverKeyIds) {
+        return withTicketStorageLock(async () => {
+            const localKeyIds = normalizeInvalidatedTicketKeyIds(
+                await chatDB.getSetting(TICKETS_INVALIDATED_KEYS_KEY)
+            );
+            const mergedKeyIds = normalizeInvalidatedTicketKeyIds([
+                ...localKeyIds,
+                ...(Array.isArray(serverKeyIds) ? serverKeyIds : [])
+            ]);
+            const [localActive, localArchive] = await Promise.all([
+                chatDB.getSetting(TICKETS_ACTIVE_KEY),
+                chatDB.getSetting(TICKETS_ARCHIVE_KEY)
+            ]);
+            const filteredActive = filterTicketsByInvalidatedKeyIds(
+                localActive,
+                mergedKeyIds
+            );
+            const filteredArchive = filterTicketsByInvalidatedKeyIds(
+                localArchive,
+                mergedKeyIds
+            );
+
+            if (typeof chatDB.saveSettings === 'function') {
+                await chatDB.saveSettings([
+                    { key: TICKETS_INVALIDATED_KEYS_KEY, value: mergedKeyIds },
+                    { key: TICKETS_ACTIVE_KEY, value: filteredActive },
+                    { key: TICKETS_ARCHIVE_KEY, value: filteredArchive }
+                ]);
+            } else {
+                await chatDB.saveSetting(TICKETS_INVALIDATED_KEYS_KEY, mergedKeyIds);
+                await chatDB.saveSetting(TICKETS_ACTIVE_KEY, filteredActive);
+                await chatDB.saveSetting(TICKETS_ARCHIVE_KEY, filteredArchive);
+            }
+        });
     }
 
     async _mergePreference(key, value, incomingUpdatedAt = null) {
@@ -618,31 +731,56 @@ class SyncService {
             return { count: 0 };
         }
 
-        const response = await this.fetchWithRetry(
-            `${ORG_API_BASE}/auth/sync`,
-            {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${accessToken}`,
-                    'Content-Type': 'application/json'
+        let acceptedCount = 0;
+        let currentAccessToken = accessToken;
+        for (
+            let offset = 0;
+            offset < blobs.length;
+            offset += MAX_SYNC_BLOBS_PER_REQUEST
+        ) {
+            const batch = blobs.slice(
+                offset,
+                offset + MAX_SYNC_BLOBS_PER_REQUEST
+            );
+            let response = await this.fetchWithRetry(
+                `${ORG_API_BASE}/auth/sync`,
+                {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${currentAccessToken}`,
+                        'Content-Type': 'application/json'
+                    },
+                    credentials: 'include',
+                    body: JSON.stringify({ blobs: batch })
                 },
-                credentials: 'include',
-                body: JSON.stringify({ blobs })
-            },
-            'Sync push'
-        );
-
-        if (!response.ok) {
+                'Sync push'
+            );
             if (response.status === 401) {
                 const refreshed = await this.refreshAccessToken();
                 if (!refreshed) throw new Error('Authentication failed');
-                return this._push(masterKey, this.getAccessToken());
+                currentAccessToken = this.getAccessToken();
+                response = await this.fetchWithRetry(
+                    `${ORG_API_BASE}/auth/sync`,
+                    {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${currentAccessToken}`,
+                            'Content-Type': 'application/json'
+                        },
+                        credentials: 'include',
+                        body: JSON.stringify({ blobs: batch })
+                    },
+                    'Sync push'
+                );
             }
-            throw new Error(`Push failed: ${response.status}`);
-        }
+            if (!response.ok) {
+                throw new Error(`Push failed: ${response.status}`);
+            }
 
-        const { accepted } = await response.json();
-        return { count: accepted?.length || 0 };
+            const { accepted } = await response.json();
+            acceptedCount += accepted?.length || 0;
+        }
+        return { count: acceptedCount };
     }
 
     /**
@@ -673,6 +811,50 @@ class SyncService {
                 { type: 'tickets', data: archivedTickets }  // Type is INSIDE
             );
             blobs.push({ id: opaqueId, ciphertext, iv, version: 1 });
+        }
+
+        // Invalidated generation fingerprints are encrypted tombstones. They
+        // prevent union-based ticket sync from resurrecting deleted tickets.
+        const invalidatedKeyIds = normalizeInvalidatedTicketKeyIds(
+            await chatDB.getSetting(TICKETS_INVALIDATED_KEYS_KEY)
+        );
+        if (invalidatedKeyIds.length > 0) {
+            // Keep the aggregate record for migration and older clients.
+            const opaqueId = await deriveOpaqueBlobId(
+                masterKey,
+                LOGICAL_IDS.TICKETS_INVALIDATED_KEYS
+            );
+            const { ciphertext, iv } = await encryptBlob(
+                masterKey,
+                LOGICAL_IDS.TICKETS_INVALIDATED_KEYS,
+                { type: 'ticket-invalidations', data: invalidatedKeyIds }
+            );
+            blobs.push({ id: opaqueId, ciphertext, iv, version: 1 });
+
+            // Each generation also gets an immutable logical record with its
+            // own HMAC-derived opaque ID. LWW updates of the same key are safe,
+            // while different devices invalidating different generations can
+            // no longer overwrite each other's tombstones.
+            for (const keyId of invalidatedKeyIds) {
+                const itemLogicalId = (
+                    `${LOGICAL_IDS.TICKET_INVALIDATION_ITEM}:${keyId}`
+                );
+                const itemOpaqueId = await deriveOpaqueBlobId(
+                    masterKey,
+                    itemLogicalId
+                );
+                const encryptedItem = await encryptBlob(
+                    masterKey,
+                    LOGICAL_IDS.TICKET_INVALIDATION_ITEM,
+                    { type: 'ticket-invalidation', key_id: keyId }
+                );
+                blobs.push({
+                    id: itemOpaqueId,
+                    ciphertext: encryptedItem.ciphertext,
+                    iv: encryptedItem.iv,
+                    version: 1
+                });
+            }
         }
 
         // Preferences

@@ -92,6 +92,14 @@ class PrivacyPassProvider {
         return { blindedRequest, state: client };
     }
 
+    async getPublicKeyId(publicKeyB64) {
+        if (!publicKeyB64) throw new Error('Missing required parameter: publicKey');
+        const digest = await crypto.subtle.digest('SHA-256', b64urlDecode(publicKeyB64));
+        return Array.from(new Uint8Array(digest), byte => (
+            byte.toString(16).padStart(2, '0')
+        )).join('');
+    }
+
     async finalizeToken(signedResponseB64, client) {
         if (!signedResponseB64 || !client) {
             throw new Error('Missing required parameters: signedResponse, state');

@@ -119,6 +119,16 @@ export async function acquireSessionAccess(options = {}) {
                 await onTicketUsed(retries, error);
                 continue;
             }
+            if (error.code === 'TICKET_KEY_INVALIDATED') {
+                retries += 1;
+                const remainingTickets = ticketClient.getTicketCount();
+                if (remainingTickets >= ticketsRequired) {
+                    continue;
+                }
+                error.message = remainingTickets > 0
+                    ? `The org rotated its ticket signing key and invalidated the old tickets. ${remainingTickets} valid ticket${remainingTickets === 1 ? '' : 's'} remain, but this model needs ${ticketsRequired}.`
+                    : 'The org rotated its ticket signing key and invalidated your old tickets. Redeem a new invite code to continue.';
+            }
             onAccessRequestError(error);
             throw error;
         }

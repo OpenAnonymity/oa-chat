@@ -176,6 +176,31 @@ Future: automated transparency log for public key consistency, similar to
 [Certificate Transparency](https://certificate.transparency.dev/) for TLS
 certificates.
 
+### Global key rotation and local invalidation
+
+An operator may deliberately replace the one global blind-signature key. This
+is different from serving a per-user key:
+
+- All clients observing a generation receive the same public key and global
+  `token_key_id`.
+- Rotation makes every ticket under prior generations unusable immediately.
+- An old-ticket response includes only that global invalidated key ID. The
+  client uses the ID embedded in each finalized RFC 9578 token to delete all
+  locally held tickets from the same generation.
+- Cross-device sync retains one encrypted, HMAC-addressed record per
+  invalidated generation so concurrent device writes cannot lose tombstones
+  or restore deleted old tickets. Each tombstone is only that same global
+  public-key fingerprint; no ticket bytes or identity link is added.
+- The org dashboard may show a generation's aggregate issued/redemption counts
+  and which invitation records issued blinded requests under it. It stores no
+  finalized tickets or mapping from an invitation's blinded requests to later
+  redemption.
+
+The key ID therefore enables revocation grouping without adding a user
+identifier. Blind signatures continue to prevent issuance-to-redemption
+linkage. Plaintext grouping remains client-side; cross-device tombstones leave
+a client only inside the existing end-to-end encrypted sync envelope.
+
 ## Zero-Trust Scope: OA Infrastructure
 
 In the scope of this project, we say that "Zero trust" means users do not need to trust any OA-operated component (org,
@@ -280,4 +305,3 @@ inference requests?** For the formal threat model and collusion analysis, see bl
 | "The org could serve per-user public keys to break unlinkability."           | Detectable. The public key endpoint is publicly accessible and unauthenticated. Any user or third party can call it at any time to record and compare keys. Since verification calls are independent and unpredictable, the org cannot serve per-user keys without detection. A single inconsistency reported by any observer exposes the attack. Future: automated transparency log. |
 | "OpenRouter could perform traffic analysis on ephemeral keys to deanonymize users." | False. Each session uses a different ephemeral key with no user identity binding. There is no persistent pseudonym across sessions for the provider to build a longitudinal profile against. Content-based correlation has only plausible deniability -- the provider cannot distinguish Alice sending prompt X from Bob sending the same prompt. This is the cross-unlinkability guarantee (see blog post [Section 3.1.1](https://openanonymity.ai/blog/unlinkable-inference/#311-adversarial-inference-provider)). |
 | "Toggle/ownership verification means trusting OpenRouter, violating zero trust to the OA system components." | False. Toggle and ownership checks enforce accountability on the *station's* provider account -- they are not about trusting the OA system. If OpenRouter lies about its own API state, it undermines itself, not OA. Regardless, user prompts remain unlinkable because blind signatures and ephemeral keys carry no user identity. |
-

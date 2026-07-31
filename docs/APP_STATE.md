@@ -25,6 +25,41 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
+- 2026-07-31: Ticket signing-key rotation is an immediate invalidation
+  boundary.
+  - Every newly redeemed ticket stores the global RFC 9578 `token_key_id` as
+    `ticket_key_id`. Legacy/imported tickets are normalized by extracting the
+    same 32-byte field from the finalized token in
+    `chat/domain/ticketKeys.js`.
+  - Org ticket errors are unwrapped from FastAPI's structured `detail`. On
+    `TICKET_KEY_INVALIDATED`, `TicketStore.consumeTickets(...)` atomically
+    deletes every active or archived local ticket with `invalidated_key_id`
+    and leaves tickets from newer generations untouched. Deleted generations
+    cannot reappear through export or sync: the local, union-merged
+    `tickets-invalidated-key-ids` list filters local loads, imports, and
+    incoming sync blobs. Sync publishes one encrypted append-only record per
+    invalidated generation (plus the legacy aggregate migration record), so
+    concurrent devices cannot lose distinct tombstones through the org's LWW
+    blob store. Local ticket operations and sync merges share the
+    `oa-inference-tickets` Web Lock, preventing local/remote unions from
+    overwriting each other. Sync schema v2 performs one full pull after upgrade
+    so records skipped by older clients are rediscovered. Tombstones contain
+    only global public-key fingerprints, never tickets or identity metadata.
+    Never infer a batch from invite metadata or timestamps; the embedded
+    public-key fingerprint is the grouping authority.
+  - `acquireSessionAccess(...)` automatically retries when enough tickets from
+    another generation remain. Otherwise it tells the user that the org
+    rotated its key and that a new invite must be redeemed. The
+    `ticket-key-invalidated` window event drives the seven-second removal toast.
+  - Invite issuance binds each blinded batch to the public `key_id` fetched by
+    the client. If rotation wins before issuance is committed, the org restores
+    the single-use credential reservation and returns `TICKET_KEY_CHANGED`;
+    the client tells the user the invite was not consumed and can be retried
+    against the newly fetched public key.
+  - The key ID is a shared public-generation fingerprint, not identity
+    metadata. It stays in the user's local ticket store and does not weaken the
+    blind-signature unlinkability boundary.
+
 - 2026-07-31: OpenRouter catalog labels for Anthropic models are normalized to
   include the `Anthropic:` prefix when upstream omits it. Already-prefixed names
   remain unchanged.
