@@ -1,0 +1,742 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import { BillingClient, isLoopbackHostname } from '../../chat/services/billingClient.js';
+
+class MemoryPendingStore {
+    constructor() { this.values = new Map(); }
+    async get(key) { return this.values.has(key) ? structuredClone(this.values.get(key)) : null; }
+    async put(value) { this.values.set(value.accountScope, structuredClone(value)); return this.get(value.accountScope); }
+    async delete(key) { this.values.delete(key); }
+}
+
+function response(data, ok = true, status = 200) {
+    return {
+        ok,
+        status,
+        async text() { return JSON.stringify(data); },
+        async json() { return data; }
+    };
+}
+
+function makeAuth(scope = 'demo:local-test-user') {
+    return {
+        async resolve() {
+            return { scope, headers: { 'X-OA-Demo-Account-ID': 'local-test-user-1234' }, mode: 'development' };
+        },
+        getKnownScope(state) { return state?.accountId ? `account:${state.accountId}` : scope; },
+        subscribe() { return () => {}; }
+    };
+}
+
+function memoryStorage() {
+    const values = new Map();
+    return {
+        getItem(key) { return values.has(key) ? values.get(key) : null; },
+        setItem(key, value) { values.set(key, String(value)); },
+        removeItem(key) { values.delete(key); }
+    };
+}
+
+function memoryLockManager() {
+    return {
+        async request(_name, _options, callback) {
+            return callback();
+        }
+    };
+}
+
+test('billing recognizes only explicit loopback hostnames', () => {
+    assert.equal(isLoopbackHostname('localhost'), true);
+    assert.equal(isLoopbackHostname('127.0.0.1'), true);
+    assert.equal(isLoopbackHostname('::1'), true);
+    assert.equal(isLoopbackHostname('localhost.example.com'), false);
+});
+
+test('public plan request does not create or send a billing identity', async () => {
+    const calls = [];
+    const client = new BillingClient({
+        authProvider: {
+            resolve() { throw new Error('auth must not run'); },
+            subscribe() { return () => {}; }
+        },
+        fetchImpl: async (url, options) => {
+            calls.push({ url, options });
+            return response({
+                id: 'premium_monthly', unit_amount: 3500, currency: 'usd',
+                interval: 'month', tickets_per_period: 300
+            });
+        }
+    });
+
+    const plan = await client.getPlan();
+
+    assert.equal(plan.unit_amount, 3500);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].options.headers.Authorization, undefined);
+    assert.equal(calls[0].options.headers['X-OA-Demo-Account-ID'], undefined);
+    client.destroy();
+});
+
+test('Checkout stores its session under the frozen account scope and sends no account identifier', async () => {
+    const storage = memoryStorage();
+    const calls = [];
+    const originalWindow = globalThis.window;
+    globalThis.window = {
+        location: {
+            origin: 'https://staging.openanonymity.ai',
+            assign() {}
+        }
+    };
+    const client = new BillingClient({
+        authProvider: makeAuth('account:alpha'),
+        storage,
+        fetchImpl: async (url, options) => {
+            calls.push({ url, options });
+            return response({ session_id: 'cs_test_alpha' });
+        }
+    });
+
+    try {
+        await client.checkout();
+        const body = JSON.parse(calls[0].options.body);
+        assert.deepEqual(body, { return_origin: 'https://staging.openanonymity.ai' });
+        assert.equal(body.account_id, undefined);
+        assert.equal(client.getCheckoutSession('account:alpha').sessionId, 'cs_test_alpha');
+    } finally {
+        client.destroy();
+        globalThis.window = originalWindow;
+    }
+});
+
+test('an account switch during Checkout prevents redirect and preserves per-account recovery', async () => {
+    const storage = memoryStorage();
+    let currentScope = 'account:alpha';
+    let releaseCheckout;
+    let redirected = false;
+    const checkoutGate = new Promise(resolve => { releaseCheckout = resolve; });
+    const auth = {
+        async resolve() {
+            const scope = currentScope;
+            return { scope, headers: { Authorization: `Bearer ${scope}` }, mode: 'account' };
+        },
+        getKnownScope() { return currentScope; },
+        subscribe() { return () => {}; }
+    };
+    const originalWindow = globalThis.window;
+    globalThis.window = {
+        location: {
+            origin: 'https://staging.openanonymity.ai',
+            assign() { redirected = true; }
+        }
+    };
+    const client = new BillingClient({
+        authProvider: auth,
+        storage,
+        fetchImpl: async () => {
+            await checkoutGate;
+            return response({
+                session_id: 'cs_test_alpha',
+                url: 'https://checkout.stripe.test/alpha'
+            });
+        }
+    });
+
+    try {
+        const checkout = client.checkout();
+        await new Promise(resolve => setTimeout(resolve, 0));
+        currentScope = 'account:beta';
+        client.handleIdentityChange({ accountId: 'beta' });
+        releaseCheckout();
+
+        await assert.rejects(checkout, error => error.name === 'AbortError');
+        assert.equal(redirected, false);
+        assert.equal(client.getCheckoutSession('account:alpha'), null);
+        assert.equal(client.getCheckoutSession('account:beta'), null);
+    } finally {
+        client.destroy();
+        globalThis.window = originalWindow;
+    }
+});
+
+test('saved Checkout confirmation resumes after reload for the same local account', async () => {
+    const storage = memoryStorage();
+    const scope = 'demo:local-test-user';
+    const client = new BillingClient({
+        authProvider: {
+            ...makeAuth(scope),
+            hasKnownIdentity() { return true; }
+        },
+        storage,
+        fetchImpl: async url => {
+            assert.ok(url.endsWith('/api/billing/status'));
+            return response({ available_batches: 1, plan: { tickets_per_period: 300 } });
+        }
+    });
+    client.saveCheckoutSession('cs_test_saved', scope);
+
+    const status = await client.resumeSavedCheckout({ pollMs: 1 });
+
+    assert.equal(status.available_batches, 1);
+    assert.equal(client.getCheckoutSession(scope), null);
+    client.destroy();
+});
+
+test('Checkout recovery is scoped and an account switch aborts without clearing it', async () => {
+    let currentScope = 'account:alpha';
+    let releaseStatus;
+    const statusGate = new Promise(resolve => { releaseStatus = resolve; });
+    const auth = {
+        async resolve() {
+            const scope = currentScope;
+            return { scope, headers: { Authorization: `Bearer ${scope}` }, mode: 'account' };
+        },
+        getKnownScope() { return currentScope; },
+        subscribe() { return () => {}; }
+    };
+    const client = new BillingClient({
+        authProvider: auth,
+        storage: memoryStorage(),
+        fetchImpl: async url => {
+            assert.ok(url.endsWith('/api/billing/status'));
+            await statusGate;
+            return response({ available_batches: 0, plan: {} });
+        }
+    });
+
+    const reconciliation = client.reconcileCheckout('cs_test_alpha', { pollMs: 1000 });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    currentScope = 'account:beta';
+    client.handleIdentityChange({ accountId: 'beta' });
+    releaseStatus();
+
+    await assert.rejects(reconciliation, error => error.name === 'AbortError');
+    assert.equal(client.getCheckoutSession('account:alpha').sessionId, 'cs_test_alpha');
+    assert.equal(client.getCheckoutSession('account:beta'), null);
+    client.destroy();
+});
+
+test('a stale status response cannot be displayed after account switching', async () => {
+    let currentScope = 'account:alpha';
+    let releaseStatus;
+    const statusGate = new Promise(resolve => { releaseStatus = resolve; });
+    const auth = {
+        async resolve() {
+            const scope = currentScope;
+            return { scope, headers: { Authorization: `Bearer ${scope}` }, mode: 'account' };
+        },
+        getKnownScope() { return currentScope; },
+        subscribe() { return () => {}; }
+    };
+    const client = new BillingClient({
+        authProvider: auth,
+        fetchImpl: async () => {
+            await statusGate;
+            return response({ available_batches: 9, plan: {} });
+        }
+    });
+
+    const loading = client.getStatus({ force: true });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    currentScope = 'account:beta';
+    client.handleIdentityChange({ accountId: 'beta' });
+    releaseStatus();
+
+    await assert.rejects(loading, error => error.name === 'AbortError');
+    assert.equal(client.status, null);
+    client.destroy();
+});
+
+test('automatic preparation processes at most one accumulated batch per page activation', async () => {
+    const pendingStore = new MemoryPendingStore();
+    const auth = makeAuth();
+    auth.hasKnownIdentity = () => true;
+    const client = new BillingClient({
+        authProvider: auth,
+        pendingStore,
+        fetchImpl: async url => {
+            assert.ok(url.endsWith('/api/billing/status'));
+            return response({ available_batches: 3, plan: { tickets_per_period: 300 } });
+        }
+    });
+    let prepared = 0;
+    client.prepareOneBatch = async () => {
+        prepared += 1;
+        return { ticketsAdded: 300 };
+    };
+
+    const first = await client.automaticallyPrepareOneBatch();
+    const second = await client.automaticallyPrepareOneBatch();
+
+    assert.equal(first.ticketsAdded, 300);
+    assert.equal(second, null);
+    assert.equal(prepared, 1);
+    client.destroy();
+});
+
+test('ticket preparation fails closed when the next allowance is missing or exceeds 300', async () => {
+    for (const [nextCount, expectedCode] of [
+        [undefined, 'BILLING_ALLOWANCE_UNAVAILABLE'],
+        [301, 'BILLING_ALLOWANCE_INVALID']
+    ]) {
+        const client = new BillingClient({
+            authProvider: makeAuth(),
+            pendingStore: new MemoryPendingStore(),
+            lockManager: memoryLockManager(),
+            ticketStore: {
+                async init() {},
+                getCount: () => 0,
+                getTickets: () => []
+            },
+            fetchImpl: async url => {
+                assert.ok(url.endsWith('/api/billing/status'));
+                return response({
+                    available_batches: 1,
+                    next_claim_ticket_count: nextCount,
+                    plan: { tickets_per_period: 300 }
+                });
+            }
+        });
+
+        await assert.rejects(
+            () => client.prepareOneBatch(),
+            error => error.code === expectedCode
+        );
+        client.destroy();
+    }
+});
+
+test('browser ticket preparation fails closed when Web Locks are unavailable', async () => {
+    const originalWindow = globalThis.window;
+    globalThis.window = {};
+    const client = new BillingClient({
+        authProvider: makeAuth(),
+        pendingStore: new MemoryPendingStore(),
+        lockManager: {},
+        ticketStore: { async init() {} },
+        fetchImpl: async () => response({})
+    });
+
+    try {
+        await assert.rejects(
+            () => client.prepareOneBatch(),
+            error => error.code === 'BILLING_BROWSER_LOCK_UNAVAILABLE'
+        );
+    } finally {
+        client.destroy();
+        globalThis.window = originalWindow;
+    }
+});
+
+test('one prorated paid batch is blinded, signed, finalized, and imported without billing metadata', async () => {
+    const targetCount = 147;
+    const pendingStore = new MemoryPendingStore();
+    const wallet = [];
+    const claimBodies = [];
+    let statusCalls = 0;
+    const client = new BillingClient({
+        baseUrl: 'http://127.0.0.1:8005',
+        authProvider: makeAuth(),
+        pendingStore,
+        lockManager: memoryLockManager(),
+        privacyPass: {
+            async createSingleTokenRequest(_publicKey) {
+                const index = this.count || 0;
+                this.count = index + 1;
+                return {
+                    blindedRequest: `blind-${index}`,
+                    serializedState: { protocol: 'test', index }
+                };
+            },
+            async finalizeToken(signed, state) {
+                return `final-${state.index}-${signed}`;
+            }
+        },
+        ticketStore: {
+            getCount: () => wallet.length,
+            getTickets: () => wallet,
+            async addTickets(tickets, options) {
+                assert.equal(options.requireDurable, true);
+                wallet.push(...tickets);
+            }
+        },
+        fetchImpl: async (url, options = {}) => {
+            if (url.endsWith('/api/billing/status')) {
+                statusCalls += 1;
+                return response({
+                    premium_active: true,
+                    subscription: { status: 'active' },
+                    available_batches: statusCalls === 1 ? 1 : 0,
+                    available_tickets: statusCalls === 1 ? targetCount : 0,
+                    next_claim_ticket_count: statusCalls === 1 ? targetCount : null,
+                    plan: { tickets_per_period: 300 }
+                });
+            }
+            if (url.endsWith('/api/ticket/issue/public-key')) {
+                return response({ public_key: 'issuer-public-key' });
+            }
+            if (url.endsWith('/api/billing/tickets/claim')) {
+                claimBodies.push({ body: JSON.parse(options.body), headers: options.headers });
+                return response({
+                    tickets_issued: targetCount,
+                    signed_responses: Array.from({ length: targetCount }, (_, index) => [index, `signed-${index}`])
+                });
+            }
+            throw new Error(`Unexpected request: ${url}`);
+        }
+    });
+
+    const result = await client.prepareOneBatch();
+
+    assert.equal(result.ticketsAdded, targetCount);
+    assert.equal(wallet.length, targetCount);
+    assert.equal(claimBodies.length, 1);
+    assert.deepEqual(Object.keys(claimBodies[0].body), ['blinded_requests']);
+    assert.equal(claimBodies[0].body.blinded_requests.length, targetCount);
+    assert.equal(claimBodies[0].headers['X-OA-Demo-Account-ID'], 'local-test-user-1234');
+    for (const ticket of wallet) {
+        assert.deepEqual(Object.keys(ticket).sort(), [
+            'blinded_request', 'created_at', 'finalized_ticket', 'signed_response'
+        ]);
+    }
+    assert.equal(await pendingStore.get('demo:local-test-user'), null);
+    client.destroy();
+});
+
+test('server-provided finalized tickets fail closed before wallet import', async () => {
+    const pendingStore = new MemoryPendingStore();
+    let imported = false;
+    const client = new BillingClient({
+        baseUrl: 'http://127.0.0.1:8005',
+        authProvider: makeAuth(),
+        pendingStore,
+        lockManager: memoryLockManager(),
+        privacyPass: {
+            count: 0,
+            async createSingleTokenRequest() {
+                const index = this.count++;
+                return { blindedRequest: `blind-${index}`, serializedState: { index } };
+            }
+        },
+        ticketStore: {
+            getCount: () => 0,
+            getTickets: () => [],
+            async addTickets() { imported = true; }
+        },
+        fetchImpl: async (url) => {
+            if (url.endsWith('/api/billing/status')) return response({ available_batches: 1, next_claim_ticket_count: 300, plan: { tickets_per_period: 300 } });
+            if (url.endsWith('/api/ticket/issue/public-key')) return response({ public_key: 'issuer-public-key' });
+            return response({ finalized_tickets: ['forbidden'], signed_responses: [] });
+        }
+    });
+
+    await assert.rejects(
+        () => client.prepareOneBatch(),
+        error => error.code === 'BILLING_SERVER_FINALIZED_TICKETS'
+    );
+    assert.equal(imported, false);
+    assert.equal((await pendingStore.get('demo:local-test-user')).generatedCount, 300);
+    client.destroy();
+});
+
+test('unexpected server metadata fails closed before wallet import', async () => {
+    const pendingStore = new MemoryPendingStore();
+    let imported = false;
+    const client = new BillingClient({
+        baseUrl: 'http://127.0.0.1:8005',
+        authProvider: makeAuth(),
+        pendingStore,
+        lockManager: memoryLockManager(),
+        privacyPass: {
+            count: 0,
+            async createSingleTokenRequest() {
+                const index = this.count++;
+                return { blindedRequest: `blind-${index}`, serializedState: { index } };
+            }
+        },
+        ticketStore: {
+            getCount: () => 0,
+            getTickets: () => [],
+            async addTickets() { imported = true; }
+        },
+        fetchImpl: async url => {
+            if (url.endsWith('/api/billing/status')) return response({ available_batches: 1, next_claim_ticket_count: 300, plan: { tickets_per_period: 300 } });
+            if (url.endsWith('/api/ticket/issue/public-key')) return response({ public_key: 'issuer-public-key' });
+            return response({
+                account_id: 'forbidden-account-link',
+                signed_responses: Array.from({ length: 300 }, (_, index) => [index, `signed-${index}`])
+            });
+        }
+    });
+
+    await assert.rejects(
+        () => client.prepareOneBatch(),
+        error => error.code === 'BILLING_UNEXPECTED_RESPONSE_METADATA'
+    );
+    assert.equal(imported, false);
+    assert.equal((await pendingStore.get('demo:local-test-user')).generatedCount, 300);
+    client.destroy();
+});
+
+test('account change aborts work but leaves account-scoped recovery state untouched', async () => {
+    const pendingStore = new MemoryPendingStore();
+    await pendingStore.put({ accountScope: 'demo:old-user', phase: 'generating', requests: [] });
+    const client = new BillingClient({
+        authProvider: makeAuth(),
+        pendingStore,
+        fetchImpl: async () => response({})
+    });
+    let aborted = false;
+    client.activeController = { abort() { aborted = true; } };
+
+    client.handleIdentityChange({ accountId: 'new-user' });
+
+    assert.equal(aborted, true);
+    assert.equal((await pendingStore.get('demo:old-user')).phase, 'generating');
+    client.destroy();
+});
+
+test('reload resumes finalization from the saved chunk without regenerating requests', async () => {
+    const pendingStore = new MemoryPendingStore();
+    const requests = Array.from({ length: 300 }, (_, index) => ({
+        index,
+        blindedRequest: `blind-${index}`,
+        serializedState: { index }
+    }));
+    const signedResponses = Array.from({ length: 300 }, (_, index) => [index, `signed-${index}`]);
+    const finalizedTickets = Array.from({ length: 150 }, (_, index) => ({
+        blinded_request: `blind-${index}`,
+        signed_response: `signed-${index}`,
+        finalized_ticket: `final-${index}`,
+        created_at: '2026-01-01T00:00:00.000Z'
+    }));
+    await pendingStore.put({
+        accountScope: 'demo:local-test-user',
+        issuerFingerprint: 'saved-fingerprint',
+        targetCount: 300,
+        generatedCount: 300,
+        requests,
+        signedResponses,
+        finalizedTickets,
+        finalizedCount: 150,
+        phase: 'finalizing',
+        createdAt: '2026-01-01T00:00:00.000Z'
+    });
+    const wallet = [];
+    let generated = 0;
+    let finalized = 0;
+    const client = new BillingClient({
+        baseUrl: 'http://127.0.0.1:8005',
+        authProvider: makeAuth(),
+        pendingStore,
+        lockManager: memoryLockManager(),
+        privacyPass: {
+            async createSingleTokenRequest() { generated += 1; throw new Error('must not regenerate'); },
+            async finalizeToken(_signed, state) { finalized += 1; return `final-${state.index}`; }
+        },
+        ticketStore: {
+            getCount: () => wallet.length,
+            getTickets: () => wallet,
+            async addTickets(tickets) { wallet.push(...tickets); }
+        },
+        fetchImpl: async url => {
+            if (url.endsWith('/api/billing/status')) {
+                return response({ available_batches: 0, plan: { tickets_per_period: 300 } });
+            }
+            throw new Error(`Unexpected request during finalization resume: ${url}`);
+        }
+    });
+
+    const result = await client.prepareOneBatch();
+
+    assert.equal(generated, 0);
+    assert.equal(finalized, 150);
+    assert.equal(result.ticketsAdded, 300);
+    assert.equal(wallet.length, 300);
+    client.destroy();
+});
+
+test('wallet persistence failure keeps the completed local recovery record', async () => {
+    const pendingStore = new MemoryPendingStore();
+    const requests = Array.from({ length: 300 }, (_, index) => ({
+        index,
+        blindedRequest: `blind-${index}`,
+        serializedState: { index }
+    }));
+    await pendingStore.put({
+        accountScope: 'demo:local-test-user',
+        issuerFingerprint: 'saved-fingerprint',
+        targetCount: 300,
+        generatedCount: 300,
+        requests,
+        signedResponses: Array.from({ length: 300 }, (_, index) => [index, `signed-${index}`]),
+        finalizedTickets: Array.from({ length: 300 }, (_, index) => ({
+            blinded_request: `blind-${index}`,
+            signed_response: `signed-${index}`,
+            finalized_ticket: `final-${index}`,
+            created_at: '2026-01-01T00:00:00.000Z'
+        })),
+        finalizedCount: 300,
+        phase: 'finalizing',
+        createdAt: '2026-01-01T00:00:00.000Z'
+    });
+    const client = new BillingClient({
+        authProvider: makeAuth(),
+        pendingStore,
+        lockManager: memoryLockManager(),
+        ticketStore: {
+            getCount: () => 0,
+            getTickets: () => [],
+            async addTickets(_tickets, options) {
+                assert.equal(options.requireDurable, true);
+                throw new Error('IndexedDB write failed');
+            }
+        },
+        fetchImpl: async url => {
+            if (url.endsWith('/api/billing/status')) return response({ available_batches: 0, plan: {} });
+            throw new Error(`Unexpected request: ${url}`);
+        }
+    });
+
+    await assert.rejects(() => client.prepareOneBatch(), /IndexedDB write failed/);
+    const saved = await pendingStore.get('demo:local-test-user');
+    assert.equal(saved.finalizedCount, 300);
+    assert.equal(saved.finalizedTickets.length, 300);
+    client.destroy();
+});
+
+test('recovery accepts already-imported tickets in active or archived wallet storage', async () => {
+    const pendingStore = new MemoryPendingStore();
+    const requests = Array.from({ length: 300 }, (_, index) => ({
+        index, blindedRequest: `blind-${index}`, serializedState: { index }
+    }));
+    const finalizedTickets = Array.from({ length: 300 }, (_, index) => ({
+        blinded_request: `blind-${index}`,
+        signed_response: `signed-${index}`,
+        finalized_ticket: `final-${index}`,
+        created_at: '2026-01-01T00:00:00.000Z'
+    }));
+    await pendingStore.put({
+        accountScope: 'demo:local-test-user',
+        issuerFingerprint: 'saved-fingerprint',
+        targetCount: 300,
+        generatedCount: 300,
+        requests,
+        signedResponses: Array.from({ length: 300 }, (_, index) => [index, `signed-${index}`]),
+        finalizedTickets,
+        finalizedCount: 300,
+        phase: 'imported',
+        createdAt: '2026-01-01T00:00:00.000Z'
+    });
+    const active = finalizedTickets.slice(1);
+    const archived = [{ ...finalizedTickets[0], consumed_at: '2026-01-01T00:01:00.000Z' }];
+    const client = new BillingClient({
+        authProvider: makeAuth(),
+        pendingStore,
+        lockManager: memoryLockManager(),
+        ticketStore: {
+            getCount: () => active.length,
+            getTickets: () => active,
+            getArchiveTickets: () => archived,
+            async addTickets(_tickets, options) { assert.equal(options.requireDurable, true); }
+        },
+        fetchImpl: async url => {
+            if (url.endsWith('/api/billing/status')) return response({ available_batches: 0, plan: {} });
+            throw new Error(`Unexpected request: ${url}`);
+        }
+    });
+
+    const result = await client.prepareOneBatch();
+
+    assert.equal(result.totalActive, 299);
+    assert.equal(await pendingStore.get('demo:local-test-user'), null);
+    assert.equal(archived.length, 1);
+    client.destroy();
+});
+
+test('one frozen billing identity is used across status and claim requests', async () => {
+    const base = makeAuth();
+    let resolveCalls = 0;
+    const auth = {
+        ...base,
+        async resolve() {
+            resolveCalls += 1;
+            return base.resolve();
+        }
+    };
+    const pendingStore = new MemoryPendingStore();
+    const wallet = [];
+    const client = new BillingClient({
+        authProvider: auth,
+        pendingStore,
+        lockManager: memoryLockManager(),
+        privacyPass: {
+            count: 0,
+            async createSingleTokenRequest() {
+                const index = this.count++;
+                return { blindedRequest: `blind-${index}`, serializedState: { index } };
+            },
+            async finalizeToken(_signed, state) { return `final-${state.index}`; }
+        },
+        ticketStore: {
+            getCount: () => wallet.length,
+            getTickets: () => wallet,
+            async addTickets(tickets) { wallet.push(...tickets); }
+        },
+        fetchImpl: async url => {
+            if (url.endsWith('/api/billing/status')) {
+                return response({
+                    available_batches: wallet.length ? 0 : 1,
+                    next_claim_ticket_count: wallet.length ? null : 300,
+                    plan: { tickets_per_period: 300 }
+                });
+            }
+            if (url.endsWith('/api/ticket/issue/public-key')) return response({ public_key: 'key' });
+            return response({
+                signed_responses: Array.from({ length: 300 }, (_, index) => [index, `signed-${index}`])
+            });
+        }
+    });
+
+    await client.prepareOneBatch();
+
+    assert.equal(resolveCalls, 1);
+    client.destroy();
+});
+
+test('a scope-specific browser lock covers preparation and recovery re-read', async () => {
+    const calls = [];
+    const lockManager = {
+        async request(name, options, callback) {
+            calls.push({ name, mode: options.mode, phase: 'entered' });
+            const value = await callback();
+            calls.push({ name, phase: 'released' });
+            return value;
+        }
+    };
+    const pendingStore = new MemoryPendingStore();
+    await pendingStore.put({
+        accountScope: 'demo:local-test-user',
+        targetCount: 299,
+        requests: [],
+        signedResponses: [],
+        finalizedTickets: [],
+        finalizedCount: 0,
+        phase: 'invalid-test-stop'
+    });
+    const client = new BillingClient({
+        authProvider: makeAuth(),
+        pendingStore,
+        lockManager,
+        ticketStore: { async init() {} },
+        fetchImpl: async url => {
+            if (url.endsWith('/api/billing/status')) return response({ available_batches: 0, plan: {} });
+            throw new Error('stop after proving the lock was acquired');
+        }
+    });
+
+    await assert.rejects(() => client.prepareOneBatch());
+    assert.equal(calls[0].mode, 'exclusive');
+    assert.match(calls[0].name, /^oa-billing-claim-v1:[0-9a-f]{64}$/);
+    client.destroy();
+});

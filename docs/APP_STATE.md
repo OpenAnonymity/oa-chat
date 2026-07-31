@@ -4,6 +4,50 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-07-31: Stripe Premium and Genuine Ticket Issuance
+
+- The sidebar has one adaptive entry: signed-out users see `Upgrade`; any local
+  account changes it to `Account` without a reload. Free accounts get an
+  `Upgrade to Premium` action in Account, and subscribed accounts get
+  `Manage billing`. Logging out restores `Upgrade`.
+- `Upgrade` opens the public Premium modal without requiring an account, while
+  starting Checkout routes through account creation or sign-in and resumes
+  afterward. Public price and interval data come from oa-org's Stripe-validated
+  `/api/billing/plan`; the UI does not hard-code the amount.
+- Checkout, status, portal access, and paid claims use `BillingAuthProvider`.
+  Local development may create a random identity only when both oa-chat and
+  oa-org are loopback. Non-loopback deployments require the account adapter.
+  Pending Checkout reconciliation is stored under that billing scope and resumes
+  after reload only for the same identity.
+- A full paid period creates a 300-ticket entitlement. The initial payment and
+  allowance may be prorated to a smaller positive count. A claim sends exactly
+  `next_claim_ticket_count` browser-blinded requests to the existing org issuer;
+  no alternate RSA or demo issuer exists in oa-chat.
+- Pending generation, signed responses, and finalization live in the separate
+  local-only `oa-billing-local-v1` IndexedDB database. Work is persisted every
+  ten tokens, survives reload, is scoped to the active billing identity, and is
+  intentionally excluded from settings sync and export.
+- Paid preparation freezes one authentication scope, holds a scope-specific Web
+  Lock across the complete operation, and fails closed if Web Locks are
+  unavailable in a browser. Account switches abort without deleting the old
+  scope's recovery state.
+- The ordinary ticket wallet receives only `blinded_request`,
+  `signed_response`, `finalized_ticket`, and `created_at`. Redemption continues
+  through the existing accountless endpoints and sends no billing metadata.
+- Recovery state is cleared only after a strict IndexedDB write and read-back
+  confirms every finalized ticket. Claim responses are field-allowlisted before
+  finalization, so server-provided billing or finalized-ticket metadata fails
+  closed.
+- Checkout recovery is stored per account scope and uses frozen authentication;
+  stale status responses are discarded after identity changes. Ticket recovery
+  treats active and archived wallet records as imported, preserving archive
+  precedence so a spent ticket is never resurrected.
+- One available allowance is prepared automatically per billing activation.
+  Additional accumulated allowances require an explicit action labeled with
+  the next server-provided count. The modal intentionally omits server allowance
+  counters such as `Current paid allowance`; those are not browser wallet counts.
+  See [ACCOUNT_BILLING.md](ACCOUNT_BILLING.md).
+
 ## How Agents Should Use This
 
 1. Read this file before changing UI-heavy or stateful parts of the app.

@@ -1,0 +1,285 @@
+/** Premium subscription UI. Pricing and interval always come from oa-org. */
+
+const CHECKOUT_INTENT_KEY = 'oa-billing-checkout-intent-v1';
+const SAFE_SUBSCRIPTION_STATUSES = new Set([
+    'active', 'trialing', 'past_due', 'unpaid', 'canceled', 'incomplete', 'paused', 'none'
+]);
+
+export default class BillingModal {
+    constructor(app) {
+        this.app = app;
+        this.billing = app.services.billing;
+        this.account = app.services.account;
+        this.overlay = document.getElementById('billing-modal');
+        this.navButton = document.getElementById('account-tab-btn');
+        this.isOpen = false;
+        this.busy = null;
+        this.error = null;
+        this.snapshot = this.billing?.snapshot?.() || {};
+        this.unsubscribe = this.billing?.subscribe?.(snapshot => {
+            this.snapshot = snapshot;
+            if (this.isOpen) this.render();
+        });
+        this.handleBillingReturn();
+        void this.billing?.resumeKnownBilling?.().catch(error => {
+            if (error?.name !== 'AbortError') {
+                console.warn('[Billing] Saved Premium preparation is waiting for a safe retry.');
+            }
+        });
+    }
+
+    destroy() {
+        this.unsubscribe?.();
+    }
+
+    rememberCheckoutIntent() {
+        try { globalThis.sessionStorage?.setItem(CHECKOUT_INTENT_KEY, '1'); } catch {}
+    }
+
+    hasCheckoutIntent() {
+        try { return globalThis.sessionStorage?.getItem(CHECKOUT_INTENT_KEY) === '1'; } catch { return false; }
+    }
+
+    clearCheckoutIntent() {
+        try { globalThis.sessionStorage?.removeItem(CHECKOUT_INTENT_KEY); } catch {}
+    }
+
+    resumeCheckoutIntent() {
+        const state = this.account?.getState?.() || {};
+        if (!this.hasCheckoutIntent() || !state.accountId || !state.sessionVerified) return false;
+        this.clearCheckoutIntent();
+        this.open();
+        queueMicrotask(() => void this.checkout());
+        return true;
+    }
+
+    async handleBillingReturn() {
+        if (typeof window === 'undefined') return;
+        const params = new URLSearchParams(window.location.search);
+        const outcome = params.get('billing');
+        const sessionId = params.get('session_id');
+        if (!outcome) {
+            try {
+                const resumed = await this.billing.resumeSavedCheckout?.();
+                if (resumed) {
+                    this.open();
+                    this.app.showToast?.('Premium payment confirmed. Preparing private tickets.', 'success');
+                    void this.startPreparation({ automatic: true });
+                }
+            } catch (error) {
+                this.open();
+                this.error = this.safeErrorMessage(error, 'Payment confirmation is still pending.');
+                this.render();
+            }
+            return;
+        }
+        this.open();
+        if (outcome === 'success' && sessionId) {
+            this.busy = 'confirming';
+            this.render();
+            try {
+                await this.billing.reconcileCheckout(sessionId);
+                this.app.showToast?.('Premium payment confirmed. Preparing private tickets.', 'success');
+                void this.startPreparation({ automatic: true });
+            } catch (error) {
+                this.error = this.safeErrorMessage(error, 'Payment confirmation is still pending.');
+            } finally {
+                this.busy = null;
+                this.clearReturnParams();
+                this.render();
+            }
+        } else {
+            this.clearReturnParams();
+        }
+    }
+
+    clearReturnParams() {
+        const params = new URLSearchParams(window.location.search);
+        params.delete('billing');
+        params.delete('session_id');
+        const search = params.toString();
+        window.history.replaceState({}, '', `${window.location.pathname}${search ? `?${search}` : ''}${window.location.hash}`);
+    }
+
+    open() {
+        if (!this.overlay) return;
+        this.isOpen = true;
+        this.returnFocus = document.activeElement;
+        this.overlay.classList.remove('hidden');
+        this.navButton?.setAttribute('aria-expanded', 'true');
+        this.render();
+        void this.refresh();
+    }
+
+    close() {
+        if (!this.overlay) return;
+        this.isOpen = false;
+        this.overlay.classList.add('hidden');
+        this.overlay.innerHTML = '';
+        this.navButton?.setAttribute('aria-expanded', 'false');
+        this.returnFocus?.focus?.();
+        this.returnFocus = null;
+    }
+
+    async refresh() {
+        this.busy = 'loading';
+        this.error = null;
+        this.render();
+        try {
+            await this.billing.getPlan({ force: true });
+            try {
+                const status = await this.billing.getStatus({ force: true, createDemo: true });
+                this.snapshot = this.billing.snapshot();
+                if (Number(status.available_batches || 0) > 0) {
+                    void this.startPreparation({ automatic: true });
+                }
+            } catch (error) {
+                if (error?.code !== 'BILLING_AUTH_REQUIRED') throw error;
+            }
+        } catch (error) {
+            this.error = this.safeErrorMessage(error, 'Premium billing is unavailable.');
+        } finally {
+            if (this.busy === 'loading') this.busy = null;
+            if (this.isOpen) this.render();
+        }
+    }
+
+    async startPreparation({ automatic = false } = {}) {
+        if (this.busy === 'preparing') return;
+        this.busy = 'preparing';
+        this.error = null;
+        this.render();
+        try {
+            const result = automatic
+                ? await this.billing.automaticallyPrepareOneBatch()
+                : await this.billing.prepareOneBatch();
+            if (result) {
+                this.app.showToast?.(`${result.ticketsAdded} private tickets added to this browser.`, 'success', 6000);
+            }
+        } catch (error) {
+            if (error?.name !== 'AbortError') {
+                this.error = this.safeErrorMessage(error, 'Private ticket preparation paused safely.');
+                this.app.showToast?.('Private ticket preparation paused. You can retry safely.', 'error', 6000);
+            }
+        } finally {
+            this.busy = null;
+            if (this.isOpen) this.render();
+        }
+    }
+
+    async checkout() {
+        this.busy = 'checkout';
+        this.error = null;
+        this.render();
+        try {
+            await this.billing.checkout();
+        } catch (error) {
+            if (error?.code === 'BILLING_AUTH_REQUIRED' && this.app.accountModal?.open) {
+                this.rememberCheckoutIntent();
+                this.close();
+                this.app.accountModal.open();
+                return;
+            }
+            this.error = this.safeErrorMessage(error, 'Unable to open Stripe Checkout.');
+            this.busy = null;
+            this.render();
+        }
+    }
+
+    async portal() {
+        this.busy = 'portal';
+        this.error = null;
+        this.render();
+        try {
+            await this.billing.portal();
+        } catch (error) {
+            this.error = this.safeErrorMessage(error, 'Unable to open the billing portal.');
+            this.busy = null;
+            this.render();
+        }
+    }
+
+    formatPrice(plan) {
+        if (!plan || !Number.isFinite(Number(plan.unit_amount))) return 'Loading price…';
+        const amount = new Intl.NumberFormat(undefined, {
+            style: 'currency',
+            currency: String(plan.currency || 'usd').toUpperCase(),
+            maximumFractionDigits: Number(plan.unit_amount) % 100 === 0 ? 0 : 2
+        }).format(Number(plan.unit_amount) / 100);
+        return `${amount} / ${plan.interval || 'period'}`;
+    }
+
+    safeErrorMessage(error, fallback) {
+        const safeByCode = {
+            BILLING_AUTH_REQUIRED: 'Sign in to your OA account to continue.',
+            BILLING_BROWSER_LOCK_UNAVAILABLE: 'This browser cannot safely prepare Premium tickets across tabs.',
+            BILLING_NO_ENTITLEMENT: 'No Premium ticket allowance is ready yet.',
+            BILLING_ALLOWANCE_UNAVAILABLE: 'Your Premium ticket allowance is not ready yet.',
+            BILLING_ALLOWANCE_INVALID: 'Your Premium ticket allowance could not be verified.',
+            BILLING_INCOMPLETE_RESPONSE: 'Private ticket preparation received an incomplete response.'
+        };
+        return safeByCode[error?.code] || fallback;
+    }
+
+    formatSubscriptionStatus(value) {
+        const normalized = String(value || 'none').toLowerCase();
+        return SAFE_SUBSCRIPTION_STATUSES.has(normalized) ? normalized : 'unavailable';
+    }
+
+    render() {
+        if (!this.isOpen || !this.overlay) return;
+        const plan = this.snapshot.plan;
+        const status = this.snapshot.status;
+        const progress = this.snapshot.progress;
+        const active = status?.premium_active === true ||
+            ['active', 'trialing'].includes(status?.subscription?.status);
+        const remaining = Number(status?.available_batches || 0);
+        const ticketCount = Number(plan?.tickets_per_period || 0);
+        const nextTicketCount = Number(status?.next_claim_ticket_count || 0);
+        const progressLabel = progress
+            ? `${progress.phase === 'finalizing' ? 'Finalizing' : progress.phase === 'claiming' ? 'Requesting signatures' : 'Preparing'} private tickets — ${progress.completed} / ${progress.total}`
+            : '';
+
+        this.overlay.innerHTML = `
+            <div role="dialog" aria-modal="true" aria-labelledby="billing-title" class="w-full max-w-md rounded-xl border border-border bg-background shadow-2xl p-5 mx-4">
+                <div class="flex items-center justify-between mb-4">
+                    <div>
+                        <h2 id="billing-title" class="text-base font-semibold text-foreground">OA Premium</h2>
+                        <p class="text-xs text-muted-foreground">Secure checkout by Stripe</p>
+                    </div>
+                    <button id="billing-close-btn" class="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent" aria-label="Close">✕</button>
+                </div>
+                <div class="rounded-lg border border-border p-4 bg-muted/20">
+                    <p class="text-2xl font-semibold text-foreground">${this.formatPrice(plan)}</p>
+                    <p class="mt-1 text-sm text-muted-foreground">${ticketCount ? `${ticketCount} privacy-preserving tickets per full monthly period.` : 'Loading ticket allowance…'}</p>
+                    <p class="mt-2 text-xs text-muted-foreground">Your first payment and ticket allowance are prorated until the next renewal.</p>
+                    <p class="mt-3 text-xs text-muted-foreground">Your account proves payment only while tickets are issued. The finished tickets remain in this browser and are redeemed without your billing identity.</p>
+                </div>
+                ${this.error ? `<div class="mt-3 rounded-md bg-destructive/10 text-destructive text-xs p-3">${this.escape(this.error)}</div>` : ''}
+                ${progress ? `
+                    <div class="mt-4">
+                        <div class="flex justify-between text-xs text-muted-foreground mb-1"><span>${this.escape(progressLabel)}</span><span>${Math.round((progress.completed / progress.total) * 100)}%</span></div>
+                        <div class="h-2 rounded-full bg-muted overflow-hidden"><div class="h-full bg-blue-600 transition-all" style="width:${(progress.completed / progress.total) * 100}%"></div></div>
+                        <p class="mt-2 text-[11px] text-muted-foreground">You may close this window. Progress remains local and resumes after reload.</p>
+                    </div>
+                ` : ''}
+                ${status ? `<p class="mt-4 text-sm text-muted-foreground">Subscription: <span class="text-foreground">${this.escape(this.formatSubscriptionStatus(status.subscription?.status))}</span></p>` : ''}
+                <div class="mt-5 flex flex-col gap-2">
+                    ${!active ? `<button id="billing-checkout-btn" class="w-full h-10 rounded-lg bg-blue-600 text-white font-medium disabled:opacity-50" ${this.busy ? 'disabled' : ''}>${this.busy === 'checkout' ? 'Opening Checkout…' : 'Upgrade with Stripe'}</button>` : ''}
+                    ${remaining > 0 && !progress ? `<button id="billing-prepare-btn" class="w-full h-10 rounded-lg border border-border text-foreground font-medium disabled:opacity-50" ${this.busy ? 'disabled' : ''}>Prepare ${nextTicketCount || ticketCount || 300} private tickets</button>` : ''}
+                    ${status?.portal_available ? `<button id="billing-portal-btn" class="w-full h-9 rounded-lg text-sm text-muted-foreground hover:text-foreground" ${this.busy ? 'disabled' : ''}>Manage billing</button>` : ''}
+                </div>
+            </div>`;
+        this.overlay.onclick = event => { if (event.target === this.overlay) this.close(); };
+        this.overlay.querySelector('#billing-close-btn')?.addEventListener('click', () => this.close());
+        this.overlay.querySelector('#billing-checkout-btn')?.addEventListener('click', () => void this.checkout());
+        this.overlay.querySelector('#billing-prepare-btn')?.addEventListener('click', () => void this.startPreparation());
+        this.overlay.querySelector('#billing-portal-btn')?.addEventListener('click', () => void this.portal());
+    }
+
+    escape(value) {
+        const div = document.createElement('div');
+        div.textContent = String(value || '');
+        return div.innerHTML;
+    }
+}

@@ -10,6 +10,7 @@ class AccountModal {
         this.app = app;
         this.accountService = this.app.services.account;
         this.syncService = this.app.services.sync;
+        this.billingService = this.app.services.billing;
         this.isOpen = false;
         this.overlay = document.getElementById('account-modal');
         this.accountState = this.accountService.getState();
@@ -37,6 +38,7 @@ class AccountModal {
 
         // Sync state
         this.syncStatus = this.syncService.getStatus();
+        this.billingSnapshot = this.billingService?.snapshot?.() || {};
 
         // UI state
         this.returnFocusEl = null;
@@ -57,6 +59,11 @@ class AccountModal {
             }
         });
 
+        this.billingUnsubscribe = this.billingService?.subscribe?.(snapshot => {
+            this.billingSnapshot = snapshot;
+            if (this.isOpen && this.accountState?.accountId) this.render();
+        });
+
         this.attachTabListener();
         this.updateTabIndicator();
     }
@@ -64,7 +71,15 @@ class AccountModal {
     attachTabListener() {
         const tabBtn = document.getElementById('account-tab-btn');
         if (tabBtn) {
-            tabBtn.onclick = () => this.isOpen ? this.close() : this.open();
+            tabBtn.onclick = () => {
+                if (this.accountState?.accountId) {
+                    if (this.app.billingModal?.isOpen) this.app.billingModal.close();
+                    this.isOpen ? this.close() : this.open();
+                    return;
+                }
+                if (this.isOpen) this.close();
+                this.app.billingModal?.open?.();
+            };
         }
     }
 
@@ -72,9 +87,15 @@ class AccountModal {
         const tabBtn = document.getElementById('account-tab-btn');
         if (!tabBtn) return;
         // Only show logged-in (green) after session is verified with server
-        const isLoggedIn = this.accountState?.accountId && this.accountState?.sessionVerified;
+        const hasAccount = !!this.accountState?.accountId;
+        const isLoggedIn = hasAccount && this.accountState?.sessionVerified;
+        const label = hasAccount ? 'Account' : 'Upgrade';
         tabBtn.dataset.status = isLoggedIn ? 'logged-in' : 'none';
-        tabBtn.title = isLoggedIn ? 'Account (logged in)' : 'Account';
+        tabBtn.title = isLoggedIn ? 'Account (logged in)' : label;
+        tabBtn.setAttribute('aria-label', hasAccount ? 'Account' : 'Upgrade to Premium');
+        tabBtn.setAttribute('aria-controls', hasAccount ? 'account-modal' : 'billing-modal');
+        const labelNode = tabBtn.querySelector('[data-account-nav-label]');
+        if (labelNode) labelNode.textContent = label;
     }
 
     open() {
@@ -88,6 +109,14 @@ class AccountModal {
         this.accountService.clearErrors();
         this.render();
         this.overlay.classList.remove('hidden');
+
+        if (this.accountState?.accountId) {
+            void this.billingService?.getStatus?.({ force: true }).catch(error => {
+                if (error?.code !== 'BILLING_AUTH_REQUIRED') {
+                    console.warn('[Billing] Premium status is temporarily unavailable.');
+                }
+            });
+        }
 
         const tabBtn = document.getElementById('account-tab-btn');
         if (tabBtn) tabBtn.setAttribute('aria-expanded', 'true');
@@ -123,6 +152,7 @@ class AccountModal {
         }
         if (this.returnFocusEl?.focus) this.returnFocusEl.focus();
         this.returnFocusEl = null;
+        setTimeout(() => this.app.billingModal?.resumeCheckoutIntent?.(), 0);
     }
 
     resetCreationFlow() {
@@ -387,6 +417,21 @@ class AccountModal {
         this.resetCreationFlow();
         this.render();
         this.app?.showToast?.('Logged out', 'success');
+    }
+
+    openPremium() {
+        this.close();
+        this.app.billingModal?.open?.();
+    }
+
+    async manageBilling() {
+        this.close();
+        try {
+            await this.billingService?.portal?.();
+        } catch {
+            this.app?.showToast?.('Unable to open billing management.', 'error');
+            this.open();
+        }
     }
 
     // =========================================================================
@@ -656,6 +701,9 @@ class AccountModal {
                 if (isStale) return 'text-amber-500';
                 return 'text-emerald-500';
             })();
+            const subscriptionStatus = this.billingSnapshot?.status?.subscription?.status || 'none';
+            const premiumActive = this.billingSnapshot?.status?.premium_active === true ||
+                ['active', 'trialing'].includes(subscriptionStatus);
 
             return `
                 <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}">
@@ -678,6 +726,18 @@ class AccountModal {
                     </div>
 
                     <p class="text-[11px] text-muted-foreground text-center mb-3">Chat history sync coming soon</p>
+
+                    <div class="rounded-lg border border-border bg-muted/20 px-3 py-3 mb-3">
+                        <div class="flex items-center justify-between gap-3">
+                            <div>
+                                <p class="text-sm font-medium text-foreground">${premiumActive ? 'OA Premium' : 'Free account'}</p>
+                                <p class="text-[11px] text-muted-foreground">${premiumActive ? 'Premium subscription active' : 'Upgrade for monthly private tickets'}</p>
+                            </div>
+                            <button id="${premiumActive ? 'account-manage-billing-btn' : 'account-upgrade-btn'}" class="h-8 px-3 rounded-md text-xs font-medium ${premiumActive ? 'border border-border text-foreground' : 'bg-blue-600 text-white'}" type="button">
+                                ${premiumActive ? 'Manage billing' : 'Upgrade to Premium'}
+                            </button>
+                        </div>
+                    </div>
 
                     <div class="flex gap-3">
                         <button id="account-clear-btn" class="btn-ghost-hover flex-1 h-9 rounded-lg text-sm border border-border bg-background text-foreground transition-colors" type="button">
@@ -982,6 +1042,12 @@ class AccountModal {
 
         const syncBtn = document.getElementById('account-sync-btn');
         if (syncBtn) syncBtn.onclick = () => this.handleSyncNow();
+
+        const upgradeBtn = document.getElementById('account-upgrade-btn');
+        if (upgradeBtn) upgradeBtn.onclick = () => this.openPremium();
+
+        const manageBillingBtn = document.getElementById('account-manage-billing-btn');
+        if (manageBillingBtn) manageBillingBtn.onclick = () => void this.manageBilling();
     }
 
     async handleSyncNow() {
@@ -1007,6 +1073,10 @@ class AccountModal {
         if (this.syncUnsubscribe) {
             this.syncUnsubscribe();
             this.syncUnsubscribe = null;
+        }
+        if (this.billingUnsubscribe) {
+            this.billingUnsubscribe();
+            this.billingUnsubscribe = null;
         }
     }
 }

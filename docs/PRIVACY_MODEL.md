@@ -43,19 +43,21 @@ link them across sessions. See blog post
 See blog post [Section 1: Blind Signatures](https://openanonymity.ai/blog/unlinkable-inference/#1-blind-signatures)
 for the full cryptographic explanation.
 
-The user obtains inference tickets using an invitation code. During issuance:
+The user obtains inference tickets using an invitation code or a paid
+subscription entitlement. During issuance:
 
 1. The client generates a random token and blinds it locally (via @cloudflare/privacypass-ts).
-2. The blinded request is sent to the org/station via `/api/alpha-register`
-  along with the invitation code (credential).
+2. The blinded request is sent to the org via `/api/alpha-register` with an
+  invitation code, or `/api/billing/tickets/claim` with billing authentication.
 3. The org/station signs the blinded request without seeing the underlying token.
 4. The client receives the signed blinded response and unblinds it locally to
   produce a finalized ticket.
 
-**What the org sees at issuance**: the invitation code (which may be
-identity-linked) and the blinded requests. It knows "credential X produced N
-blinded requests." But it only ever sees the blinded form -- it never sees the
-underlying tokens.
+**What the org sees at issuance**: the invitation code or billing identity
+(which may be identity-linked) and the blinded requests. It knows "credential X
+produced N blinded requests." But it only ever sees the blinded form -- it
+never sees the underlying tokens. Subscription claims use the same Blind RSA
+issuer and the browser stores no billing metadata in finalized ticket records.
 
 ### 2. Requesting ephemeral API keys (ticket redemption)
 
@@ -127,7 +129,7 @@ discards the bounded child key but does not restore the ticket.
 
 | Actor | What it sees | Can it identify the user? | Why not? |
 |---|---|---|---|
-| **Org / Station** | Invitation credential plus blinded requests at issuance; finalized tickets + issued API keys at redemption; station governance events | No | Blind signatures make blinded requests (issuance) cryptographically unlinkable to finalized tickets (redemption). The org knows "credential X -> N blinded requests" but cannot determine which finalized tickets those became. Never sees inference content. |
+| **Org / Station** | Invitation or billing credential plus blinded requests at issuance; finalized tickets + issued API keys at redemption; station governance events | No | Blind signatures make blinded requests (issuance) cryptographically unlinkable to finalized tickets (redemption). The org knows "credential X -> N blinded requests" but cannot determine which finalized tickets those became. Never sees inference content. |
 | **Verifier** | Raw ephemeral key transiently during `/submit_key`, station/org signatures, derived truncated key hash, broadcast status | No | The verifier derives the hash server-side and does not receive user identity or prompts. The key carries no user identity because ticket issuance and redemption are unlinkable. |
 | **Inference provider** | API key + inference content (prompts/responses) | No | Key is ephemeral and anonymous. No user identity binding. Even a malicious provider cannot link prompts to a user or across sessions. |
 | **User** | Everything (their own tickets, keys, prompts, responses) | N/A | The user is the only party who can link all steps together. |

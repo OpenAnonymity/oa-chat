@@ -246,8 +246,11 @@ class TicketStore {
         return combined;
     }
 
-    async readFromDatabase() {
+    async readFromDatabase(options = {}) {
         if (typeof chatDB === 'undefined' || !chatDB.db) {
+            if (options.requireDurable) {
+                throw new Error('The local ticket database is not available.');
+            }
             return { active: [], archived: [] };
         }
 
@@ -263,6 +266,7 @@ class TicketStore {
             };
         } catch (error) {
             console.warn('Failed to load tickets from IndexedDB:', error);
+            if (options.requireDurable) throw error;
             return { active: [], archived: [] };
         }
     }
@@ -283,7 +287,12 @@ class TicketStore {
                 persisted = true;
             } catch (error) {
                 console.warn('Failed to persist tickets:', error);
+                if (options.requireDurable) throw error;
             }
+        }
+
+        if (options.requireDurable && !persisted) {
+            throw new Error('The local ticket database did not confirm the write.');
         }
 
         this.tickets = activeTickets;
@@ -411,13 +420,36 @@ class TicketStore {
         return this.peekTickets(1)[0] || null;
     }
 
-    async addTickets(newTickets) {
+    async addTickets(newTickets, options = {}) {
         return this.withLock(async () => {
             await this.ensureDbReady();
-            const { active, archived } = await this.readFromDatabase();
+            const { active, archived } = await this.readFromDatabase({
+                requireDurable: options.requireDurable === true
+            });
             const { tickets } = this.normalizeTickets(newTickets);
-            const combined = this.mergeTickets(active, tickets);
-            await this.persistTickets(combined, archived);
+            const archivedValues = new Set(
+                archived.map(ticket => ticket?.finalized_ticket).filter(Boolean)
+            );
+            const eligibleTickets = tickets.filter(
+                ticket => !archivedValues.has(ticket.finalized_ticket)
+            );
+            const combined = this.mergeTickets(active, eligibleTickets);
+            await this.persistTickets(combined, archived, {
+                requireDurable: options.requireDurable === true
+            });
+            if (options.requireDurable === true) {
+                const confirmed = await this.readFromDatabase({ requireDurable: true });
+                const confirmedValues = new Set(
+                    [...confirmed.active, ...confirmed.archived]
+                        .map(ticket => ticket?.finalized_ticket)
+                        .filter(Boolean)
+                );
+                if (!tickets.every(ticket => confirmedValues.has(ticket.finalized_ticket))) {
+                    throw new Error('The local ticket database did not round-trip every prepared ticket.');
+                }
+                this.tickets = confirmed.active;
+                this.archive = confirmed.archived;
+            }
             return combined.length;
         });
     }
