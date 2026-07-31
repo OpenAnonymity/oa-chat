@@ -10,7 +10,10 @@ SSO accounts use a separate WebAuthn PRF passkey to unlock encryption locally.
    OA account ID.
 2. The browser generates a random 256-bit account master key.
 3. The browser creates a resident, user-verified WebAuthn credential with the
-   `prf` extension. The credential is scoped to the app's WebAuthn RP/origin.
+   `prf` extension. Its WebAuthn username and display name are the verified
+   email returned by the selected SSO provider, matching the account label the
+   user recognizes in their passkey manager. The credential remains scoped to
+   the app's WebAuthn RP/origin.
 4. The PRF output is imported directly as a non-extractable AES-GCM key. It wraps
    the random account master key with a fresh 96-bit IV and fixed versioned AAD.
 5. The browser uploads only `{ credentialId, type, version, wrappedKey }` to
@@ -31,9 +34,9 @@ returned credential IDs as `allowCredentials`, evaluates the PRF locally, and
 decrypts the matching master-key wrapper. A synced passkey can therefore unlock
 the same data on another device without an OA account number or recovery code.
 
-The org sees the opted-in identity mapping, internal account ID, passkey
-credential ID, wrapper format metadata, and ciphertext. It never receives the
-PRF output or plaintext master key.
+The org sees the opted-in identity mapping, verified provider email, internal
+account ID, passkey credential ID, wrapper format metadata, and ciphertext. It
+never receives the PRF output or plaintext master key.
 
 ## Local key handling
 

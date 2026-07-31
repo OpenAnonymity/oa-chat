@@ -95,3 +95,54 @@ test('identity account describes ticket and preference sync', () => {
         globalThis.document = originalDocument;
     }
 });
+
+test('missing legacy SSO email returns to provider sign in before passkey setup', () => {
+    const originalDocument = globalThis.document;
+    globalThis.document = {
+        getElementById() {
+            return null;
+        }
+    };
+    const state = {
+        accountId: '1234567890123456',
+        githubLinked: true,
+        googleLinked: false,
+        oauthProvider: 'github',
+        oauthEmail: null,
+        encryptionMode: 'PRF_PENDING',
+        sessionVerified: false,
+        oauthSetupRequired: false,
+        oauthRecoveryRequired: false,
+        oauthKeyringRequired: false,
+        oauthLegacyPasskeyRequired: false,
+        passkeySupported: true,
+        busy: false,
+        action: null,
+        error: 'Continue with GitHub again so OA can label your encryption passkey'
+    };
+    const modal = new AccountModal({
+        services: {
+            account: {
+                getState: () => state,
+                subscribe: () => () => {}
+            },
+            sync: {
+                getStatus: () => ({}),
+                subscribe: () => () => {}
+            }
+        }
+    });
+    modal.accountState = state;
+    modal.escapeHtml = value => String(value ?? '');
+
+    try {
+        const html = modal.renderAccountUI();
+        assert.match(html, /Continue with GitHub/);
+        assert.match(html, /label your encryption passkey/);
+        assert.doesNotMatch(html, /GitHub sign in complete/);
+        assert.doesNotMatch(html, /Create encryption passkey/);
+    } finally {
+        modal.destroy();
+        globalThis.document = originalDocument;
+    }
+});

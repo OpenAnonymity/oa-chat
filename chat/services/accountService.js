@@ -60,6 +60,14 @@ export function inferPersistedEncryptionMode(settings) {
     return null;
 }
 
+export function oauthSessionNeedsEmailRefresh(session) {
+    const mode = session?.encryptionMode;
+    const email = typeof session?.email === 'string'
+        ? session.email.trim()
+        : '';
+    return !email && (mode === 'PRF_PENDING' || mode === 'LEGACY_SSO');
+}
+
 // Platform detection for auth token handling
 // Check electronAPI.isElectron (context-isolated) or process.versions.electron (non-isolated)
 const PLATFORM = (typeof window !== 'undefined' && (window.electronAPI?.isElectron || window?.process?.versions?.electron)) ? 'electron' : 'web';
@@ -557,6 +565,7 @@ class AccountService {
             githubLinked: false,
             googleLinked: false,
             oauthProvider: null,
+            oauthEmail: null,
             oauthSetupRequired: false,
             oauthRecoveryRequired: false,
             oauthKeyringRequired: false,
@@ -1147,9 +1156,27 @@ class AccountService {
                 }
                 const keyring = await this.fetchOAuthKeyring();
                 const mode = keyring.encryptionMode;
+                if (oauthSessionNeedsEmailRefresh({
+                    ...session,
+                    encryptionMode: mode
+                })) {
+                    this.setState({
+                        sessionVerified: false,
+                        oauthProvider: provider,
+                        oauthEmail: null,
+                        encryptionMode: mode,
+                        oauthSetupRequired: false,
+                        oauthRecoveryRequired: false,
+                        oauthKeyringRequired: false,
+                        oauthLegacyPasskeyRequired: false,
+                        error: `Continue with ${OAUTH_PROVIDERS[provider].label} again so OA can label your encryption passkey`
+                    });
+                    return true;
+                }
                 this.setState({
                     sessionVerified: true,
                     oauthProvider: provider,
+                    oauthEmail: session.email || null,
                     encryptionMode: mode,
                     oauthSetupRequired: mode === 'PRF_PENDING',
                     oauthRecoveryRequired: mode === 'LEGACY_SSO',
@@ -1171,11 +1198,14 @@ class AccountService {
         let anyLinked = false;
         for (const provider of Object.keys(OAUTH_PROVIDERS)) {
             try {
-                await fetchJson(`/auth/${provider}/session`, null, {
+                const session = await fetchJson(`/auth/${provider}/session`, null, {
                     method: 'GET',
                     accessToken: this.accessToken
                 });
                 this.state[`${provider}Linked`] = true;
+                if (session.email) {
+                    this.state.oauthEmail = session.email;
+                }
                 anyLinked = true;
             } catch (error) {
                 if (error?.status === 404) {
@@ -1543,6 +1573,7 @@ class AccountService {
             this.state.encryptionCredentialId;
         const previousProviderLinked = this.state[`${provider}Linked`];
         const previousOAuthProvider = this.state.oauthProvider;
+        const previousOAuthEmail = this.state.oauthEmail;
         const syncSuspended = !link && !!previousAccountId;
 
         this.setState({
@@ -1605,6 +1636,11 @@ class AccountService {
                     `${providerConfig.label} session did not include an OA account`
                 );
             }
+            if (oauthSessionNeedsEmailRefresh(session)) {
+                throw new Error(
+                    `Continue with ${providerConfig.label} again so OA can label your encryption passkey`
+                );
+            }
             if (!link && previousAccountId && accountId !== previousAccountId) {
                 throw new Error(
                     `This ${providerConfig.label} login belongs to a different OA account. ` +
@@ -1632,6 +1668,7 @@ class AccountService {
             this.state.accountId = accountId;
             this.state[`${provider}Linked`] = true;
             this.state.oauthProvider = provider;
+            this.state.oauthEmail = session.email || null;
             this.state.encryptionMode = session.encryptionMode ||
                 this.state.encryptionMode;
             this.state.sessionVerified = true;
@@ -1735,6 +1772,9 @@ class AccountService {
                 oauthProvider: restorePreviousAccount
                     ? previousOAuthProvider
                     : this.state.oauthProvider,
+                oauthEmail: restorePreviousAccount
+                    ? previousOAuthEmail
+                    : this.state.oauthEmail,
                 sessionVerified: syncSuspended
                     ? previousSessionRestored
                     : restorePreviousAccount
@@ -1805,6 +1845,7 @@ class AccountService {
         try {
             const wrapper = await createEncryptionKeyWrapper(
                 masterKey,
+                this.state.oauthEmail,
                 this.keyringWrappers.map(item => item.credentialId)
             );
             await fetchJson('/auth/keyring', wrapper, {
@@ -1909,7 +1950,10 @@ class AccountService {
                 base64ToBytes(decoded.salt)
             );
             masterKey = await decryptBytes(recoveryKey, decoded);
-            const wrapper = await createEncryptionKeyWrapper(masterKey);
+            const wrapper = await createEncryptionKeyWrapper(
+                masterKey,
+                this.state.oauthEmail
+            );
             wrapper.legacyRecoveryCodeHash = await computeRecoveryCodeHash(
                 recoveryCode,
                 this.state.accountId
@@ -2452,6 +2496,7 @@ class AccountService {
         this.state.githubLinked = false;
         this.state.googleLinked = false;
         this.state.oauthProvider = null;
+        this.state.oauthEmail = null;
         this.state.oauthSetupRequired = false;
         this.state.oauthRecoveryRequired = false;
         this.state.oauthKeyringRequired = false;
