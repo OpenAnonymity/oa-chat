@@ -30,12 +30,16 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     summary blocks, serializes callbacks, and flushes buffered reasoning before following
     text or images. This covers providers such as Claude and Grok that can resume thinking
     after emitting visible output.
-  - During streaming, the single reasoning section moves to the latest reasoning boundary;
-    resumed answer text renders below it. `streamingReasoningContentOffset` preserves that
-    layout across session rerenders and is removed when the message becomes final/static.
-    If a reasoning-only DOM is already visible when the first answer text arrives, that
-    text is inserted before the reasoning section immediately; do not wait for another
-    reasoning delta to correct the order, or the UI visibly flashes between layouts.
+  - Interleaved placement is strictly an active-reasoning affordance. While reasoning is
+    currently arriving, the single Thinking section moves after the output visible at that
+    boundary, and `streamingReasoningContentOffset` preserves that temporary position across
+    session rerenders. As soon as text/images resume, `streamingReasoning` becomes false,
+    the completed trace returns above all answer segments, its loading treatment is removed,
+    and the transient offset is deleted. Final, cancelled, and errored messages also enforce
+    the canonical reasoning-before-answer order.
+  - Reasoning duration accumulates only active reasoning intervals. Answer-token and image
+    streaming time must not be included in the completed `Thought for …` duration, and a
+    later reasoning phase must immediately restore the live `Thinking...` treatment.
   - Resumed output also receives a paragraph break in persisted message content when the
     provider supplied no whitespace, preventing joins such as `you.The` after final render,
     cancellation, export, or reload.
@@ -166,7 +170,10 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     `reserveAccessAcquisitionHandoff(...)` before closing the quick-ask panel so
     same-model key requests can survive the handoff. The underlying key request
     receives an abort signal and is cancelled when the last waiter aborts
-    outside that handoff window.
+    outside that handoff window. Its reasoning trace is marked as streaming only
+    while reasoning chunks are arriving; the first answer chunk completes that
+    phase before rendering the answer, so the panel no longer says `Thinking...`
+    throughout answer generation.
   - Quick-ask answers are not written to IndexedDB, do not create sessions, and
     do not update session search/title state. User close only hides the panel and
     lets the request finish in memory. Full `ChatArea.render()` calls abort/reset

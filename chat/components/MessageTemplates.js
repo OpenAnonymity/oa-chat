@@ -12,6 +12,7 @@ import { getStandardizedModelDisplayName } from '../services/modelConfig.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import { renderMemoryConfidenceBadgeHtml } from '../services/memoryRetrievalAssessment.js';
 import { normalizeMemoryRetrievalFailureReason } from '../services/memoryRetrievalError.js';
+import { formatReasoningDuration } from '../domain/interleavedStream.js';
 
 // In-memory cache for reasoning trace expanded state (persists across session switches)
 const reasoningExpandedState = new Set();
@@ -822,28 +823,6 @@ function extractReasoningSummaries(reasoning) {
     }
 
     return summaries;
-}
-
-/**
- * Formats a duration in milliseconds to a human-readable string.
- * @param {number} durationMs - Duration in milliseconds
- * @returns {string} Formatted duration string
- */
-function formatReasoningDuration(durationMs) {
-    if (!durationMs) return '';
-
-    const seconds = Math.round(durationMs / 1000);
-
-    if (seconds < 60) {
-        return `Thought for ${seconds}s`;
-    } else {
-        const minutes = Math.floor(seconds / 60);
-        const remainingSeconds = seconds % 60;
-        if (remainingSeconds === 0) {
-            return `Thought for ${minutes}m`;
-        }
-        return `Thought for ${minutes}m ${remainingSeconds}s`;
-    }
 }
 
 /**

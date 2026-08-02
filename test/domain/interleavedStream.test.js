@@ -2,9 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+    activateStreamingReasoning,
     appendInterleavedContent,
+    beginReasoningPhase,
     canFinalizeInterleavedContentInPlace,
-    shouldInsertInitialContentBeforeReasoning
+    completeStreamingReasoning,
+    createReasoningPhaseClock,
+    finishReasoningPhase,
+    formatReasoningDuration
 } from '../../chat/domain/interleavedStream.js';
 
 test('content remains contiguous while the provider is emitting output', () => {
@@ -64,9 +69,34 @@ test('segmented output forces final rendering to collapse into one content bubbl
     assert.equal(canFinalizeInterleavedContentInPlace(false, 1), false);
 });
 
-test('first visible output is inserted before an existing reasoning trace', () => {
-    assert.equal(shouldInsertInitialContentBeforeReasoning(false, false, true), true);
-    assert.equal(shouldInsertInitialContentBeforeReasoning(true, false, true), false);
-    assert.equal(shouldInsertInitialContentBeforeReasoning(false, true, true), false);
-    assert.equal(shouldInsertInitialContentBeforeReasoning(false, false, false), false);
+test('reasoning duration counts only active reasoning phases', () => {
+    const clock = createReasoningPhaseClock();
+
+    beginReasoningPhase(clock, 100);
+    beginReasoningPhase(clock, 120);
+    assert.equal(finishReasoningPhase(clock, 160), 60);
+    assert.equal(finishReasoningPhase(clock, 300), 60);
+
+    beginReasoningPhase(clock, 500);
+    assert.equal(finishReasoningPhase(clock, 540), 100);
+});
+
+test('streaming reasoning flags and offsets exist only during an active phase', () => {
+    const clock = createReasoningPhaseClock();
+    const message = { streamingReasoning: false };
+
+    activateStreamingReasoning(message, clock, 14, 100);
+    assert.equal(message.streamingReasoning, true);
+    assert.equal(message.streamingReasoningContentOffset, 14);
+
+    assert.equal(completeStreamingReasoning(message, clock, 175), 75);
+    assert.equal(message.streamingReasoning, false);
+    assert.equal(message.streamingReasoningContentOffset, undefined);
+    assert.equal(message.reasoningDuration, 75);
+});
+
+test('positive sub-second reasoning durations never display as zero seconds', () => {
+    assert.equal(formatReasoningDuration(75), 'Thought for 1s');
+    assert.equal(formatReasoningDuration(60000), 'Thought for 1m');
+    assert.equal(formatReasoningDuration(65000), 'Thought for 1m 5s');
 });

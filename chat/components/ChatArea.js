@@ -8,8 +8,15 @@ import { buildMessageHTML, buildEmptyState, buildSharedIndicator, buildImportedI
 import { exportChats, exportTickets } from '../services/globalExport.js';
 import { parseStreamingReasoningContent, parseReasoningContent } from '../services/reasoningParser.js';
 import { buildQuickAskQuestion, normalizeQuickAskSelection } from '../domain/quickAsk.js';
-import { canFinalizeInterleavedContentInPlace } from '../domain/interleavedStream.js';
-import { insertStreamingContentBubble } from './streamingLayout.js';
+import {
+    canFinalizeInterleavedContentInPlace,
+    formatReasoningDuration as formatReasoningDurationText
+} from '../domain/interleavedStream.js';
+import {
+    insertStreamingContentBubble,
+    placeCompletedReasoningTrace,
+    seedReasoningTypewriterForPhase
+} from './streamingLayout.js';
 import { resolveProvider, resolveProviderFromModelReference } from '../services/providerRegistry.js';
 
 export default class ChatArea {
@@ -619,6 +626,10 @@ export default class ChatArea {
                 onChunk: (content) => {
                     if (requestId !== this.quickAsk.activeRequestId) return;
                     this.updateQuickAskAnswer(content);
+                },
+                onReasoningDone: (reasoning) => {
+                    if (requestId !== this.quickAsk.activeRequestId) return;
+                    this.updateQuickAskReasoning(reasoning);
                 },
                 onReasoningChunk: (reasoning) => {
                     if (requestId !== this.quickAsk.activeRequestId) return;
@@ -2059,22 +2070,19 @@ export default class ChatArea {
                 // The action anchor may be either the real toolbar row or the placeholder
                 // that reserves its footprint during reasoning-only streaming.
                 const actionAnchor = groupEl.querySelector(':scope > .assistant-actions-anchor');
-                const reasoningTrace = groupEl.querySelector(':scope > .reasoning-trace');
 
                 // Create the text bubble
                 const textBubble = document.createElement('div');
                 textBubble.className = 'py-3 px-4 font-normal message-assistant w-full flex items-center';
                 textBubble.innerHTML = '<div class="min-w-0 w-full overflow-hidden message-content prose"></div>';
 
-                // Establish the final order in the same frame that reveals the first
-                // visible output. Otherwise it briefly appears below the reasoning
-                // trace until the next reasoning delta moves that trace downward.
+                // Output is appended at the end of the current message body. The
+                // stream controller finalizes and normalizes any completed reasoning
+                // phase before this method runs; active reasoning callbacks alone
+                // are responsible for temporarily relocating the trace downward.
                 insertStreamingContentBubble({
                     groupEl,
                     textBubble,
-                    existingContentCount: existingContent.length,
-                    startsNewSegment,
-                    reasoningTrace,
                     actionAnchor
                 });
 
@@ -2149,8 +2157,9 @@ export default class ChatArea {
      * Uses debounced buffering for smoother rendering of rapid chunks.
      * @param {string} messageId - The message ID
      * @param {string} reasoning - The reasoning content
+     * @param {?string} completedReasoningPrefix - Reasoning rendered by an earlier phase
      */
-    updateStreamingReasoning(messageId, reasoning) {
+    updateStreamingReasoning(messageId, reasoning, completedReasoningPrefix = null) {
         const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
         const groupEl = messageEl?.querySelector('.group.flex.w-full.flex-col');
         if (groupEl) {
@@ -2177,7 +2186,22 @@ export default class ChatArea {
                 } else {
                     groupEl.appendChild(reasoningTrace);
                 }
+
+                const subtitleEl = reasoningTrace.querySelector(`#reasoning-subtitle-${messageId}`);
+                if (subtitleEl && !subtitleEl.classList.contains('reasoning-subtitle-streaming')) {
+                    subtitleEl.textContent = 'Thinking...';
+                    subtitleEl.classList.add('reasoning-subtitle-streaming');
+                }
             }
+        }
+
+        if (completedReasoningPrefix !== null) {
+            const completedContent = parseStreamingReasoningContent(completedReasoningPrefix);
+            seedReasoningTypewriterForPhase({
+                typewriter: this.typewriter,
+                messageId,
+                completedContent
+            });
         }
 
         // Always update buffer immediately (non-blocking)
@@ -2482,41 +2506,29 @@ export default class ChatArea {
      * @returns {string} Formatted duration string
      */
     formatReasoningDuration(durationMs) {
-        if (!durationMs) return '';
+        return formatReasoningDurationText(durationMs);
+    }
 
-        const seconds = Math.round(durationMs / 1000);
+    moveReasoningTraceToCompletedPosition(messageId) {
+        const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
+        const groupEl = messageEl?.querySelector('.group.flex.w-full.flex-col');
+        const reasoningTrace = groupEl?.querySelector(':scope > .reasoning-trace');
+        if (!groupEl || !reasoningTrace) return;
 
-        if (seconds < 60) {
-            return `Thought for ${seconds}s`;
-        } else {
-            const minutes = Math.floor(seconds / 60);
-            const remainingSeconds = seconds % 60;
-            if (remainingSeconds === 0) {
-                return `Thought for ${minutes}m`;
-            }
-            return `Thought for ${minutes}m ${remainingSeconds}s`;
-        }
+        placeCompletedReasoningTrace({
+            groupEl,
+            reasoningTrace,
+            firstOutputBubble: groupEl.querySelector(
+                ':scope > .message-assistant, :scope > .message-assistant-images'
+            ),
+            actionAnchor: groupEl.querySelector(':scope > .assistant-actions-anchor')
+        });
     }
 
     /**
-     * Updates the reasoning subtitle to show duration when thinking completes.
-     * Called when output starts streaming after reasoning finishes.
-     * @param {string} messageId - The message ID
-     * @param {number} reasoningDuration - Duration in milliseconds
-     */
-    updateReasoningSubtitleToDuration(messageId, reasoningDuration) {
-        const subtitleEl = document.getElementById(`reasoning-subtitle-${messageId}`);
-        if (subtitleEl) {
-            // Remove streaming animation class
-            subtitleEl.classList.remove('reasoning-subtitle-streaming');
-            // Update text to show duration
-            subtitleEl.textContent = this.formatReasoningDuration(reasoningDuration);
-        }
-    }
-
-    /**
-     * Finalizes the reasoning display after streaming completes.
-     * Applies markdown processing to the final content and updates the subtitle with timing.
+     * Finalizes the current reasoning phase.
+     * Completed reasoning returns above the answer; only actively streaming
+     * reasoning is allowed to follow already-visible output.
      * @param {string} messageId - The message ID
      * @param {string} reasoning - The final reasoning content
      * @param {number} reasoningDuration - Duration in milliseconds (optional)
@@ -2534,6 +2546,8 @@ export default class ChatArea {
         this.stopTypewriter();
 
         if (!reasoning) return;
+
+        this.moveReasoningTraceToCompletedPosition(messageId);
 
         const promptSlideAnchor = this.app.captureActivePromptScrollAnchor?.({ primeRunway: true });
         const reasoningContentEl = document.getElementById(`reasoning-content-${messageId}`);
@@ -2804,6 +2818,11 @@ export default class ChatArea {
         if (!messageEl) return;
 
         const promptSlideAnchor = this.app.captureActivePromptScrollAnchor?.({ primeRunway: true });
+
+        // Interleaved placement is a live-thinking affordance only. Ensure a
+        // completed trace is back in the canonical position before deciding
+        // whether the rest of the message can be finalized in place.
+        this.moveReasoningTraceToCompletedPosition(message.id);
 
         // Check if reasoning trace is already finalized (subtitle shows duration, not streaming)
         const existingReasoningTrace = messageEl.querySelector('.reasoning-trace');

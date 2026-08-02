@@ -10,12 +10,70 @@ export function canFinalizeInterleavedContentInPlace(reasoningFinalized, content
     return !!reasoningFinalized && Number(contentBubbleCount) <= 1;
 }
 
-export function shouldInsertInitialContentBeforeReasoning(
-    hasExistingContent,
-    startsNewSegment,
-    hasReasoningTrace
-) {
-    return !hasExistingContent && !startsNewSegment && !!hasReasoningTrace;
+export function createReasoningPhaseClock() {
+    return {
+        active: false,
+        startedAt: null,
+        durationMs: 0
+    };
+}
+
+export function beginReasoningPhase(clock, now = Date.now()) {
+    if (!clock || clock.active) return clock;
+    clock.active = true;
+    clock.startedAt = Number(now);
+    return clock;
+}
+
+export function finishReasoningPhase(clock, now = Date.now()) {
+    if (!clock) return 0;
+    if (clock.active) {
+        const finishedAt = Number(now);
+        const startedAt = Number(clock.startedAt);
+        if (Number.isFinite(finishedAt) && Number.isFinite(startedAt)) {
+            clock.durationMs += Math.max(0, finishedAt - startedAt);
+        }
+        clock.active = false;
+        clock.startedAt = null;
+    }
+    return clock.durationMs;
+}
+
+export function activateStreamingReasoning(message, clock, contentOffset, now = Date.now()) {
+    beginReasoningPhase(clock, now);
+    if (message) {
+        message.streamingReasoning = true;
+        message.streamingReasoningContentOffset = Number.isInteger(contentOffset)
+            ? contentOffset
+            : null;
+    }
+    return clock;
+}
+
+export function completeStreamingReasoning(message, clock, now = Date.now()) {
+    const durationMs = finishReasoningPhase(clock, now);
+    if (message) {
+        message.streamingReasoning = false;
+        delete message.streamingReasoningContentOffset;
+        if (durationMs > 0) {
+            message.reasoningDuration = durationMs;
+        }
+    }
+    return durationMs;
+}
+
+export function formatReasoningDuration(durationMs) {
+    const duration = Number(durationMs);
+    if (!Number.isFinite(duration) || duration <= 0) return '';
+
+    const seconds = Math.max(1, Math.round(duration / 1000));
+    if (seconds < 60) return `Thought for ${seconds}s`;
+
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    return remainingSeconds === 0
+        ? `Thought for ${minutes}m`
+        : `Thought for ${minutes}m ${remainingSeconds}s`;
 }
 
 /**

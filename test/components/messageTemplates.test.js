@@ -125,3 +125,33 @@ test('interleaved streams restore content around the current thinking section', 
     assert.ok(thinkingIndex > beforeIndex);
     assert.ok(afterIndex > thinkingIndex);
 });
+
+test('completed reasoning ignores transient offsets and renders above the answer', async () => {
+    installTemplateGlobals();
+    const { buildMessageHTML } = await import('../../chat/components/MessageTemplates.js');
+
+    const html = buildMessageHTML({
+        id: 'completed-interleaved',
+        role: 'assistant',
+        model: 'xAI: Grok Test',
+        content: 'Visible before.\n\nVisible after.',
+        reasoning: 'Finished checking sources.',
+        reasoningDuration: 17000,
+        streamingReasoning: false,
+        streamingTokens: null,
+        streamingReasoningContentOffset: 'Visible before.'.length
+    }, {
+        processContentWithLatex: escapeHtml,
+        formatTime: () => '18:15:12'
+    }, [], 'xAI: Grok Test');
+
+    const thinkingIndex = html.indexOf('reasoning-trace');
+    const beforeIndex = html.indexOf('Visible before.');
+    const afterIndex = html.indexOf('Visible after.');
+
+    assert.ok(thinkingIndex >= 0);
+    assert.ok(beforeIndex > thinkingIndex);
+    assert.ok(afterIndex > beforeIndex);
+    assert.match(html, /Thought for 17s/);
+    assert.doesNotMatch(html, /reasoning-subtitle-streaming/);
+});

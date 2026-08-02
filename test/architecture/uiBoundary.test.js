@@ -233,6 +233,12 @@ test('inline quick ask preserves scrubber and session lifecycle constraints', ()
         'inline quick ask should re-check cancellation immediately before starting inference'
     );
     assert.ok(
+        /lastStreamEventType === 'reasoning'[\s\S]*?onReasoningDone\?\.\(reasoning\)[\s\S]*?onChunk\?\.\(content/.test(inlineQuickAskMatch[0]) &&
+        chatAreaSource.includes('onReasoningDone: (reasoning) =>') &&
+        chatAreaSource.includes('this.updateQuickAskReasoning(reasoning);'),
+        'quick ask should mark reasoning complete before answer output renders'
+    );
+    assert.ok(
         /abortController\?\.signal\?\.aborted[\s\S]*?isAndroidNativeInferenceAvailable/.test(apiSource),
         'streamCompletion should reject already-aborted requests before Android native transport starts'
     );
