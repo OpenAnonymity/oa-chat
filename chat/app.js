@@ -7,6 +7,14 @@ import { getFileIconSvg } from './services/fileUtils.js';
 import { exportChats, exportTickets } from './services/globalExport.js';
 import { parseReasoningContent } from './services/reasoningParser.js';
 import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort } from './services/reasoningConfig.js';
+import {
+    appendInterleavedContent,
+    activateStreamingReasoning,
+    canSplitInterleavedContent,
+    completeStreamingReasoning,
+    createReasoningPhaseClock,
+    finishStreamingReasoningPhase
+} from './domain/interleavedStream.js';
 import { fetchUrlMetadata } from './services/urlMetadata.js';
 import { resolveProvider, resolveProviderFromModelReference } from './services/providerRegistry.js';
 import networkProxy from './services/networkProxy.js';
@@ -451,6 +459,27 @@ class ChatApp {
                 existingImages.push(img);
             }
         }
+    }
+
+    /** Records deduplicated image batches at their text-stream boundary. */
+    addStreamingImages(message, newImages, contentOffset) {
+        if (!message || !Array.isArray(newImages) || newImages.length === 0) return [];
+        if (!Array.isArray(message.images)) message.images = [];
+
+        const startIndex = message.images.length;
+        this.addImagesWithDedup(message.images, newImages);
+        const addedImages = message.images.slice(startIndex);
+        if (addedImages.length > 0) {
+            if (!Array.isArray(message.streamingImageSegments)) {
+                message.streamingImageSegments = [];
+            }
+            message.streamingImageSegments.push({
+                startIndex,
+                count: addedImages.length,
+                contentOffset: Number.isInteger(contentOffset) ? contentOffset : 0
+            });
+        }
+        return addedImages;
     }
 
     /**
@@ -5294,6 +5323,7 @@ class ChatApp {
             let streamedContent = '';
             let streamedReasoning = '';
             let firstChunkReceived = false;
+            const reasoningPhaseClock = createReasoningPhaseClock();
 
             try {
                 // Get AI response from inference backend with streaming
@@ -5354,7 +5384,8 @@ class ChatApp {
 
                 let lastSaveLength = 0;
                 const SAVE_INTERVAL_CHARS = 100;
-                let reasoningStartTime = null;
+                let lastStreamEventType = null;
+                let activeContentSegment = '';
 
                 // Stream the response with token tracking
                 const tokenData = await inferenceService.streamCompletion(
@@ -5362,6 +5393,33 @@ class ChatApp {
                     modelIdForRequest,
                     session,
                     async (chunk, imageData) => {
+                        const hasImages = Array.isArray(imageData?.images) && imageData.images.length > 0;
+                        const previousStreamEventType = lastStreamEventType;
+                        const reasoningPhaseEnded = previousStreamEventType === 'reasoning' && (!!chunk || hasImages);
+                        let startsNewContentSegment = false;
+                        let addedImages = [];
+                        if (chunk) {
+                            const contentUpdate = appendInterleavedContent(streamedContent, chunk, previousStreamEventType);
+                            streamedContent = contentUpdate.content;
+                            startsNewContentSegment = contentUpdate.startsNewSegment;
+                            activeContentSegment = startsNewContentSegment
+                                ? contentUpdate.renderedChunk
+                                : activeContentSegment + contentUpdate.renderedChunk;
+                            lastStreamEventType = 'content';
+                        } else if (hasImages) {
+                            lastStreamEventType = 'image';
+                        }
+
+                        if (reasoningPhaseEnded) {
+                            finishStreamingReasoningPhase(
+                                streamingMessage,
+                                reasoningPhaseClock
+                            );
+                            streamingMessage.content = streamedContent;
+                            streamingMessage.streamingTokens = Math.ceil(streamedContent.length / 4);
+                            await chatDB.saveMessage(streamingMessage);
+                        }
+
                         // On first chunk (of any kind), remove typing indicator and append message
                         if (!firstChunkReceived) {
                             firstChunkReceived = true;
@@ -5372,19 +5430,17 @@ class ChatApp {
 
                             // Handle text content
                             if (chunk) {
-                                streamedContent += chunk;
                                 streamingMessage.content = streamedContent;
                                 streamingMessage.streamingTokens = Math.ceil(streamedContent.length / 4);
                             }
 
                             // Handle image data
-                            if (imageData && imageData.images) {
-                                if (!streamingMessage.images) streamingMessage.images = [];
-                                this.addImagesWithDedup(streamingMessage.images, imageData.images);
+                            if (hasImages) {
+                                this.addStreamingImages(streamingMessage, imageData.images, streamedContent.length);
                             }
 
                             // Save message to DB (always) and append to UI (only if viewing this session)
-                            if (chunk || (imageData && imageData.images)) {
+                            if (chunk || hasImages) {
                                 await chatDB.saveMessage(streamingMessage);
                                 if (this.chatArea && this.isViewingSession(session.id)) {
                                     await this.chatArea.appendMessage(streamingMessage);
@@ -5393,18 +5449,14 @@ class ChatApp {
                             return; // Exit after first chunk handling
                         }
 
-                        // Handle subsequent chunks
-                        if (chunk) streamedContent += chunk;
-
                         // Handle image data
-                        if (imageData && imageData.images) {
-                            if (!streamingMessage.images) streamingMessage.images = [];
-                            this.addImagesWithDedup(streamingMessage.images, imageData.images);
+                        if (hasImages) {
+                            addedImages = this.addStreamingImages(
+                                streamingMessage,
+                                imageData.images,
+                                streamedContent.length
+                            );
                             await chatDB.saveMessage(streamingMessage);
-                            // Only update UI if still viewing the same session
-                            if (this.chatArea && this.isViewingSession(session.id)) {
-                                this.chatArea.updateStreamingImages(streamingMessageId, streamingMessage.images);
-                            }
                         }
 
                         if (streamedContent.length - lastSaveLength >= SAVE_INTERVAL_CHARS) {
@@ -5416,7 +5468,15 @@ class ChatApp {
 
                         // Only update UI if still viewing the same session
                         if (chunk && this.chatArea && this.isViewingSession(session.id)) {
-                            this.chatArea.updateStreamingMessage(streamingMessageId, streamedContent);
+                            this.chatArea.updateStreamingMessage(
+                                streamingMessageId,
+                                streamedContent,
+                                activeContentSegment,
+                                startsNewContentSegment
+                            );
+                        }
+                        if (addedImages.length > 0 && this.chatArea && this.isViewingSession(session.id)) {
+                            this.chatArea.updateStreamingImages(streamingMessageId, addedImages);
                         }
                     },
                     (tokenUpdate) => {
@@ -5434,9 +5494,23 @@ class ChatApp {
                     },
                     async (reasoningChunk) => {
                         // Handle reasoning trace streaming
+                        const completedReasoningPrefix = lastStreamEventType !== 'reasoning'
+                            ? streamedReasoning
+                            : null;
+                        if (lastStreamEventType !== 'reasoning') {
+                            activateStreamingReasoning(
+                                streamingMessage,
+                                reasoningPhaseClock,
+                                canSplitInterleavedContent(streamedContent) ? streamedContent.length : null
+                            );
+                            streamingMessage.streamingReasoningImageCount = streamingMessage.images?.length || 0;
+                        }
+                        lastStreamEventType = 'reasoning';
+                        streamingMessage.streamingReasoning = true;
+                        streamingMessage.content = streamedContent;
+                        streamingMessage.streamingTokens = Math.ceil(streamedContent.length / 4);
                         if (!firstChunkReceived) {
                             firstChunkReceived = true;
-                            reasoningStartTime = Date.now();
                             // Clear pending flag now that we have actual content
                             streamingMessage.streamingPending = false;
                             streamingMessage.streamingPhase = null;
@@ -5457,7 +5531,11 @@ class ChatApp {
 
                         // Only update UI if still viewing the same session
                         if (this.chatArea && this.isViewingSession(session.id)) {
-                            this.chatArea.updateStreamingReasoning(streamingMessageId, streamedReasoning);
+                            this.chatArea.updateStreamingReasoning(
+                                streamingMessageId,
+                                streamedReasoning,
+                                completedReasoningPrefix
+                            );
                         }
                     },
                     this.reasoningEnabled, // Use current reasoning toggle state
@@ -5466,6 +5544,7 @@ class ChatApp {
 
                 // Save the final message content with token data, reasoning, and citations
                 streamingMessage.content = streamedContent;
+                delete streamingMessage.streamingReasoningContentOffset;
                 if (streamingMessage.scrubber) {
                     streamingMessage.scrubber.redactedResponse = streamedContent;
                 }
@@ -5483,11 +5562,8 @@ class ChatApp {
                 streamingMessage.streamingPending = false;
                 streamingMessage.citations = tokenData.citations || null;
 
-                // Calculate reasoning duration if reasoning was used
-                if (streamingMessage.reasoning && reasoningStartTime) {
-                    const reasoningEndTime = Date.now();
-                    streamingMessage.reasoningDuration = reasoningEndTime - reasoningStartTime;
-                }
+                // Count only time spent in active reasoning phases, excluding answer streaming.
+                completeStreamingReasoning(streamingMessage, reasoningPhaseClock);
 
                 await chatDB.saveMessage(streamingMessage);
                 await this.refreshSessionConversationSearchText(session, null, { persist: true });
@@ -5499,13 +5575,10 @@ class ChatApp {
 
                 // Only update UI if still viewing the same session
                 if (this.chatArea && this.isViewingSession(session.id)) {
+                    await this.chatArea.finalizeStreamingMessage(streamingMessage);
                     // Finalize reasoning display with markdown processing and timing
                     if (streamingMessage.reasoning) {
                         this.chatArea.finalizeReasoningDisplay(streamingMessageId, streamingMessage.reasoning, streamingMessage.reasoningDuration);
-                    }
-                    // Re-render message if no content (to show "no response" notice and clean up empty bubbles)
-                    if (!streamingMessage.content && (!streamingMessage.images || streamingMessage.images.length === 0)) {
-                        await this.chatArea.finalizeStreamingMessage(streamingMessage);
                     }
                 }
 
@@ -5541,6 +5614,8 @@ class ChatApp {
                             streamingMessage.streamingTokens = null;
                             streamingMessage.streamingReasoning = false;
                             streamingMessage.streamingPending = false;
+                            delete streamingMessage.streamingReasoningContentOffset;
+                            completeStreamingReasoning(streamingMessage, reasoningPhaseClock);
                             await chatDB.saveMessage(streamingMessage);
                             // Only update UI if still viewing the same session
                             if (this.chatArea && this.isViewingSession(session.id)) {
@@ -5568,6 +5643,8 @@ class ChatApp {
                         streamingMessage.streamingTokens = null;
                         streamingMessage.streamingReasoning = false;
                         streamingMessage.streamingPending = false;
+                        delete streamingMessage.streamingReasoningContentOffset;
+                        completeStreamingReasoning(streamingMessage, reasoningPhaseClock);
                         await chatDB.saveMessage(streamingMessage);
                         // Only update UI if still viewing the same session
                         if (this.chatArea && this.isViewingSession(session.id)) {
@@ -5820,6 +5897,7 @@ class ChatApp {
             let firstChunkReceived = false;
             let streamedContent = '';
             let streamedReasoning = '';
+            let reasoningPhaseClock = createReasoningPhaseClock();
 
             // Retry configuration for transient errors
             const MAX_RETRIES = 2;
@@ -5860,6 +5938,7 @@ class ChatApp {
                 const streamingMessageId = this.generateId();
                 streamedContent = '';
                 streamedReasoning = '';
+                reasoningPhaseClock = createReasoningPhaseClock();
                 let streamingTokenCount = 0;
 
                 // Prepare assistant message object (don't save to DB yet - wait for first chunk)
@@ -5883,9 +5962,8 @@ class ChatApp {
                 let lastSaveLength = 0;
                 const SAVE_INTERVAL_CHARS = 100; // Save every 100 characters
                 firstChunkReceived = false;
-                let firstContentChunk = true; // Track when content starts (after reasoning)
-                let reasoningStartTime = null;
-                let reasoningEndTime = null;
+                let lastStreamEventType = null;
+                let activeContentSegment = '';
                 ({
                     processedMessages,
                     memoryGenerationAtProcess
@@ -5902,6 +5980,33 @@ class ChatApp {
                     modelIdForRequest,
                     session,
                     async (chunk, imageData) => {
+                        const hasImages = Array.isArray(imageData?.images) && imageData.images.length > 0;
+                        const previousStreamEventType = lastStreamEventType;
+                        const reasoningPhaseEnded = previousStreamEventType === 'reasoning' && (!!chunk || hasImages);
+                        let startsNewContentSegment = false;
+                        let addedImages = [];
+                        if (chunk) {
+                            const contentUpdate = appendInterleavedContent(streamedContent, chunk, previousStreamEventType);
+                            streamedContent = contentUpdate.content;
+                            startsNewContentSegment = contentUpdate.startsNewSegment;
+                            activeContentSegment = startsNewContentSegment
+                                ? contentUpdate.renderedChunk
+                                : activeContentSegment + contentUpdate.renderedChunk;
+                            lastStreamEventType = 'content';
+                        } else if (hasImages) {
+                            lastStreamEventType = 'image';
+                        }
+
+                        if (reasoningPhaseEnded) {
+                            finishStreamingReasoningPhase(
+                                streamingMessage,
+                                reasoningPhaseClock
+                            );
+                            streamingMessage.content = streamedContent;
+                            streamingMessage.streamingTokens = Math.ceil(streamedContent.length / 4);
+                            await chatDB.saveMessage(streamingMessage);
+                        }
+
                         // On first chunk (of any kind), remove typing indicator and append message
                         if (!firstChunkReceived) {
                             firstChunkReceived = true;
@@ -5910,34 +6015,17 @@ class ChatApp {
 
                             // Handle text content
                             if (chunk) {
-                                streamedContent += chunk;
                                 streamingMessage.content = streamedContent;
                                 streamingMessage.streamingTokens = Math.ceil(streamedContent.length / 4);
-
-                                // If reasoning happened before content, finalize reasoning display now
-                                if (reasoningStartTime && streamedReasoning.length > 0) {
-                                    reasoningEndTime = Date.now();
-                                    const reasoningDuration = reasoningEndTime - reasoningStartTime;
-
-                                    // Update the reasoning subtitle to show duration immediately (only if viewing this session)
-                                    if (this.chatArea && this.isViewingSession(session.id)) {
-                                        this.chatArea.updateReasoningSubtitleToDuration(
-                                            streamingMessageId,
-                                            reasoningDuration
-                                        );
-                                    }
-                                    firstContentChunk = false; // Mark that we've handled the transition
-                                }
                             }
 
                             // Handle image data
-                            if (imageData && imageData.images) {
-                                if (!streamingMessage.images) streamingMessage.images = [];
-                                this.addImagesWithDedup(streamingMessage.images, imageData.images);
+                            if (hasImages) {
+                                this.addStreamingImages(streamingMessage, imageData.images, streamedContent.length);
                             }
 
                             // Save message to DB (always) and append to UI (only if viewing this session)
-                            if (chunk || (imageData && imageData.images)) {
+                            if (chunk || hasImages) {
                                 await chatDB.saveMessage(streamingMessage);
                                 if (this.chatArea && this.isViewingSession(session.id)) {
                                     await this.chatArea.appendMessage(streamingMessage);
@@ -5946,34 +6034,13 @@ class ChatApp {
                             return; // Exit after first chunk handling
                         }
 
-                        // Handle subsequent chunks
-                        if (chunk) {
-                            streamedContent += chunk;
-
-                            // If this is the first content chunk after reasoning, finalize reasoning display
-                            if (firstContentChunk && reasoningStartTime && streamedReasoning.length > 0) {
-                                firstContentChunk = false;
-                                reasoningEndTime = Date.now();
-                                const reasoningDuration = reasoningEndTime - reasoningStartTime;
-
-                                // Update the reasoning subtitle to show duration immediately (only if viewing this session)
-                                if (this.chatArea && this.isViewingSession(session.id)) {
-                                    this.chatArea.updateReasoningSubtitleToDuration(
-                                        streamingMessageId,
-                                        reasoningDuration
-                                    );
-                                }
-                            }
-                        }
-
-                        if (imageData && imageData.images) {
-                            if (!streamingMessage.images) streamingMessage.images = [];
-                            this.addImagesWithDedup(streamingMessage.images, imageData.images);
+                        if (hasImages) {
+                            addedImages = this.addStreamingImages(
+                                streamingMessage,
+                                imageData.images,
+                                streamedContent.length
+                            );
                             await chatDB.saveMessage(streamingMessage);
-                            // Only update UI if still viewing the same session
-                            if (this.chatArea && this.isViewingSession(session.id)) {
-                                this.chatArea.updateStreamingImages(streamingMessageId, streamingMessage.images);
-                            }
                         }
 
                         // Periodically save partial content
@@ -5986,7 +6053,15 @@ class ChatApp {
 
                         // Update UI with new content (only if viewing this session)
                         if (chunk && this.chatArea && this.isViewingSession(session.id)) {
-                            this.chatArea.updateStreamingMessage(streamingMessageId, streamedContent);
+                            this.chatArea.updateStreamingMessage(
+                                streamingMessageId,
+                                streamedContent,
+                                activeContentSegment,
+                                startsNewContentSegment
+                            );
+                        }
+                        if (addedImages.length > 0 && this.chatArea && this.isViewingSession(session.id)) {
+                            this.chatArea.updateStreamingImages(streamingMessageId, addedImages);
                         }
                     },
                     (tokenUpdate) => {
@@ -6004,9 +6079,23 @@ class ChatApp {
                     },
                     async (reasoningChunk) => {
                         // Handle reasoning trace streaming
+                        const completedReasoningPrefix = lastStreamEventType !== 'reasoning'
+                            ? streamedReasoning
+                            : null;
+                        if (lastStreamEventType !== 'reasoning') {
+                            activateStreamingReasoning(
+                                streamingMessage,
+                                reasoningPhaseClock,
+                                canSplitInterleavedContent(streamedContent) ? streamedContent.length : null
+                            );
+                            streamingMessage.streamingReasoningImageCount = streamingMessage.images?.length || 0;
+                        }
+                        lastStreamEventType = 'reasoning';
+                        streamingMessage.streamingReasoning = true;
+                        streamingMessage.content = streamedContent;
+                        streamingMessage.streamingTokens = Math.ceil(streamedContent.length / 4);
                         if (!firstChunkReceived) {
                             firstChunkReceived = true;
-                            reasoningStartTime = Date.now();
                             streamingMessage.streamingPending = false;
                             streamingMessage.streamingPhase = null;
                             streamingMessage.reasoning = reasoningChunk;
@@ -6020,11 +6109,16 @@ class ChatApp {
                         } else {
                             streamedReasoning += reasoningChunk;
                             streamingMessage.reasoning = streamedReasoning;
+                            await chatDB.saveMessage(streamingMessage);
                         }
 
                         // Update UI with new reasoning content (only if viewing this session)
                         if (this.chatArea && this.isViewingSession(session.id)) {
-                            this.chatArea.updateStreamingReasoning(streamingMessageId, streamedReasoning);
+                            this.chatArea.updateStreamingReasoning(
+                                streamingMessageId,
+                                streamedReasoning,
+                                completedReasoningPrefix
+                            );
                         }
                     },
                     this.reasoningEnabled,
@@ -6033,6 +6127,7 @@ class ChatApp {
 
                 // Save the final message content with token data, reasoning, and citations
                 streamingMessage.content = streamedContent;
+                delete streamingMessage.streamingReasoningContentOffset;
                 if (streamingMessage.scrubber) {
                     streamingMessage.scrubber.redactedResponse = streamedContent;
                 }
@@ -6049,12 +6144,8 @@ class ChatApp {
                 streamingMessage.streamingReasoning = false; // Clear streaming reasoning flag
                 streamingMessage.citations = tokenData.citations || null;
 
-                // Calculate reasoning duration if reasoning was used
-                if (streamingMessage.reasoning && reasoningStartTime) {
-                    // Use already-calculated end time if available, otherwise calculate now
-                    const finalReasoningEndTime = reasoningEndTime || Date.now();
-                    streamingMessage.reasoningDuration = finalReasoningEndTime - reasoningStartTime;
-                }
+                // Count only time spent in active reasoning phases, excluding answer streaming.
+                completeStreamingReasoning(streamingMessage, reasoningPhaseClock);
 
                 await chatDB.saveMessage(streamingMessage);
                 await this.refreshSessionConversationSearchText(session, null, { persist: true });
@@ -6098,6 +6189,8 @@ class ChatApp {
                             streamingMessage.tokenCount = null;
                             streamingMessage.streamingTokens = null;
                             streamingMessage.streamingReasoning = false;
+                            delete streamingMessage.streamingReasoningContentOffset;
+                            completeStreamingReasoning(streamingMessage, reasoningPhaseClock);
                             await chatDB.saveMessage(streamingMessage);
                             // Only update UI if still viewing the same session
                             if (this.chatArea && this.isViewingSession(session.id)) {
@@ -6190,6 +6283,8 @@ class ChatApp {
                     streamingMessage.streamingReasoning = false;
                     streamingMessage.streamingPending = false;
                     streamingMessage.streamingPhase = null;
+                    delete streamingMessage.streamingReasoningContentOffset;
+                    completeStreamingReasoning(streamingMessage, reasoningPhaseClock);
                     streamingMessage.isLocalOnly = true;
                     await chatDB.saveMessage(streamingMessage);
                     // Only update UI if still viewing the same session
@@ -6413,6 +6508,7 @@ class ChatApp {
         let reasoning = '';
         let streamingTokenCount = 0;
         let firstChunkReceived = false;
+        let lastStreamEventType = null;
         const tokenData = await inferenceService.streamCompletion(
             quickAskMessages,
             modelId,
@@ -6423,8 +6519,10 @@ class ChatApp {
                     options.onStatus?.('streaming');
                 }
                 if (!chunk) return;
-                content += chunk;
-                options.onChunk?.(content, chunk);
+                const contentUpdate = appendInterleavedContent(content, chunk, lastStreamEventType);
+                content = contentUpdate.content;
+                lastStreamEventType = 'content';
+                options.onChunk?.(content, contentUpdate.renderedChunk);
             },
             (tokenUpdate) => {
                 streamingTokenCount = tokenUpdate.completionTokens || streamingTokenCount;
@@ -6441,6 +6539,7 @@ class ChatApp {
                     firstChunkReceived = true;
                     options.onStatus?.('streaming');
                 }
+                lastStreamEventType = 'reasoning';
                 reasoning += reasoningChunk || '';
                 options.onReasoningChunk?.(reasoning, reasoningChunk);
             },
@@ -6666,6 +6765,9 @@ class ChatApp {
         snapshot.streamingPhase = null;
         snapshot.streamingReasoning = false;
         snapshot.streamingTokens = null;
+        delete snapshot.streamingReasoningContentOffset;
+        delete snapshot.streamingReasoningImageCount;
+        delete snapshot.streamingImageSegments;
 
         return snapshot;
     }

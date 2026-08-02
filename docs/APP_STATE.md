@@ -25,6 +25,32 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
+- 2026-08-02: Interleaved provider reasoning/output streams preserve their wire order.
+  - `api.js` normalizes direct reasoning deltas plus OpenRouter `reasoning_details` text and
+    summary blocks, serializes callbacks, and flushes buffered reasoning before following
+    text or images. This covers providers such as Claude and Grok that can resume thinking
+    after emitting visible output.
+  - Interleaved placement is strictly an unfinished-response affordance. Once reasoning has
+    appeared, the single Thinking section moves after the output visible at that boundary,
+    and `streamingReasoningContentOffset` preserves that temporary position across later
+    answer chunks and session rerenders. The UI must keep `Thinking...` for the entire model
+    stream; a reasoning-to-answer phase transition updates duration accounting but must not
+    show `Thought for ...`. Only final completion, cancellation, or error clears
+    `streamingReasoning`, removes the transient offset, and returns the completed trace above
+    all answer segments. Live subtitles are always the literal `Thinking...`; provider
+    headings/bold summaries must not replace that label before terminal finalization.
+  - Streaming image batches record their image indices and current text offset in
+    `streamingImageSegments`; `streamingReasoningImageCount` resolves same-offset ordering
+    around the latest reasoning boundary. This keeps text, images, and Thinking in provider
+    event order during live updates and session rerenders. Both fields are transient and are
+    removed with the text offset when the response terminates or is forked into a static copy.
+  - Reasoning duration accumulates only active reasoning intervals. Answer-token and image
+    streaming time must not be included in the completed `Thought for …` duration, and a
+    later reasoning phase must resume without replaying the already-rendered trace prefix.
+  - Resumed output also receives a paragraph break in persisted message content when the
+    provider supplied no whitespace, preventing joins such as `you.The` after final render,
+    cancellation, export, or reload.
+
 - 2026-07-31: OpenRouter catalog labels for Anthropic models are normalized to
   include the `Anthropic:` prefix when upstream omits it. Already-prefixed names
   remain unchanged.
@@ -151,7 +177,9 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     `reserveAccessAcquisitionHandoff(...)` before closing the quick-ask panel so
     same-model key requests can survive the handoff. The underlying key request
     receives an abort signal and is cancelled when the last waiter aborts
-    outside that handoff window.
+    outside that handoff window. Once its reasoning trace starts streaming, the
+    panel retains the `Thinking...` treatment through answer generation and only
+    switches to its completed treatment in `onDone` after the whole response ends.
   - Quick-ask answers are not written to IndexedDB, do not create sessions, and
     do not update session search/title state. User close only hides the panel and
     lets the request finish in memory. Full `ChatArea.render()` calls abort/reset

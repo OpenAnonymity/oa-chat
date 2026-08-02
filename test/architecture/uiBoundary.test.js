@@ -233,6 +233,12 @@ test('inline quick ask preserves scrubber and session lifecycle constraints', ()
         'inline quick ask should re-check cancellation immediately before starting inference'
     );
     assert.ok(
+        !inlineQuickAskMatch[0].includes('onReasoningDone') &&
+        !chatAreaSource.includes('onReasoningDone: (reasoning) =>') &&
+        /onReasoningChunk:[\s\S]*?streaming: true[\s\S]*?onDone:[\s\S]*?updateQuickAskReasoning\(result\.reasoning \|\| ''\)/.test(chatAreaSource),
+        'quick ask should retain live reasoning treatment until the whole response finishes'
+    );
+    assert.ok(
         /abortController\?\.signal\?\.aborted[\s\S]*?isAndroidNativeInferenceAvailable/.test(apiSource),
         'streamCompletion should reject already-aborted requests before Android native transport starts'
     );
@@ -293,5 +299,32 @@ test('inline quick ask preserves scrubber and session lifecycle constraints', ()
         chatAreaSource.includes('quick-ask-assistant-pending') &&
         chatAreaSource.includes('this.closeQuickAskWindow();'),
         'quick ask should add pending breathing room and hide when clicking elsewhere'
+    );
+});
+
+test('reasoning phase boundaries remain live until the response stream ends', () => {
+    const appSource = read('chat/app.js');
+    const chatAreaSource = read('chat/components/ChatArea.js');
+    const phaseTransitionBlocks = appSource.match(
+        /if \(reasoningPhaseEnded\) \{[\s\S]*?await chatDB\.saveMessage\(streamingMessage\);\n                        \}/g
+    ) || [];
+
+    assert.equal(phaseTransitionBlocks.length, 2, 'send and regenerate should both handle phase transitions');
+    for (const block of phaseTransitionBlocks) {
+        assert.ok(block.includes('finishStreamingReasoningPhase('));
+        assert.ok(!block.includes('completeStreamingReasoning('));
+        assert.ok(!block.includes('finalizeReasoningDisplay('));
+    }
+    assert.ok(!chatAreaSource.includes('extractReasoningSubtitle('));
+    assert.ok(chatAreaSource.includes("subtitleEl.textContent = 'Thinking...';"));
+    assert.ok(appSource.includes('streamingReasoningImageCount'));
+    assert.ok(appSource.includes('streamingImageSegments'));
+    const simultaneousOutputUpdates = appSource.match(
+        /updateStreamingMessage\([\s\S]*?updateStreamingImages\(streamingMessageId, addedImages\)/g
+    ) || [];
+    assert.equal(
+        simultaneousOutputUpdates.length,
+        2,
+        'send and regenerate should render same-callback text before its image batch'
     );
 });
