@@ -911,27 +911,10 @@ function buildReasoningTrace(reasoning, messageId, isStreaming = false, processC
         reasoningHtml = processContent ? processContent(trimmedReasoning) : trimmedReasoning;
     }
 
-    // Generate subtitle - show timing for completed reasoning, or compute from content during streaming
-    // When switching back to a streaming session, compute subtitle from available reasoning content
-    let subtitle;
-    if (isStreaming) {
-        // If we have reasoning content, try to extract a meaningful subtitle from it
-        if (trimmedReasoning && trimmedReasoning.length > 20) {
-            const summaries = extractReasoningSummaries(trimmedReasoning);
-            if (summaries.length > 0) {
-                const lastSummary = summaries[summaries.length - 1];
-                subtitle = lastSummary.text.length > 150
-                    ? lastSummary.text.substring(0, 147) + '...'
-                    : lastSummary.text;
-            } else {
-                subtitle = 'Thinking...';
-            }
-        } else {
-            subtitle = 'Thinking...';
-        }
-    } else {
-        subtitle = generateReasoningSubtitle(reasoning, reasoningDuration);
-    }
+    // Past-tense summaries and durations are terminal state only.
+    const subtitle = isStreaming
+        ? 'Thinking...'
+        : generateReasoningSubtitle(reasoning, reasoningDuration);
 
     // Full-width during streaming to show more subtitle, compact when finished
     const buttonWidthClass = isStreaming ? 'w-full' : '';
@@ -1474,8 +1457,72 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
         </div>
         `;
     };
+    const buildGeneratedImageBubble = (images, startIndex = null) => {
+        const html = buildGeneratedImages(images);
+        if (!html) return '';
+        const segmentAttribute = Number.isInteger(startIndex)
+            ? ` data-streaming-image-start="${startIndex}"`
+            : '';
+        return `
+        <div class="font-normal message-assistant-images w-full"${segmentAttribute}>
+            ${html}
+        </div>
+        `;
+    };
+    const streamingImageSegments = Array.isArray(message.streamingImageSegments)
+        ? message.streamingImageSegments
+            .filter(segment => Number.isInteger(segment?.startIndex) && Number.isInteger(segment?.count))
+            .map(segment => ({
+                type: 'image',
+                startIndex: segment.startIndex,
+                count: Math.max(0, segment.count),
+                contentOffset: Math.max(0, Math.min(
+                    Number(segment.contentOffset) || 0,
+                    message.content?.length || 0
+                ))
+            }))
+        : [];
+    const buildInterleavedStreamBody = () => {
+        const reasoningImageCount = Number.isInteger(message.streamingReasoningImageCount)
+            ? message.streamingReasoningImageCount
+            : 0;
+        const events = [
+            ...streamingImageSegments,
+            { type: 'reasoning', contentOffset: reasoningContentOffset }
+        ].sort((left, right) => {
+            if (left.contentOffset !== right.contentOffset) {
+                return left.contentOffset - right.contentOffset;
+            }
+            if (left.type === right.type) {
+                return (left.startIndex || 0) - (right.startIndex || 0);
+            }
+            const imageEvent = left.type === 'image' ? left : right;
+            const imagePrecedesReasoning = imageEvent.startIndex < reasoningImageCount;
+            return left.type === 'image'
+                ? (imagePrecedesReasoning ? -1 : 1)
+                : (imagePrecedesReasoning ? 1 : -1);
+        });
+        let cursor = 0;
+        let html = '';
+        for (const event of events) {
+            if (event.contentOffset > cursor) {
+                html += buildStreamingTextBubble(message.content.slice(cursor, event.contentOffset));
+                cursor = event.contentOffset;
+            }
+            if (event.type === 'reasoning') {
+                html += reasoningBubble;
+            } else {
+                html += buildGeneratedImageBubble(
+                    message.images?.slice(event.startIndex, event.startIndex + event.count),
+                    event.startIndex
+                );
+            }
+        }
+        html += buildStreamingTextBubble(message.content.slice(cursor));
+        return html;
+    };
     const streamBodyBubble = hasInterleavedStreamingLayout
-        ? `${buildStreamingTextBubble(message.content.slice(0, reasoningContentOffset))}${reasoningBubble}${buildStreamingTextBubble(message.content.slice(reasoningContentOffset))}`
+        ? buildInterleavedStreamBody()
         : `${reasoningBubble}${textBubble}`;
     const memoryRetrievalFailure = isMemoryAgent
         ? normalizeMemoryRetrievalFailureReason(message.memoryRetrievalFailure)
@@ -1494,11 +1541,9 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
 
     // Build image bubble for generated images (large, after text)
     const generatedImagesHtml = buildGeneratedImages(message.images);
-    const imageBubble = generatedImagesHtml ? `
-        <div class="font-normal message-assistant-images w-full">
-            ${generatedImagesHtml}
-        </div>
-    ` : '';
+    const imageBubble = hasInterleavedStreamingLayout
+        ? ''
+        : buildGeneratedImageBubble(message.images);
 
     // Check if message is complete but has no user-visible output (no text, no reasoning, no images).
     // Reasoning-only responses can happen when generation is manually interrupted.

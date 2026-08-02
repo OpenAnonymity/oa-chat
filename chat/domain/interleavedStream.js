@@ -50,14 +50,24 @@ export function activateStreamingReasoning(message, clock, contentOffset, now = 
     return clock;
 }
 
-export function completeStreamingReasoning(message, clock, now = Date.now()) {
+// Close one timing interval without completing the live response UI.
+export function finishStreamingReasoningPhase(message, clock, now = Date.now()) {
     const durationMs = finishReasoningPhase(clock, now);
     if (message) {
-        message.streamingReasoning = false;
-        delete message.streamingReasoningContentOffset;
         if (durationMs > 0) {
             message.reasoningDuration = durationMs;
         }
+    }
+    return durationMs;
+}
+
+export function completeStreamingReasoning(message, clock, now = Date.now()) {
+    const durationMs = finishStreamingReasoningPhase(message, clock, now);
+    if (message) {
+        message.streamingReasoning = false;
+        delete message.streamingReasoningContentOffset;
+        delete message.streamingReasoningImageCount;
+        delete message.streamingImageSegments;
     }
     return durationMs;
 }

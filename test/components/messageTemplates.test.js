@@ -108,7 +108,7 @@ test('interleaved streams restore content around the current thinking section', 
         role: 'assistant',
         model: 'Anthropic: Claude Test',
         content: 'Visible before.\n\nVisible after.',
-        reasoning: 'Checking another source.',
+        reasoning: '## Finished phase\nChecking another source.',
         streamingReasoning: true,
         streamingTokens: 8,
         streamingReasoningContentOffset: 'Visible before.'.length
@@ -124,6 +124,54 @@ test('interleaved streams restore content around the current thinking section', 
     assert.ok(beforeIndex >= 0);
     assert.ok(thinkingIndex > beforeIndex);
     assert.ok(afterIndex > thinkingIndex);
+    assert.match(html, /Thinking\.\.\./);
+    assert.match(html, /reasoning-subtitle-streaming/);
+    assert.match(html, /id="reasoning-subtitle-interleaved"[^>]*>Thinking\.\.\.<\/span>/);
+    assert.doesNotMatch(html, /Thought for/);
+});
+
+test('streaming image events retain their position around the live thinking trace', async () => {
+    installTemplateGlobals();
+    const { buildMessageHTML } = await import('../../chat/components/MessageTemplates.js');
+    const before = 'Visible before.';
+    const after = 'Visible after.';
+    const content = `${before}\n\n${after}`;
+    const firstImage = 'data:image/png;base64,AAAA';
+    const secondImage = 'data:image/png;base64,BBBB';
+
+    const html = buildMessageHTML({
+        id: 'interleaved-images',
+        role: 'assistant',
+        model: 'xAI: Grok Test',
+        content,
+        reasoning: 'Thinking with images.',
+        images: [
+            { type: 'image_url', image_url: { url: firstImage } },
+            { type: 'image_url', image_url: { url: secondImage } }
+        ],
+        streamingReasoning: true,
+        streamingTokens: 12,
+        streamingReasoningContentOffset: before.length,
+        streamingReasoningImageCount: 1,
+        streamingImageSegments: [
+            { startIndex: 0, count: 1, contentOffset: before.length },
+            { startIndex: 1, count: 1, contentOffset: content.length }
+        ]
+    }, {
+        processContentWithLatex: escapeHtml,
+        formatTime: () => '18:15:12'
+    }, [], 'xAI: Grok Test');
+
+    const beforeIndex = html.indexOf(before);
+    const firstImageIndex = html.indexOf(firstImage);
+    const thinkingIndex = html.indexOf('reasoning-trace');
+    const afterIndex = html.indexOf(after);
+    const secondImageIndex = html.indexOf(secondImage);
+
+    assert.ok(beforeIndex < firstImageIndex);
+    assert.ok(firstImageIndex < thinkingIndex);
+    assert.ok(thinkingIndex < afterIndex);
+    assert.ok(afterIndex < secondImageIndex);
 });
 
 test('completed reasoning ignores transient offsets and renders above the answer', async () => {

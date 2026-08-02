@@ -6,7 +6,7 @@ import {
     seedReasoningTypewriterForPhase
 } from '../../chat/components/streamingLayout.js';
 
-test('answer text emitted after reasoning stays below the completed trace', () => {
+test('answer text emitted during the response stays below the live thinking trace', () => {
     const reasoningTrace = { kind: 'reasoning' };
     const actionAnchor = { kind: 'actions' };
     const textBubble = { kind: 'answer' };

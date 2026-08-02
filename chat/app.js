@@ -12,7 +12,8 @@ import {
     activateStreamingReasoning,
     canSplitInterleavedContent,
     completeStreamingReasoning,
-    createReasoningPhaseClock
+    createReasoningPhaseClock,
+    finishStreamingReasoningPhase
 } from './domain/interleavedStream.js';
 import { fetchUrlMetadata } from './services/urlMetadata.js';
 import { resolveProvider, resolveProviderFromModelReference } from './services/providerRegistry.js';
@@ -458,6 +459,27 @@ class ChatApp {
                 existingImages.push(img);
             }
         }
+    }
+
+    /** Records deduplicated image batches at their text-stream boundary. */
+    addStreamingImages(message, newImages, contentOffset) {
+        if (!message || !Array.isArray(newImages) || newImages.length === 0) return [];
+        if (!Array.isArray(message.images)) message.images = [];
+
+        const startIndex = message.images.length;
+        this.addImagesWithDedup(message.images, newImages);
+        const addedImages = message.images.slice(startIndex);
+        if (addedImages.length > 0) {
+            if (!Array.isArray(message.streamingImageSegments)) {
+                message.streamingImageSegments = [];
+            }
+            message.streamingImageSegments.push({
+                startIndex,
+                count: addedImages.length,
+                contentOffset: Number.isInteger(contentOffset) ? contentOffset : 0
+            });
+        }
+        return addedImages;
     }
 
     /**
@@ -5375,6 +5397,7 @@ class ChatApp {
                         const previousStreamEventType = lastStreamEventType;
                         const reasoningPhaseEnded = previousStreamEventType === 'reasoning' && (!!chunk || hasImages);
                         let startsNewContentSegment = false;
+                        let addedImages = [];
                         if (chunk) {
                             const contentUpdate = appendInterleavedContent(streamedContent, chunk, previousStreamEventType);
                             streamedContent = contentUpdate.content;
@@ -5388,20 +5411,13 @@ class ChatApp {
                         }
 
                         if (reasoningPhaseEnded) {
-                            const reasoningDuration = completeStreamingReasoning(
+                            finishStreamingReasoningPhase(
                                 streamingMessage,
                                 reasoningPhaseClock
                             );
                             streamingMessage.content = streamedContent;
                             streamingMessage.streamingTokens = Math.ceil(streamedContent.length / 4);
                             await chatDB.saveMessage(streamingMessage);
-                            if (this.chatArea && this.isViewingSession(session.id)) {
-                                this.chatArea.finalizeReasoningDisplay(
-                                    streamingMessageId,
-                                    streamedReasoning,
-                                    reasoningDuration
-                                );
-                            }
                         }
 
                         // On first chunk (of any kind), remove typing indicator and append message
@@ -5420,8 +5436,7 @@ class ChatApp {
 
                             // Handle image data
                             if (hasImages) {
-                                if (!streamingMessage.images) streamingMessage.images = [];
-                                this.addImagesWithDedup(streamingMessage.images, imageData.images);
+                                this.addStreamingImages(streamingMessage, imageData.images, streamedContent.length);
                             }
 
                             // Save message to DB (always) and append to UI (only if viewing this session)
@@ -5436,13 +5451,12 @@ class ChatApp {
 
                         // Handle image data
                         if (hasImages) {
-                            if (!streamingMessage.images) streamingMessage.images = [];
-                            this.addImagesWithDedup(streamingMessage.images, imageData.images);
+                            addedImages = this.addStreamingImages(
+                                streamingMessage,
+                                imageData.images,
+                                streamedContent.length
+                            );
                             await chatDB.saveMessage(streamingMessage);
-                            // Only update UI if still viewing the same session
-                            if (this.chatArea && this.isViewingSession(session.id)) {
-                                this.chatArea.updateStreamingImages(streamingMessageId, streamingMessage.images);
-                            }
                         }
 
                         if (streamedContent.length - lastSaveLength >= SAVE_INTERVAL_CHARS) {
@@ -5460,6 +5474,9 @@ class ChatApp {
                                 activeContentSegment,
                                 startsNewContentSegment
                             );
+                        }
+                        if (addedImages.length > 0 && this.chatArea && this.isViewingSession(session.id)) {
+                            this.chatArea.updateStreamingImages(streamingMessageId, addedImages);
                         }
                     },
                     (tokenUpdate) => {
@@ -5486,6 +5503,7 @@ class ChatApp {
                                 reasoningPhaseClock,
                                 canSplitInterleavedContent(streamedContent) ? streamedContent.length : null
                             );
+                            streamingMessage.streamingReasoningImageCount = streamingMessage.images?.length || 0;
                         }
                         lastStreamEventType = 'reasoning';
                         streamingMessage.streamingReasoning = true;
@@ -5966,6 +5984,7 @@ class ChatApp {
                         const previousStreamEventType = lastStreamEventType;
                         const reasoningPhaseEnded = previousStreamEventType === 'reasoning' && (!!chunk || hasImages);
                         let startsNewContentSegment = false;
+                        let addedImages = [];
                         if (chunk) {
                             const contentUpdate = appendInterleavedContent(streamedContent, chunk, previousStreamEventType);
                             streamedContent = contentUpdate.content;
@@ -5979,20 +5998,13 @@ class ChatApp {
                         }
 
                         if (reasoningPhaseEnded) {
-                            const reasoningDuration = completeStreamingReasoning(
+                            finishStreamingReasoningPhase(
                                 streamingMessage,
                                 reasoningPhaseClock
                             );
                             streamingMessage.content = streamedContent;
                             streamingMessage.streamingTokens = Math.ceil(streamedContent.length / 4);
                             await chatDB.saveMessage(streamingMessage);
-                            if (this.chatArea && this.isViewingSession(session.id)) {
-                                this.chatArea.finalizeReasoningDisplay(
-                                    streamingMessageId,
-                                    streamedReasoning,
-                                    reasoningDuration
-                                );
-                            }
                         }
 
                         // On first chunk (of any kind), remove typing indicator and append message
@@ -6009,8 +6021,7 @@ class ChatApp {
 
                             // Handle image data
                             if (hasImages) {
-                                if (!streamingMessage.images) streamingMessage.images = [];
-                                this.addImagesWithDedup(streamingMessage.images, imageData.images);
+                                this.addStreamingImages(streamingMessage, imageData.images, streamedContent.length);
                             }
 
                             // Save message to DB (always) and append to UI (only if viewing this session)
@@ -6024,13 +6035,12 @@ class ChatApp {
                         }
 
                         if (hasImages) {
-                            if (!streamingMessage.images) streamingMessage.images = [];
-                            this.addImagesWithDedup(streamingMessage.images, imageData.images);
+                            addedImages = this.addStreamingImages(
+                                streamingMessage,
+                                imageData.images,
+                                streamedContent.length
+                            );
                             await chatDB.saveMessage(streamingMessage);
-                            // Only update UI if still viewing the same session
-                            if (this.chatArea && this.isViewingSession(session.id)) {
-                                this.chatArea.updateStreamingImages(streamingMessageId, streamingMessage.images);
-                            }
                         }
 
                         // Periodically save partial content
@@ -6049,6 +6059,9 @@ class ChatApp {
                                 activeContentSegment,
                                 startsNewContentSegment
                             );
+                        }
+                        if (addedImages.length > 0 && this.chatArea && this.isViewingSession(session.id)) {
+                            this.chatArea.updateStreamingImages(streamingMessageId, addedImages);
                         }
                     },
                     (tokenUpdate) => {
@@ -6075,6 +6088,7 @@ class ChatApp {
                                 reasoningPhaseClock,
                                 canSplitInterleavedContent(streamedContent) ? streamedContent.length : null
                             );
+                            streamingMessage.streamingReasoningImageCount = streamingMessage.images?.length || 0;
                         }
                         lastStreamEventType = 'reasoning';
                         streamingMessage.streamingReasoning = true;
@@ -6505,9 +6519,6 @@ class ChatApp {
                     options.onStatus?.('streaming');
                 }
                 if (!chunk) return;
-                if (lastStreamEventType === 'reasoning') {
-                    options.onReasoningDone?.(reasoning);
-                }
                 const contentUpdate = appendInterleavedContent(content, chunk, lastStreamEventType);
                 content = contentUpdate.content;
                 lastStreamEventType = 'content';
@@ -6755,6 +6766,8 @@ class ChatApp {
         snapshot.streamingReasoning = false;
         snapshot.streamingTokens = null;
         delete snapshot.streamingReasoningContentOffset;
+        delete snapshot.streamingReasoningImageCount;
+        delete snapshot.streamingImageSegments;
 
         return snapshot;
     }

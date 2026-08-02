@@ -627,10 +627,6 @@ export default class ChatArea {
                     if (requestId !== this.quickAsk.activeRequestId) return;
                     this.updateQuickAskAnswer(content);
                 },
-                onReasoningDone: (reasoning) => {
-                    if (requestId !== this.quickAsk.activeRequestId) return;
-                    this.updateQuickAskReasoning(reasoning);
-                },
                 onReasoningChunk: (reasoning) => {
                     if (requestId !== this.quickAsk.activeRequestId) return;
                     this.updateQuickAskReasoning(reasoning, { streaming: true });
@@ -1803,11 +1799,10 @@ export default class ChatArea {
                         }
                         reasoningContentEl.appendChild(loadingIndicator);
 
-                        // Also update the subtitle to match the latest content
+                        // Streaming state always uses a literal live label.
                         const subtitleEl = document.getElementById(`reasoning-subtitle-${streamingMsg.id}`);
                         if (subtitleEl) {
-                            const subtitle = this.extractReasoningSubtitle(reasoningSource);
-                            subtitleEl.textContent = subtitle;
+                            subtitleEl.textContent = 'Thinking...';
                             if (!subtitleEl.classList.contains('reasoning-subtitle-streaming')) {
                                 subtitleEl.classList.add('reasoning-subtitle-streaming');
                             }
@@ -2076,10 +2071,8 @@ export default class ChatArea {
                 textBubble.className = 'py-3 px-4 font-normal message-assistant w-full flex items-center';
                 textBubble.innerHTML = '<div class="min-w-0 w-full overflow-hidden message-content prose"></div>';
 
-                // Output is appended at the end of the current message body. The
-                // stream controller finalizes and normalizes any completed reasoning
-                // phase before this method runs; active reasoning callbacks alone
-                // are responsible for temporarily relocating the trace downward.
+                // Append output at the current provider boundary. Once Thinking
+                // appears it stays live in that chronology until terminal cleanup.
                 insertStreamingContentBubble({
                     groupEl,
                     textBubble,
@@ -2249,11 +2242,10 @@ export default class ChatArea {
             }, this.typewriter.tickMs);
         }
 
-        // Update the subtitle with the last meaningful line and ensure animation is active
+        // Keep past-tense summaries and durations out of the live response state.
         const subtitleEl = document.getElementById(`reasoning-subtitle-${messageId}`);
         if (subtitleEl) {
-            const subtitle = this.extractReasoningSubtitle(content);
-            subtitleEl.textContent = subtitle;
+            subtitleEl.textContent = 'Thinking...';
             if (!subtitleEl.classList.contains('reasoning-subtitle-streaming')) {
                 subtitleEl.classList.add('reasoning-subtitle-streaming');
             }
@@ -2419,88 +2411,6 @@ export default class ChatArea {
     }
 
     /**
-     * Parses reasoning content to extract structure (headings, summaries, bold text).
-     * @param {string} reasoning - The reasoning content
-     * @returns {Object} Parsed structure with summaries array and sections
-     */
-    parseReasoningStructure(reasoning) {
-        if (!reasoning) return { summaries: [], sections: [] };
-
-        const lines = reasoning.trim().split('\n');
-        const summaries = [];
-        const sections = [];
-        let currentSection = null;
-
-        for (const line of lines) {
-            const trimmedLine = line.trim();
-            if (!trimmedLine) continue;
-
-            // Check for markdown headings
-            const headingMatch = trimmedLine.match(/^(#+)\s*(.+)$/);
-            if (headingMatch) {
-                const level = headingMatch[1].length;
-                const text = headingMatch[2].trim();
-                summaries.push({ type: 'heading', level, text });
-
-                // Start a new section
-                if (currentSection) sections.push(currentSection);
-                currentSection = { heading: text, level, content: [] };
-                continue;
-            }
-
-            // Check for bold text (potential summary markers)
-            // Match bold text that appears at the start or middle of a line
-            const boldMatches = trimmedLine.matchAll(/\*\*(.+?)\*\*/g);
-            for (const match of boldMatches) {
-                const boldText = match[1].trim();
-                // Only treat as summary if it's reasonably short and looks like a title
-                if (boldText.length > 5 && boldText.length < 100 && !boldText.includes('.')) {
-                    summaries.push({ type: 'bold', text: boldText });
-                }
-            }
-
-            // Add line to current section
-            if (currentSection) {
-                currentSection.content.push(trimmedLine);
-            }
-        }
-
-        if (currentSection) sections.push(currentSection);
-
-        return { summaries, sections };
-    }
-
-    /**
-     * Extracts a meaningful subtitle from reasoning content.
-     * Only uses explicit subtitle markers (## headings or **bold** text).
-     * Returns "Thinking..." if no markers are found (e.g., Claude models).
-     * @param {string} reasoning - The reasoning content
-     * @returns {string} The subtitle text
-     */
-    extractReasoningSubtitle(reasoning) {
-        if (!reasoning || reasoning.trim().length === 0) {
-            return 'Thinking...';
-        }
-
-        const MAX_LENGTH = 150;
-        const structure = this.parseReasoningStructure(reasoning);
-
-        // Only use explicit subtitle markers (headings or bold text)
-        // If none found, keep showing "Thinking..." - don't fall back to body text
-        if (structure.summaries.length > 0) {
-            const lastSummary = structure.summaries[structure.summaries.length - 1];
-            const summaryText = lastSummary.text;
-
-            return summaryText.length > MAX_LENGTH
-                ? summaryText.substring(0, MAX_LENGTH - 3) + '...'
-                : summaryText;
-        }
-
-        // No subtitle markers detected - keep default streaming indicator
-        return 'Thinking...';
-    }
-
-    /**
      * Formats a duration in milliseconds to a human-readable string.
      * @param {number} durationMs - Duration in milliseconds
      * @returns {string} Formatted duration string
@@ -2526,9 +2436,8 @@ export default class ChatArea {
     }
 
     /**
-     * Finalizes the current reasoning phase.
-     * Completed reasoning returns above the answer; only actively streaming
-     * reasoning is allowed to follow already-visible output.
+     * Finalizes the reasoning display after the overall response terminates.
+     * Completed reasoning returns above the full answer.
      * @param {string} messageId - The message ID
      * @param {string} reasoning - The final reasoning content
      * @param {number} reasoningDuration - Duration in milliseconds (optional)
@@ -2625,21 +2534,17 @@ export default class ChatArea {
             return;
         }
 
-        // Find or create the image bubble container
-        let imageBubble = messageEl.querySelector('.message-assistant-images');
+        // Each provider image batch is its own stream event. Appending a fresh
+        // bubble preserves its position relative to text and Thinking updates.
+        const actionButtonsWrapper = groupEl.querySelector(':scope > .assistant-actions-anchor');
+        const imageBubble = document.createElement('div');
+        imageBubble.className = 'font-normal message-assistant-images w-full';
+        imageBubble.dataset.streamingImageSegment = 'true';
 
-        if (!imageBubble) {
-            // Create the image bubble after text bubble but before the shared action anchor.
-            const actionButtonsWrapper = groupEl.querySelector(':scope > .assistant-actions-anchor');
-
-            imageBubble = document.createElement('div');
-            imageBubble.className = 'font-normal message-assistant-images w-full';
-
-            if (actionButtonsWrapper) {
-                groupEl.insertBefore(imageBubble, actionButtonsWrapper);
-            } else {
-                groupEl.appendChild(imageBubble);
-            }
+        if (actionButtonsWrapper) {
+            groupEl.insertBefore(imageBubble, actionButtonsWrapper);
+        } else {
+            groupEl.appendChild(imageBubble);
         }
 
         // Update images using the template function

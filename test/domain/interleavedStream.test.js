@@ -9,6 +9,7 @@ import {
     completeStreamingReasoning,
     createReasoningPhaseClock,
     finishReasoningPhase,
+    finishStreamingReasoningPhase,
     formatReasoningDuration
 } from '../../chat/domain/interleavedStream.js';
 
@@ -81,17 +82,28 @@ test('reasoning duration counts only active reasoning phases', () => {
     assert.equal(finishReasoningPhase(clock, 540), 100);
 });
 
-test('streaming reasoning flags and offsets exist only during an active phase', () => {
+test('live reasoning layout persists through answer streaming and clears on response completion', () => {
     const clock = createReasoningPhaseClock();
-    const message = { streamingReasoning: false };
+    const message = {
+        streamingReasoning: false,
+        streamingReasoningImageCount: 1,
+        streamingImageSegments: [{ startIndex: 0, count: 1, contentOffset: 14 }]
+    };
 
     activateStreamingReasoning(message, clock, 14, 100);
     assert.equal(message.streamingReasoning, true);
     assert.equal(message.streamingReasoningContentOffset, 14);
 
-    assert.equal(completeStreamingReasoning(message, clock, 175), 75);
+    assert.equal(finishStreamingReasoningPhase(message, clock, 175), 75);
+    assert.equal(message.streamingReasoning, true);
+    assert.equal(message.streamingReasoningContentOffset, 14);
+    assert.equal(message.reasoningDuration, 75);
+
+    assert.equal(completeStreamingReasoning(message, clock, 300), 75);
     assert.equal(message.streamingReasoning, false);
     assert.equal(message.streamingReasoningContentOffset, undefined);
+    assert.equal(message.streamingReasoningImageCount, undefined);
+    assert.equal(message.streamingImageSegments, undefined);
     assert.equal(message.reasoningDuration, 75);
 });
 
