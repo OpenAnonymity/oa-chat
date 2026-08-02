@@ -1478,6 +1478,26 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
             </div>
         </div>
     ` : '';
+    const reasoningContentOffset = Number.isInteger(message.streamingReasoningContentOffset)
+        ? Math.max(0, Math.min(message.streamingReasoningContentOffset, message.content?.length || 0))
+        : null;
+    const hasInterleavedStreamingLayout = !!message.streamingReasoning &&
+        reasoningContentOffset !== null &&
+        typeof message.content === 'string';
+    const buildStreamingTextBubble = (rawContent) => {
+        if (!rawContent) return '';
+        const html = enhanceInlineLinks(processContentWithLatex(rawContent), message.id);
+        return `
+        <div class="${CLASSES.assistantBubble}">
+            <div class="${CLASSES.assistantContent} streaming">
+                ${html}
+            </div>
+        </div>
+        `;
+    };
+    const streamBodyBubble = hasInterleavedStreamingLayout
+        ? `${buildStreamingTextBubble(message.content.slice(0, reasoningContentOffset))}${reasoningBubble}${buildStreamingTextBubble(message.content.slice(reasoningContentOffset))}`
+        : `${reasoningBubble}${textBubble}`;
     const memoryRetrievalFailure = isMemoryAgent
         ? normalizeMemoryRetrievalFailureReason(message.memoryRetrievalFailure)
         : null;
@@ -1655,10 +1675,9 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
                     ${tokenDisplay}
                 </div>
                 `}
-                ${reasoningBubble}
                 ${agentTraceBubble}
                 ${thumbnailsBubble}
-                ${textBubble}
+                ${streamBodyBubble}
                 ${memoryFailureDetail}
                 ${imageBubble}
                 ${memoryApprovalActions}

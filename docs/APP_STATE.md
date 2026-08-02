@@ -25,6 +25,18 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
+- 2026-08-02: Interleaved provider reasoning/output streams preserve their wire order.
+  - `api.js` normalizes direct reasoning deltas plus OpenRouter `reasoning_details` text and
+    summary blocks, serializes callbacks, and flushes buffered reasoning before following
+    text or images. This covers providers such as Claude and Grok that can resume thinking
+    after emitting visible output.
+  - During streaming, the single reasoning section moves to the latest reasoning boundary;
+    resumed answer text renders below it. `streamingReasoningContentOffset` preserves that
+    layout across session rerenders and is removed when the message becomes final/static.
+  - Resumed output also receives a paragraph break in persisted message content when the
+    provider supplied no whitespace, preventing joins such as `you.The` after final render,
+    cancellation, export, or reload.
+
 - 2026-07-31: OpenRouter catalog labels for Anthropic models are normalized to
   include the `Anthropic:` prefix when upstream omits it. Already-prefixed names
   remain unchanged.

@@ -525,16 +525,35 @@ class OpenRouterAPI {
         const REASONING_BUFFER_DELAY = 50; // ms - flush buffer after this delay
         const REASONING_BUFFER_SIZE = 20; // chars - flush when buffer reaches this size
 
+        // Provider events can alternate between reasoning and visible content. Keep
+        // their async UI callbacks in wire order so a buffered reasoning delta can
+        // never be overtaken by the answer delta that follows it.
+        let callbackQueue = Promise.resolve();
+        let callbackError = null;
+        const queueCallback = (callback) => {
+            callbackQueue = callbackQueue.then(async () => {
+                if (callbackError) return;
+                try {
+                    await callback();
+                } catch (error) {
+                    callbackError = error;
+                }
+            });
+            return callbackQueue;
+        };
+
         // Helper to flush reasoning buffer
         const flushReasoningBuffer = () => {
             if (reasoningBuffer && onReasoningChunk) {
-                onReasoningChunk(reasoningBuffer);
+                const bufferedReasoning = reasoningBuffer;
                 reasoningBuffer = '';
+                queueCallback(() => onReasoningChunk(bufferedReasoning));
             }
             if (reasoningBufferTimer) {
                 clearTimeout(reasoningBufferTimer);
                 reasoningBufferTimer = null;
             }
+            return callbackQueue;
         };
 
         // Helper to normalize URLs for deduplication (strip trailing garbage, normalize trailing slashes)
@@ -770,15 +789,24 @@ class OpenRouterAPI {
                     }
                 }
 
-                // Check for reasoning in various possible formats
-                // OpenRouter might send reasoning in different ways
-                if (parsed.type === 'response.reasoning.delta' ||
-                    parsed.reasoning_delta ||
-                    (parsed.choices?.[0]?.delta?.reasoning)) {
+                const delta = parsed.choices?.[0]?.delta;
+                const reasoningDetailsContent = Array.isArray(delta?.reasoning_details)
+                    ? delta.reasoning_details
+                        .map(detail => {
+                            if (detail?.type === 'reasoning.text') return detail.text || '';
+                            if (detail?.type === 'reasoning.summary') return detail.summary || '';
+                            return '';
+                        })
+                        .join('')
+                    : '';
+                const directReasoningContent = parsed.type === 'response.reasoning.delta'
+                    ? parsed.delta || ''
+                    : parsed.reasoning_delta || delta?.reasoning || '';
+                const reasoningContent = directReasoningContent || reasoningDetailsContent;
 
-                    const reasoningContent = parsed.delta ||
-                                           parsed.reasoning_delta ||
-                                           parsed.choices?.[0]?.delta?.reasoning || '';
+                // OpenRouter normalizes provider-specific formats into either a
+                // direct reasoning delta or text/summary reasoning_details.
+                if (reasoningContent) {
 
                     if (reasoningContent && onReasoningChunk) {
                         hasReceivedFirstToken = true;
@@ -835,7 +863,8 @@ class OpenRouterAPI {
                     if (contentDelta) {
                         hasReceivedFirstToken = true;
                         accumulatedContent += contentDelta;
-                        onChunk(contentDelta);
+                        flushReasoningBuffer();
+                        queueCallback(() => onChunk(contentDelta));
 
                         // Add reasoning tokens to content tokens for cumulative display
                         const estimatedContentTokens = Math.ceil(accumulatedContent.length / 4);
@@ -850,13 +879,13 @@ class OpenRouterAPI {
                     return;
                 }
 
-                const delta = parsed.choices?.[0]?.delta;
                 const content = delta?.content;
 
                 if (content) {
                     hasReceivedFirstToken = true;
                     accumulatedContent += content;
-                    onChunk(content);
+                    flushReasoningBuffer();
+                    queueCallback(() => onChunk(content));
 
                     // Add reasoning tokens to content tokens for cumulative display
                     const estimatedContentTokens = Math.ceil(accumulatedContent.length / 4);
@@ -872,7 +901,8 @@ class OpenRouterAPI {
                 // Check for images in the delta (standard OpenRouter format)
                 if (delta?.images) {
                     hasReceivedFirstToken = true;
-                    onChunk(null, { images: delta.images });
+                    flushReasoningBuffer();
+                    queueCallback(() => onChunk(null, { images: delta.images }));
                 }
 
                 // Check for image data in reasoning_details (only treat recognised image payloads)
@@ -880,11 +910,12 @@ class OpenRouterAPI {
                     const imageDetails = delta.reasoning_details.filter(detail => this.isReasoningDetailImage(detail));
                     if (imageDetails.length > 0) {
                         hasReceivedFirstToken = true;
+                        flushReasoningBuffer();
                         const images = imageDetails.map(detail => ({
                             type: 'image_url',
                             image_url: { url: this.buildImageUrlFromReasoningDetail(detail) }
                         }));
-                        onChunk(null, { images });
+                        queueCallback(() => onChunk(null, { images }));
                     }
                 }
 
@@ -922,9 +953,12 @@ class OpenRouterAPI {
             }
         };
 
-        const finalizeStreamResult = () => {
+        const finalizeStreamResult = async () => {
             // Flush any remaining reasoning buffer
-            flushReasoningBuffer();
+            await flushReasoningBuffer();
+            if (callbackError) {
+                throw callbackError;
+            }
 
             // Parse citations - prefer annotations over content parsing
             if (searchEnabled) {
@@ -1140,7 +1174,7 @@ class OpenRouterAPI {
             return finalizeStreamResult();
         } catch (error) {
             // Flush any remaining reasoning buffer before handling error
-            flushReasoningBuffer();
+            await flushReasoningBuffer();
 
             let streamError = error;
             if (!(streamError instanceof Error)) {

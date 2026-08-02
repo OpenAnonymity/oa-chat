@@ -8,6 +8,7 @@ import { buildMessageHTML, buildEmptyState, buildSharedIndicator, buildImportedI
 import { exportChats, exportTickets } from '../services/globalExport.js';
 import { parseStreamingReasoningContent, parseReasoningContent } from '../services/reasoningParser.js';
 import { buildQuickAskQuestion, normalizeQuickAskSelection } from '../domain/quickAsk.js';
+import { canFinalizeInterleavedContentInPlace } from '../domain/interleavedStream.js';
 import { resolveProvider, resolveProviderFromModelReference } from '../services/providerRegistry.js';
 
 export default class ChatArea {
@@ -2033,9 +2034,11 @@ export default class ChatArea {
     /**
      * Updates a specific message's content in real-time (for streaming).
      * @param {string} messageId - The message ID to update
-     * @param {string} content - New content to display
+     * @param {string} content - Full accumulated content
+     * @param {string|null} segmentContent - Content in the active visible segment
+     * @param {boolean} startsNewSegment - Whether output resumed after reasoning
      */
-    updateStreamingMessage(messageId, content) {
+    updateStreamingMessage(messageId, content, segmentContent = null, startsNewSegment = false) {
         const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
         if (!messageEl) return;
 
@@ -2043,11 +2046,14 @@ export default class ChatArea {
             messageEl.dataset.rawContent = content || '';
         }
 
-        let contentEl = messageEl.querySelector('.message-content');
+        const groupEl = messageEl.querySelector('.group.flex.w-full.flex-col');
+        const existingContent = groupEl
+            ? Array.from(groupEl.querySelectorAll(':scope > .message-assistant .message-content'))
+            : [];
+        let contentEl = startsNewSegment ? null : existingContent.at(-1);
 
         // If content element doesn't exist (e.g., first output after reasoning), create it
         if (!contentEl) {
-            const groupEl = messageEl.querySelector('.group.flex.w-full.flex-col');
             if (groupEl) {
                 // The action anchor may be either the real toolbar row or the placeholder
                 // that reserves its footprint during reasoning-only streaming.
@@ -2075,7 +2081,8 @@ export default class ChatArea {
             contentEl.classList.add('streaming');
 
             // Use the app's LaTeX-safe processor
-            let processedContent = this.app.processContentWithLatex(content);
+            const visibleContent = segmentContent === null ? content : segmentContent;
+            let processedContent = this.app.processContentWithLatex(visibleContent);
 
             // Enhance inline links into styled buttons during streaming
             processedContent = window.MessageTemplates.enhanceInlineLinks(processedContent, messageId);
@@ -2138,6 +2145,35 @@ export default class ChatArea {
      * @param {string} reasoning - The reasoning content
      */
     updateStreamingReasoning(messageId, reasoning) {
+        const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
+        const groupEl = messageEl?.querySelector('.group.flex.w-full.flex-col');
+        if (groupEl) {
+            const actionAnchor = groupEl.querySelector(':scope > .assistant-actions-anchor');
+            let reasoningTrace = groupEl.querySelector(':scope > .reasoning-trace');
+
+            if (!reasoningTrace) {
+                const traceContainer = document.createElement('div');
+                traceContainer.innerHTML = buildReasoningTrace(
+                    reasoning,
+                    messageId,
+                    true,
+                    this.app.processContentWithLatex.bind(this.app)
+                );
+                reasoningTrace = traceContainer.firstElementChild;
+            }
+
+            // A provider may return visible output, think again, then resume the
+            // answer. Keep the single thinking section at the current point in
+            // that chronology; the next content phase will be inserted below it.
+            if (reasoningTrace) {
+                if (actionAnchor) {
+                    groupEl.insertBefore(reasoningTrace, actionAnchor);
+                } else {
+                    groupEl.appendChild(reasoningTrace);
+                }
+            }
+        }
+
         // Always update buffer immediately (non-blocking)
         this.reasoningBuffer.content = reasoning;
         this.reasoningBuffer.messageId = messageId;
@@ -2148,6 +2184,7 @@ export default class ChatArea {
                 this.flushReasoningBuffer();
             }, 80);
         }
+        this.app.updateActivePromptScrollSpacer();
     }
 
     /**
@@ -2768,10 +2805,11 @@ export default class ChatArea {
         const isReasoningFinalized = existingSubtitle &&
             !existingSubtitle.classList.contains('reasoning-subtitle-streaming') &&
             existingSubtitle.textContent.startsWith('Thought for');
+        const contentBubbleCount = messageEl.querySelectorAll('.message-content').length;
 
         // If reasoning is finalized, do targeted updates instead of full replacement
         // This prevents flash by not touching the reasoning trace DOM at all
-        if (isReasoningFinalized) {
+        if (canFinalizeInterleavedContentInPlace(isReasoningFinalized, contentBubbleCount)) {
             // Just update the content element if it exists
             const contentEl = messageEl.querySelector('.message-content');
             if (contentEl && message.content) {

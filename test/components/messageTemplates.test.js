@@ -98,3 +98,30 @@ test('assistant model IDs use author providers without family-logo guessing', as
     assert.match(unresolved, /data-provider-icon-fallback[^>]*>A<\/span>/);
     assert.doesNotMatch(unresolved, /img\/openai\.svg/);
 });
+
+test('interleaved streams restore content around the current thinking section', async () => {
+    installTemplateGlobals();
+    const { buildMessageHTML } = await import('../../chat/components/MessageTemplates.js');
+
+    const html = buildMessageHTML({
+        id: 'interleaved',
+        role: 'assistant',
+        model: 'Anthropic: Claude Test',
+        content: 'Visible before.\n\nVisible after.',
+        reasoning: 'Checking another source.',
+        streamingReasoning: true,
+        streamingTokens: 8,
+        streamingReasoningContentOffset: 'Visible before.'.length
+    }, {
+        processContentWithLatex: escapeHtml,
+        formatTime: () => '18:15:12'
+    }, [], 'Anthropic: Claude Test');
+
+    const beforeIndex = html.indexOf('Visible before.');
+    const thinkingIndex = html.indexOf('reasoning-trace');
+    const afterIndex = html.indexOf('Visible after.');
+
+    assert.ok(beforeIndex >= 0);
+    assert.ok(thinkingIndex > beforeIndex);
+    assert.ok(afterIndex > thinkingIndex);
+});
