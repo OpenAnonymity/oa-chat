@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 
 import {
     appendInterleavedContent,
-    canFinalizeInterleavedContentInPlace
+    canFinalizeInterleavedContentInPlace,
+    shouldInsertInitialContentBeforeReasoning
 } from '../../chat/domain/interleavedStream.js';
 
 test('content remains contiguous while the provider is emitting output', () => {
@@ -61,4 +62,11 @@ test('segmented output forces final rendering to collapse into one content bubbl
     assert.equal(canFinalizeInterleavedContentInPlace(true, 1), true);
     assert.equal(canFinalizeInterleavedContentInPlace(true, 2), false);
     assert.equal(canFinalizeInterleavedContentInPlace(false, 1), false);
+});
+
+test('first visible output is inserted before an existing reasoning trace', () => {
+    assert.equal(shouldInsertInitialContentBeforeReasoning(false, false, true), true);
+    assert.equal(shouldInsertInitialContentBeforeReasoning(true, false, true), false);
+    assert.equal(shouldInsertInitialContentBeforeReasoning(false, true, true), false);
+    assert.equal(shouldInsertInitialContentBeforeReasoning(false, false, false), false);
 });

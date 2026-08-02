@@ -33,6 +33,9 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - During streaming, the single reasoning section moves to the latest reasoning boundary;
     resumed answer text renders below it. `streamingReasoningContentOffset` preserves that
     layout across session rerenders and is removed when the message becomes final/static.
+    If a reasoning-only DOM is already visible when the first answer text arrives, that
+    text is inserted before the reasoning section immediately; do not wait for another
+    reasoning delta to correct the order, or the UI visibly flashes between layouts.
   - Resumed output also receives a paragraph break in persisted message content when the
     provider supplied no whitespace, preventing joins such as `you.The` after final render,
     cancellation, export, or reload.

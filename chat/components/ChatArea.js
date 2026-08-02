@@ -9,6 +9,7 @@ import { exportChats, exportTickets } from '../services/globalExport.js';
 import { parseStreamingReasoningContent, parseReasoningContent } from '../services/reasoningParser.js';
 import { buildQuickAskQuestion, normalizeQuickAskSelection } from '../domain/quickAsk.js';
 import { canFinalizeInterleavedContentInPlace } from '../domain/interleavedStream.js';
+import { insertStreamingContentBubble } from './streamingLayout.js';
 import { resolveProvider, resolveProviderFromModelReference } from '../services/providerRegistry.js';
 
 export default class ChatArea {
@@ -2058,19 +2059,24 @@ export default class ChatArea {
                 // The action anchor may be either the real toolbar row or the placeholder
                 // that reserves its footprint during reasoning-only streaming.
                 const actionAnchor = groupEl.querySelector(':scope > .assistant-actions-anchor');
+                const reasoningTrace = groupEl.querySelector(':scope > .reasoning-trace');
 
                 // Create the text bubble
                 const textBubble = document.createElement('div');
                 textBubble.className = 'py-3 px-4 font-normal message-assistant w-full flex items-center';
                 textBubble.innerHTML = '<div class="min-w-0 w-full overflow-hidden message-content prose"></div>';
 
-                // Keep streamed content above the action row placeholder so reasoning
-                // does not leave a temporary gap before the answer.
-                if (actionAnchor) {
-                    groupEl.insertBefore(textBubble, actionAnchor);
-                } else {
-                    groupEl.appendChild(textBubble);
-                }
+                // Establish the final order in the same frame that reveals the first
+                // visible output. Otherwise it briefly appears below the reasoning
+                // trace until the next reasoning delta moves that trace downward.
+                insertStreamingContentBubble({
+                    groupEl,
+                    textBubble,
+                    existingContentCount: existingContent.length,
+                    startsNewSegment,
+                    reasoningTrace,
+                    actionAnchor
+                });
 
                 contentEl = textBubble.querySelector('.message-content');
             }

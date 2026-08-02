@@ -10,6 +10,14 @@ export function canFinalizeInterleavedContentInPlace(reasoningFinalized, content
     return !!reasoningFinalized && Number(contentBubbleCount) <= 1;
 }
 
+export function shouldInsertInitialContentBeforeReasoning(
+    hasExistingContent,
+    startsNewSegment,
+    hasReasoningTrace
+) {
+    return !hasExistingContent && !startsNewSegment && !!hasReasoningTrace;
+}
+
 /**
  * Appends a provider content delta while preserving a visible boundary when
  * output resumes after a reasoning phase.
