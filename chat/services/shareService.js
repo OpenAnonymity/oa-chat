@@ -275,6 +275,10 @@ export function buildSharePayload(session, messages, opts = {}) {
     return payload;
 }
 
+export function hasShareableAccess(session) {
+    return Boolean(inferenceService.buildSharedAccessPayload(session));
+}
+
 /**
  * Encode share data (encrypt with password or base64 for plaintext)
  * @param {Object} payload - Share payload
@@ -454,6 +458,7 @@ export async function createOrUpdateShare(session, messages, settings) {
 
     // Build and encode payload
     const payload = buildSharePayload(session, messages, { shareApiKeyMetadata });
+    const apiKeyShared = Boolean(payload.sharedAccess);
     const shareData = await encodeShareData(payload, password);
 
     const shareId = session.id;
@@ -473,7 +478,7 @@ export async function createOrUpdateShare(session, messages, settings) {
         shareId,
         messages.length,
         !password,
-        shareApiKeyMetadata,
+        apiKeyShared,
         ttlSeconds
     );
 
@@ -539,6 +544,7 @@ export default {
     normalizeShareId,
     isPlaintextShare,
     buildSharePayload,
+    hasShareableAccess,
     encodeShareData,
     decodeShareData,
     validatePayload,

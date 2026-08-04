@@ -247,6 +247,32 @@ test('acquireVerifiedAccess returns approved access without activating or persis
     assert.equal(harness.savedSessions.length, 0);
 });
 
+test('explicit loopback bypass skips the verifier without claiming verified status', async () => {
+    const harness = createAccessHarness({
+        verifier: {
+            supports: true,
+            allowsLocalBypass: () => true
+        }
+    });
+
+    const result = await acquireVerifiedAccess({
+        session: harness.session,
+        models: [{ id: 'model-a', name: 'Model A' }],
+        reasoningEnabled: true,
+        inferenceService: harness.inferenceService,
+        ticketClient: harness.ticketClient,
+        getTicketCost: harness.getTicketCost,
+        getFallbackModelEntry: harness.getFallbackModelEntry,
+        ...harness.callbacks
+    });
+
+    assert.equal(result.key, 'secret-key');
+    assert.equal(result.verifierSubmitKeyProof.status, 'local-loopback-bypass');
+    assert.equal(result.verifierSubmitKeyProof.detail, 'explicit_loopback_development');
+    assert.equal(harness.verificationInputs.length, 0);
+    assert.equal(harness.setAccessCalls.length, 0);
+});
+
 test('acquireVerifiedAccess returns only redacted proof evidence when verification fails', async () => {
     const harness = createAccessHarness({
         verification: {

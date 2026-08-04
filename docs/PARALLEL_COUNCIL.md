@@ -31,6 +31,12 @@ acquisition operation as ordinary Chat. The child key remains provisional until
 the verifier returns explicit `verified`; pending, unverified, rejected,
 malformed, timeout, and network-error results are never stored as lane access.
 
+For local development only, a lane may instead carry the distinct
+`local-loopback-bypass` proof when both the browser and configured oa-org hosts
+are exact loopback addresses. That status is never treated as verifier approval,
+cannot be shared, does not register the lane with production verifier state, and
+becomes unusable outside the loopback environment.
+
 A lane key is reusable only for its recorded model when it is verified,
 unexpired, and not associated with a banned station. Switching back to Chat may
 restore the verified primary lane only. Secondary and synthesis keys never

@@ -1,3 +1,5 @@
+export const LOCAL_LOOPBACK_VERIFIER_BYPASS_STATUS = 'local-loopback-bypass';
+
 export function isVerifierProofApproved(proof) {
     return proof?.status === 'verified';
 }
@@ -12,6 +14,38 @@ export function hasExplicitVerifierApproval(session) {
 
 export function hasExplicitVerifierApprovalForAccessInfo(accessInfo) {
     return isVerifierProofApproved(accessInfo?.verifierSubmitKeyProof);
+}
+
+export function isLocalLoopbackVerifierBypassProof(proof) {
+    return proof?.status === LOCAL_LOOPBACK_VERIFIER_BYPASS_STATUS;
+}
+
+export function isVerifierProofUsable(proof, options = {}) {
+    return isVerifierProofApproved(proof) ||
+        (options.allowLocalBypass === true && isLocalLoopbackVerifierBypassProof(proof));
+}
+
+export function hasUsableVerifierApproval(session, options = {}) {
+    return isVerifierProofUsable(session?.apiKeyInfo?.verifierSubmitKeyProof, options);
+}
+
+export function hasUsableVerifierApprovalForAccessInfo(accessInfo, options = {}) {
+    return isVerifierProofUsable(accessInfo?.verifierSubmitKeyProof, options);
+}
+
+export function buildExplicitlyVerifiedOpenRouterSharePayload(accessInfo) {
+    if (!accessInfo || !hasExplicitVerifierApprovalForAccessInfo(accessInfo)) return null;
+    return {
+        backendId: 'openrouter',
+        token: accessInfo.key || accessInfo.token || null,
+        expiresAt: accessInfo.expiresAt || accessInfo.expires_at || null,
+        expiresAtUnix: accessInfo.expiresAtUnix || accessInfo.expires_at_unix || null,
+        stationId: accessInfo.stationId || accessInfo.station_id || accessInfo.station_name || null,
+        recentlyAttested: accessInfo.recentlyAttested || accessInfo.station_recently_attested || false,
+        stationSignature: accessInfo.stationSignature || accessInfo.station_signature || null,
+        orgSignature: accessInfo.orgSignature || accessInfo.org_signature || null,
+        usage: accessInfo.usage || null
+    };
 }
 
 function removeRawKeyMappings(session, discardedKey, retainedKeys = new Set()) {
@@ -32,13 +66,13 @@ function removeRawKeyMappings(session, discardedKey, retainedKeys = new Set()) {
     return changed;
 }
 
-function getRetainedAccessKeys(session) {
+function getRetainedAccessKeys(session, options = {}) {
     const retained = new Set();
-    if (session?.apiKey && hasExplicitVerifierApproval(session)) {
+    if (session?.apiKey && hasUsableVerifierApproval(session, options)) {
         retained.add(session.apiKey);
     }
     for (const lane of Object.values(session?.councilAccess || {})) {
-        if (lane?.apiKey && hasExplicitVerifierApprovalForAccessInfo(lane.apiKeyInfo)) {
+        if (lane?.apiKey && hasUsableVerifierApprovalForAccessInfo(lane.apiKeyInfo, options)) {
             retained.add(lane.apiKey);
         }
     }
@@ -59,7 +93,7 @@ export function clearUnsafeOpenRouterCouncilAccess(session, options = {}) {
         if (!lane || typeof lane !== 'object' || !lane.apiKey) continue;
         const expiresAtMs = Date.parse(lane.expiresAt || lane.apiKeyInfo?.expiresAt || lane.apiKeyInfo?.expires_at || '');
         const expired = !Number.isFinite(expiresAtMs) || expiresAtMs <= now();
-        const unsafe = !hasExplicitVerifierApprovalForAccessInfo(lane.apiKeyInfo)
+        const unsafe = !hasUsableVerifierApprovalForAccessInfo(lane.apiKeyInfo, options)
             || expired
             || isBanned(lane.apiKeyInfo);
         if (!unsafe) continue;
@@ -73,7 +107,7 @@ export function clearUnsafeOpenRouterCouncilAccess(session, options = {}) {
         delete session.councilAccess;
     }
 
-    const retainedKeys = getRetainedAccessKeys(session);
+    const retainedKeys = getRetainedAccessKeys(session, options);
     for (const discardedKey of discardedKeys) {
         changed = removeRawKeyMappings(session, discardedKey, retainedKeys) || changed;
     }
@@ -86,14 +120,14 @@ export function clearUnverifiedOpenRouterAccess(session, options = {}) {
     }
 
     let changed = clearUnsafeOpenRouterCouncilAccess(session, options);
-    if (session.apiKey && !hasExplicitVerifierApproval(session)) {
+    if (session.apiKey && !hasUsableVerifierApproval(session, options)) {
         const discardedKey = session.apiKey;
         session.apiKey = null;
         session.apiKeyInfo = null;
         session.expiresAt = null;
         session.currentEphemeralKeyId = null;
         changed = true;
-        changed = removeRawKeyMappings(session, discardedKey, getRetainedAccessKeys(session)) || changed;
+        changed = removeRawKeyMappings(session, discardedKey, getRetainedAccessKeys(session, options)) || changed;
     }
 
     return changed;

@@ -254,6 +254,47 @@ test('requestLaneAccess persists only explicitly verified OpenRouter lane keys',
     assert.equal(savedSessions.length, 1);
 });
 
+test('requestLaneAccess accepts a non-verified bypass proof only in loopback mode', async () => {
+    const savedSessions = [];
+    const controller = createController({
+        ticketCount: 1,
+        costs: { 'openai/gpt': 1 },
+        models: [{ id: 'openai/gpt', name: 'GPT' }],
+        chatDB: {
+            saveSession: async (session) => savedSessions.push(JSON.parse(JSON.stringify(session)))
+        },
+        inferenceService: {
+            getAccessLabel: () => 'OpenRouter key',
+            requestAccess: async () => ({
+                key: 'local-lane-key',
+                stationId: 'local-station',
+                expiresAt: new Date(Date.now() + 60_000).toISOString()
+            }),
+            getVerificationAdapter: () => ({
+                supports: true,
+                allowsLocalBypass: () => true
+            }),
+            verifyAccess: async () => {
+                throw new Error('loopback bypass must not call verifier');
+            }
+        }
+    });
+    const session = { id: 'session-local', councilAccess: {} };
+
+    await controller.requestLaneAccess(
+        session,
+        { laneId: 'primary', id: 'openai/gpt', name: 'GPT' },
+        null
+    );
+
+    assert.equal(session.councilAccess.primary.apiKey, 'local-lane-key');
+    assert.equal(
+        session.councilAccess.primary.apiKeyInfo.verifierSubmitKeyProof.status,
+        'local-loopback-bypass'
+    );
+    assert.equal(savedSessions.length, 1);
+});
+
 test('resolveModelEntries adds Gemini 3.5 Flash as fallback secondary model when config only has primary', () => {
     const controller = createController({
         models: [
@@ -494,6 +535,53 @@ test('seedSessionAccessFromPrimaryLane restores valid primary lane access for si
     assert.equal(setCurrentAccessCalls.length, 1);
     assert.equal(setCurrentAccessCalls[0].accessInfo.key, 'primary-lane-key');
     assert.notEqual(session.apiKey, 'secondary-lane-key');
+});
+
+test('seedSessionAccessFromPrimaryLane does not register a local bypass with the production verifier', () => {
+    const validExpiry = new Date(Date.now() + 60_000).toISOString();
+    const setCurrentAccessCalls = [];
+    const controller = createController({
+        models: [{ id: 'openai/gpt', name: 'GPT' }],
+        inferenceService: {
+            setAccessInfo: (session, accessInfo) => {
+                session.apiKey = accessInfo.key;
+                session.apiKeyInfo = accessInfo;
+                session.expiresAt = accessInfo.expiresAt;
+            },
+            setCurrentAccess: (session, accessInfo) => {
+                setCurrentAccessCalls.push({ sessionId: session.id, accessInfo });
+            },
+            getVerificationAdapter: () => ({
+                supports: true,
+                allowsLocalBypass: () => true
+            })
+        }
+    });
+    const session = {
+        id: 'session-local',
+        model: 'GPT',
+        apiKey: null,
+        apiKeyInfo: null,
+        expiresAt: null,
+        councilAccess: {
+            primary: {
+                apiKey: 'local-primary-lane-key',
+                apiKeyInfo: {
+                    stationId: 'local-station',
+                    modelId: 'openai/gpt',
+                    verifierSubmitKeyProof: { status: 'local-loopback-bypass' }
+                },
+                expiresAt: validExpiry,
+                modelId: 'openai/gpt'
+            }
+        }
+    };
+
+    const laneAccess = controller.seedSessionAccessFromPrimaryLane(session);
+
+    assert.equal(laneAccess.apiKey, 'local-primary-lane-key');
+    assert.equal(session.apiKey, 'local-primary-lane-key');
+    assert.equal(setCurrentAccessCalls.length, 0);
 });
 
 test('seedSessionAccessFromPrimaryLane refuses an old-model lane after primary model changes', () => {

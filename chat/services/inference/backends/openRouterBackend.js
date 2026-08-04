@@ -2,9 +2,12 @@ import openRouterAPI from '../../../api.js';
 import ticketClient from '../../ticketClient.js';
 import networkProxy from '../../networkProxy.js';
 import stationVerifier from '../../verifier.js';
+import { isLocalVerifierBypassAllowed } from '../localVerifierPolicy.js';
 import {
+    buildExplicitlyVerifiedOpenRouterSharePayload,
     clearUnverifiedOpenRouterAccess,
-    hasExplicitVerifierApproval
+    hasExplicitVerifierApprovalForAccessInfo,
+    hasUsableVerifierApproval
 } from '../verifiedAccess.js';
 
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
@@ -15,6 +18,16 @@ function generateEphemeralKeyId() {
     const bytes = new Uint8Array(5); // 5 bytes = 10 hex chars
     crypto.getRandomValues(bytes);
     return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function allowsLocalVerifierBypass() {
+    return isLocalVerifierBypassAllowed();
+}
+
+function hasUsableAccess(session) {
+    return hasUsableVerifierApproval(session, {
+        allowLocalBypass: allowsLocalVerifierBypass()
+    });
 }
 
 const openRouterBackend = {
@@ -54,7 +67,7 @@ const openRouterBackend = {
         ),
     getAccessInfo(session) {
         if (!session) return null;
-        const approved = hasExplicitVerifierApproval(session);
+        const approved = hasUsableAccess(session);
         return {
             token: approved ? (session.apiKey || null) : null,
             info: session.apiKeyInfo || null,
@@ -65,13 +78,15 @@ const openRouterBackend = {
         };
     },
     getAccessToken(session) {
-        return hasExplicitVerifierApproval(session)
+        return hasUsableAccess(session)
             ? (session?.apiKey || null)
             : null;
     },
     sanitizePersistedAccess(session) {
         return clearUnverifiedOpenRouterAccess(session, {
+            allowLocalBypass: allowsLocalVerifierBypass(),
             isBanned: (accessInfo) => {
+                if (!hasExplicitVerifierApprovalForAccessInfo(accessInfo)) return false;
                 const stationId = accessInfo?.stationId || accessInfo?.station_id || accessInfo?.station_name || null;
                 return stationId ? stationVerifier.isStationBanned(stationId) : false;
             }
@@ -118,7 +133,7 @@ const openRouterBackend = {
         session.currentEphemeralKeyId = null;
     },
     isAccessExpired(session) {
-        if (!session?.apiKey || !hasExplicitVerifierApproval(session)) return true;
+        if (!session?.apiKey || !hasUsableAccess(session)) return true;
         if (!session.expiresAt) return true;
         return new Date(session.expiresAt) <= new Date();
     },
@@ -127,6 +142,7 @@ const openRouterBackend = {
     },
     verification: {
         supports: true,
+        allowsLocalBypass: () => allowsLocalVerifierBypass(),
         init: () => stationVerifier.init(),
         startBroadcastCheck: (getCurrentSession, options) => stationVerifier.startBroadcastCheck(getCurrentSession, options),
         setBannedWarningCallback: (callback) => stationVerifier.setBannedWarningCallback(callback),
@@ -142,18 +158,7 @@ const openRouterBackend = {
         getLastBroadcastData: () => stationVerifier.getLastBroadcastData()
     },
     buildSharedAccessPayload(accessInfo) {
-        if (!accessInfo) return null;
-        return {
-            backendId: 'openrouter',
-            token: accessInfo.key || accessInfo.token || null,
-            expiresAt: accessInfo.expiresAt || accessInfo.expires_at || null,
-            expiresAtUnix: accessInfo.expiresAtUnix || accessInfo.expires_at_unix || null,
-            stationId: accessInfo.stationId || accessInfo.station_id || accessInfo.station_name || null,
-            recentlyAttested: accessInfo.recentlyAttested || accessInfo.station_recently_attested || false,
-            stationSignature: accessInfo.stationSignature || accessInfo.station_signature || null,
-            orgSignature: accessInfo.orgSignature || accessInfo.org_signature || null,
-            usage: accessInfo.usage || null
-        };
+        return buildExplicitlyVerifiedOpenRouterSharePayload(accessInfo);
     },
     buildLegacySharedApiKey(sharedAccess) {
         if (!sharedAccess) return null;

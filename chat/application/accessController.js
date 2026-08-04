@@ -1,4 +1,8 @@
-import { isVerifierResultApproved } from '../services/inference/verifiedAccess.js';
+import {
+    isVerifierProofApproved,
+    isVerifierResultApproved,
+    LOCAL_LOOPBACK_VERIFIER_BYPASS_STATUS
+} from '../services/inference/verifiedAccess.js';
 
 export function isAccessCreditExhaustedError(error) {
     if (error?.status !== 402) return false;
@@ -244,6 +248,18 @@ export async function acquireVerifiedAccess(options = {}) {
     result.modelName = result.modelName || modelName;
     const verifier = inferenceService.getVerificationAdapter(session);
     if (verifier?.supports) {
+        if (verifier.allowsLocalBypass?.() === true) {
+            const proof = buildVerifierSubmitKeyProof({
+                status: LOCAL_LOOPBACK_VERIFIER_BYPASS_STATUS,
+                detail: 'explicit_loopback_development'
+            }, result);
+            result = {
+                ...result,
+                verifierSubmitKeyProof: proof
+            };
+            return result;
+        }
+
         let verifyResult;
         try {
             verifyResult = await inferenceService.verifyAccess(session, result);
@@ -292,7 +308,8 @@ export async function acquireSessionAccess(options = {}) {
 
     delete session.lastVerifierSubmitKeyProof;
     inferenceService.setAccessInfo(session, result);
-    if (inferenceService.getVerificationAdapter(session)?.supports) {
+    if (inferenceService.getVerificationAdapter(session)?.supports &&
+        isVerifierProofApproved(result?.verifierSubmitKeyProof)) {
         inferenceService.setCurrentAccess(session, result);
     }
 

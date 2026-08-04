@@ -72,6 +72,12 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
+- 2026-08-04: Local oa-org inference can bypass the external verifier only when
+  both the oa-chat page and configured oa-org URL use exact loopback hostnames.
+  The access proof is stored as `local-loopback-bypass`, not `verified`; the
+  same credential is discarded on non-loopback startup and cannot enter shared
+  access payloads. Ordinary Chat and Parallel/Council use the same policy.
+
 - 2026-07-31: OpenRouter catalog labels for Anthropic models are normalized to
   include the `Anthropic:` prefix when upstream omits it. Already-prefixed names
   remain unchanged.

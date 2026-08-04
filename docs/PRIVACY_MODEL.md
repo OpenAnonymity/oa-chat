@@ -124,6 +124,16 @@ unverified, mismatched, and network-error results never activate the provisional
 child key. Because ticket spending commits before verification, a failed check
 discards the bounded child key but does not restore the ticket.
 
+The sole development exception requires both the oa-chat page hostname and its
+configured oa-org hostname to be an exact loopback value (`localhost`,
+`127.0.0.1`, or `::1`). In that environment the browser may skip the external
+verifier so a locally signed org response can be exercised end to end. The
+result is labeled `local-loopback-bypass`, never `verified`; it is unusable when
+the app is opened from any non-loopback host and is excluded from shared-access
+payloads. The security UI identifies it as a local development bypass, and
+production verifier ban/broadcast state is not applied to that credential.
+Production and staging therefore retain the fail-closed verifier path.
+
 ## What Each Component Can and Cannot See
 
 

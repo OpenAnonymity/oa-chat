@@ -76,7 +76,10 @@ import {
     persistVerifierSubmitKeyProof as persistVerifierSubmitKeyProofValue
 } from './application/accessController.js';
 import CouncilController from './application/councilController.js';
-import { isVerifierResultApproved } from './services/inference/verifiedAccess.js';
+import {
+    hasExplicitVerifierApprovalForAccessInfo,
+    isVerifierResultApproved
+} from './services/inference/verifiedAccess.js';
 import { COUNCIL_MODE_FEATURE_FLAG } from './config.js';
 import {
     RESPONSE_MODE_SINGLE,
@@ -6093,7 +6096,9 @@ class ChatApp {
         const verifier = inferenceService.getVerificationAdapter(session);
         const accessInfo = inferenceService.getAccessInfo(session);
         const accessId = verifier?.getAccessId(accessInfo?.info);
-        if (verifier?.supports && accessId) {
+        if (verifier?.supports &&
+            accessId &&
+            hasExplicitVerifierApprovalForAccessInfo(accessInfo?.info)) {
             const stationState = verifier.getAccessState(accessId);
             // Also check cached broadcast data directly
             const isBannedInCache = verifier.isAccessBanned(accessId);
@@ -6809,7 +6814,11 @@ class ChatApp {
         const verifier = inferenceService.getVerificationAdapter(accessSession);
         const accessInfo = inferenceService.getAccessInfo(accessSession);
         const accessId = verifier?.getAccessId(accessInfo?.info);
-        if (!verifier?.supports || !accessId) return null;
+        if (!verifier?.supports ||
+            !accessId ||
+            !hasExplicitVerifierApprovalForAccessInfo(accessInfo?.info)) {
+            return null;
+        }
 
         const stationState = verifier.getAccessState(accessId);
         const isBannedInCache = verifier.isAccessBanned(accessId);

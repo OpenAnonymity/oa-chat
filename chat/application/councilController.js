@@ -13,7 +13,10 @@ import {
     normalizeCouncilConfig
 } from '../domain/councilConfig.js';
 import { findModelByNameOrId, resolveSecondaryModelNameForModels } from '../domain/modelSelection.js';
-import { hasExplicitVerifierApprovalForAccessInfo } from '../services/inference/verifiedAccess.js';
+import {
+    hasExplicitVerifierApprovalForAccessInfo,
+    hasUsableVerifierApprovalForAccessInfo
+} from '../services/inference/verifiedAccess.js';
 
 const SAVE_INTERVAL_MS = 350;
 const LANE_IDS = ['primary', 'secondary'];
@@ -400,8 +403,11 @@ export default class CouncilController {
         const token = accessInfo.key || accessInfo.token || accessInfo.apiKey || null;
         const verifier = this.inferenceService.getVerificationAdapter?.(session);
         const keyInfo = accessInfo.apiKeyInfo || accessInfo.info || accessInfo;
-        if (token && verifier?.supports && !hasExplicitVerifierApprovalForAccessInfo(keyInfo)) {
-            throw new Error('Refusing to persist a Council lane key without explicit verifier approval.');
+        const usableProof = hasUsableVerifierApprovalForAccessInfo(keyInfo, {
+            allowLocalBypass: verifier?.allowsLocalBypass?.() === true
+        });
+        if (token && verifier?.supports && !usableProof) {
+            throw new Error('Refusing to persist a Council lane key without verifier approval or an explicit loopback bypass.');
         }
         container[laneId] = {
             apiKey: token,
@@ -434,7 +440,9 @@ export default class CouncilController {
     isLaneAccessVerified(session, laneAccess) {
         const verifier = this.inferenceService.getVerificationAdapter?.(session);
         if (!verifier?.supports) return true;
-        return hasExplicitVerifierApprovalForAccessInfo(laneAccess?.apiKeyInfo);
+        return hasUsableVerifierApprovalForAccessInfo(laneAccess?.apiKeyInfo, {
+            allowLocalBypass: verifier.allowsLocalBypass?.() === true
+        });
     }
 
     isLaneAccessUsable(session, laneAccess, entry = null) {
@@ -450,6 +458,10 @@ export default class CouncilController {
         if (!laneAccess?.apiKeyInfo) return null;
         const verifier = this.inferenceService.getVerificationAdapter?.(session);
         if (!verifier?.supports) return null;
+        if (!hasExplicitVerifierApprovalForAccessInfo(laneAccess.apiKeyInfo) &&
+            verifier.allowsLocalBypass?.() === true) {
+            return null;
+        }
         const accessId = typeof verifier.getAccessId === 'function'
             ? verifier.getAccessId(laneAccess.apiKeyInfo)
             : null;
@@ -603,7 +615,11 @@ export default class CouncilController {
         };
 
         this.inferenceService.setAccessInfo(session, accessInfo);
-        if (typeof this.inferenceService.setCurrentAccess === 'function') {
+        const verifier = this.inferenceService.getVerificationAdapter?.(session);
+        const shouldSetVerifierCurrentAccess = !verifier?.supports ||
+            hasExplicitVerifierApprovalForAccessInfo(accessInfo);
+        if (shouldSetVerifierCurrentAccess &&
+            typeof this.inferenceService.setCurrentAccess === 'function') {
             this.inferenceService.setCurrentAccess(session, accessInfo);
         }
         return laneAccess;
