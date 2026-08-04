@@ -89,6 +89,7 @@ test('isAccessCreditExhaustedError recognizes OpenRouter credit exhaustion shape
     assert.equal(isAccessCreditExhaustedError({ status: 401, message: 'credits' }), false);
     assert.equal(isAccessCreditExhaustedError({ status: 402, message: 'More credits required' }), true);
     assert.equal(isAccessCreditExhaustedError({ status: 402, data: { error: { message: 'Can only afford 1 max_tokens' } } }), true);
+    assert.equal(isAccessCreditExhaustedError({ status: 402, responseData: { error: { message: 'Can only afford 1 max_tokens' } } }), true);
     assert.equal(isAccessCreditExhaustedError({ status: 402, data: { detail: 'unrelated billing text' } }), false);
 });
 
@@ -152,6 +153,8 @@ test('acquireSessionAccess requests tickets, verifies access, saves, and clears 
     assert.deepEqual(harness.networkSessions, ['session-1']);
     assert.equal(harness.session.shareInfo.apiKeyShared, false);
     assert.equal(harness.session.currentAccess.key, 'secret-key');
+    assert.equal(harness.session.apiKeyInfo.modelId, 'model-a');
+    assert.equal(harness.session.apiKeyInfo.modelName, 'Model A');
     assert.equal(harness.session.apiKeyInfo.verifierSubmitKeyProof.status, 'verified');
     assert.deepEqual(harness.changed, ['session-1']);
     assert.equal(harness.savedSessions.length, 1);
@@ -237,6 +240,51 @@ test('acquireSessionAccess retries spent tickets before succeeding', async () =>
     assert.equal(token, 'fresh-key');
     assert.equal(harness.requested.length, 2);
     assert.deepEqual(harness.ticketUsed, [1]);
+});
+
+test('acquireSessionAccess can request an explicit ticket budget', async () => {
+    const harness = createAccessHarness({
+        getTicketCost: () => 1
+    });
+
+    await acquireSessionAccess({
+        session: harness.session,
+        models: [{ id: 'model-a', name: 'Model A' }],
+        reasoningEnabled: false,
+        inferenceService: harness.inferenceService,
+        ticketClient: harness.ticketClient,
+        chatDB: harness.chatDB,
+        getTicketCost: harness.getTicketCost,
+        getFallbackModelEntry: harness.getFallbackModelEntry,
+        ticketsRequiredOverride: 4,
+        ticketRequirementLabel: 'multi-model response',
+        ...harness.callbacks
+    });
+
+    assert.deepEqual(harness.requested.map(item => item.request), [{ ticketsRequired: 4 }]);
+});
+
+test('acquireSessionAccess validates explicit ticket budget before network calls', async () => {
+    const harness = createAccessHarness({ ticketCount: 2 });
+
+    await assert.rejects(
+        acquireSessionAccess({
+            session: harness.session,
+            models: [{ id: 'model-a', name: 'Model A' }],
+            reasoningEnabled: false,
+            inferenceService: harness.inferenceService,
+            ticketClient: harness.ticketClient,
+            chatDB: harness.chatDB,
+            getTicketCost: () => 1,
+            getFallbackModelEntry: harness.getFallbackModelEntry,
+            ticketsRequiredOverride: 4,
+            ticketRequirementLabel: 'multi-model response',
+            ...harness.callbacks
+        }),
+        /Not enough tickets for multi-model response. Need 4, but only 2 available./
+    );
+
+    assert.equal(harness.requested.length, 0);
 });
 
 test('acquireSessionAccess clears and saves rejected verifier access', async () => {
