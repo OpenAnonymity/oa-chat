@@ -8,6 +8,10 @@ import { ORG_API_BASE, SHARE_BASE_URL } from '../config.js';
 import inferenceService from './inference/inferenceService.js';
 import networkProxy from './networkProxy.js';
 import { buildBaseSharePayload } from './sharePayload.js';
+import {
+    normalizeCouncilConfig,
+    normalizeResponseMode
+} from '../domain/councilConfig.js';
 
 // ========== Share ID Normalization ==========
 
@@ -366,6 +370,8 @@ export function createSessionFromPayload(payload, shareId, ciphertext, generateI
         lastImportedAt: Date.now(),
         model: payload.session.model,
         inferenceBackend: backendId,
+        responseMode: normalizeResponseMode(payload.session.responseMode),
+        councilConfig: normalizeCouncilConfig(payload.session.councilConfig, payload.session.model),
         apiKey: sessionAccess?.token || null,
         apiKeyInfo: sessionAccess?.info || null,
         expiresAt: sessionAccess?.expiresAt || null,
