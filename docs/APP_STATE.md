@@ -25,6 +25,23 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
+- 2026-08-04: Plain `Cmd/Ctrl+F` uses an app-owned find-on-page toolbar instead
+  of the browser's native find UI, so a forgotten find field cannot retain
+  keyboard focus after the user returns to the app. The toolbar follows standard
+  next/previous, `Enter` / `Shift+Enter`, `Cmd/Ctrl+G`, `Escape`, close-button,
+  and click-away behavior. It auto-dismisses after 10 seconds without find
+  activity and restores the previously focused input when dismissed by timeout,
+  Escape, or its close button; clicking elsewhere preserves the user's new focus.
+  If that return target becomes unavailable (for example, a modal opens), focus
+  moves to an eligible text control in the active dialog and never remains in the
+  hidden find toolbar. True modal dialogs take precedence over visible non-modal
+  `role="dialog"` surfaces such as quick ask. Tabbing out also dismisses find
+  without later focus theft.
+  Matching can span adjacent inline Markdown nodes and uses original-string
+  offsets so Unicode case folding cannot create invalid DOM ranges.
+  The deadline is rechecked when the tab/app becomes visible or focused so
+  background timer throttling cannot leave a stale find toolbar open.
+
 - 2026-07-31: OpenRouter catalog labels for Anthropic models are normalized to
   include the `Anthropic:` prefix when upstream omits it. Already-prefixed names
   remain unchanged.
