@@ -3,9 +3,9 @@ import accountService from './accountService.js';
 import privacyPassProvider from './privacyPass.js';
 import ticketStore from './ticketStore.js';
 import billingPendingStore from './billingPendingStore.js';
+import { BILLING_CHECKOUT_STORAGE_KEY } from './billingState.js';
 
 const DEMO_IDENTITY_KEY = 'oa-billing-demo-account-id-v1';
-const CHECKOUT_KEY = 'oa-billing-checkout-v1';
 const CHUNK_SIZE = 10;
 const FULL_PERIOD_TICKETS = 300;
 const NORMAL_TICKET_FIELDS = new Set([
@@ -351,7 +351,7 @@ export class BillingClient {
         if (!this.storage || !sessionId || !scope) return;
         const state = this.readCheckoutSessions();
         state.sessions[scope] = { sessionId, savedAt: Date.now() };
-        this.storage.setItem(CHECKOUT_KEY, JSON.stringify(state));
+        this.storage.setItem(BILLING_CHECKOUT_STORAGE_KEY, JSON.stringify(state));
     }
 
     getCheckoutSession(scope) {
@@ -363,7 +363,7 @@ export class BillingClient {
         const empty = { version: 2, sessions: {} };
         if (!this.storage) return empty;
         try {
-            const value = JSON.parse(this.storage.getItem(CHECKOUT_KEY) || 'null');
+            const value = JSON.parse(this.storage.getItem(BILLING_CHECKOUT_STORAGE_KEY) || 'null');
             if (value?.version === 2 && value.sessions && typeof value.sessions === 'object') {
                 return value;
             }
@@ -384,15 +384,15 @@ export class BillingClient {
     clearCheckoutSession(scope = null) {
         if (!this.storage) return;
         if (!scope) {
-            this.storage.removeItem(CHECKOUT_KEY);
+            this.storage.removeItem(BILLING_CHECKOUT_STORAGE_KEY);
             return;
         }
         const state = this.readCheckoutSessions();
         delete state.sessions[scope];
         if (Object.keys(state.sessions).length === 0) {
-            this.storage.removeItem(CHECKOUT_KEY);
+            this.storage.removeItem(BILLING_CHECKOUT_STORAGE_KEY);
         } else {
-            this.storage.setItem(CHECKOUT_KEY, JSON.stringify(state));
+            this.storage.setItem(BILLING_CHECKOUT_STORAGE_KEY, JSON.stringify(state));
         }
     }
 

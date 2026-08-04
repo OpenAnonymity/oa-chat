@@ -1,6 +1,7 @@
 /** Premium subscription UI. Pricing and interval always come from oa-org. */
 
-const CHECKOUT_INTENT_KEY = 'oa-billing-checkout-intent-v1';
+import { BILLING_CHECKOUT_INTENT_KEY } from '../services/billingState.js';
+
 const SAFE_SUBSCRIPTION_STATUSES = new Set([
     'active', 'trialing', 'past_due', 'unpaid', 'canceled', 'incomplete', 'paused', 'none'
 ]);
@@ -33,15 +34,15 @@ export default class BillingModal {
     }
 
     rememberCheckoutIntent() {
-        try { globalThis.sessionStorage?.setItem(CHECKOUT_INTENT_KEY, '1'); } catch {}
+        try { globalThis.sessionStorage?.setItem(BILLING_CHECKOUT_INTENT_KEY, '1'); } catch {}
     }
 
     hasCheckoutIntent() {
-        try { return globalThis.sessionStorage?.getItem(CHECKOUT_INTENT_KEY) === '1'; } catch { return false; }
+        try { return globalThis.sessionStorage?.getItem(BILLING_CHECKOUT_INTENT_KEY) === '1'; } catch { return false; }
     }
 
     clearCheckoutIntent() {
-        try { globalThis.sessionStorage?.removeItem(CHECKOUT_INTENT_KEY); } catch {}
+        try { globalThis.sessionStorage?.removeItem(BILLING_CHECKOUT_INTENT_KEY); } catch {}
     }
 
     resumeCheckoutIntent() {

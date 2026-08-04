@@ -6,6 +6,7 @@
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import themeManager from '../services/themeManager.js';
 import SmoothProgress from '../services/smoothProgress.js';
+import { hasPendingBillingHandoff } from '../services/billingState.js';
 import TurnstileBubble from './TurnstileBubble.js';
 
 // localStorage key for synchronous pre-hydration check (matches preferencesStore snapshot)
@@ -75,6 +76,13 @@ class WelcomePanel {
     }
 
     shouldShow() {
+        // Checkout return and recovery own the foreground until paid tickets are
+        // safely imported. The generic no-ticket onboarding must not cover them.
+        if (hasPendingBillingHandoff({
+            search: globalThis.location?.search || '',
+            localStorage: globalThis.localStorage,
+            sessionStorage: globalThis.sessionStorage
+        })) return false;
         // Don't show if dismissed
         if (localStorage.getItem(STORAGE_KEY_DISMISSED) === 'true') return false;
         // Don't show if user already has tickets
@@ -1213,6 +1221,17 @@ class WelcomePanel {
                 </div>
 
                 <!-- Action buttons -->
+                <button
+                    id="create-account-btn"
+                    type="button"
+                    class="welcome-btn-glass btn-ghost-hover w-full h-10 px-3 mb-2 rounded-lg text-sm border border-border text-foreground shadow-sm transition-colors flex items-center justify-center gap-1.5 ${controlsDisabled ? 'pointer-events-none opacity-60' : ''}"
+                    ${controlsDisabled ? 'disabled' : ''}
+                >
+                    <svg class="w-4 h-4 flex-shrink-0" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+                    </svg>
+                    <span>Create Account</span>
+                </button>
                 <div class="flex items-stretch gap-2">
                     <a
                         href="https://openanonymity.ai/beta"
