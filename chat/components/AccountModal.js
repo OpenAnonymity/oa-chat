@@ -137,8 +137,9 @@ class AccountModal {
         this.close();
     }
 
-    close() {
+    close({ billingHandoff = 'cancel' } = {}) {
         if (!this.isOpen || !this.overlay) return;
+        const hasCheckoutIntent = this.hasPendingPremiumCheckout();
         this.isOpen = false;
         this.overlay.classList.add('hidden');
         this.overlay.innerHTML = '';
@@ -152,7 +153,25 @@ class AccountModal {
         }
         if (this.returnFocusEl?.focus) this.returnFocusEl.focus();
         this.returnFocusEl = null;
-        setTimeout(() => this.app.billingModal?.resumeCheckoutIntent?.(), 0);
+        if (hasCheckoutIntent) {
+            setTimeout(() => {
+                if (billingHandoff === 'resume') {
+                    this.app.billingModal?.resumeCheckoutIntent?.();
+                } else {
+                    this.app.billingModal?.cancelCheckoutIntent?.({ reopenPremium: true });
+                }
+            }, 0);
+        }
+    }
+
+    hasPendingPremiumCheckout() {
+        return this.app.billingModal?.hasCheckoutIntent?.() === true;
+    }
+
+    resumePremiumCheckoutIfPending() {
+        if (!this.hasPendingPremiumCheckout()) return false;
+        this.close({ billingHandoff: 'resume' });
+        return true;
     }
 
     resetCreationFlow() {
@@ -323,8 +342,9 @@ class AccountModal {
         try {
             await this.accountService.completeAccountRegistration();
             this.creationStep = 'complete';
-            this.render();
             this.app?.showToast?.('Account created successfully', 'success');
+            if (this.resumePremiumCheckoutIfPending()) return;
+            this.render();
         } catch (error) {
             this.creationStep = 'error';
             this.creationError = error.message || 'Registration failed.';
@@ -333,8 +353,13 @@ class AccountModal {
     }
 
     handleCancelCreation() {
+        const returnToPremium = this.hasPendingPremiumCheckout();
         this.accountService.cancelPendingAccount();
         this.resetCreationFlow();
+        if (returnToPremium) {
+            this.close();
+            return;
+        }
         this.render();
     }
 
@@ -351,7 +376,10 @@ class AccountModal {
     async handleAccountPasskeyUnlock() {
         const accountId = this.accountState?.accountId || this.accountInputValue?.trim();
         const success = await this.accountService.unlockWithPasskey(accountId);
-        if (success) this.app?.showToast?.('Account unlocked', 'success');
+        if (success) {
+            this.app?.showToast?.('Account unlocked', 'success');
+            this.resumePremiumCheckoutIfPending();
+        }
     }
 
     async handleAccountRecoveryUnlock() {
@@ -376,6 +404,10 @@ class AccountModal {
                 // Step 4: Show success
                 this.recoveryStep = 'complete';
                 this.render();
+                if (this.resumePremiumCheckoutIfPending()) {
+                    this.app?.showToast?.('Account recovered successfully', 'success');
+                    return;
+                }
                 // Brief delay to show success state
                 setTimeout(() => {
                     this.recoveryStep = 'idle';
@@ -758,6 +790,7 @@ class AccountModal {
         const accountValue = this.escapeHtml(this.accountInputValue || '');
         const recoveryValue = this.escapeHtml(this.recoveryInputValue || '');
         const showRecovery = this.showRecoveryInput;
+        const continuingToPremium = this.hasPendingPremiumCheckout();
 
         return `
             <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}" style="padding:24px 24px 18px">
@@ -815,7 +848,7 @@ class AccountModal {
 
                 <!-- Header -->
                 <div class="flex items-center justify-between mb-1">
-                    <h3 class="text-base font-medium text-foreground">${showRecovery ? 'Account Recovery' : 'Account'}</h3>
+                    <h3 class="text-base font-medium text-foreground">${showRecovery ? 'Account Recovery' : continuingToPremium ? 'Continue to OA Premium' : 'Account'}</h3>
                     <button id="close-account-modal" class="text-muted-foreground hover:text-foreground transition-colors p-1 -mr-1 rounded-lg hover:bg-accent" aria-label="Close">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
@@ -825,7 +858,9 @@ class AccountModal {
 
                 <p class="text-xs text-muted-foreground" style="margin-bottom:20px">${showRecovery
                     ? 'Recover your account with the recovery code saved at account creation time.'
-                    : 'Account enables sync across browsers &amp; devices. Your data is locally encrypted with Passkey (<a href="https://www.w3.org/TR/webauthn-3/" target="_blank" rel="noopener noreferrer" class="account-link">WebAuthn</a> with <a href="https://w3c.github.io/webauthn/#prf-extension" target="_blank" rel="noopener noreferrer" class="account-link">PRF extension</a>), so no one but you can decrypt it.'
+                    : continuingToPremium
+                        ? 'Create or sign in to an account to continue securely to Stripe Checkout. You will not need to click Upgrade again.'
+                        : 'Account enables sync across browsers &amp; devices. Your data is locally encrypted with Passkey (<a href="https://www.w3.org/TR/webauthn-3/" target="_blank" rel="noopener noreferrer" class="account-link">WebAuthn</a> with <a href="https://w3c.github.io/webauthn/#prf-extension" target="_blank" rel="noopener noreferrer" class="account-link">PRF extension</a>), so no one but you can decrypt it.'
                 }</p>
 
                 ${!passkeySupported ? `
@@ -840,7 +875,7 @@ class AccountModal {
                         <svg class="w-3.5 h-3.5 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
                         </svg>
-                        Create new account
+                        ${continuingToPremium ? 'Create account and continue' : 'Create new account'}
                     </button>
 
                     <!-- Divider -->

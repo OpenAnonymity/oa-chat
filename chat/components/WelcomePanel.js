@@ -615,6 +615,11 @@ class WelcomePanel {
         setTimeout(() => this.app.accountModal?.open(), 150);
     }
 
+    handleUpgrade() {
+        this.close();
+        setTimeout(() => this.app.billingModal?.open?.(), 150);
+    }
+
     handleStartChatting() {
         this.close();
         setTimeout(() => this.app.elements.messageInput?.focus(), 150);
@@ -1225,15 +1230,15 @@ class WelcomePanel {
 
                 <!-- Action buttons -->
                 <button
-                    id="create-account-btn"
+                    id="welcome-upgrade-btn"
                     type="button"
-                    class="welcome-btn-glass btn-ghost-hover w-full h-10 px-3 mb-2 rounded-lg text-sm border border-border text-foreground shadow-sm transition-colors flex items-center justify-center gap-1.5 ${controlsDisabled ? 'pointer-events-none opacity-60' : ''}"
+                    class="welcome-btn-blue-glass w-full h-10 px-3 mb-2 rounded-lg text-sm font-medium text-white transition-colors flex items-center justify-center gap-1.5 ${controlsDisabled ? 'pointer-events-none opacity-60' : ''}"
                     ${controlsDisabled ? 'disabled' : ''}
                 >
-                    <svg class="w-4 h-4 flex-shrink-0" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+                    <svg class="w-4 h-4 flex-shrink-0" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v18m6-12-6-6-6 6" />
                     </svg>
-                    <span>Create Account</span>
+                    <span>Upgrade</span>
                 </button>
                 <div class="flex items-stretch gap-2">
                     <a
@@ -1251,7 +1256,7 @@ class WelcomePanel {
                     </a>
                     <button
                         id="import-data-btn"
-                        class="welcome-btn-blue-glass flex-1 h-10 px-3 rounded-lg text-sm text-white transition-colors flex items-center justify-center gap-1.5"
+                        class="welcome-btn-glass btn-ghost-hover flex-1 h-10 px-3 rounded-lg text-sm border border-border text-foreground shadow-sm transition-colors flex items-center justify-center gap-1.5"
                         ${controlsDisabled ? 'disabled' : ''}
                     >
                         <svg class="w-4 h-4 flex-shrink-0" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
@@ -1570,6 +1575,11 @@ class WelcomePanel {
         const createAccountBtn = document.getElementById('create-account-btn');
         if (createAccountBtn) {
             createAccountBtn.onclick = () => this.handleCreateAccount();
+        }
+
+        const welcomeUpgradeBtn = document.getElementById('welcome-upgrade-btn');
+        if (welcomeUpgradeBtn) {
+            welcomeUpgradeBtn.onclick = () => this.handleUpgrade();
         }
 
         const startChattingBtn = document.getElementById('start-chatting-btn');

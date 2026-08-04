@@ -11,6 +11,13 @@ The browser can still be used without an account. An authenticated billing
 identity is needed only for Checkout, subscription status, the Stripe portal,
 and claiming a paid allowance. Ticket redemption remains accountless.
 
+The initial Welcome screen labels the paid path **Upgrade** and opens the public
+Premium modal before asking for authentication. If Checkout then needs an
+account, successful creation or sign-in consumes a session-scoped intent and
+continues to Stripe exactly once. Cancelling that account step clears the intent
+and returns to Premium, so a later account action cannot trigger a surprise
+redirect.
+
 ## Privacy Boundary
 
 ```text

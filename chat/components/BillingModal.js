@@ -45,6 +45,13 @@ export default class BillingModal {
         try { globalThis.sessionStorage?.removeItem(BILLING_CHECKOUT_INTENT_KEY); } catch {}
     }
 
+    cancelCheckoutIntent({ reopenPremium = true } = {}) {
+        if (!this.hasCheckoutIntent()) return false;
+        this.clearCheckoutIntent();
+        if (reopenPremium) this.open();
+        return true;
+    }
+
     resumeCheckoutIntent() {
         const state = this.account?.getState?.() || {};
         if (!this.hasCheckoutIntent() || !state.accountId || !state.sessionVerified) return false;

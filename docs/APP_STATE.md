@@ -12,8 +12,11 @@ reading code alone.
   `Manage billing`. Logging out restores `Upgrade`.
 - `Upgrade` opens the public Premium modal without requiring an account, while
   starting Checkout routes through account creation or sign-in and resumes
-  afterward. Public price and interval data come from oa-org's Stripe-validated
-  `/api/billing/plan`; the UI does not hard-code the amount.
+  exactly once afterward. The initial Welcome screen uses the same `Upgrade`
+  entry rather than mislabeling Premium as account creation. Explicitly
+  cancelling the account step clears the session-scoped Checkout intent and
+  returns to Premium. Public price and interval data come from oa-org's
+  Stripe-validated `/api/billing/plan`; the UI does not hard-code the amount.
 - Checkout, status, portal access, and paid claims use `BillingAuthProvider`.
   Local development may create a random identity only when both oa-chat and
   oa-org are loopback. Non-loopback deployments require the account adapter.

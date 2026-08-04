@@ -76,3 +76,137 @@ test('account view exposes upgrade and billing-management actions', () => {
     assert.match(source, /Upgrade to Premium/);
     assert.match(source, /Manage billing/);
 });
+
+test('signed-out Checkout records one intent and opens Account', async () => {
+    const modal = Object.create(BillingModal.prototype);
+    let remembered = 0;
+    let closed = 0;
+    let accountOpened = 0;
+    modal.billing = {
+        checkout: async () => {
+            const error = new Error('auth required');
+            error.code = 'BILLING_AUTH_REQUIRED';
+            throw error;
+        }
+    };
+    modal.app = { accountModal: { open: () => { accountOpened += 1; } } };
+    modal.render = () => {};
+    modal.rememberCheckoutIntent = () => { remembered += 1; };
+    modal.close = () => { closed += 1; };
+
+    await modal.checkout();
+
+    assert.equal(remembered, 1);
+    assert.equal(closed, 1);
+    assert.equal(accountOpened, 1);
+});
+
+test('verified account consumes Checkout intent and resumes exactly once', async () => {
+    const modal = Object.create(BillingModal.prototype);
+    let hasIntent = true;
+    let cleared = 0;
+    let opened = 0;
+    let checkouts = 0;
+    modal.account = { getState: () => ({ accountId: 'alpha', sessionVerified: true }) };
+    modal.hasCheckoutIntent = () => hasIntent;
+    modal.clearCheckoutIntent = () => { hasIntent = false; cleared += 1; };
+    modal.open = () => { opened += 1; };
+    modal.checkout = async () => { checkouts += 1; };
+
+    assert.equal(modal.resumeCheckoutIntent(), true);
+    assert.equal(modal.resumeCheckoutIntent(), false);
+    await new Promise(resolve => queueMicrotask(resolve));
+    assert.equal(cleared, 1);
+    assert.equal(opened, 1);
+    assert.equal(checkouts, 1);
+});
+
+test('cancelling a Checkout intent consumes it before returning to Premium', () => {
+    const modal = Object.create(BillingModal.prototype);
+    let hasIntent = true;
+    let opened = 0;
+    modal.hasCheckoutIntent = () => hasIntent;
+    modal.clearCheckoutIntent = () => { hasIntent = false; };
+    modal.open = () => { opened += 1; };
+
+    assert.equal(modal.cancelCheckoutIntent(), true);
+    assert.equal(modal.cancelCheckoutIntent(), false);
+    assert.equal(hasIntent, false);
+    assert.equal(opened, 1);
+});
+
+test('cancelling account authentication clears intent and returns to Premium', async () => {
+    const modal = Object.create(AccountModal.prototype);
+    let cancelled = 0;
+    let resumed = 0;
+    modal.app = {
+        billingModal: {
+            hasCheckoutIntent: () => true,
+            cancelCheckoutIntent: ({ reopenPremium }) => {
+                assert.equal(reopenPremium, true);
+                cancelled += 1;
+            },
+            resumeCheckoutIntent: () => { resumed += 1; }
+        }
+    };
+    modal.isOpen = true;
+    modal.overlay = { classList: { add() {} }, innerHTML: 'account' };
+    modal.clearAnimationTimeouts = () => {};
+    modal.returnFocusEl = null;
+    modal.escapeHandler = null;
+    const originalDocument = globalThis.document;
+    globalThis.document = { getElementById: () => null, removeEventListener() {} };
+
+    try {
+        modal.close();
+        await new Promise(resolve => setTimeout(resolve, 0));
+        assert.equal(cancelled, 1);
+        assert.equal(resumed, 0);
+    } finally {
+        globalThis.document = originalDocument;
+    }
+});
+
+test('successful account authentication requests automatic Checkout resumption', () => {
+    const modal = Object.create(AccountModal.prototype);
+    let closeOptions = null;
+    modal.app = { billingModal: { hasCheckoutIntent: () => true } };
+    modal.close = options => { closeOptions = options; };
+
+    assert.equal(modal.resumePremiumCheckoutIfPending(), true);
+    assert.deepEqual(closeOptions, { billingHandoff: 'resume' });
+});
+
+test('successful passkey sign-in automatically resumes a pending Premium Checkout', async () => {
+    const modal = Object.create(AccountModal.prototype);
+    let resumed = 0;
+    modal.accountState = {};
+    modal.accountInputValue = '1234 5678 9012 3456';
+    modal.accountService = { unlockWithPasskey: async () => true };
+    modal.resumePremiumCheckoutIfPending = () => { resumed += 1; return true; };
+    modal.app = { showToast() {} };
+
+    await modal.handleAccountPasskeyUnlock();
+    assert.equal(resumed, 1);
+});
+
+test('completed account creation automatically resumes a pending Premium Checkout', async () => {
+    const modal = Object.create(AccountModal.prototype);
+    let resumed = 0;
+    modal.creationStep = 'recovery';
+    modal.accountService = { completeAccountRegistration: async () => {} };
+    modal.render = () => {};
+    modal.resumePremiumCheckoutIfPending = () => { resumed += 1; return true; };
+    modal.app = { showToast() {} };
+
+    await modal.handleConfirmRecoverySaved();
+    assert.equal(modal.creationStep, 'complete');
+    assert.equal(resumed, 1);
+});
+
+test('account authentication explains the Premium continuation', () => {
+    const source = String(AccountModal.prototype.renderAccountUI);
+    assert.match(source, /Continue to OA Premium/);
+    assert.match(source, /continue securely to Stripe Checkout/);
+    assert.match(source, /Create account and continue/);
+});
