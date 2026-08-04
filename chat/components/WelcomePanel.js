@@ -76,6 +76,9 @@ class WelcomePanel {
     }
 
     shouldShow() {
+        // A deliberately opened Premium surface takes precedence over generic
+        // first-run access onboarding, even before Checkout state is persisted.
+        if (this.app?.billingModal?.isOpen) return false;
         // Checkout return and recovery own the foreground until paid tickets are
         // safely imported. The generic no-ticket onboarding must not cover them.
         if (hasPendingBillingHandoff({

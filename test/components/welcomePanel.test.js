@@ -7,3 +7,9 @@ test('initial welcome screen offers account creation', () => {
     assert.match(source, /id="create-account-btn"/);
     assert.match(source, /Create Account/);
 });
+
+test('an open Premium surface suppresses delayed first-run onboarding', () => {
+    const panel = Object.create(WelcomePanel.prototype);
+    panel.app = { billingModal: { isOpen: true } };
+    assert.equal(panel.shouldShow(), false);
+});
