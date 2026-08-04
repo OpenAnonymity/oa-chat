@@ -63,6 +63,20 @@ test('processMessagesForApi applies memory override to only the last user messag
     ]);
 });
 
+test('processMessagesForApi keeps original prompt when memory override is absent', () => {
+    const result = processMessagesForApi([
+        { role: 'user', content: 'first' },
+        { role: 'assistant', content: 'ok' },
+        { role: 'user', content: 'second' }
+    ], 'openai/gpt-5.2-chat', { apiOverrideContent: '' });
+
+    assert.deepEqual(result.map(message => message.content), [
+        'first',
+        'ok',
+        'second'
+    ]);
+});
+
 test('processMessagesForApi converts uploaded text, image, and generic files', () => {
     const result = processMessagesForApi([
         {

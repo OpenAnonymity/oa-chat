@@ -17,6 +17,24 @@ import {
     getEditableDiffSelectionState
 } from '../services/editableDiffRenderer.js';
 import { normalizeReasoningEffort } from '../services/reasoningConfig.js';
+import { getProviderIcon } from '../services/providerIcons.js';
+import { resolveProvider, resolveProviderFromModelReference } from '../services/providerRegistry.js';
+import { onModelTiersUpdate } from '../services/modelTiers.js';
+import {
+    RESPONSE_MODE_COUNCIL,
+    COUNCIL_OUTPUT_PARALLEL,
+    COUNCIL_OUTPUT_SYNTHESIS
+} from '../domain/councilConfig.js';
+import {
+    findModelByNameOrId,
+    getComposerModelDisplayName,
+    getProviderlessModelDisplayName,
+    getConfiguredSecondaryModelNameForModels,
+    getDefaultSecondaryModelNameForModels,
+    resolvePrimaryModelNameForModels,
+    resolveSecondaryModelNameForModels,
+    resolveSynthesisModelNameForModels
+} from '../domain/modelSelection.js';
 
 const MESSAGE_INPUT_MAX_HEIGHT_PX = 300;
 const MESSAGE_INPUT_PREVIEW_EXPANDED_MIN_HEIGHT_PX = 384;
@@ -58,9 +76,62 @@ export default class ChatInput {
         this.scrubberModelsReady = false;
         this.scrubberModelSelect = null;
         this.memoryAgentModelSelect = null;
+        this.multiModelSecondarySelect = null;
+        this.multiModelSecondaryInlineSelect = null;
+        this.multiModelSecondaryInlineButton = null;
+        this.multiModelSynthesisSelect = null;
+        this.multiModelModeSelect = null;
+        this.councilSynthesisInlineSelect = null;
+        this.councilSynthesisInlineButton = null;
+        this.councilReviewToggle = null;
+        this.councilReviewModelSelect = null;
+        onModelTiersUpdate(() => this.refreshMultiModelSettingsUI());
+        this.applyComposerLayout();
         // Store undone scrubber state for redo functionality
         this.scrubberUndoState = null;
     }
+
+    getComposerToolElements() {
+        return {
+            toolsContainer: document.getElementById('composer-more-menu'),
+            fileAction: document.getElementById('composer-file-action'),
+            settingsControl: document.getElementById('composer-settings-control'),
+            settingsActions: document.getElementById('composer-settings-actions'),
+            searchToggle: document.getElementById('search-toggle')
+        };
+    }
+
+    placeComposerToolControls() {
+        if (typeof document === 'undefined') return;
+        const {
+            toolsContainer,
+            fileAction,
+            settingsControl,
+            settingsActions,
+            searchToggle
+        } = this.getComposerToolElements();
+        if (!toolsContainer || !fileAction || !settingsControl || !settingsActions || !searchToggle) return;
+
+        toolsContainer.append(fileAction, settingsControl);
+        settingsActions.append(searchToggle);
+    }
+
+    applyComposerLayout() {
+        if (typeof document === 'undefined') return;
+        if (!document.documentElement.dataset.composerMode) {
+            document.documentElement.dataset.composerMode = 'chat';
+        }
+        this.placeComposerToolControls();
+    }
+
+    setComposerModeDataset(isCouncilEnabled) {
+        const mode = isCouncilEnabled ? 'parallel' : 'chat';
+        if (typeof document !== 'undefined') {
+            document.documentElement.dataset.composerMode = mode;
+        }
+        return mode;
+    }
+
 
     /**
      * Sets up all event listeners for the input area controls.
@@ -241,21 +312,26 @@ export default class ChatInput {
                 const button = e.target.closest('.chat-mode-toggle-btn');
                 if (!button) return;
 
-                const isMemory = button.dataset.modeOption === 'memory';
-                if (isMemory && this.app.memoryFeatureEnabled === false) {
-                    this.updateMemoryToggleUI();
-                    return;
-                }
-                if (isMemory && this.app.memoryMode && this.app.memoryEditor) {
-                    this.app.memoryEditor.open();
-                    return;
-                }
+                const mode = button.dataset.modeOption || 'chat';
+                const isParallel = mode === 'parallel';
                 const container = this.app.elements.memoryToggle;
                 container.classList.add('sliding');
                 setTimeout(() => container.classList.remove('sliding'), 250);
-                this.app.memoryMode = isMemory && this.app.memoryFeatureEnabled !== false;
+
+                if (isParallel) {
+                    await this.setCouncilModeFromComposer(true);
+                } else {
+                    await this.setCouncilModeFromComposer(false);
+                }
+
                 this.updateMemoryToggleUI();
-                await this.app.data.saveSetting('memoryMode', this.app.memoryMode);
+                this.refreshMultiModelSettingsUI();
+            });
+        }
+
+        if (this.app.elements.memoryContextToggle) {
+            this.app.elements.memoryContextToggle.addEventListener('click', (event) => {
+                this.handleMemoryContextToggleClick(event);
             });
         }
 
@@ -288,13 +364,13 @@ export default class ChatInput {
             const isHidden = menu.classList.contains('hidden');
 
             if (isHidden) {
+                const btnRect = btn.getBoundingClientRect();
                 // Move menu to body for backdrop-filter to work (escapes input-card stacking context)
                 document.body.appendChild(menu);
                 menu.classList.remove('hidden');
                 btn.classList.add('tooltip-disabled'); // Hide tooltip while menu is open
 
                 // Position relative to settings button
-                const btnRect = btn.getBoundingClientRect();
                 menu.style.left = `${btnRect.left}px`;
                 menu.style.bottom = `${window.innerHeight - btnRect.top + 8}px`;
                 menu.style.width = `${SETTINGS_MENU_WIDTH_PX}px`;
@@ -303,16 +379,192 @@ export default class ChatInput {
 
                 this.ensureScrubberModelsLoaded();
                 this.refreshMemorySettingsUI();
+                this.refreshMultiModelSettingsUI();
             } else {
                 menu.classList.add('hidden');
                 btn.classList.remove('tooltip-disabled');
             }
         });
 
+        const secondarySelect = document.getElementById('multi-model-secondary-select');
+        if (secondarySelect) {
+            this.multiModelSecondarySelect = secondarySelect;
+            secondarySelect.addEventListener('click', (event) => event.stopPropagation());
+            secondarySelect.addEventListener('change', async (event) => {
+                event.stopPropagation();
+                if (this.multiModelSecondaryInlineSelect) {
+                    this.multiModelSecondaryInlineSelect.value = event.target.value;
+                }
+                await this.persistCouncilSelectionFromControls();
+            });
+        }
+
+        const secondaryInlineSelect = document.getElementById('council-secondary-inline-select');
+        if (secondaryInlineSelect) {
+            this.multiModelSecondaryInlineSelect = secondaryInlineSelect;
+            secondaryInlineSelect.addEventListener('click', (event) => event.stopPropagation());
+            secondaryInlineSelect.addEventListener('change', async (event) => {
+                event.stopPropagation();
+                if (this.multiModelSecondarySelect) {
+                    this.multiModelSecondarySelect.value = event.target.value;
+                }
+                await this.persistCouncilSelectionFromControls();
+            });
+        }
+
+        const secondaryInlineButton = document.getElementById('council-secondary-model-btn');
+        if (secondaryInlineButton) {
+            this.multiModelSecondaryInlineButton = secondaryInlineButton;
+            secondaryInlineButton.addEventListener('click', (event) => {
+                event.stopPropagation();
+                this.openCouncilSecondaryModelPicker();
+            });
+            secondaryInlineButton.addEventListener('keydown', (event) => {
+                if (event.key !== 'ArrowDown' && event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                event.stopPropagation();
+                this.openCouncilSecondaryModelPicker();
+            });
+        }
+
+        const synthesisInlineSelect = document.getElementById('council-synthesis-inline-select');
+        if (synthesisInlineSelect) {
+            this.councilSynthesisInlineSelect = synthesisInlineSelect;
+            synthesisInlineSelect.addEventListener('click', (event) => event.stopPropagation());
+            synthesisInlineSelect.addEventListener('change', async (event) => {
+                event.stopPropagation();
+                if (this.councilReviewModelSelect) {
+                    this.councilReviewModelSelect.value = event.target.value;
+                }
+                if (this.multiModelSynthesisSelect) {
+                    this.multiModelSynthesisSelect.value = event.target.value;
+                }
+                await this.persistCouncilSelectionFromControls();
+            });
+        }
+
+        const councilReviewToggle = document.getElementById('council-review-toggle');
+        if (councilReviewToggle) {
+            this.councilReviewToggle = councilReviewToggle;
+            councilReviewToggle.addEventListener('click', async (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                const enabled = councilReviewToggle.getAttribute('aria-checked') !== 'true';
+                await this.setCouncilReviewEnabledFromSettings(enabled);
+            });
+        }
+
+        const councilReviewModelSelect = document.getElementById('council-review-model-select');
+        if (councilReviewModelSelect) {
+            this.councilReviewModelSelect = councilReviewModelSelect;
+            councilReviewModelSelect.addEventListener('click', (event) => event.stopPropagation());
+            councilReviewModelSelect.addEventListener('change', async (event) => {
+                event.stopPropagation();
+                if (this.councilSynthesisInlineSelect) {
+                    this.councilSynthesisInlineSelect.value = event.target.value;
+                }
+                if (this.multiModelSynthesisSelect) {
+                    this.multiModelSynthesisSelect.value = event.target.value;
+                }
+                await this.persistCouncilSelectionFromControls();
+            });
+        }
+
+        const modeSelect = document.getElementById('multi-model-mode-select');
+        if (modeSelect) {
+            this.multiModelModeSelect = modeSelect;
+            modeSelect.addEventListener('click', (event) => event.stopPropagation());
+            modeSelect.addEventListener('change', async (event) => {
+                event.stopPropagation();
+                const session = this.app.getCurrentSession();
+                const members = this.getMultiModelMembersForSelection();
+                const synthesisModel = this.getCouncilSynthesisModelForSelection();
+                const outputMode = this.getMultiModelOutputModeForSelection();
+                const enabled = session
+                    ? session.responseMode === RESPONSE_MODE_COUNCIL && session.councilConfig?.enabled === true
+                    : this.app.getPendingCouncilConfig?.()?.enabled === true;
+                await this.persistParallelDefaults({
+                    enabled,
+                    members,
+                    synthesisModel,
+                    outputMode
+                });
+                if (!session) {
+                    const pendingCouncilConfig = this.app.getPendingCouncilConfig?.();
+                    this.app.setPendingCouncilConfig?.({
+                        enabled: pendingCouncilConfig?.enabled === true,
+                        members,
+                        synthesisModel,
+                        outputMode,
+                        reviewEnabled: false
+                    });
+                    this.refreshMultiModelSettingsUI();
+                    return;
+                }
+                await this.app.setCouncilModeForCurrentSession({
+                    enabled,
+                    members,
+                    synthesisModel,
+                    outputMode
+                });
+                this.refreshMultiModelSettingsUI();
+            });
+        }
+
+        const synthesisSelect = document.getElementById('multi-model-synthesis-select');
+        if (synthesisSelect) {
+            this.multiModelSynthesisSelect = synthesisSelect;
+            synthesisSelect.addEventListener('click', (event) => event.stopPropagation());
+            synthesisSelect.addEventListener('change', async (event) => {
+                event.stopPropagation();
+                if (this.councilReviewModelSelect) {
+                    this.councilReviewModelSelect.value = event.target.value;
+                }
+                if (this.councilSynthesisInlineSelect) {
+                    this.councilSynthesisInlineSelect.value = event.target.value;
+                }
+                const session = this.app.getCurrentSession();
+                const members = this.getMultiModelMembersForSelection();
+                const synthesisModel = this.getCouncilSynthesisModelForSelection();
+                const outputMode = this.getMultiModelOutputModeForSelection();
+                const enabled = session
+                    ? session.responseMode === RESPONSE_MODE_COUNCIL && session.councilConfig?.enabled === true
+                    : this.app.getPendingCouncilConfig?.()?.enabled === true;
+                await this.persistParallelDefaults({
+                    enabled,
+                    members,
+                    synthesisModel,
+                    outputMode
+                });
+                if (!session) {
+                    const pendingCouncilConfig = this.app.getPendingCouncilConfig?.();
+                    this.app.setPendingCouncilConfig?.({
+                        enabled: pendingCouncilConfig?.enabled === true,
+                        members,
+                        synthesisModel,
+                        outputMode,
+                        reviewEnabled: false
+                    });
+                    this.refreshMultiModelSettingsUI();
+                    return;
+                }
+                await this.app.setCouncilModeForCurrentSession({
+                    enabled,
+                    members,
+                    synthesisModel,
+                    outputMode
+                });
+                this.refreshMultiModelSettingsUI();
+            });
+        }
+
         // Settings menu actions
         // Stop propagation for all clicks inside the menu to prevent document click handler from closing it
         this.app.elements.settingsMenu.addEventListener('click', async (e) => {
             e.stopPropagation();
+            if (e.target.closest('#file-upload-btn, #search-toggle')) {
+                return;
+            }
             // Skip toggle buttons - they have their own handlers
             if (e.target.closest('.display-toggle-container') || e.target.closest('.theme-toggle-container')) {
                 return;
@@ -1735,7 +1987,64 @@ export default class ChatInput {
     updateSearchToggleUI() {
         const toggle = this.app.elements.searchToggle;
         toggle.setAttribute('aria-pressed', this.app.searchEnabled);
+        toggle.setAttribute('aria-checked', this.app.searchEnabled ? 'true' : 'false');
         toggle.classList.toggle('search-active', this.app.searchEnabled);
+        const stateLabel = toggle.querySelector('.composer-menu-state');
+        if (stateLabel) {
+            stateLabel.textContent = this.app.searchEnabled ? 'On' : 'Off';
+        }
+    }
+
+    closeSettingsMenu() {
+        const menu = this.app.elements.settingsMenu;
+        const button = this.app.elements.settingsBtn;
+        if (!menu) return;
+        menu.classList.add('hidden');
+        button?.classList.remove('tooltip-disabled');
+    }
+
+    async setMemoryContextEnabled(enabled) {
+        if (enabled === true && this.app.memoryFeatureEnabled === false) {
+            this.app.memoryMode = false;
+            this.updateMemoryToggleUI();
+            await this.app.data.saveSetting('memoryMode', false);
+            return;
+        }
+        this.app.memoryMode = enabled === true;
+        this.updateMemoryToggleUI();
+        await this.app.data.saveSetting('memoryMode', this.app.memoryMode);
+    }
+
+    async openMemoryContextPanel() {
+        if (this.app.memoryFeatureEnabled === false) {
+            this.updateMemoryToggleUI();
+            this.app.showToast?.('Memory is off in settings.', 'info', 3000);
+            return;
+        }
+        await this.setMemoryContextEnabled(true);
+        this.app.memoryEditor?.open?.();
+    }
+
+    handleMemoryContextToggleClick(event) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        if (this.app.memoryFeatureEnabled === false) {
+            this.updateMemoryToggleUI();
+            this.app.showToast?.('Memory is off in settings.', 'info', 3000);
+            return;
+        }
+
+        if (event.detail >= 2) {
+            this.openMemoryContextPanel().catch(error => {
+                console.error('Failed to open memory panel:', error);
+            });
+            return;
+        }
+
+        this.setMemoryContextEnabled(!this.app.memoryMode).catch(error => {
+            console.error('Failed to toggle memory context:', error);
+        });
     }
 
     updateMemoryToggleUI() {
@@ -1743,7 +2052,12 @@ export default class ChatInput {
         if (!container) return;
 
         const memoryFeatureEnabled = this.app.memoryFeatureEnabled !== false;
-        const mode = memoryFeatureEnabled && this.app.memoryMode ? 'memory' : 'chat';
+        const session = this.app.getCurrentSession();
+        const pendingCouncilConfig = this.app.getPendingCouncilConfig?.();
+        const isCouncilEnabled = session
+            ? session.responseMode === RESPONSE_MODE_COUNCIL && session.councilConfig?.enabled === true
+            : pendingCouncilConfig?.enabled === true;
+        const mode = this.setComposerModeDataset(isCouncilEnabled);
         const isFirstRender = container.style.visibility === 'hidden';
         if (isFirstRender) {
             const indicator = container.querySelector('.chat-mode-toggle-indicator');
@@ -1754,29 +2068,226 @@ export default class ChatInput {
         } else {
             container.dataset.mode = mode;
         }
-        container.setAttribute('aria-disabled', String(!memoryFeatureEnabled));
-        container.classList.toggle('is-disabled', !memoryFeatureEnabled);
+        container.removeAttribute('aria-disabled');
+        container.classList.remove('is-disabled');
 
         container.querySelectorAll('.chat-mode-toggle-btn').forEach((button) => {
             button.setAttribute('aria-checked', String(button.dataset.modeOption === mode));
-            const isMemoryButton = button.dataset.modeOption === 'memory';
-            const isDisabledMemoryButton = isMemoryButton && !memoryFeatureEnabled;
-            button.setAttribute('aria-disabled', String(isDisabledMemoryButton));
-            button.tabIndex = isDisabledMemoryButton ? -1 : 0;
-            if (isMemoryButton) {
-                button.title = memoryFeatureEnabled ? 'Memory mode' : 'Memory is off in settings';
-                const tooltipText = button.querySelector('[data-memory-tooltip-text]');
-                const tooltipBeta = button.querySelector('[data-memory-tooltip-beta]');
-                if (tooltipText) {
-                    tooltipText.textContent = memoryFeatureEnabled
-                        ? 'Auto-attach relevant context'
-                        : 'Memory is off in settings';
-                }
-                if (tooltipBeta) {
-                    tooltipBeta.classList.toggle('hidden', !memoryFeatureEnabled);
-                }
-            }
+            button.setAttribute('aria-disabled', 'false');
+            button.tabIndex = 0;
         });
+
+        const memoryButton = this.app.elements.memoryContextToggle;
+        if (memoryButton) {
+            const memoryEnabled = memoryFeatureEnabled && this.app.memoryMode === true;
+            memoryButton.setAttribute('aria-checked', String(memoryEnabled));
+            memoryButton.setAttribute('aria-disabled', String(!memoryFeatureEnabled));
+            memoryButton.classList.toggle('memory-active', memoryEnabled);
+            memoryButton.classList.toggle('memory-disabled', !memoryFeatureEnabled);
+            memoryButton.title = memoryFeatureEnabled
+                ? (memoryEnabled
+                    ? 'Auto-attach memory is on. Double-click to open memory.'
+                    : 'Auto-attach memory is off. Double-click to open memory.')
+                : 'Memory is off in settings.';
+
+            const tooltipText = memoryButton.querySelector('[data-memory-tooltip-text]');
+            const tooltipDetail = memoryButton.querySelector('[data-memory-tooltip-detail]');
+            const tooltipBeta = memoryButton.querySelector('[data-memory-tooltip-beta]');
+            if (tooltipText) {
+                tooltipText.textContent = memoryFeatureEnabled
+                    ? 'Auto-attach relevant context'
+                    : 'Memory is off in settings';
+            }
+            if (tooltipDetail) {
+                tooltipDetail.classList.toggle('hidden', !memoryFeatureEnabled);
+            }
+            if (tooltipBeta) {
+                tooltipBeta.classList.toggle('hidden', !memoryFeatureEnabled);
+            }
+        }
+    }
+
+    async setCouncilModeFromComposer(enabled, options = {}) {
+        const members = this.getMultiModelMembersForSelection({ preferControlSelection: false });
+        const synthesisModel = this.getCouncilSynthesisModelForSelection();
+        const outputMode = enabled
+            ? (options.outputMode || this.getMultiModelOutputModeForSelection())
+            : COUNCIL_OUTPUT_PARALLEL;
+        const session = this.app.getCurrentSession();
+        await this.persistParallelDefaults({
+            enabled,
+            members,
+            synthesisModel,
+            outputMode
+        });
+
+        if (!session) {
+            this.app.setPendingCouncilConfig?.({
+                enabled,
+                members,
+                synthesisModel,
+                outputMode,
+                reviewEnabled: false
+            });
+            return null;
+        }
+
+        return this.app.setCouncilModeForCurrentSession({
+            enabled,
+            members,
+            synthesisModel,
+            outputMode
+        });
+    }
+
+    async persistParallelDefaults(options = {}) {
+        const enabled = options.enabled === true;
+        const members = Array.isArray(options.members) ? options.members : this.getMultiModelMembersForSelection();
+        const secondaryModel = typeof members[1] === 'string' && members[1].trim()
+            ? members[1].trim()
+            : null;
+        const synthesisModel = typeof options.synthesisModel === 'string' && options.synthesisModel.trim()
+            ? options.synthesisModel.trim()
+            : null;
+        const outputMode = options.outputMode === COUNCIL_OUTPUT_SYNTHESIS
+            ? COUNCIL_OUTPUT_SYNTHESIS
+            : COUNCIL_OUTPUT_PARALLEL;
+
+        this.app.setParallelDefaults?.({
+            enabled,
+            secondaryModel,
+            synthesisModel,
+            outputMode
+        });
+
+        await Promise.all([
+            this.app.data.saveSetting('parallelModeEnabled', enabled),
+            this.app.data.saveSetting('parallelSecondaryModel', secondaryModel),
+            this.app.data.saveSetting('parallelSynthesisModel', synthesisModel),
+            this.app.data.saveSetting('parallelOutputMode', outputMode)
+        ]);
+    }
+
+    async setCouncilReviewEnabledFromSettings(enabled) {
+        const session = this.app.getCurrentSession();
+        const pendingCouncilConfig = this.app.getPendingCouncilConfig?.();
+        const currentlyMultiModelEnabled = session
+            ? session.responseMode === RESPONSE_MODE_COUNCIL && session.councilConfig?.enabled === true
+            : pendingCouncilConfig?.enabled === true;
+        const nextMultiModelEnabled = enabled || currentlyMultiModelEnabled;
+        const members = this.getMultiModelMembersForSelection();
+        const synthesisModel = this.getCouncilSynthesisModelForSelection();
+        const outputMode = enabled ? COUNCIL_OUTPUT_SYNTHESIS : COUNCIL_OUTPUT_PARALLEL;
+        await this.persistParallelDefaults({
+            enabled: nextMultiModelEnabled,
+            members,
+            synthesisModel,
+            outputMode
+        });
+
+        if (!session) {
+            this.app.setPendingCouncilConfig?.({
+                enabled: nextMultiModelEnabled,
+                members,
+                synthesisModel,
+                outputMode,
+                reviewEnabled: false
+            });
+            this.refreshMultiModelSettingsUI();
+            this.updateMemoryToggleUI();
+            return;
+        }
+
+        await this.app.setCouncilModeForCurrentSession({
+            enabled: nextMultiModelEnabled,
+            members,
+            synthesisModel,
+            outputMode
+        });
+        this.refreshMultiModelSettingsUI();
+        this.updateMemoryToggleUI();
+    }
+
+    async persistCouncilSelectionFromControls() {
+        const session = this.app.getCurrentSession();
+        const members = this.getMultiModelMembersForSelection();
+        const synthesisModel = this.getCouncilSynthesisModelForSelection();
+        const outputMode = this.getMultiModelOutputModeForSelection();
+        const currentEnabled = session
+            ? session.responseMode === RESPONSE_MODE_COUNCIL && session.councilConfig?.enabled === true
+            : this.app.getPendingCouncilConfig?.()?.enabled === true;
+        await this.persistParallelDefaults({
+            enabled: currentEnabled,
+            members,
+            synthesisModel,
+            outputMode
+        });
+
+        if (!session) {
+            const pendingCouncilConfig = this.app.getPendingCouncilConfig?.();
+            this.app.setPendingCouncilConfig?.({
+                enabled: pendingCouncilConfig?.enabled === true,
+                members,
+                synthesisModel,
+                outputMode,
+                reviewEnabled: false
+            });
+            this.refreshMultiModelSettingsUI();
+            return;
+        }
+
+        const enabled = session.responseMode === RESPONSE_MODE_COUNCIL && session.councilConfig?.enabled === true;
+        await this.app.setCouncilModeForCurrentSession({
+            enabled,
+            members,
+            synthesisModel,
+            outputMode
+        });
+        this.refreshMultiModelSettingsUI();
+    }
+
+    async selectCouncilSecondaryModel(modelName) {
+        if (!modelName) return;
+        if (this.multiModelSecondaryInlineSelect) {
+            this.multiModelSecondaryInlineSelect.value = modelName;
+        }
+        if (this.multiModelSecondarySelect) {
+            this.multiModelSecondarySelect.value = modelName;
+        }
+        await this.persistCouncilSelectionFromControls();
+    }
+
+    async selectCouncilSynthesisModel(modelName) {
+        if (!modelName) return;
+        if (this.councilReviewModelSelect) {
+            this.councilReviewModelSelect.value = modelName;
+        }
+        if (this.councilSynthesisInlineSelect) {
+            this.councilSynthesisInlineSelect.value = modelName;
+        }
+        if (this.multiModelSynthesisSelect) {
+            this.multiModelSynthesisSelect.value = modelName;
+        }
+        await this.persistCouncilSelectionFromControls();
+    }
+
+    openCouncilSecondaryModelPicker() {
+        if (!this.app.modelPicker?.open) return;
+        this.app.modelPicker.open({ selectionMode: 'council-secondary' });
+    }
+
+    closeSettingsMenu() {
+        if (!this.app.elements.settingsMenu) return;
+        this.app.elements.settingsMenu.classList.add('hidden');
+        this.app.elements.settingsBtn?.classList.remove('tooltip-disabled');
+    }
+
+    openCouncilSynthesisModelPicker(options = {}) {
+        if (!this.app.modelPicker?.open) return;
+        if (options.closeSettings) {
+            this.closeSettingsMenu();
+        }
+        this.app.modelPicker.open({ selectionMode: 'council-synthesis' });
     }
 
     /**
@@ -1807,6 +2318,361 @@ export default class ChatInput {
             button.setAttribute('aria-checked', String(isActive));
             button.disabled = false;
         });
+    }
+
+    getPrimaryModelName() {
+        const session = this.app.getCurrentSession();
+        const preferredModelName = this.app.normalizeModelName(session?.model)
+            || session?.model
+            || this.app.state.pendingModelName
+            || '';
+        const fallbackModelName = this.app.getFallbackModelEntry?.(session)?.name
+            || this.app.getDefaultModelName?.()
+            || '';
+        return resolvePrimaryModelNameForModels({
+            models: this.app.state.models,
+            preferredModelName,
+            fallbackModelName,
+            normalizeModelName: (modelName) => this.app.normalizeModelName?.(modelName)
+        });
+    }
+
+    getMultiModelMembersForSelection(options = {}) {
+        const { preferControlSelection = true } = options;
+        const primary = this.getPrimaryModelName();
+        const secondary = this.getSelectedCouncilSecondaryModelName(primary, { preferControlSelection });
+        return [primary, secondary].filter(Boolean);
+    }
+
+    getSelectedCouncilSecondaryModelName(primaryModelName = this.getPrimaryModelName(), options = {}) {
+        const { preferControlSelection = true } = options;
+        const configuredSecondary = this.getConfiguredSecondaryModelName(primaryModelName);
+        const controlSecondary = preferControlSelection
+            ? (this.multiModelSecondaryInlineSelect?.value || this.multiModelSecondarySelect?.value || '')
+            : '';
+        return this.resolveSecondaryModelName(primaryModelName, controlSecondary || configuredSecondary);
+    }
+
+    getConfiguredSecondaryModelName(primaryModelName) {
+        const session = this.app.getCurrentSession();
+        const pendingCouncilConfig = this.app.getPendingCouncilConfig?.();
+        const councilMembers = session?.councilConfig?.members || pendingCouncilConfig?.members || [];
+        return getConfiguredSecondaryModelNameForModels({
+            models: this.app.state.models,
+            councilMembers,
+            primaryModelName,
+            normalizeModelName: (modelName) => this.app.normalizeModelName?.(modelName)
+        });
+    }
+
+    getDefaultSecondaryModelName(primaryModelName) {
+        return getDefaultSecondaryModelNameForModels({
+            models: this.app.state.models,
+            primaryModelName,
+            normalizeModelName: (modelName) => this.app.normalizeModelName?.(modelName)
+        });
+    }
+
+    resolveSecondaryModelName(primaryModelName, preferredModelName = '') {
+        return resolveSecondaryModelNameForModels({
+            models: this.app.state.models,
+            primaryModelName,
+            preferredModelName,
+            normalizeModelName: (modelName) => this.app.normalizeModelName?.(modelName)
+        });
+    }
+
+    resolveCouncilSynthesisModelName(preferredModelName = '', fallbackModelName = this.getPrimaryModelName()) {
+        return resolveSynthesisModelNameForModels({
+            models: this.app.state.models,
+            preferredModelName,
+            fallbackModelName,
+            normalizeModelName: (modelName) => this.app.normalizeModelName?.(modelName)
+        });
+    }
+
+    getModelEntryByName(modelName) {
+        return findModelByNameOrId(
+            this.app.state.models,
+            modelName,
+            (candidate) => this.app.normalizeModelName?.(candidate)
+        );
+    }
+
+    getShortModelName(modelName) {
+        return getComposerModelDisplayName(modelName);
+    }
+
+    getFullModelHoverName(modelName) {
+        return getProviderlessModelDisplayName(modelName) || 'Select model';
+    }
+
+    buildModelIconHtml(modelName, sizeClass = 'w-3 h-3') {
+        const model = this.getModelEntryByName(modelName);
+        const resolvedProvider = model?.provider
+            ? resolveProvider(model.provider).displayName
+            : resolveProviderFromModelReference(modelName).displayName;
+        const provider = resolvedProvider && resolvedProvider !== 'Unknown' ? resolvedProvider : null;
+        const iconData = provider ? getProviderIcon(provider, sizeClass) : { html: '', hasIcon: false };
+        const shortName = this.getShortModelName(modelName);
+        const iconHtml = iconData.html || `<span class="text-[10px] font-semibold">${this.escapeOptionText((shortName || '?').charAt(0).toUpperCase())}</span>`;
+        return {
+            html: iconHtml,
+            bgClass: iconData.hasIcon ? 'bg-white' : 'bg-muted'
+        };
+    }
+
+    getCouncilSynthesisModelForSelection() {
+        const session = this.app.getCurrentSession();
+        const pendingCouncilConfig = this.app.getPendingCouncilConfig?.();
+        const preferredModelName = this.councilReviewModelSelect?.value
+            || this.councilSynthesisInlineSelect?.value
+            || this.multiModelSynthesisSelect?.value
+            || session?.councilConfig?.synthesisModel
+            || session?.councilConfig?.chairmanModel
+            || pendingCouncilConfig?.synthesisModel
+            || pendingCouncilConfig?.chairmanModel
+            || this.getPrimaryModelName()
+            || '';
+        return this.resolveCouncilSynthesisModelName(preferredModelName, this.getPrimaryModelName());
+    }
+
+    getMultiModelOutputModeForSelection() {
+        if (this.councilReviewToggle) {
+            return this.councilReviewToggle.getAttribute('aria-checked') === 'true'
+                ? COUNCIL_OUTPUT_SYNTHESIS
+                : COUNCIL_OUTPUT_PARALLEL;
+        }
+        if (this.multiModelModeSelect) {
+            return this.multiModelModeSelect?.value === COUNCIL_OUTPUT_PARALLEL
+                ? COUNCIL_OUTPUT_PARALLEL
+                : COUNCIL_OUTPUT_SYNTHESIS;
+        }
+
+        const session = this.app.getCurrentSession();
+        const pendingCouncilConfig = this.app.getPendingCouncilConfig?.();
+        return session?.councilConfig?.outputMode
+            || pendingCouncilConfig?.outputMode
+            || COUNCIL_OUTPUT_PARALLEL;
+    }
+
+    refreshMultiModelSettingsUI() {
+        const session = this.app.getCurrentSession();
+        const select = document.getElementById('multi-model-secondary-select');
+        const inlineContainer = document.getElementById('council-inline-models');
+        const inlineSelect = document.getElementById('council-secondary-inline-select');
+        const inlineButton = document.getElementById('council-secondary-model-btn');
+        const synthesisInlineSelect = document.getElementById('council-synthesis-inline-select');
+        const councilReviewToggle = document.getElementById('council-review-toggle');
+        const councilReviewModelRow = document.getElementById('council-review-model-row');
+        const councilReviewModelSelect = document.getElementById('council-review-model-select');
+        const modeSelect = document.getElementById('multi-model-mode-select');
+        const synthesisSelect = document.getElementById('multi-model-synthesis-select');
+
+        const pendingCouncilConfig = this.app.getPendingCouncilConfig?.();
+        const isEnabled = session
+            ? session.responseMode === RESPONSE_MODE_COUNCIL && session.councilConfig?.enabled === true
+            : pendingCouncilConfig?.enabled === true;
+        this.setComposerModeDataset(isEnabled);
+        if (inlineContainer) {
+            inlineContainer.classList.toggle('hidden', !isEnabled);
+            inlineContainer.classList.toggle('flex', isEnabled);
+            inlineContainer.setAttribute('aria-hidden', isEnabled ? 'false' : 'true');
+        }
+        const primaryModelButton = this.app.elements.modelPickerBtn || document.getElementById('model-picker-btn');
+        if (primaryModelButton) {
+            const primaryModelName = this.getPrimaryModelName();
+            const primaryHoverName = this.getFullModelHoverName(primaryModelName);
+            primaryModelButton.setAttribute('data-tooltip', primaryHoverName);
+            primaryModelButton.setAttribute('data-tooltip-position', 'top');
+            primaryModelButton.setAttribute('aria-label', `Primary model: ${primaryHoverName}`);
+            primaryModelButton.title = primaryHoverName;
+            primaryModelButton.classList.remove('model-picker-icon-only');
+            primaryModelButton.classList.add('composer-model-chip');
+        }
+
+        const primary = this.getPrimaryModelName();
+        const requestedCouncilSynthesisModel = session?.councilConfig?.synthesisModel
+            || session?.councilConfig?.chairmanModel
+            || pendingCouncilConfig?.synthesisModel
+            || pendingCouncilConfig?.chairmanModel
+            || primary
+            || '';
+        const storedOutputMode = session?.councilConfig?.outputMode
+            || pendingCouncilConfig?.outputMode
+            || COUNCIL_OUTPUT_PARALLEL;
+        const outputMode = isEnabled ? storedOutputMode : COUNCIL_OUTPUT_PARALLEL;
+        const isCouncilReviewEnabled = outputMode === COUNCIL_OUTPUT_SYNTHESIS;
+        this.app.updateCouncilLayoutMode?.(session);
+        const models = Array.isArray(this.app.state.models) ? this.app.state.models : [];
+        const availableModels = models.filter((model) => model?.name);
+        const allSelectableModels = models.filter((model) => model?.name);
+        const modelsLoaded = allSelectableModels.length > 0;
+        const councilSynthesisModel = this.resolveCouncilSynthesisModelName(requestedCouncilSynthesisModel, primary);
+        const configuredSecondary = this.getConfiguredSecondaryModelName(primary);
+        const selectedSecondary = this.resolveSecondaryModelName(primary, configuredSecondary);
+
+        if (modeSelect) {
+            this.multiModelModeSelect = modeSelect;
+            modeSelect.value = outputMode === COUNCIL_OUTPUT_PARALLEL
+                ? COUNCIL_OUTPUT_PARALLEL
+                : COUNCIL_OUTPUT_SYNTHESIS;
+        }
+
+        const renderSecondaryOptions = () => availableModels.map((model, index) => {
+            const value = model.name;
+            const selected = selectedSecondary
+                ? value === selectedSecondary
+                : index === 0;
+            return `<option value="${this.escapeOptionValue(value)}"${selected ? ' selected' : ''}>${this.escapeOptionText(value)}</option>`;
+        }).join('');
+
+        if (select) {
+            if (availableModels.length === 0) {
+                select.innerHTML = '<option value="" disabled selected>No second model</option>';
+                select.disabled = true;
+            } else {
+                select.disabled = false;
+                select.innerHTML = renderSecondaryOptions();
+            }
+        }
+
+        if (inlineSelect) {
+            this.multiModelSecondaryInlineSelect = inlineSelect;
+            if (availableModels.length === 0) {
+                inlineSelect.innerHTML = '<option value="" disabled selected>No second model</option>';
+                inlineSelect.disabled = true;
+            } else {
+                inlineSelect.disabled = false;
+                inlineSelect.innerHTML = renderSecondaryOptions();
+            }
+        }
+
+        if (inlineButton) {
+            this.multiModelSecondaryInlineButton = inlineButton;
+            inlineButton.disabled = !isEnabled || availableModels.length === 0;
+            inlineButton.setAttribute('data-tooltip-position', 'top');
+            inlineButton.classList.remove('council-model-icon-only');
+            inlineButton.classList.add('composer-model-chip');
+            inlineButton.setAttribute('aria-hidden', isEnabled ? 'false' : 'true');
+            if (isEnabled) {
+                inlineButton.removeAttribute('tabindex');
+            } else {
+                inlineButton.setAttribute('tabindex', '-1');
+            }
+            const selectedModel = findModelByNameOrId(
+                availableModels,
+                selectedSecondary,
+                (modelName) => this.app.normalizeModelName?.(modelName)
+            ) || availableModels[0] || null;
+            if (!selectedModel) {
+                inlineButton.setAttribute('aria-label', 'Secondary model unavailable');
+                inlineButton.setAttribute('data-tooltip', 'No model available');
+                inlineButton.title = 'No model available';
+                inlineButton.innerHTML = '<span class="model-name-container min-w-0 truncate">No second model</span>';
+            } else {
+                const secondaryHoverName = this.getFullModelHoverName(selectedModel.name);
+                inlineButton.setAttribute('aria-label', `Secondary model: ${secondaryHoverName}`);
+                inlineButton.setAttribute('data-tooltip', secondaryHoverName);
+                inlineButton.title = secondaryHoverName;
+                const icon = this.buildModelIconHtml(selectedModel.name, 'w-3 h-3');
+                inlineButton.innerHTML = `
+                    <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 ${icon.bgClass}">
+                        ${icon.html}
+                    </div>
+                    <span class="model-name-container min-w-0">${this.escapeOptionText(this.getShortModelName(selectedModel.name))}</span>
+                    <div class="model-shortcut flex items-center gap-0.5 ml-2 pointer-events-none text-muted-foreground text-xs">
+                        <span class="opacity-60">⌘</span>
+                        <span class="opacity-60">J</span>
+                    </div>
+                `;
+            }
+        }
+
+        const renderSynthesisOptions = () => {
+            const options = [...allSelectableModels];
+            if (!modelsLoaded && councilSynthesisModel && !options.some((model) => model.name === councilSynthesisModel)) {
+                options.unshift({ name: councilSynthesisModel });
+            }
+            return options.map((model, index) => {
+                const value = model.name;
+                const label = this.getFullModelHoverName(value);
+                const selected = councilSynthesisModel
+                    ? value === councilSynthesisModel
+                    : index === 0;
+                return `<option value="${this.escapeOptionValue(value)}"${selected ? ' selected' : ''}>${this.escapeOptionText(label)}</option>`;
+            }).join('');
+        };
+
+        if (councilReviewToggle) {
+            this.councilReviewToggle = councilReviewToggle;
+            councilReviewToggle.setAttribute('aria-checked', String(isCouncilReviewEnabled));
+            councilReviewToggle.classList.toggle('switch-active', isCouncilReviewEnabled);
+            councilReviewToggle.classList.toggle('switch-inactive', !isCouncilReviewEnabled);
+            councilReviewToggle.title = isCouncilReviewEnabled
+                ? 'Council review is on'
+                : 'Council review is off';
+        }
+
+        if (councilReviewModelRow) {
+            councilReviewModelRow.classList.toggle('hidden', !isCouncilReviewEnabled);
+        }
+
+        if (councilReviewModelSelect) {
+            this.councilReviewModelSelect = councilReviewModelSelect;
+            const councilHoverName = councilSynthesisModel
+                ? this.getFullModelHoverName(councilSynthesisModel)
+                : 'No model available';
+            councilReviewModelSelect.setAttribute('aria-label', `Council model: ${councilHoverName}`);
+            councilReviewModelSelect.title = councilHoverName;
+            if (allSelectableModels.length === 0 && !councilSynthesisModel) {
+                councilReviewModelSelect.innerHTML = '<option value="" disabled selected>No council model</option>';
+                councilReviewModelSelect.disabled = true;
+            } else {
+                councilReviewModelSelect.disabled = !isCouncilReviewEnabled;
+                councilReviewModelSelect.innerHTML = renderSynthesisOptions();
+                if (councilSynthesisModel) {
+                    councilReviewModelSelect.value = councilSynthesisModel;
+                }
+            }
+        }
+
+        if (synthesisInlineSelect) {
+            this.councilSynthesisInlineSelect = synthesisInlineSelect;
+            if (allSelectableModels.length === 0 && !councilSynthesisModel) {
+                synthesisInlineSelect.innerHTML = '<option value="" disabled selected>No council model</option>';
+                synthesisInlineSelect.disabled = true;
+            } else {
+                synthesisInlineSelect.disabled = !isCouncilReviewEnabled;
+                synthesisInlineSelect.innerHTML = renderSynthesisOptions();
+            }
+        }
+
+        if (synthesisSelect) {
+            this.multiModelSynthesisSelect = synthesisSelect;
+            if (allSelectableModels.length === 0 && !councilSynthesisModel) {
+                synthesisSelect.innerHTML = '<option value="" disabled selected>No council model</option>';
+                synthesisSelect.disabled = true;
+            } else {
+                synthesisSelect.disabled = !isCouncilReviewEnabled;
+                synthesisSelect.innerHTML = renderSynthesisOptions();
+            }
+        }
+    }
+
+    escapeOptionValue(value) {
+        return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
+    escapeOptionText(value) {
+        return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
     }
 
     /**

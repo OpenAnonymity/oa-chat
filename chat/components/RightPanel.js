@@ -52,6 +52,7 @@ class RightPanel {
         this.importStatus = null;
         this.isSplitting = false;
         this.timerInterval = null;
+        this.lastLaneExpiryRenderAt = 0;
         this.pendingInvitationCode = null;
         this.pendingInvitationTickets = null;
         this.pendingInvitationSource = null;
@@ -394,7 +395,7 @@ class RightPanel {
 
         if (!dot) return;
 
-        const hasActiveKey = this.apiKey && !this.isExpired;
+        const hasActiveKey = this.hasAnyActiveAccessKey();
 
         // Remove all status classes first
         dot.classList.remove('status-active', 'status-inactive');
@@ -424,6 +425,7 @@ class RightPanel {
         if (!this.expiresAt) {
             this.timeRemaining = null;
             this.isExpired = false;
+            this.ensureLaneExpirationTimer();
             return;
         }
 
@@ -440,6 +442,8 @@ class RightPanel {
                     this.timerInterval = null;
                 }
                 this.updateStatusIndicator();
+                this.refreshLaneExpiryPanelIfNeeded(true);
+                this.ensureLaneExpirationTimer();
             } else {
                 this.isExpired = false;
                 const hours = Math.floor(diff / 3600000);
@@ -465,6 +469,8 @@ class RightPanel {
                     : '';
                 timeRemainingEl.innerHTML = shareIcon + (this.timeRemaining || 'Loading...');
                 timeRemainingEl.className = `font-medium px-1 py-0.5 rounded-full text-[10px] flex-shrink-0 ${this.getExpiryWidthClass(isKeyShared)} flex items-center ${this.getExpiryAlignmentClass(isKeyShared)} gap-0.5 tabular-nums whitespace-nowrap ${this.getTimerClasses(isKeyShared)}`;
+            } else if (this.getCouncilAccessRows().length > 0) {
+                this.refreshLaneExpiryPanelIfNeeded();
             }
         };
 
@@ -1646,12 +1652,292 @@ class RightPanel {
         return this.app.state.sessions.filter(s => this.app.services.inference.getAccessInfo(s)?.token === this.apiKey).length;
     }
 
+    hasAnyAccessKey() {
+        return !!this.apiKey || this.getCouncilAccessRows().some((row) => !!row.access?.apiKey);
+    }
+
+    hasAnyActiveAccessKey() {
+        if (this.apiKey && !this.isExpired) return true;
+        return this.getCouncilAccessRows().some((row) => (
+            !!row.access?.apiKey && this.getAccessExpiryLabel(row.access) !== 'Expired'
+        ));
+    }
+
+    getCouncilAccessRows() {
+        const session = this.currentSession;
+        const access = session?.councilAccess || null;
+        const config = session
+            ? (session.councilConfig || {})
+            : this.getPendingCouncilAccessConfig();
+        const isParallelMode = session
+            ? session.responseMode === 'council' && config.enabled === true
+            : config?.enabled === true;
+        if (!isParallelMode) return [];
+
+        const rows = [
+            {
+                id: 'primary',
+                label: 'Model 1',
+                access: access?.primary || null
+            },
+            {
+                id: 'secondary',
+                label: 'Model 2',
+                access: access?.secondary || null
+            }
+        ];
+
+        if (config.outputMode === 'council') {
+            rows.push({
+                id: 'synthesis',
+                label: 'Council',
+                access: access?.synthesis || null
+            });
+        }
+
+        return rows;
+    }
+
+    getPendingCouncilAccessConfig() {
+        const pendingConfig = this.app.getPendingCouncilConfig?.();
+        if (pendingConfig) return pendingConfig;
+        return this.app.buildPersistedParallelCouncilConfig?.() || null;
+    }
+
+    getAccessExpiryLabel(access) {
+        if (!access?.apiKey) return 'Pending';
+        const expiresAt = access.expiresAt || access.apiKeyInfo?.expiresAt || access.apiKeyInfo?.expires_at || null;
+        if (!expiresAt) return 'Active';
+
+        const diffMs = new Date(expiresAt).getTime() - Date.now();
+        if (!Number.isFinite(diffMs)) return 'Active';
+        if (diffMs <= 0) return 'Expired';
+
+        const hours = Math.floor(diffMs / 3600000);
+        const minutes = Math.floor((diffMs % 3600000) / 60000);
+        if (hours > 0) return `${hours}h ${minutes}m`;
+        if (minutes > 0) return `${minutes}m`;
+        return '<1m';
+    }
+
+    getAccessExpiryClasses(access) {
+        if (!access?.apiKey) return 'bg-muted/30 text-muted-foreground';
+        return this.getAccessExpiryLabel(access) === 'Expired'
+            ? 'bg-red-500/10 text-red-600 dark:text-red-400'
+            : 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400';
+    }
+
+    hasCouncilAccessKeys() {
+        return this.getCouncilAccessRows().some((row) => !!row.access?.apiKey);
+    }
+
+    maskCouncilAccessToken(access) {
+        if (!access?.apiKey) return '';
+        const laneDisplaySession = {
+            ...this.currentSession,
+            currentEphemeralKeyId: null,
+            ephemeralKeyMappings: null
+        };
+        return this.app.services.inference.maskAccessToken(laneDisplaySession, access.apiKey);
+    }
+
+    getLaneAttestationAccessInfo(access) {
+        if (!access?.apiKey) return null;
+        return {
+            ...(access.apiKeyInfo || {}),
+            key: access.apiKey,
+            token: access.apiKey,
+            expiresAt: access.expiresAt || access.apiKeyInfo?.expiresAt || access.apiKeyInfo?.expires_at || null
+        };
+    }
+
+    ensureLaneExpirationTimer() {
+        if ((this.expiresAt && !this.isExpired) || this.timerInterval || !this.hasCouncilAccessKeys()) return;
+
+        this.timerInterval = setInterval(() => {
+            if ((this.expiresAt && !this.isExpired) || !this.hasCouncilAccessKeys()) {
+                clearInterval(this.timerInterval);
+                this.timerInterval = null;
+                return;
+            }
+            this.renderTopSectionOnly();
+            this.updateStatusIndicator();
+        }, 30000);
+    }
+
+    refreshLaneExpiryPanelIfNeeded(force = false) {
+        if (this.getCouncilAccessRows().length === 0) return;
+        const now = Date.now();
+        if (!force && now - this.lastLaneExpiryRenderAt < 30000) return;
+        this.lastLaneExpiryRenderAt = now;
+        this.renderTopSectionOnly();
+        this.updateStatusIndicator();
+    }
+
+    generateCouncilAccessKeyPanelHTML(rows) {
+        const rowHtml = rows.map((row) => {
+            const access = row.access || null;
+            const hasKey = !!access?.apiKey;
+            const displayMask = hasKey
+                ? this.maskCouncilAccessToken(access)
+                : 'Requested on message send';
+            const station = access?.apiKeyInfo?.stationId || access?.apiKeyInfo?.station_name || null;
+            return `
+                <div class="rounded-md border ${hasKey ? 'border-border bg-muted/20' : 'border-dashed border-border bg-muted/10'} p-2">
+                    <div class="flex items-center justify-between gap-2 mb-1.5">
+                        <div class="min-w-0">
+                            <div class="text-[10px] font-semibold text-foreground">${this.escapeHtml(row.label)}</div>
+                        </div>
+                        <div class="flex items-center gap-1 flex-shrink-0">
+                            ${hasKey ? `
+                                <button
+                                    class="lane-verifier-attestation-btn inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-border text-[8px] text-muted-foreground hover:text-foreground hover:bg-accent hover:border-foreground/20 transition-all"
+                                    title="Show verifier attestation for ${this.escapeHtmlAttribute(row.label)}"
+                                    type="button"
+                                    data-council-attestation-lane="${this.escapeHtmlAttribute(row.id)}"
+                                >?</button>
+                            ` : ''}
+                            <span class="font-medium px-1.5 py-0.5 rounded-full text-[10px] tabular-nums whitespace-nowrap ${this.getAccessExpiryClasses(access)}">
+                                ${this.escapeHtml(this.getAccessExpiryLabel(access))}
+                            </span>
+                        </div>
+                    </div>
+                    <div class="text-[10px] font-mono break-all ${hasKey ? 'text-foreground' : 'text-muted-foreground'}">${this.escapeHtml(displayMask)}</div>
+                    ${station ? `
+                        <div class="flex items-center justify-between mt-1.5 pt-1.5 border-t border-border/60">
+                            <span class="text-[10px] text-muted-foreground">Issuing Station</span>
+                            <span class="text-[10px] font-medium">${this.escapeHtml(station)}</span>
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        }).join('');
+
+        return `
+            <div class="p-3">
+                <div class="mb-3">
+                    <div class="flex items-center gap-1.5 mb-2">
+                        <svg class="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
+                        </svg>
+                        <span class="text-xs font-medium">Ephemeral Access Keys</span>
+                    </div>
+                    <div class="text-[10px] text-muted-foreground mb-2">
+                        Keys persist until expiry or exhaustion.
+                    </div>
+                    <div class="space-y-2">
+                        ${rowHtml}
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    generateSingleAccessKeyPanelHTML(hasApiKey) {
+        return hasApiKey ? `
+            <div class="p-3">
+                <div class="mb-3">
+                    <div class="flex items-center gap-1.5 mb-2">
+                        <svg class="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
+                        </svg>
+                        <span class="text-xs font-medium">Ephemeral Access Key</span>
+                        <button
+                            id="verifier-attestation-btn"
+                            class="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-border text-[8px] text-muted-foreground hover:text-foreground hover:bg-accent hover:border-foreground/20 transition-all"
+                            title="Show verifier attestation"
+                            type="button"
+                        >?</button>
+                    </div>
+                    <div class="flex items-center justify-between text-[10px] font-mono bg-muted/20 p-2 rounded-md border border-border break-all text-foreground">
+                        ${(() => {
+                            const keyInfo = this.getKeyDisplayInfo();
+                            const hoverClasses = keyInfo.hoverContentHtml ? 'cursor-help hover:bg-muted/40 rounded px-1 -mx-1' : '';
+                            return `<span id="ephemeral-key-display" class="flex-1 min-w-0 transition-colors ${this.isRenewingKey ? 'text-muted-foreground opacity-70' : ''} ${hoverClasses}"
+                                ${keyInfo.hoverContentHtml ? 'data-has-tooltip="true"' : ''}>${keyInfo.displayMask}</span>`;
+                        })()}
+                        <div class="flex items-center gap-0 flex-shrink-0 ml-1">
+                            <button
+                                id="renew-key-btn"
+                                class="inline-flex items-center justify-center w-4 h-4 rounded-sm text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors disabled:opacity-60 disabled:pointer-events-none"
+                                aria-label="Regenerate key"
+                                title="Regenerate key"
+                                ${this.isRenewingKey ? 'disabled' : ''}
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3 h-3 ${this.isRenewingKey ? 'animate-spin' : ''}">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                                </svg>
+                            </button>
+                            <span id="api-key-expiry" class="font-medium px-1 py-0.5 rounded-full text-[10px] flex-shrink-0 ${this.getExpiryWidthClass()} flex items-center ${this.getExpiryAlignmentClass()} gap-0.5 tabular-nums whitespace-nowrap ${this.getTimerClasses()}">
+                                ${(this.currentSession?.shareInfo?.apiKeyShared || this.currentSession?.apiKeyInfo?.isShared)
+                                    ? `<span class="inline-flex w-3 h-3 items-center justify-center"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/></svg></span>`
+                                    : ''}${this.timeRemaining || 'Loading...'}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="space-y-2 mb-3">
+
+                    ${(this.apiKeyInfo?.stationId || this.apiKeyInfo?.station_name) ? `
+                        <div class="flex items-center justify-between p-2 bg-background rounded-md border border-border">
+                            <span class="text-[10px] text-muted-foreground">Issuing Station</span>
+                            <span class="text-[10px] font-medium">${this.escapeHtml(this.apiKeyInfo.stationId || this.apiKeyInfo.station_name)}</span>
+                        </div>
+                    ` : ''}
+
+                    ${this.getSharedKeyCount() > 1 ? `
+                        <div class="flex items-center justify-between p-2 bg-primary/5 rounded-md border border-primary/20">
+                            <span class="text-[10px] text-muted-foreground">Shared across</span>
+                            <span class="text-[10px] font-medium text-primary">${this.getSharedKeyCount()} sessions</span>
+                        </div>
+                    ` : ''}
+                </div>
+
+            </div>
+        ` : `
+            <div class="p-3">
+                <div class="mb-3">
+                    <div class="flex items-center gap-1.5 mb-2">
+                        <svg class="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
+                        </svg>
+                        <span class="text-xs font-medium">Ephemeral Access Key</span>
+                        <button
+                            id="verifier-attestation-btn"
+                            class="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-border text-[8px] text-muted-foreground hover:text-foreground hover:bg-accent hover:border-foreground/20 transition-all"
+                            title="Show verifier attestation"
+                            type="button"
+                        >?</button>
+                    </div>
+                    <div class="flex items-center justify-between text-[10px] bg-muted/10 p-2 rounded-md border border-dashed border-border text-muted-foreground">
+                        <span class="flex-1 min-w-0">Requested on message send</span>
+                        <span class="font-medium px-1 py-0.5 rounded-full text-[10px] flex-shrink-0 bg-muted/30 text-muted-foreground">Pending</span>
+                    </div>
+                </div>
+                <div class="space-y-2 mb-3">
+                    <div class="flex items-center justify-between p-2 bg-background rounded-md border border-dashed border-border">
+                        <span class="text-[10px] text-muted-foreground">Issuing Station</span>
+                        <span class="text-[10px] font-medium text-muted-foreground">To be assigned</span>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    generateAccessKeyPanelHTML(hasApiKey) {
+        const councilAccessRows = this.getCouncilAccessRows();
+        return councilAccessRows.length > 0
+            ? this.generateCouncilAccessKeyPanelHTML(councilAccessRows)
+            : this.generateSingleAccessKeyPanelHTML(hasApiKey);
+    }
+
     /**
      * Generates HTML for the top section (tickets and API key) only.
      */
     generateTopSectionHTML() {
         const hasTickets = this.ticketCount > 0;
-        const hasApiKey = !!this.apiKey;
+        const hasApiKey = this.hasAnyAccessKey();
         const fallbackTicketValue = 'Not stored';
         const previewTicket = this.currentTicket?.finalized_ticket
             || this.currentTicket?.signed_response
@@ -1965,95 +2251,7 @@ class RightPanel {
             ` : ''}
 
             <!-- API Key Panel -->
-            ${hasApiKey ? `
-                <div class="p-3">
-                    <div class="mb-3">
-                        <div class="flex items-center gap-1.5 mb-2">
-                            <svg class="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
-                            </svg>
-                            <span class="text-xs font-medium">Ephemeral Access Key</span>
-                            <button
-                                id="verifier-attestation-btn"
-                                class="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-border text-[8px] text-muted-foreground hover:text-foreground hover:bg-accent hover:border-foreground/20 transition-all"
-                                title="Show verifier attestation"
-                                type="button"
-                            >?</button>
-                        </div>
-                        <div class="flex items-center justify-between text-[10px] font-mono bg-muted/20 p-2 rounded-md border border-border break-all text-foreground">
-                            ${(() => {
-                                const keyInfo = this.getKeyDisplayInfo();
-                                const hoverClasses = keyInfo.hoverContentHtml ? 'cursor-help hover:bg-muted/40 rounded px-1 -mx-1' : '';
-                                return `<span id="ephemeral-key-display" class="flex-1 min-w-0 transition-colors ${this.isRenewingKey ? 'text-muted-foreground opacity-70' : ''} ${hoverClasses}"
-                                    ${keyInfo.hoverContentHtml ? 'data-has-tooltip="true"' : ''}>${keyInfo.displayMask}</span>`;
-                            })()}
-                            <div class="flex items-center gap-0 flex-shrink-0 ml-1">
-                                <button
-                                    id="renew-key-btn"
-                                    class="inline-flex items-center justify-center w-4 h-4 rounded-sm text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors disabled:opacity-60 disabled:pointer-events-none"
-                                    aria-label="Regenerate key"
-                                    title="Regenerate key"
-                                    ${this.isRenewingKey ? 'disabled' : ''}
-                                >
-                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3 h-3 ${this.isRenewingKey ? 'animate-spin' : ''}">
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
-                                    </svg>
-                                </button>
-                                <span id="api-key-expiry" class="font-medium px-1 py-0.5 rounded-full text-[10px] flex-shrink-0 ${this.getExpiryWidthClass()} flex items-center ${this.getExpiryAlignmentClass()} gap-0.5 tabular-nums whitespace-nowrap ${this.getTimerClasses()}">
-                                    ${(this.currentSession?.shareInfo?.apiKeyShared || this.currentSession?.apiKeyInfo?.isShared)
-                                        ? `<span class="inline-flex w-3 h-3 items-center justify-center"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/></svg></span>`
-                                        : ''}${this.timeRemaining || 'Loading...'}
-                                </span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="space-y-2 mb-3">
-
-                        ${(this.apiKeyInfo?.stationId || this.apiKeyInfo?.station_name) ? `
-                            <div class="flex items-center justify-between p-2 bg-background rounded-md border border-border">
-                                <span class="text-[10px] text-muted-foreground">Issuing Station</span>
-                                <span class="text-[10px] font-medium">${this.escapeHtml(this.apiKeyInfo.stationId || this.apiKeyInfo.station_name)}</span>
-                            </div>
-                        ` : ''}
-
-                        ${this.getSharedKeyCount() > 1 ? `
-                            <div class="flex items-center justify-between p-2 bg-primary/5 rounded-md border border-primary/20">
-                                <span class="text-[10px] text-muted-foreground">Shared across</span>
-                                <span class="text-[10px] font-medium text-primary">${this.getSharedKeyCount()} sessions</span>
-                            </div>
-                        ` : ''}
-                    </div>
-
-                </div>
-            ` : `
-                <div class="p-3">
-                    <div class="mb-3">
-                        <div class="flex items-center gap-1.5 mb-2">
-                            <svg class="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
-                            </svg>
-                            <span class="text-xs font-medium">Ephemeral Access Key</span>
-                            <button
-                                id="verifier-attestation-btn"
-                                class="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-border text-[8px] text-muted-foreground hover:text-foreground hover:bg-accent hover:border-foreground/20 transition-all"
-                                title="Show verifier attestation"
-                                type="button"
-                            >?</button>
-                        </div>
-                        <div class="flex items-center justify-between text-[10px] bg-muted/10 p-2 rounded-md border border-dashed border-border text-muted-foreground">
-                            <span class="flex-1 min-w-0">Requested on message send</span>
-                            <span class="font-medium px-1 py-0.5 rounded-full text-[10px] flex-shrink-0 bg-muted/30 text-muted-foreground">Pending</span>
-                        </div>
-                    </div>
-                    <div class="space-y-2 mb-3">
-                        <div class="flex items-center justify-between p-2 bg-background rounded-md border border-dashed border-border">
-                            <span class="text-[10px] text-muted-foreground">Issuing Station</span>
-                            <span class="text-[10px] font-medium text-muted-foreground">To be assigned</span>
-                        </div>
-                    </div>
-                </div>
-            `}
+            ${this.generateAccessKeyPanelHTML(hasApiKey)}
 
             ${this.generateProxySectionHTML()}
         `;
@@ -2475,6 +2673,20 @@ class RightPanel {
                 stationId: this.apiKeyInfo?.stationId || this.apiKeyInfo?.station_name || null
             });
         }
+
+        document.querySelectorAll('[data-council-attestation-lane]').forEach((button) => {
+            button.onclick = () => {
+                const laneId = button.dataset.councilAttestationLane || '';
+                const row = this.getCouncilAccessRows().find((entry) => entry.id === laneId);
+                const accessInfo = this.getLaneAttestationAccessInfo(row?.access);
+                if (!accessInfo) return;
+                verifierAttestationModal.open({
+                    session: this.currentSession || null,
+                    accessInfo,
+                    stationId: accessInfo.stationId || accessInfo.station_id || accessInfo.station_name || null
+                });
+            };
+        });
     }
 
     /**
@@ -2497,6 +2709,7 @@ class RightPanel {
 
         // Re-attach event listeners for the top section only
         this.attachTopSectionEventListeners();
+        this.ensureLaneExpirationTimer();
     }
 
     /**
