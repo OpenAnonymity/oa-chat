@@ -12,6 +12,7 @@ import { exportTickets } from '../services/globalExport.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import { SHARE_BASE_URL } from '../config.js';
 import SmoothProgress from '../services/smoothProgress.js';
+import { COUNCIL_OUTPUT_SYNTHESIS } from '../domain/councilConfig.js';
 
 // Layout constant for toolbar overlay prediction
 const RIGHT_PANEL_WIDTH = 288; // 18rem = 288px
@@ -1687,7 +1688,7 @@ class RightPanel {
             }
         ];
 
-        if (config.outputMode === 'council') {
+        if (config.outputMode === COUNCIL_OUTPUT_SYNTHESIS) {
             rows.push({
                 id: 'synthesis',
                 label: 'Council',
@@ -1823,7 +1824,7 @@ class RightPanel {
                         <span class="text-xs font-medium">Ephemeral Access Keys</span>
                     </div>
                     <div class="text-[10px] text-muted-foreground mb-2">
-                        Keys persist until expiry or exhaustion.
+                        Keys persist until expiry, model change, or exhaustion.
                     </div>
                     <div class="space-y-2">
                         ${rowHtml}

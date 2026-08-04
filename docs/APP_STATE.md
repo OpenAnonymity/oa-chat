@@ -186,20 +186,15 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     the no-session pending model if it was still tracking the old default.
     Initial model-catalog load also drains pinned updates that arrived while
     `modelsLoading` was true.
-- 2026-06-04: Single-model ticket redemption is key-based, not selection-based.
-  - Primary model selection only updates the stored model preference/session
-    field and rerenders the picker label; it does not clear
-    `session.apiKey` or redeem tickets. A normal send only calls
-    `acquireAndSetAccess(...)` when the session has no access token or the
-    token is expired. If a user switches from a cheap model to an expensive
-    model while an existing session key is still valid, the app will try that
-    existing key first. More tickets are redeemed only when a fresh key is
-    needed, such as missing/expired access or a pre-stream 402 credit-exhaustion
-    retry. The model picker badge shows the ticket cost for the next new key,
-    not an immediate charge on click. Parallel/Council follows the same
-    key-based charging model within each lane: model changes do not proactively
-    redeem tickets, and OpenRouter credit exhaustion decides whether a fresh
-    lane key is needed.
+- 2026-08-04: Parallel/Council lane access is bound to its selected model.
+  - Ordinary Chat keeps the existing key-based charging behavior: changing its
+    model does not redeem immediately, and a valid verified session key can be
+    tried until expiry or credit exhaustion. Parallel/Council is stricter for
+    cost preflight and lane isolation. Each lane reuses access only when its
+    verifier proof is approved, its station is not banned, it has not expired,
+    and its recorded model matches that lane's selected model. A lane model
+    change therefore makes only that lane stale and the next Parallel send
+    acquires a fresh key at the new model's ticket cost.
 - 2026-05-29: Parallel/Council response mode is wired as a session-level opt-in.
   - The bottom response-mode slider has `Chat` and `Parallel` states. Memory is
     a separate book-icon toggle immediately to the left of that slider, so users
@@ -212,7 +207,7 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     responses, no synthesis/chairman request. Council is no longer a visible composer mode;
     the settings menu has a `Parallel` section with a `Council review` switch.
     Turning that switch on also turns Parallel on, writes
-    `outputMode: 'council'`, reveals a Council model select inside settings,
+    `outputMode: 'synthesis'`, reveals a Council model select inside settings,
     and enables the existing review pass below the two first responses. The
     primary picker uses `⌘K`, the secondary picker uses `⌘J`, and `⌘L` still
     opens the shared searchable model picker for Council selection when Council
@@ -247,28 +242,30 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     controller resolve the primary lane to the default/fallback model before
     assigning the secondary lane.
     The settings menu no longer exposes duplicate legacy multi-model rows.
-    Parallel mode is a global persisted preference: toggling Chat/Parallel
-    writes `parallelModeEnabled`, and new sessions inherit that mode unless a
-    more specific pending session config exists. The last secondary model,
+    Parallel is an explicit session-level choice. Every empty New Chat composer
+    starts in Chat even if an older global `parallelModeEnabled` setting exists;
+    startup resets that setting so a historical toggle cannot trigger extra
+    requests or ticket spending in a new session. The last secondary model,
     Council model, and Parallel/Council output mode are persisted as
     `parallelSecondaryModel`, `parallelSynthesisModel`, and
     `parallelOutputMode`. New single-chat sessions still keep the saved
     secondary model in their disabled `councilConfig`, so turning Parallel on in
     that session reuses the user's last secondary model instead of reverting to
     the default. The empty New Chat composer rebuilds its pending council config
-    from those persisted defaults before rendering, so the visible Chat/Parallel
-    state matches the mode that first send will use. Composer components update
+    from those persisted model defaults before rendering, but leaves the mode
+    disabled until the user explicitly selects Parallel. Composer components update
     the in-memory persisted defaults through `ChatApp.setParallelDefaults()`;
     direct writes like `this.app.parallelModeEnabled = ...` will fail through
     the strict component facade.
   - The switch can be set before a session exists; `ChatApp.pendingCouncilConfig`
     carries that choice into the first created session. Enabled sessions persist
     `responseMode: 'council'` plus `councilConfig` with up to two member display
-    names, `outputMode`, `synthesisModel`, and `reviewEnabled: false`. The
+    names, `outputMode`, `synthesisModel`, and `reviewEnabled` derived from
+    whether output mode is `synthesis`. The
     active session model is the primary lane; the selected second model is the
     comparison lane. Parallel with Council review off writes
     `outputMode: 'parallel'`, so synthesis is skipped and no synthesis key is
-    acquired. Parallel with Council review on writes `outputMode: 'council'`,
+    acquired. Parallel with Council review on writes `outputMode: 'synthesis'`,
     so the selected Council model gets its own synthesis key and writes the
     final answer. Missing/legacy `outputMode` still normalizes to `parallel` to
     avoid unexpected third-key redemption. If a config only names the primary
@@ -290,23 +287,21 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - Council access is lane-scoped under `session.councilAccess.primary` and
     `session.councilAccess.secondary`, plus `session.councilAccess.synthesis`
     for the Council answer. Each lane stores its own ephemeral key, access
-    metadata, expiry, and last-issued model id. Lane keys are lane-scoped, not
-    model-scoped: primary only uses `councilAccess.primary`, secondary only uses
-    `councilAccess.secondary`, and synthesis only uses
-    `councilAccess.synthesis`, but a valid same-lane key can be tried after
-    that lane switches models. There is no cross-lane key pooling.
+    metadata, expiry, and last-issued model id. Lane keys are both lane-scoped
+    and model-bound: primary only uses `councilAccess.primary`, secondary only
+    uses `councilAccess.secondary`, synthesis only uses
+    `councilAccess.synthesis`, and a model change refreshes that lane before
+    inference. There is no cross-lane key pooling.
     `RightPanel` renders these lane records as separate Ephemeral Access Key
     rows when Parallel/Council is active: `Model 1`, `Model 2`, and `Council`
     only when synthesis/Council review is enabled. This is display-only and
     does not change key acquisition, ticket preflight, or lane isolation. The
-    RHS panel intentionally shows lane roles, not model names, because lane
-    keys can persist after a user switches models; the current model choice
-    belongs in the composer/settings while the RHS panel represents access-key
-    state. The multi-lane panel includes the hint `Keys persist until expiry or
-    exhaustion.` to make that persistence explicit. When there is no active
-    session, the RHS panel mirrors `pendingCouncilConfig` or the persisted
-    Parallel defaults and shows pending `Model 1` / `Model 2` / optional
-    `Council` rows for the mode that a new chat will use. These no-session rows
+    RHS panel intentionally shows lane roles, not model names; the current model
+    choice belongs in the composer/settings while the RHS panel represents
+    access-key state. The multi-lane panel notes that keys persist until expiry,
+    model change, or exhaustion. When there is no active session, the RHS panel
+    mirrors `pendingCouncilConfig` and shows pending `Model 1` / `Model 2` /
+    optional `Council` rows only after Parallel is explicitly selected. These no-session rows
     are a preview only: they do not create a session, redeem tickets, or acquire
     access until the first send.
     Lane rows mask the actual lane token rather than the session's primary
@@ -322,10 +317,9 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     exhaustion, only that lane is cleared and refreshed. Reused lane keys are
     also checked against the verifier's live/cached banned-station state before
     use; a now-banned lane key is treated as stale, cleared, included in ticket
-    preflight, and replaced before inference. A lane model switch does not count
-    as stale access for ticket preflight; if the existing key cannot afford the
-    new request, the lane request gets a pre-stream 402, clears only that lane,
-    redeems a fresh key priced for the selected lane model, and retries once.
+    preflight, and replaced before inference. A lane model switch also counts
+    as stale access for ticket preflight and causes that lane to acquire a fresh
+    key priced for the selected model before inference.
     Before acquiring any missing/expired/banned lane keys, the controller checks
     that enough tickets exist for all fresh primary/secondary/synthesis lanes so
     it does not partially charge one lane and then fail on another. Parallel
@@ -544,7 +538,7 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     `ticketClient` from `ChatApp` instead of importing the service singletons
     directly. This keeps browser storage/network singleton initialization out
     of unit tests and lets `test/application/councilController.test.js` lock
-    down mixed lane costs, same-lane model-switch reuse, synthesis 402 retry,
+    down mixed lane costs, model-switch refresh, synthesis 402 retry,
     insufficient-ticket preflight behavior, lane-specific Stage 1 history,
     partial synthesis, and synthesis fallback behavior with small stubs.
   - `chat/domain/councilPrompts.js` defines the Council synthesis prompt. It

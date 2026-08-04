@@ -57,7 +57,15 @@ await esbuild.build({
 });
 
 const bundledTests = await collectTests(outDir);
-const child = spawn(process.execPath, ['--test', ...bundledTests], {
+// These bundled tests share browser/global shims and a single temporary output
+// directory. Node 24's isolated workers can corrupt verifier-suite IPC even at
+// concurrency one, so keep the repository test group serial and in-process.
+const child = spawn(process.execPath, [
+    '--test',
+    '--test-concurrency=1',
+    '--test-isolation=none',
+    ...bundledTests
+], {
     stdio: 'inherit'
 });
 

@@ -70,11 +70,13 @@ import {
 } from './domain/memorySettings.js';
 import {
     acquireSessionAccess,
+    buildSafeAccessErrorMetadata,
     buildVerifierSubmitKeyProof as buildVerifierSubmitKeyProofValue,
     isAccessCreditExhaustedError as isAccessCreditExhaustedErrorValue,
     persistVerifierSubmitKeyProof as persistVerifierSubmitKeyProofValue
 } from './application/accessController.js';
 import CouncilController from './application/councilController.js';
+import { isVerifierResultApproved } from './services/inference/verifiedAccess.js';
 import { COUNCIL_MODE_FEATURE_FLAG } from './config.js';
 import {
     RESPONSE_MODE_SINGLE,
@@ -227,6 +229,7 @@ class ChatApp {
         this.sessionSearchDebounce = null;
         this.sessionSearchRequestId = 0;
         this.dbReadyPromise = Promise.resolve(null);
+        this.initialModelLoadPromise = null;
         this.eventListenersAttached = false;
         this.sessionFilters = {
             starredOnly: false,
@@ -1733,7 +1736,8 @@ class ChatApp {
 
         // Start model loading independently so the picker remains usable even
         // if local storage/session history work is slow.
-        this.loadModels().then(() => {
+        this.initialModelLoadPromise = this.loadModels();
+        this.initialModelLoadPromise.then(() => {
             this.renderCurrentModel(); // Re-render button with model icons
             if (this.modelPicker) {
                 // Re-render model list if modal is open, otherwise warm it in idle time.
@@ -1771,6 +1775,11 @@ class ChatApp {
         window.addEventListener('oa-db-compat-mode', () => {
             this.showToast('Chat storage is running in compatibility mode. Close other tabs and reload to finish the upgrade.', 'error');
         });
+
+        // Load cached verifier trust before any persisted access is restored or
+        // sanitized. This closes the reload window where a newly banned lane
+        // could otherwise be treated as reusable.
+        await this.initVerifier();
 
         // Now set up theme controls after chatInput is initialized
         this.updateThemeControls(themeManager.getPreference(), themeManager.getEffectiveTheme());
@@ -1936,7 +1945,13 @@ class ChatApp {
         this.reasoningEnabled = true;
         chatDB.saveSetting('reasoningEnabled', true).catch(() => {});
         this.reasoningEffort = normalizeReasoningEffort(savedReasoningEffort);
-        this.parallelModeEnabled = savedParallelModeEnabled === true;
+        // Parallel is session-scoped and explicit. Preserve old model choices,
+        // but do not let a historical global toggle opt a new chat into extra
+        // model requests or ticket spending.
+        this.parallelModeEnabled = false;
+        if (savedParallelModeEnabled === true) {
+            chatDB.saveSetting('parallelModeEnabled', false).catch(() => {});
+        }
         this.parallelSecondaryModel = typeof savedParallelSecondaryModel === 'string' && savedParallelSecondaryModel.trim()
             ? savedParallelSecondaryModel.trim()
             : null;
@@ -2004,7 +2019,7 @@ class ChatApp {
 
         // Load models from inference backend in background (non-blocking)
         // Updates model picker with icons once loaded
-        this.loadModels().then(async () => {
+        (this.initialModelLoadPromise || this.loadModels()).then(async () => {
             await this.refreshDefaultModelPreferenceForAvailabilityUpdate();
             if (this.pendingModelAvailabilityRefresh) {
                 this.pendingModelAvailabilityRefresh = false;
@@ -2056,9 +2071,6 @@ class ChatApp {
 
         // Set up link preview event listeners
         this.setupLinkPreviewListeners();
-
-        // Initialize verifier and start broadcast checks
-        this.initVerifier();
 
         // Scroll to bottom after initial load (for refresh)
         setTimeout(() => {
@@ -2459,48 +2471,34 @@ class ChatApp {
         console.log('🔐 Verifying shared access...');
         const verifyResult = await verifier.submitAccess(accessInfo);
 
-        if (verifyResult?.status === 'verified') {
+        if (isVerifierResultApproved(verifyResult)) {
             console.log('✅ Shared access verified successfully');
-            return sharedAccess;
+            return {
+                ...sharedAccess,
+                verifierSubmitKeyProof: this.buildVerifierSubmitKeyProof(
+                    verifyResult,
+                    accessInfo
+                )
+            };
         }
 
-        if (verifyResult?.status === 'pending') {
-            // Soft failure - verifier offline, allow import with warning
-            console.warn('⚠️ Shared access verification pending (verifier offline), allowing import');
-            return sharedAccess;
-        }
+        console.warn(
+            '⚠️ Shared access was not explicitly verified; the key will not be imported'
+        );
 
-        if (verifyResult?.status === 'unverified') {
-            const detail = verifyResult?.detail || verifyResult?.data?.detail;
-            if (detail === 'key_near_expiry') {
-                console.warn('⚠️ Shared access key expires too soon to verify, allowing import');
-            } else if (detail === 'ownership_check_error') {
-                console.warn('⚠️ Shared access verification temporarily unavailable, allowing import');
-            } else {
-                console.warn('⚠️ Shared access verification unverified, allowing import');
-            }
-            return sharedAccess;
-        }
+        const isBanned = !!verifyResult?.bannedStation;
+        const banReason = verifyResult?.bannedStation?.reason;
+        const detail = verifyResult?.detail || verifyResult?.data?.detail;
+        const choice = await this.ui.shareModals.showSharedKeyVerificationFailedPrompt({
+            error: verifyResult?.error?.message ||
+                detail ||
+                'The verifier did not explicitly approve this key',
+            stationId: sharedAccess.stationId,
+            isBanned,
+            banReason
+        });
 
-        if (verifyResult?.status === 'rejected') {
-            console.warn('⚠️ Shared access verification failed:', verifyResult.error?.message);
-
-            // Check if it's a banned station
-            const isBanned = !!verifyResult.bannedStation;
-            const banReason = verifyResult.bannedStation?.reason;
-
-            const choice = await this.ui.shareModals.showSharedKeyVerificationFailedPrompt({
-                error: verifyResult.error?.message || 'Verification failed',
-                stationId: sharedAccess.stationId,
-                isBanned,
-                banReason
-            });
-
-            return choice === 'import_without_key' ? null : 'cancel';
-        }
-
-        // Unknown status - allow import
-        return sharedAccess;
+        return choice === 'import_without_key' ? null : 'cancel';
     }
 
     /**
@@ -2536,6 +2534,18 @@ class ChatApp {
 
             shareService.validatePayload(payload);
 
+            // Resolve any imported credential before changing the existing
+            // transcript. Cancel must leave the local session untouched.
+            const sharedAccess = this.getSharedAccessFromPayload(payload);
+            let verifiedAccess = undefined;
+            if (sharedAccess?.token) {
+                verifiedAccess = await this.verifySharedAccess(sharedAccess);
+                if (verifiedAccess === 'cancel') {
+                    await this.switchSession(existingSession.id);
+                    return;
+                }
+            }
+
             // Delete old messages for this session
             const oldMessages = await chatDB.getSessionMessages(existingSession.id);
             for (const msg of oldMessages) {
@@ -2565,14 +2575,8 @@ class ChatApp {
             existingSession.importedCiphertext = encryptedData.ciphertext;
             this.applySessionConversationSearchText(existingSession, messages);
 
-            // Verify and apply shared access if present
-            const sharedAccess = this.getSharedAccessFromPayload(payload);
+            // Apply the already-resolved shared access if present.
             if (sharedAccess?.token) {
-                const verifiedAccess = await this.verifySharedAccess(sharedAccess);
-                if (verifiedAccess === 'cancel') {
-                    await this.switchSession(existingSession.id);
-                    return;
-                }
                 if (verifiedAccess) {
                     const backendId = verifiedAccess.backendId || inferenceService.getDefaultBackendId();
                     const sessionAccess = inferenceService.sharedAccessToSessionAccess(backendId, verifiedAccess);
@@ -3236,14 +3240,14 @@ class ChatApp {
     /**
      * Initialize the verifier service for station verification
      */
-    initVerifier() {
+    async initVerifier() {
         const verifier = inferenceService.getVerificationAdapter();
         if (!verifier?.supports) {
             return;
         }
 
         // Initialize verifier (loads cached broadcast data)
-        verifier.init();
+        await verifier.init();
 
         // Set up banned warning callback - show warning and clear API key when station gets banned
         verifier.setBannedWarningCallback(async ({ stationId, reason, bannedAt, session }) => {
@@ -3262,7 +3266,7 @@ class ChatApp {
         });
 
         // Start periodic broadcast checks
-        verifier.startBroadcastCheck(() => this.getCurrentSession());
+        verifier.startBroadcastCheck(() => this.getCurrentSession(), { immediate: false });
     }
 
     setupInputAreaObserver() {
@@ -3765,7 +3769,7 @@ class ChatApp {
                 members: requestedMembers,
                 synthesisModel: requestedSynthesisModel,
                 outputMode: requestedOutputMode,
-                reviewEnabled: false
+                reviewEnabled: requestedOutputMode === COUNCIL_OUTPUT_SYNTHESIS
             },
             fallbackModelName
         );
@@ -3815,11 +3819,11 @@ class ChatApp {
             ? this.parallelSynthesisModel.trim()
             : primaryModel;
         return normalizeCouncilConfig({
-            enabled: this.parallelModeEnabled === true,
+            enabled: false,
             members: [primaryModel, secondaryModel].filter(Boolean),
             synthesisModel,
             outputMode: this.parallelOutputMode,
-            reviewEnabled: false
+            reviewEnabled: this.parallelOutputMode === COUNCIL_OUTPUT_SYNTHESIS
         }, primaryModel);
     }
 
@@ -3842,7 +3846,7 @@ class ChatApp {
 
     applyPersistedParallelPendingConfig(fallbackModelName = null) {
         this.pendingCouncilConfig = this.buildPersistedParallelCouncilConfig(fallbackModelName);
-        this.pendingCouncilLayoutPreference = this.parallelModeEnabled === true;
+        this.pendingCouncilLayoutPreference = false;
         if (!this.state.currentSessionId) {
             this.rightPanel?.onSessionChange?.(null);
         }
@@ -6028,12 +6032,20 @@ class ChatApp {
             }
         } catch (error) {
             if (!this.isCancelledError(error, abortController.signal)) {
-                console.error('Error regenerating Parallel lane:', error);
+                const metadata = buildSafeAccessErrorMetadata(error);
+                const safeDetail = [
+                    metadata.status ? `HTTP ${metadata.status}` : null,
+                    metadata.code
+                ].filter(Boolean).join(', ');
+                const safeMessage = safeDetail
+                    ? `Parallel lane regeneration failed (${safeDetail}).`
+                    : 'Parallel lane regeneration failed.';
+                console.error('Error regenerating Parallel lane:', metadata);
                 if (this.floatingPanel) {
-                    this.floatingPanel.showMessage(error.message, 'error', 5000);
+                    this.floatingPanel.showMessage(safeMessage, 'error', 5000);
                 }
                 if (this.isViewingSession(session.id)) {
-                    await this.addMessage('assistant', `**Error:** ${error.message}`, { isLocalOnly: true });
+                    await this.addMessage('assistant', `**Error:** ${safeMessage}`, { isLocalOnly: true });
                 }
             }
         } finally {
@@ -7735,10 +7747,21 @@ class ChatApp {
         return div.innerHTML;
     }
 
+    sanitizePersistedSessionAccess(session) {
+        if (!inferenceService.sanitizePersistedAccess(session)) return;
+        chatDB.saveSession(session).catch(error => {
+            console.warn(
+                'Failed to persist removal of an unverified session key:',
+                error
+            );
+        });
+    }
+
     cacheSessions(sessions) {
         if (!Array.isArray(sessions)) return;
         sessions.forEach(session => {
             if (session && session.id) {
+                this.sanitizePersistedSessionAccess(session);
                 this.normalizeSessionCouncilState(session);
                 this.state.sessionsById.set(session.id, session);
             }
@@ -7748,6 +7771,7 @@ class ChatApp {
     insertSessionIntoList(session) {
         if (!session || !session.id) return;
         if (this.state.sessionsById.has(session.id)) return;
+        this.sanitizePersistedSessionAccess(session);
 
         this.normalizeSessionCouncilState(session);
 

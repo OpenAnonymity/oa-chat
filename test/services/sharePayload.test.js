@@ -71,7 +71,31 @@ test('buildBaseSharePayload serializes council response mode and config for shar
         enabled: true,
         members: ['OpenAI: GPT-5 Instant', 'Anthropic: Claude Sonnet'],
         synthesisModel: 'Google: Gemini Flash',
-        outputMode: 'council',
+        outputMode: 'synthesis',
         reviewEnabled: true
     });
+});
+
+test('Council shares exclude lane credentials and wallet state', () => {
+    const payload = buildBaseSharePayload({
+        title: 'Private Council state',
+        model: 'Primary',
+        responseMode: 'council',
+        councilConfig: {
+            enabled: true,
+            members: ['Primary', 'Secondary'],
+            synthesisModel: 'Reviewer',
+            outputMode: 'synthesis',
+            reviewEnabled: true
+        },
+        councilAccess: {
+            primary: { apiKey: 'lane-secret', apiKeyInfo: { key: 'lane-secret' } }
+        },
+        inferenceTickets: ['ticket-secret']
+    }, []);
+
+    const serialized = JSON.stringify(payload);
+    assert.doesNotMatch(serialized, /lane-secret|ticket-secret/);
+    assert.equal('councilAccess' in payload.session, false);
+    assert.equal('inferenceTickets' in payload.session, false);
 });

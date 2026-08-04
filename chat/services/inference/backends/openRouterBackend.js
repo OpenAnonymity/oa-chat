@@ -2,6 +2,10 @@ import openRouterAPI from '../../../api.js';
 import ticketClient from '../../ticketClient.js';
 import networkProxy from '../../networkProxy.js';
 import stationVerifier from '../../verifier.js';
+import {
+    clearUnverifiedOpenRouterAccess,
+    hasExplicitVerifierApproval
+} from '../verifiedAccess.js';
 
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 const OPENROUTER_MODELS_URL = `${OPENROUTER_BASE_URL}/models`;
@@ -50,8 +54,9 @@ const openRouterBackend = {
         ),
     getAccessInfo(session) {
         if (!session) return null;
+        const approved = hasExplicitVerifierApproval(session);
         return {
-            token: session.apiKey || null,
+            token: approved ? (session.apiKey || null) : null,
             info: session.apiKeyInfo || null,
             expiresAt: session.expiresAt ||
                 session.apiKeyInfo?.expiresAt ||
@@ -60,7 +65,17 @@ const openRouterBackend = {
         };
     },
     getAccessToken(session) {
-        return session?.apiKey || null;
+        return hasExplicitVerifierApproval(session)
+            ? (session?.apiKey || null)
+            : null;
+    },
+    sanitizePersistedAccess(session) {
+        return clearUnverifiedOpenRouterAccess(session, {
+            isBanned: (accessInfo) => {
+                const stationId = accessInfo?.stationId || accessInfo?.station_id || accessInfo?.station_name || null;
+                return stationId ? stationVerifier.isStationBanned(stationId) : false;
+            }
+        });
     },
     setAccessInfo(session, accessInfo) {
         if (!session || !accessInfo) return;
@@ -103,7 +118,7 @@ const openRouterBackend = {
         session.currentEphemeralKeyId = null;
     },
     isAccessExpired(session) {
-        if (!session?.apiKey) return true;
+        if (!session?.apiKey || !hasExplicitVerifierApproval(session)) return true;
         if (!session.expiresAt) return true;
         return new Date(session.expiresAt) <= new Date();
     },
@@ -113,7 +128,7 @@ const openRouterBackend = {
     verification: {
         supports: true,
         init: () => stationVerifier.init(),
-        startBroadcastCheck: (getCurrentSession) => stationVerifier.startBroadcastCheck(getCurrentSession),
+        startBroadcastCheck: (getCurrentSession, options) => stationVerifier.startBroadcastCheck(getCurrentSession, options),
         setBannedWarningCallback: (callback) => stationVerifier.setBannedWarningCallback(callback),
         submitAccess: (accessInfo) => stationVerifier.submitKey(accessInfo),
         setCurrentAccess: (accessInfo, session) => {
@@ -191,7 +206,8 @@ const openRouterBackend = {
                 key: sharedAccess.token,
                 expiresAtUnix: sharedAccess.expiresAtUnix,
                 stationSignature: sharedAccess.stationSignature,
-                orgSignature: sharedAccess.orgSignature
+                orgSignature: sharedAccess.orgSignature,
+                verifierSubmitKeyProof: sharedAccess.verifierSubmitKeyProof || null
             }
         };
     },

@@ -406,7 +406,15 @@ class OpenRouterAPI {
                 response
             };
         } catch (error) {
-            console.error('Error sending completion:', error);
+            console.error('Error sending completion:', {
+                name: typeof error?.name === 'string'
+                    ? error.name.replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 80)
+                    : 'Error',
+                code: typeof error?.code === 'string'
+                    ? error.code.replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 80)
+                    : null,
+                status: Number.isFinite(Number(error?.status)) ? Number(error.status) : null
+            });
 
             if (window.networkLogger) {
                 window.networkLogger.logRequest({

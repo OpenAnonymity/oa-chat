@@ -45,6 +45,17 @@ test('normalizeCouncilConfig preserves parallel output mode', () => {
     assert.equal(config.outputMode, COUNCIL_OUTPUT_PARALLEL);
 });
 
+test('normalizeCouncilConfig migrates legacy council output mode to synthesis', () => {
+    const config = normalizeCouncilConfig({
+        enabled: true,
+        members: ['OpenAI: GPT', 'Anthropic: Claude'],
+        outputMode: 'council'
+    }, 'OpenAI: GPT');
+
+    assert.equal(config.outputMode, COUNCIL_OUTPUT_SYNTHESIS);
+    assert.equal(config.reviewEnabled, true);
+});
+
 test('normalizeCouncilConfig preserves duplicate members for same-model Parallel lanes', () => {
     const config = normalizeCouncilConfig({
         enabled: true,

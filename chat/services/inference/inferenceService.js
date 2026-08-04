@@ -135,6 +135,12 @@ const inferenceService = {
     clearAccessInfo(session) {
         return getBackendForSession(session).clearAccessInfo(session);
     },
+    sanitizePersistedAccess(session) {
+        const backend = getBackendForSession(session);
+        return typeof backend.sanitizePersistedAccess === 'function'
+            ? backend.sanitizePersistedAccess(session)
+            : false;
+    },
     isAccessExpired(session) {
         return getBackendForSession(session).isAccessExpired(session);
     },

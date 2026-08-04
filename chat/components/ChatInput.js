@@ -496,7 +496,7 @@ export default class ChatInput {
                         members,
                         synthesisModel,
                         outputMode,
-                        reviewEnabled: false
+                        reviewEnabled: outputMode === COUNCIL_OUTPUT_SYNTHESIS
                     });
                     this.refreshMultiModelSettingsUI();
                     return;
@@ -543,7 +543,7 @@ export default class ChatInput {
                         members,
                         synthesisModel,
                         outputMode,
-                        reviewEnabled: false
+                        reviewEnabled: outputMode === COUNCIL_OUTPUT_SYNTHESIS
                     });
                     this.refreshMultiModelSettingsUI();
                     return;
@@ -2127,7 +2127,7 @@ export default class ChatInput {
                 members,
                 synthesisModel,
                 outputMode,
-                reviewEnabled: false
+                reviewEnabled: outputMode === COUNCIL_OUTPUT_SYNTHESIS
             });
             return null;
         }
@@ -2161,7 +2161,9 @@ export default class ChatInput {
         });
 
         await Promise.all([
-            this.app.data.saveSetting('parallelModeEnabled', enabled),
+            // Mode is session-scoped. Keep this legacy setting false so a new
+            // chat cannot silently inherit multi-model ticket spending.
+            this.app.data.saveSetting('parallelModeEnabled', false),
             this.app.data.saveSetting('parallelSecondaryModel', secondaryModel),
             this.app.data.saveSetting('parallelSynthesisModel', synthesisModel),
             this.app.data.saveSetting('parallelOutputMode', outputMode)
@@ -2191,7 +2193,7 @@ export default class ChatInput {
                 members,
                 synthesisModel,
                 outputMode,
-                reviewEnabled: false
+                reviewEnabled: outputMode === COUNCIL_OUTPUT_SYNTHESIS
             });
             this.refreshMultiModelSettingsUI();
             this.updateMemoryToggleUI();
@@ -2230,7 +2232,7 @@ export default class ChatInput {
                 members,
                 synthesisModel,
                 outputMode,
-                reviewEnabled: false
+                reviewEnabled: outputMode === COUNCIL_OUTPUT_SYNTHESIS
             });
             this.refreshMultiModelSettingsUI();
             return;

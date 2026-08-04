@@ -745,10 +745,10 @@ test('right panel shows lane-scoped ephemeral keys for Parallel and Council', ()
     assert.equal(source.includes('session?.councilAccess'), true);
     assert.equal(source.includes('generateCouncilAccessKeyPanelHTML'), true);
     assert.equal(source.includes('Ephemeral Access Keys'), true);
-    assert.equal(source.includes('Keys persist until expiry or exhaustion.'), true);
+    assert.equal(source.includes('Keys persist until expiry, model change, or exhaustion.'), true);
     assert.equal(source.includes('this.generateAccessKeyPanelHTML(hasApiKey)'), true);
     assert.equal(source.includes('hasAnyActiveAccessKey()'), true);
-    assert.equal(source.includes("if (config.outputMode === 'council')"), true);
+    assert.equal(source.includes('if (config.outputMode === COUNCIL_OUTPUT_SYNTHESIS)'), true);
     assert.equal(source.includes("|| access?.synthesis?.apiKey"), false);
     assert.equal(source.includes('model: members'), false);
     assert.equal(source.includes('row.model'), false);
@@ -850,7 +850,7 @@ test('council review setting drives synthesis output mode in ChatInput', () => {
     );
 });
 
-test('Parallel mode and secondary model persist as new-session defaults', () => {
+test('new sessions default to Chat while Parallel model choices remain available', () => {
     const appSource = read('chat/app.js');
     const chatInputSource = read('chat/components/ChatInput.js');
     const appInterfaceSource = read('chat/ui/appInterface.js');
@@ -859,10 +859,16 @@ test('Parallel mode and secondary model persist as new-session defaults', () => 
     assert.equal(appSource.includes("chatDB.getSetting('parallelSecondaryModel')"), true);
     assert.equal(appSource.includes("chatDB.getSetting('parallelSynthesisModel')"), true);
     assert.equal(appSource.includes("chatDB.getSetting('parallelOutputMode')"), true);
-    assert.equal(appSource.includes('this.parallelModeEnabled = savedParallelModeEnabled === true;'), true);
+    assert.equal(appSource.includes('this.parallelModeEnabled = false;'), true);
+    assert.equal(appSource.includes("chatDB.saveSetting('parallelModeEnabled', false)"), true);
     assert.equal(appSource.includes('this.parallelSecondaryModel = typeof savedParallelSecondaryModel ==='), true);
     assert.equal(appSource.includes('this.parallelOutputMode = normalizeCouncilOutputMode(savedParallelOutputMode);'), true);
     assert.equal(appSource.includes('buildPersistedParallelCouncilConfig(fallbackModelName = null)'), true);
+    assert.match(
+        appSource,
+        /buildPersistedParallelCouncilConfig[\s\S]*?return normalizeCouncilConfig\(\{[\s\S]*?enabled: false,/,
+        'remembered model choices must not enable Parallel for a new chat'
+    );
     assert.equal(appSource.includes('applyPersistedParallelPendingConfig(fallbackModelName = null)'), true);
     assert.match(
         appSource,
@@ -873,7 +879,7 @@ test('Parallel mode and secondary model persist as new-session defaults', () => 
         appSource.includes('const pendingCouncilConfig = this.pendingCouncilConfig')
             && appSource.includes(': this.buildPersistedParallelCouncilConfig(modelNameForNewSession);'),
         true,
-        'new sessions should inherit persisted Parallel defaults when there is no explicit pending config'
+        'new sessions should retain model choices in a disabled pending config'
     );
     assert.equal(
         appSource.includes('councilConfig: pendingCouncilConfig || buildDefaultCouncilConfig(modelNameForNewSession)'),
@@ -882,7 +888,7 @@ test('Parallel mode and secondary model persist as new-session defaults', () => 
     );
 
     assert.equal(chatInputSource.includes('async persistParallelDefaults(options = {})'), true);
-    assert.equal(chatInputSource.includes("this.app.data.saveSetting('parallelModeEnabled', enabled)"), true);
+    assert.equal(chatInputSource.includes("this.app.data.saveSetting('parallelModeEnabled', false)"), true);
     assert.equal(chatInputSource.includes("this.app.data.saveSetting('parallelSecondaryModel', secondaryModel)"), true);
     assert.equal(chatInputSource.includes("this.app.data.saveSetting('parallelSynthesisModel', synthesisModel)"), true);
     assert.equal(chatInputSource.includes("this.app.data.saveSetting('parallelOutputMode', outputMode)"), true);
@@ -893,7 +899,7 @@ test('Parallel mode and secondary model persist as new-session defaults', () => 
     assert.match(
         chatInputSource,
         /setCouncilModeFromComposer[\s\S]*?await this\.persistParallelDefaults\(\{/,
-        'Chat/Parallel mode changes should persist globally'
+        'Chat/Parallel changes should persist model choices while mode stays session-scoped'
     );
     assert.match(
         chatInputSource,
@@ -980,9 +986,14 @@ test('council model shortcut follows enabled review setting', () => {
 
 test('initial model load drains pinned availability refreshes', () => {
     const source = read('chat/app.js');
-    const initialLoadMatch = source.match(/this\.loadModels\(\)\.then\(async \(\) => \{([\s\S]*?)\}\)\.catch/);
+    const initialLoadMatch = source.match(/\(this\.initialModelLoadPromise \|\| this\.loadModels\(\)\)\.then\(async \(\) => \{([\s\S]*?)\}\)\.catch/);
 
     assert.ok(initialLoadMatch, 'initial model load should use an async completion handler');
+    assert.equal(
+        (source.match(/this\.initialModelLoadPromise = this\.loadModels\(\);/g) || []).length,
+        1,
+        'startup should create one shared model-catalog request'
+    );
 
     const initialLoadBody = initialLoadMatch[1];
     assert.ok(

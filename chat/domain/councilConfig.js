@@ -1,7 +1,9 @@
 export const RESPONSE_MODE_SINGLE = 'single';
 export const RESPONSE_MODE_COUNCIL = 'council';
 export const COUNCIL_OUTPUT_PARALLEL = 'parallel';
-export const COUNCIL_OUTPUT_SYNTHESIS = 'council';
+export const COUNCIL_OUTPUT_SYNTHESIS = 'synthesis';
+
+const LEGACY_COUNCIL_OUTPUT_SYNTHESIS = 'council';
 
 const MAX_COUNCIL_MEMBERS = 2;
 
@@ -10,7 +12,9 @@ export function normalizeResponseMode(mode) {
 }
 
 export function normalizeCouncilOutputMode(mode) {
-    return mode === COUNCIL_OUTPUT_SYNTHESIS ? COUNCIL_OUTPUT_SYNTHESIS : COUNCIL_OUTPUT_PARALLEL;
+    return mode === COUNCIL_OUTPUT_SYNTHESIS || mode === LEGACY_COUNCIL_OUTPUT_SYNTHESIS
+        ? COUNCIL_OUTPUT_SYNTHESIS
+        : COUNCIL_OUTPUT_PARALLEL;
 }
 
 function normalizeModelNameValue(modelName) {
@@ -66,7 +70,7 @@ export function normalizeCouncilConfig(config = {}, fallbackModelName = null) {
         members,
         synthesisModel,
         outputMode,
-        reviewEnabled: config?.reviewEnabled === true
+        reviewEnabled: outputMode === COUNCIL_OUTPUT_SYNTHESIS
     };
 }
 

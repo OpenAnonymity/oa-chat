@@ -95,6 +95,14 @@ The user sends prompts directly to the inference provider:
 The provider sees inference from an anonymous ephemeral key. It has zero
 information about who holds that key.
 
+Parallel and Council preserve this transport boundary. Parallel obtains
+separate verified, bounded child keys for its primary and secondary lanes and
+sends both requests directly from the browser. Optional Council review obtains
+its own verified child key only after the first-stage responses settle. oa-org,
+station, and verifier do not receive any of these prompts or responses. Browser
+activity logs retain only operational metadata and redact
+prompt/response content at the logging sink.
+
 ### 4. Key verification (verifier)
 
 The client submits the key to the verifier for station compliance verification:
@@ -108,13 +116,19 @@ The client submits the key to the verifier for station compliance verification:
 Even if the verifier retained the key, it could not link it to a user identity
 because the key was issued through blind signatures with no user identity attached.
 
+The browser fails closed unless the verifier explicitly returns `verified` and
+binds that approval to the requested station and key hash. Pending, unknown,
+unverified, mismatched, and network-error results never activate the provisional
+child key. Because ticket spending commits before verification, a failed check
+discards the bounded child key but does not restore the ticket.
+
 ## What Each Component Can and Cannot See
 
 
 | Actor | What it sees | Can it identify the user? | Why not? |
 |---|---|---|---|
-| **Org / Station** | Blinded requests at issuance, finalized tickets + issued API keys at redemption, station governance events | No | Blind signatures make blinded requests (issuance) cryptographically unlinkable to finalized tickets (redemption). The org knows "credential X -> N blinded requests" but cannot determine which finalized tickets those became. Never sees inference content. |
-| **Verifier** | API key hash (transient), station signatures, broadcast status | No | Raw key used transiently and immediately hashed. Key carries no user identity (blind signatures). |
+| **Org / Station** | Invitation credential plus blinded requests at issuance; finalized tickets + issued API keys at redemption; station governance events | No | Blind signatures make blinded requests (issuance) cryptographically unlinkable to finalized tickets (redemption). The org knows "credential X -> N blinded requests" but cannot determine which finalized tickets those became. Never sees inference content. |
+| **Verifier** | Raw ephemeral key transiently during `/submit_key`, station/org signatures, derived truncated key hash, broadcast status | No | The verifier derives the hash server-side and does not receive user identity or prompts. The key carries no user identity because ticket issuance and redemption are unlinkable. |
 | **Inference provider** | API key + inference content (prompts/responses) | No | Key is ephemeral and anonymous. No user identity binding. Even a malicious provider cannot link prompts to a user or across sessions. |
 | **User** | Everything (their own tickets, keys, prompts, responses) | N/A | The user is the only party who can link all steps together. |
 
@@ -280,4 +294,3 @@ inference requests?** For the formal threat model and collusion analysis, see bl
 | "The org could serve per-user public keys to break unlinkability."           | Detectable. The public key endpoint is publicly accessible and unauthenticated. Any user or third party can call it at any time to record and compare keys. Since verification calls are independent and unpredictable, the org cannot serve per-user keys without detection. A single inconsistency reported by any observer exposes the attack. Future: automated transparency log. |
 | "OpenRouter could perform traffic analysis on ephemeral keys to deanonymize users." | False. Each session uses a different ephemeral key with no user identity binding. There is no persistent pseudonym across sessions for the provider to build a longitudinal profile against. Content-based correlation has only plausible deniability -- the provider cannot distinguish Alice sending prompt X from Bob sending the same prompt. This is the cross-unlinkability guarantee (see blog post [Section 3.1.1](https://openanonymity.ai/blog/unlinkable-inference/#311-adversarial-inference-provider)). |
 | "Toggle/ownership verification means trusting OpenRouter, violating zero trust to the OA system components." | False. Toggle and ownership checks enforce accountability on the *station's* provider account -- they are not about trusting the OA system. If OpenRouter lies about its own API state, it undermines itself, not OA. Regardless, user prompts remain unlinkable because blind signatures and ephemeral keys carry no user identity. |
-

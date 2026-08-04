@@ -1,6 +1,9 @@
 import { chatDB as defaultChatDB } from '../db.js';
 import { parseReasoningContent } from '../services/reasoningParser.js';
-import { persistVerifierSubmitKeyProof } from './accessController.js';
+import {
+    acquireVerifiedAccess,
+    buildSafeAccessErrorMetadata
+} from './accessController.js';
 import { getMessageTextContent } from '../domain/messageContent.js';
 import { buildCouncilSynthesisMessages } from '../domain/councilPrompts.js';
 import {
@@ -10,6 +13,7 @@ import {
     normalizeCouncilConfig
 } from '../domain/councilConfig.js';
 import { findModelByNameOrId, resolveSecondaryModelNameForModels } from '../domain/modelSelection.js';
+import { hasExplicitVerifierApprovalForAccessInfo } from '../services/inference/verifiedAccess.js';
 
 const SAVE_INTERVAL_MS = 350;
 const LANE_IDS = ['primary', 'secondary'];
@@ -31,6 +35,17 @@ function throwIfAborted(signal) {
     if (signal?.aborted) {
         throw createAbortError();
     }
+}
+
+function buildSafeCouncilErrorMessage(error, fallback = 'Request failed.') {
+    const status = Number(error?.status ?? error?.response?.status);
+    const code = typeof error?.code === 'string'
+        ? error.code.replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 80)
+        : '';
+    const details = [];
+    if (Number.isFinite(status)) details.push(`HTTP ${status}`);
+    if (code) details.push(code);
+    return details.length > 0 ? `${fallback} (${details.join(', ')})` : fallback;
 }
 
 function buildCouncilLabel(index) {
@@ -224,7 +239,7 @@ export default class CouncilController {
                 stageEntry.cancelledAt = Date.now();
             } else {
                 stageEntry.status = 'error';
-                stageEntry.error = error?.message || 'Request failed';
+                stageEntry.error = buildSafeCouncilErrorMessage(error);
                 assistantMessage.council.errors.push({
                     laneId,
                     model: stageEntry.model,
@@ -383,6 +398,11 @@ export default class CouncilController {
     setLaneAccess(session, laneId, accessInfo = {}) {
         const container = this.ensureCouncilAccessContainer(session);
         const token = accessInfo.key || accessInfo.token || accessInfo.apiKey || null;
+        const verifier = this.inferenceService.getVerificationAdapter?.(session);
+        const keyInfo = accessInfo.apiKeyInfo || accessInfo.info || accessInfo;
+        if (token && verifier?.supports && !hasExplicitVerifierApprovalForAccessInfo(keyInfo)) {
+            throw new Error('Refusing to persist a Council lane key without explicit verifier approval.');
+        }
         container[laneId] = {
             apiKey: token,
             apiKeyInfo: accessInfo.apiKeyInfo || accessInfo.info || accessInfo,
@@ -409,6 +429,21 @@ export default class CouncilController {
         if (!laneAccess?.apiKey) return true;
         if (!laneAccess.expiresAt) return true;
         return new Date(laneAccess.expiresAt) <= new Date();
+    }
+
+    isLaneAccessVerified(session, laneAccess) {
+        const verifier = this.inferenceService.getVerificationAdapter?.(session);
+        if (!verifier?.supports) return true;
+        return hasExplicitVerifierApprovalForAccessInfo(laneAccess?.apiKeyInfo);
+    }
+
+    isLaneAccessUsable(session, laneAccess, entry = null) {
+        if (!laneAccess?.apiKey) return false;
+        if (!this.isLaneAccessVerified(session, laneAccess)) return false;
+        if (this.isLaneAccessExpired(laneAccess)) return false;
+        if (this.isLaneAccessBanned(session, laneAccess)) return false;
+        if (entry?.id && laneAccess.modelId !== entry.id) return false;
+        return true;
     }
 
     getBannedLaneAccessInfo(session, laneAccess) {
@@ -486,17 +521,13 @@ export default class CouncilController {
 
     needsFreshLaneAccess(session, entry) {
         const laneAccess = this.getLaneAccess(session, entry.laneId);
-        return !(
-            laneAccess?.apiKey
-            && !this.isLaneAccessExpired(laneAccess)
-            && !this.isLaneAccessBanned(session, laneAccess)
-        );
+        return !this.isLaneAccessUsable(session, laneAccess, entry);
     }
 
     seedPrimaryLaneAccessFromSession(session, entry) {
         if (entry?.laneId !== 'primary') return null;
         const laneAccess = this.getLaneAccess(session, 'primary');
-        if (laneAccess?.apiKey && !this.isLaneAccessExpired(laneAccess) && !this.isLaneAccessBanned(session, laneAccess)) {
+        if (this.isLaneAccessUsable(session, laneAccess, entry)) {
             return laneAccess;
         }
         if (!session?.apiKey || this.inferenceService.isAccessExpired(session)) {
@@ -529,11 +560,37 @@ export default class CouncilController {
 
     seedSessionAccessFromPrimaryLane(session) {
         const laneAccess = this.getLaneAccess(session, 'primary');
+        const expectedPrimaryEntry = this.findModelEntry(session?.model)
+            || (typeof this.app.getFallbackModelEntry === 'function'
+                ? this.app.getFallbackModelEntry(session)
+                : null);
         if (
-            !laneAccess?.apiKey
-            || this.isLaneAccessExpired(laneAccess)
-            || this.isLaneAccessBanned(session, laneAccess)
+            !expectedPrimaryEntry?.id
+            || !this.isLaneAccessUsable(session, laneAccess, {
+                id: expectedPrimaryEntry.id
+            })
         ) {
+            const discardedKey = session?.apiKey || null;
+            if (typeof this.inferenceService.clearAccessInfo === 'function') {
+                this.inferenceService.clearAccessInfo(session);
+            } else if (session) {
+                session.apiKey = null;
+                session.apiKeyInfo = null;
+                session.expiresAt = null;
+                session.currentEphemeralKeyId = null;
+            }
+            const keyStillUsedByCouncil = discardedKey && Object.values(session?.councilAccess || {})
+                .some((access) => access?.apiKey === discardedKey);
+            if (discardedKey && !keyStillUsedByCouncil && session?.ephemeralKeyMappings) {
+                for (const [mappingId, mapping] of Object.entries(session.ephemeralKeyMappings)) {
+                    if (mapping?.underlyingKeyId === discardedKey) {
+                        delete session.ephemeralKeyMappings[mappingId];
+                    }
+                }
+                if (Object.keys(session.ephemeralKeyMappings).length === 0) {
+                    delete session.ephemeralKeyMappings;
+                }
+            }
             return null;
         }
 
@@ -582,81 +639,44 @@ export default class CouncilController {
             this.app.floatingPanel.showMessage(`Acquiring ${accessLabel} for ${entry.name}...`, 'info');
         }
 
-        if (typeof window !== 'undefined' && window.networkLogger) {
-            window.networkLogger.setCurrentSession(session.id);
-        }
-
-        let result = null;
-        let retries = 0;
-        const maxRetries = Math.min(availableTickets, ticketsRequired + 10);
-        while (retries < maxRetries) {
-            throwIfAborted(signal);
-            try {
-                result = await this.inferenceService.requestAccess(session, {
-                    ticketsRequired,
-                    ...(signal ? { signal } : {})
-                });
-                break;
-            } catch (error) {
-                if (isAbortError(error) || signal?.aborted) {
-                    throw error;
+        const result = await acquireVerifiedAccess({
+            session,
+            models: this.app.state.models,
+            reasoningEnabled: this.app.reasoningEnabled,
+            inferenceService: this.inferenceService,
+            ticketClient: this.ticketClient,
+            getTicketCost: (modelId, reasoningEnabled) => this.app.getTicketCost(modelId, reasoningEnabled),
+            getFallbackModelEntry: (targetSession) => this.app.getFallbackModelEntry?.(targetSession),
+            modelIdOverride: entry.id,
+            modelNameOverride: entry.name,
+            modelEntryOverride: entry,
+            ticketsRequiredOverride: ticketsRequired,
+            ticketRequirementLabel: entry.name,
+            signal,
+            onTicketUsed: () => this.app.showToast?.('Ticket already used, trying next available'),
+            onNetworkSession: (sessionId) => {
+                if (typeof window !== 'undefined' && window.networkLogger) {
+                    window.networkLogger.setCurrentSession(sessionId);
                 }
-                if (error.code === 'TICKET_USED') {
-                    retries += 1;
-                    this.app.showToast?.('Ticket already used, trying next available');
-                    continue;
+            },
+            onGranted: () => {
+                if (typingId) {
+                    this.app.advancePendingStateAfterAccessGranted(session.id, typingId);
                 }
-                console.error('Failed to acquire council lane access:', error);
-                throw error;
-            }
-        }
-        if (!result) {
-            throw new Error('All available tickets were already spent');
-        }
+            },
+            onAccessRequestError: (metadata) => {
+                if (metadata?.name !== 'AbortError') {
+                    console.error('Failed to acquire Council lane access:', metadata);
+                }
+            },
+            onVerificationWarning: (...args) => console.warn(...args)
+        });
         throwIfAborted(signal);
 
-        if (typingId) {
-            try {
-                this.app.advancePendingStateAfterAccessGranted(session.id, typingId);
-            } catch (error) {
-                console.warn('Pending-state update after access grant failed:', error);
-            }
-        }
-
-        const laneSession = {
-            ...session,
-            apiKey: null,
-            apiKeyInfo: null,
-            expiresAt: null
-        };
-        this.inferenceService.setAccessInfo(laneSession, result);
-
-        const verifier = this.inferenceService.getVerificationAdapter?.(session);
-        if (verifier?.supports) {
-            const laneInfo = this.inferenceService.getAccessInfo(laneSession);
-            const verifyResult = await this.inferenceService.verifyAccess(session, laneInfo?.info);
-            persistVerifierSubmitKeyProof(laneSession, verifyResult);
-
-            if (verifyResult?.status === 'rejected') {
-                const errorMsg = verifyResult.error?.message || 'Verification failed';
-                if (verifyResult.bannedStation) {
-                    const banned = verifyResult.bannedStation;
-                    throw new Error(`Station ${banned.stationId} is banned: ${banned.reason || 'Unknown reason'}`);
-                }
-                throw new Error(`Key verification failed: ${errorMsg}`);
-            }
-
-            if (verifyResult?.status === 'unverified') {
-                console.warn('Council lane key verification unverified, continuing without verification');
-            }
-
-            this.inferenceService.setCurrentAccess(session, laneInfo?.info);
-        }
-
         const laneAccess = this.setLaneAccess(session, entry.laneId, {
-            key: laneSession.apiKey,
-            apiKeyInfo: laneSession.apiKeyInfo,
-            expiresAt: laneSession.expiresAt,
+            key: result.key || result.token,
+            apiKeyInfo: result,
+            expiresAt: result.expiresAt || result.expires_at,
             modelId: entry.id,
             ticketsConsumed: result.ticketsConsumed || result.tickets_consumed || result.ticketsUsed?.length || ticketsRequired
         });
@@ -672,11 +692,7 @@ export default class CouncilController {
         throwIfAborted(signal);
         this.seedPrimaryLaneAccessFromSession(session, entry);
         const laneAccess = this.getLaneAccess(session, entry.laneId);
-        if (
-            laneAccess?.apiKey
-            && !this.isLaneAccessExpired(laneAccess)
-            && !this.isLaneAccessBanned(session, laneAccess)
-        ) {
+        if (this.isLaneAccessUsable(session, laneAccess, entry)) {
             return laneAccess;
         }
         if (laneAccess?.apiKey && this.isLaneAccessBanned(session, laneAccess)) {
@@ -748,7 +764,7 @@ export default class CouncilController {
                 } : null,
                 synthesisModel: synthesisEntry?.name || normalizedCouncilConfig.synthesisModel || null,
                 outputMode: normalizedCouncilConfig.outputMode,
-                reviewEnabled: false,
+                reviewEnabled: normalizedCouncilConfig.reviewEnabled,
                 ticketsRequired,
                 startedAt: now
             }
@@ -772,7 +788,10 @@ export default class CouncilController {
     persistStreamingMessageSnapshot(message) {
         if (!message?.id) return;
         this.chatDB.saveMessage(message).catch((error) => {
-            console.debug('Unable to persist streaming council snapshot:', error);
+            console.debug(
+                'Unable to persist streaming council snapshot:',
+                buildSafeAccessErrorMetadata(error)
+            );
         });
     }
 
@@ -986,11 +1005,17 @@ export default class CouncilController {
             await this.ensureAccessForEntries(session, entries, typingId, abortController?.signal || null);
 
             if (userMessage?.id) {
-                this.app.generateSessionTitleIfNeeded(session.id, userMessage.id, {
-                    accessSession: this.buildLaneSession(session, 'primary')
-                }).catch(error => {
-                    console.debug('Session title generation failed:', error);
-                });
+                try {
+                    // Multi-model turns keep the local title. A separate remote
+                    // title request would violate the exact lane request count
+                    // and consume the primary key's bounded credit.
+                    await this.app.clearSessionTitleGenerationPending?.(session.id);
+                } catch (error) {
+                    console.debug(
+                        'Unable to clear Council title-generation state:',
+                        buildSafeAccessErrorMetadata(error)
+                    );
+                }
             }
 
             let lastSaveAt = 0;
@@ -1043,7 +1068,7 @@ export default class CouncilController {
                         return;
                     }
                     stageEntry.status = 'error';
-                    stageEntry.error = error?.message || 'Request failed';
+                    stageEntry.error = buildSafeCouncilErrorMessage(error);
                     stageEntry.streamingReasoning = false;
                     stageEntry.streamingTokens = null;
                     assistantMessage.council.errors.push({
@@ -1138,7 +1163,10 @@ export default class CouncilController {
                             assistantMessage.council.synthesis.streamingTokens = null;
                             assistantMessage.council.statusMessage = 'Stopped after first opinions.';
                         } else {
-                            const errorMessage = error?.message || 'Council synthesis failed.';
+                            const errorMessage = buildSafeCouncilErrorMessage(
+                                error,
+                                'Council synthesis failed.'
+                            );
                             assistantMessage.content = canonical.response;
                             assistantMessage.model = canonical.model;
                             assistantMessage.citations = canonical.citations || null;
@@ -1208,12 +1236,15 @@ export default class CouncilController {
                 }
                 return;
             }
-            console.error('Error running Parallel/Council turn:', error);
+            console.error(
+                'Error running Parallel/Council turn:',
+                buildSafeAccessErrorMetadata(error)
+            );
             if (userMessage?.id) {
                 await this.app.clearSessionTitleGenerationPending(session.id);
             }
             if (assistantMessage) {
-                const errorMessage = error?.message || 'Request failed';
+                const errorMessage = buildSafeCouncilErrorMessage(error);
                 assistantMessage.content = assistantMessage.content || 'Sorry, I encountered an error while processing the selected model request.';
                 assistantMessage.council.statusMessage = 'Model request failed.';
                 if (Array.isArray(assistantMessage.council?.stage1)) {

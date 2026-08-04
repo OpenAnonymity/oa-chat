@@ -186,6 +186,74 @@ test('requestLaneAccess passes abort signal and rejects already-aborted requests
     assert.equal(requests.length, 1);
 });
 
+test('requestLaneAccess persists only explicitly verified OpenRouter lane keys', async () => {
+    const statuses = ['pending', 'unverified', 'rejected', 'unknown'];
+    for (const status of statuses) {
+        const savedSessions = [];
+        const controller = createController({
+            ticketCount: 1,
+            costs: { 'openai/gpt': 1 },
+            models: [{ id: 'openai/gpt', name: 'GPT' }],
+            chatDB: {
+                saveSession: async (session) => savedSessions.push(JSON.parse(JSON.stringify(session)))
+            },
+            inferenceService: {
+                getAccessLabel: () => 'OpenRouter key',
+                requestAccess: async () => ({
+                    key: `provisional-${status}`,
+                    stationId: 'station-a',
+                    expiresAt: new Date(Date.now() + 60_000).toISOString()
+                }),
+                getVerificationAdapter: () => ({ supports: true }),
+                verifyAccess: async () => ({ status, detail: status })
+            }
+        });
+        const session = { id: `session-${status}`, councilAccess: {} };
+
+        await assert.rejects(
+            () => controller.requestLaneAccess(
+                session,
+                { laneId: 'primary', id: 'openai/gpt', name: 'GPT' },
+                null
+            ),
+            /Key verification/
+        );
+        assert.equal(session.councilAccess.primary, undefined);
+        assert.equal(savedSessions.length, 0);
+        assert.doesNotMatch(JSON.stringify(session), new RegExp(`provisional-${status}`));
+    }
+
+    const savedSessions = [];
+    const controller = createController({
+        ticketCount: 1,
+        costs: { 'openai/gpt': 1 },
+        models: [{ id: 'openai/gpt', name: 'GPT' }],
+        chatDB: {
+            saveSession: async (session) => savedSessions.push(JSON.parse(JSON.stringify(session)))
+        },
+        inferenceService: {
+            getAccessLabel: () => 'OpenRouter key',
+            requestAccess: async () => ({
+                key: 'approved-key',
+                stationId: 'station-a',
+                expiresAt: new Date(Date.now() + 60_000).toISOString()
+            }),
+            getVerificationAdapter: () => ({ supports: true }),
+            verifyAccess: async () => ({ status: 'verified', data: { key_hash: 'hash-a' } })
+        }
+    });
+    const session = { id: 'session-verified', councilAccess: {} };
+    await controller.requestLaneAccess(
+        session,
+        { laneId: 'primary', id: 'openai/gpt', name: 'GPT' },
+        null
+    );
+
+    assert.equal(session.councilAccess.primary.apiKey, 'approved-key');
+    assert.equal(session.councilAccess.primary.apiKeyInfo.verifierSubmitKeyProof.status, 'verified');
+    assert.equal(savedSessions.length, 1);
+});
+
 test('resolveModelEntries adds Gemini 3.5 Flash as fallback secondary model when config only has primary', () => {
     const controller = createController({
         models: [
@@ -379,6 +447,7 @@ test('seedSessionAccessFromPrimaryLane restores valid primary lane access for si
     const setAccessCalls = [];
     const setCurrentAccessCalls = [];
     const controller = createController({
+        models: [{ id: 'openai/gpt-new', name: 'GPT New' }],
         inferenceService: {
             setAccessInfo: (session, accessInfo) => {
                 setAccessCalls.push(accessInfo);
@@ -394,6 +463,7 @@ test('seedSessionAccessFromPrimaryLane restores valid primary lane access for si
     });
     const session = {
         id: 'session-1',
+        model: 'GPT New',
         apiKey: null,
         apiKeyInfo: null,
         expiresAt: null,
@@ -424,6 +494,57 @@ test('seedSessionAccessFromPrimaryLane restores valid primary lane access for si
     assert.equal(setCurrentAccessCalls.length, 1);
     assert.equal(setCurrentAccessCalls[0].accessInfo.key, 'primary-lane-key');
     assert.notEqual(session.apiKey, 'secondary-lane-key');
+});
+
+test('seedSessionAccessFromPrimaryLane refuses an old-model lane after primary model changes', () => {
+    let setAccessCalled = false;
+    const controller = createController({
+        models: [
+            { id: 'openai/gpt-old', name: 'GPT Old' },
+            { id: 'openai/gpt-new', name: 'GPT New' }
+        ],
+        inferenceService: {
+            setAccessInfo: () => {
+                setAccessCalled = true;
+            },
+            clearAccessInfo: (session) => {
+                session.apiKey = null;
+                session.apiKeyInfo = null;
+                session.expiresAt = null;
+                session.currentEphemeralKeyId = null;
+            },
+            getVerificationAdapter: () => ({ supports: false })
+        }
+    });
+    const session = {
+        id: 'session-1',
+        model: 'GPT New',
+        apiKey: 'stale-single-chat-key',
+        apiKeyInfo: { modelId: 'openai/gpt-old' },
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        currentEphemeralKeyId: 'mapping-stale',
+        ephemeralKeyMappings: {
+            'mapping-stale': {
+                underlyingKeyId: 'stale-single-chat-key'
+            }
+        },
+        councilAccess: {
+            primary: {
+                apiKey: 'old-model-key',
+                apiKeyInfo: { modelId: 'openai/gpt-old' },
+                expiresAt: new Date(Date.now() + 60_000).toISOString(),
+                modelId: 'openai/gpt-old'
+            }
+        }
+    };
+
+    assert.equal(controller.seedSessionAccessFromPrimaryLane(session), null);
+    assert.equal(setAccessCalled, false);
+    assert.equal(session.apiKey, null);
+    assert.equal(session.apiKeyInfo, null);
+    assert.equal(session.expiresAt, null);
+    assert.equal(session.currentEphemeralKeyId, null);
+    assert.equal(session.ephemeralKeyMappings, undefined);
 });
 
 test('seedSessionAccessFromPrimaryLane skips expired primary lane access', () => {
@@ -552,9 +673,9 @@ test('ensureAccessForEntries does not seed primary lane when access model metada
     assert.equal(session.councilAccess.primary.apiKey, 'primary-key');
 });
 
-test('ensureAccessForEntries reuses valid lane keys after primary and secondary model switches', async () => {
+test('ensureAccessForEntries refreshes lane keys after primary and secondary model switches', async () => {
     const controller = createController({
-        ticketCount: 0,
+        ticketCount: 7,
         costs: {
             'openai/gpt-4': 4,
             'anthropic/claude-3': 3
@@ -598,11 +719,11 @@ test('ensureAccessForEntries reuses valid lane keys after primary and secondary 
         { laneId: 'primary', id: 'openai/gpt-4', name: 'GPT 4' },
         { laneId: 'secondary', id: 'anthropic/claude-3', name: 'Claude 3' }
     ]), 0);
-    assert.deepEqual(refreshed, []);
-    assert.equal(session.councilAccess.primary.apiKey, 'primary-existing');
-    assert.equal(session.councilAccess.primary.modelId, 'openai/gpt-3');
-    assert.equal(session.councilAccess.secondary.apiKey, 'secondary-old');
-    assert.equal(session.councilAccess.secondary.modelId, 'anthropic/claude-2');
+    assert.deepEqual(refreshed, ['primary', 'secondary']);
+    assert.equal(session.councilAccess.primary.apiKey, 'primary-new');
+    assert.equal(session.councilAccess.primary.modelId, 'openai/gpt-4');
+    assert.equal(session.councilAccess.secondary.apiKey, 'secondary-new');
+    assert.equal(session.councilAccess.secondary.modelId, 'anthropic/claude-3');
 });
 
 test('ensureAccessForEntries refreshes expired lane access for the selected model', async () => {
@@ -696,7 +817,10 @@ test('ensureAccessForEntries refreshes a lane whose station is now banned', asyn
         refreshed.push(entry.laneId);
         return controller.setLaneAccess(targetSession, entry.laneId, {
             key: 'secondary-new-key',
-            apiKeyInfo: { stationId: 'station-ok' },
+            apiKeyInfo: {
+                stationId: 'station-ok',
+                verifierSubmitKeyProof: { status: 'verified' }
+            },
             modelId: entry.id,
             expiresAt: validExpiry
         });
@@ -1158,6 +1282,8 @@ function createRunTurnHarness({ councilConfig = {}, sendLaneCompletion, runSynth
     const savedMessages = [];
     const savedSessions = [];
     const memoryExtractionCalls = [];
+    const titleGenerationCalls = [];
+    const titlePendingClearCalls = [];
     const userMessage = {
         id: 'user-1',
         sessionId: 'session-1',
@@ -1207,7 +1333,10 @@ function createRunTurnHarness({ councilConfig = {}, sendLaneCompletion, runSynth
         isViewingSession: () => false,
         showTypingIndicator: () => null,
         removeTypingIndicator: () => {},
-        generateSessionTitleIfNeeded: () => Promise.resolve(),
+        generateSessionTitleIfNeeded: (...args) => {
+            titleGenerationCalls.push(args);
+            return Promise.resolve();
+        },
         sanitizeMessagesForApi: (messages) => messages,
         refreshSessionConversationSearchText: async () => {},
         renderSessions: () => {},
@@ -1215,7 +1344,9 @@ function createRunTurnHarness({ councilConfig = {}, sendLaneCompletion, runSynth
             memoryExtractionCalls.push(targetSession?.id || null);
         },
         enrichCitationsAndUpdateUI: () => {},
-        clearSessionTitleGenerationPending: async () => {},
+        clearSessionTitleGenerationPending: async (sessionId) => {
+            titlePendingClearCalls.push(sessionId);
+        },
         generateId: (() => {
             let counter = 0;
             return () => `assistant-${counter += 1}`;
@@ -1230,12 +1361,28 @@ function createRunTurnHarness({ councilConfig = {}, sendLaneCompletion, runSynth
     if (runSynthesisCompletion) {
         controller.runSynthesisCompletion = runSynthesisCompletion;
     }
-    return { controller, session, userMessage, savedMessages, savedSessions, memoryExtractionCalls };
+    return {
+        controller,
+        session,
+        userMessage,
+        savedMessages,
+        savedSessions,
+        memoryExtractionCalls,
+        titleGenerationCalls,
+        titlePendingClearCalls
+    };
 }
 
 test('runMultiModelTurn stores successful synthesis as canonical message content', async () => {
     const synthesisCalls = [];
-    const { controller, session, userMessage, savedMessages } = createRunTurnHarness({
+    const {
+        controller,
+        session,
+        userMessage,
+        savedMessages,
+        titleGenerationCalls,
+        titlePendingClearCalls
+    } = createRunTurnHarness({
         sendLaneCompletion: async ({ entry }) => ({ content: `${entry.name} first response` }),
         runSynthesisCompletion: async (request) => {
             synthesisCalls.push(request);
@@ -1259,6 +1406,8 @@ test('runMultiModelTurn stores successful synthesis as canonical message content
     assert.equal(finalMessage.council.stage1.length, 2);
     assert.equal(synthesisCalls.length, 1);
     assert.equal(synthesisCalls[0].synthesisEntry.laneId, 'synthesis');
+    assert.equal(titleGenerationCalls.length, 0);
+    assert.deepEqual(titlePendingClearCalls, ['session-1']);
 });
 
 test('runMultiModelTurn sends one memory-processed prompt to both lanes without duplicating it into synthesis context', async () => {
@@ -1673,6 +1822,6 @@ test('runMultiModelTurn preserves Stage 1 fallback and records synthesis failure
     assert.equal(finalMessage.model, 'GPT');
     assert.equal(finalMessage.council.synthesis.status, 'error');
     assert.equal(finalMessage.council.synthesis.fallbackUsed, true);
-    assert.equal(finalMessage.council.synthesis.error, 'synthesis unavailable');
+    assert.equal(finalMessage.council.synthesis.error, 'Council synthesis failed.');
     assert.match(finalMessage.council.statusMessage, /Council synthesis failed\. Continuing from Response A\./);
 });
