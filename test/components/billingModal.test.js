@@ -36,6 +36,92 @@ test('billing modal maps failures to privacy-safe copy instead of displaying raw
     );
 });
 
+function renderBilling(snapshot) {
+    const modal = Object.create(BillingModal.prototype);
+    modal.isOpen = true;
+    modal.overlay = {
+        innerHTML: '',
+        querySelector() { return null; }
+    };
+    modal.snapshot = snapshot;
+    modal.busy = null;
+    modal.error = null;
+    modal.escape = value => String(value ?? '');
+    modal.render();
+    return modal.overlay.innerHTML;
+}
+
+test('ticket-pack UI renders server-provided $7 and 50-ticket values only for eligible subscribers', () => {
+    const plan = {
+        unit_amount: 3500,
+        currency: 'usd',
+        interval: 'month',
+        tickets_per_period: 300,
+        ticket_pack: { unit_amount: 700, currency: 'usd', tickets: 50 }
+    };
+    const eligible = renderBilling({
+        plan,
+        status: {
+            premium_active: true,
+            subscription: { status: 'active', cancel_at_period_end: true },
+            available_batches: 0,
+            ticket_pack: { eligible: true, can_purchase: true, state: 'ready', ticket_count: 50 }
+        }
+    });
+    assert.match(eligible, /Buy 50 tickets/);
+    assert.match(eligible, /\$7/);
+    assert.match(eligible, /billing-topup-btn/);
+
+    const ineligible = renderBilling({
+        plan,
+        status: {
+            premium_active: false,
+            subscription: { status: 'none' },
+            ticket_pack: { eligible: false, can_purchase: false, state: 'ineligible', ticket_count: 50 }
+        }
+    });
+    assert.equal(ineligible.includes('Buy 50 tickets'), false);
+
+    const unavailable = renderBilling({
+        plan: { ...plan, ticket_pack: null },
+        status: {
+            premium_active: true,
+            subscription: { status: 'trialing' },
+            ticket_pack: { eligible: true, can_purchase: true, state: 'ready', ticket_count: 50 }
+        }
+    });
+    assert.equal(unavailable.includes('Buy 50 tickets'), false);
+});
+
+test('pending or claimable ticket packs replace the purchase control', () => {
+    const plan = {
+        unit_amount: 3500,
+        currency: 'usd',
+        interval: 'month',
+        tickets_per_period: 300,
+        ticket_pack: { unit_amount: 700, currency: 'usd', tickets: 50 }
+    };
+    const status = state => ({
+        premium_active: true,
+        subscription: { status: 'active' },
+        ticket_pack: {
+            eligible: true,
+            can_purchase: false,
+            state,
+            ticket_count: 50
+        }
+    });
+
+    const checkoutPending = renderBilling({ plan, status: status('checkout_pending') });
+    assert.match(checkoutPending, /id="billing-topup-btn"/);
+    assert.match(checkoutPending, /Continue ticket-pack Checkout/);
+    assert.match(checkoutPending, /waiting for payment or confirmation/);
+
+    const claimable = renderBilling({ plan, status: status('claimable') });
+    assert.equal(claimable.includes('id="billing-topup-btn"'), false);
+    assert.match(claimable, /billing-topup-prepare-btn/);
+});
+
 test('adaptive sidebar label follows account presence without requiring a paid subscription', () => {
     const attributes = new Map();
     const label = { textContent: '' };

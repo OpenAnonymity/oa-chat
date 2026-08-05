@@ -82,12 +82,18 @@ export default class BillingModal {
             return;
         }
         this.open();
-        if (outcome === 'success' && sessionId) {
+        if (['success', 'topup_success'].includes(outcome) && sessionId) {
+            const kind = outcome === 'topup_success' ? 'topup' : 'subscription';
             this.busy = 'confirming';
             this.render();
             try {
-                await this.billing.reconcileCheckout(sessionId);
-                this.app.showToast?.('Premium payment confirmed. Preparing private tickets.', 'success');
+                await this.billing.reconcileCheckout(sessionId, { kind });
+                this.app.showToast?.(
+                    kind === 'topup'
+                        ? 'Ticket-pack payment confirmed. Preparing private tickets.'
+                        : 'Premium payment confirmed. Preparing private tickets.',
+                    'success'
+                );
                 void this.startPreparation({ automatic: true });
             } catch (error) {
                 this.error = this.safeErrorMessage(error, 'Payment confirmation is still pending.');
@@ -97,6 +103,8 @@ export default class BillingModal {
                 this.render();
             }
         } else {
+            if (outcome === 'cancelled') this.billing.discardKnownCheckout?.('subscription');
+            if (outcome === 'topup_cancelled') this.billing.discardKnownCheckout?.('topup');
             this.clearReturnParams();
         }
     }
@@ -138,7 +146,8 @@ export default class BillingModal {
             try {
                 const status = await this.billing.getStatus({ force: true, createDemo: true });
                 this.snapshot = this.billing.snapshot();
-                if (Number(status.available_batches || 0) > 0) {
+                if (Number(status.available_batches || 0) > 0 ||
+                    ['claimable', 'claiming'].includes(status?.ticket_pack?.state)) {
                     void this.startPreparation({ automatic: true });
                 }
             } catch (error) {
@@ -194,6 +203,19 @@ export default class BillingModal {
         }
     }
 
+    async purchaseTicketPack() {
+        this.busy = 'topup-checkout';
+        this.error = null;
+        this.render();
+        try {
+            await this.billing.purchaseTicketPack();
+        } catch (error) {
+            this.error = this.safeErrorMessage(error, 'Unable to open ticket-pack Checkout.');
+            this.busy = null;
+            this.render();
+        }
+    }
+
     async portal() {
         this.busy = 'portal';
         this.error = null;
@@ -217,6 +239,16 @@ export default class BillingModal {
         return `${amount} / ${plan.interval || 'period'}`;
     }
 
+    formatMoney(offer) {
+        if (!offer || !Number.isFinite(Number(offer.unit_amount))) return 'Loading price…';
+        return new Intl.NumberFormat(undefined, {
+            style: 'currency',
+            currency: String(offer.currency || 'usd').toUpperCase(),
+            minimumFractionDigits: Number(offer.unit_amount) % 100 === 0 ? 0 : 2,
+            maximumFractionDigits: 2
+        }).format(Number(offer.unit_amount) / 100);
+    }
+
     safeErrorMessage(error, fallback) {
         const safeByCode = {
             BILLING_AUTH_REQUIRED: 'Sign in to your OA account to continue.',
@@ -224,7 +256,10 @@ export default class BillingModal {
             BILLING_NO_ENTITLEMENT: 'No Premium ticket allowance is ready yet.',
             BILLING_ALLOWANCE_UNAVAILABLE: 'Your Premium ticket allowance is not ready yet.',
             BILLING_ALLOWANCE_INVALID: 'Your Premium ticket allowance could not be verified.',
-            BILLING_INCOMPLETE_RESPONSE: 'Private ticket preparation received an incomplete response.'
+            BILLING_INCOMPLETE_RESPONSE: 'Private ticket preparation received an incomplete response.',
+            BILLING_TOPUP_PENDING: 'Finish preparing the current ticket pack before buying another.',
+            BILLING_TOPUP_INELIGIBLE: 'An active Premium subscription is required for ticket packs.',
+            BILLING_TOPUP_UNAVAILABLE: 'Ticket packs are temporarily unavailable.'
         };
         return safeByCode[error?.code] || fallback;
     }
@@ -244,8 +279,13 @@ export default class BillingModal {
         const remaining = Number(status?.available_batches || 0);
         const ticketCount = Number(plan?.tickets_per_period || 0);
         const nextTicketCount = Number(status?.next_claim_ticket_count || 0);
+        const ticketPack = plan?.ticket_pack || null;
+        const ticketPackStatus = status?.ticket_pack || null;
+        const showTicketPack = Boolean(ticketPack && ticketPackStatus?.eligible === true);
+        const ticketPackCount = Number(ticketPack?.tickets || ticketPackStatus?.ticket_count || 0);
+        const ticketPackState = String(ticketPackStatus?.state || 'ineligible');
         const progressLabel = progress
-            ? `${progress.phase === 'finalizing' ? 'Finalizing' : progress.phase === 'claiming' ? 'Requesting signatures' : 'Preparing'} private tickets — ${progress.completed} / ${progress.total}`
+            ? `${progress.phase === 'finalizing' ? 'Finalizing' : progress.phase === 'claiming' ? 'Requesting signatures' : 'Preparing'}${progress.source === 'topup' ? ' ticket-pack' : ''} private tickets — ${progress.completed} / ${progress.total}`
             : '';
 
         this.overlay.innerHTML = `
@@ -263,6 +303,22 @@ export default class BillingModal {
                     <p class="mt-2 text-xs text-muted-foreground">Your first payment and ticket allowance are prorated until the next renewal.</p>
                     <p class="mt-3 text-xs text-muted-foreground">Your account proves payment only while tickets are issued. The finished tickets remain in this browser and are redeemed without your billing identity.</p>
                 </div>
+                ${showTicketPack ? `
+                    <div class="mt-3 rounded-lg border border-border p-4">
+                        <p class="text-sm font-semibold text-foreground">Buy ${ticketPackCount} tickets — ${this.escape(this.formatMoney(ticketPack))}</p>
+                        <p class="mt-1 text-xs text-muted-foreground">A one-time Premium add-on. Prepare the tickets privately in this browser after payment.</p>
+                        ${ticketPackState === 'ready' && ticketPackStatus?.can_purchase === true ? `
+                            <button id="billing-topup-btn" class="mt-3 w-full h-10 rounded-lg bg-blue-600 text-white font-medium disabled:opacity-50" ${this.busy ? 'disabled' : ''}>${this.busy === 'topup-checkout' ? 'Opening Checkout…' : `Buy ${ticketPackCount} tickets — ${this.escape(this.formatMoney(ticketPack))}`}</button>
+                        ` : ''}
+                        ${ticketPackState === 'checkout_pending' ? `
+                            <p class="mt-3 text-xs text-muted-foreground">Ticket-pack Checkout is waiting for payment or confirmation.</p>
+                            <button id="billing-topup-btn" class="mt-3 w-full h-10 rounded-lg border border-border text-foreground font-medium disabled:opacity-50" ${this.busy ? 'disabled' : ''}>${this.busy === 'topup-checkout' ? 'Opening Checkout…' : 'Continue ticket-pack Checkout'}</button>
+                        ` : ''}
+                        ${['claimable', 'claiming'].includes(ticketPackState) && !progress ? `
+                            <button id="billing-topup-prepare-btn" class="mt-3 w-full h-10 rounded-lg border border-border text-foreground font-medium disabled:opacity-50" ${this.busy ? 'disabled' : ''}>${ticketPackState === 'claiming' ? 'Resume preparing' : 'Prepare'} ${ticketPackCount} private tickets</button>
+                        ` : ''}
+                    </div>
+                ` : ''}
                 ${this.error ? `<div class="mt-3 rounded-md bg-destructive/10 text-destructive text-xs p-3">${this.escape(this.error)}</div>` : ''}
                 ${progress ? `
                     <div class="mt-4">
@@ -282,6 +338,8 @@ export default class BillingModal {
         this.overlay.querySelector('#billing-close-btn')?.addEventListener('click', () => this.close());
         this.overlay.querySelector('#billing-checkout-btn')?.addEventListener('click', () => void this.checkout());
         this.overlay.querySelector('#billing-prepare-btn')?.addEventListener('click', () => void this.startPreparation());
+        this.overlay.querySelector('#billing-topup-btn')?.addEventListener('click', () => void this.purchaseTicketPack());
+        this.overlay.querySelector('#billing-topup-prepare-btn')?.addEventListener('click', () => void this.startPreparation());
         this.overlay.querySelector('#billing-portal-btn')?.addEventListener('click', () => void this.portal());
     }
 

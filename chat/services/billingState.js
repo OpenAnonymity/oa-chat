@@ -13,6 +13,11 @@ export function hasSavedBillingCheckout(storage = globalThis.localStorage) {
     if (!storage) return false;
     try {
         const value = JSON.parse(storage.getItem(BILLING_CHECKOUT_STORAGE_KEY) || 'null');
+        if (value?.version === 3 && value.sessions && typeof value.sessions === 'object') {
+            return Object.values(value.sessions).some(kinds =>
+                Boolean(kinds?.subscription?.sessionId || kinds?.topup?.sessionId)
+            );
+        }
         if (value?.version === 2 && value.sessions && typeof value.sessions === 'object') {
             return Object.values(value.sessions).some(session => Boolean(session?.sessionId));
         }

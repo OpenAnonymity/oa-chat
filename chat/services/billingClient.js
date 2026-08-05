@@ -8,6 +8,8 @@ import { BILLING_CHECKOUT_STORAGE_KEY } from './billingState.js';
 const DEMO_IDENTITY_KEY = 'oa-billing-demo-account-id-v1';
 const CHUNK_SIZE = 10;
 const FULL_PERIOD_TICKETS = 300;
+const TICKET_PACK_TICKETS = 50;
+const CHECKOUT_KINDS = new Set(['subscription', 'topup']);
 const NORMAL_TICKET_FIELDS = new Set([
     'blinded_request',
     'signed_response',
@@ -84,7 +86,34 @@ function normalizeSignedResponses(data, expectedCount) {
     return normalized;
 }
 
-function resolveClaimTicketCount(status, pending, plan) {
+function validateClaimRef(value) {
+    return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+}
+
+function resolveClaimContext(status, pending, plan) {
+    const source = pending
+        ? (pending.source || 'subscription')
+        : (
+            ['claimable', 'claiming'].includes(status?.ticket_pack?.state)
+                ? 'topup'
+                : 'subscription'
+        );
+    if (source === 'topup') {
+        const claimRef = pending?.claimRef || status?.ticket_pack?.claim_ref;
+        const targetCount = Number(pending?.targetCount ?? status?.ticket_pack?.ticket_count);
+        const planCount = Number(plan?.ticket_pack?.tickets ?? TICKET_PACK_TICKETS);
+        if (!validateClaimRef(claimRef) || targetCount !== TICKET_PACK_TICKETS || planCount !== TICKET_PACK_TICKETS) {
+            const error = new Error('Billing status returned an invalid ticket-pack allowance.');
+            error.code = 'BILLING_ALLOWANCE_INVALID';
+            throw error;
+        }
+        return { source, claimRef, targetCount };
+    }
+    if (source !== 'subscription') {
+        const error = new Error('Saved billing recovery has an unsupported source.');
+        error.code = 'BILLING_ALLOWANCE_INVALID';
+        throw error;
+    }
     const target = Number(pending?.targetCount ?? status?.next_claim_ticket_count);
     const fullPeriod = Number(
         status?.plan?.tickets_per_period ?? plan?.tickets_per_period ?? FULL_PERIOD_TICKETS
@@ -99,7 +128,7 @@ function resolveClaimTicketCount(status, pending, plan) {
         error.code = 'BILLING_ALLOWANCE_INVALID';
         throw error;
     }
-    return target;
+    return { source, claimRef: null, targetCount: target };
 }
 
 function validateNormalTicket(ticket) {
@@ -312,6 +341,17 @@ export class BillingClient {
             signal
         });
         this.assertIdentityContext(auth, signal, generation);
+        const pending = await this.pendingStore.get(auth.scope).catch(() => null);
+        this.assertIdentityContext(auth, signal, generation);
+        if (pending?.source === 'topup' && status?.ticket_pack) {
+            status.ticket_pack = {
+                ...status.ticket_pack,
+                can_purchase: false,
+                state: 'claiming',
+                ticket_count: Number(pending.targetCount || status.ticket_pack.ticket_count),
+                claim_ref: pending.claimRef || status.ticket_pack.claim_ref || null
+            };
+        }
         this.status = status;
         this.plan = status.plan || this.plan;
         this.publish();
@@ -328,7 +368,29 @@ export class BillingClient {
             body: { return_origin: window.location.origin }
         });
         this.assertIdentityContext(auth, undefined, generation);
-        if (result.session_id) this.saveCheckoutSession(result.session_id, auth.scope);
+        if (result.session_id) this.saveCheckoutSession(result.session_id, auth.scope, 'subscription');
+        if (result.url) window.location.assign(result.url);
+        return result;
+    }
+
+    async purchaseTicketPack() {
+        const generation = this.identityGeneration;
+        const auth = await this.auth.resolve({ createDemo: false });
+        this.assertIdentityContext(auth, undefined, generation);
+        const pending = await this.pendingStore.get(auth.scope);
+        this.assertIdentityContext(auth, undefined, generation);
+        if (pending?.source === 'topup') {
+            const error = new Error('Finish importing the current ticket pack before buying another.');
+            error.code = 'BILLING_TOPUP_PENDING';
+            throw error;
+        }
+        const result = await this.request('/api/billing/topups/checkout', {
+            method: 'POST',
+            authContext: auth,
+            body: { return_origin: window.location.origin }
+        });
+        this.assertIdentityContext(auth, undefined, generation);
+        if (result.session_id) this.saveCheckoutSession(result.session_id, auth.scope, 'topup');
         if (result.url) window.location.assign(result.url);
         return result;
     }
@@ -347,31 +409,44 @@ export class BillingClient {
         return result;
     }
 
-    saveCheckoutSession(sessionId, scope) {
-        if (!this.storage || !sessionId || !scope) return;
+    saveCheckoutSession(sessionId, scope, kind = 'subscription') {
+        if (!this.storage || !sessionId || !scope || !CHECKOUT_KINDS.has(kind)) return;
         const state = this.readCheckoutSessions();
-        state.sessions[scope] = { sessionId, savedAt: Date.now() };
+        state.sessions[scope] ||= {};
+        state.sessions[scope][kind] = { sessionId, savedAt: Date.now() };
         this.storage.setItem(BILLING_CHECKOUT_STORAGE_KEY, JSON.stringify(state));
     }
 
-    getCheckoutSession(scope) {
-        const value = this.readCheckoutSessions().sessions[scope];
-        return value ? { ...value, scope } : null;
+    getCheckoutSession(scope, kind = 'subscription') {
+        const value = this.readCheckoutSessions().sessions[scope]?.[kind];
+        return value ? { ...value, scope, kind } : null;
     }
 
     readCheckoutSessions() {
-        const empty = { version: 2, sessions: {} };
+        const empty = { version: 3, sessions: {} };
         if (!this.storage) return empty;
         try {
             const value = JSON.parse(this.storage.getItem(BILLING_CHECKOUT_STORAGE_KEY) || 'null');
-            if (value?.version === 2 && value.sessions && typeof value.sessions === 'object') {
+            if (value?.version === 3 && value.sessions && typeof value.sessions === 'object') {
                 return value;
+            }
+            if (value?.version === 2 && value.sessions && typeof value.sessions === 'object') {
+                return {
+                    version: 3,
+                    sessions: Object.fromEntries(
+                        Object.entries(value.sessions)
+                            .filter(([, session]) => session?.sessionId)
+                            .map(([scope, session]) => [scope, { subscription: session }])
+                    )
+                };
             }
             if (value?.scope && value?.sessionId) {
                 return {
-                    version: 2,
+                    version: 3,
                     sessions: {
-                        [value.scope]: { sessionId: value.sessionId, savedAt: value.savedAt }
+                        [value.scope]: {
+                            subscription: { sessionId: value.sessionId, savedAt: value.savedAt }
+                        }
                     }
                 };
             }
@@ -381,14 +456,19 @@ export class BillingClient {
         return empty;
     }
 
-    clearCheckoutSession(scope = null) {
+    clearCheckoutSession(scope = null, kind = null) {
         if (!this.storage) return;
         if (!scope) {
             this.storage.removeItem(BILLING_CHECKOUT_STORAGE_KEY);
             return;
         }
         const state = this.readCheckoutSessions();
-        delete state.sessions[scope];
+        if (kind && CHECKOUT_KINDS.has(kind)) {
+            delete state.sessions[scope]?.[kind];
+            if (Object.keys(state.sessions[scope] || {}).length === 0) delete state.sessions[scope];
+        } else {
+            delete state.sessions[scope];
+        }
         if (Object.keys(state.sessions).length === 0) {
             this.storage.removeItem(BILLING_CHECKOUT_STORAGE_KEY);
         } else {
@@ -396,12 +476,33 @@ export class BillingClient {
         }
     }
 
+    discardKnownCheckout(kind) {
+        const scope = this.auth.getKnownScope?.() || null;
+        if (scope) this.clearCheckoutSession(scope, kind);
+    }
+
     async resumeSavedCheckout(options = {}) {
         if (!this.auth.hasKnownIdentity?.()) return null;
         const auth = await this.auth.resolve({ createDemo: false });
-        const saved = this.getCheckoutSession(auth.scope);
-        if (!saved?.sessionId) return null;
-        return this.reconcileCheckout(saved.sessionId, { ...options, authContext: auth });
+        let result = null;
+        let firstError = null;
+        for (const kind of ['subscription', 'topup']) {
+            const saved = this.getCheckoutSession(auth.scope, kind);
+            if (saved?.sessionId) {
+                try {
+                    result = await this.reconcileCheckout(saved.sessionId, {
+                        ...options,
+                        kind,
+                        authContext: auth
+                    });
+                } catch (error) {
+                    if (error?.name === 'AbortError') throw error;
+                    firstError ||= error;
+                }
+            }
+        }
+        if (!result && firstError) throw firstError;
+        return result;
     }
 
     async reconcileCheckout(sessionId, options = {}) {
@@ -423,6 +524,7 @@ export class BillingClient {
 
     async reconcileCheckoutWithController(sessionId, controller, options) {
         const auth = options.authContext || await this.auth.resolve({ createDemo: true });
+        const kind = CHECKOUT_KINDS.has(options.kind) ? options.kind : 'subscription';
         const generation = this.identityGeneration;
         this.checkoutScope = auth.scope;
         const assertActive = () => {
@@ -432,7 +534,7 @@ export class BillingClient {
             }
         };
         assertActive();
-        this.saveCheckoutSession(sessionId, auth.scope);
+        this.saveCheckoutSession(sessionId, auth.scope, kind);
         const started = Date.now();
         const timeoutMs = options.timeoutMs ?? 80_000;
         while (Date.now() - started < timeoutMs) {
@@ -445,8 +547,11 @@ export class BillingClient {
                 if (error?.name === 'AbortError') throw error;
                 return null;
             });
-            if (status?.available_batches > 0) {
-                this.clearCheckoutSession(auth.scope);
+            const ready = kind === 'topup'
+                ? ['claimable', 'claiming'].includes(status?.ticket_pack?.state)
+                : Number(status?.available_batches || 0) > 0;
+            if (ready) {
+                this.clearCheckoutSession(auth.scope, kind);
                 return status;
             }
             await new Promise((resolve, reject) => {
@@ -458,7 +563,10 @@ export class BillingClient {
             });
         }
         assertActive();
-        const complete = await this.request('/api/billing/checkout/complete', {
+        const completePath = kind === 'topup'
+            ? '/api/billing/topups/checkout/complete'
+            : '/api/billing/checkout/complete';
+        const complete = await this.request(completePath, {
             method: 'POST',
             authContext: auth,
             body: { session_id: sessionId },
@@ -466,7 +574,7 @@ export class BillingClient {
         });
         assertActive();
         this.status = complete.status;
-        this.clearCheckoutSession(auth.scope);
+        this.clearCheckoutSession(auth.scope, kind);
         this.publish();
         return this.status;
     }
@@ -520,14 +628,15 @@ export class BillingClient {
             });
             this.assertAuthContext(auth, controller.signal);
             const existing = await this.pendingStore.get(auth.scope);
-            if (!existing && Number(status.available_batches || 0) < 1) {
+            const hasTopup = ['claimable', 'claiming'].includes(status?.ticket_pack?.state);
+            if (!existing && Number(status.available_batches || 0) < 1 && !hasTopup) {
                 if (options.allowNoEntitlement) return null;
                 const error = new Error('No paid Premium ticket batch is available.');
                 error.code = 'BILLING_NO_ENTITLEMENT';
                 throw error;
             }
-            const targetCount = resolveClaimTicketCount(status, existing, this.plan);
-            return this.runPreparation(auth, controller.signal, options.onProgress, targetCount);
+            const claimContext = resolveClaimContext(status, existing, this.plan);
+            return this.runPreparation(auth, controller.signal, options.onProgress, claimContext);
         };
 
         const lockName = `oa-billing-claim-v1:${await sha256(auth.scope)}`;
@@ -546,9 +655,10 @@ export class BillingClient {
         return execute();
     }
 
-    async runPreparation(auth, signal, onProgress, targetCount) {
+    async runPreparation(auth, signal, onProgress, claimContext) {
+        const { source, claimRef, targetCount } = claimContext;
         const updateProgress = (phase, completed, total = targetCount) => {
-            this.progress = { phase, completed, total, accountScope: auth.scope };
+            this.progress = { phase, completed, total, accountScope: auth.scope, source };
             onProgress?.(this.progress);
             this.publish();
         };
@@ -561,6 +671,8 @@ export class BillingClient {
             const publicKey = await this.fetchPublicKey(signal);
             pending = {
                 accountScope: auth.scope,
+                source,
+                claimRef,
                 issuerFingerprint: await sha256(publicKey),
                 targetCount,
                 generatedCount: 0,
@@ -573,7 +685,9 @@ export class BillingClient {
             };
             pending = await this.pendingStore.put(pending);
         }
-        if (pending.targetCount !== targetCount || pending.accountScope !== auth.scope) {
+        const pendingSource = pending.source || 'subscription';
+        if (pending.targetCount !== targetCount || pending.accountScope !== auth.scope ||
+            pendingSource !== source || (source === 'topup' && pending.claimRef !== claimRef)) {
             throw new Error('Saved billing claim does not match this account or plan.');
         }
 
@@ -606,12 +720,27 @@ export class BillingClient {
             }
             assertActive();
             updateProgress('claiming', 0);
-            const claim = await this.request('/api/billing/tickets/claim', {
-                method: 'POST',
-                authContext: auth,
-                body: { blinded_requests: roundTrip.requests.map(request => [request.index, request.blindedRequest]) },
-                signal
-            });
+            const claimBody = {
+                blinded_requests: roundTrip.requests.map(request => [request.index, request.blindedRequest])
+            };
+            if (source === 'topup') claimBody.claim_ref = claimRef;
+            let claim;
+            try {
+                claim = await this.request('/api/billing/tickets/claim', {
+                    method: 'POST',
+                    authContext: auth,
+                    body: claimBody,
+                    signal
+                });
+            } catch (error) {
+                if (source === 'topup' && error?.code === 'BILLING_NO_ENTITLEMENT') {
+                    await this.pendingStore.delete(auth.scope);
+                    this.progress = null;
+                    this.status = null;
+                    this.publish();
+                }
+                throw error;
+            }
             pending.signedResponses = normalizeSignedResponses(claim, targetCount);
             pending.phase = 'signed';
             pending = await this.pendingStore.put(pending);

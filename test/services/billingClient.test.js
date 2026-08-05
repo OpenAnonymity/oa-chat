@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { BillingClient, isLoopbackHostname } from '../../chat/services/billingClient.js';
+import { BILLING_CHECKOUT_STORAGE_KEY } from '../../chat/services/billingState.js';
 
 class MemoryPendingStore {
     constructor() { this.values = new Map(); }
@@ -109,6 +110,150 @@ test('Checkout stores its session under the frozen account scope and sends no ac
     }
 });
 
+test('Checkout recovery version 3 keeps subscription and top-up sessions independent', () => {
+    const storage = memoryStorage();
+    const client = new BillingClient({
+        authProvider: makeAuth('account:alpha'),
+        pendingStore: new MemoryPendingStore(),
+        storage,
+        fetchImpl: async () => response({})
+    });
+
+    client.saveCheckoutSession('cs_test_subscription', 'account:alpha', 'subscription');
+    client.saveCheckoutSession('cs_test_topup', 'account:alpha', 'topup');
+
+    assert.equal(client.getCheckoutSession('account:alpha', 'subscription').sessionId, 'cs_test_subscription');
+    assert.equal(client.getCheckoutSession('account:alpha', 'topup').sessionId, 'cs_test_topup');
+    assert.equal(JSON.parse(storage.getItem(BILLING_CHECKOUT_STORAGE_KEY)).version, 3);
+    client.clearCheckoutSession('account:alpha', 'topup');
+    assert.equal(client.getCheckoutSession('account:alpha', 'topup'), null);
+    assert.equal(client.getCheckoutSession('account:alpha', 'subscription').sessionId, 'cs_test_subscription');
+    client.destroy();
+});
+
+test('Checkout recovery migrates version 2 records as subscription sessions', () => {
+    const storage = memoryStorage();
+    storage.setItem(BILLING_CHECKOUT_STORAGE_KEY, JSON.stringify({
+        version: 2,
+        sessions: {
+            'account:alpha': { sessionId: 'cs_test_legacy', savedAt: 123 }
+        }
+    }));
+    const client = new BillingClient({
+        authProvider: makeAuth('account:alpha'),
+        pendingStore: new MemoryPendingStore(),
+        storage,
+        fetchImpl: async () => response({})
+    });
+
+    assert.equal(client.getCheckoutSession('account:alpha', 'subscription').sessionId, 'cs_test_legacy');
+    assert.equal(client.getCheckoutSession('account:alpha', 'topup'), null);
+    client.saveCheckoutSession('cs_test_topup', 'account:alpha', 'topup');
+    const migrated = JSON.parse(storage.getItem(BILLING_CHECKOUT_STORAGE_KEY));
+    assert.equal(migrated.version, 3);
+    assert.equal(migrated.sessions['account:alpha'].subscription.sessionId, 'cs_test_legacy');
+    assert.equal(migrated.sessions['account:alpha'].topup.sessionId, 'cs_test_topup');
+    client.destroy();
+});
+
+test('ticket-pack Checkout uses its dedicated endpoint and recovery kind', async () => {
+    const storage = memoryStorage();
+    const pendingStore = new MemoryPendingStore();
+    const calls = [];
+    let redirected = '';
+    const originalWindow = globalThis.window;
+    globalThis.window = {
+        location: {
+            origin: 'https://staging.openanonymity.ai',
+            assign(value) { redirected = value; }
+        }
+    };
+    const client = new BillingClient({
+        authProvider: makeAuth('account:alpha'),
+        pendingStore,
+        storage,
+        fetchImpl: async (url, options) => {
+            calls.push({ url, options });
+            return response({
+                session_id: 'cs_test_topup',
+                url: 'https://checkout.stripe.test/topup'
+            });
+        }
+    });
+
+    try {
+        await client.purchaseTicketPack();
+        assert.ok(calls[0].url.endsWith('/api/billing/topups/checkout'));
+        assert.deepEqual(JSON.parse(calls[0].options.body), {
+            return_origin: 'https://staging.openanonymity.ai'
+        });
+        assert.equal(client.getCheckoutSession('account:alpha', 'topup').sessionId, 'cs_test_topup');
+        assert.equal(client.getCheckoutSession('account:alpha', 'subscription'), null);
+        assert.equal(redirected, 'https://checkout.stripe.test/topup');
+    } finally {
+        client.destroy();
+        globalThis.window = originalWindow;
+    }
+});
+
+test('a local unimported top-up blocks another browser purchase', async () => {
+    const pendingStore = new MemoryPendingStore();
+    await pendingStore.put({
+        accountScope: 'account:alpha',
+        source: 'topup',
+        claimRef: 'a'.repeat(64),
+        targetCount: 50
+    });
+    let called = false;
+    const client = new BillingClient({
+        authProvider: makeAuth('account:alpha'),
+        pendingStore,
+        fetchImpl: async () => { called = true; return response({}); }
+    });
+
+    await assert.rejects(
+        () => client.purchaseTicketPack(),
+        error => error.code === 'BILLING_TOPUP_PENDING'
+    );
+    assert.equal(called, false);
+    client.destroy();
+});
+
+test('an account switch during the local top-up check prevents Checkout creation', async () => {
+    let currentScope = 'account:alpha';
+    let releasePending;
+    let checkoutCalled = false;
+    const pendingGate = new Promise(resolve => { releasePending = resolve; });
+    const auth = {
+        async resolve() {
+            const scope = currentScope;
+            return { scope, headers: { Authorization: `Bearer ${scope}` }, mode: 'account' };
+        },
+        getKnownScope() { return currentScope; },
+        subscribe() { return () => {}; }
+    };
+    const client = new BillingClient({
+        authProvider: auth,
+        pendingStore: {
+            async get() { await pendingGate; return null; }
+        },
+        fetchImpl: async () => {
+            checkoutCalled = true;
+            return response({});
+        }
+    });
+
+    const checkout = client.purchaseTicketPack();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    currentScope = 'account:beta';
+    client.handleIdentityChange({ accountId: 'beta' });
+    releasePending();
+
+    await assert.rejects(checkout, error => error.name === 'AbortError');
+    assert.equal(checkoutCalled, false);
+    client.destroy();
+});
+
 test('an account switch during Checkout prevents redirect and preserves per-account recovery', async () => {
     const storage = memoryStorage();
     let currentScope = 'account:alpha';
@@ -182,6 +327,100 @@ test('saved Checkout confirmation resumes after reload for the same local accoun
     client.destroy();
 });
 
+test('a failed subscription recovery does not block saved top-up recovery', async () => {
+    const storage = memoryStorage();
+    const scope = 'account:alpha';
+    const calls = [];
+    const client = new BillingClient({
+        authProvider: {
+            ...makeAuth(scope),
+            hasKnownIdentity() { return true; }
+        },
+        pendingStore: new MemoryPendingStore(),
+        storage,
+        fetchImpl: async (url, options = {}) => {
+            calls.push(url);
+            if (url.endsWith('/api/billing/status')) {
+                return response({
+                    available_batches: 0,
+                    ticket_pack: { eligible: true, state: 'checkout_pending' },
+                    plan: { tickets_per_period: 300, ticket_pack: { tickets: 50 } }
+                });
+            }
+            if (url.endsWith('/api/billing/checkout/complete')) {
+                return response({ detail: { code: 'BILLING_NO_ENTITLEMENT' } }, false, 409);
+            }
+            if (url.endsWith('/api/billing/topups/checkout/complete')) {
+                return response({ status: {
+                    available_batches: 0,
+                    ticket_pack: {
+                        eligible: true,
+                        can_purchase: false,
+                        state: 'claimable',
+                        ticket_count: 50,
+                        claim_ref: 'b'.repeat(64)
+                    },
+                    plan: { tickets_per_period: 300, ticket_pack: { tickets: 50 } }
+                }});
+            }
+            throw new Error(`Unexpected request: ${url}`);
+        }
+    });
+    client.saveCheckoutSession('cs_test_subscription', scope, 'subscription');
+    client.saveCheckoutSession('cs_test_topup', scope, 'topup');
+
+    const status = await client.resumeSavedCheckout({ timeoutMs: 0 });
+
+    assert.equal(status.ticket_pack.state, 'claimable');
+    assert.equal(calls.some(url => url.endsWith('/api/billing/checkout/complete')), true);
+    assert.equal(calls.some(url => url.endsWith('/api/billing/topups/checkout/complete')), true);
+    assert.equal(client.getCheckoutSession(scope, 'subscription').sessionId, 'cs_test_subscription');
+    assert.equal(client.getCheckoutSession(scope, 'topup'), null);
+    client.destroy();
+});
+
+test('top-up reconciliation uses its completion endpoint without clearing subscription recovery', async () => {
+    const storage = memoryStorage();
+    const scope = 'account:alpha';
+    const calls = [];
+    const client = new BillingClient({
+        authProvider: makeAuth(scope),
+        pendingStore: new MemoryPendingStore(),
+        storage,
+        fetchImpl: async (url, options = {}) => {
+            calls.push({ url, options });
+            if (url.endsWith('/api/billing/topups/checkout/complete')) {
+                return response({
+                    status: {
+                        ticket_pack: {
+                            eligible: true,
+                            can_purchase: false,
+                            state: 'claimable',
+                            ticket_count: 50,
+                            claim_ref: 'b'.repeat(64)
+                        },
+                        plan: { ticket_pack: { tickets: 50 } }
+                    }
+                });
+            }
+            throw new Error(`Unexpected request: ${url}`);
+        }
+    });
+    client.saveCheckoutSession('cs_test_subscription', scope, 'subscription');
+
+    const status = await client.reconcileCheckout('cs_test_topup', {
+        kind: 'topup',
+        timeoutMs: 0
+    });
+
+    assert.equal(status.ticket_pack.state, 'claimable');
+    assert.ok(calls[0].url.endsWith('/api/billing/topups/checkout/complete'));
+    assert.deepEqual(JSON.parse(calls[0].options.body), { session_id: 'cs_test_topup' });
+    assert.equal(client.getCheckoutSession(scope, 'topup'), null);
+    assert.equal(client.getCheckoutSession(scope, 'subscription').sessionId, 'cs_test_subscription');
+    client.destroy();
+});
+
 test('Checkout recovery is scoped and an account switch aborts without clearing it', async () => {
     let currentScope = 'account:alpha';
     let releaseStatus;
@@ -244,6 +483,68 @@ test('a stale status response cannot be displayed after account switching', asyn
 
     await assert.rejects(loading, error => error.name === 'AbortError');
     assert.equal(client.status, null);
+    client.destroy();
+});
+
+test('status cannot publish after an account switch during pending-claim lookup', async () => {
+    let currentScope = 'account:alpha';
+    let releasePending;
+    const pendingGate = new Promise(resolve => { releasePending = resolve; });
+    const auth = {
+        async resolve() {
+            const scope = currentScope;
+            return { scope, headers: { Authorization: `Bearer ${scope}` }, mode: 'account' };
+        },
+        getKnownScope() { return currentScope; },
+        subscribe() { return () => {}; }
+    };
+    const client = new BillingClient({
+        authProvider: auth,
+        pendingStore: {
+            async get() { await pendingGate; return null; }
+        },
+        fetchImpl: async () => response({ available_batches: 9, plan: {} })
+    });
+
+    const loading = client.getStatus({ force: true });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    currentScope = 'account:beta';
+    client.handleIdentityChange({ accountId: 'beta' });
+    releasePending();
+
+    await assert.rejects(loading, error => error.name === 'AbortError');
+    assert.equal(client.status, null);
+    client.destroy();
+});
+
+test('status keeps another top-up blocked until durable local recovery is imported', async () => {
+    const pendingStore = new MemoryPendingStore();
+    await pendingStore.put({
+        accountScope: 'account:alpha',
+        source: 'topup',
+        claimRef: 'd'.repeat(64),
+        targetCount: 50
+    });
+    const client = new BillingClient({
+        authProvider: makeAuth('account:alpha'),
+        pendingStore,
+        fetchImpl: async () => response({
+            ticket_pack: {
+                eligible: true,
+                can_purchase: true,
+                state: 'ready',
+                ticket_count: 50,
+                claim_ref: null
+            },
+            plan: { ticket_pack: { tickets: 50 } }
+        })
+    });
+
+    const status = await client.getStatus({ force: true });
+
+    assert.equal(status.ticket_pack.can_purchase, false);
+    assert.equal(status.ticket_pack.state, 'claiming');
+    assert.equal(status.ticket_pack.claim_ref, 'd'.repeat(64));
     client.destroy();
 });
 
@@ -403,6 +704,210 @@ test('one prorated paid batch is blinded, signed, finalized, and imported withou
     client.destroy();
 });
 
+test('a referenced 50-ticket top-up cannot be replaced by an older subscription allowance', async () => {
+    const claimRef = 'c'.repeat(64);
+    const pendingStore = new MemoryPendingStore();
+    const wallet = [];
+    const claimBodies = [];
+    let statusCalls = 0;
+    const client = new BillingClient({
+        baseUrl: 'http://127.0.0.1:8005',
+        authProvider: makeAuth(),
+        pendingStore,
+        lockManager: memoryLockManager(),
+        privacyPass: {
+            count: 0,
+            async createSingleTokenRequest() {
+                const index = this.count++;
+                return {
+                    blindedRequest: `topup-blind-${index}`,
+                    serializedState: { index }
+                };
+            },
+            async finalizeToken(signed, state) {
+                return `topup-final-${state.index}-${signed}`;
+            }
+        },
+        ticketStore: {
+            getCount: () => wallet.length,
+            getTickets: () => wallet,
+            getArchiveTickets: () => [],
+            async init() {},
+            async addTickets(tickets, options) {
+                assert.equal(options.requireDurable, true);
+                wallet.push(...tickets);
+            }
+        },
+        fetchImpl: async (url, options = {}) => {
+            if (url.endsWith('/api/billing/status')) {
+                statusCalls += 1;
+                return response({
+                    premium_active: true,
+                    subscription: { status: 'active' },
+                    available_batches: 1,
+                    available_tickets: 300,
+                    next_claim_ticket_count: 300,
+                    ticket_pack: statusCalls === 1 ? {
+                        eligible: true,
+                        can_purchase: false,
+                        state: 'claimable',
+                        ticket_count: 50,
+                        claim_ref: claimRef
+                    } : {
+                        eligible: true,
+                        can_purchase: true,
+                        state: 'ready',
+                        ticket_count: 50,
+                        claim_ref: null
+                    },
+                    plan: {
+                        tickets_per_period: 300,
+                        ticket_pack: { tickets: 50, unit_amount: 700, currency: 'usd' }
+                    }
+                });
+            }
+            if (url.endsWith('/api/ticket/issue/public-key')) {
+                return response({ public_key: 'issuer-public-key' });
+            }
+            if (url.endsWith('/api/billing/tickets/claim')) {
+                claimBodies.push(JSON.parse(options.body));
+                return response({
+                    tickets_issued: 50,
+                    replayed: false,
+                    signed_responses: Array.from(
+                        { length: 50 },
+                        (_, index) => [index, `topup-signed-${index}`]
+                    )
+                });
+            }
+            throw new Error(`Unexpected request: ${url}`);
+        }
+    });
+
+    const result = await client.prepareOneBatch();
+
+    assert.equal(result.ticketsAdded, 50);
+    assert.equal(wallet.length, 50);
+    assert.equal(claimBodies.length, 1);
+    assert.equal(claimBodies[0].claim_ref, claimRef);
+    assert.equal(claimBodies[0].blinded_requests.length, 50);
+    for (const ticket of wallet) {
+        assert.deepEqual(Object.keys(ticket).sort(), [
+            'blinded_request', 'created_at', 'finalized_ticket', 'signed_response'
+        ]);
+    }
+    assert.equal(await pendingStore.get('demo:local-test-user'), null);
+    client.destroy();
+});
+
+test('a malformed top-up reference fails closed instead of claiming an older subscription allowance', async () => {
+    let generated = 0;
+    let claimCalled = false;
+    const client = new BillingClient({
+        authProvider: makeAuth(),
+        pendingStore: new MemoryPendingStore(),
+        lockManager: memoryLockManager(),
+        privacyPass: {
+            async createSingleTokenRequest() {
+                generated += 1;
+                throw new Error('must not generate');
+            }
+        },
+        ticketStore: { async init() {} },
+        fetchImpl: async url => {
+            if (url.endsWith('/api/billing/status')) {
+                return response({
+                    available_batches: 1,
+                    next_claim_ticket_count: 300,
+                    ticket_pack: {
+                        eligible: true,
+                        can_purchase: false,
+                        state: 'claimable',
+                        ticket_count: 50,
+                        claim_ref: 'malformed'
+                    },
+                    plan: {
+                        tickets_per_period: 300,
+                        ticket_pack: { tickets: 50, unit_amount: 700, currency: 'usd' }
+                    }
+                });
+            }
+            if (url.endsWith('/api/billing/tickets/claim')) claimCalled = true;
+            throw new Error(`Unexpected request: ${url}`);
+        }
+    });
+
+    await assert.rejects(
+        () => client.prepareOneBatch(),
+        error => error.code === 'BILLING_ALLOWANCE_INVALID'
+    );
+    assert.equal(generated, 0);
+    assert.equal(claimCalled, false);
+    client.destroy();
+});
+
+test('a refunded top-up clears unrecoverable local claim state after server rejection', async () => {
+    const claimRef = 'e'.repeat(64);
+    const pendingStore = new MemoryPendingStore();
+    let claimCalls = 0;
+    const client = new BillingClient({
+        baseUrl: 'http://127.0.0.1:8005',
+        authProvider: makeAuth(),
+        pendingStore,
+        lockManager: memoryLockManager(),
+        privacyPass: {
+            count: 0,
+            async createSingleTokenRequest() {
+                const index = this.count++;
+                return { blindedRequest: `blind-${index}`, serializedState: { index } };
+            }
+        },
+        ticketStore: {
+            async init() {},
+            getCount: () => 0,
+            getTickets: () => []
+        },
+        fetchImpl: async (url) => {
+            if (url.endsWith('/api/billing/status')) {
+                return response({
+                    available_batches: 0,
+                    ticket_pack: {
+                        eligible: true,
+                        can_purchase: false,
+                        state: 'claimable',
+                        ticket_count: 50,
+                        claim_ref: claimRef
+                    },
+                    plan: { tickets_per_period: 300, ticket_pack: { tickets: 50 } }
+                });
+            }
+            if (url.endsWith('/api/ticket/issue/public-key')) {
+                return response({ public_key: 'issuer-public-key' });
+            }
+            if (url.endsWith('/api/billing/tickets/claim')) {
+                claimCalls += 1;
+                return response({
+                    detail: {
+                        code: 'BILLING_NO_ENTITLEMENT',
+                        error: 'No paid ticket batch is available'
+                    }
+                }, false, 409);
+            }
+            throw new Error(`Unexpected request: ${url}`);
+        }
+    });
+
+    await assert.rejects(
+        () => client.prepareOneBatch(),
+        error => error.code === 'BILLING_NO_ENTITLEMENT'
+    );
+
+    assert.equal(claimCalls, 1);
+    assert.equal(await pendingStore.get('demo:local-test-user'), null);
+    assert.equal(client.progress, null);
+    client.destroy();
+});
+
 test('server-provided finalized tickets fail closed before wallet import', async () => {
     const pendingStore = new MemoryPendingStore();
     let imported = false;
@@ -541,7 +1046,20 @@ test('reload resumes finalization from the saved chunk without regenerating requ
         },
         fetchImpl: async url => {
             if (url.endsWith('/api/billing/status')) {
-                return response({ available_batches: 0, plan: { tickets_per_period: 300 } });
+                return response({
+                    available_batches: 0,
+                    ticket_pack: {
+                        eligible: true,
+                        can_purchase: false,
+                        state: 'claimable',
+                        ticket_count: 50,
+                        claim_ref: 'f'.repeat(64)
+                    },
+                    plan: {
+                        tickets_per_period: 300,
+                        ticket_pack: { tickets: 50, unit_amount: 700, currency: 'usd' }
+                    }
+                });
             }
             throw new Error(`Unexpected request during finalization resume: ${url}`);
         }

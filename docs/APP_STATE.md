@@ -4,6 +4,41 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-08-05: Premium $7 / 50-Ticket Top-Ups
+
+- The Premium modal renders the one-time pack only when both public
+  `plan.ticket_pack` exists and authenticated `status.ticket_pack.eligible` is
+  true. Price and count are server data; ineligible and signed-out users see no
+  pack copy or action.
+- Checkout recovery is now version 3:
+  `sessions[accountScope].subscription` and
+  `sessions[accountScope].topup` are independent. Version-2 and legacy records
+  migrate into the subscription slot. Reconciliation, clearing, frozen auth,
+  and account-switch abortion are scoped to both account and purchase kind.
+- A top-up claim is an explicit 50-ticket operation. Local IndexedDB recovery
+  adds `source: "topup"`, `claimRef`, and `targetCount: 50`; the claim request
+  sends that reference, while finalized wallet records retain the same four
+  ordinary ticket fields. The reference must never enter exports, shares,
+  redemptions, tickets, or logs.
+- If oa-org has committed a claim and reports the pack `ready` before local
+  wallet import finishes, the pending local record projects browser state back
+  to `claiming` and disables another purchase. That override is cleared only
+  after durable wallet write/read-back and archive-precedence verification.
+- Top-up and subscription work share the existing account-scoped Web Lock,
+  frozen authentication context, ten-ticket chunks, strict response allowlist,
+  and account-switch abort behavior. A claimable pack takes precedence over an
+  older implicit subscription entitlement, because only it has the explicit
+  `claim_ref`.
+- Stripe return values are distinct (`topup_success` / `topup_cancelled`). A
+  successful return prepares the pack automatically; cancellation discards only
+  the matching local recovery slot. If Stripe still reports that server-side
+  Checkout as open, `checkout_pending` offers a Continue action that safely
+  reuses it. Purchase fills the ordinary wallet and does not redeem a ticket or
+  alter issuer-key rotation.
+
+See [ACCOUNT_BILLING.md](ACCOUNT_BILLING.md) for the full contract and privacy
+boundary.
+
 ## 2026-07-31: Stripe Premium and Genuine Ticket Issuance
 
 - The sidebar has one adaptive entry: signed-out users see `Upgrade`; any local
