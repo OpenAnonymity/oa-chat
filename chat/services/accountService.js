@@ -24,17 +24,13 @@
 import { ORG_API_BASE } from '../config.js';
 import { chatDB } from '../db.js';
 import { generateRecoveryCode, isValidRecoveryCode, normalizeRecoveryCode } from './recoveryCode.js';
+import sessionService from './sessionService.js';
 import syncService from './syncService.js';
 
 const ACCOUNT_SETTINGS_KEY = 'account-settings';
 const ACCOUNT_MASTER_CRYPTO_KEY = 'account-master-crypto-key';
 const ACCOUNT_MASTER_KEY_BYTES = 'account-master-key-bytes';  // Raw bytes for sync HKDF
-const ACCOUNT_REFRESH_TOKEN_KEY = 'account-refresh-token';  // Electron-only: refresh token persistence
 const ACCOUNT_REQUEST_TIMEOUT_MS = 10000;
-
-// Platform detection for auth token handling
-// Check electronAPI.isElectron (context-isolated) or process.versions.electron (non-isolated)
-const PLATFORM = (typeof window !== 'undefined' && (window.electronAPI?.isElectron || window?.process?.versions?.electron)) ? 'electron' : 'web';
 
 // Argon2id parameters for recovery code KDF.
 // These values balance security vs. UX on mobile devices.
@@ -367,25 +363,26 @@ class TokenInvalidatedError extends Error {
     }
 }
 
-// Global callback for token invalidation - set by AccountService
-let onTokenInvalidated = null;
-
 /**
  * Fetch JSON from the auth API.
- * CSRF protection provided by SameSite=Strict cookie + WebAuthn challenge-response.
+ * SuperTokens adds cookie/header session state and performs one refresh/retry
+ * automatically when a protected request has an expired access token.
  */
 async function fetchJson(path, body, { timeoutMs = ACCOUNT_REQUEST_TIMEOUT_MS } = {}) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-    const response = await fetch(`${ORG_API_BASE}${path}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Client-Platform': PLATFORM },
-        credentials: 'include',
-        body: JSON.stringify(body || {}),
-        signal: controller.signal
-    });
-    clearTimeout(timeoutId);
+    let response;
+    try {
+        response = await sessionService.fetch(`${ORG_API_BASE}${path}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify(body || {}),
+            signal: controller.signal
+        });
+    } finally {
+        clearTimeout(timeoutId);
+    }
     let data = null;
     try {
         data = await response.json();
@@ -395,9 +392,6 @@ async function fetchJson(path, body, { timeoutMs = ACCOUNT_REQUEST_TIMEOUT_MS } 
     if (!response.ok) {
         // Detect token invalidation (e.g., after recovery on another device)
         if (response.status === 401 && data?.code === 'INVALID_TOKEN') {
-            if (onTokenInvalidated) {
-                onTokenInvalidated();
-            }
             throw new TokenInvalidatedError(data?.error || data?.message);
         }
         const message = data?.error || data?.message || response.statusText || 'Request failed';
@@ -429,7 +423,7 @@ class AccountService {
             action: null,
             error: null,
             status: 'none',
-            sessionVerified: false,  // True only after /refresh confirms session is valid
+            sessionVerified: false,  // True after SuperTokens confirms a current session
             passkeySupported: typeof window !== 'undefined' && !!window.PublicKeyCredential,
             prfSupported: null,
             rateLimited: false,
@@ -447,13 +441,11 @@ class AccountService {
         // Holds { accountId, masterKey, credential, prfBytes, recoveryCode } during creation
         this.pendingAccount = null;
 
-        // Session persistence: access token (memory) and CryptoKey (IndexedDB)
-        this.accessToken = null;
-        this.refreshToken = null;  // Electron-only: refresh token for Bearer auth
+        // The encryption key is persisted locally. Session tokens are owned by
+        // SuperTokens (HttpOnly cookies in web, isolated preload/main in Electron).
         this.cryptoKey = null;  // Non-extractable CryptoKey for encryption
 
-        // Set up global callback for token invalidation
-        onTokenInvalidated = () => this.handleTokenInvalidation();
+        sessionService.onSessionExpired(() => this.handleTokenInvalidation());
     }
 
     getState() {
@@ -547,13 +539,6 @@ class AccountService {
         return this.cryptoKey;
     }
 
-    /**
-     * Get the current access token for API authentication.
-     */
-    getAccessToken() {
-        return this.accessToken;
-    }
-
     // =========================================================================
     // Master Key Persistence (Non-Extractable CryptoKey in IndexedDB)
     // =========================================================================
@@ -629,63 +614,6 @@ class AccountService {
         this.cryptoKey = null;
     }
 
-    // =========================================================================
-    // Access Token Management
-    // =========================================================================
-
-    /**
-     * Refresh the access token using the refresh token.
-     * - Web: Uses HttpOnly cookie (sent automatically via credentials: include)
-     * - Electron: Uses Bearer token in Authorization header (no cookies)
-     * Called during init() to restore session, and when access token expires.
-     * @returns {Promise<boolean>} True if token was refreshed, false otherwise
-     */
-    async refreshAccessToken() {
-        try {
-            const headers = {
-                'Content-Type': 'application/json',
-                'X-Client-Platform': PLATFORM
-            };
-            
-            // Electron: send refresh token as Bearer (no cookie available)
-            if (PLATFORM === 'electron') {
-                if (!this.refreshToken) {
-                    return false;  // No refresh token to use
-                }
-                headers['Authorization'] = `Bearer ${this.refreshToken}`;
-            }
-            
-            const response = await fetch(`${ORG_API_BASE}/auth/refresh`, {
-                method: 'POST',
-                headers,
-                credentials: 'include'  // Still needed for web (harmless for Electron)
-            });
-            
-            if (!response.ok) {
-                this.accessToken = null;
-                return false;
-            }
-            
-            const data = await response.json();
-            if (data.accessToken) {
-                this.accessToken = data.accessToken;
-                return true;
-            }
-            return false;
-        } catch (error) {
-            console.warn('Failed to refresh access token:', error);
-            this.accessToken = null;
-            return false;
-        }
-    }
-
-    /**
-     * Clear the access token from memory.
-     */
-    clearAccessToken() {
-        this.accessToken = null;
-    }
-
     getFormattedAccountId() {
         return formatAccountId(this.state.accountId);
     }
@@ -721,6 +649,7 @@ class AccountService {
 
     async init() {
         if (this.state.isReady) return;
+        await sessionService.init();
         if (!chatDB) {
             this.setState({ isReady: true });
             return;
@@ -738,19 +667,14 @@ class AccountService {
             // Try to restore session from persisted CryptoKey
             const hasKey = await this.loadMasterKey();
             if (hasKey) {
-                // Electron: load refresh token from IndexedDB before attempting refresh
-                if (PLATFORM === 'electron') {
-                    this.refreshToken = await chatDB.getSetting(ACCOUNT_REFRESH_TOKEN_KEY).catch(() => null);
-                }
-                
                 // Mark ready immediately - UI can render, models can load
                 // Token refresh happens in background (non-blocking)
                 this.state.isReady = true;
                 this.updateStatus();
                 this.notify();
                 
-                // Refresh token in background (non-blocking) - don't await
-                this.refreshTokenInBackground();
+                // Verify/refresh the SuperTokens session in the background.
+                this.verifySessionInBackground();
                 return;
             }
             // No persisted key - will need passkey
@@ -761,27 +685,23 @@ class AccountService {
         this.notify();
     }
 
-    /**
-     * Refresh the access token in the background without blocking init.
-     * Called after session restoration when we have a persisted master key.
-     * Includes a small delay to prevent rate limiting on burst page refreshes.
-     */
-    async refreshTokenInBackground() {
+    /** Verify the persisted SuperTokens session without blocking app startup. */
+    async verifySessionInBackground() {
         try {
             // Small delay to prevent rate limiting on burst page refreshes
             await new Promise(resolve => setTimeout(resolve, 1000));
             
-            const tokenRefreshed = await this.refreshAccessToken().catch(() => false);
-            if (tokenRefreshed) {
+            const sessionVerified = await sessionService.verifySession().catch(() => false);
+            if (sessionVerified) {
                 // Session verified with server - now show logged-in state
                 this.state.sessionVerified = true;
                 this.notify();
                 // Initialize sync for restored session
                 this.initializeSync(false).catch(() => {});
             }
-            // If refresh failed, user can still work locally; re-auth on next API call
+            // If verification failed, local data remains usable until re-authentication.
         } catch (error) {
-            console.warn('[AccountService] Background token refresh failed:', error);
+            console.warn('[AccountService] Background session verification failed:', error);
         }
     }
 
@@ -953,7 +873,7 @@ class AccountService {
         const recoveryCodeHash = await computeRecoveryCodeHash(recoveryCode, accountId);
 
         // Register with server
-        const registerData = await fetchJson('/auth/register', {
+        await fetchJson('/auth/register', {
             accountId,
             credential: credentialToJSON(credential),
             wrappedKeyPasskey: wrappedPasskey,
@@ -969,16 +889,7 @@ class AccountService {
         this.state.recoveryConfirmed = true;  // User already confirmed before this step
         this.state.recoveryCode = null;
 
-        // Handle access token from response
-        if (registerData?.accessToken) {
-            this.accessToken = registerData.accessToken;
-            this.state.sessionVerified = true;
-        }
-        // Electron: capture and persist refresh token to IndexedDB
-        if (PLATFORM === 'electron' && registerData?.refreshToken) {
-            this.refreshToken = registerData.refreshToken;
-            await chatDB.saveSetting(ACCOUNT_REFRESH_TOKEN_KEY, registerData.refreshToken);
-        }
+        this.state.sessionVerified = await sessionService.doesSessionExist();
         
         // Persist master key as non-extractable CryptoKey for session restoration
         await this.persistMasterKey(masterKey);
@@ -1004,23 +915,13 @@ class AccountService {
         try {
             // Set credentials on sync service (avoids circular dependency)
             const masterKey = this.getMasterKey();
-            const accessToken = this.getAccessToken();
             
-            if (!masterKey || !accessToken) {
+            if (!masterKey || !this.state.sessionVerified) {
                 console.warn('[AccountService] Cannot initialize sync without credentials');
                 return;
             }
-            
-            // Provide refresh callback that syncService can call
-            const refreshCallback = async () => {
-                const success = await this.refreshAccessToken();
-                if (success) {
-                    return { accessToken: this.accessToken };
-                }
-                return null;
-            };
-            
-            syncService.setCredentials(masterKey, accessToken, refreshCallback);
+
+            syncService.setCredentials(masterKey);
             await syncService.init();
             
             // Sync is automatically enabled when credentials are set
@@ -1118,7 +1019,7 @@ class AccountService {
             // Compute recovery code hash for server verification
             const recoveryCodeHash = await computeRecoveryCodeHash(recoveryCode, accountId);
 
-            const registerData = await fetchJson('/auth/register', {
+            await fetchJson('/auth/register', {
                 accountId,
                 credential: credentialToJSON(credential),
                 wrappedKeyPasskey: wrappedPasskey,
@@ -1136,16 +1037,7 @@ class AccountService {
             this.state.action = null;
             this.state.error = null;
             
-            // Handle access token from response
-            if (registerData?.accessToken) {
-                this.accessToken = registerData.accessToken;
-                this.state.sessionVerified = true;
-            }
-            // Electron: capture and persist refresh token to IndexedDB
-            if (PLATFORM === 'electron' && registerData?.refreshToken) {
-                this.refreshToken = registerData.refreshToken;
-                await chatDB.saveSetting(ACCOUNT_REFRESH_TOKEN_KEY, registerData.refreshToken);
-            }
+            this.state.sessionVerified = await sessionService.doesSessionExist();
             
             // Persist master key as non-extractable CryptoKey for session restoration
             await this.persistMasterKey(masterKey);
@@ -1249,16 +1141,7 @@ class AccountService {
             this.state.error = null;
             this.state.recoveryRequired = false;
             
-            // Handle access token from response
-            if (loginData.accessToken) {
-                this.accessToken = loginData.accessToken;
-                this.state.sessionVerified = true;
-            }
-            // Electron: capture and persist refresh token to IndexedDB
-            if (PLATFORM === 'electron' && loginData.refreshToken) {
-                this.refreshToken = loginData.refreshToken;
-                await chatDB.saveSetting(ACCOUNT_REFRESH_TOKEN_KEY, loginData.refreshToken);
-            }
+            this.state.sessionVerified = await sessionService.doesSessionExist();
             
             // Persist master key as non-extractable CryptoKey for session restoration
             await this.persistMasterKey(masterKey);
@@ -1371,7 +1254,7 @@ class AccountService {
             );
 
             // 6. Complete recovery with new passkey
-            const completeData = await fetchJson('/auth/recovery/complete', {
+            await fetchJson('/auth/recovery/complete', {
                 accountId,
                 credential: credentialToJSON(credential),
                 wrappedKeyPasskey: wrappedPasskey
@@ -1388,16 +1271,7 @@ class AccountService {
             this.state.error = null;
             this.state.recoveryRequired = false;
             
-            // Handle access token from response
-            if (completeData?.accessToken) {
-                this.accessToken = completeData.accessToken;
-                this.state.sessionVerified = true;
-            }
-            // Electron: capture and persist refresh token to IndexedDB
-            if (PLATFORM === 'electron' && completeData?.refreshToken) {
-                this.refreshToken = completeData.refreshToken;
-                await chatDB.saveSetting(ACCOUNT_REFRESH_TOKEN_KEY, completeData.refreshToken);
-            }
+            this.state.sessionVerified = await sessionService.doesSessionExist();
             
             // Persist master key as non-extractable CryptoKey for session restoration
             await this.persistMasterKey(masterKey);
@@ -1429,17 +1303,18 @@ class AccountService {
     }
 
     /**
-     * Clear the master key from memory.
-     * We zero the buffer to reduce exposure window, though JS GC may retain copies.
-     * This is the best-effort approach available in browser environments.
-     */
-    /**
      * Handle token invalidation (e.g., after recovery on another device).
      * Clears all session data and forces re-authentication.
-     * Called automatically by fetchJson when 401 INVALID_TOKEN is detected.
+     * Called by the SuperTokens session event when refresh is expired/revoked.
      */
     async handleTokenInvalidation() {
         console.warn('[AccountService] Token invalidated - clearing session');
+
+        try {
+            await syncService.clearAll();
+        } catch (error) {
+            console.warn('[AccountService] Failed to stop sync after session expiry:', error);
+        }
         
         // Clear in-memory state
         if (this.masterKey) {
@@ -1447,13 +1322,7 @@ class AccountService {
         }
         this.masterKey = null;
         this.cryptoKey = null;
-        this.accessToken = null;
         this.state.sessionVerified = false;
-        // Electron: clear invalid refresh token
-        if (PLATFORM === 'electron') {
-            this.refreshToken = null;
-            await chatDB.deleteSetting(ACCOUNT_REFRESH_TOKEN_KEY).catch(() => {});
-        }
         
         // Clear persisted CryptoKey from IndexedDB
         await this.clearPersistedMasterKey();
@@ -1473,8 +1342,9 @@ class AccountService {
         }
         this.masterKey = null;
         this.cryptoKey = null;  // Clear from memory (IndexedDB copy remains for re-unlock)
-        this.accessToken = null;
         this.state.sessionVerified = false;
+        syncService.clearCredentials();
+        syncService.stopPeriodicSync();
         this.updateStatus();
         this.notify();
     }
@@ -1483,10 +1353,18 @@ class AccountService {
      * Full logout - clears all session data and notifies server.
      * This is different from lock() in that it:
      * - Clears the persisted CryptoKey from IndexedDB
-     * - Invalidates the refresh token on the server
+     * - Revokes the SuperTokens session on the server
      * - Requires full passkey re-authentication to log back in
      */
     async logout() {
+        // Revoke the server session while its refresh token is still available.
+        try {
+            await sessionService.signOut();
+        } catch (error) {
+            // Local logout must still complete if the org is unavailable.
+            console.warn('Server logout failed:', error);
+        }
+
         // Stop sync and clear sync data
         try {
             await syncService.clearAll();
@@ -1500,31 +1378,10 @@ class AccountService {
         }
         this.masterKey = null;
         this.cryptoKey = null;
-        this.accessToken = null;
         this.state.sessionVerified = false;
-        // Electron: clear persisted refresh token
-        if (PLATFORM === 'electron') {
-            this.refreshToken = null;
-            await chatDB.deleteSetting(ACCOUNT_REFRESH_TOKEN_KEY).catch(() => {});
-        }
         
         // Clear persisted CryptoKey from IndexedDB
         await this.clearPersistedMasterKey();
-        
-        // Notify server to invalidate refresh token
-        try {
-            await fetch(`${ORG_API_BASE}/auth/logout`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Client-Platform': PLATFORM
-                },
-                credentials: 'include'  // Sends HttpOnly cookie to be invalidated
-            });
-        } catch (error) {
-            // Server logout failure shouldn't prevent local logout
-            console.warn('Server logout failed:', error);
-        }
         
         this.updateStatus();
         this.notify();

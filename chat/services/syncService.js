@@ -15,6 +15,7 @@
 import { ORG_API_BASE } from '../config.js';
 import { chatDB } from '../db.js';
 import { fetchRetry } from './fetchRetry.js';
+import sessionService from './sessionService.js';
 
 const SYNC_LOCK_NAME = 'oa-sync';
 const SYNC_SALT = 'oa-sync-v1';
@@ -159,10 +160,8 @@ class SyncService {
         this.listeners = new Set();
         this.syncTimer = null;
         
-        // Credentials (set by accountService)
+        // The master key enables encryption. SuperTokens owns session state.
         this.masterKey = null;
-        this.accessToken = null;
-        this.refreshTokenCallback = null;
 
         // Cache: opaque ID -> logical ID mapping (computed on init)
         this.idMapping = null;
@@ -173,21 +172,13 @@ class SyncService {
         this.lastSyncResult = null;
     }
 
-    setCredentials(masterKey, accessToken, refreshCallback) {
+    setCredentials(masterKey) {
         this.masterKey = masterKey;
-        this.accessToken = accessToken;
-        this.refreshTokenCallback = refreshCallback;
         this.idMapping = null; // Reset mapping when credentials change
-    }
-
-    updateAccessToken(accessToken) {
-        this.accessToken = accessToken;
     }
 
     clearCredentials() {
         this.masterKey = null;
-        this.accessToken = null;
-        this.refreshTokenCallback = null;
         this.idMapping = null;
     }
 
@@ -228,7 +219,7 @@ class SyncService {
      * No separate flag needed.
      */
     isEnabled() {
-        return !!(this.masterKey && this.accessToken);
+        return !!this.masterKey;
     }
 
     /**
@@ -272,12 +263,11 @@ class SyncService {
         }
 
         try {
-            const response = await fetch(
+            const response = await sessionService.fetch(
                 `${ORG_API_BASE}/auth/sync/status`,
                 {
                     method: 'GET',
                     headers: {
-                        'Authorization': `Bearer ${this.accessToken}`,
                         'Content-Type': 'application/json'
                     },
                     credentials: 'include'
@@ -340,10 +330,6 @@ class SyncService {
         return this.masterKey;
     }
 
-    getAccessToken() {
-        return this.accessToken;
-    }
-
     getPreferenceTimestampKey(key) {
         return `${SYNC_PREF_UPDATED_AT_PREFIX}${key}`;
     }
@@ -356,27 +342,14 @@ class SyncService {
         return Math.floor(timestamp);
     }
 
-    async refreshAccessToken() {
-        if (!this.refreshTokenCallback) return false;
-        try {
-            const result = await this.refreshTokenCallback();
-            if (result?.accessToken) {
-                this.accessToken = result.accessToken;
-                return true;
-            }
-        } catch (error) {
-            console.warn('[SyncService] Token refresh failed:', error);
-        }
-        return false;
-    }
-
     async fetchWithRetry(url, options, context = 'Sync') {
-        // Use shared retry utility with native fetch (default)
-        // Sync operations are idempotent (version-based) - safe to retry
+        // SuperTokens performs access-token refresh/retry. This outer retry is
+        // only for transient network/server failures; sync is version-idempotent.
         return fetchRetry(url, options, {
             context,
             maxAttempts: 3,
-            timeoutMs: 30000
+            timeoutMs: 30000,
+            fetchFn: sessionService.fetch.bind(sessionService)
         });
     }
 
@@ -394,32 +367,27 @@ class SyncService {
             return { success: false, error: 'Account not unlocked' };
         }
 
-        const accessToken = this.getAccessToken();
-        if (!accessToken) {
-            return { success: false, error: 'No access token' };
-        }
-
         // Set syncing state immediately for UI feedback
         this.syncInProgress = true;
         this.notify('sync_start');
 
         if (navigator.locks) {
             return navigator.locks.request(SYNC_LOCK_NAME, { mode: 'exclusive' },
-                () => this._doSync(masterKey, accessToken)
+                () => this._doSync(masterKey)
             );
         }
 
-        return this._doSync(masterKey, accessToken);
+        return this._doSync(masterKey);
     }
 
-    async _doSync(masterKey, accessToken) {
+    async _doSync(masterKey) {
 
         try {
             // Build ID mapping first
             await this._buildIdMapping(masterKey);
 
-            const pullResult = await this._pull(masterKey, accessToken);
-            const pushResult = await this._push(masterKey, accessToken);
+            const pullResult = await this._pull(masterKey);
+            const pushResult = await this._push(masterKey);
 
             const result = {
                 success: true,
@@ -444,7 +412,7 @@ class SyncService {
         }
     }
 
-    async _pull(masterKey, accessToken) {
+    async _pull(masterKey) {
         const lastSync = await chatDB.getSetting(SYNC_LAST_TIME_KEY) || 0;
 
         const response = await this.fetchWithRetry(
@@ -452,7 +420,6 @@ class SyncService {
             {
                 method: 'GET',
                 headers: {
-                    'Authorization': `Bearer ${accessToken}`,
                     'Content-Type': 'application/json'
                 },
                 credentials: 'include'
@@ -461,11 +428,6 @@ class SyncService {
         );
 
         if (!response.ok) {
-            if (response.status === 401) {
-                const refreshed = await this.refreshAccessToken();
-                if (!refreshed) throw new Error('Authentication failed');
-                return this._pull(masterKey, this.getAccessToken());
-            }
             throw new Error(`Pull failed: ${response.status}`);
         }
 
@@ -612,7 +574,7 @@ class SyncService {
         return true;
     }
 
-    async _push(masterKey, accessToken) {
+    async _push(masterKey) {
         const blobs = await this._collectLocalBlobs(masterKey);
         if (blobs.length === 0) {
             return { count: 0 };
@@ -623,7 +585,6 @@ class SyncService {
             {
                 method: 'POST',
                 headers: {
-                    'Authorization': `Bearer ${accessToken}`,
                     'Content-Type': 'application/json'
                 },
                 credentials: 'include',
@@ -633,11 +594,6 @@ class SyncService {
         );
 
         if (!response.ok) {
-            if (response.status === 401) {
-                const refreshed = await this.refreshAccessToken();
-                if (!refreshed) throw new Error('Authentication failed');
-                return this._push(masterKey, this.getAccessToken());
-            }
             throw new Error(`Push failed: ${response.status}`);
         }
 

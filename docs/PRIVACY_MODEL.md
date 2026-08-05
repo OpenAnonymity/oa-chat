@@ -81,6 +81,13 @@ decorrelation between bulk purchase and individual per-session redemption. Even
 if such a side-channel were somehow exploited, no OA system sees prompts or
 responses -- the user's queries remain unlinkable and anonymous regardless.
 
+The browser's account-session SDK is deliberately scoped to the org `/auth`
+path. Both its interceptor and the app's account-fetch wrapper reject other
+paths, while direct org requests outside `/auth` omit browser credentials. This
+prevents an account cookie from accompanying finalized tickets at redemption,
+which would otherwise defeat issuance-to-redemption unlinkability regardless of
+the blind-signature cryptography.
+
 ### 3. Inference (direct to provider)
 
 See blog post [Section 2: Secure Inference Proxies](https://openanonymity.ai/blog/unlinkable-inference/#2-secure-inference-proxies)
@@ -117,6 +124,13 @@ because the key was issued through blind signatures with no user identity attach
 | **Verifier** | API key hash (transient), station signatures, broadcast status | No | Raw key used transiently and immediately hashed. Key carries no user identity (blind signatures). |
 | **Inference provider** | API key + inference content (prompts/responses) | No | Key is ephemeral and anonymous. No user identity binding. Even a malicious provider cannot link prompts to a user or across sessions. |
 | **User** | Everything (their own tickets, keys, prompts, responses) | N/A | The user is the only party who can link all steps together. |
+
+SuperTokens is an account-session subsystem inside the org trust boundary. Its
+Core sees the OA account ID, session handles, and authentication timing needed
+for refresh/revocation. It receives no prompts, responses, finalized inference
+keys, or blinding secrets. Replacing OA's hand-rolled refresh tokens with this
+subsystem therefore does not add an identity-to-inference linkage: ticket
+blinding remains client-side and inference remains direct to the provider.
 
 
 ## What If Any OA Component Is Malicious?
@@ -280,4 +294,3 @@ inference requests?** For the formal threat model and collusion analysis, see bl
 | "The org could serve per-user public keys to break unlinkability."           | Detectable. The public key endpoint is publicly accessible and unauthenticated. Any user or third party can call it at any time to record and compare keys. Since verification calls are independent and unpredictable, the org cannot serve per-user keys without detection. A single inconsistency reported by any observer exposes the attack. Future: automated transparency log. |
 | "OpenRouter could perform traffic analysis on ephemeral keys to deanonymize users." | False. Each session uses a different ephemeral key with no user identity binding. There is no persistent pseudonym across sessions for the provider to build a longitudinal profile against. Content-based correlation has only plausible deniability -- the provider cannot distinguish Alice sending prompt X from Bob sending the same prompt. This is the cross-unlinkability guarantee (see blog post [Section 3.1.1](https://openanonymity.ai/blog/unlinkable-inference/#311-adversarial-inference-provider)). |
 | "Toggle/ownership verification means trusting OpenRouter, violating zero trust to the OA system components." | False. Toggle and ownership checks enforce accountability on the *station's* provider account -- they are not about trusting the OA system. If OpenRouter lies about its own API state, it undermines itself, not OA. Regardless, user prompts remain unlinkable because blind signatures and ephemeral keys carry no user identity. |
-

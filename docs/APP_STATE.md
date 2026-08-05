@@ -25,6 +25,18 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
+- 2026-08-04: Account session refresh is owned by SuperTokens. See
+  [Account Sessions](ACCOUNT_SESSIONS.md). Browser requests use HttpOnly cookie
+  mode; Electron renderer requests use the same `sessionService` API but run the
+  SDK in the isolated desktop preload with header-mode tokens encrypted by the
+  main process. Keep access/refresh tokens out of OA response bodies,
+  IndexedDB/localStorage, renderer APIs, and hand-written `Authorization`
+  headers. `syncService` retains only the client-side master key and relies on
+  the SDK's automatic refresh/retry. Keep both the SDK interception override and
+  `sessionService.fetch(...)` restricted to the org `/auth` path; widening that
+  boundary can attach identity-linked account cookies to unlinkable ticket
+  redemption or other privacy-sensitive org traffic.
+
 - 2026-07-31: OpenRouter catalog labels for Anthropic models are normalized to
   include the `Anthropic:` prefix when upstream omits it. Already-prefixed names
   remain unchanged.
