@@ -30,11 +30,20 @@ reading code alone.
   older implicit subscription entitlement, because only it has the explicit
   `claim_ref`.
 - Stripe return values are distinct (`topup_success` / `topup_cancelled`). A
-  successful return prepares the pack automatically; cancellation discards only
-  the matching local recovery slot. If Stripe still reports that server-side
-  Checkout as open, `checkout_pending` offers a Continue action that safely
-  reuses it. Purchase fills the ordinary wallet and does not redeem a ticket or
-  alter issuer-key rotation.
+  successful return prepares the pack automatically. A canceled return uses the
+  session ID saved by that specific tab in `sessionStorage`; it never guesses
+  from the durable account slot, so an old tab cannot cancel a newer Checkout.
+- `checkout_pending` now offers both **Continue ticket-pack Checkout** and
+  **Cancel Checkout**. Explicit cancellation expires the matching Stripe
+  session immediately. Tab close, reload, crash, and connectivity loss preserve
+  recovery; Stripe expires an unpaid pack after 30 minutes and status then
+  clears stale durable Checkout state. Completed asynchronous payments remain
+  pending, and payment winning a cancellation race proceeds to normal 50-ticket
+  preparation.
+- Checkout recovery and durable IndexedDB claim/import recovery remain separate.
+  No unload/beacon/tab-close cancellation exists, and the tab-scoped session ID
+  never enters sync, exports, wallet state, tickets, or logs. Purchase fills the
+  ordinary wallet and does not redeem a ticket or alter issuer-key rotation.
 
 See [ACCOUNT_BILLING.md](ACCOUNT_BILLING.md) for the full contract and privacy
 boundary.

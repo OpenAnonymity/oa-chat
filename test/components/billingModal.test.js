@@ -36,7 +36,7 @@ test('billing modal maps failures to privacy-safe copy instead of displaying raw
     );
 });
 
-function renderBilling(snapshot) {
+function renderBilling(snapshot, busy = null) {
     const modal = Object.create(BillingModal.prototype);
     modal.isOpen = true;
     modal.overlay = {
@@ -44,8 +44,9 @@ function renderBilling(snapshot) {
         querySelector() { return null; }
     };
     modal.snapshot = snapshot;
-    modal.busy = null;
+    modal.busy = busy;
     modal.error = null;
+    modal.notice = null;
     modal.escape = value => String(value ?? '');
     modal.render();
     return modal.overlay.innerHTML;
@@ -114,12 +115,115 @@ test('pending or claimable ticket packs replace the purchase control', () => {
 
     const checkoutPending = renderBilling({ plan, status: status('checkout_pending') });
     assert.match(checkoutPending, /id="billing-topup-btn"/);
+    assert.match(checkoutPending, /id="billing-topup-cancel-btn"/);
     assert.match(checkoutPending, /Continue ticket-pack Checkout/);
+    assert.match(checkoutPending, /Cancel Checkout/);
     assert.match(checkoutPending, /waiting for payment or confirmation/);
+
+    const cancelling = renderBilling({ plan, status: status('checkout_pending') }, 'topup-cancel');
+    assert.match(cancelling, /Cancelling…/);
+    assert.match(cancelling, /id="billing-topup-btn"[^>]*disabled/);
+    assert.match(cancelling, /id="billing-topup-cancel-btn"[^>]*disabled/);
 
     const claimable = renderBilling({ plan, status: status('claimable') });
     assert.equal(claimable.includes('id="billing-topup-btn"'), false);
     assert.match(claimable, /billing-topup-prepare-btn/);
+});
+
+test('Stripe cancel return uses only the tab-scoped ticket-pack session', async () => {
+    const originalWindow = globalThis.window;
+    let cancelledSession = null;
+    let clearedReturn = false;
+    let clearedParams = false;
+    globalThis.window = { location: { search: '?billing=topup_cancelled' } };
+    const modal = Object.create(BillingModal.prototype);
+    modal.billing = {
+        getTopupReturnSession() { return { sessionId: 'cs_test_from_this_tab' }; },
+        async cancelTicketPackCheckout(sessionId) {
+            cancelledSession = sessionId;
+            return { outcome: 'cancelled', status: { ticket_pack: { state: 'ready' } } };
+        },
+        clearTopupReturnSession() { clearedReturn = true; }
+    };
+    modal.app = { showToast() {} };
+    modal.open = () => { modal.isOpen = true; };
+    modal.render = () => {};
+    modal.clearReturnParams = () => { clearedParams = true; };
+    modal.startPreparation = () => {};
+    modal.error = null;
+    modal.notice = null;
+    modal.busy = null;
+
+    try {
+        await modal.handleBillingReturn();
+        assert.equal(cancelledSession, 'cs_test_from_this_tab');
+        assert.equal(clearedReturn, true);
+        assert.equal(clearedParams, true);
+    } finally {
+        globalThis.window = originalWindow;
+    }
+});
+
+test('Stripe cancel return without tab identity does not guess the durable session', async () => {
+    const originalWindow = globalThis.window;
+    let cancellationCalled = false;
+    globalThis.window = { location: { search: '?billing=topup_cancelled' } };
+    const modal = Object.create(BillingModal.prototype);
+    modal.billing = {
+        getTopupReturnSession() { return null; },
+        async cancelTicketPackCheckout() { cancellationCalled = true; },
+        clearTopupReturnSession() {}
+    };
+    modal.app = {};
+    modal.open = () => { modal.isOpen = true; };
+    modal.render = () => {};
+    modal.clearReturnParams = () => {};
+    modal.error = null;
+    modal.notice = null;
+    modal.busy = null;
+
+    try {
+        await modal.handleBillingReturn();
+        assert.equal(cancellationCalled, false);
+        assert.match(modal.notice, /Continue it or cancel it here/);
+    } finally {
+        globalThis.window = originalWindow;
+    }
+});
+
+test('expired top-up success return does not toast or prepare tickets', async () => {
+    const originalWindow = globalThis.window;
+    let toastCalled = false;
+    let preparationCalled = false;
+    let clearedParams = false;
+    globalThis.window = {
+        location: {
+            search: '?billing=topup_success&session_id=cs_test_expired_return'
+        }
+    };
+    const modal = Object.create(BillingModal.prototype);
+    modal.billing = {
+        async reconcileCheckout() { return null; },
+        clearTopupReturnSession() {}
+    };
+    modal.app = { showToast() { toastCalled = true; } };
+    modal.open = () => { modal.isOpen = true; };
+    modal.render = () => {};
+    modal.clearReturnParams = () => { clearedParams = true; };
+    modal.startPreparation = () => { preparationCalled = true; };
+    modal.error = null;
+    modal.notice = null;
+    modal.busy = null;
+
+    try {
+        await modal.handleBillingReturn();
+        assert.equal(toastCalled, false);
+        assert.equal(preparationCalled, false);
+        assert.equal(clearedParams, true);
+        assert.match(modal.notice, /expired before payment was confirmed/);
+    } finally {
+        globalThis.window = originalWindow;
+    }
 });
 
 test('adaptive sidebar label follows account presence without requiring a paid subscription', () => {

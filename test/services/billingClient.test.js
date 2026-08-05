@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { BillingClient, isLoopbackHostname } from '../../chat/services/billingClient.js';
+import {
+    BILLING_TOPUP_RETURN_SESSION_KEY,
+    BillingClient,
+    isLoopbackHostname
+} from '../../chat/services/billingClient.js';
 import { BILLING_CHECKOUT_STORAGE_KEY } from '../../chat/services/billingState.js';
 
 class MemoryPendingStore {
@@ -158,6 +162,7 @@ test('Checkout recovery migrates version 2 records as subscription sessions', ()
 
 test('ticket-pack Checkout uses its dedicated endpoint and recovery kind', async () => {
     const storage = memoryStorage();
+    const sessionStorage = memoryStorage();
     const pendingStore = new MemoryPendingStore();
     const calls = [];
     let redirected = '';
@@ -172,6 +177,7 @@ test('ticket-pack Checkout uses its dedicated endpoint and recovery kind', async
         authProvider: makeAuth('account:alpha'),
         pendingStore,
         storage,
+        sessionStorage,
         fetchImpl: async (url, options) => {
             calls.push({ url, options });
             return response({
@@ -189,11 +195,264 @@ test('ticket-pack Checkout uses its dedicated endpoint and recovery kind', async
         });
         assert.equal(client.getCheckoutSession('account:alpha', 'topup').sessionId, 'cs_test_topup');
         assert.equal(client.getCheckoutSession('account:alpha', 'subscription'), null);
+        assert.equal(
+            JSON.parse(sessionStorage.getItem(BILLING_TOPUP_RETURN_SESSION_KEY)).sessionId,
+            'cs_test_topup'
+        );
         assert.equal(redirected, 'https://checkout.stripe.test/topup');
     } finally {
         client.destroy();
         globalThis.window = originalWindow;
     }
+});
+
+test('ticket-pack cancellation posts only the session and clears only terminal top-up recovery', async () => {
+    const storage = memoryStorage();
+    const sessionStorage = memoryStorage();
+    const calls = [];
+    const client = new BillingClient({
+        authProvider: makeAuth('account:alpha'),
+        pendingStore: new MemoryPendingStore(),
+        storage,
+        sessionStorage,
+        fetchImpl: async (url, options) => {
+            calls.push({ url, options });
+            return response({
+                outcome: 'cancelled',
+                status: {
+                    ticket_pack: { eligible: true, can_purchase: true, state: 'ready' }
+                }
+            });
+        }
+    });
+    client.saveCheckoutSession('cs_test_subscription', 'account:alpha', 'subscription');
+    client.saveCheckoutSession('cs_test_topup', 'account:alpha', 'topup');
+    client.saveTopupReturnSession('cs_test_topup');
+
+    const result = await client.cancelTicketPackCheckout('cs_test_topup');
+
+    assert.equal(result.outcome, 'cancelled');
+    assert.ok(calls[0].url.endsWith('/api/billing/topups/checkout/cancel'));
+    assert.deepEqual(JSON.parse(calls[0].options.body), { session_id: 'cs_test_topup' });
+    assert.equal(client.getCheckoutSession('account:alpha', 'topup'), null);
+    assert.equal(
+        client.getCheckoutSession('account:alpha', 'subscription').sessionId,
+        'cs_test_subscription'
+    );
+    assert.equal(sessionStorage.getItem(BILLING_TOPUP_RETURN_SESSION_KEY), null);
+    client.destroy();
+});
+
+test('a stale cancellation response cannot clear a newer top-up Checkout', async () => {
+    const storage = memoryStorage();
+    const sessionStorage = memoryStorage();
+    let releaseCancellation;
+    const cancellationGate = new Promise(resolve => { releaseCancellation = resolve; });
+    const client = new BillingClient({
+        authProvider: makeAuth('account:alpha'),
+        pendingStore: new MemoryPendingStore(),
+        storage,
+        sessionStorage,
+        fetchImpl: async () => {
+            await cancellationGate;
+            return response({
+                outcome: 'cancelled',
+                status: { ticket_pack: { eligible: true, state: 'ready' } }
+            });
+        }
+    });
+    client.saveCheckoutSession('cs_test_old', 'account:alpha', 'topup');
+    client.saveTopupReturnSession('cs_test_old');
+
+    const cancelling = client.cancelTicketPackCheckout('cs_test_old');
+    await new Promise(resolve => setTimeout(resolve, 0));
+    client.saveCheckoutSession('cs_test_new', 'account:alpha', 'topup');
+    client.saveTopupReturnSession('cs_test_new');
+    releaseCancellation();
+    await cancelling;
+
+    assert.equal(client.getCheckoutSession('account:alpha', 'topup').sessionId, 'cs_test_new');
+    assert.equal(client.getTopupReturnSession().sessionId, 'cs_test_new');
+    client.destroy();
+});
+
+test('claimable status converts an idempotent cancellation into payment confirmation', async () => {
+    const client = new BillingClient({
+        authProvider: makeAuth('account:alpha'),
+        pendingStore: new MemoryPendingStore(),
+        storage: memoryStorage(),
+        fetchImpl: async () => response({
+            outcome: 'cancelled',
+            status: { ticket_pack: { eligible: true, state: 'claimable' } }
+        })
+    });
+    client.saveCheckoutSession('cs_test_paid_race', 'account:alpha', 'topup');
+
+    const result = await client.cancelTicketPackCheckout('cs_test_paid_race');
+
+    assert.equal(result.outcome, 'payment_confirmed');
+    assert.equal(client.getCheckoutSession('account:alpha', 'topup'), null);
+    client.destroy();
+});
+
+test('payment-pending cancellation and request failure preserve top-up recovery', async () => {
+    const storage = memoryStorage();
+    let fail = false;
+    const client = new BillingClient({
+        authProvider: makeAuth('account:alpha'),
+        pendingStore: new MemoryPendingStore(),
+        storage,
+        fetchImpl: async () => fail
+            ? response({ detail: { code: 'BILLING_UNAVAILABLE' } }, false, 503)
+            : response({
+                outcome: 'payment_pending',
+                status: { ticket_pack: { eligible: true, state: 'checkout_pending' } }
+            })
+    });
+    client.saveCheckoutSession('cs_test_pending', 'account:alpha', 'topup');
+
+    const pending = await client.cancelTicketPackCheckout('cs_test_pending');
+    assert.equal(pending.outcome, 'payment_pending');
+    assert.equal(client.getCheckoutSession('account:alpha', 'topup').sessionId, 'cs_test_pending');
+
+    fail = true;
+    await assert.rejects(
+        () => client.cancelTicketPackCheckout('cs_test_pending'),
+        error => error.code === 'BILLING_UNAVAILABLE'
+    );
+    assert.equal(client.getCheckoutSession('account:alpha', 'topup').sessionId, 'cs_test_pending');
+    client.destroy();
+});
+
+test('account switching aborts cancellation before local recovery can be cleared', async () => {
+    let currentScope = 'account:alpha';
+    let releaseRequest;
+    const requestGate = new Promise(resolve => { releaseRequest = resolve; });
+    const auth = {
+        async resolve() {
+            const scope = currentScope;
+            return { scope, headers: { Authorization: `Bearer ${scope}` }, mode: 'account' };
+        },
+        getKnownScope() { return currentScope; },
+        subscribe() { return () => {}; }
+    };
+    const client = new BillingClient({
+        authProvider: auth,
+        pendingStore: new MemoryPendingStore(),
+        storage: memoryStorage(),
+        fetchImpl: async () => {
+            await requestGate;
+            return response({
+                outcome: 'cancelled',
+                status: { ticket_pack: { state: 'ready' } }
+            });
+        }
+    });
+    client.saveCheckoutSession('cs_test_alpha', 'account:alpha', 'topup');
+
+    const cancellation = client.cancelTicketPackCheckout('cs_test_alpha');
+    await new Promise(resolve => setTimeout(resolve, 0));
+    currentScope = 'account:beta';
+    client.handleIdentityChange({ accountId: 'beta' });
+    releaseRequest();
+
+    await assert.rejects(cancellation, error => error?.name === 'AbortError');
+    assert.equal(client.getCheckoutSession('account:alpha', 'topup').sessionId, 'cs_test_alpha');
+    client.destroy();
+});
+
+test('server ready status clears expired Checkout recovery but preserves a pending top-up import', async () => {
+    const storage = memoryStorage();
+    const pendingStore = new MemoryPendingStore();
+    const client = new BillingClient({
+        authProvider: makeAuth('account:alpha'),
+        pendingStore,
+        storage,
+        fetchImpl: async () => response({
+            ticket_pack: { eligible: true, can_purchase: true, state: 'ready', ticket_count: 50 },
+            plan: { ticket_pack: { tickets: 50 } }
+        })
+    });
+    client.saveCheckoutSession('cs_test_expired', 'account:alpha', 'topup');
+
+    await client.getStatus({ force: true });
+    assert.equal(client.getCheckoutSession('account:alpha', 'topup'), null);
+
+    client.saveCheckoutSession('cs_test_claim', 'account:alpha', 'topup');
+    await pendingStore.put({
+        accountScope: 'account:alpha',
+        source: 'topup',
+        claimRef: 'a'.repeat(64),
+        targetCount: 50
+    });
+    const status = await client.getStatus({ force: true });
+    assert.equal(status.ticket_pack.state, 'claiming');
+    assert.equal(client.getCheckoutSession('account:alpha', 'topup').sessionId, 'cs_test_claim');
+    assert.ok(await pendingStore.get('account:alpha'));
+    client.destroy();
+});
+
+test('a stale ready status response cannot clear a newer top-up Checkout', async () => {
+    let releaseStatus;
+    const statusGate = new Promise(resolve => { releaseStatus = resolve; });
+    const client = new BillingClient({
+        authProvider: makeAuth('account:alpha'),
+        pendingStore: new MemoryPendingStore(),
+        storage: memoryStorage(),
+        fetchImpl: async () => {
+            await statusGate;
+            return response({
+                ticket_pack: { eligible: true, can_purchase: true, state: 'ready' },
+                plan: { ticket_pack: { tickets: 50 } }
+            });
+        }
+    });
+    client.saveCheckoutSession('cs_test_old', 'account:alpha', 'topup');
+
+    const loading = client.getStatus({ force: true });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    client.saveCheckoutSession('cs_test_new', 'account:alpha', 'topup');
+    releaseStatus();
+    await loading;
+
+    assert.equal(client.getCheckoutSession('account:alpha', 'topup').sessionId, 'cs_test_new');
+    client.destroy();
+});
+
+test('terminal ineligible status clears only the matching disabled-feature recovery', async () => {
+    const client = new BillingClient({
+        authProvider: makeAuth('account:alpha'),
+        pendingStore: new MemoryPendingStore(),
+        storage: memoryStorage(),
+        fetchImpl: async () => response({
+            ticket_pack: { eligible: false, can_purchase: false, state: 'ineligible' },
+            plan: { ticket_pack: null }
+        })
+    });
+    client.saveCheckoutSession('cs_test_disabled', 'account:alpha', 'topup');
+
+    await client.getStatus({ force: true });
+
+    assert.equal(client.getCheckoutSession('account:alpha', 'topup'), null);
+    client.destroy();
+});
+
+test('a pending-claim storage failure cannot clear Checkout recovery', async () => {
+    const client = new BillingClient({
+        authProvider: makeAuth('account:alpha'),
+        pendingStore: { async get() { throw new Error('IndexedDB unavailable'); } },
+        storage: memoryStorage(),
+        fetchImpl: async () => response({
+            ticket_pack: { eligible: true, can_purchase: true, state: 'ready' },
+            plan: { ticket_pack: { tickets: 50 } }
+        })
+    });
+    client.saveCheckoutSession('cs_test_preserved', 'account:alpha', 'topup');
+
+    await client.getStatus({ force: true });
+
+    assert.equal(client.getCheckoutSession('account:alpha', 'topup').sessionId, 'cs_test_preserved');
+    client.destroy();
 });
 
 test('a local unimported top-up blocks another browser purchase', async () => {
@@ -375,6 +634,42 @@ test('a failed subscription recovery does not block saved top-up recovery', asyn
     assert.equal(calls.some(url => url.endsWith('/api/billing/checkout/complete')), true);
     assert.equal(calls.some(url => url.endsWith('/api/billing/topups/checkout/complete')), true);
     assert.equal(client.getCheckoutSession(scope, 'subscription').sessionId, 'cs_test_subscription');
+    assert.equal(client.getCheckoutSession(scope, 'topup'), null);
+    client.destroy();
+});
+
+test('expired top-up recovery stops after terminal ready status without completing', async () => {
+    const storage = memoryStorage();
+    const scope = 'account:alpha';
+    const calls = [];
+    const client = new BillingClient({
+        authProvider: makeAuth(scope),
+        pendingStore: new MemoryPendingStore(),
+        storage,
+        fetchImpl: async url => {
+            calls.push(url);
+            return response({
+                ticket_pack: {
+                    eligible: true,
+                    can_purchase: true,
+                    state: 'ready',
+                    ticket_count: 50
+                },
+                plan: { ticket_pack: { tickets: 50 } }
+            });
+        }
+    });
+    client.saveCheckoutSession('cs_test_expired_return', scope, 'topup');
+
+    const result = await client.reconcileCheckout('cs_test_expired_return', {
+        kind: 'topup',
+        pollMs: 1,
+        timeoutMs: 5
+    });
+
+    assert.equal(result, null);
+    assert.equal(calls.length, 1);
+    assert.ok(calls[0].endsWith('/api/billing/status'));
     assert.equal(client.getCheckoutSession(scope, 'topup'), null);
     client.destroy();
 });

@@ -97,9 +97,33 @@ subscription sessions. Multiple account scopes retain separate recovery records.
 Polling uses one frozen identity and is aborted on account switch, so a response
 for one account cannot replace displayed status or clear another account's or
 purchase kind's Checkout recovery. A failed subscription recovery does not block
-the independent top-up recovery slot. If a canceled pack Checkout remains open
-at Stripe, the pending state offers **Continue ticket-pack Checkout** and the
-backend reuses the same session.
+the independent top-up recovery slot.
+
+A top-up Checkout remains recoverable after reload, tab closure, crash, or lost
+connectivity. While it is pending, the modal shows **Continue ticket-pack
+Checkout** and **Cancel Checkout**. Continue reuses the same server session;
+Cancel asks oa-org to expire that exact Stripe session and resets immediately
+only after Stripe confirms expiration. There is no second confirmation dialog.
+An open unpaid pack expires automatically after 30 minutes, and the next status
+refresh clears stale local Checkout recovery. A completed payment that is still
+processing keeps both recovery controls and cannot be replaced by a new
+Checkout.
+
+The Stripe Back/Cancel return uses a small tab-scoped `sessionStorage` record to
+identify the Checkout opened by that tab. It never guesses from the durable
+account-scoped record, so a stale Stripe tab cannot cancel a newer Checkout. If
+payment wins an expiration race, oa-org creates or preserves the entitlement and
+the browser begins its normal 50-ticket preparation. Tab closure is not proof of
+cancellation: there are deliberately no `beforeunload`, `sendBeacon`, or
+tab-close cancellation handlers. The tab-scoped return record contains only the
+test Checkout Session ID and is excluded from sync, exports, wallet state,
+tickets, and logs.
+
+Checkout recovery and claim recovery are intentionally distinct. Checkout
+recovery ends after confirmed cancellation, payment, or automatic expiration.
+Once payment creates an entitlement, the IndexedDB claim record remains
+authoritative until every ticket is durably imported, even if the server has
+already returned to `ready`.
 
 Wallet import preserves archive precedence. If a crash leaves the pending claim
 after some imported tickets have already been spent, recovery recognizes those
@@ -141,6 +165,8 @@ Monthly” or “500 Tickets.”
 - `POST /api/billing/checkout/complete` reconciles a delayed webhook.
 - `POST /api/billing/topups/checkout` creates or reuses the one-time pack Checkout.
 - `POST /api/billing/topups/checkout/complete` reconciles its delayed payment.
+- `POST /api/billing/topups/checkout/cancel` expires the authenticated account's
+  matching unpaid pack Checkout or reports that payment won the race.
 - `POST /api/billing/portal` opens Stripe's customer portal.
 - `POST /api/billing/tickets/claim` submits exactly the server-reported next
   allowance: 300 for a full period, the prorated first-period count, or exactly

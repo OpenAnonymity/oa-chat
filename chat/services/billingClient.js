@@ -6,6 +6,7 @@ import billingPendingStore from './billingPendingStore.js';
 import { BILLING_CHECKOUT_STORAGE_KEY } from './billingState.js';
 
 const DEMO_IDENTITY_KEY = 'oa-billing-demo-account-id-v1';
+export const BILLING_TOPUP_RETURN_SESSION_KEY = 'oa-billing-topup-return-v1';
 const CHUNK_SIZE = 10;
 const FULL_PERIOD_TICKETS = 300;
 const TICKET_PACK_TICKETS = 50;
@@ -233,6 +234,7 @@ export class BillingClient {
         this.privacyPass = options.privacyPass || privacyPassProvider;
         this.ticketStore = options.ticketStore || ticketStore;
         this.storage = options.storage || globalThis.localStorage;
+        this.sessionStorage = options.sessionStorage || globalThis.sessionStorage;
         this.lockManager = options.lockManager || globalThis.navigator?.locks || null;
         this.listeners = new Set();
         this.status = null;
@@ -336,13 +338,30 @@ export class BillingClient {
         const generation = this.identityGeneration;
         const auth = authContext || await this.auth.resolve({ createDemo });
         this.assertIdentityContext(auth, signal, generation);
+        const checkoutAtRequestStart = this.getCheckoutSession(auth.scope, 'topup');
         const status = await this.request('/api/billing/status', {
             authContext: auth,
             signal
         });
         this.assertIdentityContext(auth, signal, generation);
-        const pending = await this.pendingStore.get(auth.scope).catch(() => null);
+        let pendingReadSucceeded = true;
+        const pending = await this.pendingStore.get(auth.scope).catch(() => {
+            pendingReadSucceeded = false;
+            return null;
+        });
         this.assertIdentityContext(auth, signal, generation);
+        if (
+            pendingReadSucceeded &&
+            !pending &&
+            ['ready', 'ineligible'].includes(status?.ticket_pack?.state) &&
+            checkoutAtRequestStart?.sessionId
+        ) {
+            this.clearCheckoutSession(
+                auth.scope,
+                'topup',
+                checkoutAtRequestStart.sessionId
+            );
+        }
         if (pending?.source === 'topup' && status?.ticket_pack) {
             status.ticket_pack = {
                 ...status.ticket_pack,
@@ -390,9 +409,72 @@ export class BillingClient {
             body: { return_origin: window.location.origin }
         });
         this.assertIdentityContext(auth, undefined, generation);
-        if (result.session_id) this.saveCheckoutSession(result.session_id, auth.scope, 'topup');
+        if (result.session_id) {
+            this.saveCheckoutSession(result.session_id, auth.scope, 'topup');
+            this.saveTopupReturnSession(result.session_id);
+        }
         if (result.url) window.location.assign(result.url);
         return result;
+    }
+
+    async cancelTicketPackCheckout(sessionId) {
+        if (!/^cs_test_[A-Za-z0-9_]+$/.test(String(sessionId || ''))) {
+            const error = new Error('Invalid ticket-pack Checkout session.');
+            error.code = 'BILLING_TOPUP_INVALID_CHECKOUT';
+            throw error;
+        }
+        if (this.checkoutController) {
+            const error = new Error('Another billing recovery operation is already running.');
+            error.code = 'BILLING_TOPUP_CHECKOUT_BUSY';
+            throw error;
+        }
+
+        const generation = this.identityGeneration;
+        const auth = await this.auth.resolve({ createDemo: false });
+        const controller = new AbortController();
+        this.checkoutController = controller;
+        this.checkoutScope = auth.scope;
+        const assertActive = () => {
+            this.assertIdentityContext(auth, controller.signal, generation);
+            if (this.checkoutScope !== auth.scope) {
+                throw new DOMException('Billing identity changed', 'AbortError');
+            }
+        };
+        try {
+            assertActive();
+            const result = await this.request('/api/billing/topups/checkout/cancel', {
+                method: 'POST',
+                authContext: auth,
+                body: { session_id: sessionId },
+                signal: controller.signal
+            });
+            assertActive();
+            if (!['cancelled', 'payment_confirmed', 'payment_pending'].includes(result?.outcome)) {
+                const error = new Error('Ticket-pack cancellation returned an unknown state.');
+                error.code = 'BILLING_REQUEST_FAILED';
+                throw error;
+            }
+            const outcome = (
+                result.outcome === 'cancelled' &&
+                ['claimable', 'claiming'].includes(result.status?.ticket_pack?.state)
+            ) ? 'payment_confirmed' : result.outcome;
+            const normalizedResult = outcome === result.outcome
+                ? result
+                : { ...result, outcome };
+            if (['cancelled', 'payment_confirmed'].includes(outcome)) {
+                this.clearCheckoutSession(auth.scope, 'topup', sessionId);
+                this.clearTopupReturnSession(sessionId);
+            }
+            this.status = normalizedResult.status || this.status;
+            this.plan = normalizedResult.status?.plan || this.plan;
+            this.publish();
+            return normalizedResult;
+        } finally {
+            if (this.checkoutController === controller) {
+                this.checkoutController = null;
+                this.checkoutScope = null;
+            }
+        }
     }
 
     async portal() {
@@ -415,6 +497,43 @@ export class BillingClient {
         state.sessions[scope] ||= {};
         state.sessions[scope][kind] = { sessionId, savedAt: Date.now() };
         this.storage.setItem(BILLING_CHECKOUT_STORAGE_KEY, JSON.stringify(state));
+    }
+
+    saveTopupReturnSession(sessionId) {
+        if (!this.sessionStorage || !/^cs_test_[A-Za-z0-9_]+$/.test(String(sessionId || ''))) return;
+        try {
+            this.sessionStorage.setItem(BILLING_TOPUP_RETURN_SESSION_KEY, JSON.stringify({
+                sessionId,
+                savedAt: Date.now()
+            }));
+        } catch {
+            // Tab-scoped recovery is an optional safety aid; durable recovery remains authoritative.
+        }
+    }
+
+    getTopupReturnSession() {
+        if (!this.sessionStorage) return null;
+        try {
+            const value = JSON.parse(this.sessionStorage.getItem(BILLING_TOPUP_RETURN_SESSION_KEY) || 'null');
+            return /^cs_test_[A-Za-z0-9_]+$/.test(String(value?.sessionId || ''))
+                ? { sessionId: value.sessionId, savedAt: value.savedAt }
+                : null;
+        } catch {
+            return null;
+        }
+    }
+
+    clearTopupReturnSession(expectedSessionId = undefined) {
+        try {
+            if (expectedSessionId !== undefined) {
+                const current = this.getTopupReturnSession();
+                if (current?.sessionId !== expectedSessionId) return false;
+            }
+            this.sessionStorage?.removeItem(BILLING_TOPUP_RETURN_SESSION_KEY);
+            return true;
+        } catch {
+            return false;
+        }
     }
 
     getCheckoutSession(scope, kind = 'subscription') {
@@ -456,14 +575,20 @@ export class BillingClient {
         return empty;
     }
 
-    clearCheckoutSession(scope = null, kind = null) {
-        if (!this.storage) return;
+    clearCheckoutSession(scope = null, kind = null, expectedSessionId = undefined) {
+        if (!this.storage) return false;
         if (!scope) {
             this.storage.removeItem(BILLING_CHECKOUT_STORAGE_KEY);
-            return;
+            return true;
         }
         const state = this.readCheckoutSessions();
         if (kind && CHECKOUT_KINDS.has(kind)) {
+            if (
+                expectedSessionId !== undefined &&
+                state.sessions[scope]?.[kind]?.sessionId !== expectedSessionId
+            ) {
+                return false;
+            }
             delete state.sessions[scope]?.[kind];
             if (Object.keys(state.sessions[scope] || {}).length === 0) delete state.sessions[scope];
         } else {
@@ -474,11 +599,17 @@ export class BillingClient {
         } else {
             this.storage.setItem(BILLING_CHECKOUT_STORAGE_KEY, JSON.stringify(state));
         }
+        return true;
     }
 
     discardKnownCheckout(kind) {
         const scope = this.auth.getKnownScope?.() || null;
         if (scope) this.clearCheckoutSession(scope, kind);
+    }
+
+    getKnownCheckoutSession(kind) {
+        const scope = this.auth.getKnownScope?.() || null;
+        return scope ? this.getCheckoutSession(scope, kind) : null;
     }
 
     async resumeSavedCheckout(options = {}) {
@@ -553,6 +684,15 @@ export class BillingClient {
             if (ready) {
                 this.clearCheckoutSession(auth.scope, kind);
                 return status;
+            }
+            if (
+                kind === 'topup' &&
+                ['ready', 'ineligible'].includes(status?.ticket_pack?.state)
+            ) {
+                // Status reconciliation has already established that this
+                // saved Checkout no longer has a payable or claimable pack.
+                // Do not turn an expected expiration into a completion error.
+                return null;
             }
             await new Promise((resolve, reject) => {
                 const timeout = setTimeout(resolve, options.pollMs ?? 2000);
