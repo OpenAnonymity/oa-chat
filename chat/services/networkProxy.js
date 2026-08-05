@@ -717,12 +717,9 @@ class NetworkProxy {
                 throw error;
             }
 
-            // Silently disable proxy and auto-retry with direct fetch
-            // Use synchronous state update to avoid race conditions with parallel requests
-            console.warn('[networkProxy.fetch] Proxy failed, silently disabling and retrying direct:', url?.substring(0, 100));
-            this.state.settings.enabled = false;
+            // Auto-retry with direct fetch for this request only
+            console.warn('[networkProxy.fetch] Proxy failed, retrying direct:', url?.substring(0, 100));
             this.state.fallbackActive = true;
-            await this.saveSettings(this.state.settings);
 
             // Emit change to update UI to show failure status
             this.emitChange();
