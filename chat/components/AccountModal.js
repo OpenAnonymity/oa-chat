@@ -39,6 +39,8 @@ class AccountModal {
         // Sync state
         this.syncStatus = this.syncService.getStatus();
         this.billingSnapshot = this.billingService?.snapshot?.() || {};
+        this.billingBusy = null;
+        this.billingError = null;
 
         // UI state
         this.returnFocusEl = null;
@@ -466,6 +468,41 @@ class AccountModal {
         }
     }
 
+    async purchaseTicketPack() {
+        this.billingBusy = 'topup-checkout';
+        this.billingError = null;
+        this.render();
+        try {
+            await this.billingService?.purchaseTicketPack?.();
+        } catch (error) {
+            const safeByCode = {
+                BILLING_AUTH_REQUIRED: 'Sign in to your OA account to continue.',
+                BILLING_TOPUP_PENDING: 'Finish preparing the current ticket pack before buying another.',
+                BILLING_TOPUP_INELIGIBLE: 'An active Premium subscription is required for ticket packs.',
+                BILLING_TOPUP_UNAVAILABLE: 'Ticket packs are temporarily unavailable.'
+            };
+            this.billingError = safeByCode[error?.code] || 'Unable to open ticket-pack Checkout.';
+            this.billingBusy = null;
+            this.render();
+        }
+    }
+
+    prepareTicketPack() {
+        this.close();
+        this.app.billingModal?.open?.();
+        queueMicrotask(() => void this.app.billingModal?.startPreparation?.());
+    }
+
+    formatMoney(offer) {
+        if (!offer || !Number.isFinite(Number(offer.unit_amount))) return 'Loading price…';
+        return new Intl.NumberFormat(undefined, {
+            style: 'currency',
+            currency: String(offer.currency || 'usd').toUpperCase(),
+            minimumFractionDigits: Number(offer.unit_amount) % 100 === 0 ? 0 : 2,
+            maximumFractionDigits: 2
+        }).format(Number(offer.unit_amount) / 100);
+    }
+
     // =========================================================================
     // Render
     // =========================================================================
@@ -736,6 +773,24 @@ class AccountModal {
             const subscriptionStatus = this.billingSnapshot?.status?.subscription?.status || 'none';
             const premiumActive = this.billingSnapshot?.status?.premium_active === true ||
                 ['active', 'trialing'].includes(subscriptionStatus);
+            const portalAvailable = this.billingSnapshot?.status?.portal_available === true;
+            const ticketPack = this.billingSnapshot?.plan?.ticket_pack || null;
+            const ticketPackStatus = this.billingSnapshot?.status?.ticket_pack || null;
+            const showTicketPack = Boolean(
+                premiumActive && ticketPack && ticketPackStatus?.eligible === true
+            );
+            const ticketPackCount = Number(ticketPack?.tickets || ticketPackStatus?.ticket_count || 0);
+            const ticketPackState = String(ticketPackStatus?.state || 'ineligible');
+            const ticketPackReady = ticketPackState === 'ready' && ticketPackStatus?.can_purchase === true;
+            const ticketPackCheckoutPending = ticketPackState === 'checkout_pending';
+            const ticketPackClaimable = ['claimable', 'claiming'].includes(ticketPackState);
+            const ticketPackActionLabel = ticketPackClaimable
+                ? `${ticketPackState === 'claiming' ? 'Resume preparing' : 'Prepare'} ${ticketPackCount} private tickets`
+                : ticketPackCheckoutPending
+                    ? 'Continue ticket-pack Checkout'
+                    : this.billingBusy === 'topup-checkout'
+                        ? 'Opening Checkout…'
+                        : `Buy ${ticketPackCount} tickets — ${this.formatMoney(ticketPack)}`;
 
             return `
                 <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}">
@@ -765,10 +820,25 @@ class AccountModal {
                                 <p class="text-sm font-medium text-foreground">${premiumActive ? 'OA Premium' : 'Free account'}</p>
                                 <p class="text-[11px] text-muted-foreground">${premiumActive ? 'Premium subscription active' : 'Upgrade for monthly private tickets'}</p>
                             </div>
-                            <button id="${premiumActive ? 'account-manage-billing-btn' : 'account-upgrade-btn'}" class="h-8 px-3 rounded-md text-xs font-medium ${premiumActive ? 'border border-border text-foreground' : 'bg-blue-600 text-white'}" type="button">
-                                ${premiumActive ? 'Manage billing' : 'Upgrade to Premium'}
-                            </button>
+                            ${premiumActive ? (portalAvailable ? `
+                                <button id="account-manage-billing-btn" class="h-8 px-3 rounded-md text-xs font-medium border border-border text-foreground" type="button">
+                                    Manage billing
+                                </button>
+                            ` : '') : `
+                                <button id="account-upgrade-btn" class="h-8 px-3 rounded-md text-xs font-medium bg-blue-600 text-white" type="button">
+                                    Upgrade to Premium
+                                </button>
+                            `}
                         </div>
+                        ${showTicketPack && (ticketPackReady || ticketPackCheckoutPending || ticketPackClaimable) ? `
+                            <div class="mt-3 pt-3 border-t border-border">
+                                <p class="text-[11px] text-muted-foreground mb-2">Need more private tickets?</p>
+                                <button id="${ticketPackClaimable ? 'account-topup-prepare-btn' : 'account-topup-btn'}" class="w-full h-9 rounded-lg bg-blue-600 text-white text-sm font-medium disabled:opacity-50" type="button" ${this.billingBusy ? 'disabled' : ''}>
+                                    ${ticketPackActionLabel}
+                                </button>
+                                ${this.billingError ? `<p class="mt-2 text-xs text-destructive">${this.escapeHtml(this.billingError)}</p>` : ''}
+                            </div>
+                        ` : ''}
                     </div>
 
                     <div class="flex gap-3">
@@ -1083,6 +1153,12 @@ class AccountModal {
 
         const manageBillingBtn = document.getElementById('account-manage-billing-btn');
         if (manageBillingBtn) manageBillingBtn.onclick = () => void this.manageBilling();
+
+        const topupBtn = document.getElementById('account-topup-btn');
+        if (topupBtn) topupBtn.onclick = () => void this.purchaseTicketPack();
+
+        const topupPrepareBtn = document.getElementById('account-topup-prepare-btn');
+        if (topupPrepareBtn) topupPrepareBtn.onclick = () => this.prepareTicketPack();
     }
 
     async handleSyncNow() {

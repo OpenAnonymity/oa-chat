@@ -261,10 +261,31 @@ test('adaptive sidebar label follows account presence without requiring a paid s
     }
 });
 
-test('account view exposes upgrade and billing-management actions', () => {
+test('account view exposes the ticket-pack action directly without an intermediate Premium button', () => {
     const source = String(AccountModal.prototype.renderAccountUI);
     assert.match(source, /Upgrade to Premium/);
+    assert.match(source, /account-topup-btn/);
+    assert.match(source, /Buy \$\{ticketPackCount\} tickets/);
     assert.match(source, /Manage billing/);
+    assert.equal(source.includes('Premium & ticket packs'), false);
+});
+
+test('account ticket-pack action starts Checkout directly', async () => {
+    const modal = Object.create(AccountModal.prototype);
+    let purchases = 0;
+    let renders = 0;
+    modal.billingService = {
+        async purchaseTicketPack() { purchases += 1; }
+    };
+    modal.render = () => { renders += 1; };
+    modal.billingBusy = null;
+    modal.billingError = null;
+
+    await modal.purchaseTicketPack();
+
+    assert.equal(purchases, 1);
+    assert.equal(renders, 1);
+    assert.equal(modal.billingError, null);
 });
 
 test('signed-out Checkout records one intent and opens Account', async () => {
