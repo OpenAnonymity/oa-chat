@@ -110,6 +110,44 @@ export function buildSessionSearchIndexFields(messages, options = {}) {
     };
 }
 
+export function getSessionDateFilterBounds(filters = {}, now = Date.now()) {
+    const startOfDay = (value) => {
+        const date = new Date(value);
+        return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    };
+    const shiftDays = (date, days) => {
+        const shifted = new Date(date);
+        shifted.setDate(shifted.getDate() + days);
+        return shifted;
+    };
+    const toBounds = (start, endExclusive) => ({
+        minUpdatedAt: start.getTime(),
+        maxUpdatedAt: endExclusive.getTime() - 1
+    });
+
+    if (filters.customDate) {
+        const start = new Date(`${filters.customDate}T00:00:00`);
+        if (!Number.isFinite(start.getTime())) return {};
+        return toBounds(start, shiftDays(start, 1));
+    }
+
+    const today = startOfDay(now);
+    const tomorrow = shiftDays(today, 1);
+    if (filters.dateMode === 'today') {
+        return toBounds(today, tomorrow);
+    }
+    if (filters.dateMode === 'yesterday') {
+        return toBounds(shiftDays(today, -1), today);
+    }
+    if (filters.dateMode === '7d') {
+        return toBounds(shiftDays(today, -6), tomorrow);
+    }
+    if (filters.dateMode === '30d') {
+        return toBounds(shiftDays(today, -29), tomorrow);
+    }
+    return {};
+}
+
 export function cleanGeneratedSessionTitle(title, options = {}) {
     const maxLength = options.maxLength || DEFAULT_SESSION_TITLE_MAX_LENGTH;
     if (typeof title !== 'string') return '';

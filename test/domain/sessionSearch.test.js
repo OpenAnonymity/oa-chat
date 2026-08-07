@@ -7,6 +7,7 @@ import {
     buildSessionSearchIndexFields,
     buildSessionTitleSearchText,
     cleanGeneratedSessionTitle,
+    getSessionDateFilterBounds,
     getSearchableMessageText,
     normalizeSessionSearchText
 } from '../../chat/domain/sessionSearch.js';
@@ -89,6 +90,24 @@ test('buildSessionSearchIndexFields accepts deterministic clock for tests', () =
         buildSessionSearchIndexFields([{ role: 'user', content: 'hello' }], { now: () => 123 }),
         { conversationSearchText: 'hello', conversationSearchIndexedAt: 123 }
     );
+});
+
+test('date filter bounds follow local calendar days across daylight saving changes', () => {
+    const previousTimezone = process.env.TZ;
+    process.env.TZ = 'America/Los_Angeles';
+    try {
+        const springForward = getSessionDateFilterBounds({ customDate: '2025-03-09' });
+        assert.equal(springForward.maxUpdatedAt - springForward.minUpdatedAt + 1, 23 * 60 * 60 * 1000);
+
+        const fallBack = getSessionDateFilterBounds({ customDate: '2025-11-02' });
+        assert.equal(fallBack.maxUpdatedAt - fallBack.minUpdatedAt + 1, 25 * 60 * 60 * 1000);
+    } finally {
+        if (previousTimezone === undefined) {
+            delete process.env.TZ;
+        } else {
+            process.env.TZ = previousTimezone;
+        }
+    }
 });
 
 test('cleanGeneratedSessionTitle removes prefixes, quotes, punctuation, and truncates at word boundary', () => {

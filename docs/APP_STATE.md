@@ -25,6 +25,27 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
+- 2026-08-07: Global sidebar search now uses a memory-only Orama BM25 index.
+  - It indexes complete user prompts and visible assistant answers without the
+    old 2k-per-message / 12k-per-session caps. Scrubbed prompts contribute both
+    their original and redacted local variants; cached redacted/restored answer
+    variants are also searchable.
+  - Reasoning, citations, attachments, system rows, and local-only Memory Agent
+    rows remain excluded. Search never performs a restoration network call.
+  - Results remain session-recency ordered and show one compact, highlighted
+    message excerpt per session. Selecting an excerpt opens the session, switches
+    to the matched locally stored scrubber view when needed, and scrolls to the
+    exact message.
+  - The index prewarms in idle-time batches, queues mutations that race the
+    initial build, updates affected sessions
+    incrementally, and is invalidated by cross-tab writes and same-tab backup
+    imports. Fork indexing uses the fork's newly assigned message IDs. Date
+    filters use local calendar-day boundaries so DST transitions are safe.
+    The index is not persisted, avoiding another durable copy of original prompt
+    PII.
+  - Legacy `conversationSearchText` fields remain for compatibility but are no
+    longer used for text-query results. See [SIDEBAR_SEARCH.md](SIDEBAR_SEARCH.md).
+
 - 2026-08-04: Plain `Cmd/Ctrl+F` uses an app-owned find-on-page toolbar instead
   of the browser's native find UI, so a forgotten find field cannot retain
   keyboard focus after the user returns to the app. The toolbar follows standard
@@ -430,8 +451,8 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     small filter menu.
   - When search, starred-only, or date filtering is active, the sidebar scans
     all session records from IndexedDB so older chats outside the paged sidebar
-    are still eligible. Message loading is still avoided unless a text query
-    needs lazy `conversationSearchText` backfill.
+    are still eligible. As of 2026-08-07, text queries use the prewarmed Orama
+    index rather than lazy `conversationSearchText` backfill.
 - 2026-04-30: Memory mode now uses `nanomem.augmentQueryAdaptive(...)` for multi-turn follow-ups.
   - New sessions initialize `session.memoryRetrievedContext = { version: 1, entries: [] }`.
   - A memory context entry is appended only after the user approves the memory prompt or auto-include sends it. Denied/skipped prompts are not reusable context.
@@ -443,11 +464,10 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - The app still writes an immediate local fallback title from the first user message, then after the session has a valid ephemeral OpenRouter key it requests a short title from `google/gemini-3.1-flash-lite-preview`.
   - Title generation is fire-and-forget and failure-tolerant: a failed title request leaves the local fallback title unchanged and does not block the main chat stream.
   - `session.titleSource` protects user edits. Local automatic titles use `local`, generated titles use `generated`, and sidebar/manual renames use `manual`; async generation only overwrites the unchanged local title it started from.
-  - Sidebar search matches the visible title, the legacy first-prompt `session.titleSearchText` for non-manual titles, and the bounded full-conversation `session.conversationSearchText` index.
-  - `session.conversationSearchText` is built from non-local user/assistant message text, capped at 12k chars per session and 2k chars per message. Long chats preserve the first searchable message plus the most recent turns, trading complete recall for bounded IndexedDB size and predictable search cost.
-  - Sidebar search uses literal/token matching, not arbitrary subsequence matching. Otherwise queries like `meaning` can match characters scattered across `means. In ... GPU`.
-  - Existing sessions without `conversationSearchText` are lazily indexed during sidebar search and persisted through `chatDB.updateSessionSearchIndex(...)` without broadcasting a session reload.
-  - See [SIDEBAR_SEARCH.md](SIDEBAR_SEARCH.md) for the current search algorithm and cap policy.
+  - The original title-search implementation used `titleSearchText` and a
+    bounded `conversationSearchText` field. That search path was superseded by
+    the uncapped, memory-only Orama index on 2026-08-07; the legacy fields remain
+    only for compatibility. See [SIDEBAR_SEARCH.md](SIDEBAR_SEARCH.md).
   - While a local fallback title is waiting for model generation, `session.titleGenerationPending` applies the sidebar title shimmer. Clear that flag on success, failure, empty-title output, missing/expired access, access-acquisition failure, or manual rename so the temporary-title animation does not persist indefinitely.
 - 2026-04-26: Sidebar session titles must use attribute escaping when rendered into input values.
   - First-turn titles are generated from the raw user prompt, so prompts that begin with a double quote can produce titles like `"A CPU TEE ...`.

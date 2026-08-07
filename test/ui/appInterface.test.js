@@ -39,6 +39,8 @@ function createMockApp(overrides = {}) {
         normalizeModelName: (modelName) => `${modelName} normalized`,
         renderCurrentModel: () => calls.push(['renderCurrentModel']),
         getFilteredSessions: () => [{ id: 'session-1' }],
+        getSessionSearchMatch: (sessionId) => ({ sessionId, messageId: 'message-1' }),
+        openSessionSearchMatch: (sessionId, match) => calls.push(['openSessionSearchMatch', sessionId, match]),
         toggleSessionStar: (sessionId) => calls.push(['toggleSessionStar', sessionId]),
         deleteSession: (sessionId) => calls.push(['deleteSession', sessionId]),
         switchSession: (sessionId) => calls.push(['switchSession', sessionId]),
@@ -172,18 +174,24 @@ test('sidebar interface exposes sidebar-only elements and proxies actions', asyn
     assert.equal(ui.elements.modelPickerBtn, undefined);
     assert.equal(ui.sessionSearchQuery, 'query');
     assert.deepEqual(ui.getFilteredSessions(), [{ id: 'session-1' }]);
+    assert.deepEqual(ui.getSessionSearchMatch('session-1'), {
+        sessionId: 'session-1',
+        messageId: 'message-1'
+    });
     assert.equal(ui.hasActiveSessionListCriteria(), true);
     assert.equal(ui.getSessionListEmptyText(), 'No sessions');
 
     await ui.toggleSessionStar('session-1');
     await ui.switchSession('session-2');
     await ui.updateSessionTitle('session-2', 'Title');
+    await ui.openSessionSearchMatch('session-1', { messageId: 'message-1' });
     ui.updateToolbarDivider();
 
     assert.deepEqual(calls, [
         ['toggleSessionStar', 'session-1'],
         ['switchSession', 'session-2'],
         ['updateSessionTitle', 'session-2', 'Title'],
+        ['openSessionSearchMatch', 'session-1', { messageId: 'message-1' }],
         ['updateToolbarDivider']
     ]);
 });
