@@ -9,6 +9,7 @@ const SESSION_ROW_HEIGHT = 36;
 const HEADER_ROW_HEIGHT = 36;
 const GROUP_SPACER_HEIGHT = 12;
 const FOOTER_ROW_HEIGHT = 32;
+const SEARCH_SESSION_ROW_HEIGHT = 68;
 const VIRTUALIZE_THRESHOLD = 400;
 const VIRTUAL_OVERSCAN = 8;
 const SIDEBAR_DEFAULT_WIDTH = 220;
@@ -67,6 +68,23 @@ export default class Sidebar {
             .replace(/'/g, '&#39;')
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;');
+    }
+
+    highlightSearchText(text, query) {
+        const source = String(text || '');
+        const terms = String(query || '').toLowerCase().match(/[a-z0-9]+/g) || [];
+        if (!terms.length) return this.escapeHtml(source);
+        const pattern = terms
+            .sort((a, b) => b.length - a.length)
+            .map(term => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+            .join('|');
+        if (!pattern) return this.escapeHtml(source);
+        const regex = new RegExp(`(${pattern})`, 'gi');
+        return source.split(regex).map((part, index) => (
+            index % 2 === 1
+                ? `<mark class="session-search-mark">${this.escapeHtml(part)}</mark>`
+                : this.escapeHtml(part)
+        )).join('');
     }
 
     /**
@@ -141,6 +159,8 @@ export default class Sidebar {
         const isImported = !!(session.importedFrom || session.importedSource ||
             (session.forkedFrom && (session.importedMessageCount || 0) > 0));
         const shareLabel = isShared ? 'Update Share' : 'Share';
+        const searchMatch = this.app.getSessionSearchMatch?.(session.id) || null;
+        const hasSearchMatch = Boolean(searchMatch && this.app.sessionSearchQuery.trim());
 
         // Build indicator icons
         let indicatorHtml = '';
@@ -167,14 +187,25 @@ export default class Sidebar {
         const starLabel = isStarred ? 'Unstar chat' : 'Star chat';
         const starMenuLabel = isStarred ? 'Unstar' : 'Star';
 
+        const matchHtml = hasSearchMatch ? `
+            <button class="session-search-match" type="button"
+                data-session-id="${this.escapeHtmlAttribute(session.id)}"
+                data-message-id="${this.escapeHtmlAttribute(searchMatch.messageId || '')}"
+                aria-label="Open ${this.escapeHtmlAttribute(searchMatch.label || 'search match')}">
+                <span class="session-search-match-label">${this.escapeHtml(searchMatch.label || 'Match')}</span>
+                <span class="session-search-match-snippet">${this.highlightSearchText(searchMatch.snippet, this.app.sessionSearchQuery)}</span>
+            </button>
+        ` : '';
+
         return `
-            <div class="group relative flex h-9 items-center rounded-lg ${isActive ? 'chat-session active' : 'hover-highlight'} transition-colors pl-3 chat-session" data-session-id="${session.id}">
-                <a class="flex flex-1 items-center justify-between h-full min-w-0 text-foreground hover:text-foreground cursor-pointer">
-                    <div class="flex min-w-0 flex-1 items-center">
+            <div class="group relative flex ${hasSearchMatch ? 'session-search-result' : 'h-9 items-center'} rounded-lg ${isActive ? 'chat-session active' : 'hover-highlight'} transition-colors pl-3 chat-session" data-session-id="${this.escapeHtmlAttribute(session.id)}">
+                <div class="flex flex-1 ${hasSearchMatch ? 'min-h-0 flex-col justify-center py-1.5' : 'items-center justify-between h-full'} min-w-0 text-foreground cursor-pointer">
+                    <div class="flex min-w-0 w-full items-center">
                         <input class="session-title-input w-full cursor-pointer truncate bg-transparent text-sm leading-5 focus:outline-none text-foreground ${titleClass}" placeholder="Untitled Chat" readonly data-session-id="${this.escapeHtmlAttribute(session.id)}" value="${this.escapeHtmlAttribute(session.title)}">
                         ${indicatorHtml}
                     </div>
-                </a>
+                    ${matchHtml}
+                </div>
                 <div class="flex shrink-0 items-center relative">
                     <button class="${starButtonClass}" aria-label="${starLabel}" title="${starLabel}" aria-pressed="${isStarred ? 'true' : 'false'}" data-session-id="${this.escapeHtmlAttribute(session.id)}">
                         ${this.getStarIconSvg(isStarred)}
@@ -209,6 +240,18 @@ export default class Sidebar {
         this.listenersAttached = true;
 
         list.addEventListener('click', async (e) => {
+            const searchMatchButton = e.target.closest('.session-search-match');
+            if (searchMatchButton) {
+                e.preventDefault();
+                e.stopPropagation();
+                const sessionId = searchMatchButton.dataset.sessionId;
+                const match = this.app.getSessionSearchMatch?.(sessionId);
+                if (match) {
+                    await this.app.openSessionSearchMatch(sessionId, match);
+                }
+                return;
+            }
+
             const starBtn = e.target.closest('.session-star-btn');
             if (starBtn) {
                 e.preventDefault();
@@ -659,7 +702,9 @@ export default class Sidebar {
             case 'footer':
                 return FOOTER_ROW_HEIGHT;
             default:
-                return SESSION_ROW_HEIGHT;
+                return this.app.sessionSearchQuery.trim() && this.app.getSessionSearchMatch?.(item.session?.id)
+                    ? SEARCH_SESSION_ROW_HEIGHT
+                    : SESSION_ROW_HEIGHT;
         }
     }
 

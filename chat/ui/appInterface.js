@@ -146,6 +146,8 @@ export function createSidebarInterface(app) {
             return app.sessionSearchQuery;
         },
         getFilteredSessions: () => app.getFilteredSessions(),
+        getSessionSearchMatch: (sessionId) => app.getSessionSearchMatch(sessionId),
+        openSessionSearchMatch: (sessionId, match) => app.openSessionSearchMatch(sessionId, match),
         toggleSessionStar: (sessionId) => app.toggleSessionStar(sessionId),
         deleteSession: (sessionId) => app.deleteSession(sessionId),
         switchSession: (sessionId) => app.switchSession(sessionId),

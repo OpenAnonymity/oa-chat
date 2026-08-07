@@ -571,6 +571,36 @@ class ChatDatabase {
         });
     }
 
+    async getSearchableMessagesForIndex() {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['messages'], 'readonly');
+            const store = transaction.objectStore('messages');
+            const request = store.openCursor();
+            const messages = [];
+
+            request.onsuccess = (event) => {
+                const cursor = event.target.result;
+                if (!cursor) {
+                    resolve(messages);
+                    return;
+                }
+                const message = cursor.value;
+                if (message && (message.role === 'user' || message.role === 'assistant') && !message.isLocalOnly) {
+                    messages.push({
+                        id: message.id,
+                        sessionId: message.sessionId,
+                        role: message.role,
+                        content: message.content,
+                        timestamp: message.timestamp,
+                        scrubber: message.scrubber || null
+                    });
+                }
+                cursor.continue();
+            };
+            request.onerror = () => reject(request.error);
+        });
+    }
+
     async deleteSessionMessages(sessionId) {
         return new Promise((resolve, reject) => {
             const transaction = this.db.transaction(['messages'], 'readwrite');

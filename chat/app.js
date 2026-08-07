@@ -13,6 +13,7 @@ import networkProxy from './services/networkProxy.js';
 import inferenceService from './services/inference/inferenceService.js';
 import ticketClient from './services/ticketClient.js';
 import scrubberService from './services/scrubberService.js';
+import conversationSearch from './services/conversationSearch.js';
 import {
     augmentQuery as runMemoryAugmentQuery,
     augmentQueryAdaptive as runMemoryAugmentQueryAdaptive,
@@ -45,6 +46,7 @@ import {
     getSearchableMessageText as getSearchableMessageTextValue,
     buildSessionConversationSearchText as buildSessionConversationSearchTextValue,
     buildSessionSearchIndexFields as buildSessionSearchIndexFieldsValue,
+    getSessionDateFilterBounds,
     cleanGeneratedSessionTitle as cleanGeneratedSessionTitleText
 } from './domain/sessionSearch.js';
 import {
@@ -142,6 +144,7 @@ class ChatApp {
             sessionSearchResultsQuery: '',
             sessionSearchResultsKey: '',
             sessionSearchPending: false,
+            sessionSearchMatches: new Map(),
             currentSessionId: null,
             models: [],
             modelsLoading: false,
@@ -209,6 +212,7 @@ class ChatApp {
         this.sessionSearchQuery = '';
         this.sessionSearchDebounce = null;
         this.sessionSearchRequestId = 0;
+        this.conversationSearch = conversationSearch;
         this.sessionFilters = {
             starredOnly: false,
             dateMode: 'all',
@@ -1922,10 +1926,14 @@ class ChatApp {
         this.migrateSessionsInBackground(this.state.sessions);
         const scheduleBackfill = () => chatDB.backfillMissingUpdatedAt()
             .catch(err => console.warn('UpdatedAt backfill failed:', err));
+        const scheduleConversationSearch = () => this.conversationSearch.ensureBuilt(chatDB)
+            .catch(err => console.warn('Conversation search indexing failed:', err));
         if (typeof requestIdleCallback === 'function') {
             requestIdleCallback(scheduleBackfill);
+            requestIdleCallback(scheduleConversationSearch, { timeout: 4000 });
         } else {
             setTimeout(scheduleBackfill, 1200);
+            setTimeout(scheduleConversationSearch, 1600);
         }
 
         this.renderDeleteHistoryModalContent();
@@ -3845,7 +3853,12 @@ class ChatApp {
             }
             session.updatedAt = Date.now();
             await chatDB.saveSession(session);
+            const messages = await chatDB.getSessionMessages(session.id);
+            await this.conversationSearch.upsertSession(session, messages);
             this.renderSessions();
+            if (this.hasActiveSessionListCriteria()) {
+                void this.updateSessionSearchResults();
+            }
         }
     }
 
@@ -3893,6 +3906,13 @@ class ChatApp {
         if (loadedSession && loadedSession !== session) {
             Object.assign(loadedSession, fields);
         }
+        void this.conversationSearch.upsertSession(session, messages)
+            .then(() => {
+                if (this.getNormalizedSessionSearchQuery()) {
+                    void this.updateSessionSearchResults();
+                }
+            })
+            .catch(error => console.warn('Failed to update conversation search:', error));
         return fields;
     }
 
@@ -3965,7 +3985,12 @@ class ChatApp {
             latestSession.titleGeneratedAt = Date.now();
             latestSession.updatedAt = Date.now();
             await chatDB.saveSession(latestSession);
+            const latestMessages = await chatDB.getSessionMessages(latestSession.id);
+            await this.conversationSearch.upsertSession(latestSession, latestMessages);
             this.renderSessions();
+            if (this.hasActiveSessionListCriteria()) {
+                void this.updateSessionSearchResults();
+            }
         } catch (error) {
             console.debug('Session title generation skipped:', error);
             await this.clearSessionTitleGenerationPending(sessionId);
@@ -5561,6 +5586,7 @@ class ChatApp {
                             }
                         }
                     }
+                    await this.refreshSessionConversationSearchText(session, null, { persist: true });
                 } else {
                     if (firstChunkReceived && streamingMessage) {
                         streamingMessage.content = 'Sorry, I encountered an error while processing your request.';
@@ -6120,6 +6146,7 @@ class ChatApp {
                         }
                     }
                     // If firstChunkReceived is false, message was never added to UI or DB, nothing to clean up
+                    await this.refreshSessionConversationSearchText(session, null, { persist: true });
                     break retryLoop; // Don't retry cancelled requests
                 }
 
@@ -6497,14 +6524,20 @@ class ChatApp {
      */
     async deleteSession(sessionId) {
         const index = this.state.sessions.findIndex(s => s.id === sessionId);
-        if (index > -1) {
+        if (index > -1 || this.state.sessionsById.has(sessionId)) {
             const deletedCurrentSession = this.state.currentSessionId === sessionId;
-            this.state.sessions.splice(index, 1);
+            if (index > -1) {
+                this.state.sessions.splice(index, 1);
+            }
             this.state.sessionsById.delete(sessionId);
+            this.state.sessionSearchResults = this.state.sessionSearchResults
+                ?.filter(session => session.id !== sessionId) || null;
+            this.state.sessionSearchMatches?.delete(sessionId);
 
             // Delete from DB
             await chatDB.deleteSession(sessionId);
             await chatDB.deleteSessionMessages(sessionId);
+            await this.conversationSearch.removeSession(sessionId);
             this.sessionScrollPositions.delete(sessionId);
             this.sessionPromptScrollAnchors.delete(sessionId);
             if (this.activePromptScroll?.sessionId === sessionId) {
@@ -6853,7 +6886,14 @@ class ChatApp {
             searchEnabled: this.searchEnabled,
             forkedFrom: session.id
         };
-        this.applySessionConversationSearchText(newSession, messagesToCopy);
+        const baseTime = Date.now();
+        const forkedMessages = messagesToCopy.map((message, index) => ({
+            ...message,
+            id: this.generateId(),
+            sessionId: newSessionId,
+            timestamp: baseTime + index
+        }));
+        this.applySessionConversationSearchText(newSession, forkedMessages);
 
         const accessInfo = inferenceService.getAccessInfo(session);
         if (accessInfo?.token) {
@@ -6868,15 +6908,7 @@ class ChatApp {
         this.state.sessionsById.set(newSession.id, newSession);
 
         // Copy messages to new session
-        const baseTime = Date.now();
-        for (let i = 0; i < messagesToCopy.length; i++) {
-            const msg = messagesToCopy[i];
-            const newMessage = {
-                ...msg,
-                id: this.generateId(),
-                sessionId: newSessionId,
-                timestamp: baseTime + i // Ensure strictly increasing timestamps to preserve order
-            };
+        for (const newMessage of forkedMessages) {
             await chatDB.saveMessage(newMessage);
         }
 
@@ -6966,6 +6998,7 @@ class ChatApp {
         } else {
             await this.clearAllChatsIncompatFallback();
         }
+        this.conversationSearch.clear();
         await chatDB.saveSetting('currentSessionId', null);
 
         // Render empty state while the new session is created
@@ -7204,6 +7237,7 @@ class ChatApp {
     }
 
     async reloadSessions() {
+        this.conversationSearch.invalidate();
         this.state.sessions = [];
         this.state.sessionsById = new Map();
         this.state.sessionsPageCursor = null;
@@ -7212,6 +7246,7 @@ class ChatApp {
         this.state.sessionSearchResultsQuery = '';
         this.state.sessionSearchResultsKey = '';
         this.state.sessionSearchPending = false;
+        this.state.sessionSearchMatches = new Map();
         await this.loadInitialSessions();
         await this.ensureSessionLoaded(this.state.currentSessionId);
         if (this.hasActiveSessionListCriteria()) {
@@ -7222,6 +7257,9 @@ class ChatApp {
     }
 
     handleStorageEvent(type, payload) {
+        if (type === 'sessions-updated' || type === 'sessions-cleared' || type === 'messages-updated') {
+            this.conversationSearch.invalidate();
+        }
         if (this.isCurrentSessionStreaming()) {
             this.pendingStorageRefresh = true;
             return;
@@ -7313,29 +7351,9 @@ class ChatApp {
     sessionMatchesDateFilter(session) {
         const timestamp = this.getSessionTimestamp(session);
         if (!timestamp) return false;
-
-        const mode = this.sessionFilters.dateMode;
-        if (this.sessionFilters.customDate) {
-            return this.getLocalDateKey(timestamp) === this.sessionFilters.customDate;
-        }
-        if (mode === 'all') return true;
-
-        const todayStart = this.getStartOfLocalDay();
-        const sessionDayStart = this.getStartOfLocalDay(new Date(timestamp));
-        const dayMs = 24 * 60 * 60 * 1000;
-
-        if (mode === 'today') {
-            return sessionDayStart === todayStart;
-        }
-        if (mode === 'yesterday') {
-            return sessionDayStart === todayStart - dayMs;
-        }
-        if (mode === '7d') {
-            return sessionDayStart >= todayStart - (6 * dayMs);
-        }
-        if (mode === '30d') {
-            return sessionDayStart >= todayStart - (29 * dayMs);
-        }
+        const bounds = getSessionDateFilterBounds(this.sessionFilters);
+        if (Number.isFinite(bounds.minUpdatedAt) && timestamp < bounds.minUpdatedAt) return false;
+        if (Number.isFinite(bounds.maxUpdatedAt) && timestamp > bounds.maxUpdatedAt) return false;
         return true;
     }
 
@@ -7361,6 +7379,75 @@ class ChatApp {
         this.state.sessionSearchResultsQuery = '';
         this.state.sessionSearchResultsKey = '';
         this.state.sessionSearchPending = false;
+        this.state.sessionSearchMatches = new Map();
+    }
+
+    getConversationSearchFilterOptions() {
+        const options = {
+            limit: SESSION_SEARCH_LIMIT,
+            starredOnly: this.sessionFilters.starredOnly,
+            ...getSessionDateFilterBounds(this.sessionFilters)
+        };
+        return options;
+    }
+
+    getSessionSearchMatch(sessionId) {
+        const query = this.getNormalizedSessionSearchQuery();
+        if (!query || this.state.sessionSearchResultsQuery !== query ||
+            this.state.sessionSearchResultsKey !== this.getSessionResultsKey()) {
+            return null;
+        }
+        return this.state.sessionSearchMatches?.get(sessionId) || null;
+    }
+
+    async openSessionSearchMatch(sessionId, match) {
+        if (!sessionId) return;
+        if (sessionId !== this.state.currentSessionId) {
+            await this.switchSession(sessionId);
+        }
+        if (this.isMobileView()) {
+            this.hideSidebar();
+        }
+        if (!match?.messageId) return;
+
+        const messages = await chatDB.getSessionMessages(sessionId);
+        const message = messages.find(entry => String(entry.id) === String(match.messageId));
+        if (!message) return;
+
+        let contentChanged = false;
+        if (message.role === 'user' && match.variant === 'original-prompt' && message.scrubber?.original) {
+            message.content = message.scrubber.original;
+            message.scrubber.showingOriginal = true;
+            contentChanged = true;
+        } else if (message.role === 'user' && match.variant === 'scrubbed-prompt' && message.scrubber?.redacted) {
+            message.content = message.scrubber.redacted;
+            message.scrubber.showingOriginal = false;
+            contentChanged = true;
+        } else if (message.role === 'assistant' && match.variant === 'restored-answer' && message.scrubber?.restoredResponse) {
+            message.content = message.scrubber.restoredResponse;
+            message.scrubber.restored = true;
+            contentChanged = true;
+        } else if (message.role === 'assistant' && match.variant === 'redacted-answer' && message.scrubber?.redactedResponse) {
+            message.content = message.scrubber.redactedResponse;
+            message.scrubber.restored = false;
+            contentChanged = true;
+        }
+
+        if (contentChanged) {
+            await chatDB.saveMessage(message);
+        }
+        await this.renderMessages();
+
+        const messageElement = Array.from(
+            this.elements.messagesContainer?.querySelectorAll('[data-message-id]') || []
+        ).find(element => element.dataset.messageId === String(match.messageId));
+        if (!messageElement) return;
+        messageElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        messageElement.classList.remove('search-match-focus');
+        void messageElement.offsetWidth;
+        messageElement.classList.add('search-match-focus');
+        setTimeout(() => messageElement.classList.remove('search-match-focus'), 1500);
+
     }
 
     async toggleSessionStar(sessionId) {
@@ -7378,6 +7465,8 @@ class ChatApp {
         }
 
         await chatDB.saveSession(session);
+        const messages = await chatDB.getSessionMessages(session.id);
+        await this.conversationSearch.upsertSession(session, messages);
         this.resetSessionSearchResults();
         this.renderSessions();
         if (this.hasActiveSessionListCriteria()) {
@@ -7488,6 +7577,7 @@ class ChatApp {
             this.state.sessionSearchResultsQuery = '';
             this.state.sessionSearchResultsKey = '';
             this.state.sessionSearchPending = false;
+            this.state.sessionSearchMatches = new Map();
             this.renderSessions();
             return;
         }
@@ -7498,6 +7588,7 @@ class ChatApp {
             this.state.sessionSearchResultsQuery = '';
             this.state.sessionSearchResultsKey = '';
             this.state.sessionSearchPending = false;
+            this.state.sessionSearchMatches = new Map();
             this.renderSessions();
             return;
         }
@@ -7508,36 +7599,32 @@ class ChatApp {
         this.renderSessions();
 
         const results = [];
+        const matches = new Map();
         try {
             const allSessions = await chatDB.getAllSessions();
             allSessions.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
 
-            for (const session of allSessions) {
-                if (requestId !== this.sessionSearchRequestId) {
-                    return;
+            if (query) {
+                await this.conversationSearch.ensureBuilt(chatDB);
+                if (requestId !== this.sessionSearchRequestId) return;
+                const searchMatches = await this.conversationSearch.search(
+                    query,
+                    this.getConversationSearchFilterOptions()
+                );
+                const sessionsById = new Map(allSessions.map(session => [session.id, session]));
+                for (const match of searchMatches) {
+                    const session = sessionsById.get(match.sessionId);
+                    if (!session || !this.sessionMatchesSidebarFilters(session)) continue;
+                    const loadedSession = this.state.sessionsById.get(session.id);
+                    results.push(loadedSession || session);
+                    matches.set(session.id, match);
                 }
-
-                let sessionToMatch = session;
-                const filterMatches = this.sessionMatchesSidebarFilters(sessionToMatch);
-                let matches = filterMatches;
-                if (filterMatches && query) {
-                    matches = this.sessionMatchesSearchQuery(sessionToMatch, query);
-                }
-                if (filterMatches && !matches && query && typeof sessionToMatch.conversationSearchText !== 'string') {
-                    try {
-                        await this.refreshSessionConversationSearchText(sessionToMatch, null, { persist: true });
-                        matches = this.sessionMatchesSearchQuery(sessionToMatch, query);
-                    } catch (error) {
-                        console.warn('Failed to index session for sidebar search:', error);
-                    }
-                }
-
-                if (matches) {
-                    const loadedSession = this.state.sessionsById.get(sessionToMatch.id);
-                    sessionToMatch = loadedSession || sessionToMatch;
-                    results.push(sessionToMatch);
-                    if (query && results.length >= SESSION_SEARCH_LIMIT) {
-                        break;
+            } else {
+                for (const session of allSessions) {
+                    if (requestId !== this.sessionSearchRequestId) return;
+                    if (this.sessionMatchesSidebarFilters(session)) {
+                        const loadedSession = this.state.sessionsById.get(session.id);
+                        results.push(loadedSession || session);
                     }
                 }
             }
@@ -7553,6 +7640,7 @@ class ChatApp {
         this.state.sessionSearchResultsQuery = query;
         this.state.sessionSearchResultsKey = resultsKey;
         this.state.sessionSearchPending = false;
+        this.state.sessionSearchMatches = matches;
         this.cacheSessions(results);
         this.renderSessions();
     }
@@ -7573,6 +7661,9 @@ class ChatApp {
         });
 
         if (this.state.sessionSearchResults && this.state.sessionSearchResultsKey === this.getSessionResultsKey()) {
+            if (query) {
+                return this.state.sessionSearchResults;
+            }
             return this.mergeSessionLists(inMemory, this.state.sessionSearchResults);
         }
 
@@ -9177,6 +9268,7 @@ Your API key has been cleared. A new key from a different station will be obtain
                 message.content = restoreResult.text;
                 message.tokenCount = Math.ceil(restoreResult.text.length / 4);
                 await chatDB.saveMessage(message);
+                await this.conversationSearch.upsertSession(session, messages);
                 if (this.chatArea && this.isViewingSession(session.id)) {
                     this.chatArea.updateMessage(message);
                 }
@@ -9245,6 +9337,8 @@ Your API key has been cleared. A new key from a different station will be obtain
                 message.scrubber.restoredResponse = restoreResult.text;
                 message.scrubber.redactedResponse = responseText;
                 await chatDB.saveMessage(message);
+                messages[messageIndex] = message;
+                await this.conversationSearch.upsertSession(session, messages);
                 console.log('[Scrubber] Pre-cached restoration for message:', message.id);
             }
         } catch (error) {

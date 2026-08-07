@@ -1550,6 +1550,11 @@ export default class ChatArea {
         for (const msg of messagesToDelete) {
             await this.app.data.deleteMessage(msg.id);
         }
+        const remainingMessages = messages.slice(0, messageIndex + 1);
+        if (typeof this.app.applySessionConversationSearchText === 'function') {
+            this.app.applySessionConversationSearchText(session, remainingMessages);
+            await this.app.data.saveSession(session);
+        }
 
         await this.render();
         await this.app.regenerateResponse();
