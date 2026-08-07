@@ -40,6 +40,7 @@ test('vanilla UI adapter is the owner of concrete component construction', () =>
         'ChatArea',
         'ChatInput',
         'Sidebar',
+        'InPageFind',
         'ModelPicker',
         'RightPanel',
         'MessageNavigation'

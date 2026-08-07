@@ -9,6 +9,7 @@ import AccountModal from '../../components/AccountModal.js';
 import MemoryEditor from '../../components/MemoryEditor.js';
 import WelcomePanel from '../../components/WelcomePanel.js';
 import ThanksPanel from '../../components/ThanksPanel.js';
+import InPageFind from '../../components/InPageFind.js';
 import shareModals from '../../components/ShareModals.js';
 import { buildTypingIndicator, configureMessageTemplateServices } from '../../components/MessageTemplates.js';
 import { createVanillaUiInterface } from '../appInterface.js';
@@ -48,6 +49,7 @@ export default class VanillaChatUi {
 
         const componentApp = this.interfaces.componentApp;
         this.components = {
+            inPageFind: new InPageFind(),
             sidebar: new Sidebar(this.interfaces.sidebar),
             chatArea: new ChatArea(componentApp),
             chatInput: new ChatInput(componentApp),

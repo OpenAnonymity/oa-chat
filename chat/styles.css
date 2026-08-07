@@ -132,6 +132,144 @@ code, pre, kbd, .font-mono {
     font-family: var(--font-mono);
 }
 
+/* App-owned Cmd/Ctrl+F avoids the browser find bar retaining keyboard focus. */
+.in-page-find {
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 0.75rem);
+    right: 0.75rem;
+    z-index: 140;
+    display: flex;
+    width: min(23rem, calc(100vw - 1.5rem));
+    min-height: 2.5rem;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.3rem 0.35rem 0.3rem 0.65rem;
+    color: hsl(var(--color-popover-foreground));
+    background: hsl(var(--color-popover) / 0.96);
+    border: 1px solid hsl(var(--color-border));
+    border-radius: 0.7rem;
+    box-shadow: 0 10px 30px hsl(0 0% 0% / 0.16), 0 2px 8px hsl(0 0% 0% / 0.08);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+}
+
+.in-page-find.hidden {
+    display: none;
+}
+
+.in-page-find:focus-within {
+    border-color: hsl(var(--color-ring) / 0.55);
+    box-shadow: 0 10px 30px hsl(0 0% 0% / 0.16), 0 0 0 2px hsl(var(--color-ring) / 0.12);
+}
+
+.in-page-find__search-icon {
+    width: 1rem;
+    height: 1rem;
+    flex: 0 0 auto;
+    fill: none;
+    stroke: hsl(var(--color-muted-foreground));
+    stroke-width: 1.5;
+    stroke-linecap: round;
+}
+
+.in-page-find__input {
+    min-width: 0;
+    flex: 1 1 auto;
+    padding: 0.25rem 0.1rem;
+    color: hsl(var(--color-foreground));
+    background: transparent;
+    border: 0;
+    outline: 0;
+    font-size: 0.8125rem;
+    line-height: 1.25rem;
+}
+
+.in-page-find__input::-webkit-search-cancel-button {
+    display: none;
+}
+
+.in-page-find__count {
+    min-width: 2.8rem;
+    color: hsl(var(--color-muted-foreground));
+    font-size: 0.6875rem;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.in-page-find__button {
+    display: inline-flex;
+    width: 1.75rem;
+    height: 1.75rem;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    color: hsl(var(--color-muted-foreground));
+    background: transparent;
+    border: 0;
+    border-radius: 0.4rem;
+    cursor: pointer;
+}
+
+.in-page-find__button:hover:not(:disabled),
+.in-page-find__button:focus-visible {
+    color: hsl(var(--color-foreground));
+    background: hsl(var(--color-accent));
+    outline: none;
+}
+
+.in-page-find__button:focus-visible {
+    box-shadow: 0 0 0 2px hsl(var(--color-ring) / 0.3);
+}
+
+.in-page-find__button:disabled {
+    opacity: 0.35;
+    cursor: default;
+}
+
+.in-page-find__button svg {
+    width: 1rem;
+    height: 1rem;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.in-page-find__divider {
+    width: 1px;
+    height: 1.1rem;
+    flex: 0 0 auto;
+    margin: 0 0.1rem;
+    background: hsl(var(--color-border));
+}
+
+::highlight(oa-find-match) {
+    color: inherit;
+    background: hsl(44 96% 64% / 0.48);
+}
+
+::highlight(oa-find-current) {
+    color: inherit;
+    background: hsl(32 96% 54% / 0.82);
+}
+
+.dark ::highlight(oa-find-match) {
+    background: hsl(44 90% 54% / 0.34);
+}
+
+.dark ::highlight(oa-find-current) {
+    background: hsl(32 96% 58% / 0.68);
+}
+
+@media (max-width: 520px) {
+    .in-page-find {
+        right: 0.5rem;
+        width: calc(100vw - 1rem);
+    }
+}
+
 .bg-background {
     --tw-bg-opacity: 1;
     background-color: hsl(var(--color-background) / var(--tw-bg-opacity, 1)) !important;
