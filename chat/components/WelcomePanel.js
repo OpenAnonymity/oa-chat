@@ -1103,7 +1103,7 @@ class WelcomePanel {
                     ` : ''}
                 </div>
 
-                <p class="text-sm text-muted-foreground mb-4">A simple, fast, <a href="https://github.com/openanonymity/oa-fastchat" target="_blank" rel="noopener noreferrer" class="text-foreground welcome-link">open source</a>, and <a href="https://openanonymity.ai/blog/unlinkable-inference/" target="_blank" rel="noopener noreferrer" class="text-foreground welcome-link">provably unlinkable</a> chat client by <a href="https://openanonymity.ai/" target="_blank" rel="noopener noreferrer" class="text-foreground welcome-link">The Open Anonymity Project</a>.</p>
+                <p class="text-sm text-muted-foreground mb-4">A simple, fast, <a href="https://github.com/dsobhani8/oa-chat" target="_blank" rel="noopener noreferrer" class="text-foreground welcome-link">open source</a>, and <a href="https://openanonymity.ai/blog/unlinkable-inference/" target="_blank" rel="noopener noreferrer" class="text-foreground welcome-link">provably unlinkable</a> chat client by <a href="https://openanonymity.ai/" target="_blank" rel="noopener noreferrer" class="text-foreground welcome-link">The Open Anonymity Project</a>.</p>
 
                 <!-- Guarantees -->
                 <div class="welcome-guarantees" style="margin-top:6px;margin-bottom:27px">

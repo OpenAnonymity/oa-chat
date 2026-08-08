@@ -376,7 +376,7 @@ export function getActivityDescription(log, detailed = false) {
                     return 'The API key expires too soon to perform ownership verification. This is expected behavior for keys near their expiry time. This should not occur unless the app delays verification or has been modified.';
                 }
                 if (status === 'queued' || status === 'pending') {
-                    return 'The verifier is currently unreachable. Station integrity will be attested as soon as verifier comes <a href="https://verifier2.openanonymity.ai/health" target="_blank" rel="noopener noreferrer" class="underline hover:text-amber-700 dark:hover:text-amber-300">online</a>. You can continue sending messages normally because this station was recently attested by other users.';
+                    return 'The verifier is currently unreachable. The disposable key remains inactive while verification is pending.';
                 } else if (status >= 200 && status < 300) {
                     return 'Successfully verified the integrity of the key issuing station.';
                 } else if (status >= 400 || status === 0) {

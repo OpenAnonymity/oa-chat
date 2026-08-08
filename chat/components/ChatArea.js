@@ -8,6 +8,7 @@ import { buildMessageHTML, buildEmptyState, buildSharedIndicator, buildImportedI
 import { exportChats, exportTickets } from '../services/globalExport.js';
 import { parseStreamingReasoningContent, parseReasoningContent } from '../services/reasoningParser.js';
 import { buildQuickAskQuestion, normalizeQuickAskSelection } from '../domain/quickAsk.js';
+import { resolveProvider, resolveProviderFromModelReference } from '../services/providerRegistry.js';
 
 export default class ChatArea {
     /**
@@ -17,6 +18,7 @@ export default class ChatArea {
         this.app = app;
         // Buffer for debounced reasoning updates during streaming
         this.reasoningBuffer = { content: '', timeout: null, messageId: null };
+        this.councilReasoningStreams = new Map();
         // Typewriter state for gradual content reveal
         this.typewriter = {
             targetContent: '',      // Full content to display
@@ -45,6 +47,7 @@ export default class ChatArea {
             messageId: '',
             activeKey: '',
             selectionRect: null,
+            windowAnchor: null,
             abortController: null,
             activeRequestId: 0,
             requestInFlight: false
@@ -151,10 +154,25 @@ export default class ChatArea {
                 return;
             }
 
+            const copyCouncilLaneBtn = e.target.closest('.copy-council-lane-btn');
+            if (copyCouncilLaneBtn) {
+                const messageId = copyCouncilLaneBtn.dataset.messageId;
+                const laneId = copyCouncilLaneBtn.dataset.councilLaneId;
+                await this.handleCopyCouncilLane(messageId, laneId, copyCouncilLaneBtn);
+                return;
+            }
+
             const copyUserBtn = e.target.closest('.copy-user-message-btn');
             if (copyUserBtn) {
                 const messageId = copyUserBtn.dataset.messageId;
                 await this.handleCopyMessage(messageId);
+                return;
+            }
+
+            const councilTabBtn = e.target.closest('.council-tab-btn');
+            if (councilTabBtn) {
+                e.preventDefault();
+                this.handleCouncilTabSwitch(councilTabBtn);
                 return;
             }
 
@@ -165,8 +183,20 @@ export default class ChatArea {
                 return;
             }
 
+            const regenerateCouncilLaneBtn = e.target.closest('.regenerate-council-lane-btn');
+            if (regenerateCouncilLaneBtn) {
+                const messageId = regenerateCouncilLaneBtn.dataset.messageId;
+                const laneId = regenerateCouncilLaneBtn.dataset.councilLaneId;
+                await this.handleRegenerateCouncilLane(messageId, laneId, regenerateCouncilLaneBtn);
+                return;
+            }
+
             const memoryApprovalBtn = e.target.closest('.memory-approval-btn');
             if (memoryApprovalBtn) {
+                if (this.app.memoryFeatureEnabled === false) {
+                    this.app.showToast?.('Memory is off in settings.', 'info', 3000);
+                    return;
+                }
                 const messageId = memoryApprovalBtn.dataset.messageId;
                 const decision = memoryApprovalBtn.dataset.decision;
                 await this.app.handleMemoryApprovalDecision(messageId, decision);
@@ -175,6 +205,10 @@ export default class ChatArea {
 
             const memoryPreviewBtn = e.target.closest('.memory-preview-btn');
             if (memoryPreviewBtn) {
+                if (this.app.memoryFeatureEnabled === false) {
+                    this.app.showToast?.('Memory is off in settings.', 'info', 3000);
+                    return;
+                }
                 const messageId = memoryPreviewBtn.dataset.messageId;
                 const userMessageId = memoryPreviewBtn.dataset.userMessageId;
                 await this.handleMemoryPromptPreview(messageId, userMessageId);
@@ -237,6 +271,16 @@ export default class ChatArea {
             if (forkBtn) {
                 const messageId = forkBtn.dataset.messageId;
                 await this.app.forkConversation(messageId);
+                return;
+            }
+
+            const editSecondaryModelPickerBtn = e.target.closest('.edit-secondary-model-picker-btn');
+            if (editSecondaryModelPickerBtn) {
+                e.preventDefault();
+                e.stopPropagation();
+                if (this.app.modelPicker) {
+                    this.app.modelPicker.open({ selectionMode: 'council-secondary' });
+                }
                 return;
             }
 
@@ -333,7 +377,10 @@ export default class ChatArea {
         });
 
         window.addEventListener('resize', () => this.hideQuickAskPopover());
-        this.app.elements.chatArea?.addEventListener('scroll', () => this.hideQuickAskPopover(), { passive: true });
+        this.app.elements.chatArea?.addEventListener('scroll', () => {
+            this.hideQuickAskPopover();
+            this.syncQuickAskWindowToScroll();
+        }, { passive: true });
     }
 
     getAssistantSelectionData() {
@@ -395,6 +442,7 @@ export default class ChatArea {
         popover.classList.remove('hidden');
         popover.setAttribute('aria-hidden', 'false');
         this.positionQuickAskPopover(popover, selectionData.rect);
+        this.updateQuickAskLayerState();
     }
 
     ensureQuickAskPopover() {
@@ -446,6 +494,7 @@ export default class ChatArea {
         if (!popover) return;
         popover.classList.add('hidden');
         popover.setAttribute('aria-hidden', 'true');
+        this.updateQuickAskLayerState();
     }
 
     getQuickAskKey(selectedText = this.quickAsk.selectedText, messageId = this.quickAsk.messageId) {
@@ -465,6 +514,7 @@ export default class ChatArea {
             panel.classList.remove('hidden');
             panel.setAttribute('aria-hidden', 'false');
             this.positionQuickAskWindow(panel, this.quickAsk.selectionRect);
+            this.updateQuickAskLayerState();
             return;
         }
 
@@ -477,6 +527,7 @@ export default class ChatArea {
 
         panel.classList.remove('hidden');
         panel.setAttribute('aria-hidden', 'false');
+        this.updateQuickAskLayerState();
         panel.querySelector('.quick-ask-user-bubble').textContent = this.quickAsk.question;
         panel.querySelector('.quick-ask-status').textContent = '';
         this.updateQuickAskReasoning('');
@@ -489,8 +540,8 @@ export default class ChatArea {
     ensureQuickAskWindow() {
         if (this.quickAsk.window) {
             if (!this.quickAsk.window.isConnected ||
-                this.quickAsk.window.parentElement !== this.app.elements.messagesContainer) {
-                this.app.elements.messagesContainer.appendChild(this.quickAsk.window);
+                this.quickAsk.window.parentElement !== document.body) {
+                document.body.appendChild(this.quickAsk.window);
             }
             return this.quickAsk.window;
         }
@@ -521,16 +572,42 @@ export default class ChatArea {
             e.preventDefault();
             this.handleCopyCodeBlock(codeBlockCopyBtn);
         });
-        this.app.elements.messagesContainer.appendChild(panel);
+        document.body.appendChild(panel);
         this.quickAsk.window = panel;
         return panel;
     }
 
-    positionQuickAskWindow(panel, rect) {
+    syncQuickAskWindowToScroll() {
+        if (!this.quickAsk.window ||
+            this.quickAsk.window.classList.contains('hidden') ||
+            !this.quickAsk.windowAnchor) return;
+        this.positionQuickAskWindow(this.quickAsk.window, null, { preserveAnchor: true });
+    }
+
+    positionQuickAskWindow(panel, rect, options = {}) {
         const margin = 16;
+        const chatArea = this.app.elements.chatArea;
+        const scrollTop = chatArea?.scrollTop || 0;
+        const scrollLeft = chatArea?.scrollLeft || 0;
+        const chatAreaRect = chatArea?.getBoundingClientRect();
         const panelRect = panel.getBoundingClientRect();
         const width = panelRect.width || Math.min(520, window.innerWidth - (margin * 2));
         const height = panelRect.height || 360;
+
+        if (options.preserveAnchor && this.quickAsk.windowAnchor) {
+            const anchoredLeft = (chatAreaRect?.left || 0) + this.quickAsk.windowAnchor.left - scrollLeft;
+            const anchoredTop = (chatAreaRect?.top || 0) + this.quickAsk.windowAnchor.top - scrollTop;
+            const isInChatViewport = !chatAreaRect ||
+                (anchoredTop + height > chatAreaRect.top && anchoredTop < chatAreaRect.bottom);
+
+            Object.assign(panel.style, {
+                left: `${anchoredLeft}px`,
+                top: `${anchoredTop}px`,
+                visibility: isInChatViewport ? '' : 'hidden'
+            });
+            return;
+        }
+
         const sourceRect = rect || {
             left: window.innerWidth / 2,
             right: window.innerWidth / 2,
@@ -549,12 +626,17 @@ export default class ChatArea {
         const top = belowTop + height <= window.innerHeight - margin
             ? belowTop
             : Math.max(margin, aboveTop);
-        const containerRect = this.app.elements.messagesContainer.getBoundingClientRect();
+        const clampedTop = Math.min(Math.max(margin, top), window.innerHeight - height - margin);
 
         Object.assign(panel.style, {
-            left: `${left - containerRect.left}px`,
-            top: `${Math.min(Math.max(margin, top), window.innerHeight - height - margin) - containerRect.top}px`
+            left: `${left}px`,
+            top: `${clampedTop}px`,
+            visibility: ''
         });
+        this.quickAsk.windowAnchor = {
+            left: left - (chatAreaRect?.left || 0) + scrollLeft,
+            top: clampedTop - (chatAreaRect?.top || 0) + scrollTop
+        };
     }
 
     async startQuickAskRequest(requestId) {
@@ -733,6 +815,7 @@ export default class ChatArea {
         if (this.quickAsk.window) {
             this.quickAsk.window.classList.add('hidden');
             this.quickAsk.window.setAttribute('aria-hidden', 'true');
+            this.updateQuickAskLayerState();
         }
         if (reset) {
             this.quickAsk.selectedText = '';
@@ -740,7 +823,14 @@ export default class ChatArea {
             this.quickAsk.messageId = '';
             this.quickAsk.activeKey = '';
             this.quickAsk.selectionRect = null;
+            this.quickAsk.windowAnchor = null;
         }
+    }
+
+    updateQuickAskLayerState() {
+        const popoverVisible = this.quickAsk.popover && !this.quickAsk.popover.classList.contains('hidden');
+        const windowVisible = this.quickAsk.window && !this.quickAsk.window.classList.contains('hidden');
+        document.body.classList.toggle('quick-ask-layer-active', Boolean(popoverVisible || windowVisible));
     }
 
     getQuickAskActiveSessionId() {
@@ -770,8 +860,8 @@ export default class ChatArea {
         if (!this.shouldPreserveQuickAskWindowForRender(sessionId)) return;
 
         if (!panel.isConnected ||
-            panel.parentElement !== this.app.elements.messagesContainer) {
-            this.app.elements.messagesContainer.appendChild(panel);
+            panel.parentElement !== document.body) {
+            document.body.appendChild(panel);
         }
     }
 
@@ -809,6 +899,23 @@ export default class ChatArea {
             navigator.clipboard.writeText(text).catch(() => {});
             return true;
         }
+    }
+
+    handleCouncilTabSwitch(button) {
+        const messageEl = button.closest('[data-message-id]');
+        const label = button.dataset.councilTabLabel;
+        if (!messageEl || !label) return;
+
+        messageEl.querySelectorAll('.council-tab-btn').forEach((entry) => {
+            const isActive = entry === button;
+            entry.classList.toggle('council-tab-btn-active', isActive);
+            entry.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        });
+
+        messageEl.querySelectorAll('.council-response-panel').forEach((panel) => {
+            const isActive = panel.dataset.councilPanelLabel === label;
+            panel.classList.toggle('hidden', !isActive);
+        });
     }
 
     /**
@@ -946,6 +1053,22 @@ export default class ChatArea {
         }
     }
 
+    renderCompletedAssistantContent(message, scopeId = message?.id) {
+        let processedContent = message?.content || '';
+
+        if (message?.citations && message.citations.length > 0) {
+            processedContent = window.MessageTemplates.insertRawCitationMarkers(processedContent, message.citations);
+        }
+
+        processedContent = this.app.processContentWithLatex(processedContent);
+
+        if (message?.citations && message.citations.length > 0) {
+            processedContent = window.MessageTemplates.addInlineCitationMarkers(processedContent, scopeId);
+        }
+
+        return window.MessageTemplates.enhanceInlineLinks(processedContent, scopeId);
+    }
+
     /**
      * Handles copying the content of a message.
      * Prioritizes Safari-safe raw DOM data when enabled, else DB-first.
@@ -1011,6 +1134,33 @@ export default class ChatArea {
         }
     }
 
+    findCouncilLaneEntry(message, laneId) {
+        const stageEntries = Array.isArray(message?.council?.stage1)
+            ? message.council.stage1
+            : [];
+        if (!laneId || stageEntries.length === 0) return null;
+        return stageEntries.find((entry) => entry?.laneId === laneId)
+            || stageEntries.find((entry) => entry?.label === laneId)
+            || null;
+    }
+
+    async handleCopyCouncilLane(messageId, laneId, button = null) {
+        const session = this.app.getCurrentSession();
+        if (!session || !messageId || !laneId) return;
+
+        const messages = await this.app.data.getSessionMessages(session.id);
+        const message = messages.find((entry) => entry.id === messageId);
+        const laneEntry = this.findCouncilLaneEntry(message, laneId);
+        const response = typeof laneEntry?.response === 'string'
+            ? laneEntry.response
+            : '';
+
+        if (!response.trim()) return;
+
+        this.copyToClipboard(response);
+        this.animateCopyButton(button || document.querySelector(`.copy-council-lane-btn[data-message-id="${messageId}"][data-council-lane-id="${laneId}"]`));
+    }
+
     /**
      * Shows copy success feedback on the appropriate button.
      * @param {string} messageId - The message ID
@@ -1042,8 +1192,10 @@ export default class ChatArea {
      * @param {HTMLElement} btn - The button element
      */
     animateCopyButton(btn) {
+        if (!btn) return;
         const originalTitle = btn.title;
         const svg = btn.querySelector('svg');
+        if (!svg) return;
         const originalSvgContent = svg.innerHTML;
 
         // Replace with checkmark icon
@@ -1185,12 +1337,39 @@ export default class ChatArea {
         for (const msg of messagesToDelete) {
             await this.app.data.deleteMessage(msg.id);
         }
+        const remainingMessages = messages.slice(0, messageIndex);
+        await this.app.recomputeSessionCouncilTranscriptHint?.(session, remainingMessages);
 
         // Re-render messages to remove deleted messages from UI
         await this.render();
 
         // Trigger regeneration by calling the app's regenerateResponse method
         await this.app.regenerateResponse();
+    }
+
+    async handleRegenerateCouncilLane(messageId, laneId, triggerButton = null) {
+        const session = this.app.getCurrentSession();
+        if (!session || !messageId || !laneId) return;
+
+        if (this.app.isCurrentSessionStreaming()) {
+            const stopped = await this.app.stopCurrentSessionStreamingAndWait();
+            if (!stopped) return;
+        }
+
+        if (triggerButton) {
+            triggerButton.classList.add('is-processing');
+            triggerButton.setAttribute('aria-busy', 'true');
+            triggerButton.blur();
+        }
+
+        try {
+            await this.app.regenerateCouncilLane(messageId, laneId);
+        } finally {
+            if (triggerButton) {
+                triggerButton.classList.remove('is-processing');
+                triggerButton.removeAttribute('aria-busy');
+            }
+        }
     }
 
     /**
@@ -1422,6 +1601,10 @@ export default class ChatArea {
     }
 
     async showCiPromptEditor(messageId, draftOverride = null) {
+        if (this.app.memoryFeatureEnabled === false) {
+            this.app.showToast?.('Memory is off in settings.', 'info', 3000);
+            return;
+        }
         const session = this.app.getCurrentSession();
         if (!session) return;
 
@@ -1444,6 +1627,10 @@ export default class ChatArea {
             fullPrompt: draft.editedFullPrompt || draft.fullPrompt || '',
             isReadOnly,
             onSave: isReadOnly ? null : async (editedPrompt) => {
+                if (this.app.memoryFeatureEnabled === false) {
+                    this.app.showToast?.('Memory is off in settings.', 'info', 3000);
+                    return;
+                }
                 message.ciPromptDraft = {
                     ...message.ciPromptDraft,
                     editedFullPrompt: editedPrompt
@@ -1486,6 +1673,8 @@ export default class ChatArea {
         for (const msg of messagesToDelete) {
             await this.app.data.deleteMessage(msg.id);
         }
+        const remainingMessages = messages.slice(0, messageIndex + 1);
+        await this.app.recomputeSessionCouncilTranscriptHint?.(session, remainingMessages);
 
         await this.render();
         await this.app.regenerateResponse();
@@ -1565,6 +1754,7 @@ export default class ChatArea {
             clearInterval(this.typewriter.interval);
             this.typewriter.interval = null;
         }
+        this.clearAllCouncilReasoningStreams();
 
         // Check if empty state is already rendered (by prelude.js) to avoid re-render flash
         const hasEmptyState = messagesContainer.querySelector('.welcome-landing') !== null;
@@ -1584,6 +1774,12 @@ export default class ChatArea {
         if (currentGeneration !== this.renderGeneration) {
             return; // Bail out - a newer render is in progress
         }
+
+        const persistCouncilLayoutHint = this.app.persistCouncilLayoutHintFromMessages?.(session, messages);
+        persistCouncilLayoutHint?.catch?.((error) => {
+            console.debug('Unable to persist council layout hint:', error);
+        });
+        this.app.updateCouncilLayoutMode?.(session, messages);
 
         if (messages.length === 0) {
             if (!hasEmptyState) {
@@ -1670,8 +1866,10 @@ export default class ChatArea {
         const needsTypingIndicator = isSessionStreaming && (!lastMsg || lastMsg.role === 'user');
         if (needsTypingIndicator) {
             // Get provider from session model for the typing indicator
-            const sessionModel = this.app.state.models?.find(m => m.name === session.model);
-            const providerName = sessionModel?.provider || 'OpenAI';
+            const sessionModel = this.app.state.models?.find(m => m.name === session.model || m.id === session.model);
+            const providerName = sessionModel?.provider
+                ? resolveProvider(sessionModel.provider).displayName
+                : resolveProviderFromModelReference(session.model).displayName;
             messagesHtml += buildTypingIndicator('typing-restore-' + Date.now(), providerName, session.model, Date.now(), streamingPhase);
         }
 
@@ -2026,6 +2224,262 @@ export default class ChatArea {
             });
             this.app.updateActivePromptScrollSpacer();
         }
+    }
+
+    getCouncilLaneReasoningId(messageId, laneId) {
+        return `${messageId}-${laneId || 'lane'}`;
+    }
+
+    getCouncilLaneBody(messageId, laneId) {
+        const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
+        if (!messageEl) return null;
+
+        if (laneId === 'synthesis') {
+            const synthesisBlock = messageEl.querySelector('.council-synthesis-block');
+            return synthesisBlock?.querySelector('.council-response-body') || null;
+        }
+
+        const panels = Array.from(messageEl.querySelectorAll('.council-response-panel'));
+        const panel = panels.find((entry) => entry.dataset.councilLaneId === laneId);
+        return panel?.querySelector('.council-response-body') || null;
+    }
+
+    removeCouncilLanePending(bodyEl) {
+        bodyEl?.querySelector('.council-response-pending')?.remove();
+    }
+
+    ensureCouncilLaneContentElement(messageId, laneId) {
+        const bodyEl = this.getCouncilLaneBody(messageId, laneId);
+        if (!bodyEl) return null;
+        this.removeCouncilLanePending(bodyEl);
+
+        let contentEl = bodyEl.querySelector('.council-lane-content');
+        if (contentEl) return contentEl;
+
+        const contentShell = document.createElement('div');
+        contentShell.className = 'py-3 px-4 font-normal message-assistant w-full flex items-center council-lane-content-shell';
+        contentShell.innerHTML = '<div class="min-w-0 w-full overflow-hidden message-content prose council-lane-content"></div>';
+        bodyEl.appendChild(contentShell);
+        return contentShell.querySelector('.council-lane-content');
+    }
+
+    updateCouncilLaneContent(messageId, laneId, content) {
+        const contentEl = this.ensureCouncilLaneContentElement(messageId, laneId);
+        if (!contentEl) return;
+
+        contentEl.classList.add('streaming');
+        let processedContent = this.app.processContentWithLatex(content || '');
+        processedContent = window.MessageTemplates.enhanceInlineLinks(
+            processedContent,
+            `${messageId}-${laneId || 'lane'}`
+        );
+        this.patchStreamingContent(contentEl, processedContent);
+        renderMathInElement(contentEl, {
+            delimiters: [
+                {left: '$$', right: '$$', display: true},
+                {left: '\\[', right: '\\]', display: true},
+                {left: '\\(', right: '\\)', display: false}
+            ],
+            throwOnError: false
+        });
+        this.app.updateActivePromptScrollSpacer();
+        this.app.updateScrollButtonVisibility();
+    }
+
+    ensureCouncilLaneReasoningTrace(messageId, laneId) {
+        const reasoningId = this.getCouncilLaneReasoningId(messageId, laneId);
+        const existingContentEl = document.getElementById(`reasoning-content-${reasoningId}`);
+        if (existingContentEl) return existingContentEl;
+
+        const bodyEl = this.getCouncilLaneBody(messageId, laneId);
+        if (!bodyEl) return null;
+        this.removeCouncilLanePending(bodyEl);
+
+        const traceWrapper = document.createElement('div');
+        traceWrapper.innerHTML = buildReasoningTrace(
+            '',
+            reasoningId,
+            true,
+            this.app.processContentWithLatex.bind(this.app)
+        );
+        const traceEl = traceWrapper.firstElementChild;
+        if (!traceEl) return null;
+
+        const firstContentShell = bodyEl.querySelector('.council-lane-content-shell');
+        if (firstContentShell) {
+            bodyEl.insertBefore(traceEl, firstContentShell);
+        } else {
+            bodyEl.appendChild(traceEl);
+        }
+        return document.getElementById(`reasoning-content-${reasoningId}`);
+    }
+
+    getCouncilReasoningStreamState(reasoningId) {
+        if (!this.councilReasoningStreams.has(reasoningId)) {
+            this.councilReasoningStreams.set(reasoningId, {
+                content: '',
+                timeout: null,
+                targetContent: '',
+                displayedLength: 0,
+                interval: null,
+                charsPerTick: 3,
+                tickMs: 16,
+                autoScrollPaused: false
+            });
+        }
+        return this.councilReasoningStreams.get(reasoningId);
+    }
+
+    updateCouncilLaneReasoning(messageId, laneId, reasoning) {
+        const reasoningId = this.getCouncilLaneReasoningId(messageId, laneId);
+        this.ensureCouncilLaneReasoningTrace(messageId, laneId);
+        const state = this.getCouncilReasoningStreamState(reasoningId);
+        state.content = reasoning || '';
+
+        if (!state.timeout) {
+            state.timeout = setTimeout(() => {
+                this.flushCouncilReasoningBuffer(reasoningId);
+            }, 80);
+        }
+    }
+
+    flushCouncilReasoningBuffer(reasoningId) {
+        const state = this.getCouncilReasoningStreamState(reasoningId);
+        state.timeout = null;
+        if (!state.content) return;
+
+        const parsedReasoning = parseStreamingReasoningContent(state.content);
+        state.targetContent = parsedReasoning;
+
+        if (!state.interval) {
+            state.interval = setInterval(() => {
+                this.councilReasoningTypewriterTick(reasoningId);
+            }, state.tickMs);
+        }
+
+        const subtitleEl = document.getElementById(`reasoning-subtitle-${reasoningId}`);
+        if (subtitleEl) {
+            subtitleEl.textContent = this.extractReasoningSubtitle(state.content);
+            if (!subtitleEl.classList.contains('reasoning-subtitle-streaming')) {
+                subtitleEl.classList.add('reasoning-subtitle-streaming');
+            }
+        }
+    }
+
+    setupCouncilReasoningScrollTracking(el, state) {
+        if (!el || el._councilReasoningScrollTracked) return;
+        el._councilReasoningScrollTracked = true;
+        el.addEventListener('wheel', (e) => {
+            if (e.deltaY < 0) {
+                state.autoScrollPaused = true;
+            } else if (e.deltaY > 0 && state.autoScrollPaused) {
+                const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+                if (distanceFromBottom <= 5) {
+                    state.autoScrollPaused = false;
+                }
+            }
+        }, { passive: true });
+    }
+
+    councilReasoningTypewriterTick(reasoningId) {
+        const state = this.getCouncilReasoningStreamState(reasoningId);
+        const reasoningContentEl = document.getElementById(`reasoning-content-${reasoningId}`);
+        if (!reasoningContentEl) {
+            this.clearCouncilReasoningStream(reasoningId);
+            return;
+        }
+
+        this.setupCouncilReasoningScrollTracking(reasoningContentEl, state);
+        reasoningContentEl.classList.add('streaming');
+
+        let loadingIndicator = reasoningContentEl.querySelector('.reasoning-loading-indicator');
+        if (!loadingIndicator) {
+            loadingIndicator = document.createElement('span');
+            loadingIndicator.className = 'reasoning-loading-indicator reasoning-subtitle-streaming';
+            loadingIndicator.textContent = 'Thinking...';
+            reasoningContentEl.appendChild(loadingIndicator);
+        }
+
+        const updateContentPreservingIndicator = (html) => {
+            const children = Array.from(reasoningContentEl.childNodes);
+            for (const child of children) {
+                if (child !== loadingIndicator) {
+                    child.remove();
+                }
+            }
+            const wrapper = document.createElement('div');
+            wrapper.innerHTML = html;
+            while (wrapper.firstChild) {
+                reasoningContentEl.insertBefore(wrapper.firstChild, loadingIndicator);
+            }
+        };
+
+        const targetLength = state.targetContent.length;
+        if (state.displayedLength < targetLength) {
+            state.displayedLength = Math.min(state.displayedLength + state.charsPerTick, targetLength);
+        }
+        const displayContent = state.targetContent.substring(0, state.displayedLength);
+        updateContentPreservingIndicator(this.convertBasicMarkdownToHtml(displayContent));
+
+        if (!state.autoScrollPaused) {
+            reasoningContentEl.scrollTop = reasoningContentEl.scrollHeight;
+        }
+        this.app.updateActivePromptScrollSpacer();
+        this.app.updateScrollButtonVisibility();
+    }
+
+    clearCouncilReasoningStream(reasoningId) {
+        const state = this.councilReasoningStreams.get(reasoningId);
+        if (!state) return;
+        if (state.timeout) {
+            clearTimeout(state.timeout);
+        }
+        if (state.interval) {
+            clearInterval(state.interval);
+        }
+        this.councilReasoningStreams.delete(reasoningId);
+    }
+
+    clearAllCouncilReasoningStreams() {
+        Array.from(this.councilReasoningStreams.keys()).forEach(reasoningId => {
+            this.clearCouncilReasoningStream(reasoningId);
+        });
+    }
+
+    clearCouncilLaneReasoning(messageId, laneId, options = {}) {
+        const reasoningId = this.getCouncilLaneReasoningId(messageId, laneId);
+        this.clearCouncilReasoningStream(reasoningId);
+
+        const reasoningContentEl = document.getElementById(`reasoning-content-${reasoningId}`);
+        if (reasoningContentEl) {
+            reasoningContentEl.querySelector('.reasoning-loading-indicator')?.remove();
+            reasoningContentEl.classList.remove('streaming');
+        }
+
+        const subtitleEl = document.getElementById(`reasoning-subtitle-${reasoningId}`);
+        if (subtitleEl) {
+            subtitleEl.classList.remove('reasoning-subtitle-streaming');
+            if (options.label && subtitleEl.textContent.trim() === 'Thinking...') {
+                subtitleEl.textContent = options.label;
+            }
+        }
+    }
+
+    updateCouncilLaneReasoningSubtitleToDuration(messageId, laneId, reasoningDuration) {
+        const reasoningId = this.getCouncilLaneReasoningId(messageId, laneId);
+        this.updateReasoningSubtitleToDuration(reasoningId, reasoningDuration);
+    }
+
+    finalizeCouncilLaneReasoning(messageId, laneId, reasoning, reasoningDuration) {
+        const reasoningId = this.getCouncilLaneReasoningId(messageId, laneId);
+        const state = this.councilReasoningStreams.get(reasoningId);
+        if (state?.timeout) {
+            clearTimeout(state.timeout);
+            state.timeout = null;
+            this.flushCouncilReasoningBuffer(reasoningId);
+        }
+        this.clearCouncilReasoningStream(reasoningId);
+        this.finalizeReasoningDisplay(reasoningId, reasoning, reasoningDuration);
     }
 
     /**
@@ -2689,12 +3143,15 @@ export default class ChatArea {
      * This ensures reasoning traces are collapsed and tokens are correctly displayed.
      * When reasoning is already finalized, does targeted updates to avoid flash.
      * @param {Object} message - The completed message object
+     * @param {Object} options
+     * @param {boolean} options.forceFullRender - Rebuild all message chrome even if reasoning is finalized
      */
-    async finalizeStreamingMessage(message) {
+    async finalizeStreamingMessage(message, options = {}) {
         const messageEl = document.querySelector(`[data-message-id="${message.id}"]`);
         if (!messageEl) return;
 
         const promptSlideAnchor = this.app.captureActivePromptScrollAnchor?.({ primeRunway: true });
+        const forceFullRender = options.forceFullRender === true;
 
         // Check if reasoning trace is already finalized (subtitle shows duration, not streaming)
         const existingReasoningTrace = messageEl.querySelector('.reasoning-trace');
@@ -2705,33 +3162,13 @@ export default class ChatArea {
 
         // If reasoning is finalized, do targeted updates instead of full replacement
         // This prevents flash by not touching the reasoning trace DOM at all
-        if (isReasoningFinalized) {
+        if (isReasoningFinalized && !forceFullRender) {
             // Just update the content element if it exists
             const contentEl = messageEl.querySelector('.message-content');
             if (contentEl && message.content) {
                 // Remove streaming class to re-enable hover effects
                 contentEl.classList.remove('streaming');
-
-                // Process content with the full pipeline (same as buildAssistantMessage)
-                let processedContent = message.content;
-
-                // Insert raw citation markers before LaTeX processing
-                if (message.citations && message.citations.length > 0) {
-                    processedContent = window.MessageTemplates.insertRawCitationMarkers(processedContent, message.citations);
-                }
-
-                // Process LaTeX/Markdown
-                processedContent = this.app.processContentWithLatex(processedContent);
-
-                // Style citation markers into clickable elements
-                if (message.citations && message.citations.length > 0) {
-                    processedContent = window.MessageTemplates.addInlineCitationMarkers(processedContent, message.id);
-                }
-
-                // Enhance inline links into styled buttons
-                processedContent = window.MessageTemplates.enhanceInlineLinks(processedContent, message.id);
-
-                contentEl.innerHTML = processedContent;
+                contentEl.innerHTML = this.renderCompletedAssistantContent(message, message.id);
                 renderMathInElement(contentEl, {
                     delimiters: [
                         {left: '$$', right: '$$', display: true},
@@ -2857,24 +3294,39 @@ export default class ChatArea {
      * Updates the edit model picker button content to sync with the main model picker.
      * Called after render when editing a message.
      */
+    updateEditModelPickerChip(targetButton, sourceButton, laneLabel) {
+        if (!targetButton || !sourceButton) return;
+
+        const iconDiv = sourceButton.querySelector('.w-5.h-5');
+        const modelNameSpan = sourceButton.querySelector('.model-name-container');
+        if (!iconDiv || !modelNameSpan) return;
+
+        const modelName = modelNameSpan.textContent?.trim() || `${laneLabel} model`;
+        const iconClone = iconDiv.cloneNode(true);
+        const label = document.createElement('span');
+        label.className = 'model-name-container min-w-0 truncate';
+        label.textContent = modelName;
+        targetButton.replaceChildren(iconClone, label);
+        const hoverName = sourceButton.getAttribute('data-tooltip')
+            || sourceButton.title
+            || modelName;
+        targetButton.title = hoverName;
+        targetButton.setAttribute('data-tooltip', hoverName);
+        targetButton.setAttribute('data-tooltip-position', 'top');
+        targetButton.setAttribute('aria-label', `${laneLabel} model: ${hoverName}`);
+    }
+
     updateEditModelPickerButton() {
-        const editModelPickerBtn = document.getElementById('edit-model-picker-btn');
-        if (!editModelPickerBtn) return;
-
-        // Get the main model picker button's inner HTML (except the keyboard shortcut)
-        const mainBtn = this.app.elements.modelPickerBtn;
-        if (!mainBtn) return;
-
-        // Extract icon and model name from main button
-        const iconDiv = mainBtn.querySelector('.w-5.h-5');
-        const modelNameSpan = mainBtn.querySelector('.model-name-container');
-
-        if (iconDiv && modelNameSpan) {
-            editModelPickerBtn.innerHTML = `
-                ${iconDiv.outerHTML}
-                <span class="model-name-container min-w-0 truncate">${modelNameSpan.textContent}</span>
-            `;
-        }
+        this.updateEditModelPickerChip(
+            document.getElementById('edit-model-picker-btn'),
+            this.app.elements.modelPickerBtn,
+            'Primary'
+        );
+        this.updateEditModelPickerChip(
+            document.getElementById('edit-secondary-model-picker-btn'),
+            document.getElementById('council-secondary-model-btn'),
+            'Secondary'
+        );
     }
 
     /**

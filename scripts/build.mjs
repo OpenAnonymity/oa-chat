@@ -9,12 +9,27 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 
+const readOption = (name) => {
+    const index = process.argv.indexOf(name);
+    if (index < 0) return null;
+    const value = process.argv[index + 1];
+    if (!value || value.startsWith('--')) {
+        throw new Error(`[build] ${name} requires a value.`);
+    }
+    return value;
+};
+
 const srcDir = path.join(repoRoot, 'chat');
-const outDir = path.join(repoRoot, 'dist');
+const appEntry = readOption('--app-entry');
+const outputDirectory = readOption('--out-dir');
+const outDir = outputDirectory
+    ? path.resolve(process.cwd(), outputDirectory)
+    : path.join(repoRoot, 'dist');
 const assetsDir = path.join(outDir, 'assets');
 const vectorDir = path.join(repoRoot, 'vector');
 const localInferenceDir = path.join(repoRoot, 'local_inference');
 const nanomemDir = path.join(repoRoot, 'nanomem');
+const outputMarkerName = '.oa-chat-build-output';
 
 const pathExists = async (target) => {
     try {
@@ -26,11 +41,26 @@ const pathExists = async (target) => {
 };
 
 const entryPoints = {
-    app: path.join(srcDir, 'app.js'),
+    app: appEntry
+        ? path.resolve(process.cwd(), appEntry)
+        : path.join(srcDir, 'standalone.js'),
     prelude: path.join(srcDir, 'prelude.js')
 };
 
 const toPosixPath = (value) => value.split(path.sep).join('/');
+
+const assertSafeOutputDirectory = async () => {
+    const workingDirectory = path.resolve(process.cwd());
+    const relative = path.relative(workingDirectory, outDir);
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+        throw new Error('[build] --out-dir must be a child directory of the current working directory.');
+    }
+    const defaultOutputDirectory = path.join(repoRoot, 'dist');
+    if (outDir !== defaultOutputDirectory && await pathExists(outDir) &&
+        !(await pathExists(path.join(outDir, outputMarkerName)))) {
+        throw new Error('[build] Refusing to replace an existing custom directory that was not created by this build helper.');
+    }
+};
 
 const replaceBundleBlock = (html, name, scriptPath) => {
     const blockRegex = new RegExp(`<!--\\s*BUNDLE:${name}\\s*-->[\\s\\S]*?<!--\\s*\\/BUNDLE:${name}\\s*-->`);
@@ -76,6 +106,7 @@ const collectJsFiles = async (dir) => {
 };
 
 const build = async () => {
+    await assertSafeOutputDirectory();
     if (!(await pathExists(path.join(nanomemDir, 'src')))) {
         try {
             execSync('git submodule update --init nanomem', { cwd: repoRoot, stdio: 'pipe' });
@@ -87,23 +118,9 @@ const build = async () => {
         }
     }
 
-    // Ensure chat/nanomem is a real directory so esbuild can resolve imports.
-    // In dev it's a symlink; in CI the symlink target may not survive filtering.
-    const chatNanomem = path.join(srcDir, 'nanomem');
-    await fs.rm(chatNanomem, { recursive: true, force: true });
-    await fs.cp(nanomemDir, chatNanomem, {
-        recursive: true,
-        filter: (src) => {
-            const rel = path.relative(nanomemDir, src);
-            if (!rel) return true;
-            if (rel === 'node_modules' || rel.startsWith('node_modules/')) return false;
-            if (rel === '.git' || rel.startsWith('.git')) return false;
-            return true;
-        }
-    });
-
     await fs.rm(outDir, { recursive: true, force: true });
-    await fs.mkdir(path.join(repoRoot, 'dist'), { recursive: true });
+    await fs.mkdir(outDir, { recursive: true });
+    await fs.writeFile(path.join(outDir, outputMarkerName), 'oa-chat build output\n', 'utf8');
     await fs.cp(srcDir, outDir, { recursive: true });
     const vectorOutDir = path.join(outDir, 'vector');
     if (await pathExists(vectorOutDir)) {
@@ -160,6 +177,18 @@ const build = async () => {
         chunkNames: 'chunk-[hash]',
         assetNames: 'asset-[hash]',
         target: ['es2020'],
+        loader: {
+            '.png': 'file',
+            '.jpg': 'file',
+            '.jpeg': 'file',
+            '.gif': 'file',
+            '.webp': 'file',
+            '.svg': 'file',
+            '.woff': 'file',
+            '.woff2': 'file',
+            '.ttf': 'file',
+            '.otf': 'file'
+        },
         define: { '__DEV__': 'false' },
         minify: true,
         metafile: true,
@@ -178,12 +207,21 @@ const build = async () => {
 
     const appScriptPath = toPosixPath(path.relative(outDir, appOutput[0]));
     const preludeScriptPath = toPosixPath(path.relative(outDir, preludeOutput[0]));
+    const appCssPath = appOutput[1].cssBundle
+        ? toPosixPath(path.relative(outDir, path.resolve(appOutput[1].cssBundle)))
+        : null;
 
     const indexPath = path.join(outDir, 'index.html');
     let html = await fs.readFile(indexPath, 'utf8');
 
     html = replaceBundleBlock(html, 'PRELUDE', preludeScriptPath);
     html = replaceBundleBlock(html, 'APP', appScriptPath);
+    if (appCssPath) {
+        html = html.replace(
+            '</head>',
+            `    <link rel="stylesheet" href="${appCssPath}">\n</head>`
+        );
+    }
 
     const appHash = appOutput[0].match(/-([a-z0-9]+)\.js$/i)?.[1];
     html = versionStaticAssetRefs(html, appHash);
@@ -214,6 +252,7 @@ const build = async () => {
     }
 
     console.log(`Built app bundle: ${appScriptPath}`);
+    if (appCssPath) console.log(`Built app styles: ${appCssPath}`);
     console.log(`Built prelude bundle: ${preludeScriptPath}`);
     if (appHash) console.log(`Build hash: ${appHash}`);
 };

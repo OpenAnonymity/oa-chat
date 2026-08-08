@@ -7,6 +7,11 @@ import { encrypt, decrypt } from './shareEncryption.js';
 import { ORG_API_BASE, SHARE_BASE_URL } from '../config.js';
 import inferenceService from './inference/inferenceService.js';
 import networkProxy from './networkProxy.js';
+import { buildBaseSharePayload } from './sharePayload.js';
+import {
+    normalizeCouncilConfig,
+    normalizeResponseMode
+} from '../domain/councilConfig.js';
 
 // ========== Share ID Normalization ==========
 
@@ -245,50 +250,9 @@ export function isPlaintextShare(shareData) {
  * @returns {Object} Share payload
  */
 export function buildSharePayload(session, messages, opts = {}) {
-    const payload = {
-        version: 1,
-        session: {
-            title: session.title,
-            model: session.model,
-            createdAt: session.createdAt,
-            updatedAt: session.updatedAt,
-            searchEnabled: session.searchEnabled,
-            inferenceBackend: session.inferenceBackend || inferenceService.getDefaultBackendId()
-        },
-        messages: messages.map(m => {
-            const msg = {
-                role: m.role,
-                content: m.content,
-                timestamp: m.timestamp,
-                model: m.model,
-                files: m.files,
-                images: m.images,
-                reasoning: m.reasoning,
-                reasoningDuration: m.reasoningDuration,
-                tokenCount: m.tokenCount
-            };
-
-            // Preserve memory agent fields for proper rendering in shared view
-            if (m.isLocalOnly) msg.isLocalOnly = true;
-            if (Array.isArray(m.agentTrace) && m.agentTrace.length > 0) {
-                msg.agentTrace = m.agentTrace;
-            }
-            if (m.memoryRetrievalAssessment) {
-                msg.memoryRetrievalAssessment = m.memoryRetrievalAssessment;
-            }
-            if (m.ciPromptDraft) {
-                msg.ciPromptDraft = m.ciPromptDraft;
-                // Normalize pending approval to approved for shared context
-                // (recipients can't interact with approval UI)
-                const status = m.memoryApprovalPrompt?.status;
-                if (status === 'approved' || status === 'pending') {
-                    msg.memoryApprovalPrompt = { status: 'approved' };
-                }
-            }
-
-            return msg;
-        })
-    };
+    const payload = buildBaseSharePayload(session, messages, {
+        defaultBackendId: inferenceService.getDefaultBackendId()
+    });
 
     // Include shared access payload (legacy sharedApiKey preserved for compatibility)
     if (opts.shareApiKeyMetadata) {
@@ -309,6 +273,10 @@ export function buildSharePayload(session, messages, opts = {}) {
     }
 
     return payload;
+}
+
+export function hasShareableAccess(session) {
+    return Boolean(inferenceService.buildSharedAccessPayload(session));
 }
 
 /**
@@ -406,6 +374,8 @@ export function createSessionFromPayload(payload, shareId, ciphertext, generateI
         lastImportedAt: Date.now(),
         model: payload.session.model,
         inferenceBackend: backendId,
+        responseMode: normalizeResponseMode(payload.session.responseMode),
+        councilConfig: normalizeCouncilConfig(payload.session.councilConfig, payload.session.model),
         apiKey: sessionAccess?.token || null,
         apiKeyInfo: sessionAccess?.info || null,
         expiresAt: sessionAccess?.expiresAt || null,
@@ -488,6 +458,7 @@ export async function createOrUpdateShare(session, messages, settings) {
 
     // Build and encode payload
     const payload = buildSharePayload(session, messages, { shareApiKeyMetadata });
+    const apiKeyShared = Boolean(payload.sharedAccess);
     const shareData = await encodeShareData(payload, password);
 
     const shareId = session.id;
@@ -507,7 +478,7 @@ export async function createOrUpdateShare(session, messages, settings) {
         shareId,
         messages.length,
         !password,
-        shareApiKeyMetadata,
+        apiKeyShared,
         ttlSeconds
     );
 
@@ -573,6 +544,7 @@ export default {
     normalizeShareId,
     isPlaintextShare,
     buildSharePayload,
+    hasShareableAccess,
     encodeShareData,
     decodeShareData,
     validatePayload,

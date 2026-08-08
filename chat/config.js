@@ -9,7 +9,24 @@
 // signatures), and it is never in the inference data path (never sees prompts
 // or responses). Being closed-source is irrelevant -- its worst case is denial
 // of service, not privacy breach. See docs/PRIVACY_MODEL.md.
-export const ORG_API_BASE = 'https://org.openanonymity.ai';
+const PRODUCTION_ORG_API_BASE = 'https://org.openanonymity.ai';
+const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+
+export function isLoopbackHostname(hostname) {
+    return LOOPBACK_HOSTNAMES.has(hostname || '');
+}
+
+export function resolveOrgApiBase(locationLike = null) {
+    const hostname = locationLike?.hostname;
+    if (isLoopbackHostname(hostname)) {
+        return `http://${hostname}:8005`;
+    }
+    return PRODUCTION_ORG_API_BASE;
+}
+
+export const ORG_API_BASE = resolveOrgApiBase(
+    typeof window !== 'undefined' ? window.location : null
+);
 
 // Verifier service -- hardware-attested (AMD SEV-SNP) station compliance
 // enforcer. Open-source and auditable. Enforces privacy toggles and key
@@ -32,6 +49,11 @@ export const TURNSTILE_SITE_KEY = '0x4AAAAAACumDp8HcWWXKNzk';
 
 // Retry up to this fraction of available tickets when tickets are already-used
 export const TICKET_RETRY_RATIO = 0.5;
+
+// Council mode is available for explicit session-level opt-in only.
+// New sessions still default to normal chat (`responseMode: 'single'`), so this
+// does not change behavior unless a session is deliberately configured for it.
+export const COUNCIL_MODE_FEATURE_FLAG = true;
 
 // Debug logging -- enabled in development (localhost), disabled in production builds.
 // The build script (scripts/build.mjs) replaces __DEV__ with false at build time.

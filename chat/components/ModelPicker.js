@@ -8,6 +8,11 @@
  */
 
 import { getProviderIcon } from '../services/providerIcons.js';
+import { resolveProvider, resolveProviderFromModelReference } from '../services/providerRegistry.js';
+import {
+    getComposerModelDisplayName,
+    getProviderlessModelDisplayName
+} from '../domain/modelSelection.js';
 import { getDefaultModelConfig, onPinnedModelsUpdate } from '../services/modelConfig.js';
 import { getTicketCost, onModelTiersUpdate } from '../services/modelTiers.js';
 
@@ -34,6 +39,7 @@ export default class ModelPicker {
         this.hasRenderedOnce = false;
         this.modelConfigVersion = 0;
         this.searchDebounceTimer = null;
+        this.selectionMode = 'primary';
 
         // Listen for pinned/disabled updates (API fetch completed)
         onPinnedModelsUpdate(() => this._onConfigUpdate());
@@ -110,12 +116,21 @@ export default class ModelPicker {
     /**
      * Opens the model picker modal and focuses the search input.
      */
-    open() {
+    open(options = {}) {
+        this.selectionMode = options.selectionMode || options.mode || 'primary';
         const modal = this.app.elements.modelPickerModal;
         modal.classList.remove('hidden');
+        modal.dataset.selectionMode = this.selectionMode;
+        if (this.app.elements.modelSearch) {
+            this.app.elements.modelSearch.placeholder = this.isSecondarySelectionMode()
+                ? 'Search second model...'
+                : this.isSynthesisSelectionMode()
+                    ? 'Search council model...'
+                    : 'Search models...';
+        }
         this.highlightedIndex = -1;
         const shouldRestoreScroll = this.savedScrollTop > 0;
-        this.renderModels('', shouldRestoreScroll);
+        this.renderModels('', shouldRestoreScroll, true);
         // Restore scroll position after browser renders the content
         requestAnimationFrame(() => {
             if (shouldRestoreScroll) {
@@ -132,8 +147,11 @@ export default class ModelPicker {
         // Save scroll position before hiding (from the scroll container, not inner list)
         this.savedScrollTop = this.app.elements.modelListScrollArea.scrollTop;
         this.app.elements.modelPickerModal.classList.add('hidden');
+        delete this.app.elements.modelPickerModal.dataset.selectionMode;
         // Clear search
         this.app.elements.modelSearch.value = '';
+        this.app.elements.modelSearch.placeholder = 'Search models...';
+        this.selectionMode = 'primary';
         // Focus input after closing modal
         requestAnimationFrame(() => {
             if (this.app.elements.messageInput) {
@@ -145,12 +163,23 @@ export default class ModelPicker {
     /**
      * Toggles the model picker modal open/closed.
      */
-    toggle() {
+    toggle(options = {}) {
+        const requestedMode = options.selectionMode || options.mode || 'primary';
         if (this.app.elements.modelPickerModal.classList.contains('hidden')) {
-            this.open();
+            this.open({ selectionMode: requestedMode });
+        } else if (this.selectionMode !== requestedMode) {
+            this.open({ selectionMode: requestedMode });
         } else {
             this.close();
         }
+    }
+
+    isSecondarySelectionMode() {
+        return this.selectionMode === 'council-secondary';
+    }
+
+    isSynthesisSelectionMode() {
+        return this.selectionMode === 'council-synthesis';
     }
 
     /**
@@ -162,7 +191,7 @@ export default class ModelPicker {
      */
     filterModels(searchTerm = '') {
         // First filter out disabled models
-        const allowedModels = this.app.state.models.filter(model =>
+        let allowedModels = this.app.state.models.filter(model =>
             !this.disabledModels.has(model.id)
         );
 
@@ -191,6 +220,20 @@ export default class ModelPicker {
     }
 
     getCurrentModelName() {
+        if (this.isSecondarySelectionMode()) {
+            return this.app.getCouncilSecondaryModelName?.() || '';
+        }
+        if (this.isSynthesisSelectionMode()) {
+            return this.app.getCouncilSynthesisModelName?.() || '';
+        }
+        return this.getPrimaryCurrentModelName();
+    }
+
+    getPrimaryCurrentModelName() {
+        const resolvedPrimaryModelName = this.app.getPrimaryModelName?.();
+        if (resolvedPrimaryModelName) {
+            return resolvedPrimaryModelName;
+        }
         const session = this.app.getCurrentSession();
         const rawModelName = (session && session.model) || this.app.state.pendingModelName || null;
         const modelsLoaded = this.app.state.models && this.app.state.models.length > 0;
@@ -211,9 +254,12 @@ export default class ModelPicker {
         const modelsLength = this.app.state.models?.length || 0;
         const reasoningFlag = this.app.reasoningEnabled ? '1' : '0';
         const loadingFlag = this.app.state.modelsLoading ? '1' : '0';
+        const primaryModelName = this.app.getPrimaryModelName?.() || '';
         return [
+            this.selectionMode,
             searchTerm,
             this.getCurrentModelName(),
+            primaryModelName,
             modelsVersion,
             modelsLength,
             this.modelConfigVersion,
@@ -343,7 +389,9 @@ export default class ModelPicker {
      */
     buildModelOptionHTML(model) {
         const session = this.app.getCurrentSession();
-        const currentModel = session?.model || this.app.state.pendingModelName;
+        const currentModel = this.isSecondarySelectionMode() || this.isSynthesisSelectionMode()
+            ? this.getCurrentModelName()
+            : (session?.model || this.app.state.pendingModelName);
         const isSelected = currentModel === model.name;
         const iconData = getProviderIcon(model.provider, 'w-3.5 h-3.5');
         const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
@@ -388,7 +436,14 @@ export default class ModelPicker {
      * @param {string} modelName - Display name chosen by the user
      */
     async selectModel(modelName) {
-        await this.app.actions.selectModel(modelName);
+        if (this.isSecondarySelectionMode() && this.app.actions.selectCouncilSecondaryModel) {
+            await this.app.actions.selectCouncilSecondaryModel(modelName);
+        } else if (this.isSynthesisSelectionMode() && this.app.actions.selectCouncilSynthesisModel) {
+            await this.app.actions.selectCouncilSynthesisModel(modelName);
+        } else {
+            await this.app.actions.selectModel(modelName);
+        }
+        this.app.refreshEditModelPickerButton?.();
         this.close(); // close() handles input focus
     }
 
@@ -411,7 +466,7 @@ export default class ModelPicker {
      * Renders the current model display in the input area.
      */
     renderCurrentModel() {
-        const currentModelName = this.getCurrentModelName();
+        const currentModelName = this.getPrimaryCurrentModelName();
 
         // Guard against elements not being available
         if (!this.app.elements.modelPickerBtn) {
@@ -420,72 +475,45 @@ export default class ModelPicker {
 
         // Always show shortcut HTML
         const shortcutHtml = `
-            <div class="flex items-center gap-0.5 ml-2 pointer-events-none text-muted-foreground text-xs">
+            <div class="model-shortcut flex items-center gap-0.5 ml-2 pointer-events-none text-muted-foreground text-xs">
                 <span class="opacity-60">⌘</span>
                 <span class="opacity-60">K</span>
             </div>
         `;
 
-        // Extract provider from model name - try multiple strategies
-        // This allows showing icons immediately without waiting for the models API
-        const inferProvider = (name) => {
-            if (!name) return null;
-            // Strategy 1: "Provider: Model" format (our custom names)
-            if (name.includes(': ')) {
-                return name.split(': ')[0];
-            }
-            // Strategy 2: Keyword matching for common model names
-            const lowerName = name.toLowerCase();
-            if (lowerName.includes('gpt') || lowerName.includes('o1-') || lowerName.includes('o3-') || lowerName.includes('o4-')) return 'OpenAI';
-            if (lowerName.includes('claude')) return 'Anthropic';
-            if (lowerName.includes('gemini')) return 'Google';
-            if (lowerName.includes('llama')) return 'Meta';
-            if (lowerName.includes('mistral')) return 'Mistral';
-            if (lowerName.includes('deepseek')) return 'DeepSeek';
-            if (lowerName.includes('qwen')) return 'Qwen';
-            if (lowerName.includes('command')) return 'Cohere';
-            if (lowerName.includes('sonar')) return 'Perplexity';
-            if (lowerName.includes('nemotron')) return 'Nvidia';
-            return null;
-        };
-
-        // Try to get provider from model lookup first, then infer from name
-        const model = this.app.state.models.find(m => m.name === currentModelName);
-        const provider = model?.provider || inferProvider(currentModelName);
+        // Prefer catalog metadata; persisted IDs and explicit provider prefixes are
+        // resolved centrally without guessing a company from model-family keywords.
+        const matchesCurrentModel = (model) => model.name === currentModelName || model.id === currentModelName;
+        const model = this.app.state.models.find(matchesCurrentModel)
+            || this.app.cachedModelDisplayMetadata.find(matchesCurrentModel);
+        const provider = model?.provider
+            ? resolveProvider(model.provider).displayName
+            : resolveProviderFromModelReference(currentModelName).displayName;
         // getProviderIcon returns first letter fallback when no icon configured
-        const iconData = provider ? getProviderIcon(provider, 'w-3 h-3') : { html: '', hasIcon: false };
+        const iconData = getProviderIcon(provider, 'w-3 h-3');
 
         // Use icon HTML directly - getProviderIcon already provides first letter fallback
         // Only show spinner if provider is completely unknown (very rare)
         const iconContent = iconData.html || `<span class="text-[10px] font-semibold">?</span>`;
         const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
 
-        // Extract short model name (without provider prefix) for compact display
-        // Format: "Provider: Model" -> "Model"
-        let shortModelName = currentModelName;
-        if (currentModelName && currentModelName.includes(': ')) {
-            shortModelName = currentModelName.split(': ').slice(1).join(': ');
-        }
+        const shortModelName = getComposerModelDisplayName(currentModelName);
+        const hoverModelName = getProviderlessModelDisplayName(currentModelName) || 'Select model';
 
         this.app.elements.modelPickerBtn.innerHTML = `
             <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 ${bgClass}">
                 ${iconContent}
             </div>
-            <span class="model-name-container min-w-0 truncate">${shortModelName}</span>
+            <span class="model-name-container min-w-0">${shortModelName}</span>
             ${shortcutHtml}
         `;
         this.app.elements.modelPickerBtn.classList.add('gap-1.5');
+        this.app.elements.modelPickerBtn.title = hoverModelName;
+        this.app.elements.modelPickerBtn.setAttribute('data-tooltip', hoverModelName);
+        this.app.elements.modelPickerBtn.setAttribute('data-tooltip-position', 'top');
+        this.app.elements.modelPickerBtn.setAttribute('aria-label', `Primary model: ${hoverModelName}`);
 
-        // Also update the edit form model picker button if it exists (keeps it in sync)
-        const editModelPickerBtn = document.getElementById('edit-model-picker-btn');
-        if (editModelPickerBtn) {
-            editModelPickerBtn.innerHTML = `
-                <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 ${bgClass}">
-                    ${iconContent}
-                </div>
-                <span class="model-name-container min-w-0 truncate">${shortModelName}</span>
-            `;
-        }
+        this.app.refreshEditModelPickerButton?.();
     }
 
     /**

@@ -30,11 +30,18 @@ function createMockApp(overrides = {}) {
             pendingModelName: null,
             currentSessionId: session?.id || null
         },
+        cachedModelDisplayMetadata: overrides.cachedModelDisplayMetadata || [],
         reasoningEnabled: true,
+        memoryFeatureEnabled: true,
         sessionSearchQuery: 'query',
         getCurrentSession: () => session,
         getDefaultModelName: () => 'Default Model',
+        getFallbackModelEntry: () => ({ id: 'model-a', name: 'Model A' }),
         normalizeModelName: (modelName) => `${modelName} normalized`,
+        setParallelDefaults: (options) => {
+            calls.push(['setParallelDefaults', options]);
+            return options;
+        },
         renderCurrentModel: () => calls.push(['renderCurrentModel']),
         getFilteredSessions: () => [{ id: 'session-1' }],
         toggleSessionStar: (sessionId) => calls.push(['toggleSessionStar', sessionId]),
@@ -46,6 +53,7 @@ function createMockApp(overrides = {}) {
         exportChatToPdf: () => calls.push(['exportChatToPdf']),
         updateSessionTitle: (sessionId, title) => calls.push(['updateSessionTitle', sessionId, title]),
         updateToolbarDivider: () => calls.push(['updateToolbarDivider']),
+        setMemoryFeatureEnabled: async (enabled) => calls.push(['setMemoryFeatureEnabled', enabled]),
         hasActiveSessionListCriteria: () => true,
         getSessionListEmptyText: () => 'No sessions'
     };
@@ -53,7 +61,8 @@ function createMockApp(overrides = {}) {
 }
 
 test('model picker interface exposes only model-picker elements and state selectors', () => {
-    const { app } = createMockApp();
+    const cachedModel = { id: 'openrouter/auto', name: 'Auto Router', provider: 'OpenRouter' };
+    const { app } = createMockApp({ cachedModelDisplayMetadata: [cachedModel] });
     const ui = createModelPickerInterface(app, {
         chatDBImpl: { saveSetting: async () => {}, saveSession: async () => {} }
     });
@@ -62,9 +71,13 @@ test('model picker interface exposes only model-picker elements and state select
     assert.equal(ui.elements.sessionsList, undefined);
     assert.equal(ui.state, app.state);
     assert.equal(ui.reasoningEnabled, true);
+    assert.deepEqual(ui.cachedModelDisplayMetadata, [cachedModel]);
     assert.equal(ui.getCurrentSession(), null);
     assert.equal(ui.getDefaultModelName(), 'Default Model');
     assert.equal(ui.normalizeModelName('Model A'), 'Model A normalized');
+
+    app.cachedModelDisplayMetadata = [];
+    assert.deepEqual(ui.cachedModelDisplayMetadata, [], 'cache exposure should remain a live read-only view');
 });
 
 test('model picker selectModel stores pending model when there is no session', async () => {
@@ -106,6 +119,106 @@ test('model picker selectModel updates active session through injected persisten
     assert.deepEqual(savedSettings, [['selectedModel', 'Model A normalized']]);
     assert.deepEqual(savedSessions, [[activeSession]]);
     assert.deepEqual(calls, [['renderCurrentModel']]);
+});
+
+test('model picker renders cached provider metadata through its narrowed interface', async () => {
+    const originalDocument = globalThis.document;
+    const originalLocalStorage = globalThis.localStorage;
+    globalThis.document = {
+        addEventListener() {},
+        getElementById() {
+            return null;
+        }
+    };
+    globalThis.localStorage = {
+        getItem() {
+            return null;
+        },
+        setItem() {}
+    };
+
+    try {
+        const { default: ModelPicker } = await import('../../chat/components/ModelPicker.js');
+        const cachedModel = { id: 'openrouter/auto', name: 'Auto Router normalized', provider: 'OpenRouter' };
+        const { app } = createMockApp({ cachedModelDisplayMetadata: [cachedModel] });
+        app.state.models = [];
+        app.state.pendingModelName = 'Auto Router';
+        app.elements.modelPickerBtn = {
+            innerHTML: '',
+            title: '',
+            classList: { add() {} },
+            setAttribute() {}
+        };
+        const ui = createModelPickerInterface(app, {
+            chatDBImpl: { saveSetting: async () => {}, saveSession: async () => {} }
+        });
+
+        new ModelPicker(ui).renderCurrentModel();
+
+        assert.match(app.elements.modelPickerBtn.innerHTML, /src="img\/openrouter\.svg"/);
+        assert.match(app.elements.modelPickerBtn.innerHTML, /alt="OpenRouter"/);
+    } finally {
+        if (originalDocument === undefined) {
+            delete globalThis.document;
+        } else {
+            globalThis.document = originalDocument;
+        }
+        if (originalLocalStorage === undefined) {
+            delete globalThis.localStorage;
+        } else {
+            globalThis.localStorage = originalLocalStorage;
+        }
+    }
+});
+
+test('model picker secondary selection delegates to chat input without changing primary model', async () => {
+    const activeSession = { id: 'session-1', model: 'Primary Model' };
+    const { app } = createMockApp({ session: activeSession });
+    const delegatedSelections = [];
+    app.chatInput = {
+        getPrimaryModelName: () => 'Primary Model',
+        getSelectedCouncilSecondaryModelName: () => 'Old Secondary',
+        selectCouncilSecondaryModel: async (modelName) => delegatedSelections.push(modelName)
+    };
+    const ui = createModelPickerInterface(app, {
+        chatDBImpl: {
+            saveSetting: async () => {},
+            saveSession: async () => {}
+        }
+    });
+
+    const result = await ui.actions.selectCouncilSecondaryModel('Model A');
+
+    assert.deepEqual(result, { session: activeSession, modelName: 'Model A normalized' });
+    assert.equal(ui.getPrimaryModelName(), 'Primary Model');
+    assert.equal(ui.getCouncilSecondaryModelName(), 'Old Secondary');
+    assert.equal(activeSession.model, 'Primary Model');
+    assert.deepEqual(delegatedSelections, ['Model A normalized']);
+});
+
+test('model picker council selection delegates to chat input without changing primary model', async () => {
+    const activeSession = { id: 'session-1', model: 'Primary Model' };
+    const { app } = createMockApp({ session: activeSession });
+    const delegatedSelections = [];
+    app.chatInput = {
+        getPrimaryModelName: () => 'Primary Model',
+        getCouncilSynthesisModelForSelection: () => 'Old Council',
+        selectCouncilSynthesisModel: async (modelName) => delegatedSelections.push(modelName)
+    };
+    const ui = createModelPickerInterface(app, {
+        chatDBImpl: {
+            saveSetting: async () => {},
+            saveSession: async () => {}
+        }
+    });
+
+    const result = await ui.actions.selectCouncilSynthesisModel('Model A');
+
+    assert.deepEqual(result, { session: activeSession, modelName: 'Model A normalized' });
+    assert.equal(ui.getPrimaryModelName(), 'Primary Model');
+    assert.equal(ui.getCouncilSynthesisModelName(), 'Old Council');
+    assert.equal(activeSession.model, 'Primary Model');
+    assert.deepEqual(delegatedSelections, ['Model A normalized']);
 });
 
 test('sidebar interface exposes sidebar-only elements and proxies actions', async () => {
@@ -165,6 +278,10 @@ test('component data interface isolates persistence calls behind an adapter', as
             deleteSessionMessages: async (...args) => calls.push(['deleteSessionMessages', ...args]),
             saveSession: async (...args) => calls.push(['saveSession', ...args]),
             saveSessionWithMessages: async (...args) => calls.push(['saveSessionWithMessages', ...args]),
+            getSetting: async (...args) => {
+                calls.push(['getSetting', ...args]);
+                return 'setting-value';
+            },
             saveSetting: async (...args) => calls.push(['saveSetting', ...args])
         }
     });
@@ -178,6 +295,7 @@ test('component data interface isolates persistence calls behind an adapter', as
     await data.deleteSessionMessages('session-1');
     await data.saveSession({ id: 'session-1' });
     await data.saveSessionWithMessages({ id: 'session-2' }, [{ id: 'message-3' }]);
+    assert.equal(await data.getSetting('searchEnabled'), 'setting-value');
     await data.saveSetting('searchEnabled', true);
 
     assert.deepEqual(calls, [
@@ -189,6 +307,7 @@ test('component data interface isolates persistence calls behind an adapter', as
         ['deleteSessionMessages', 'session-1'],
         ['saveSession', { id: 'session-1' }],
         ['saveSessionWithMessages', { id: 'session-2' }, [{ id: 'message-3' }]],
+        ['getSetting', 'searchEnabled'],
         ['saveSetting', 'searchEnabled', true]
     ]);
 });
@@ -215,8 +334,19 @@ test('component services interface groups backend-facing services for UI injecti
     assert.deepEqual(services.sync, { name: 'sync' });
 });
 
+test('component app facade exposes memory feature controls', async () => {
+    const { app, calls } = createMockApp();
+    const facade = createComponentAppFacade(app);
+
+    assert.equal(facade.memoryFeatureEnabled, true);
+
+    await facade.setMemoryFeatureEnabled(false);
+
+    assert.deepEqual(calls, [['setMemoryFeatureEnabled', false]]);
+});
+
 test('component app facade exposes an explicit compatibility contract', () => {
-    const { app } = createMockApp();
+    const { app, calls } = createMockApp();
     const facade = createComponentAppFacade(app, undefined, {
         ticketClientImpl: { getTicketCount: () => 0 }
     });
@@ -225,6 +355,10 @@ test('component app facade exposes an explicit compatibility contract', () => {
     assert.equal(typeof facade.services.tickets.getTicketCount, 'function');
     assert.equal(facade.elements.sessionsList.id, 'sessionsList');
     assert.equal(facade.getCurrentSession(), null);
+    assert.equal(facade.getDefaultModelName(), 'Default Model');
+    assert.deepEqual(facade.getFallbackModelEntry(), { id: 'model-a', name: 'Model A' });
+    assert.deepEqual(facade.setParallelDefaults({ enabled: true }), { enabled: true });
+    assert.deepEqual(calls, [['setParallelDefaults', { enabled: true }]]);
     assert.equal(facade.notARealAppField, undefined);
 
     facade.searchEnabled = false;

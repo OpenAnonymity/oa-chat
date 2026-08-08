@@ -2,6 +2,13 @@ import openRouterAPI from '../../../api.js';
 import ticketClient from '../../ticketClient.js';
 import networkProxy from '../../networkProxy.js';
 import stationVerifier from '../../verifier.js';
+import { isLocalVerifierBypassAllowed } from '../localVerifierPolicy.js';
+import {
+    buildExplicitlyVerifiedOpenRouterSharePayload,
+    clearUnverifiedOpenRouterAccess,
+    hasExplicitVerifierApprovalForAccessInfo,
+    hasUsableVerifierApproval
+} from '../verifiedAccess.js';
 
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 const OPENROUTER_MODELS_URL = `${OPENROUTER_BASE_URL}/models`;
@@ -11,6 +18,16 @@ function generateEphemeralKeyId() {
     const bytes = new Uint8Array(5); // 5 bytes = 10 hex chars
     crypto.getRandomValues(bytes);
     return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function allowsLocalVerifierBypass() {
+    return isLocalVerifierBypassAllowed();
+}
+
+function hasUsableAccess(session) {
+    return hasUsableVerifierApproval(session, {
+        allowLocalBypass: allowsLocalVerifierBypass()
+    });
 }
 
 const openRouterBackend = {
@@ -27,11 +44,13 @@ const openRouterBackend = {
         verifyUrl: OPENROUTER_MODELS_URL,
         displayName: 'OpenRouter'
     },
+    getCachedModels: () => openRouterAPI.getCachedModels(),
     fetchModels: () => openRouterAPI.fetchModels(),
     getDisplayName: (modelId, fallback) => openRouterAPI.getDisplayName(modelId, fallback),
     sendCompletion: (messages, modelId, token) => openRouterAPI.sendCompletion(messages, modelId, token),
+    sendCompletionStrict: (messages, modelId, token, options) => openRouterAPI.sendCompletionStrict(messages, modelId, token, options),
     generateSessionTitle: (prompt, token, options) => openRouterAPI.generateSessionTitle(prompt, token, options),
-    streamCompletion: (messages, modelId, token, onChunk, onTokenUpdate, files, searchEnabled, abortController, onStreamOpen, onReasoningChunk, reasoningEnabled, reasoningEffort) =>
+    streamCompletion: (messages, modelId, token, onChunk, onTokenUpdate, files, searchEnabled, abortController, onStreamOpen, onReasoningChunk, reasoningEnabled, reasoningEffort, maxOutputTokens) =>
         openRouterAPI.streamCompletion(
             messages,
             modelId,
@@ -44,12 +63,14 @@ const openRouterBackend = {
             onStreamOpen,
             onReasoningChunk,
             reasoningEnabled,
-            reasoningEffort
+            reasoningEffort,
+            maxOutputTokens
         ),
     getAccessInfo(session) {
         if (!session) return null;
+        const approved = hasUsableAccess(session);
         return {
-            token: session.apiKey || null,
+            token: approved ? (session.apiKey || null) : null,
             info: session.apiKeyInfo || null,
             expiresAt: session.expiresAt ||
                 session.apiKeyInfo?.expiresAt ||
@@ -58,7 +79,19 @@ const openRouterBackend = {
         };
     },
     getAccessToken(session) {
-        return session?.apiKey || null;
+        return hasUsableAccess(session)
+            ? (session?.apiKey || null)
+            : null;
+    },
+    sanitizePersistedAccess(session) {
+        return clearUnverifiedOpenRouterAccess(session, {
+            allowLocalBypass: allowsLocalVerifierBypass(),
+            isBanned: (accessInfo) => {
+                if (!hasExplicitVerifierApprovalForAccessInfo(accessInfo)) return false;
+                const stationId = accessInfo?.stationId || accessInfo?.station_id || accessInfo?.station_name || null;
+                return stationId ? stationVerifier.isStationBanned(stationId) : false;
+            }
+        });
     },
     setAccessInfo(session, accessInfo) {
         if (!session || !accessInfo) return;
@@ -101,7 +134,7 @@ const openRouterBackend = {
         session.currentEphemeralKeyId = null;
     },
     isAccessExpired(session) {
-        if (!session?.apiKey) return true;
+        if (!session?.apiKey || !hasUsableAccess(session)) return true;
         if (!session.expiresAt) return true;
         return new Date(session.expiresAt) <= new Date();
     },
@@ -110,6 +143,7 @@ const openRouterBackend = {
     },
     verification: {
         supports: true,
+        allowsLocalBypass: () => allowsLocalVerifierBypass(),
         init: () => stationVerifier.init(),
         startBroadcastCheck: (getCurrentSession) => stationVerifier.startBroadcastCheck(getCurrentSession),
         setBannedWarningCallback: (callback) => stationVerifier.setBannedWarningCallback(callback),
@@ -125,18 +159,7 @@ const openRouterBackend = {
         getLastBroadcastData: () => stationVerifier.getLastBroadcastData()
     },
     buildSharedAccessPayload(accessInfo) {
-        if (!accessInfo) return null;
-        return {
-            backendId: 'openrouter',
-            token: accessInfo.key || accessInfo.token || null,
-            expiresAt: accessInfo.expiresAt || accessInfo.expires_at || null,
-            expiresAtUnix: accessInfo.expiresAtUnix || accessInfo.expires_at_unix || null,
-            stationId: accessInfo.stationId || accessInfo.station_id || accessInfo.station_name || null,
-            recentlyAttested: accessInfo.recentlyAttested || accessInfo.station_recently_attested || false,
-            stationSignature: accessInfo.stationSignature || accessInfo.station_signature || null,
-            orgSignature: accessInfo.orgSignature || accessInfo.org_signature || null,
-            usage: accessInfo.usage || null
-        };
+        return buildExplicitlyVerifiedOpenRouterSharePayload(accessInfo);
     },
     buildLegacySharedApiKey(sharedAccess) {
         if (!sharedAccess) return null;
@@ -189,7 +212,8 @@ const openRouterBackend = {
                 key: sharedAccess.token,
                 expiresAtUnix: sharedAccess.expiresAtUnix,
                 stationSignature: sharedAccess.stationSignature,
-                orgSignature: sharedAccess.orgSignature
+                orgSignature: sharedAccess.orgSignature,
+                verifierSubmitKeyProof: sharedAccess.verifierSubmitKeyProof || null
             }
         };
     },

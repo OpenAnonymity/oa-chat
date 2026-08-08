@@ -1306,7 +1306,7 @@ class ShareModals {
         const isShared = !!shareInfo?.shareId;
         // Never consider expired if ttlSeconds is 0 (no expiry)
         const isExpired = shareInfo?.ttlSeconds !== 0 && shareInfo?.expiresAt && Date.now() > shareInfo.expiresAt;
-        const hasApiKey = !!session.apiKeyInfo;
+        const hasApiKey = this.shareService.hasShareableAccess(session);
         // API key expiry is stored at session.expiresAt (can be ISO string or timestamp)
         const isApiKeyExpired = hasApiKey && session.expiresAt && new Date(session.expiresAt) <= new Date();
         const prevTtl = shareInfo?.ttlSeconds ?? getExpiryTtl(); // Use saved preference for new shares
@@ -1639,14 +1639,14 @@ class ShareModals {
                 const newExpiryDate = newShareInfo?.ttlSeconds === 0 ? null : (newShareInfo?.expiresAt ? new Date(newShareInfo.expiresAt).toLocaleString() : null);
                 const newShareUrl = this.shareService.buildShareUrl(session.id);
                 // API key expiry is at session.expiresAt, not inside apiKeyInfo
-                const newApiKeyExpiresAt = (apiMetadataCheckbox?.checked && session.expiresAt)
+                const newApiKeyExpiresAt = (newShareInfo?.apiKeyShared && session.expiresAt)
                     ? session.expiresAt
                     : null;
 
                 // Build success panel using shared helper
                 const successPanelHtml = buildStatusPanelHtml({
                     isPlaintext: !password,
-                    apiKeyShared: apiMetadataCheckbox?.checked || false,
+                    apiKeyShared: newShareInfo?.apiKeyShared || false,
                     apiKeyExpiresAt: newApiKeyExpiresAt,
                     isExpired: false,
                     expiryDate: newExpiryDate,

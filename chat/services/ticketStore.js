@@ -94,8 +94,24 @@ class TicketStore {
 
     emitUpdate() {
         if (typeof window !== 'undefined') {
+            this.publishRedactedAuditSummary();
             window.dispatchEvent(new CustomEvent(TICKETS_UPDATED_EVENT));
         }
+    }
+
+    publishRedactedAuditSummary() {
+        if (typeof window === 'undefined' || typeof document === 'undefined' ||
+            !['localhost', '127.0.0.1', '[::1]'].includes(window.location?.hostname)) {
+            return;
+        }
+
+        let marker = document.querySelector('meta[name="oa-ticket-wallet-audit"]');
+        if (!marker) {
+            marker = document.createElement('meta');
+            marker.setAttribute('name', 'oa-ticket-wallet-audit');
+            document.head.appendChild(marker);
+        }
+        marker.setAttribute('content', JSON.stringify(this.getRedactedAuditSummary()));
     }
 
     async withLock(handler) {
@@ -246,8 +262,11 @@ class TicketStore {
         return combined;
     }
 
-    async readFromDatabase() {
+    async readFromDatabase(options = {}) {
         if (typeof chatDB === 'undefined' || !chatDB.db) {
+            if (options.requireDurable) {
+                throw new Error('The local ticket database is not available.');
+            }
             return { active: [], archived: [] };
         }
 
@@ -263,6 +282,7 @@ class TicketStore {
             };
         } catch (error) {
             console.warn('Failed to load tickets from IndexedDB:', error);
+            if (options.requireDurable) throw error;
             return { active: [], archived: [] };
         }
     }
@@ -283,7 +303,12 @@ class TicketStore {
                 persisted = true;
             } catch (error) {
                 console.warn('Failed to persist tickets:', error);
+                if (options.requireDurable) throw error;
             }
+        }
+
+        if (options.requireDurable && !persisted) {
+            throw new Error('The local ticket database did not confirm the write.');
         }
 
         this.tickets = activeTickets;
@@ -401,6 +426,28 @@ class TicketStore {
         return this.archive.length;
     }
 
+    getRedactedAuditSummary() {
+        const summarize = tickets => {
+            const rows = Array.isArray(tickets) ? tickets : [];
+            return {
+                count: rows.length,
+                fieldNames: [...new Set(rows.flatMap(ticket => Object.keys(ticket || {})))].sort(),
+                allHaveCoreFields: rows.every(ticket =>
+                    ['blinded_request', 'signed_response', 'finalized_ticket', 'created_at']
+                        .every(field => Object.prototype.hasOwnProperty.call(ticket || {}, field))
+                )
+            };
+        };
+
+        return {
+            active: summarize(this.tickets),
+            archived: summarize(this.archive),
+            archivedAllHaveConsumedAt: this.archive.every(ticket => !!ticket?.consumed_at),
+            legacyActivePresent: typeof localStorage !== 'undefined' && localStorage.getItem(STORAGE_KEY) !== null,
+            legacyArchivePresent: typeof localStorage !== 'undefined' && localStorage.getItem(ARCHIVE_KEY) !== null
+        };
+    }
+
     peekTickets(count = 1) {
         this.ensureInit();
         if (count <= 0) return [];
@@ -411,13 +458,36 @@ class TicketStore {
         return this.peekTickets(1)[0] || null;
     }
 
-    async addTickets(newTickets) {
+    async addTickets(newTickets, options = {}) {
         return this.withLock(async () => {
             await this.ensureDbReady();
-            const { active, archived } = await this.readFromDatabase();
+            const { active, archived } = await this.readFromDatabase({
+                requireDurable: options.requireDurable === true
+            });
             const { tickets } = this.normalizeTickets(newTickets);
-            const combined = this.mergeTickets(active, tickets);
-            await this.persistTickets(combined, archived);
+            const archivedValues = new Set(
+                archived.map(ticket => ticket?.finalized_ticket).filter(Boolean)
+            );
+            const eligibleTickets = tickets.filter(
+                ticket => !archivedValues.has(ticket.finalized_ticket)
+            );
+            const combined = this.mergeTickets(active, eligibleTickets);
+            await this.persistTickets(combined, archived, {
+                requireDurable: options.requireDurable === true
+            });
+            if (options.requireDurable === true) {
+                const confirmed = await this.readFromDatabase({ requireDurable: true });
+                const confirmedValues = new Set(
+                    [...confirmed.active, ...confirmed.archived]
+                        .map(ticket => ticket?.finalized_ticket)
+                        .filter(Boolean)
+                );
+                if (!tickets.every(ticket => confirmedValues.has(ticket.finalized_ticket))) {
+                    throw new Error('The local ticket database did not round-trip every prepared ticket.');
+                }
+                this.tickets = confirmed.active;
+                this.archive = confirmed.archived;
+            }
             return combined.length;
         });
     }
@@ -579,5 +649,13 @@ class TicketStore {
 }
 
 const ticketStore = new TicketStore();
+
+if (typeof window !== 'undefined' &&
+    ['localhost', '127.0.0.1', '[::1]'].includes(window.location?.hostname)) {
+    Object.defineProperty(window, '__oaTicketWalletAudit', {
+        configurable: true,
+        value: () => ticketStore.getRedactedAuditSummary()
+    });
+}
 
 export default ticketStore;

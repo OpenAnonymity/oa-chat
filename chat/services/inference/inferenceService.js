@@ -3,6 +3,7 @@ import enclaveStationBackend from './backends/enclaveStationBackend.js';
 import providerDirectBackend from './backends/providerDirectBackend.js';
 import transportHints from './transportHints.js';
 import { getDefaultModelConfig } from '../modelConfig.js';
+import { getLocalCreditLimitedMaxOutputTokens } from './localCreditLimit.js';
 
 const backends = new Map([
     [openRouterBackend.id, openRouterBackend],
@@ -99,6 +100,12 @@ const inferenceService = {
         const backend = getBackendForSession(session);
         return backend.accessShortLabel || backend.accessLabel;
     },
+    getCachedModels(session) {
+        const backend = getBackendForSession(session);
+        return typeof backend.getCachedModels === 'function'
+            ? backend.getCachedModels()
+            : [];
+    },
     getTlsDisplayName(session) {
         const backend = getBackendForSession(session);
         return backend.tls?.displayName || backend.label;
@@ -128,6 +135,12 @@ const inferenceService = {
     },
     clearAccessInfo(session) {
         return getBackendForSession(session).clearAccessInfo(session);
+    },
+    sanitizePersistedAccess(session) {
+        const backend = getBackendForSession(session);
+        return typeof backend.sanitizePersistedAccess === 'function'
+            ? backend.sanitizePersistedAccess(session)
+            : false;
     },
     isAccessExpired(session) {
         return getBackendForSession(session).isAccessExpired(session);
@@ -165,8 +178,17 @@ const inferenceService = {
             onStreamOpen,
             onReasoningChunk,
             reasoningEnabled,
-            reasoningEffort
+            reasoningEffort,
+            getLocalCreditLimitedMaxOutputTokens(session)
         );
+    },
+    async sendCompletionStrict(messages, modelId, session, options = {}) {
+        const backend = getBackendForSession(session);
+        if (typeof backend.sendCompletionStrict !== 'function') {
+            throw new Error(`Backend does not support strict completions: ${backend.id}`);
+        }
+        const token = backend.getAccessToken(session);
+        return backend.sendCompletionStrict(messages, modelId, token, options);
     },
     buildSharedAccessPayload(session) {
         const backend = getBackendForSession(session);

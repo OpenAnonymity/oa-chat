@@ -43,7 +43,7 @@ class NetworkLogger {
             url: details.url || '',
             status: details.status || 0,
             request: details.request || {},
-            response: details.response || {},
+            response: this.sanitizeResponse(details.response || {}),
             error: details.error || null,
             message: details.message || '',
             detail: details.detail || '',
@@ -163,19 +163,39 @@ class NetworkLogger {
     sanitizeHeaders(headers) {
         const sanitized = { ...headers };
 
-        // Mask authorization headers
-        if (sanitized.Authorization) {
-            const auth = sanitized.Authorization;
-            if (auth.includes('Bearer')) {
-                const token = auth.split('Bearer ')[1];
-                if (token && token.length > 20) {
-                    sanitized.Authorization = `Bearer ${token.slice(0, 12)}...${token.slice(-8)}`;
-                }
+        // Tickets can remain usable after transactional rollback, so redact every
+        // authorization credential rather than assuming the request consumed it.
+        for (const headerName of ['Authorization', 'authorization']) {
+            if (!sanitized[headerName]) continue;
+            const auth = String(sanitized[headerName]);
+            if (auth.startsWith('InferenceTicket')) {
+                sanitized[headerName] = 'InferenceTicket [REDACTED]';
+            } else if (auth.startsWith('Bearer')) {
+                sanitized[headerName] = 'Bearer [REDACTED]';
+            } else {
+                sanitized[headerName] = '[REDACTED]';
             }
-            // InferenceTicket tokens are single-use and already consumed, so no need to mask them
         }
 
         return sanitized;
+    }
+
+    /**
+     * Clone response diagnostics while removing bearer credentials.
+     */
+    sanitizeResponse(response) {
+        if (Array.isArray(response)) {
+            return response.map(item => this.sanitizeResponse(item));
+        }
+        if (!response || typeof response !== 'object') {
+            return response;
+        }
+
+        const sensitiveFields = new Set(['key', 'api_key', 'apiKey', 'access_token', 'accessToken']);
+        return Object.fromEntries(Object.entries(response).map(([name, value]) => [
+            name,
+            sensitiveFields.has(name) ? '[REDACTED]' : this.sanitizeResponse(value)
+        ]));
     }
 
     /**

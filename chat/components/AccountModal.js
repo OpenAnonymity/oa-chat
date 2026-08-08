@@ -3,6 +3,8 @@
  * Modern, clean design matching ShareModals aesthetic
  */
 
+import { SLOT_NAMES } from '../extensions/extensionHost.js';
+
 const MODAL_CLASSES = 'w-full max-w-sm rounded-xl border border-border bg-background shadow-2xl p-5 mx-4 flex flex-col';
 
 class AccountModal {
@@ -399,12 +401,23 @@ class AccountModal {
         const state = this.accountState || {};
         const accountId = state.accountId;
 
-        if (this.creationStep !== 'idle' && !accountId) {
+        const isCreationFlow = this.creationStep !== 'idle' && !accountId;
+        const isRecoveryFlow = this.recoveryStep !== 'idle';
+
+        if (isCreationFlow) {
             this.overlay.innerHTML = this.renderCreationFlow();
         } else {
             this.overlay.innerHTML = this.renderAccountUI();
         }
 
+        const dialog = this.overlay.querySelector('[role="dialog"]');
+        if (dialog && !isCreationFlow && !isRecoveryFlow) {
+            const commercialSlot = document.createElement('div');
+            commercialSlot.dataset.oaExtensionSlot = SLOT_NAMES.ACCOUNT_COMMERCIAL;
+            commercialSlot.hidden = true;
+            dialog.appendChild(commercialSlot);
+            this.app.extensionSlots?.refresh?.(SLOT_NAMES.ACCOUNT_COMMERCIAL);
+        }
         this.attachEventListeners();
     }
 

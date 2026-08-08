@@ -16,6 +16,7 @@ import { getDefaultModelConfig } from './services/modelConfig.js';
 import { resolveModelDisplayName } from './services/modelNames.js';
 import apiKeyStore from './services/apiKeyStore.js';
 import { loadModelCatalog, saveModelCatalog } from './services/modelCatalogCache.js';
+import { normalizeOpenRouterModelProviders, resolveProviderFromModelId } from './services/providerRegistry.js';
 import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort } from './services/reasoningConfig.js';
 
 const OPENROUTER_BACKEND_ID = 'openrouter';
@@ -27,7 +28,7 @@ const TITLE_SUMMARY_MAX_INPUT_CHARS = 4000;
 // Use template literals (backticks) for multi-line prompts
 // This is a function so dynamic values (like date) are evaluated per request
 const getSystemPrompt = (modelId) => `
-You are ${modelId ? `${modelId}, ` : ''}a highly capable, thoughtful, and precise assistant. Your goal is to deeply understand the user's intent, ask clarifying questions when needed, think step-by-step through complex problems, provide clear, direct, and concise answers, and proactively anticipate helpful follow-up information. Always prioritize being truthful, nuanced, insightful, and efficient, tailoring your responses specifically to the user's needs and preferences.  Also be concise: keep answers brief and to the point, but without losing important details. Importantly, be privacy-aware: never request user data and, when appropriate, remind users not to share sensitive information and that their inputs may be revealing their identity.
+You are ${modelId ? `${modelId}, ` : ''}a highly capable, thoughtful, and precise assistant. Your goal is to deeply understand the user's intent, ask clarifying questions when needed, think step-by-step through complex problems, provide clear, and direct answers, and proactively anticipate helpful follow-up information. Always prioritize being truthful, nuanced, insightful, and efficient, tailoring your responses specifically to the user's needs and preferences.  It is important to be concise: keep answers brief and to the point, but without losing important details.
 
 Formatting Rules:
 - Use Markdown for lists, tables, and styling.
@@ -42,6 +43,32 @@ Current date: ${new Date().toLocaleDateString()}.
 // const getSystemPrompt = () => '';
 // Example:
 // const getSystemPrompt = () => `You are a helpful AI assistant.
+
+function hasPdfContent(messages = []) {
+    return messages.some((message) => {
+        if (!Array.isArray(message?.content)) return false;
+        return message.content.some((part) => {
+            const filename = part?.file?.filename || '';
+            const fileData = part?.file?.file_data || '';
+            return part?.type === 'file' && (
+                /\.pdf$/i.test(filename) ||
+                (typeof fileData === 'string' && fileData.startsWith('data:application/pdf'))
+            );
+        });
+    });
+}
+
+function applyPdfFileParserPlugin(body, messages = []) {
+    if (!hasPdfContent(messages)) return;
+    body.plugins = [
+        {
+            id: 'file-parser',
+            pdf: {
+                engine: 'mistral-ocr'
+            }
+        }
+    ];
+}
 
 class OpenRouterAPI {
     constructor() {
@@ -58,6 +85,13 @@ class OpenRouterAPI {
         if (!key) return null;
         if (apiKeyStore.isExpired()) return null;
         return key;
+    }
+
+    getCachedModels() {
+        const cachedModels = loadModelCatalog(OPENROUTER_BACKEND_ID);
+        return Array.isArray(cachedModels)
+            ? normalizeOpenRouterModelProviders(cachedModels)
+            : [];
     }
 
     // Fetch available models from OpenRouter
@@ -98,8 +132,8 @@ class OpenRouterAPI {
         } catch (error) {
             console.error('Error fetching models from OpenRouter:', error);
 
-            const cachedModels = loadModelCatalog(OPENROUTER_BACKEND_ID);
-            if (Array.isArray(cachedModels) && cachedModels.length > 0) {
+            const cachedModels = this.getCachedModels();
+            if (cachedModels.length > 0) {
                 console.warn('Using cached model catalog for OpenRouter.');
                 return cachedModels;
             }
@@ -129,9 +163,7 @@ class OpenRouterAPI {
                 return null;
             }
 
-            // Extract provider from model ID (e.g., "openai/gpt-4" -> "OpenAI")
-            const provider = model.id.split('/')[0];
-            const providerName = this.capitalizeProvider(provider);
+            const providerName = resolveProviderFromModelId(model.id).displayName;
 
             // Categorize models
             let category = 'Other models';
@@ -152,8 +184,10 @@ class OpenRouterAPI {
             }
 
             // Apply custom display name if one exists
-            const defaultName = model.name || model.id;
-            const displayName = this.getDisplayName(model.id, defaultName);
+            const defaultName = typeof model.name === 'string' && model.name.trim()
+                ? model.name.trim()
+                : model.id;
+            const displayName = String(this.getDisplayName(model.id, defaultName) || defaultName).trim();
 
             return {
                 id: model.id,
@@ -177,23 +211,6 @@ class OpenRouterAPI {
             const priceB = b.pricing?.prompt || 0;
             return priceA - priceB;
         });
-    }
-
-    capitalizeProvider(provider) {
-        const providerMap = {
-            'openai': 'OpenAI',
-            'anthropic': 'Anthropic',
-            'google': 'Google',
-            'meta-llama': 'Meta',
-            'mistralai': 'Mistral',
-            'deepseek': 'DeepSeek',
-            'cohere': 'Cohere',
-            'perplexity': 'Perplexity',
-            'qwen': 'Qwen',
-            'nvidia': 'Nvidia',
-            'alibaba': 'Qwen'  // Alibaba models are Qwen
-        };
-        return providerMap[provider] || provider.charAt(0).toUpperCase() + provider.slice(1);
     }
 
     isReasoningDetailImage(detail) {
@@ -277,7 +294,7 @@ class OpenRouterAPI {
     }
 
     // Send chat completion request
-    async sendCompletion(messages, modelId, apiKey) {
+    async sendCompletionStrict(messages, modelId, apiKey, options = {}) {
         const url = `${this.baseUrl}/chat/completions`;
         const key = apiKey || this.getApiKey();
 
@@ -290,24 +307,48 @@ class OpenRouterAPI {
             'Content-Type': 'application/json'
         };
 
+        const {
+            context = 'Inference completion',
+            maxAttempts = 3,
+            timeoutMs = 0,
+            signal = null,
+            searchEnabled = false,
+            reasoningEnabled = true,
+            reasoningEffort = DEFAULT_REASONING_EFFORT
+        } = options;
+
+        let effectiveModelId = modelId;
+        if (searchEnabled && !modelId.includes(':online')) {
+            effectiveModelId = `${modelId}:online`;
+        }
+
+        const normalizedReasoningEffort = normalizeReasoningEffort(reasoningEffort);
+        const reasoningPayload = reasoningEnabled
+            ? { effort: normalizedReasoningEffort }
+            : null;
+
         // Prepend system prompt if it exists
-        const systemPrompt = getSystemPrompt(modelId);
+        const systemPrompt = getSystemPrompt(effectiveModelId);
         const messagesWithSystem = systemPrompt
             ? [{ role: 'system', content: systemPrompt }, ...messages]
             : messages;
 
         const body = {
-            model: modelId,
+            model: effectiveModelId,
             messages: messagesWithSystem.map(msg => ({
                 role: msg.role,
                 content: msg.content
             }))
         };
+        applyPdfFileParserPlugin(body, messagesWithSystem);
+        if (reasoningPayload) {
+            body.reasoning = reasoningPayload;
+        }
 
+        // POST is idempotent for same input - safe to retry
+        // No timeout - provider manages timeouts; completions can take long
         try {
-            // POST is idempotent for same input - safe to retry
-            // No timeout - provider manages timeouts; completions can take long
-            const { response, data } = await networkProxy.fetchWithRetryJson(
+            const { response, data, text } = await networkProxy.fetchWithRetryJson(
                 url,
                 {
                     method: 'POST',
@@ -315,13 +356,13 @@ class OpenRouterAPI {
                     body: JSON.stringify(body)
                 },
                 {
-                    context: 'Inference completion',
-                    maxAttempts: 3,
-                    timeoutMs: 0  // No timeout - let OpenRouter manage
+                    context,
+                    maxAttempts,
+                    timeoutMs,
+                    signal
                 }
             );
 
-            // Log successful request
             if (window.networkLogger) {
                 window.networkLogger.logRequest({
                     type: 'openrouter',
@@ -337,20 +378,35 @@ class OpenRouterAPI {
             }
 
             if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
+                const error = new Error(`HTTP error! status: ${response.status}`);
+                error.status = response.status;
+                error.responseText = text || '';
+                error.data = data;
+                error.responseData = data;
+                throw error;
             }
 
-            return data.choices[0]?.message?.content || 'No response received';
+            const content = data?.choices?.[0]?.message?.content;
+            if (typeof content !== 'string') {
+                const error = new Error('Invalid completion response');
+                error.responseData = data;
+                throw error;
+            }
+
+            return {
+                content,
+                data,
+                response
+            };
         } catch (error) {
             console.error('Error sending completion:', error);
 
-            // Log failed request
             if (window.networkLogger) {
                 window.networkLogger.logRequest({
                     type: 'openrouter',
                     method: 'POST',
                     url: url,
-                    status: 0,
+                    status: Number.isFinite(error?.status) ? error.status : 0,
                     request: {
                         headers: window.networkLogger.sanitizeHeaders(headers),
                         body: body
@@ -359,6 +415,15 @@ class OpenRouterAPI {
                 });
             }
 
+            throw error;
+        }
+    }
+
+    async sendCompletion(messages, modelId, apiKey) {
+        try {
+            const result = await this.sendCompletionStrict(messages, modelId, apiKey);
+            return result.content;
+        } catch (error) {
             return `Error: ${error.message}. Using simulated response instead: This is a fallback response since the API call failed.`;
         }
     }
@@ -453,7 +518,7 @@ class OpenRouterAPI {
     }
 
     // Stream chat completion with support for multimodal content, web search, and reasoning traces
-    async streamCompletion(messages, modelId, apiKey, onChunk, onTokenUpdate, files = [], searchEnabled = false, abortController = null, onStreamOpen = null, onReasoningChunk = null, reasoningEnabled = true, reasoningEffort = DEFAULT_REASONING_EFFORT) {
+    async streamCompletion(messages, modelId, apiKey, onChunk, onTokenUpdate, files = [], searchEnabled = false, abortController = null, onStreamOpen = null, onReasoningChunk = null, reasoningEnabled = true, reasoningEffort = DEFAULT_REASONING_EFFORT, maxOutputTokens = undefined) {
         const key = apiKey || this.getApiKey();
 
         if (!key) {
@@ -981,6 +1046,10 @@ class OpenRouterAPI {
                 stream_options: { include_usage: true }
             };
 
+            if (Number.isInteger(maxOutputTokens) && maxOutputTokens > 0) {
+                requestBody.max_tokens = maxOutputTokens;
+            }
+
             // Add model-specific max_tokens if applicable (disabled - let OpenRouter use API key credits)
             // const maxTokens = this.getMaxTokensForModel(effectiveModelId);
             // if (maxTokens !== undefined) {
@@ -990,14 +1059,7 @@ class OpenRouterAPI {
             // Add PDF plugin configuration if PDFs are present
             // Default to mistral-ocr as per OpenRouter documentation
             if (hasPdfFiles) {
-                requestBody.plugins = [
-                    {
-                        id: 'file-parser',
-                        pdf: {
-                            engine: 'mistral-ocr'
-                        }
-                    }
-                ];
+                applyPdfFileParserPlugin(requestBody, processedMessages);
             }
 
             // Add reasoning parameter if enabled (OpenRouter unified reasoning API)
