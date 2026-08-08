@@ -10,6 +10,7 @@ class AccountModal {
         this.app = app;
         this.accountService = this.app.services.account;
         this.syncService = this.app.services.sync;
+        this.billingService = this.app.services.billing;
         this.isOpen = false;
         this.overlay = document.getElementById('account-modal');
         this.accountState = this.accountService.getState();
@@ -38,6 +39,9 @@ class AccountModal {
 
         // Sync state
         this.syncStatus = this.syncService.getStatus();
+        this.billingSnapshot = this.billingService?.snapshot?.() || {};
+        this.billingBusy = null;
+        this.billingError = null;
 
         // UI state
         this.returnFocusEl = null;
@@ -58,6 +62,11 @@ class AccountModal {
             }
         });
 
+        this.billingUnsubscribe = this.billingService?.subscribe?.(snapshot => {
+            this.billingSnapshot = snapshot;
+            if (this.isOpen && this.accountState?.accountId) this.render();
+        });
+
         this.attachTabListener();
         this.updateTabIndicator();
     }
@@ -65,7 +74,15 @@ class AccountModal {
     attachTabListener() {
         const tabBtn = document.getElementById('account-tab-btn');
         if (tabBtn) {
-            tabBtn.onclick = () => this.isOpen ? this.close() : this.open();
+            tabBtn.onclick = () => {
+                if (this.accountState?.accountId) {
+                    if (this.app.billingModal?.isOpen) this.app.billingModal.close();
+                    this.isOpen ? this.close() : this.open();
+                    return;
+                }
+                if (this.isOpen) this.close();
+                this.app.billingModal?.open?.();
+            };
         }
     }
 
@@ -73,11 +90,15 @@ class AccountModal {
         const tabBtn = document.getElementById('account-tab-btn');
         if (!tabBtn) return;
         // Only show logged-in (green) after session is verified with server
-        const isLoggedIn = this.accountState?.accountId &&
-            this.accountState?.sessionVerified &&
-            this.accountState?.status === 'unlocked';
+        const hasAccount = !!this.accountState?.accountId;
+        const isLoggedIn = hasAccount && this.accountState?.sessionVerified;
+        const label = hasAccount ? 'Account' : 'Upgrade';
         tabBtn.dataset.status = isLoggedIn ? 'logged-in' : 'none';
-        tabBtn.title = isLoggedIn ? 'Account (logged in)' : 'Account';
+        tabBtn.title = isLoggedIn ? 'Account (logged in)' : label;
+        tabBtn.setAttribute('aria-label', hasAccount ? 'Account' : 'Upgrade to Premium');
+        tabBtn.setAttribute('aria-controls', hasAccount ? 'account-modal' : 'billing-modal');
+        const labelNode = tabBtn.querySelector('[data-account-nav-label]');
+        if (labelNode) labelNode.textContent = label;
     }
 
     open() {
@@ -91,6 +112,14 @@ class AccountModal {
         this.accountService.clearErrors();
         this.render();
         this.overlay.classList.remove('hidden');
+
+        if (this.accountState?.accountId) {
+            void this.billingService?.getStatus?.({ force: true }).catch(error => {
+                if (error?.code !== 'BILLING_AUTH_REQUIRED') {
+                    console.warn('[Billing] Premium status is temporarily unavailable.');
+                }
+            });
+        }
 
         const tabBtn = document.getElementById('account-tab-btn');
         if (tabBtn) tabBtn.setAttribute('aria-expanded', 'true');
@@ -114,8 +143,9 @@ class AccountModal {
         this.close();
     }
 
-    close() {
+    close({ billingHandoff = 'cancel' } = {}) {
         if (!this.isOpen || !this.overlay) return;
+        const hasCheckoutIntent = this.hasPendingPremiumCheckout();
         this.isOpen = false;
         this.overlay.classList.add('hidden');
         this.overlay.innerHTML = '';
@@ -129,6 +159,25 @@ class AccountModal {
         }
         if (this.returnFocusEl?.focus) this.returnFocusEl.focus();
         this.returnFocusEl = null;
+        if (hasCheckoutIntent) {
+            setTimeout(() => {
+                if (billingHandoff === 'resume') {
+                    this.app.billingModal?.resumeCheckoutIntent?.();
+                } else {
+                    this.app.billingModal?.cancelCheckoutIntent?.({ reopenPremium: true });
+                }
+            }, 0);
+        }
+    }
+
+    hasPendingPremiumCheckout() {
+        return this.app.billingModal?.hasCheckoutIntent?.() === true;
+    }
+
+    resumePremiumCheckoutIfPending() {
+        if (!this.hasPendingPremiumCheckout()) return false;
+        this.close({ billingHandoff: 'resume' });
+        return true;
     }
 
     resetCreationFlow() {
@@ -337,8 +386,9 @@ class AccountModal {
         try {
             await this.accountService.completeAccountRegistration();
             this.creationStep = 'complete';
-            this.render();
             this.app?.showToast?.('Account created successfully', 'success');
+            if (this.resumePremiumCheckoutIfPending()) return;
+            this.render();
         } catch (error) {
             this.creationStep = 'error';
             this.creationError = error.message || 'Registration failed.';
@@ -347,12 +397,17 @@ class AccountModal {
     }
 
     async handleCancelCreation() {
+        const returnToPremium = this.hasPendingPremiumCheckout();
         if (this.creationStep.startsWith('oauth_') || this.accountState?.oauthSetupRequired) {
             this.accountService.cancelPendingOAuthAccount();
             await this.accountService.clearLocalAccount();
         }
         this.accountService.cancelPendingAccount();
         this.resetCreationFlow();
+        if (returnToPremium) {
+            this.close();
+            return;
+        }
         this.render();
     }
 
@@ -373,7 +428,10 @@ class AccountModal {
     async handleAccountPasskeyUnlock() {
         const accountId = this.accountState?.accountId || this.accountInputValue?.trim();
         const success = await this.accountService.unlockWithPasskey(accountId);
-        if (success) this.app?.showToast?.('Account unlocked', 'success');
+        if (success) {
+            this.app?.showToast?.('Account unlocked', 'success');
+            this.resumePremiumCheckoutIfPending();
+        }
     }
 
     async handleAccountRecoveryUnlock() {
@@ -398,6 +456,10 @@ class AccountModal {
                 // Step 4: Show success
                 this.recoveryStep = 'complete';
                 this.render();
+                if (this.resumePremiumCheckoutIfPending()) {
+                    this.app?.showToast?.('Account recovered successfully', 'success');
+                    return;
+                }
                 // Brief delay to show success state
                 setTimeout(() => {
                     this.recoveryStep = 'idle';
@@ -467,6 +529,56 @@ class AccountModal {
         this.resetCreationFlow();
         this.render();
         this.app?.showToast?.('Logged out', 'success');
+    }
+
+    openPremium() {
+        this.close();
+        this.app.billingModal?.open?.();
+    }
+
+    async manageBilling() {
+        this.close();
+        try {
+            await this.billingService?.portal?.();
+        } catch {
+            this.app?.showToast?.('Unable to open billing management.', 'error');
+            this.open();
+        }
+    }
+
+    async purchaseTicketPack() {
+        this.billingBusy = 'topup-checkout';
+        this.billingError = null;
+        this.render();
+        try {
+            await this.billingService?.purchaseTicketPack?.();
+        } catch (error) {
+            const safeByCode = {
+                BILLING_AUTH_REQUIRED: 'Sign in to your OA account to continue.',
+                BILLING_TOPUP_PENDING: 'Finish preparing the current ticket pack before buying another.',
+                BILLING_TOPUP_INELIGIBLE: 'An active Premium subscription is required for ticket packs.',
+                BILLING_TOPUP_UNAVAILABLE: 'Ticket packs are temporarily unavailable.'
+            };
+            this.billingError = safeByCode[error?.code] || 'Unable to open ticket-pack Checkout.';
+            this.billingBusy = null;
+            this.render();
+        }
+    }
+
+    prepareTicketPack() {
+        this.close();
+        this.app.billingModal?.open?.();
+        queueMicrotask(() => void this.app.billingModal?.startPreparation?.());
+    }
+
+    formatMoney(offer) {
+        if (!offer || !Number.isFinite(Number(offer.unit_amount))) return 'Loading price…';
+        return new Intl.NumberFormat(undefined, {
+            style: 'currency',
+            currency: String(offer.currency || 'usd').toUpperCase(),
+            minimumFractionDigits: Number(offer.unit_amount) % 100 === 0 ? 0 : 2,
+            maximumFractionDigits: 2
+        }).format(Number(offer.unit_amount) / 100);
     }
 
     // =========================================================================
@@ -803,6 +915,27 @@ class AccountModal {
                 if (isStale) return 'text-amber-500';
                 return 'text-emerald-500';
             })();
+            const subscriptionStatus = this.billingSnapshot?.status?.subscription?.status || 'none';
+            const premiumActive = this.billingSnapshot?.status?.premium_active === true ||
+                ['active', 'trialing'].includes(subscriptionStatus);
+            const portalAvailable = this.billingSnapshot?.status?.portal_available === true;
+            const ticketPack = this.billingSnapshot?.plan?.ticket_pack || null;
+            const ticketPackStatus = this.billingSnapshot?.status?.ticket_pack || null;
+            const showTicketPack = Boolean(
+                premiumActive && ticketPack && ticketPackStatus?.eligible === true
+            );
+            const ticketPackCount = Number(ticketPack?.tickets || ticketPackStatus?.ticket_count || 0);
+            const ticketPackState = String(ticketPackStatus?.state || 'ineligible');
+            const ticketPackReady = ticketPackState === 'ready' && ticketPackStatus?.can_purchase === true;
+            const ticketPackCheckoutPending = ticketPackState === 'checkout_pending';
+            const ticketPackClaimable = ['claimable', 'claiming'].includes(ticketPackState);
+            const ticketPackActionLabel = ticketPackClaimable
+                ? `${ticketPackState === 'claiming' ? 'Resume preparing' : 'Prepare'} ${ticketPackCount} private tickets`
+                : ticketPackCheckoutPending
+                    ? 'Continue ticket-pack Checkout'
+                    : this.billingBusy === 'topup-checkout'
+                        ? 'Opening Checkout…'
+                        : `Buy ${ticketPackCount} tickets — ${this.formatMoney(ticketPack)}`;
 
             return `
                 <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}">
@@ -838,6 +971,33 @@ class AccountModal {
                         </div>
                     ` : ''}
 
+                    <div class="rounded-lg border border-border bg-muted/20 px-3 py-3 mb-3">
+                        <div class="flex items-center justify-between gap-3">
+                            <div>
+                                <p class="text-sm font-medium text-foreground">${premiumActive ? 'OA Premium' : 'Free account'}</p>
+                                <p class="text-[11px] text-muted-foreground">${premiumActive ? 'Premium subscription active' : 'Upgrade for monthly private tickets'}</p>
+                            </div>
+                            ${premiumActive ? (portalAvailable ? `
+                                <button id="account-manage-billing-btn" class="h-8 px-3 rounded-md text-xs font-medium border border-border text-foreground" type="button">
+                                    Manage billing
+                                </button>
+                            ` : '') : `
+                                <button id="account-upgrade-btn" class="h-8 px-3 rounded-md text-xs font-medium bg-blue-600 text-white" type="button">
+                                    Upgrade to Premium
+                                </button>
+                            `}
+                        </div>
+                        ${showTicketPack && (ticketPackReady || ticketPackCheckoutPending || ticketPackClaimable) ? `
+                            <div class="mt-3 pt-3 border-t border-border">
+                                <p class="text-[11px] text-muted-foreground mb-2">Need more private tickets?</p>
+                                <button id="${ticketPackClaimable ? 'account-topup-prepare-btn' : 'account-topup-btn'}" class="w-full h-9 rounded-lg bg-blue-600 text-white text-sm font-medium disabled:opacity-50" type="button" ${this.billingBusy ? 'disabled' : ''}>
+                                    ${ticketPackActionLabel}
+                                </button>
+                                ${this.billingError ? `<p class="mt-2 text-xs text-destructive">${this.escapeHtml(this.billingError)}</p>` : ''}
+                            </div>
+                        ` : ''}
+                    </div>
+
                     <div class="flex gap-3">
                         <button id="account-clear-btn" class="btn-ghost-hover flex-1 h-9 rounded-lg text-sm border border-border bg-background text-foreground transition-colors disabled:opacity-50" type="button" ${isBusy ? 'disabled' : ''}>
                             Log out
@@ -859,6 +1019,7 @@ class AccountModal {
         );
         const recoveryValue = this.escapeHtml(this.recoveryInputValue || '');
         const showRecovery = this.showRecoveryInput;
+        const continuingToPremium = this.hasPendingPremiumCheckout();
 
         return `
             <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}" style="padding:24px 24px 18px">
@@ -916,7 +1077,7 @@ class AccountModal {
 
                 <!-- Header -->
                 <div class="flex items-center justify-between mb-1">
-                    <h3 class="text-base font-medium text-foreground">${showRecovery ? 'Account Recovery' : 'Account'}</h3>
+                    <h3 class="text-base font-medium text-foreground">${showRecovery ? 'Account Recovery' : continuingToPremium ? 'Continue to OA Premium' : 'Account'}</h3>
                     <button id="close-account-modal" class="text-muted-foreground hover:text-foreground transition-colors p-1 -mr-1 rounded-lg hover:bg-accent" aria-label="Close">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
@@ -926,7 +1087,9 @@ class AccountModal {
 
                 <p class="text-xs text-muted-foreground" style="margin-bottom:20px">${showRecovery
                     ? 'Recover your account with the recovery code saved at account creation time.'
-                    : 'Google authenticates your account. Your passkey separately encrypts synced data so the org cannot read it.'
+                    : continuingToPremium
+                        ? 'Create or sign in to an account to continue securely to Stripe Checkout. You will not need to click Upgrade again.'
+                        : 'Google authenticates your account. Your passkey separately encrypts synced data so the org cannot read it.'
                 }</p>
 
                 ${!passkeySupported ? `
@@ -952,7 +1115,7 @@ class AccountModal {
                         <svg class="w-3.5 h-3.5 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
                         </svg>
-                        Create new account
+                        ${continuingToPremium ? 'Create account and continue' : 'Create new account'}
                     </button>
 
                     <!-- Divider -->
@@ -1257,6 +1420,18 @@ class AccountModal {
 
         const syncBtn = document.getElementById('account-sync-btn');
         if (syncBtn) syncBtn.onclick = () => this.handleSyncNow();
+
+        const upgradeBtn = document.getElementById('account-upgrade-btn');
+        if (upgradeBtn) upgradeBtn.onclick = () => this.openPremium();
+
+        const manageBillingBtn = document.getElementById('account-manage-billing-btn');
+        if (manageBillingBtn) manageBillingBtn.onclick = () => void this.manageBilling();
+
+        const topupBtn = document.getElementById('account-topup-btn');
+        if (topupBtn) topupBtn.onclick = () => void this.purchaseTicketPack();
+
+        const topupPrepareBtn = document.getElementById('account-topup-prepare-btn');
+        if (topupPrepareBtn) topupPrepareBtn.onclick = () => this.prepareTicketPack();
     }
 
     async handleSyncNow() {
@@ -1282,6 +1457,10 @@ class AccountModal {
         if (this.syncUnsubscribe) {
             this.syncUnsubscribe();
             this.syncUnsubscribe = null;
+        }
+        if (this.billingUnsubscribe) {
+            this.billingUnsubscribe();
+            this.billingUnsubscribe = null;
         }
     }
 }

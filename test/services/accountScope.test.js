@@ -198,8 +198,6 @@ test('sync refuses to read live values from another account scope', async () => 
     try {
         syncService.setCredentials(
             new Uint8Array(32).fill(1),
-            'account-a-token',
-            async () => null,
             'account-a'
         );
         const result = await syncService.sync();

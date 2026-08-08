@@ -177,7 +177,7 @@ test('sync push chunks append-only invalidation records to server limits', async
         };
     };
 
-    const result = await service._push(new Uint8Array(32), 'access-token');
+    const result = await service._push(new Uint8Array(32));
 
     assert.deepEqual(batchSizes, [100, 100, 5]);
     assert.equal(result.count, 205);
@@ -283,8 +283,8 @@ test('sync schema upgrade performs one full pull for dynamic tombstones', async 
             };
         };
 
-        await service._pull(new Uint8Array(32), 'access-token');
-        await service._pull(new Uint8Array(32), 'access-token');
+        await service._pull(new Uint8Array(32));
+        await service._pull(new Uint8Array(32));
 
         assert.match(requestedUrls[0], /\?since=0$/);
         assert.match(requestedUrls[1], /\?since=1000$/);

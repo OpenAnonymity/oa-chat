@@ -8,15 +8,17 @@ rotation, verification, revocation, and retry.
 ## Browser path
 
 `chat/services/sessionService.js` initializes the SuperTokens Session recipe in
-cookie mode. Account and encrypted-sync requests go through
+cookie mode. Account, encrypted-sync, and billing-account requests go through
 `sessionService.fetch(...)`; the SDK supplies HttpOnly cookies, refreshes via
 `POST /auth/session/refresh` when necessary, and retries the original protected
 request once.
 
 The SDK interceptor and `sessionService.fetch(...)` are both restricted to the
-org origin's `/auth` path. This is a privacy boundary, not just request routing:
-account cookies must never be attached to ticket issuance/redemption, sharing,
-model metadata, or other org endpoints. Those paths continue through
+org origin's `/auth` and `/api/billing` paths. This is a privacy boundary, not
+just request routing: account cookies must never be attached to accountless
+ticket redemption, sharing, model metadata, or other org endpoints. Billing
+ticket claims are intentionally account-authenticated entitlement issuance;
+their blinded requests remain unlinkable to later redemption. Accountless paths continue through
 `networkProxy`, whose direct-fetch paths force `credentials: 'omit'`.
 
 No account access or refresh token is present in an OA response model or stored
@@ -70,4 +72,4 @@ production build regenerates and consumes that same checked-in vendor module.
 
 `test/sessionArchitecture.test.mjs` guards against reintroducing manual refresh
 endpoints, bearer headers, renderer token accessors, or session interception
-outside `/auth`.
+outside the explicit `/auth` and `/api/billing` account boundary.

@@ -34,7 +34,7 @@
  * is ease of audit -- no compiled binaries comparison.
  */
 
-import { publicVerif, TokenChallenge } from '../vendor/privacypass-ts/privacypass-ts.min.js';
+import { publicVerif, TokenChallenge, util } from '../vendor/privacypass-ts/privacypass-ts.min.js';
 
 const { Client, BlindRSAMode } = publicVerif;
 
@@ -89,7 +89,11 @@ class PrivacyPassProvider {
         const tokenRequest = await client.createTokenRequest(challenge, pubKeyBytes);
         const blindedRequest = b64urlEncode(tokenRequest.serialize());
 
-        return { blindedRequest, state: client };
+        return {
+            blindedRequest,
+            state: client,
+            serializedState: this.serializeState(client, publicKeyB64)
+        };
     }
 
     async getPublicKeyId(publicKeyB64) {
@@ -100,11 +104,53 @@ class PrivacyPassProvider {
         )).join('');
     }
 
-    async finalizeToken(signedResponseB64, client) {
-        if (!signedResponseB64 || !client) {
+    serializeState(client, publicKeyB64) {
+        if (!client?.finData || !publicKeyB64) {
+            throw new Error('Privacy Pass state is not serializable');
+        }
+        return {
+            version: 1,
+            protocol: 'public-token-blind-rsa',
+            mode: client.mode,
+            publicKey: publicKeyB64,
+            tokenInput: b64urlEncode(client.finData.tokenInput),
+            authInput: b64urlEncode(client.finData.authInput.serialize()),
+            inv: b64urlEncode(client.finData.inv)
+        };
+    }
+
+    async deserializeState(serializedState) {
+        if (!serializedState || serializedState.protocol !== 'public-token-blind-rsa') {
+            throw new Error('Unsupported Privacy Pass state');
+        }
+        const publicKeyBytes = b64urlDecode(serializedState.publicKey);
+        const spkiBytes = util.convertRSASSAPSSToEnc(publicKeyBytes);
+        const pkIssuer = await crypto.subtle.importKey(
+            'spki',
+            spkiBytes,
+            { name: 'RSA-PSS', hash: 'SHA-384' },
+            true,
+            ['verify']
+        );
+        const authInputBytes = b64urlDecode(serializedState.authInput);
+        const client = new Client(serializedState.mode ?? BlindRSAMode.PSS);
+        client.finData = {
+            tokenInput: b64urlDecode(serializedState.tokenInput),
+            authInput: { serialize: () => authInputBytes },
+            inv: b64urlDecode(serializedState.inv),
+            pkIssuer
+        };
+        return client;
+    }
+
+    async finalizeToken(signedResponseB64, clientOrState) {
+        if (!signedResponseB64 || !clientOrState) {
             throw new Error('Missing required parameters: signedResponse, state');
         }
 
+        const client = typeof clientOrState.finalize === 'function'
+            ? clientOrState
+            : await this.deserializeState(clientOrState);
         const responseBytes = b64urlDecode(signedResponseB64);
         const tokenResponse = publicVerif.TokenResponse.deserialize(responseBytes);
         const token = await client.finalize(tokenResponse);

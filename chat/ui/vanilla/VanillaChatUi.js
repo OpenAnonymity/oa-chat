@@ -6,6 +6,7 @@ import ChatInput from '../../components/ChatInput.js';
 import ModelPicker from '../../components/ModelPicker.js';
 import ChatHistoryImportModal from '../../components/ChatHistoryImportModal.js';
 import AccountModal from '../../components/AccountModal.js';
+import BillingModal from '../../components/BillingModal.js';
 import MemoryEditor from '../../components/MemoryEditor.js';
 import WelcomePanel from '../../components/WelcomePanel.js';
 import ThanksPanel from '../../components/ThanksPanel.js';
@@ -20,6 +21,7 @@ import inferenceService from '../../services/inference/inferenceService.js';
 import stationVerifier from '../../services/verifier.js';
 import shareService from '../../services/shareService.js';
 import accountService from '../../services/accountService.js';
+import billingClient from '../../services/billingClient.js';
 import syncService from '../../services/encryptedSyncService.js';
 
 export default class VanillaChatUi {
@@ -33,6 +35,7 @@ export default class VanillaChatUi {
             verifierServiceImpl: stationVerifier,
             shareServiceImpl: shareService,
             accountServiceImpl: accountService,
+            billingClientImpl: billingClient,
             syncServiceImpl: syncService,
             ...options
         });
@@ -56,6 +59,7 @@ export default class VanillaChatUi {
             modelPicker: new ModelPicker(this.interfaces.modelPicker),
             chatHistoryImportModal: new ChatHistoryImportModal(componentApp),
             accountModal: new AccountModal(componentApp),
+            billingModal: new BillingModal(componentApp),
             memoryEditor: new MemoryEditor(componentApp),
             welcomePanel: new WelcomePanel(componentApp),
             thanksPanel: new ThanksPanel(componentApp),

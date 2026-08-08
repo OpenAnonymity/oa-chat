@@ -303,10 +303,7 @@ test('identity-backed sync pushes encrypted tickets and restores them on a fresh
         }
 
         assert.equal(options.method, 'POST');
-        assert.equal(
-            options.headers.Authorization,
-            'Bearer identity-token'
-        );
+        assert.equal(options.headers.Authorization, undefined);
         remoteBlobs = JSON.parse(options.body).blobs;
         return {
             ok: true,
@@ -321,8 +318,6 @@ test('identity-backed sync pushes encrypted tickets and restores them on a fresh
     };
     syncService.setCredentials(
         key,
-        'identity-token',
-        async () => null,
         'identity-account',
         { identityBacked: true }
     );
@@ -387,8 +382,6 @@ test('cash-style ticket removal syncs hash tombstones without retaining secrets'
     syncService.triggerTicketSync = () => {};
     syncService.setCredentials(
         new Uint8Array(32).fill(12),
-        'identity-token',
-        async () => null,
         'identity-account',
         { identityBacked: true }
     );
@@ -472,8 +465,6 @@ test('SSO redemption defers sync while other mutations and legacy redemption syn
     };
     syncService.setCredentials(
         new Uint8Array(32).fill(10),
-        'identity-token',
-        async () => null,
         'identity-account',
         { identityBacked: true }
     );
@@ -497,8 +488,6 @@ test('SSO redemption defers sync while other mutations and legacy redemption syn
         syncService.clearCredentials();
         syncService.setCredentials(
             new Uint8Array(32).fill(11),
-            'legacy-token',
-            async () => null,
             'identity-account'
         );
         await ticketStore.consumeTickets(1, async () => 'redeemed');

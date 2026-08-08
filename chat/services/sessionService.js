@@ -11,24 +11,28 @@ import { SuperTokens, Session } from '../vendor/supertokens-session.js';
 
 const isElectron = typeof window !== 'undefined' && window.electronAPI?.isElectron === true;
 
-function normalizeAccountAuthUrl(input) {
+function normalizeAccountSessionUrl(input) {
     const value = typeof Request !== 'undefined' && input instanceof Request
         ? input.url
         : String(input);
     const url = new URL(value, window.location.href);
     const orgUrl = new URL(ORG_API_BASE);
-    const isAuthPath = url.pathname === '/auth' || url.pathname.startsWith('/auth/');
+    const isAccountPath =
+        url.pathname === '/auth' ||
+        url.pathname.startsWith('/auth/') ||
+        url.pathname === '/api/billing' ||
+        url.pathname.startsWith('/api/billing/');
 
-    if (url.origin !== orgUrl.origin || !isAuthPath) {
-        throw new TypeError('Account session requests are restricted to the org /auth API');
+    if (url.origin !== orgUrl.origin || !isAccountPath) {
+        throw new TypeError('Account session requests are restricted to org account APIs');
     }
 
     return url.toString();
 }
 
-function isAccountAuthUrl(input) {
+function isAccountSessionUrl(input) {
     try {
-        normalizeAccountAuthUrl(input);
+        normalizeAccountSessionUrl(input);
         return true;
     } catch {
         return false;
@@ -93,7 +97,7 @@ class SessionService {
                                 apiDomain,
                                 sessionTokenBackendDomain
                             ) => (
-                                isAccountAuthUrl(toCheckUrl) &&
+                                isAccountSessionUrl(toCheckUrl) &&
                                 originalImplementation.shouldDoInterceptionBasedOnUrl(
                                     toCheckUrl,
                                     apiDomain,
@@ -135,7 +139,7 @@ class SessionService {
 
     async fetch(input, init = {}) {
         await this.init();
-        const authUrl = normalizeAccountAuthUrl(input);
+        const authUrl = normalizeAccountSessionUrl(input);
         if (!isElectron) {
             return window.fetch(authUrl, init);
         }

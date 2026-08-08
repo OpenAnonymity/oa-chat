@@ -367,8 +367,11 @@ export class TicketStore {
         return combined;
     }
 
-    async readFromDatabase() {
+    async readFromDatabase(options = {}) {
         if (typeof chatDB === 'undefined' || !chatDB.db) {
+            if (options.requireDurable) {
+                throw new Error('The local ticket database is not available.');
+            }
             return {
                 active: [],
                 archived: [],
@@ -393,6 +396,7 @@ export class TicketStore {
             };
         } catch (error) {
             console.warn('Failed to load tickets from IndexedDB:', error);
+            if (options.requireDurable) throw error;
             return {
                 active: [],
                 archived: [],
@@ -443,7 +447,12 @@ export class TicketStore {
                 persisted = true;
             } catch (error) {
                 console.warn('Failed to persist tickets:', error);
+                if (options.requireDurable) throw error;
             }
+        }
+
+        if (options.requireDurable && !persisted) {
+            throw new Error('The local ticket database did not confirm the write.');
         }
 
         this.tickets = activeTickets;
@@ -609,10 +618,12 @@ export class TicketStore {
         return this.peekTickets(1)[0] || null;
     }
 
-    async addTickets(newTickets) {
+    async addTickets(newTickets, options = {}) {
         return this.withLock(async () => {
             await this.ensureDbReady();
-            const stored = await this.readFromDatabase();
+            const stored = await this.readFromDatabase({
+                requireDurable: options.requireDurable === true
+            });
             const invalidatedKeyIds = normalizeInvalidatedTicketKeyIds(
                 stored.invalidatedKeyIds
             );
@@ -636,19 +647,41 @@ export class TicketStore {
                 )
             ]);
             const { tickets } = this.normalizeTickets(newTickets);
+            const archivedValues = new Set(
+                archived.map(ticket => ticket?.finalized_ticket).filter(Boolean)
+            );
+            const eligibleTickets = tickets.filter(
+                ticket => !archivedValues.has(ticket.finalized_ticket)
+            );
             const generationFilteredCombined = filterTicketsByInvalidatedKeyIds(
-                this.mergeTickets(active, tickets),
+                this.mergeTickets(active, eligibleTickets),
                 invalidatedKeyIds
             );
             const combined = await filterTicketsByTombstones(
                 generationFilteredCombined,
                 stored.tombstones
             );
-            await this.persistTickets(combined, archived);
+            await this.persistTickets(combined, archived, {
+                tombstones: stored.tombstones,
+                invalidatedKeyIds,
+                requireDurable: options.requireDurable === true
+            });
+            if (options.requireDurable === true) {
+                const confirmed = await this.readFromDatabase({ requireDurable: true });
+                const confirmedValues = new Set(
+                    [...confirmed.active, ...confirmed.archived]
+                        .map(ticket => ticket?.finalized_ticket)
+                        .filter(Boolean)
+                );
+                if (!tickets.every(ticket => confirmedValues.has(ticket.finalized_ticket))) {
+                    throw new Error('The local ticket database did not round-trip every prepared ticket.');
+                }
+                this.tickets = confirmed.active;
+                this.archive = confirmed.archived;
+            }
             return combined.length;
         });
     }
-
     async clearTickets() {
         return this.withLock(async () => {
             await this.ensureDbReady();

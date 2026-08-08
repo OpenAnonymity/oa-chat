@@ -8,7 +8,6 @@ import syncService from '../../chat/services/encryptedSyncService.js';
 test('new SSO keyring setup adopts the existing device wallet', async () => {
     const originals = {
         getSyncKeyMaterial: accountService.getSyncKeyMaterial,
-        getAccessToken: accountService.getAccessToken,
         activateAccountScope: syncService.activateAccountScope,
         setCredentials: syncService.setCredentials,
         init: syncService.init,
@@ -18,8 +17,8 @@ test('new SSO keyring setup adopts the existing device wallet', async () => {
     let activation = null;
     let credentialOptions = null;
     accountService.getSyncKeyMaterial = () => new Uint8Array(32).fill(9);
-    accountService.getAccessToken = () => 'identity-token';
     accountService.state.accountId = '4444444444444444';
+    accountService.state.sessionVerified = true;
     accountService.state.googleLinked = true;
     accountService.localAccountContinuity = false;
     syncService.activateAccountScope = async (accountId, options) => {
@@ -27,8 +26,6 @@ test('new SSO keyring setup adopts the existing device wallet', async () => {
     };
     syncService.setCredentials = (
         _keyMaterial,
-        _accessToken,
-        _refreshCallback,
         _accountId,
         options
     ) => {
@@ -49,13 +46,13 @@ test('new SSO keyring setup adopts the existing device wallet', async () => {
         });
     } finally {
         accountService.getSyncKeyMaterial = originals.getSyncKeyMaterial;
-        accountService.getAccessToken = originals.getAccessToken;
         syncService.activateAccountScope = originals.activateAccountScope;
         syncService.setCredentials = originals.setCredentials;
         syncService.init = originals.init;
         syncService.sync = originals.sync;
         syncService.startPeriodicSync = originals.startPeriodicSync;
         accountService.state.accountId = null;
+        accountService.state.sessionVerified = false;
         accountService.state.googleLinked = false;
         accountService.localAccountContinuity = false;
     }

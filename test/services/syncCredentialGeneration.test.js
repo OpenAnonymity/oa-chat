@@ -4,20 +4,14 @@ import test from 'node:test';
 import { chatDB } from '../../chat/db.js';
 import syncService from '../../chat/services/encryptedSyncService.js';
 
-test('an in-flight sync cannot refresh with a replacement account session', async () => {
+test('an in-flight sync cannot finish with a replacement account session', async () => {
     const originalCollect = syncService._collectLocalBlobs;
     const originalFetch = syncService.fetchWithRetry;
     let finishRequest;
-    let refreshCalled = false;
 
     try {
         syncService.setCredentials(
             new Uint8Array(32).fill(1),
-            'account-a-token',
-            async () => {
-                refreshCalled = true;
-                return { accessToken: 'account-b-token' };
-            },
             'account-a'
         );
         const generation = syncService.credentialGeneration;
@@ -33,7 +27,6 @@ test('an in-flight sync cannot refresh with a replacement account session', asyn
 
         const pendingPush = syncService._push(
             new Uint8Array(32).fill(1),
-            'account-a-token',
             generation
         );
         await new Promise(resolve => setTimeout(resolve, 0));
@@ -42,8 +35,8 @@ test('an in-flight sync cannot refresh with a replacement account session', asyn
         finishRequest({ ok: false, status: 401 });
 
         await assert.rejects(pendingPush, /Sync credentials changed/);
-        assert.equal(refreshCalled, false);
-        assert.equal(syncService.accessToken, null);
+        assert.equal(syncService.keyMaterial, null);
+        assert.equal(syncService.accountId, null);
     } finally {
         syncService._collectLocalBlobs = originalCollect;
         syncService.fetchWithRetry = originalFetch;
@@ -58,8 +51,6 @@ test('an invalidated ID mapping build cannot populate the replacement account ca
 
         syncService.setCredentials(
             accountAKey,
-            'account-a-token',
-            async () => null,
             'account-a'
         );
         const accountAGeneration = syncService.credentialGeneration;
@@ -70,8 +61,6 @@ test('an invalidated ID mapping build cannot populate the replacement account ca
 
         syncService.setCredentials(
             accountBKey,
-            'account-b-token',
-            async () => null,
             'account-b'
         );
         const accountBGeneration = syncService.credentialGeneration;
@@ -107,8 +96,6 @@ test('an invalidated pull cannot apply parsed blobs or publish sync metadata', a
         const accountAKey = new Uint8Array(32).fill(1);
         syncService.setCredentials(
             accountAKey,
-            'account-a-token',
-            async () => null,
             'account-a'
         );
         const generation = syncService.credentialGeneration;
@@ -131,7 +118,6 @@ test('an invalidated pull cannot apply parsed blobs or publish sync metadata', a
 
         const pendingPull = syncService._pull(
             accountAKey,
-            'account-a-token',
             generation,
             new Map()
         );
@@ -165,8 +151,6 @@ test('an invalidated sync does not overwrite replacement-account UI state', asyn
         const accountAKey = new Uint8Array(32).fill(1);
         syncService.setCredentials(
             accountAKey,
-            'account-a-token',
-            async () => null,
             'account-a'
         );
         const generation = syncService.credentialGeneration;
@@ -180,7 +164,6 @@ test('an invalidated sync does not overwrite replacement-account UI state', asyn
 
         const pendingSync = syncService._doSync(
             accountAKey,
-            'account-a-token',
             'account-a',
             generation
         );
@@ -190,8 +173,6 @@ test('an invalidated sync does not overwrite replacement-account UI state', asyn
 
         syncService.setCredentials(
             new Uint8Array(32).fill(2),
-            'account-b-token',
-            async () => null,
             'account-b'
         );
         finishBuild(new Map());

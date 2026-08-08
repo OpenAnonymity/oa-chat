@@ -21,6 +21,9 @@ const enclaveStationBackend = {
     sendCompletion() {
         throw new Error('Enclaved Station backend not implemented: sendCompletion');
     },
+    sendCompletionStrict() {
+        throw new Error('Enclaved Station backend not implemented: sendCompletionStrict');
+    },
     streamCompletion() {
         throw new Error('Enclaved Station backend not implemented: streamCompletion');
     },

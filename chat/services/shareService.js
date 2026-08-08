@@ -9,6 +9,10 @@ import { ORG_API_BASE } from './orgEndpoints.js';
 import inferenceService from './inference/inferenceService.js';
 import networkProxy from './networkProxy.js';
 import { buildBaseSharePayload } from './sharePayload.js';
+import {
+    normalizeCouncilConfig,
+    normalizeResponseMode
+} from '../domain/councilConfig.js';
 
 // ========== Share ID Normalization ==========
 
@@ -272,6 +276,10 @@ export function buildSharePayload(session, messages, opts = {}) {
     return payload;
 }
 
+export function hasShareableAccess(session) {
+    return Boolean(inferenceService.buildSharedAccessPayload(session));
+}
+
 /**
  * Encode share data (encrypt with password or base64 for plaintext)
  * @param {Object} payload - Share payload
@@ -367,6 +375,8 @@ export function createSessionFromPayload(payload, shareId, ciphertext, generateI
         lastImportedAt: Date.now(),
         model: payload.session.model,
         inferenceBackend: backendId,
+        responseMode: normalizeResponseMode(payload.session.responseMode),
+        councilConfig: normalizeCouncilConfig(payload.session.councilConfig, payload.session.model),
         apiKey: sessionAccess?.token || null,
         apiKeyInfo: sessionAccess?.info || null,
         expiresAt: sessionAccess?.expiresAt || null,
@@ -449,6 +459,7 @@ export async function createOrUpdateShare(session, messages, settings) {
 
     // Build and encode payload
     const payload = buildSharePayload(session, messages, { shareApiKeyMetadata });
+    const apiKeyShared = Boolean(payload.sharedAccess);
     const shareData = await encodeShareData(payload, password);
 
     const shareId = session.id;
@@ -468,7 +479,7 @@ export async function createOrUpdateShare(session, messages, settings) {
         shareId,
         messages.length,
         !password,
-        shareApiKeyMetadata,
+        apiKeyShared,
         ttlSeconds
     );
 
@@ -534,6 +545,7 @@ export default {
     normalizeShareId,
     isPlaintextShare,
     buildSharePayload,
+    hasShareableAccess,
     encodeShareData,
     decodeShareData,
     validatePayload,

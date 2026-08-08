@@ -49,19 +49,21 @@ link them across sessions. See blog post
 See blog post [Section 1: Blind Signatures](https://openanonymity.ai/blog/unlinkable-inference/#1-blind-signatures)
 for the full cryptographic explanation.
 
-The user obtains inference tickets using an invitation code. During issuance:
+The user obtains inference tickets using an invitation code or a paid
+subscription entitlement. During issuance:
 
 1. The client generates a random token and blinds it locally (via @cloudflare/privacypass-ts).
-2. The blinded request is sent to the org/station via `/api/alpha-register`
-  along with the invitation code (credential).
+2. The blinded request is sent to the org via `/api/alpha-register` with an
+  invitation code, or `/api/billing/tickets/claim` with billing authentication.
 3. The org/station signs the blinded request without seeing the underlying token.
 4. The client receives the signed blinded response and unblinds it locally to
   produce a finalized ticket.
 
-**What the org sees at issuance**: the invitation code (which may be
-identity-linked) and the blinded requests. It knows "credential X produced N
-blinded requests." But it only ever sees the blinded form -- it never sees the
-underlying tokens.
+**What the org sees at issuance**: the invitation code or billing identity
+(which may be identity-linked) and the blinded requests. It knows "credential X
+produced N blinded requests." But it only ever sees the blinded form -- it
+never sees the underlying tokens. Subscription claims use the same Blind RSA
+issuer and the browser stores no billing metadata in finalized ticket records.
 
 ### 2. Requesting ephemeral API keys (ticket redemption)
 
@@ -107,6 +109,14 @@ The user sends prompts directly to the inference provider:
 
 The provider sees inference from an anonymous ephemeral key. It has zero
 information about who holds that key.
+
+Parallel and Council preserve this transport boundary. Parallel obtains
+separate verified, bounded child keys for its primary and secondary lanes and
+sends both requests directly from the browser. Optional Council review obtains
+its own verified child key only after the first-stage responses settle. oa-org,
+station, and verifier do not receive any of these prompts or responses. Browser
+activity logs retain only operational metadata and redact
+prompt/response content at the logging sink.
 
 ### 4. Key verification (verifier)
 
@@ -165,13 +175,31 @@ See
 [Google Sign-In](GOOGLE_SIGN_IN.md)
 for implementation details.
 
+### 6. Verifier fail-closed policy
+
+The browser fails closed unless the verifier explicitly returns `verified` and
+binds that approval to the requested station and key hash. Pending, unknown,
+unverified, mismatched, and network-error results never activate the provisional
+child key. Because ticket spending commits before verification, a failed check
+discards the bounded child key but does not restore the ticket.
+
+The sole development exception requires both the oa-chat page hostname and its
+configured oa-org hostname to be an exact loopback value (`localhost`,
+`127.0.0.1`, or `::1`). In that environment the browser may skip the external
+verifier so a locally signed org response can be exercised end to end. The
+result is labeled `local-loopback-bypass`, never `verified`; it is unusable when
+the app is opened from any non-loopback host and is excluded from shared-access
+payloads. The security UI identifies it as a local development bypass, and
+production verifier ban/broadcast state is not applied to that credential.
+Production and staging therefore retain the fail-closed verifier path.
+
 ## What Each Component Can and Cannot See
 
 
 | Actor | What it sees | Can it identify the user? | Why not? |
 |---|---|---|---|
-| **Org / Station** | Blinded requests at issuance, finalized tickets + issued API keys at redemption, station governance events; for optional SSO it also sees a provider subject plus opaque encrypted ticket/preference sync blobs and their metadata | For optional account login and its encrypted-sync metadata; it can attempt timing/size correlation with redemption, but cannot read ticket or prompt contents | Blind signatures make blinded requests cryptographically unlinkable to finalized tickets. Synced ticket payloads and logical IDs are encrypted/HMAC-opaque, while identity credentials remain absent from redemption and inference. Never sees inference content. |
-| **Verifier** | API key hash (transient), station signatures, broadcast status | No | Raw key used transiently and immediately hashed. Key carries no user identity (blind signatures). |
+| **Org / Station** | Invitation or billing credential plus blinded requests at issuance; finalized tickets + issued API keys at redemption; station governance events; for optional SSO it also sees a provider subject plus opaque encrypted sync blobs and metadata | It identifies opt-in account activity such as billing and sync, but cannot link that identity to ticket redemption or inference | Blind signatures make blinded requests cryptographically unlinkable to finalized tickets. Synced ticket payloads and logical IDs are encrypted/HMAC-opaque, while identity credentials remain absent from redemption and inference. Never sees inference content. |
+| **Verifier** | Raw ephemeral key transiently during `/submit_key`, station/org signatures, derived truncated key hash, broadcast status | No | The verifier derives the hash server-side and does not receive user identity or prompts. The key carries no user identity because ticket issuance and redemption are unlinkable. |
 | **Inference provider** | API key + inference content (prompts/responses) | No | Key is ephemeral and anonymous. No user identity binding. Even a malicious provider cannot link prompts to a user or across sessions. |
 | **User** | Everything (their own tickets, keys, prompts, responses) | N/A | The user is the only party who can link all steps together. |
 

@@ -33,7 +33,7 @@ test('Electron renderer transport exposes responses without token accessors', as
     assert.doesNotMatch(source, /st-refresh-token/);
 });
 
-test('account session credentials are scoped to the org auth API', async () => {
+test('account session credentials are scoped to explicit org account APIs', async () => {
     const [sessionSource, proxySource] = await Promise.all([
         read('chat/services/sessionService.js'),
         read('chat/services/networkProxy.js'),
@@ -41,7 +41,10 @@ test('account session credentials are scoped to the org auth API', async () => {
 
     assert.match(sessionSource, /url\.pathname === '\/auth'/);
     assert.match(sessionSource, /url\.pathname\.startsWith\('\/auth\/'\)/);
+    assert.match(sessionSource, /url\.pathname === '\/api\/billing'/);
+    assert.match(sessionSource, /url\.pathname\.startsWith\('\/api\/billing\/'\)/);
     assert.match(sessionSource, /shouldDoInterceptionBasedOnUrl/);
-    assert.match(sessionSource, /normalizeAccountAuthUrl\(input\)/);
+    assert.match(sessionSource, /normalizeAccountSessionUrl\(input\)/);
+    assert.doesNotMatch(sessionSource, /api\/request_key|api\/ticket\/redeem/);
     assert.match(proxySource, /fetch\(resource, \{ \.\.\.init, credentials: 'omit' \}\)/);
 });

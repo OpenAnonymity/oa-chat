@@ -4,6 +4,97 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-08-05: Premium $7 / 50-Ticket Top-Ups
+
+- The Premium modal renders the one-time pack only when both public
+  `plan.ticket_pack` exists and authenticated `status.ticket_pack.eligible` is
+  true. Price and count are server data; ineligible and signed-out users see no
+  pack copy or action.
+- Checkout recovery is now version 3:
+  `sessions[accountScope].subscription` and
+  `sessions[accountScope].topup` are independent. Version-2 and legacy records
+  migrate into the subscription slot. Reconciliation, clearing, frozen auth,
+  and account-switch abortion are scoped to both account and purchase kind.
+- A top-up claim is an explicit 50-ticket operation. Local IndexedDB recovery
+  adds `source: "topup"`, `claimRef`, and `targetCount: 50`; the claim request
+  sends that reference, while finalized wallet records retain the same four
+  ordinary ticket fields. The reference must never enter exports, shares,
+  redemptions, tickets, or logs.
+- If oa-org has committed a claim and reports the pack `ready` before local
+  wallet import finishes, the pending local record projects browser state back
+  to `claiming` and disables another purchase. That override is cleared only
+  after durable wallet write/read-back and archive-precedence verification.
+- Top-up and subscription work share the existing account-scoped Web Lock,
+  frozen authentication context, ten-ticket chunks, strict response allowlist,
+  and account-switch abort behavior. A claimable pack takes precedence over an
+  older implicit subscription entitlement, because only it has the explicit
+  `claim_ref`.
+- Stripe return values are distinct (`topup_success` / `topup_cancelled`). A
+  successful return prepares the pack automatically. A canceled return uses the
+  session ID saved by that specific tab in `sessionStorage`; it never guesses
+  from the durable account slot, so an old tab cannot cancel a newer Checkout.
+- `checkout_pending` now offers both **Continue ticket-pack Checkout** and
+  **Cancel Checkout**. Explicit cancellation expires the matching Stripe
+  session immediately. Tab close, reload, crash, and connectivity loss preserve
+  recovery; Stripe expires an unpaid pack after 30 minutes and status then
+  clears stale durable Checkout state. Completed asynchronous payments remain
+  pending, and payment winning a cancellation race proceeds to normal 50-ticket
+  preparation.
+- Checkout recovery and durable IndexedDB claim/import recovery remain separate.
+  No unload/beacon/tab-close cancellation exists, and the tab-scoped session ID
+  never enters sync, exports, wallet state, tickets, or logs. Purchase fills the
+  ordinary wallet and does not redeem a ticket or alter issuer-key rotation.
+
+See [ACCOUNT_BILLING.md](ACCOUNT_BILLING.md) for the full contract and privacy
+boundary.
+
+## 2026-07-31: Stripe Premium and Genuine Ticket Issuance
+
+- The sidebar has one adaptive entry: signed-out users see `Upgrade`; any local
+  account changes it to `Account` without a reload. Free accounts get an
+  `Upgrade to Premium` action in Account, and subscribed accounts get
+  `Manage billing`. Logging out restores `Upgrade`.
+- `Upgrade` opens the public Premium modal without requiring an account, while
+  starting Checkout routes through account creation or sign-in and resumes
+  exactly once afterward. The initial Welcome screen uses the same `Upgrade`
+  entry rather than mislabeling Premium as account creation. Explicitly
+  cancelling the account step clears the session-scoped Checkout intent and
+  returns to Premium. Public price and interval data come from oa-org's
+  Stripe-validated `/api/billing/plan`; the UI does not hard-code the amount.
+- Checkout, status, portal access, and paid claims use `BillingAuthProvider`.
+  Local development may create a random identity only when both oa-chat and
+  oa-org are loopback. Non-loopback deployments require the account adapter.
+  Pending Checkout reconciliation is stored under that billing scope and resumes
+  after reload only for the same identity.
+- A full paid period creates a 300-ticket entitlement. The initial payment and
+  allowance may be prorated to a smaller positive count. A claim sends exactly
+  `next_claim_ticket_count` browser-blinded requests to the existing org issuer;
+  no alternate RSA or demo issuer exists in oa-chat.
+- Pending generation, signed responses, and finalization live in the separate
+  local-only `oa-billing-local-v1` IndexedDB database. Work is persisted every
+  ten tokens, survives reload, is scoped to the active billing identity, and is
+  intentionally excluded from settings sync and export.
+- Paid preparation freezes one authentication scope, holds a scope-specific Web
+  Lock across the complete operation, and fails closed if Web Locks are
+  unavailable in a browser. Account switches abort without deleting the old
+  scope's recovery state.
+- The ordinary ticket wallet receives only `blinded_request`,
+  `signed_response`, `finalized_ticket`, and `created_at`. Redemption continues
+  through the existing accountless endpoints and sends no billing metadata.
+- Recovery state is cleared only after a strict IndexedDB write and read-back
+  confirms every finalized ticket. Claim responses are field-allowlisted before
+  finalization, so server-provided billing or finalized-ticket metadata fails
+  closed.
+- Checkout recovery is stored per account scope and uses frozen authentication;
+  stale status responses are discarded after identity changes. Ticket recovery
+  treats active and archived wallet records as imported, preserving archive
+  precedence so a spent ticket is never resurrected.
+- One available allowance is prepared automatically per billing activation.
+  Additional accumulated allowances require an explicit action labeled with
+  the next server-provided count. The modal intentionally omits server allowance
+  counters such as `Current paid allowance`; those are not browser wallet counts.
+  See [ACCOUNT_BILLING.md](ACCOUNT_BILLING.md).
+
 ## How Agents Should Use This
 
 1. Read this file before changing UI-heavy or stateful parts of the app.
@@ -86,13 +177,30 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   headers. `encryptedSyncService` retains only non-extractable client-side
   derivation keys and relies on
   the SDK's automatic refresh/retry. Keep both the SDK interception override and
-  `sessionService.fetch(...)` restricted to the org `/auth` path; widening that
-  boundary can attach identity-linked account cookies to unlinkable ticket
-  redemption or other privacy-sensitive org traffic.
+  `sessionService.fetch(...)` restricted to the org `/auth` and `/api/billing`
+  account paths. Premium claims belong inside this identity boundary because
+  they authorize paid blinded issuance; accountless redemption, request-key,
+  sharing, and model paths must remain outside it.
+
+- 2026-08-04: Local oa-org inference can bypass the external verifier only when
+  both the oa-chat page and configured oa-org URL use exact loopback hostnames.
+  The access proof is stored as `local-loopback-bypass`, not `verified`; the
+  same credential is discarded on non-loopback startup and cannot enter shared
+  access payloads. Ordinary Chat and Parallel/Council use the same policy.
 
 - 2026-07-31: OpenRouter catalog labels for Anthropic models are normalized to
   include the `Anthropic:` prefix when upstream omits it. Already-prefixed names
   remain unchanged.
+- 2026-07-16: Parallel/Council share and provider-display rebase notes.
+  - Shared chat payloads serialize `responseMode` and `councilConfig`, and both
+    first import plus update-import paths restore those fields. Otherwise imported
+    Parallel/Council transcripts render old aggregate messages but silently continue
+    as single-model chats.
+  - Parallel/Council composer and response labels should use catalog provider
+    metadata or `resolveProviderFromModelReference(...)` for explicit provider
+  prefixes/model IDs. Do not infer providers from bare model-family words such
+  as Llama, Gemini, Claude, or Nemotron; bare names should fall back to neutral
+  initials when catalog metadata is unavailable.
 
 - 2026-08-07: Google is the only supported SSO provider.
   - The account UI and client account state no longer expose GitHub sign-in,
@@ -378,6 +486,367 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     the no-session pending model if it was still tracking the old default.
     Initial model-catalog load also drains pinned updates that arrived while
     `modelsLoading` was true.
+- 2026-08-04: Parallel/Council lane access is bound to its selected model.
+  - Ordinary Chat keeps the existing key-based charging behavior: changing its
+    model does not redeem immediately, and a valid verified session key can be
+    tried until expiry or credit exhaustion. Parallel/Council is stricter for
+    cost preflight and lane isolation. Each lane reuses access only when its
+    verifier proof is approved, its station is not banned, it has not expired,
+    and its recorded model matches that lane's selected model. A lane model
+    change therefore makes only that lane stale and the next Parallel send
+    acquires a fresh key at the new model's ticket cost.
+- 2026-05-29: Parallel/Council response mode is wired as a session-level opt-in.
+  - The bottom response-mode slider has `Chat` and `Parallel` states. Memory is
+    a separate book-icon toggle immediately to the left of that slider, so users
+    can combine `Chat + Memory` or `Parallel + Memory`; clicking Parallel no
+    longer turns Memory off, and clicking the book no longer leaves Parallel. A
+    single book click toggles memory auto-attach; a quick double-click opens the
+    memory panel and leaves auto-attach on. Turning on user-facing `Parallel`
+    from the composer exposes an inline second-model picker beside the primary
+    model picker and, by default, keeps output to Stage 1 only: two model
+    responses, no synthesis/chairman request. Council is no longer a visible composer mode;
+    the settings menu has a `Parallel` section with a `Council review` switch.
+    Turning that switch on also turns Parallel on, writes
+    `outputMode: 'synthesis'`, reveals a Council model select inside settings,
+    and enables the existing review pass below the two first responses. The
+    primary picker uses `⌘K`, the secondary picker uses `⌘J`, and `⌘L` still
+    opens the shared searchable model picker for Council selection when Council
+    review is enabled or the settings menu is open. The visible Council setting
+    itself follows the Scrubber/Memory settings pattern: a compact native
+    select row, not a composer-style model chip. Its option values stay as raw
+    catalog names for model matching, but visible option labels omit provider
+    prefixes/company names like `OpenAI:` or `Anthropic:`. Secondary and Council selection can
+    choose any selectable model, including the current primary model. If a
+    persisted Council model is
+    no longer selectable, settings fall back to the same primary/default model
+    the controller will charge for instead of displaying a stale model name.
+    Ticket costs remain shown inside the modal options. While Parallel is
+    active, the composer shows primary and secondary model chips with provider
+    icons, provider-stripped names, and full model names in tooltip/aria labels;
+    the Council model is never shown in the composer. Turning Council review
+    off leaves the user in Parallel but skips the Council answer. Switching the composer
+    from Parallel back to Chat resets `outputMode` to plain Parallel, so the
+    next Parallel use starts as two-model comparison unless the user re-enables
+    Council review; synthesis access is still only preflighted/acquired when
+    Parallel is active with Council review on. Toggling Council review does not
+    alter the independent Memory book state.
+    The picker derives the same fallback secondary model as the controller,
+    including legacy model-id members and stale-member skipping, so its
+    displayed model matches the lane that will be charged, and refreshes when
+    model ticket tiers update. When there is no configured second model,
+    Parallel prefers Google Gemini 3.5 Flash as the secondary lane if it is
+    available and not already the primary model; otherwise it falls back to the
+    first available non-primary model. This keeps GPT OSS from becoming the
+    implicit second lane just because it appears earlier in the catalog. If the
+    session's primary model is stale or unavailable, both the composer and
+    controller resolve the primary lane to the default/fallback model before
+    assigning the secondary lane.
+    The settings menu no longer exposes duplicate legacy multi-model rows.
+    Parallel is an explicit session-level choice. Every empty New Chat composer
+    starts in Chat even if an older global `parallelModeEnabled` setting exists;
+    startup resets that setting so a historical toggle cannot trigger extra
+    requests or ticket spending in a new session. The last secondary model,
+    Council model, and Parallel/Council output mode are persisted as
+    `parallelSecondaryModel`, `parallelSynthesisModel`, and
+    `parallelOutputMode`. New single-chat sessions still keep the saved
+    secondary model in their disabled `councilConfig`, so turning Parallel on in
+    that session reuses the user's last secondary model instead of reverting to
+    the default. The empty New Chat composer rebuilds its pending council config
+    from those persisted model defaults before rendering, but leaves the mode
+    disabled until the user explicitly selects Parallel. Composer components update
+    the in-memory persisted defaults through `ChatApp.setParallelDefaults()`;
+    direct writes like `this.app.parallelModeEnabled = ...` will fail through
+    the strict component facade.
+  - The switch can be set before a session exists; `ChatApp.pendingCouncilConfig`
+    carries that choice into the first created session. Enabled sessions persist
+    `responseMode: 'council'` plus `councilConfig` with up to two member display
+    names, `outputMode`, `synthesisModel`, and `reviewEnabled` derived from
+    whether output mode is `synthesis`. The
+    active session model is the primary lane; the selected second model is the
+    comparison lane. Parallel with Council review off writes
+    `outputMode: 'parallel'`, so synthesis is skipped and no synthesis key is
+    acquired. Parallel with Council review on writes `outputMode: 'synthesis'`,
+    so the selected Council model gets its own synthesis key and writes the
+    final answer. Missing/legacy `outputMode` still normalizes to `parallel` to
+    avoid unexpected third-key redemption. If a config only names the primary
+    model, the controller adds the first available non-primary model as the
+    secondary lane.
+  - The Council synthesis prompt lives in `chat/domain/councilPrompts.js`. It
+    asks the synthesis model to act as an independent reviewer over anonymous
+    `Response A` / `Response B` drafts, briefly compare only material
+    differences, errors, missing caveats, and useful synthesis, then produce a
+    concise final answer to the original request. The review should be fair,
+    critical, concise, and evidence-oriented, but avoid generic praise, model/provider identities,
+    scores/grades/ranked lists, chatty phrasing, and generic follow-up offers.
+    Partial synthesis is supported when only one draft response is available.
+  - `chat/application/councilController.js` runs the selected models in
+    parallel through `inferenceService.streamCompletion(...)`, preserving the
+    browser-only OpenRouter path and the existing ephemeral access flow. Strict
+    completion remains only as a fallback for tests or future backends that do
+    not expose streaming.
+  - Council access is lane-scoped under `session.councilAccess.primary` and
+    `session.councilAccess.secondary`, plus `session.councilAccess.synthesis`
+    for the Council answer. Each lane stores its own ephemeral key, access
+    metadata, expiry, and last-issued model id. Lane keys are both lane-scoped
+    and model-bound: primary only uses `councilAccess.primary`, secondary only
+    uses `councilAccess.secondary`, synthesis only uses
+    `councilAccess.synthesis`, and a model change refreshes that lane before
+    inference. There is no cross-lane key pooling.
+    `RightPanel` renders these lane records as separate Ephemeral Access Key
+    rows when Parallel/Council is active: `Model 1`, `Model 2`, and `Council`
+    only when synthesis/Council review is enabled. This is display-only and
+    does not change key acquisition, ticket preflight, or lane isolation. The
+    RHS panel intentionally shows lane roles, not model names; the current model
+    choice belongs in the composer/settings while the RHS panel represents
+    access-key state. The multi-lane panel notes that keys persist until expiry,
+    model change, or exhaustion. When there is no active session, the RHS panel
+    mirrors `pendingCouncilConfig` and shows pending `Model 1` / `Model 2` /
+    optional `Council` rows only after Parallel is explicitly selected. These no-session rows
+    are a preview only: they do not create a session, redeem tickets, or acquire
+    access until the first send.
+    Lane rows mask the actual lane token rather than the session's primary
+    ephemeral alias, and use their own lightweight expiry refresh when there is
+    no single-chat key timer active. If a single-chat key timer is active while
+    lane rows are displayed, that timer refreshes the lane panel instead of
+    looking for the single-key expiry chip; when the single key expires, it
+    forces one lane-panel refresh and lets the lane timer take over. Each lane
+    row owns its own verifier-attestation button and passes that lane token and
+    access metadata to the modal; do not reuse the single-session key
+    attestation context for the multi-lane panel.
+  - If a lane key is missing, expires, is banned, or OpenRouter reports credit
+    exhaustion, only that lane is cleared and refreshed. Reused lane keys are
+    also checked against the verifier's live/cached banned-station state before
+    use; a now-banned lane key is treated as stale, cleared, included in ticket
+    preflight, and replaced before inference. A lane model switch also counts
+    as stale access for ticket preflight and causes that lane to acquire a fresh
+    key priced for the selected model before inference.
+    Before acquiring any missing/expired/banned lane keys, the controller checks
+    that enough tickets exist for all fresh primary/secondary/synthesis lanes so
+    it does not partially charge one lane and then fail on another. Parallel
+    with Council review off preflights/acquires only the primary and secondary
+    lanes. Changing the Council model or toggling Council review does not
+    proactively clear `councilAccess.synthesis`; synthesis access refreshes only
+    when that lane actually needs a fresh key.
+  - Parallel/Council reasoning uses the same collapsed reasoning trace UI as
+    normal chat. Stage 1 lanes render `entry.reasoning` above each lane
+    response with lane-specific IDs, and Council synthesis stores and renders
+    `council.synthesis.reasoning` above the Council answer. Lane responses now
+    stream through lane-scoped DOM targets (`primary`, `secondary`, and
+    `synthesis`), so content and reasoning can appear token-by-token without
+    clobbering the other lane. `ChatArea` keeps a separate
+    `councilReasoningStreams` map for those concurrent traces while the normal
+    single-chat `reasoningBuffer` remains unchanged. Final lane/synthesis
+    completion still saves parsed reasoning, duration, citations, and canonical
+    message content as before.
+  - Persisted Memory mode can remain enabled globally, and send/regenerate now
+    run memory augmentation once before a Parallel/Council turn fans out to
+    model lanes. The approved `_lastApiContent` override is applied by
+    `processMessagesWithFiles(...)` to the shared last user turn, so primary
+    and secondary lanes receive the same memory-augmented prompt. The Council
+    synthesis prompt still uses the canonical chat context plus Stage 1
+    responses; memory is not injected a second time into synthesis. The
+    override is cleared by the app-level send/regenerate `finally` block after
+    the full turn completes, fails, or is cancelled. Council regenerate
+    preserves the current local-only Memory Agent status row while pruning old
+    model responses. A single book-toggle click only changes `memoryMode` and
+    does not alter Parallel/Council session config; double-clicking the book
+    opens the memory panel and keeps `memoryMode` enabled. Post-turn background
+    memory extraction still runs after successful Parallel responses, so a
+    separate confidential memory key redemption can appear after the visible
+    model requests finish; that is memory ingestion, not a hidden response lane.
+  - If Parallel is enabled after a normal single-model turn, the primary
+    lane can seed from the existing `session.apiKey` when the key is valid and
+    the access metadata identifies the same primary model. In that case,
+    opening Parallel only redeems tickets for missing/new lanes such as the
+    secondary model; seeded primary lane access records use
+    `ticketsConsumed: 0`. Newly acquired single-model access records are stamped
+    with `modelId`/`modelName` so council does not seed an old key whose model
+    ownership is ambiguous.
+  - If Parallel is disabled, `ChatApp.setCouncilModeForCurrentSession(...)`
+    seeds normal single-chat access back from a valid `councilAccess.primary`
+    record. Returning to single chat should therefore keep using the primary
+    lane key instead of redeeming a new ticket, unless that primary lane key is
+    missing, expired, banned, or later rejected by OpenRouter for exhausted
+    credit. Secondary and synthesis keys are never pooled into single-chat
+    access.
+  - A Stage 1 council turn is stored as one assistant message with
+    `message.council` metadata. `message.council.stage1` keeps the two
+    first-opinion responses. In Stage 1-only mode, each future lane request
+    builds API history from that lane's own prior Stage 1 responses, so the
+    secondary lane does not inherit the primary lane's previous answer.
+  - With Council review enabled, `message.council.synthesis` keeps the Council
+    answer status/response/error. When synthesis succeeds,
+    `message.content` is the Council answer and `message.model` is `Council`, so
+    future turns use the prior Council answer as normal assistant context. If
+    synthesis fails or the user chose Stage 1-only mode, `message.content` falls
+    back to the first completed Stage 1 response; synthesis failures set
+    `message.council.synthesis.fallbackUsed` to true.
+  - The current implementation covers Stage 1 "first opinions" plus one
+    Council review pass. It does not yet run Karpathy-style peer ranking or
+    scoring.
+  - `MessageTemplates` renders two council lanes side by side on desktop and
+    stacked on narrow screens, then renders the Council Answer below them only
+    after synthesis actually starts. Stage 1 response headers include provider
+    icons. Parallel/Council does not use the generic typing-indicator row during
+    access acquisition; `CouncilController` saves the assistant message before
+    lane access is acquired so the selected model cards and `Waiting for
+    response` shimmer appear immediately. The aggregate assistant row
+    intentionally omits a visible `Parallel`/`Council` text label and redundant
+    top-left mode icon; the lane cards and optional Council Answer section
+    already identify the mode. Completed lane and synthesis status chips are
+    also hidden, while error/cancelled/partial/fallback status remains visible.
+    Pending lane cards reuse the normal chat `Waiting for response` shimmer
+    instead of showing a `Pending` chip or custom `Waiting for this model to
+    finish...` copy. Stage 1-only mode removes the aggregate status/note row
+    instead of showing a waiting row, completion label, lane-history
+    implementation note, or canonical-context explanation. While synthesis
+    runs, the Council answer section is separated from the two draft responses
+    by a subtle horizontal rule, then shows the selected synthesis model with
+    its provider icon, providerless model name, and a visible `Council` role
+    badge. It reuses the normal chat `Waiting for response` shimmer while
+    omitting the aggregate `Council`/ready status row. Once the Council answer
+    is available, the same selected-model row remains above the answer,
+    matching the model the user chose and was charged for; redundant `Council
+    Answer` header copy and completed-status text stay hidden. On synthesis failure it shows `Council synthesis failed.
+    Continuing from Response A.` (or the actual fallback label). Council
+    review suppresses the aggregate copy/regenerate/fork action row while
+    synthesis is waiting/pending/running, then restores copy/regenerate inside
+    the Council synthesis block once synthesis reaches a final or fallback
+    state; fork stays disabled. Plain Parallel keeps normal actions directly
+    under each completed lane response instead of on the aggregate message,
+    because aggregate copy/regenerate/fork is ambiguous when two drafts are
+    visible. Both the synthesis and lane action rows reuse the normal
+    `assistant-actions-row` anchor so their spacing matches single-chat
+    assistant actions.
+    Web-search sources are also lane-local: each Stage 1 lane renders its own
+    Sources button and citation carousel at the bottom of that response only
+    when that lane produced citations. Council synthesis renders its own
+    separate Sources button when the synthesis response has citations; aggregate
+    Council/Parallel messages no longer reuse one canonical sources button for
+    all visible responses.
+    The Council answer block is width-capped, centered, and given extra top
+    spacing below the two lanes so synthesis reads like the normal narrow
+    transcript even when Parallel keeps the page wide. Lane copy copies only that lane response. Lane fork is
+    intentionally disabled for Parallel lanes for now, and completed aggregate
+    Council answers also omit fork; normal fork remains on single-chat
+    assistant messages only.
+    Lane regenerate refreshes only that lane, reusing or refreshing only that lane access; if the lane was not canonical, the
+    existing canonical response stays canonical. Like normal regenerate, lane
+    regenerate prunes later messages before rerunning so future context cannot
+    depend on the replaced answer. Canonical citation controls stay available
+    with the aggregate message.
+  - Parallel/Council layout has two separate stability rules. Transcript width
+    is sticky for any session that is actively in Parallel/Council or has ever
+    entered Parallel/Council; `session.hasCouncilLayoutPreference` preserves the
+    wider layout when the user toggles back to Chat, even before a Parallel
+    response is saved. Pending no-session Parallel state can also hold this
+    preference until the first session is created, but it must not force layout
+    changes onto unrelated existing sessions. `session.hasCouncilTranscript`
+    separately tracks saved `message.council` output across session switches and forks, and
+    `ChatArea.render(...)` backfills/recomputes it from stored messages for
+    older sessions. Regenerate, resend, prompt edit, and cancelled Council turns
+    recompute the transcript hint after pruning, but they do not clear the
+    user's sticky layout preference. The manual wide-screen toggle uses the
+    same message width as Parallel/Council (`min(92vw, 82rem)`) so switching
+    modes does not make Chat wide feel narrower. The top-left manual wide-mode
+    button is hidden whenever the current session is using Parallel/Council
+    layout, because that layout already owns the wider transcript width.
+    Background saves may mark a non-visible session as having a council
+    transcript, but root layout classes should only update for the currently
+    viewed session. Composer controls are
+    stable independently: the default composer keeps attachment and Settings
+    visible inline, while Web search moves to the bottom of the existing
+    Settings menu; there is no separate `+` menu. File upload, settings, and
+    web search keep their original element IDs/handlers, and response mode and
+    Memory stay visible beside them. Web search defaults on, but only the Web
+    search row shows `On`/`Off` and active styling. Compact model pickers sit on
+    the left side of the composer, with file/settings/mode/memory/send controls
+    anchored together on the right to reduce layout flash. Chat mode shows the
+    primary model icon plus a compact name; Parallel reveals the secondary
+    model chip after primary. Model chips use `fit-content` natural width up to
+    a shared responsive max width (`12.25rem` on desktop, `8.75rem` on small
+    screens) so short model names produce short buttons while long names cap
+    cleanly. The root `data-composer-mode` is refreshed from both the mode
+    toggle and the multi-model settings refresh so Chat/Parallel layout rules
+    apply immediately after switching modes. The composer label is the
+    full provider-stripped catalog name; JavaScript does not apply a character
+    budget or semantic/family-name rewrite. CSS owns the
+    visual ellipsis via the label span (`overflow: hidden`, `white-space:
+    nowrap`, `text-overflow: ellipsis`), so truncation follows actual rendered
+    button width across devices. Labels must not wrap to multiple lines. The
+    chip should not hide overflow at the button level because that clips
+    descenders in labels with letters like `g`, `p`, and `y`; horizontal
+    clipping belongs on the label span. The composer left action group allows
+    visible overflow so model-chip tooltips are not clipped. Composer model
+    chips set both
+    `data-tooltip` and native `title` to the full provider-stripped catalog
+    name, with no lane label like `Primary model:` or `Secondary model:` and no
+    provider prefix like `OpenAI:` or `Anthropic:`. Those hover labels stay on a
+    single line. When a user edits/rewrites a prompt, the edit box mirrors the
+    models that will receive the regenerated turn: Chat shows the primary chip,
+    while active Parallel/Council sessions show primary and secondary chips.
+    The Council/chair model remains Settings-only and is not shown in the edit
+    box. Changing either model while edit mode is open refreshes those edit
+    chips from the composer chips. Full provider names remain visible in the shared model picker. Run
+    `npm run audit:model-labels` to check the current live OpenRouter catalog
+    for labels that fail providerless normalization and to inspect the longest
+    CSS-truncated label. Chat mode primary chips use natural width and can grow
+    up to the same width as two Parallel chips plus their gap; Parallel stays
+    unchanged. Chat max width is calculated as two Parallel chip maxes plus
+    `--composer-model-chip-gap`, the same variable used for the actual Parallel
+    model-chip gap. Short model names still use natural button width. Keep the
+    Chat width selector at ID-level specificity because the base composer chip
+    width rule is also ID-scoped. The send button has a small
+    left margin (`0.9rem`) so the Memory-to-send gap is wider without changing
+    spacing between Memory and the other right-side controls. This targets only
+    `.composer-right-actions #send-btn`, not the shared right-side control gap.
+    The Chat/Parallel slider also has a small left margin so it breathes after
+    the Memory/book button without changing spacing between the other tool
+    buttons. The Memory book tooltip is two-line copy: the first line names
+    auto-attach, and the second line says double-click opens Memory with the
+    Beta badge. If the global Memory feature switch is off, only the Memory
+    book is marked disabled; the Chat/Parallel slider remains interactive.
+    OpenRouter catalog display names are trimmed on live ingest and cache
+    load/save, and model selection helpers compare by id plus trimmed display
+    name so provider catalog quirks
+    like `Baidu: ERNIE 4.5 VL 424B A47B ` do not make secondary selection fail
+    when the visible label omits the trailing whitespace. Parallel mode permits
+    the same model in both lanes. `session.councilConfig.members` may therefore
+    contain duplicate model names, and the controller preserves them as separate
+    primary/secondary lane entries with separate lane access records. If both
+    lanes need fresh access, they are still charged independently even when the
+    selected model is the same.
+  - The old `?composerVariant=...` and `?composerWidth=...` design comparison
+    knobs were removed after the composer direction settled. The fixed behavior
+    is full model-name chips, attachment and Settings visible inline, Web
+    search inside Settings, and wider Chat-mode model-chip capacity by default.
+  - Completed assistant Markdown finalization now funnels in-place content
+    updates through `ChatArea.renderCompletedAssistantContent(...)`, the same
+    citation -> Markdown/LaTeX -> inline-citation -> link-enhancement pipeline
+    used by the normal full render path. This guards the single-chat path where
+    finalized reasoning can otherwise update only `.message-content` in place.
+    Normal send completion must always call `finalizeStreamingMessage(...)`,
+    even when text content exists, because the streaming DOM may contain only a
+    partial Markdown render from the last chunk; regenerate already followed
+    this final-render pattern. Run that final message render before
+    `finalizeReasoningDisplay(...)` so the final action row and Sources UI are
+    rebuilt before the reasoning trace is polished. Citation metadata
+    enrichment must call `finalizeStreamingMessage(message, { forceFullRender:
+    true })`, because enriched source cards live outside `.message-content` and
+    would otherwise be skipped by the no-flash finalized-reasoning branch.
+  - `CouncilController` receives `chatDB`, `inferenceService`, and
+    `ticketClient` from `ChatApp` instead of importing the service singletons
+    directly. This keeps browser storage/network singleton initialization out
+    of unit tests and lets `test/application/councilController.test.js` lock
+    down mixed lane costs, model-switch refresh, synthesis 402 retry,
+    insufficient-ticket preflight behavior, lane-specific Stage 1 history,
+    partial synthesis, and synthesis fallback behavior with small stubs.
+  - `chat/domain/councilPrompts.js` defines the Council synthesis prompt. It
+    intentionally omits Stage 2 peer-ranking inputs, anonymizes first-opinion
+    drafts as `Response A`, `Response B`, and asks the Council model to briefly
+    compare only material differences, errors, missing caveats, and useful
+    synthesis before writing a concise final answer. It avoids model/provider identities,
+    scores/grades/ranked lists, chatty phrasing, and generic follow-up offers.
 - 2026-05-26: Prompt edit file drag feedback is scoped to the inline editor.
   - While a prompt edit draft is open, file drags highlight the edit prompt card
     and keep the bottom composer drop overlay hidden, matching the drop target.
@@ -661,7 +1130,7 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - Read [MEMORY_MODE.md](MEMORY_MODE.md) before touching this path.
   - The app-side contract is `chat/app.js -> chat/services/memoryBridge.js -> chat/nanomem/browser.js`; do not import `nanomem/src/...` from app code.
   - `chat/nanomem` is a tracked symlink and production build now hard-requires the `nanomem` submodule. If the bundle suddenly starts failing on `node:*` imports from `nanomem`, check that the browser entry is still pointing at `nanomem/src/browser.js`, not the generic index.
-  - Memory mode is a global toggle persisted in IndexedDB setting `memoryMode`, not a per-session mode.
+  - Memory mode is a global book toggle persisted in IndexedDB setting `memoryMode`, not a per-session mode.
   - Memory mode now also persists `memoryAutoInclude` and `memoryAgentModel`. The first short-circuits the in-chat approval wait, and the second is used by both live retrieval and memory backfill/import.
   - The retrieval summary is a local-only assistant message with an agent trace and explicit include/skip controls. Regeneration clears older local-only memory status messages after the last user turn before rerunning retrieval.
   - The pending approval row now has `Include memory`, `Always include`, `Skip`, and `Edit prompt`. After memory is approved/sent, the revised prompt remains visible in the local status message, so the approved row only shows the status chip and omits a separate view/edit button. `Always include` is not just a one-shot approve: it flips the global `memoryAutoInclude` setting on and the settings-menu switch should reflect that immediately.
