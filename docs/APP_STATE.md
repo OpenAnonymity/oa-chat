@@ -62,12 +62,22 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - Bypassed access cannot enter a shared-chat payload. Deployed clients remain
     fail-closed and require an explicit `verified` response.
 
+- 2026-08-07: Google is the only supported SSO provider.
+  - The account UI and client account state no longer expose GitHub sign-in,
+    GitHub-linked flags, or GitHub compatibility wrappers.
+  - The org no longer mounts `/auth/github/*` routes or accepts GitHub OAuth
+    configuration. Access and refresh tokens carrying GitHub authentication
+    provenance are rejected. Older provenance-less refresh records are also
+    retired because their original provider cannot be distinguished safely, so
+     sessions issued before provider removal cannot outlive the route removal.
+     Existing identity rows remain opaque storage records, but there is no
+     GitHub authentication path into them.
+
 - 2026-07-30: SSO encryption passkeys use the provider email as their WebAuthn
   username and display name.
-  - Google requests `openid email`; GitHub requests `user:email` and resolves
-    the verified primary email. The org stores that email with the provider
-    identity and returns it from the authenticated provider session.
-  - `accountService.oauthEmail` is populated by both provider session paths and
+  - Google requests `openid email`. The org stores the verified email with the
+    provider identity and returns it from the authenticated provider session.
+  - `accountService.oauthEmail` is populated by the Google session path and
     is passed explicitly into every SSO encryption-passkey creation, including
     legacy SSO migration. `encryptionPasskey.js` has no generic label fallback;
     missing email requires a fresh SSO sign-in.
@@ -90,7 +100,7 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     redeemable ticket secrets locally and syncs a separate encrypted SHA-256
     deletion-tombstone blob so stale devices cannot resurrect them. Remote
     active/archive merges always apply those tombstones.
-  - A new device must authenticate with Google/GitHub and unlock the shared
+  - A new device must authenticate with Google and unlock the shared
     master key with the PRF passkey before it can decrypt the restored wallet.
     A newly created SSO account adopts and uploads tickets already on that
     device, matching legacy account creation. Remote ticket merges immediately
@@ -105,7 +115,7 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 - 2026-07-29: SSO uses a Confer-style authentication/encryption split; see
   [ENCRYPTION_PASSKEYS.md](ENCRYPTION_PASSKEYS.md).
-  - Google/GitHub authenticates and authorizes opaque account storage. A
+  - Google authenticates and authorizes opaque account storage. A
     separate client-only WebAuthn PRF passkey wraps the random sync master key.
     The org stores `credentialId` plus the versioned AES-GCM wrapper and never
     receives a WebAuthn assertion, PRF output, or plaintext key.
@@ -136,7 +146,7 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     also take this lock; scope snapshot/live-key/marker changes commit through
     one settings transaction, and stale store caches are cleared.
   - Superseded by the 2026-07-30 entry above: identity-backed accounts now sync
-    encrypted ticket wallets as well as preferences. GitHub/Google linking
+    encrypted ticket wallets as well as preferences. Google linking
     remains rejected to preserve dedicated account identity/recovery semantics.
   - Legacy unscoped values are adopted when the user creates a new account on
     that device, matching the original account-number flow. For a returning
@@ -155,13 +165,12 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     preserves those claims, so a stale cookie cannot become a fresh provider-
     linking step-up merely by calling `/auth/refresh`.
 
-- 2026-07-28: Account authentication supports Google and GitHub OAuth in
-  addition to passkeys; see [GOOGLE_SIGN_IN.md](GOOGLE_SIGN_IN.md) and
-  [GITHUB_SIGN_IN.md](GITHUB_SIGN_IN.md).
+- 2026-07-28: Account authentication supports Google OAuth in addition to
+  passkeys; see [GOOGLE_SIGN_IN.md](GOOGLE_SIGN_IN.md).
   - `accountService.authenticateWithOAuth(provider, ...)` owns the shared popup,
     setup, recovery-unlock, account-mismatch, and local-key restoration flow.
-    Provider-specific linked flags plus `lastOAuthProvider` are persisted so a
-    locked browser can recover through the most recently used provider.
+    The Google-linked flag plus `lastOAuthProvider` are persisted so a locked
+    browser can recover through Google.
   - Superseded by the 2026-07-30 passkey-label entry above: Google now requests
     `openid email`, and the org retains the verified email with `sub` so it can
     label the user's encryption passkey.
@@ -174,7 +183,7 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     localhost still uses `https://org.openanonymity.ai`. The callback host is
     canonical `localhost`; requests to the dev server via `127.0.0.1` redirect
     there before the app loads.
-  - Provider wrappers such as `authenticateWithGithub(...)` use the shared popup
+  - `authenticateWithGoogle(...)` uses the shared popup
     flow and the org's HttpOnly refresh cookie. OAuth/access tokens never travel
     through the popup message or app URL.
   - Superseded by the 2026-07-29 encryption-passkey entry above: new or
@@ -184,7 +193,7 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     separate namespaces.
   - Refresh preserves the original provider/passkey method and authentication
     time; refresh does not manufacture newer authentication provenance.
-  - Opting into Google or GitHub makes the sync account identifiable to the org,
+  - Opting into Google makes the sync account identifiable to the org,
     but does not put identity into blinded ticket redemption or inference
     traffic.
   - Superseded by the 2026-07-29 account-scope entry above: syncable local state
