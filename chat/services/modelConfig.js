@@ -7,7 +7,7 @@
  * - Static UI defaults (default model and display-name overrides)
  */
 
-import { ORG_API_BASE } from '../config.js';
+import { ORG_API_BASE } from './orgEndpoints.js';
 import { standardizeModelDisplayName } from './modelNames.js';
 
 // Cache key for pinned/disabled model metadata

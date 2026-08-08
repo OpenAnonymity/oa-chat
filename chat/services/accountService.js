@@ -6,31 +6,66 @@
  * Master Key: 256-bit random key generated client-side via crypto.getRandomValues().
  * Never leaves the browser in plaintext; only wrapped forms are sent to the server.
  *
- * Two independent unlock paths:
- *   1. Passkey + PRF: Master key wrapped with AES-GCM using key material derived
- *      from WebAuthn PRF extension output. PRF input is SHA-256(accountId).
- *   2. Recovery Code: Master key wrapped with AES-GCM using Argon2id-derived key
- *      from the 4-word recovery code + random salt.
+ * SSO accounts follow a Confer-style split:
+ *   1. OAuth authenticates the account and authorizes access to ciphertext.
+ *   2. A local WebAuthn PRF result derives an AES-GCM wrapping key.
+ *   3. That wrapping key decrypts the random account master key.
+ *
+ * Legacy passkey-only accounts retain their account-number/recovery flow only
+ * for compatibility and migration.
  *
  * Server stores: credential public keys, wrapped keys (ciphertext only).
  * Server never sees: master key, PRF output, recovery code.
  *
  * Threat model:
  *   - Compromised server cannot decrypt data (no plaintext keys).
- *   - Stolen device requires passkey biometric/PIN to unlock.
- *   - Recovery code brute-force mitigated by Argon2id (64MB, 3 iterations).
+ *   - A fresh device or a logged-out browser requires the encryption passkey.
+ *   - An unlocked browser keeps non-extractable CryptoKeys in IndexedDB so a
+ *     page reload does not repeatedly prompt for the passkey.
+ *   - Legacy recovery-code brute force is mitigated by Argon2id.
  */
 
-import { ORG_API_BASE } from '../config.js';
+import { ORG_API_BASE, ORG_AUTH_ORIGIN } from './orgEndpoints.js';
 import { chatDB } from '../db.js';
 import { generateRecoveryCode, isValidRecoveryCode, normalizeRecoveryCode } from './recoveryCode.js';
-import syncService from './syncService.js';
+import syncService from './encryptedSyncService.js';
+import {
+    createEncryptionKeyWrapper,
+    unlockEncryptionKeyring
+} from './encryptionPasskey.js';
+import { withAccountDataLock } from './accountDataLock.js';
 
 const ACCOUNT_SETTINGS_KEY = 'account-settings';
+const ACCOUNT_KEY_BUNDLE = 'account-key-bundle-v1';
 const ACCOUNT_MASTER_CRYPTO_KEY = 'account-master-crypto-key';
-const ACCOUNT_MASTER_KEY_BYTES = 'account-master-key-bytes';  // Raw bytes for sync HKDF
+const ACCOUNT_MASTER_KEY_BYTES = 'account-master-key-bytes';  // Legacy; removed after migration
+const ACCOUNT_SYNC_DERIVATION_KEY = 'account-sync-derivation-key';
+const ACCOUNT_SYNC_ID_KEY = 'account-sync-id-key';
 const ACCOUNT_REFRESH_TOKEN_KEY = 'account-refresh-token';  // Electron-only: refresh token persistence
 const ACCOUNT_REQUEST_TIMEOUT_MS = 10000;
+const OAUTH_PROVIDERS = Object.freeze({
+    google: Object.freeze({ label: 'Google' })
+});
+
+export function inferPersistedEncryptionMode(settings) {
+    if (settings?.encryptionMode) return settings.encryptionMode;
+    if (settings?.credentialId) return 'LEGACY_PASSKEY';
+    if (
+        settings?.encryptionCredentialId &&
+        settings?.googleLinked
+    ) {
+        return 'PRF';
+    }
+    return null;
+}
+
+export function oauthSessionNeedsEmailRefresh(session) {
+    const mode = session?.encryptionMode;
+    const email = typeof session?.email === 'string'
+        ? session.email.trim()
+        : '';
+    return !email && (mode === 'PRF_PENDING' || mode === 'LEGACY_SSO');
+}
 
 // Platform detection for auth token handling
 // Check electronAPI.isElectron (context-isolated) or process.versions.electron (non-isolated)
@@ -100,6 +135,17 @@ function decodeBase64String(input) {
     if (!input) return new Uint8Array();
     const hasUrlChars = input.includes('-') || input.includes('_');
     return hasUrlChars ? base64UrlToBytes(input) : base64ToBytes(input);
+}
+
+function getAccessTokenAccountId(token) {
+    try {
+        const payload = token?.split('.')?.[1];
+        if (!payload) return null;
+        const json = textDecoder.decode(base64UrlToBytes(payload));
+        return normalizeAccountId(JSON.parse(json)?.sub);
+    } catch (error) {
+        return null;
+    }
 }
 
 function encodeWrappedKey(payload) {
@@ -374,15 +420,33 @@ let onTokenInvalidated = null;
  * Fetch JSON from the auth API.
  * CSRF protection provided by SameSite=Strict cookie + WebAuthn challenge-response.
  */
-async function fetchJson(path, body, { timeoutMs = ACCOUNT_REQUEST_TIMEOUT_MS } = {}) {
+async function fetchJson(
+    path,
+    body,
+    {
+        timeoutMs = ACCOUNT_REQUEST_TIMEOUT_MS,
+        method = 'POST',
+        accessToken = null
+    } = {}
+) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
+    const headers = {
+        'Content-Type': 'application/json',
+        'X-Client-Platform': PLATFORM
+    };
+    if (accessToken) {
+        headers.Authorization = `Bearer ${accessToken}`;
+    }
+
     const response = await fetch(`${ORG_API_BASE}${path}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Client-Platform': PLATFORM },
+        method,
+        headers,
         credentials: 'include',
-        body: JSON.stringify(body || {}),
+        body: method === 'GET' || method === 'HEAD'
+            ? undefined
+            : JSON.stringify(body || {}),
         signal: controller.signal
     });
     clearTimeout(timeoutId);
@@ -400,10 +464,75 @@ async function fetchJson(path, body, { timeoutMs = ACCOUNT_REQUEST_TIMEOUT_MS } 
             }
             throw new TokenInvalidatedError(data?.error || data?.message);
         }
-        const message = data?.error || data?.message || response.statusText || 'Request failed';
-        throw new Error(message);
+        const detail = data?.detail;
+        const message = data?.error ||
+            data?.message ||
+            (typeof detail === 'object' ? detail?.error || detail?.message : detail) ||
+            response.statusText ||
+            'Request failed';
+        const requestError = new Error(message);
+        requestError.status = response.status;
+        throw requestError;
     }
     return data || {};
+}
+
+function getOAuthProvider(provider) {
+    const config = OAUTH_PROVIDERS[provider];
+    if (!config) throw new Error('Unsupported sign-in provider');
+    return config;
+}
+
+function waitForOAuthPopup(popup, provider, timeoutMs = 5 * 60 * 1000) {
+    const providerConfig = getOAuthProvider(provider);
+    const orgOrigin = ORG_AUTH_ORIGIN;
+
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        const finish = (callback) => {
+            if (settled) return;
+            settled = true;
+            window.removeEventListener('message', handleMessage);
+            clearInterval(closePoll);
+            clearTimeout(timeout);
+            callback();
+        };
+        const handleMessage = (event) => {
+            if (
+                event.origin !== orgOrigin ||
+                event.source !== popup ||
+                event.data?.type !== `oa-${provider}-auth`
+            ) {
+                return;
+            }
+            if (event.data.ok) {
+                finish(() => resolve());
+            } else {
+                finish(() => reject(new Error(
+                    event.data.error || `${providerConfig.label} sign in failed`
+                )));
+            }
+        };
+        const closePoll = setInterval(() => {
+            if (popup.closed) {
+                finish(() => reject(new Error(
+                    `${providerConfig.label} sign in was cancelled`
+                )));
+            }
+        }, 500);
+        const timeout = setTimeout(() => {
+            try {
+                popup.close();
+            } catch (error) {
+                // The popup may already have navigated or closed.
+            }
+            finish(() => reject(new Error(
+                `${providerConfig.label} sign in timed out`
+            )));
+        }, timeoutMs);
+
+        window.addEventListener('message', handleMessage);
+    });
 }
 
 function toFriendlyError(error) {
@@ -422,6 +551,8 @@ class AccountService {
             isReady: false,
             accountId: null,
             credentialId: null,
+            encryptionCredentialId: null,
+            encryptionMode: null,
             recoveryConfirmed: false,
             recoveryCode: null,
             recoveryRequired: false,
@@ -430,6 +561,13 @@ class AccountService {
             error: null,
             status: 'none',
             sessionVerified: false,  // True only after /refresh confirms session is valid
+            googleLinked: false,
+            oauthProvider: null,
+            oauthEmail: null,
+            oauthSetupRequired: false,
+            oauthRecoveryRequired: false,
+            oauthKeyringRequired: false,
+            oauthLegacyPasskeyRequired: false,
             passkeySupported: typeof window !== 'undefined' && !!window.PublicKeyCredential,
             prfSupported: null,
             rateLimited: false,
@@ -437,6 +575,7 @@ class AccountService {
         };
         this.masterKey = null;
         this.recoveryPayload = null;
+        this.keyringWrappers = [];
         this.subscribers = new Set();
 
         // Rate limiting state (not persisted - resets on page reload)
@@ -446,11 +585,13 @@ class AccountService {
         // Pending account for multi-step creation flow
         // Holds { accountId, masterKey, credential, prfBytes, recoveryCode } during creation
         this.pendingAccount = null;
-
         // Session persistence: access token (memory) and CryptoKey (IndexedDB)
         this.accessToken = null;
         this.refreshToken = null;  // Electron-only: refresh token for Bearer auth
         this.cryptoKey = null;  // Non-extractable CryptoKey for encryption
+        this.syncDerivationKey = null;
+        this.syncIdKey = null;
+        this.localAccountContinuity = false;
 
         // Set up global callback for token invalidation
         onTokenInvalidated = () => this.handleTokenInvalidation();
@@ -547,6 +688,14 @@ class AccountService {
         return this.cryptoKey;
     }
 
+    getSyncKeyMaterial() {
+        if (!this.syncDerivationKey || !this.syncIdKey) return null;
+        return {
+            derivationKey: this.syncDerivationKey,
+            idKey: this.syncIdKey
+        };
+    }
+
     /**
      * Get the current access token for API authentication.
      */
@@ -560,26 +709,87 @@ class AccountService {
 
     /**
      * Persist the master key in IndexedDB.
-     * Stores both:
-     * - Non-extractable CryptoKey (for local AES-GCM encryption)
-     * - Raw bytes (for sync HKDF key derivation)
+     * Stores only non-extractable CryptoKeys. Raw master-key bytes are never
+     * persisted. Separate imports give each primitive the minimum key usages it
+     * needs while preserving the existing encrypted-sync format.
      */
-    async persistMasterKey(masterKeyBytes) {
+    async persistMasterKey(masterKeyBytes, accountId = this.state.accountId) {
         if (!chatDB) return;
+        const normalizedAccountId = normalizeAccountId(accountId);
+        if (!normalizedAccountId) {
+            throw new Error('Cannot persist an encryption key without an account');
+        }
         
-        // Import as non-extractable CryptoKey for local encryption
-        const cryptoKey = await crypto.subtle.importKey(
-            'raw',
-            masterKeyBytes,
-            { name: 'AES-GCM' },
-            false,  // extractable = false
-            ['encrypt', 'decrypt']
+        const [cryptoKey, syncDerivationKey, syncIdKey] = await Promise.all([
+            crypto.subtle.importKey(
+                'raw',
+                masterKeyBytes,
+                { name: 'AES-GCM' },
+                false,
+                ['encrypt', 'decrypt']
+            ),
+            crypto.subtle.importKey(
+                'raw',
+                masterKeyBytes,
+                { name: 'HKDF' },
+                false,
+                ['deriveKey']
+            ),
+            crypto.subtle.importKey(
+                'raw',
+                masterKeyBytes,
+                { name: 'HMAC', hash: 'SHA-256' },
+                false,
+                ['sign']
+            )
+        ]);
+
+        await this.persistCryptoKeyBundle(
+            normalizedAccountId,
+            cryptoKey,
+            syncDerivationKey,
+            syncIdKey
         );
-        
-        // Store both in IndexedDB
-        await chatDB.saveSetting(ACCOUNT_MASTER_CRYPTO_KEY, cryptoKey);
-        await chatDB.saveSetting(ACCOUNT_MASTER_KEY_BYTES, new Uint8Array(masterKeyBytes));
         this.cryptoKey = cryptoKey;
+        this.syncDerivationKey = syncDerivationKey;
+        this.syncIdKey = syncIdKey;
+    }
+
+    async persistCryptoKeyBundle(
+        accountId,
+        cryptoKey,
+        syncDerivationKey,
+        syncIdKey
+    ) {
+        return withAccountDataLock(async () => {
+            const settings = await chatDB.getSetting(ACCOUNT_SETTINGS_KEY);
+            if (
+                normalizeAccountId(settings?.accountId) !==
+                normalizeAccountId(accountId)
+            ) {
+                throw new Error(
+                    'Account changed before the encryption key could be saved'
+                );
+            }
+            await chatDB.updateSettings(
+                [{
+                    key: ACCOUNT_KEY_BUNDLE,
+                    value: {
+                        accountId: normalizeAccountId(accountId),
+                        cryptoKey,
+                        derivationKey: syncDerivationKey,
+                        idKey: syncIdKey,
+                        version: 1
+                    }
+                }],
+                [
+                    ACCOUNT_MASTER_CRYPTO_KEY,
+                    ACCOUNT_MASTER_KEY_BYTES,
+                    ACCOUNT_SYNC_DERIVATION_KEY,
+                    ACCOUNT_SYNC_ID_KEY
+                ]
+            );
+        });
     }
 
     /**
@@ -591,20 +801,73 @@ class AccountService {
         if (!chatDB) return false;
         
         try {
-            const [cryptoKey, keyBytes] = await Promise.all([
+            const [
+                bundle,
+                cryptoKey,
+                syncDerivationKey,
+                syncIdKey,
+                legacyKeyBytes
+            ] = await Promise.all([
+                chatDB.getSetting(ACCOUNT_KEY_BUNDLE),
                 chatDB.getSetting(ACCOUNT_MASTER_CRYPTO_KEY),
+                chatDB.getSetting(ACCOUNT_SYNC_DERIVATION_KEY),
+                chatDB.getSetting(ACCOUNT_SYNC_ID_KEY),
                 chatDB.getSetting(ACCOUNT_MASTER_KEY_BYTES)
             ]);
-            
-            if (cryptoKey && cryptoKey instanceof CryptoKey) {
+
+            const expectedAccountId = normalizeAccountId(this.state.accountId);
+            if (
+                bundle?.accountId === expectedAccountId &&
+                bundle.cryptoKey instanceof CryptoKey &&
+                bundle.derivationKey instanceof CryptoKey &&
+                bundle.idKey instanceof CryptoKey
+            ) {
+                this.cryptoKey = bundle.cryptoKey;
+                this.syncDerivationKey = bundle.derivationKey;
+                this.syncIdKey = bundle.idKey;
+                return true;
+            }
+
+            // Once a bundle exists, never fall back to the old unbound key
+            // records. A mismatched or malformed bundle is safer to reject than
+            // to guess which account the legacy records belong to.
+            if (bundle !== undefined && bundle !== null) {
+                return false;
+            }
+
+            if (
+                expectedAccountId &&
+                this.localAccountContinuity &&
+                cryptoKey instanceof CryptoKey &&
+                syncDerivationKey instanceof CryptoKey &&
+                syncIdKey instanceof CryptoKey
+            ) {
+                await this.persistCryptoKeyBundle(
+                    expectedAccountId,
+                    cryptoKey,
+                    syncDerivationKey,
+                    syncIdKey
+                );
                 this.cryptoKey = cryptoKey;
+                this.syncDerivationKey = syncDerivationKey;
+                this.syncIdKey = syncIdKey;
+                return true;
             }
-            
-            if (keyBytes && keyBytes instanceof Uint8Array) {
-                this.masterKey = new Uint8Array(keyBytes);
+
+            // One-time migration from builds that persisted raw key bytes.
+            if (
+                expectedAccountId &&
+                this.localAccountContinuity &&
+                legacyKeyBytes instanceof Uint8Array
+            ) {
+                const migrated = new Uint8Array(legacyKeyBytes);
+                try {
+                    await this.persistMasterKey(migrated, expectedAccountId);
+                    return true;
+                } finally {
+                    migrated.fill(0);
+                }
             }
-            
-            return !!(this.cryptoKey && this.masterKey);
         } catch (error) {
             console.warn('Failed to load master key from IndexedDB:', error);
         }
@@ -615,18 +878,38 @@ class AccountService {
      * Clear the persisted master key from IndexedDB.
      * Called during logout to fully clear the session.
      */
-    async clearPersistedMasterKey() {
+    async clearPersistedMasterKey(accountId = this.state.accountId) {
         if (!chatDB) return;
         
         try {
-            await Promise.all([
-                chatDB.deleteSetting(ACCOUNT_MASTER_CRYPTO_KEY),
-                chatDB.deleteSetting(ACCOUNT_MASTER_KEY_BYTES)
-            ]);
+            await withAccountDataLock(async () => {
+                const expectedAccountId = normalizeAccountId(accountId);
+                const bundle = await chatDB.getSetting(ACCOUNT_KEY_BUNDLE);
+                if (
+                    bundle?.accountId &&
+                    normalizeAccountId(bundle.accountId) !== expectedAccountId
+                ) {
+                    // Another tab/account owns the persisted bundle. Leave it
+                    // untouched, but still clear this instance's memory below.
+                    return;
+                }
+                await chatDB.updateSettings(
+                    [],
+                    [
+                        ACCOUNT_KEY_BUNDLE,
+                        ACCOUNT_MASTER_CRYPTO_KEY,
+                        ACCOUNT_MASTER_KEY_BYTES,
+                        ACCOUNT_SYNC_DERIVATION_KEY,
+                        ACCOUNT_SYNC_ID_KEY
+                    ]
+                );
+            });
         } catch (error) {
             console.warn('Failed to delete master key from IndexedDB:', error);
         }
         this.cryptoKey = null;
+        this.syncDerivationKey = null;
+        this.syncIdKey = null;
     }
 
     // =========================================================================
@@ -640,7 +923,7 @@ class AccountService {
      * Called during init() to restore session, and when access token expires.
      * @returns {Promise<boolean>} True if token was refreshed, false otherwise
      */
-    async refreshAccessToken() {
+    async refreshAccessToken({ expectedAccountId = this.state.accountId } = {}) {
         try {
             const headers = {
                 'Content-Type': 'application/json',
@@ -668,6 +951,14 @@ class AccountService {
             
             const data = await response.json();
             if (data.accessToken) {
+                const tokenAccountId = getAccessTokenAccountId(data.accessToken);
+                if (
+                    expectedAccountId &&
+                    tokenAccountId !== normalizeAccountId(expectedAccountId)
+                ) {
+                    this.accessToken = null;
+                    return false;
+                }
                 this.accessToken = data.accessToken;
                 return true;
             }
@@ -703,8 +994,7 @@ class AccountService {
     updateStatus() {
         if (this.state.busy) {
             this.state.status = 'busy';
-        } else if (this.masterKey || this.cryptoKey) {
-            // Unlocked if we have either raw masterKey or persisted CryptoKey
+        } else if (this.cryptoKey && this.getSyncKeyMaterial()) {
             this.state.status = 'unlocked';
         } else if (this.state.accountId) {
             this.state.status = 'locked';
@@ -731,9 +1021,16 @@ class AccountService {
         // Load account settings (accountId, credentialId, etc.)
         const settings = await chatDB.getSetting(ACCOUNT_SETTINGS_KEY).catch(() => null);
         if (settings?.accountId) {
+            this.localAccountContinuity = true;
             this.state.accountId = settings.accountId;
+            syncService.setLocalAccountScope(settings.accountId);
             this.state.credentialId = settings.credentialId || null;
+            this.state.encryptionCredentialId =
+                settings.encryptionCredentialId || null;
+            this.state.encryptionMode = inferPersistedEncryptionMode(settings);
             this.state.recoveryConfirmed = !!settings.recoveryConfirmed;
+            this.state.googleLinked = !!settings.googleLinked;
+            this.state.oauthProvider = settings.lastOAuthProvider || null;
             
             // Try to restore session from persisted CryptoKey
             const hasKey = await this.loadMasterKey();
@@ -759,6 +1056,13 @@ class AccountService {
         this.state.isReady = true;
         this.updateStatus();
         this.notify();
+
+        if (
+            this.state.accountId &&
+            this.state.googleLinked
+        ) {
+            this.restoreOAuthLockedSession().catch(() => {});
+        }
     }
 
     /**
@@ -775,6 +1079,8 @@ class AccountService {
             if (tokenRefreshed) {
                 // Session verified with server - now show logged-in state
                 this.state.sessionVerified = true;
+                await this.refreshOAuthLinkStatuses();
+                await this.persistSettings();
                 this.notify();
                 // Initialize sync for restored session
                 this.initializeSync(false).catch(() => {});
@@ -785,12 +1091,138 @@ class AccountService {
         }
     }
 
+    getLinkedOAuthProviders() {
+        return Object.keys(OAUTH_PROVIDERS).filter(
+            provider => this.state[`${provider}Linked`]
+        );
+    }
+
+    async fetchOAuthKeyring() {
+        if (!this.accessToken) {
+            throw new Error('Sign in before unlocking encrypted data');
+        }
+        const keyring = await fetchJson('/auth/keyring', null, {
+            method: 'GET',
+            accessToken: this.accessToken
+        });
+        if (
+            this.state.accountId &&
+            normalizeAccountId(keyring.accountId) !== this.state.accountId
+        ) {
+            throw new Error('The encrypted keyring belongs to a different account');
+        }
+        this.keyringWrappers = Array.isArray(keyring.wrappers)
+            ? keyring.wrappers
+            : [];
+        this.state.encryptionMode = keyring.encryptionMode || null;
+        this.recoveryPayload = keyring.legacyWrappedKeyRecovery
+            ? normalizeWrappedKeyPayload(keyring.legacyWrappedKeyRecovery)
+            : null;
+        return keyring;
+    }
+
+    async restoreOAuthLockedSession() {
+        const linkedProviders = this.getLinkedOAuthProviders();
+        if (
+            !this.state.accountId ||
+            linkedProviders.length === 0 ||
+            this.getSyncKeyMaterial()
+        ) {
+            return false;
+        }
+        if (!await this.refreshAccessToken()) {
+            return false;
+        }
+
+        const preferredProvider = linkedProviders.includes(this.state.oauthProvider)
+            ? this.state.oauthProvider
+            : linkedProviders[0];
+        const providers = [
+            preferredProvider,
+            ...linkedProviders.filter(provider => provider !== preferredProvider)
+        ];
+
+        for (const provider of providers) {
+            try {
+                const session = await fetchJson(`/auth/${provider}/session`, null, {
+                    method: 'GET',
+                    accessToken: this.accessToken
+                });
+                if (normalizeAccountId(session.accountId) !== this.state.accountId) {
+                    continue;
+                }
+                const keyring = await this.fetchOAuthKeyring();
+                const mode = keyring.encryptionMode;
+                if (oauthSessionNeedsEmailRefresh({
+                    ...session,
+                    encryptionMode: mode
+                })) {
+                    this.setState({
+                        sessionVerified: false,
+                        oauthProvider: provider,
+                        oauthEmail: null,
+                        encryptionMode: mode,
+                        oauthSetupRequired: false,
+                        oauthRecoveryRequired: false,
+                        oauthKeyringRequired: false,
+                        oauthLegacyPasskeyRequired: false,
+                        error: `Continue with ${OAUTH_PROVIDERS[provider].label} again so OA can label your encryption passkey`
+                    });
+                    return true;
+                }
+                this.setState({
+                    sessionVerified: true,
+                    oauthProvider: provider,
+                    oauthEmail: session.email || null,
+                    encryptionMode: mode,
+                    oauthSetupRequired: mode === 'PRF_PENDING',
+                    oauthRecoveryRequired: mode === 'LEGACY_SSO',
+                    oauthKeyringRequired: mode === 'PRF',
+                    oauthLegacyPasskeyRequired:
+                        mode === 'LEGACY_PASSKEY',
+                    error: null
+                });
+                return true;
+            } catch (error) {
+                // Try the next locally known linked provider.
+            }
+        }
+        return false;
+    }
+
+    async refreshOAuthLinkStatuses() {
+        if (!this.accessToken || !this.state.accountId) return false;
+        let anyLinked = false;
+        for (const provider of Object.keys(OAUTH_PROVIDERS)) {
+            try {
+                const session = await fetchJson(`/auth/${provider}/session`, null, {
+                    method: 'GET',
+                    accessToken: this.accessToken
+                });
+                this.state[`${provider}Linked`] = true;
+                if (session.email) {
+                    this.state.oauthEmail = session.email;
+                }
+                anyLinked = true;
+            } catch (error) {
+                if (error?.status === 404) {
+                    this.state[`${provider}Linked`] = false;
+                }
+            }
+        }
+        return anyLinked;
+    }
+
     async persistSettings() {
         if (!chatDB) return;
         const payload = {
             accountId: this.state.accountId,
             credentialId: this.state.credentialId,
+            encryptionCredentialId: this.state.encryptionCredentialId,
+            encryptionMode: this.state.encryptionMode,
             recoveryConfirmed: this.state.recoveryConfirmed,
+            googleLinked: this.state.googleLinked,
+            lastOAuthProvider: this.state.oauthProvider,
             updatedAt: Date.now()
         };
         await chatDB.saveSetting(ACCOUNT_SETTINGS_KEY, payload);
@@ -980,13 +1412,12 @@ class AccountService {
             await chatDB.saveSetting(ACCOUNT_REFRESH_TOKEN_KEY, registerData.refreshToken);
         }
         
-        // Persist master key as non-extractable CryptoKey for session restoration
-        await this.persistMasterKey(masterKey);
-
         // Clear pending account (don't zero masterKey since we're using it)
         this.pendingAccount = null;
 
         await this.persistSettings();
+        // Persist only after account settings bind the bundle to this account.
+        await this.persistMasterKey(masterKey);
         this.updateStatus();
         this.notify();
 
@@ -1003,10 +1434,10 @@ class AccountService {
     async initializeSync(enableForNewAccount = false) {
         try {
             // Set credentials on sync service (avoids circular dependency)
-            const masterKey = this.getMasterKey();
+            const keyMaterial = this.getSyncKeyMaterial();
             const accessToken = this.getAccessToken();
             
-            if (!masterKey || !accessToken) {
+            if (!keyMaterial || !accessToken) {
                 console.warn('[AccountService] Cannot initialize sync without credentials');
                 return;
             }
@@ -1020,7 +1451,28 @@ class AccountService {
                 return null;
             };
             
-            syncService.setCredentials(masterKey, accessToken, refreshCallback);
+            await syncService.activateAccountScope(this.state.accountId, {
+                // Match the legacy account flow: creating an account from a
+                // device with an existing wallet adopts that wallet. Returning
+                // accounts adopt only when local continuity proves ownership.
+                adoptUnscoped: enableForNewAccount ||
+                    this.localAccountContinuity
+            });
+            this.localAccountContinuity = true;
+            syncService.setCredentials(
+                keyMaterial,
+                accessToken,
+                refreshCallback,
+                this.state.accountId,
+                {
+                    identityBacked: !!(
+                        this.state.googleLinked ||
+                        ['PRF', 'PRF_PENDING', 'LEGACY_SSO'].includes(
+                            this.state.encryptionMode
+                        )
+                    )
+                }
+            );
             await syncService.init();
             
             // Sync is automatically enabled when credentials are set
@@ -1059,6 +1511,464 @@ class AccountService {
      */
     getPendingAccountId() {
         return this.pendingAccount?.accountId || null;
+    }
+
+    // =========================================================================
+    // Google OAuth Authentication
+    // =========================================================================
+
+    async authenticateWithOAuth(provider, { link = false } = {}) {
+        const providerConfig = getOAuthProvider(provider);
+        if (this.state.busy) return null;
+        if (link) {
+            this.setError(
+                `${providerConfig.label} uses a separate privacy partition and cannot be connected to an existing OA account`
+            );
+            return null;
+        }
+        if (PLATFORM !== 'web') {
+            this.setError(
+                `${providerConfig.label} sign in is currently available in the web app`
+            );
+            return null;
+        }
+
+        if (link && !this.state.accountId) {
+            this.setError(
+                `Sign in to your OA account before connecting ${providerConfig.label}`
+            );
+            return null;
+        }
+
+        // Open synchronously from the click handler so popup blockers allow it,
+        // before the optional asynchronous passkey step-up.
+        let popup = window.open(
+            '',
+            `oa-${provider}-auth`,
+            'popup,width=600,height=720'
+        );
+        if (!popup) {
+            this.setError(`Allow popups to continue with ${providerConfig.label}`);
+            return null;
+        }
+        popup.document.title = `Connecting to ${providerConfig.label}...`;
+        popup.document.body.textContent = `Connecting to ${providerConfig.label}...`;
+
+        if (link) {
+            if (this.state.status !== 'unlocked') {
+                popup.close();
+                this.setError('Unlock your encrypted data before connecting another sign-in method');
+                return null;
+            }
+        }
+
+        const previousAccountId = this.state.accountId;
+        const previousCredentialId = this.state.credentialId;
+        const previousEncryptionCredentialId =
+            this.state.encryptionCredentialId;
+        const previousProviderLinked = this.state[`${provider}Linked`];
+        const previousOAuthProvider = this.state.oauthProvider;
+        const previousOAuthEmail = this.state.oauthEmail;
+        const syncSuspended = !link && !!previousAccountId;
+
+        this.setState({
+            busy: true,
+            action: link ? `${provider}_link` : `${provider}_login`,
+            error: null,
+            oauthProvider: provider,
+            oauthSetupRequired: false,
+            oauthRecoveryRequired: false,
+            oauthKeyringRequired: false,
+            oauthLegacyPasskeyRequired: false
+        });
+
+        try {
+            if (syncSuspended) {
+                syncService.clearCredentials();
+                await syncService.deactivateAccountScope(previousAccountId);
+                await syncService.clearAll();
+            }
+            if (link && !this.accessToken) {
+                const refreshed = await this.refreshAccessToken();
+                if (!refreshed) {
+                    throw new Error('Your session expired. Sign in again first.');
+                }
+            }
+
+            popup.document.title = `Connecting to ${providerConfig.label}...`;
+            popup.document.body.textContent = `Connecting to ${providerConfig.label}...`;
+
+            const startData = await fetchJson(`/auth/${provider}/start`, {
+                mode: link ? 'link' : 'login',
+                returnOrigin: window.location.origin,
+                expectedAccountId: link ? undefined : previousAccountId || undefined
+            }, {
+                accessToken: link ? this.accessToken : null
+            });
+            if (!startData.authorizationUrl) {
+                throw new Error(
+                    `${providerConfig.label} authorization URL was missing`
+                );
+            }
+
+            popup.location.replace(startData.authorizationUrl);
+            await waitForOAuthPopup(popup, provider);
+
+            if (!await this.refreshAccessToken({
+                expectedAccountId: link ? previousAccountId : null
+            })) {
+                throw new Error(
+                    `${providerConfig.label} session could not be established`
+                );
+            }
+            const session = await fetchJson(`/auth/${provider}/session`, null, {
+                method: 'GET',
+                accessToken: this.accessToken
+            });
+            const accountId = normalizeAccountId(session.accountId);
+            if (!accountId) {
+                throw new Error(
+                    `${providerConfig.label} session did not include an OA account`
+                );
+            }
+            if (oauthSessionNeedsEmailRefresh(session)) {
+                throw new Error(
+                    `Continue with ${providerConfig.label} again so OA can label your encryption passkey`
+                );
+            }
+            if (!link && previousAccountId && accountId !== previousAccountId) {
+                throw new Error(
+                    `This ${providerConfig.label} login belongs to a different OA account. ` +
+                    'Log out locally before switching accounts.'
+                );
+            }
+
+            if (link) {
+                if (accountId !== this.state.accountId) {
+                    throw new Error(
+                        `${providerConfig.label} was connected to a different OA account`
+                    );
+                }
+                this.state[`${provider}Linked`] = true;
+                this.state.oauthProvider = provider;
+                this.state.busy = false;
+                this.state.action = null;
+                this.state.sessionVerified = true;
+                await this.persistSettings();
+                this.updateStatus();
+                this.notify();
+                return { status: 'linked', accountId };
+            }
+
+            this.state.accountId = accountId;
+            this.state[`${provider}Linked`] = true;
+            this.state.oauthProvider = provider;
+            this.state.oauthEmail = session.email || null;
+            this.state.encryptionMode = session.encryptionMode ||
+                this.state.encryptionMode;
+            this.state.sessionVerified = true;
+            this.state.busy = false;
+            this.state.action = null;
+            this.state.error = null;
+
+            const localSettings = await chatDB.getSetting(ACCOUNT_SETTINGS_KEY).catch(() => null);
+            this.localAccountContinuity =
+                localSettings?.accountId === accountId;
+            const hasLocalKey =
+                this.state.encryptionMode !== 'LEGACY_SSO' &&
+                localSettings?.accountId === accountId
+                ? await this.loadMasterKey()
+                : false;
+            if (hasLocalKey) {
+                this.state.credentialId = localSettings?.credentialId || null;
+                this.state.encryptionCredentialId =
+                    localSettings?.encryptionCredentialId || null;
+                this.state.encryptionMode =
+                    session.encryptionMode ||
+                    inferPersistedEncryptionMode(localSettings);
+                this.state.recoveryConfirmed = !!localSettings?.recoveryConfirmed;
+                this.state.oauthSetupRequired = false;
+                this.state.oauthRecoveryRequired = false;
+                this.state.oauthKeyringRequired = false;
+                this.state.oauthLegacyPasskeyRequired = false;
+                await this.persistSettings();
+                this.updateStatus();
+                this.notify();
+                await this.initializeSync(false);
+                return { status: 'unlocked', accountId };
+            }
+
+            await this.clearPersistedMasterKey();
+            this.state.credentialId = null;
+            this.state.encryptionCredentialId = null;
+            const keyring = await this.fetchOAuthKeyring();
+            const mode = keyring.encryptionMode;
+
+            if (mode === 'PRF') {
+                this.state.oauthKeyringRequired = true;
+                await this.persistSettings();
+                this.updateStatus();
+                this.notify();
+                return { status: 'keyring_unlock', accountId };
+            }
+
+            if (mode === 'LEGACY_PASSKEY') {
+                this.state.oauthLegacyPasskeyRequired = true;
+                await this.persistSettings();
+                this.updateStatus();
+                this.notify();
+                return { status: 'legacy_passkey', accountId };
+            }
+
+            if (mode === 'LEGACY_SSO') {
+                // One-time compatibility path for SSO accounts created before
+                // encryption passkeys. Recovery is not used by new accounts.
+                this.state.oauthSetupRequired = false;
+                this.state.oauthRecoveryRequired = true;
+                this.state.oauthKeyringRequired = false;
+                await this.persistSettings();
+                this.updateStatus();
+                this.notify();
+                return { status: 'migration', accountId };
+            }
+
+            this.state.oauthSetupRequired = true;
+            await this.persistSettings();
+            this.updateStatus();
+            this.notify();
+            return { status: 'keyring_setup', accountId };
+        } catch (error) {
+            try {
+                popup?.close();
+            } catch (closeError) {
+                // Ignore popup cleanup failures.
+            }
+            const restorePreviousAccount = !link &&
+                this.state.accountId &&
+                this.state.accountId !== previousAccountId &&
+                !this.getSyncKeyMaterial();
+            let previousSessionRestored = false;
+            if (syncSuspended && this.getSyncKeyMaterial()) {
+                previousSessionRestored = await this.refreshAccessToken({
+                    expectedAccountId: previousAccountId
+                });
+            }
+            this.setState({
+                accountId: restorePreviousAccount ? previousAccountId : this.state.accountId,
+                credentialId: restorePreviousAccount
+                    ? previousCredentialId
+                    : this.state.credentialId,
+                encryptionCredentialId: restorePreviousAccount
+                    ? previousEncryptionCredentialId
+                    : this.state.encryptionCredentialId,
+                [`${provider}Linked`]: restorePreviousAccount
+                    ? previousProviderLinked
+                    : this.state[`${provider}Linked`],
+                oauthProvider: restorePreviousAccount
+                    ? previousOAuthProvider
+                    : this.state.oauthProvider,
+                oauthEmail: restorePreviousAccount
+                    ? previousOAuthEmail
+                    : this.state.oauthEmail,
+                sessionVerified: syncSuspended
+                    ? previousSessionRestored
+                    : restorePreviousAccount
+                        ? false
+                        : this.state.sessionVerified,
+                busy: false,
+                action: null,
+                oauthSetupRequired: false,
+                oauthRecoveryRequired: false,
+                oauthKeyringRequired: false,
+                oauthLegacyPasskeyRequired: false,
+                error: toFriendlyError(error)
+            });
+            if (
+                syncSuspended &&
+                this.getSyncKeyMaterial() &&
+                previousSessionRestored
+            ) {
+                await this.initializeSync(false);
+            }
+            return null;
+        }
+    }
+
+    authenticateWithGoogle(options = {}) {
+        return this.authenticateWithOAuth('google', options);
+    }
+
+    async finishOAuthKeyUnlock(masterKey, credentialId, { newAccount = false } = {}) {
+        try {
+            await this.persistMasterKey(masterKey);
+        } finally {
+            masterKey.fill(0);
+        }
+        this.masterKey = null;
+        this.state.encryptionCredentialId = credentialId;
+        this.state.encryptionMode = 'PRF';
+        this.state.recoveryConfirmed = false;
+        this.state.oauthSetupRequired = false;
+        this.state.oauthRecoveryRequired = false;
+        this.state.oauthKeyringRequired = false;
+        this.state.oauthLegacyPasskeyRequired = false;
+        this.state.sessionVerified = true;
+        this.state.busy = false;
+        this.state.action = null;
+        this.state.error = null;
+        await this.persistSettings();
+        this.updateStatus();
+        this.notify();
+        await this.initializeSync(newAccount);
+    }
+
+    async setupOAuthKeyring() {
+        if (!this.state.accountId || !this.accessToken) {
+            this.setError('Sign in before creating an encryption passkey');
+            return false;
+        }
+        this.setState({
+            busy: true,
+            action: `${this.state.oauthProvider || 'oauth'}_key_setup`,
+            error: null
+        });
+        const masterKey = crypto.getRandomValues(new Uint8Array(32));
+        try {
+            const wrapper = await createEncryptionKeyWrapper(
+                masterKey,
+                this.state.oauthEmail,
+                this.keyringWrappers.map(item => item.credentialId)
+            );
+            await fetchJson('/auth/keyring', wrapper, {
+                accessToken: this.accessToken
+            });
+            this.keyringWrappers = [...this.keyringWrappers, wrapper];
+            await this.finishOAuthKeyUnlock(masterKey, wrapper.credentialId, {
+                newAccount: true
+            });
+            return true;
+        } catch (error) {
+            masterKey.fill(0);
+            if (error?.status === 409) {
+                try {
+                    const keyring = await this.fetchOAuthKeyring();
+                    if (this.keyringWrappers.length > 0) {
+                        this.setState({
+                            busy: false,
+                            action: null,
+                            oauthSetupRequired: false,
+                            oauthKeyringRequired: true,
+                            error: null
+                        });
+                        return this.unlockOAuthKeyring(keyring);
+                    }
+                } catch (refreshError) {
+                    error = refreshError;
+                }
+            }
+            this.setState({
+                busy: false,
+                action: null,
+                error: toFriendlyError(error)
+            });
+            return false;
+        }
+    }
+
+    completeOAuthAccountSetup() {
+        return this.setupOAuthKeyring();
+    }
+
+    async unlockOAuthKeyring(keyring = null) {
+        if (this.state.busy) return false;
+        this.setState({
+            busy: true,
+            action: `${this.state.oauthProvider || 'oauth'}_key_unlock`,
+            error: null
+        });
+        try {
+            if (!keyring) {
+                keyring = await this.fetchOAuthKeyring();
+            } else if (Array.isArray(keyring.wrappers)) {
+                this.keyringWrappers = keyring.wrappers;
+            }
+            const { credentialId, masterKey } = await unlockEncryptionKeyring(
+                this.keyringWrappers
+            );
+            await this.finishOAuthKeyUnlock(masterKey, credentialId);
+            return true;
+        } catch (error) {
+            this.setState({
+                busy: false,
+                action: null,
+                oauthKeyringRequired: true,
+                error: toFriendlyError(error)
+            });
+            return false;
+        }
+    }
+
+    /**
+     * One-time migration for SSO accounts created by the recovery-code build.
+     * The recovered master key is immediately re-wrapped with a PRF passkey.
+     */
+    async unlockOAuthWithRecoveryCode(recoveryCodeInput) {
+        if (this.state.busy || !this.state.oauthRecoveryRequired) return false;
+        const recoveryCode = normalizeRecoveryCode(recoveryCodeInput);
+        if (!isValidRecoveryCode(recoveryCode)) {
+            this.setError('Enter the legacy 5-word recovery code for this account');
+            return false;
+        }
+        if (!this.recoveryPayload || !this.accessToken) {
+            this.setError('Sign in before migrating encrypted data');
+            return false;
+        }
+
+        this.setState({
+            busy: true,
+            action: `${this.state.oauthProvider || 'oauth'}_migration`,
+            error: null
+        });
+        let masterKey = null;
+        try {
+            const decoded = decodeWrappedKey(this.recoveryPayload);
+            const recoveryKey = await deriveRecoveryKey(
+                recoveryCode,
+                base64ToBytes(decoded.salt)
+            );
+            masterKey = await decryptBytes(recoveryKey, decoded);
+            const wrapper = await createEncryptionKeyWrapper(
+                masterKey,
+                this.state.oauthEmail
+            );
+            wrapper.legacyRecoveryCodeHash = await computeRecoveryCodeHash(
+                recoveryCode,
+                this.state.accountId
+            );
+            await fetchJson('/auth/keyring', wrapper, {
+                accessToken: this.accessToken
+            });
+            this.keyringWrappers = [wrapper];
+            await this.finishOAuthKeyUnlock(masterKey, wrapper.credentialId);
+            masterKey = null;
+            this.recoveryPayload = null;
+            return true;
+        } catch (error) {
+            this.setState({
+                busy: false,
+                action: null,
+                error: toFriendlyError(error)
+            });
+            return false;
+        } finally {
+            masterKey?.fill(0);
+        }
+    }
+
+    cancelPendingOAuthAccount() {
+        this.state.oauthSetupRequired = false;
+        this.state.oauthKeyringRequired = false;
+        this.state.oauthLegacyPasskeyRequired = false;
     }
 
     // =========================================================================
@@ -1147,10 +2057,9 @@ class AccountService {
                 await chatDB.saveSetting(ACCOUNT_REFRESH_TOKEN_KEY, registerData.refreshToken);
             }
             
-            // Persist master key as non-extractable CryptoKey for session restoration
-            await this.persistMasterKey(masterKey);
-            
             await this.persistSettings();
+            // Persist only after account settings bind the bundle to this account.
+            await this.persistMasterKey(masterKey);
             this.updateStatus();
             this.notify();
             
@@ -1165,7 +2074,10 @@ class AccountService {
         }
     }
 
-    async unlockWithPasskey(accountIdInput, { mediation, silent = false } = {}) {
+    async unlockWithPasskey(
+        accountIdInput,
+        { mediation, silent = false, action = 'unlock' } = {}
+    ) {
         if (this.state.busy) return false;
         if (!this.state.passkeySupported) {
             if (!silent) this.setError('Passkeys are not supported in this browser');
@@ -1187,7 +2099,7 @@ class AccountService {
             return false;
         }
 
-        this.setState({ busy: true, action: 'unlock', error: null, recoveryRequired: false });
+        this.setState({ busy: true, action, error: null, recoveryRequired: false });
         try {
             const challengeData = await fetchJson('/auth/challenge', {
                 accountId,
@@ -1244,10 +2156,12 @@ class AccountService {
             this.masterKey = masterKey;
             this.state.accountId = accountId;
             this.state.credentialId = assertion.id;
+            this.state.encryptionMode = 'LEGACY_PASSKEY';
             this.state.busy = false;
             this.state.action = null;
             this.state.error = null;
             this.state.recoveryRequired = false;
+            this.state.oauthLegacyPasskeyRequired = false;
             
             // Handle access token from response
             if (loginData.accessToken) {
@@ -1260,10 +2174,10 @@ class AccountService {
                 await chatDB.saveSetting(ACCOUNT_REFRESH_TOKEN_KEY, loginData.refreshToken);
             }
             
-            // Persist master key as non-extractable CryptoKey for session restoration
-            await this.persistMasterKey(masterKey);
-            
+            await this.refreshOAuthLinkStatuses();
             await this.persistSettings();
+            // Persist only after account settings bind the bundle to this account.
+            await this.persistMasterKey(masterKey);
             this.updateStatus();
             this.notify();
             
@@ -1399,10 +2313,10 @@ class AccountService {
                 await chatDB.saveSetting(ACCOUNT_REFRESH_TOKEN_KEY, completeData.refreshToken);
             }
             
-            // Persist master key as non-extractable CryptoKey for session restoration
-            await this.persistMasterKey(masterKey);
-            
+            await this.refreshOAuthLinkStatuses();
             await this.persistSettings();
+            // Persist only after account settings bind the bundle to this account.
+            await this.persistMasterKey(masterKey);
             this.updateStatus();
             this.notify();
 
@@ -1441,12 +2355,17 @@ class AccountService {
     async handleTokenInvalidation() {
         console.warn('[AccountService] Token invalidated - clearing session');
         
+        syncService.clearCredentials();
+        await syncService.deactivateAccountScope(this.state.accountId).catch(() => {});
+
         // Clear in-memory state
         if (this.masterKey) {
             this.masterKey.fill(0);
         }
         this.masterKey = null;
         this.cryptoKey = null;
+        this.syncDerivationKey = null;
+        this.syncIdKey = null;
         this.accessToken = null;
         this.state.sessionVerified = false;
         // Electron: clear invalid refresh token
@@ -1473,8 +2392,17 @@ class AccountService {
         }
         this.masterKey = null;
         this.cryptoKey = null;  // Clear from memory (IndexedDB copy remains for re-unlock)
+        this.syncDerivationKey = null;
+        this.syncIdKey = null;
         this.accessToken = null;
         this.state.sessionVerified = false;
+        this.state.oauthKeyringRequired =
+            this.state.encryptionMode === 'PRF' &&
+            this.state.googleLinked;
+        this.state.oauthLegacyPasskeyRequired =
+            this.state.encryptionMode === 'LEGACY_PASSKEY' &&
+            this.state.googleLinked;
+        syncService.clearCredentials();
         this.updateStatus();
         this.notify();
     }
@@ -1487,8 +2415,10 @@ class AccountService {
      * - Requires full passkey re-authentication to log back in
      */
     async logout() {
-        // Stop sync and clear sync data
+        // Snapshot and hide account-bound data before removing credentials.
         try {
+            syncService.clearCredentials();
+            await syncService.deactivateAccountScope(this.state.accountId);
             await syncService.clearAll();
         } catch (error) {
             console.warn('Failed to clear sync data:', error);
@@ -1500,6 +2430,8 @@ class AccountService {
         }
         this.masterKey = null;
         this.cryptoKey = null;
+        this.syncDerivationKey = null;
+        this.syncIdKey = null;
         this.accessToken = null;
         this.state.sessionVerified = false;
         // Electron: clear persisted refresh token
@@ -1532,12 +2464,24 @@ class AccountService {
 
     async clearLocalAccount() {
         await this.logout();  // Use logout instead of lock for full cleanup
+        this.cancelPendingOAuthAccount();
         this.state.accountId = null;
         this.state.credentialId = null;
+        this.state.encryptionCredentialId = null;
+        this.state.encryptionMode = null;
         this.state.recoveryConfirmed = false;
         this.state.recoveryCode = null;
         this.state.recoveryRequired = false;
+        this.state.googleLinked = false;
+        this.state.oauthProvider = null;
+        this.state.oauthEmail = null;
+        this.state.oauthSetupRequired = false;
+        this.state.oauthRecoveryRequired = false;
+        this.state.oauthKeyringRequired = false;
+        this.state.oauthLegacyPasskeyRequired = false;
         this.recoveryPayload = null;
+        this.keyringWrappers = [];
+        this.localAccountContinuity = false;
         // Delete account settings from IndexedDB (not just set to null)
         if (chatDB) {
             await chatDB.deleteSetting(ACCOUNT_SETTINGS_KEY).catch(() => {});
@@ -1548,9 +2492,10 @@ class AccountService {
 
     async maybeAutoUnlock() {
         // Skip if already unlocked (session restored from IndexedDB)
-        if (this.masterKey || this.cryptoKey) return;
+        if (this.getSyncKeyMaterial()) return;
         
         if (!this.state.accountId || !this.state.passkeySupported || this.state.busy) return;
+        if (this.state.googleLinked) return;
         if (typeof PublicKeyCredential?.isConditionalMediationAvailable !== 'function') return;
         const supportsConditional = await PublicKeyCredential.isConditionalMediationAvailable();
         if (!supportsConditional) return;

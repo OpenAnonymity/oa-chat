@@ -3,7 +3,7 @@
  * Shows VERIFIABLE security information - not just parsed strings
  */
 
-import { ORG_API_BASE } from '../config.js';
+import { ORG_API_BASE } from '../services/orgEndpoints.js';
 const LIBCURL_ASSET_URL = 'vendor/libcurl/libcurl_full.js';
 const LIBCURL_VERSION = '0.7.1';
 

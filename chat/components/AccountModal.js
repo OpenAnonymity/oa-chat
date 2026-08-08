@@ -30,6 +30,7 @@ class AccountModal {
         this.recoveryCodeCopied = false;
         this.creationError = null;
         this.isLoadingAccountId = false;
+        this.oauthProvider = null;
 
         // Animation state
         this.revealedDigits = 0;
@@ -72,7 +73,9 @@ class AccountModal {
         const tabBtn = document.getElementById('account-tab-btn');
         if (!tabBtn) return;
         // Only show logged-in (green) after session is verified with server
-        const isLoggedIn = this.accountState?.accountId && this.accountState?.sessionVerified;
+        const isLoggedIn = this.accountState?.accountId &&
+            this.accountState?.sessionVerified &&
+            this.accountState?.status === 'unlocked';
         tabBtn.dataset.status = isLoggedIn ? 'logged-in' : 'none';
         tabBtn.title = isLoggedIn ? 'Account (logged in)' : 'Account';
     }
@@ -99,7 +102,10 @@ class AccountModal {
 
     handleCloseAttempt() {
         // Don't allow closing during recovery step - user must save their codes
-        if (this.creationStep === 'recovery') {
+        if (
+            this.creationStep === 'recovery' ||
+            this.creationStep === 'oauth_authorizing'
+        ) {
             return;
         }
         if (this.creationStep !== 'idle' && this.creationStep !== 'complete') {
@@ -133,6 +139,7 @@ class AccountModal {
         this.recoveryCodeCopied = false;
         this.creationError = null;
         this.isLoadingAccountId = false;
+        this.oauthProvider = null;
         this.revealedDigits = 0;
         this.clearAnimationTimeouts();
     }
@@ -189,6 +196,43 @@ class AccountModal {
             this.creationError = error.message || 'Failed to create account. Please try again.';
             this.isLoadingAccountId = false;
             this.render();
+        }
+    }
+
+    getOAuthProviderLabel() {
+        return 'Google';
+    }
+
+    async handleOAuthAuthentication(provider) {
+        this.oauthProvider = provider;
+        this.creationStep = 'oauth_authorizing';
+        this.creationError = null;
+        this.render();
+
+        const result = await this.accountService.authenticateWithOAuth(provider);
+        if (!result) {
+            this.creationStep = 'idle';
+            this.oauthProvider = null;
+            this.render();
+            return;
+        }
+
+        const providerLabel = this.getOAuthProviderLabel(provider);
+        this.creationStep = 'idle';
+        this.render();
+        if (result.status === 'unlocked') {
+            this.app?.showToast?.(`Signed in with ${providerLabel}`, 'success');
+        }
+    }
+
+    async handleConnectOAuth(provider) {
+        const providerLabel = this.getOAuthProviderLabel(provider);
+        const result = await this.accountService.authenticateWithOAuth(
+            provider,
+            { link: true }
+        );
+        if (result?.status === 'linked') {
+            this.app?.showToast?.(`${providerLabel} connected`, 'success');
         }
     }
 
@@ -302,13 +346,21 @@ class AccountModal {
         }
     }
 
-    handleCancelCreation() {
+    async handleCancelCreation() {
+        if (this.creationStep.startsWith('oauth_') || this.accountState?.oauthSetupRequired) {
+            this.accountService.cancelPendingOAuthAccount();
+            await this.accountService.clearLocalAccount();
+        }
         this.accountService.cancelPendingAccount();
         this.resetCreationFlow();
         this.render();
     }
 
-    handleStartOver() {
+    async handleStartOver() {
+        if (this.accountState?.oauthSetupRequired) {
+            this.accountService.cancelPendingOAuthAccount();
+            await this.accountService.clearLocalAccount();
+        }
         this.accountService.cancelPendingAccount();
         this.resetCreationFlow();
         this.render();
@@ -364,6 +416,34 @@ class AccountModal {
         }
     }
 
+    async handleOAuthRecoveryUnlock() {
+        const providerLabel = this.getOAuthProviderLabel(
+            this.accountState?.oauthProvider
+        );
+        const success = await this.accountService.unlockOAuthWithRecoveryCode(
+            this.recoveryInputValue
+        );
+        if (success) {
+            this.recoveryInputValue = '';
+            this.app?.showToast?.(`Signed in with ${providerLabel}`, 'success');
+        }
+    }
+
+    async handleOAuthKeyringUnlock() {
+        const state = this.accountService.getState();
+        const success = state.oauthLegacyPasskeyRequired
+            ? await this.accountService.unlockWithPasskey(
+                state.accountId,
+                { action: 'oauth_legacy_passkey' }
+            )
+            : state.oauthSetupRequired
+                ? await this.accountService.setupOAuthKeyring()
+                : await this.accountService.unlockOAuthKeyring();
+        if (success) {
+            this.app?.showToast?.('Encrypted data unlocked', 'success');
+        }
+    }
+
     async handleAccountCopyId() {
         if (!this.accountState?.accountId) return;
         try {
@@ -399,7 +479,8 @@ class AccountModal {
         const state = this.accountState || {};
         const accountId = state.accountId;
 
-        if (this.creationStep !== 'idle' && !accountId) {
+        const oauthCreationInProgress = this.creationStep.startsWith('oauth_');
+        if (this.creationStep !== 'idle' && (oauthCreationInProgress || !accountId)) {
             this.overlay.innerHTML = this.renderCreationFlow();
         } else {
             this.overlay.innerHTML = this.renderAccountUI();
@@ -425,10 +506,11 @@ class AccountModal {
 
     renderCreationFlow() {
         const step = this.creationStep;
+        const providerLabel = this.getOAuthProviderLabel();
 
         return `
             <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}">
-                ${this.renderHeader(step === 'complete' ? 'Account Created' : step === 'error' ? 'Error' : 'Create Account')}
+                ${this.renderHeader(step === 'complete' ? 'Account Created' : step === 'error' ? 'Error' : step.startsWith('oauth_') ? `Continue with ${providerLabel}` : 'Create Account')}
                 <div class="flex-1 flex items-center justify-center">
                     ${this.renderCreationBody(step)}
                 </div>
@@ -440,7 +522,17 @@ class AccountModal {
     }
 
     renderCreationBody(step) {
+        const providerLabel = this.getOAuthProviderLabel();
         switch (step) {
+            case 'oauth_authorizing':
+                return `
+                    <div class="w-full text-center py-6">
+                        <div class="w-10 h-10 border-2 border-foreground border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
+                        <p class="text-sm font-medium text-foreground mb-1">Waiting for ${providerLabel}...</p>
+                        <p class="text-xs text-muted-foreground">Complete sign in in the popup window.</p>
+                    </div>
+                `;
+
             case 'passkey':
             case 'passkey_retry': {
                 const isWaiting = this.isLoadingAccountId || this.revealedDigits < 16;
@@ -546,6 +638,13 @@ class AccountModal {
 
     renderCreationActions(step) {
         switch (step) {
+            case 'oauth_authorizing':
+                return `
+                    <button class="w-full h-9 rounded-lg text-sm bg-muted text-muted-foreground cursor-not-allowed" type="button" disabled>
+                        Complete sign in in the popup
+                    </button>
+                `;
+
             case 'passkey':
                 return `
                     <button id="cancel-creation-btn" class="btn-ghost-hover w-full h-9 rounded-lg text-sm border border-border bg-background text-foreground transition-colors" type="button">
@@ -600,6 +699,35 @@ class AccountModal {
         }
     }
 
+    renderOAuthProviderIcon(provider, className = 'w-4 h-4') {
+        return `
+            <svg class="${className}" viewBox="0 0 24 24" aria-hidden="true">
+                <path fill="#4285F4" d="M21.6 12.23c0-.71-.06-1.4-.19-2.07H12v3.91h5.38a4.6 4.6 0 01-2 3.02v2.54h3.24c1.9-1.75 2.98-4.33 2.98-7.4z"></path>
+                <path fill="#34A853" d="M12 22c2.7 0 4.98-.9 6.63-2.37l-3.24-2.54c-.9.6-2.05.96-3.39.96-2.61 0-4.82-1.76-5.61-4.13H3.04v2.62A10 10 0 0012 22z"></path>
+                <path fill="#FBBC05" d="M6.39 13.92A6.02 6.02 0 016.08 12c0-.67.11-1.32.31-1.92V7.46H3.04A10 10 0 002 12c0 1.61.39 3.14 1.04 4.54l3.35-2.62z"></path>
+                <path fill="#EA4335" d="M12 5.95c1.47 0 2.79.51 3.83 1.5l2.87-2.88A9.63 9.63 0 0012 2a10 10 0 00-8.96 5.46l3.35 2.62C7.18 7.71 9.39 5.95 12 5.95z"></path>
+            </svg>
+        `;
+    }
+
+    renderOAuthConnection(provider, state, isBusy, action) {
+        const providerLabel = this.getOAuthProviderLabel(provider);
+        if (state[`${provider}Linked`]) {
+            return `
+                <div class="flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
+                    ${this.renderOAuthProviderIcon(provider, 'w-3.5 h-3.5')}
+                    ${providerLabel} connected
+                </div>
+            `;
+        }
+        return `
+            <button id="account-connect-${provider}-btn" class="btn-ghost-hover w-full h-9 rounded-lg text-sm border border-border bg-background text-foreground transition-colors flex items-center justify-center gap-2" type="button" ${isBusy ? 'disabled' : ''}>
+                ${this.renderOAuthProviderIcon(provider)}
+                ${action === `${provider}_link` ? `Connecting ${providerLabel}...` : `Connect ${providerLabel}`}
+            </button>
+        `;
+    }
+
     renderAccountUI() {
         const state = this.accountState || {};
         const accountId = state.accountId;
@@ -607,6 +735,9 @@ class AccountModal {
         const passkeySupported = state.passkeySupported;
         const isBusy = state.busy;
         const action = state.action;
+        const usesIdentityLogin =
+            state.googleLinked &&
+            state.encryptionMode !== 'LEGACY_PASSKEY';
 
         // Recovery flow UI (verifying/adding passkey)
         if (this.recoveryStep === 'verifying' || this.recoveryStep === 'adding_passkey') {
@@ -618,8 +749,24 @@ class AccountModal {
             return this.renderRecoveryCompleteUI();
         }
 
+        if (
+            state.oauthRecoveryRequired ||
+            state.oauthKeyringRequired ||
+            state.oauthSetupRequired ||
+            state.oauthLegacyPasskeyRequired
+        ) {
+            return this.renderOAuthUnlockUI();
+        }
+
         // Logged in state - don't show errors here since login was successful
-        if (accountId) {
+        if (
+            accountId &&
+            state.sessionVerified &&
+            (
+                state.status === 'unlocked' ||
+                action === 'google_link'
+            )
+        ) {
             // Always get fresh status
             const syncStatus = this.syncService.getStatus();
             const isSyncing = syncStatus.syncing;
@@ -671,19 +818,31 @@ class AccountModal {
                                 <span class="text-xs ${syncStatusColor}">${syncStatusText}</span>
                             </div>
                         </div>
-                        <button id="account-copy-id-btn" class="account-number-text font-mono text-lg tracking-widest text-foreground mb-1 whitespace-nowrap hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer bg-transparent border-none p-0" type="button" title="Copy account ID">
-                            ${this.escapeHtml(formattedAccountId)}
-                        </button>
-                        <p class="text-[11px] text-muted-foreground">Encrypted sync for tickets & preferences</p>
+                        ${usesIdentityLogin ? `
+                            <p class="text-sm font-medium text-foreground mb-1">Encrypted with your passkey</p>
+                        ` : `
+                            <button id="account-copy-id-btn" class="account-number-text font-mono text-lg tracking-widest text-foreground mb-1 whitespace-nowrap hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer bg-transparent border-none p-0" type="button" title="Copy account ID">
+                                ${this.escapeHtml(formattedAccountId)}
+                            </button>
+                        `}
+                        <p class="text-[11px] text-muted-foreground">
+                            Encrypted sync for tickets & preferences
+                        </p>
                     </div>
 
                     <p class="text-[11px] text-muted-foreground text-center mb-3">Chat history sync coming soon</p>
 
+                    ${state.googleLinked ? `
+                        <div class="grid gap-2 mb-3">
+                            ${this.renderOAuthConnection('google', state, isBusy, action)}
+                        </div>
+                    ` : ''}
+
                     <div class="flex gap-3">
-                        <button id="account-clear-btn" class="btn-ghost-hover flex-1 h-9 rounded-lg text-sm border border-border bg-background text-foreground transition-colors" type="button">
+                        <button id="account-clear-btn" class="btn-ghost-hover flex-1 h-9 rounded-lg text-sm border border-border bg-background text-foreground transition-colors disabled:opacity-50" type="button" ${isBusy ? 'disabled' : ''}>
                             Log out
                         </button>
-                        <button id="account-sync-btn" class="btn-ghost-hover flex-1 h-9 rounded-lg text-sm border border-border bg-background transition-colors disabled:opacity-50 flex items-center justify-center gap-2" type="button" ${isSyncing ? 'disabled' : ''}>
+                        <button id="account-sync-btn" class="btn-ghost-hover flex-1 h-9 rounded-lg text-sm border border-border bg-background transition-colors disabled:opacity-50 flex items-center justify-center gap-2" type="button" ${isSyncing || isBusy ? 'disabled' : ''}>
                             <svg class="w-4 h-4 ${isSyncing ? 'animate-spin' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"></path>
                             </svg>
@@ -695,7 +854,9 @@ class AccountModal {
         }
 
         // No account - show create/login
-        const accountValue = this.escapeHtml(this.accountInputValue || '');
+        const accountValue = this.escapeHtml(
+            this.accountInputValue || this.formatAccountId(accountId)
+        );
         const recoveryValue = this.escapeHtml(this.recoveryInputValue || '');
         const showRecovery = this.showRecoveryInput;
 
@@ -765,7 +926,7 @@ class AccountModal {
 
                 <p class="text-xs text-muted-foreground" style="margin-bottom:20px">${showRecovery
                     ? 'Recover your account with the recovery code saved at account creation time.'
-                    : 'Account enables sync across browsers &amp; devices. Your data is locally encrypted with Passkey (<a href="https://www.w3.org/TR/webauthn-3/" target="_blank" rel="noopener noreferrer" class="account-link">WebAuthn</a> with <a href="https://w3c.github.io/webauthn/#prf-extension" target="_blank" rel="noopener noreferrer" class="account-link">PRF extension</a>), so no one but you can decrypt it.'
+                    : 'Google authenticates your account. Your passkey separately encrypts synced data so the org cannot read it.'
                 }</p>
 
                 ${!passkeySupported ? `
@@ -775,8 +936,19 @@ class AccountModal {
                 ` : ''}
 
                 ${!showRecovery ? `
+                    <!-- OAuth sign in -->
+                    <button id="account-google-btn" class="w-full h-10 rounded-lg text-sm font-medium border border-border bg-background text-foreground hover:bg-accent transition-colors disabled:opacity-50 flex items-center justify-center gap-2 mb-2" type="button" ${isBusy ? 'disabled' : ''}>
+                        ${this.renderOAuthProviderIcon('google')}
+                        Continue with Google
+                    </button>
+                    <div class="flex items-center gap-3" style="margin:16px 0">
+                        <div class="flex-1 h-px bg-border"></div>
+                        <span class="text-xs text-muted-foreground">or use a passkey</span>
+                        <div class="flex-1 h-px bg-border"></div>
+                    </div>
+
                     <!-- Create account -->
-                    <button id="generate-account-btn" class="account-btn-create w-full h-10 rounded-lg text-sm font-medium text-white transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5" type="button" ${!passkeySupported ? 'disabled' : ''}>
+                    <button id="generate-account-btn" class="account-btn-create w-full h-10 rounded-lg text-sm font-medium text-white transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5" type="button" ${isBusy || !passkeySupported ? 'disabled' : ''}>
                         <svg class="w-3.5 h-3.5 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
                         </svg>
@@ -786,7 +958,7 @@ class AccountModal {
                     <!-- Divider -->
                     <div class="flex items-center gap-3" style="margin:16px 0">
                         <div class="flex-1 h-px bg-border"></div>
-                        <span class="text-xs text-muted-foreground">or log in</span>
+                        <span class="text-xs text-muted-foreground">passkey login</span>
                         <div class="flex-1 h-px bg-border"></div>
                     </div>
                 ` : ''}
@@ -848,6 +1020,78 @@ class AccountModal {
                     `}
                 </div>
 
+                ${state.error ? `<p class="text-xs text-destructive mt-3 text-center">${this.escapeHtml(state.error)}</p>` : ''}
+            </div>
+        `;
+    }
+
+    renderOAuthUnlockUI() {
+        const state = this.accountState || {};
+        const providerLabel = this.getOAuthProviderLabel(state.oauthProvider);
+        const recoveryValue = this.escapeHtml(this.recoveryInputValue || '');
+        const isLegacyMigration = state.oauthRecoveryRequired;
+        const isSetup = state.oauthSetupRequired;
+        const isLegacyPasskey = state.oauthLegacyPasskeyRequired;
+
+        return `
+            <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}">
+                ${this.renderHeader(
+                    isLegacyMigration
+                        ? 'Upgrade encrypted data'
+                        : isLegacyPasskey
+                            ? 'Unlock legacy encrypted data'
+                        : isSetup
+                            ? 'Encrypt your data'
+                            : 'Unlock encrypted data'
+                )}
+                <div class="flex items-center justify-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 mb-3">
+                    <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+                    ${providerLabel} sign in complete
+                </div>
+                ${isLegacyPasskey ? `
+                    <p class="account-number-text font-mono text-base tracking-widest text-foreground text-center whitespace-nowrap mb-3">
+                        ${this.escapeHtml(this.formatAccountId(state.accountId))}
+                    </p>
+                ` : ''}
+                <p class="text-xs text-muted-foreground text-center mb-4">
+                    ${isLegacyMigration
+                        ? 'Enter the recovery code from the previous account system once. OA will replace it with a PRF encryption passkey.'
+                        : isLegacyPasskey
+                            ? 'This account predates encryption-only passkeys. Use its existing passkey to unlock it; its account number and recovery path remain available.'
+                        : isSetup
+                            ? 'Create an encryption passkey. Its PRF output wraps your data key locally and never reaches the org.'
+                            : 'Use your encryption passkey. Its PRF output unlocks your data locally and never reaches the org.'
+                    }
+                </p>
+                ${isLegacyMigration ? `
+                    <div class="account-input-wrap flex items-center w-full h-10 rounded-lg mb-3 border border-border bg-muted/25">
+                        <input
+                            id="oauth-recovery-code-input"
+                            type="text"
+                            placeholder="Legacy 5-word recovery code"
+                            class="flex-1 h-full px-3 text-sm bg-transparent text-foreground placeholder:text-muted-foreground/40 focus:outline-none"
+                            value="${recoveryValue}"
+                            ${state.busy ? 'disabled' : ''}
+                        />
+                    </div>
+                    <button id="oauth-recovery-submit-btn" class="w-full h-9 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50" type="button" ${state.busy ? 'disabled' : ''}>
+                        ${state.busy ? 'Upgrading...' : 'Upgrade with passkey'}
+                    </button>
+                ` : `
+                    <button id="oauth-keyring-submit-btn" class="w-full h-9 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50" type="button" ${state.busy ? 'disabled' : ''}>
+                        ${state.busy
+                            ? isSetup ? 'Creating passkey...' : 'Unlocking...'
+                            : isSetup
+                                ? 'Create encryption passkey'
+                                : isLegacyPasskey
+                                    ? 'Use legacy passkey'
+                                    : 'Unlock with passkey'
+                        }
+                    </button>
+                `}
+                <button id="account-clear-btn" class="w-full text-xs text-muted-foreground hover:text-foreground mt-3" type="button">
+                    Cancel and log out
+                </button>
                 ${state.error ? `<p class="text-xs text-destructive mt-3 text-center">${this.escapeHtml(state.error)}</p>` : ''}
             </div>
         `;
@@ -927,6 +1171,16 @@ class AccountModal {
         const generateBtn = document.getElementById('generate-account-btn');
         if (generateBtn) generateBtn.onclick = () => this.handleGenerateAccountNumber();
 
+        const googleBtn = document.getElementById('account-google-btn');
+        if (googleBtn) {
+            googleBtn.onclick = () => this.handleOAuthAuthentication('google');
+        }
+
+        const connectGoogleBtn = document.getElementById('account-connect-google-btn');
+        if (connectGoogleBtn) {
+            connectGoogleBtn.onclick = () => this.handleConnectOAuth('google');
+        }
+
         const cancelCreationBtn = document.getElementById('cancel-creation-btn');
         if (cancelCreationBtn) cancelCreationBtn.onclick = () => this.handleCancelCreation();
 
@@ -973,6 +1227,27 @@ class AccountModal {
 
         const recoverySubmitBtn = document.getElementById('account-recovery-submit-btn');
         if (recoverySubmitBtn) recoverySubmitBtn.onclick = () => this.handleAccountRecoveryUnlock();
+
+        const oauthRecoveryInput = document.getElementById('oauth-recovery-code-input');
+        if (oauthRecoveryInput) {
+            oauthRecoveryInput.oninput = (e) => { this.recoveryInputValue = e.target.value; };
+            oauthRecoveryInput.onkeydown = (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    this.handleOAuthRecoveryUnlock();
+                }
+            };
+        }
+
+        const oauthRecoverySubmitBtn = document.getElementById('oauth-recovery-submit-btn');
+        if (oauthRecoverySubmitBtn) {
+            oauthRecoverySubmitBtn.onclick = () => this.handleOAuthRecoveryUnlock();
+        }
+
+        const oauthKeyringSubmitBtn = document.getElementById('oauth-keyring-submit-btn');
+        if (oauthKeyringSubmitBtn) {
+            oauthKeyringSubmitBtn.onclick = () => this.handleOAuthKeyringUnlock();
+        }
 
         const copyIdBtn = document.getElementById('account-copy-id-btn');
         if (copyIdBtn) copyIdBtn.onclick = () => this.handleAccountCopyId();
