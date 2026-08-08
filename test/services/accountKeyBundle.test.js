@@ -20,7 +20,7 @@ test('new SSO keyring setup adopts the existing device wallet', async () => {
     accountService.getSyncKeyMaterial = () => new Uint8Array(32).fill(9);
     accountService.getAccessToken = () => 'identity-token';
     accountService.state.accountId = '4444444444444444';
-    accountService.state.githubLinked = true;
+    accountService.state.googleLinked = true;
     accountService.localAccountContinuity = false;
     syncService.activateAccountScope = async (accountId, options) => {
         activation = { accountId, options };
@@ -56,7 +56,7 @@ test('new SSO keyring setup adopts the existing device wallet', async () => {
         syncService.sync = originals.sync;
         syncService.startPeriodicSync = originals.startPeriodicSync;
         accountService.state.accountId = null;
-        accountService.state.githubLinked = false;
+        accountService.state.googleLinked = false;
         accountService.localAccountContinuity = false;
     }
 });

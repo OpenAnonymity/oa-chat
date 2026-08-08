@@ -199,8 +199,8 @@ class AccountModal {
         }
     }
 
-    getOAuthProviderLabel(provider = this.oauthProvider) {
-        return provider === 'google' ? 'Google' : 'GitHub';
+    getOAuthProviderLabel() {
+        return 'Google';
     }
 
     async handleOAuthAuthentication(provider) {
@@ -700,19 +700,12 @@ class AccountModal {
     }
 
     renderOAuthProviderIcon(provider, className = 'w-4 h-4') {
-        if (provider === 'google') {
-            return `
-                <svg class="${className}" viewBox="0 0 24 24" aria-hidden="true">
-                    <path fill="#4285F4" d="M21.6 12.23c0-.71-.06-1.4-.19-2.07H12v3.91h5.38a4.6 4.6 0 01-2 3.02v2.54h3.24c1.9-1.75 2.98-4.33 2.98-7.4z"></path>
-                    <path fill="#34A853" d="M12 22c2.7 0 4.98-.9 6.63-2.37l-3.24-2.54c-.9.6-2.05.96-3.39.96-2.61 0-4.82-1.76-5.61-4.13H3.04v2.62A10 10 0 0012 22z"></path>
-                    <path fill="#FBBC05" d="M6.39 13.92A6.02 6.02 0 016.08 12c0-.67.11-1.32.31-1.92V7.46H3.04A10 10 0 002 12c0 1.61.39 3.14 1.04 4.54l3.35-2.62z"></path>
-                    <path fill="#EA4335" d="M12 5.95c1.47 0 2.79.51 3.83 1.5l2.87-2.88A9.63 9.63 0 0012 2a10 10 0 00-8.96 5.46l3.35 2.62C7.18 7.71 9.39 5.95 12 5.95z"></path>
-                </svg>
-            `;
-        }
         return `
-            <svg class="${className}" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                <path d="M12 .7a11.5 11.5 0 00-3.64 22.41c.58.1.79-.25.79-.56v-2.02c-3.22.7-3.9-1.37-3.9-1.37-.52-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.04 1.78 2.72 1.27 3.38.97.1-.75.4-1.27.74-1.56-2.57-.29-5.28-1.29-5.28-5.69 0-1.26.45-2.28 1.2-3.09-.12-.3-.52-1.47.11-3.05 0 0 .98-.31 3.16 1.18a10.98 10.98 0 015.75 0c2.18-1.49 3.16-1.18 3.16-1.18.63 1.58.23 2.75.11 3.05.75.81 1.2 1.83 1.2 3.09 0 4.41-2.72 5.4-5.3 5.69.42.36.79 1.07.79 2.16v3.03c0 .31.21.67.8.56A11.5 11.5 0 0012 .7z"></path>
+            <svg class="${className}" viewBox="0 0 24 24" aria-hidden="true">
+                <path fill="#4285F4" d="M21.6 12.23c0-.71-.06-1.4-.19-2.07H12v3.91h5.38a4.6 4.6 0 01-2 3.02v2.54h3.24c1.9-1.75 2.98-4.33 2.98-7.4z"></path>
+                <path fill="#34A853" d="M12 22c2.7 0 4.98-.9 6.63-2.37l-3.24-2.54c-.9.6-2.05.96-3.39.96-2.61 0-4.82-1.76-5.61-4.13H3.04v2.62A10 10 0 0012 22z"></path>
+                <path fill="#FBBC05" d="M6.39 13.92A6.02 6.02 0 016.08 12c0-.67.11-1.32.31-1.92V7.46H3.04A10 10 0 002 12c0 1.61.39 3.14 1.04 4.54l3.35-2.62z"></path>
+                <path fill="#EA4335" d="M12 5.95c1.47 0 2.79.51 3.83 1.5l2.87-2.88A9.63 9.63 0 0012 2a10 10 0 00-8.96 5.46l3.35 2.62C7.18 7.71 9.39 5.95 12 5.95z"></path>
             </svg>
         `;
     }
@@ -743,7 +736,7 @@ class AccountModal {
         const isBusy = state.busy;
         const action = state.action;
         const usesIdentityLogin =
-            (state.githubLinked || state.googleLinked) &&
+            state.googleLinked &&
             state.encryptionMode !== 'LEGACY_PASSKEY';
 
         // Recovery flow UI (verifying/adding passkey)
@@ -771,7 +764,6 @@ class AccountModal {
             state.sessionVerified &&
             (
                 state.status === 'unlocked' ||
-                action === 'github_link' ||
                 action === 'google_link'
             )
         ) {
@@ -840,16 +832,9 @@ class AccountModal {
 
                     <p class="text-[11px] text-muted-foreground text-center mb-3">Chat history sync coming soon</p>
 
-                    ${(state.githubLinked || state.googleLinked) ? `
+                    ${state.googleLinked ? `
                         <div class="grid gap-2 mb-3">
-                            ${state.githubLinked
-                                ? this.renderOAuthConnection('github', state, isBusy, action)
-                                : ''
-                            }
-                            ${state.googleLinked
-                                ? this.renderOAuthConnection('google', state, isBusy, action)
-                                : ''
-                            }
+                            ${this.renderOAuthConnection('google', state, isBusy, action)}
                         </div>
                     ` : ''}
 
@@ -941,7 +926,7 @@ class AccountModal {
 
                 <p class="text-xs text-muted-foreground" style="margin-bottom:20px">${showRecovery
                     ? 'Recover your account with the recovery code saved at account creation time.'
-                    : 'Google or GitHub authenticates your account. Your passkey separately encrypts synced data so the org cannot read it.'
+                    : 'Google authenticates your account. Your passkey separately encrypts synced data so the org cannot read it.'
                 }</p>
 
                 ${!passkeySupported ? `
@@ -956,11 +941,6 @@ class AccountModal {
                         ${this.renderOAuthProviderIcon('google')}
                         Continue with Google
                     </button>
-                    <button id="account-github-btn" class="w-full h-10 rounded-lg text-sm font-medium border border-border bg-foreground text-background hover:opacity-90 transition-opacity disabled:opacity-50 flex items-center justify-center gap-2" type="button" ${isBusy ? 'disabled' : ''}>
-                        ${this.renderOAuthProviderIcon('github')}
-                        Continue with GitHub
-                    </button>
-
                     <div class="flex items-center gap-3" style="margin:16px 0">
                         <div class="flex-1 h-px bg-border"></div>
                         <span class="text-xs text-muted-foreground">or use a passkey</span>
@@ -1190,16 +1170,6 @@ class AccountModal {
 
         const generateBtn = document.getElementById('generate-account-btn');
         if (generateBtn) generateBtn.onclick = () => this.handleGenerateAccountNumber();
-
-        const githubBtn = document.getElementById('account-github-btn');
-        if (githubBtn) {
-            githubBtn.onclick = () => this.handleOAuthAuthentication('github');
-        }
-
-        const connectGithubBtn = document.getElementById('account-connect-github-btn');
-        if (connectGithubBtn) {
-            connectGithubBtn.onclick = () => this.handleConnectOAuth('github');
-        }
 
         const googleBtn = document.getElementById('account-google-btn');
         if (googleBtn) {

@@ -44,7 +44,6 @@ const ACCOUNT_SYNC_ID_KEY = 'account-sync-id-key';
 const ACCOUNT_REFRESH_TOKEN_KEY = 'account-refresh-token';  // Electron-only: refresh token persistence
 const ACCOUNT_REQUEST_TIMEOUT_MS = 10000;
 const OAUTH_PROVIDERS = Object.freeze({
-    github: Object.freeze({ label: 'GitHub' }),
     google: Object.freeze({ label: 'Google' })
 });
 
@@ -53,7 +52,7 @@ export function inferPersistedEncryptionMode(settings) {
     if (settings?.credentialId) return 'LEGACY_PASSKEY';
     if (
         settings?.encryptionCredentialId &&
-        (settings?.githubLinked || settings?.googleLinked)
+        settings?.googleLinked
     ) {
         return 'PRF';
     }
@@ -562,7 +561,6 @@ class AccountService {
             error: null,
             status: 'none',
             sessionVerified: false,  // True only after /refresh confirms session is valid
-            githubLinked: false,
             googleLinked: false,
             oauthProvider: null,
             oauthEmail: null,
@@ -1031,7 +1029,6 @@ class AccountService {
                 settings.encryptionCredentialId || null;
             this.state.encryptionMode = inferPersistedEncryptionMode(settings);
             this.state.recoveryConfirmed = !!settings.recoveryConfirmed;
-            this.state.githubLinked = !!settings.githubLinked;
             this.state.googleLinked = !!settings.googleLinked;
             this.state.oauthProvider = settings.lastOAuthProvider || null;
             
@@ -1062,7 +1059,7 @@ class AccountService {
 
         if (
             this.state.accountId &&
-            (this.state.githubLinked || this.state.googleLinked)
+            this.state.googleLinked
         ) {
             this.restoreOAuthLockedSession().catch(() => {});
         }
@@ -1224,7 +1221,6 @@ class AccountService {
             encryptionCredentialId: this.state.encryptionCredentialId,
             encryptionMode: this.state.encryptionMode,
             recoveryConfirmed: this.state.recoveryConfirmed,
-            githubLinked: this.state.githubLinked,
             googleLinked: this.state.googleLinked,
             lastOAuthProvider: this.state.oauthProvider,
             updatedAt: Date.now()
@@ -1470,7 +1466,6 @@ class AccountService {
                 this.state.accountId,
                 {
                     identityBacked: !!(
-                        this.state.githubLinked ||
                         this.state.googleLinked ||
                         ['PRF', 'PRF_PENDING', 'LEGACY_SSO'].includes(
                             this.state.encryptionMode
@@ -1519,7 +1514,7 @@ class AccountService {
     }
 
     // =========================================================================
-    // OAuth Authentication (GitHub and Google)
+    // Google OAuth Authentication
     // =========================================================================
 
     async authenticateWithOAuth(provider, { link = false } = {}) {
@@ -1799,10 +1794,6 @@ class AccountService {
         }
     }
 
-    authenticateWithGithub(options = {}) {
-        return this.authenticateWithOAuth('github', options);
-    }
-
     authenticateWithGoogle(options = {}) {
         return this.authenticateWithOAuth('google', options);
     }
@@ -1885,10 +1876,6 @@ class AccountService {
     }
 
     completeOAuthAccountSetup() {
-        return this.setupOAuthKeyring();
-    }
-
-    completeGithubAccountSetup() {
         return this.setupOAuthKeyring();
     }
 
@@ -1978,18 +1965,10 @@ class AccountService {
         }
     }
 
-    unlockGithubWithRecoveryCode(recoveryCodeInput) {
-        return this.unlockOAuthWithRecoveryCode(recoveryCodeInput);
-    }
-
     cancelPendingOAuthAccount() {
         this.state.oauthSetupRequired = false;
         this.state.oauthKeyringRequired = false;
         this.state.oauthLegacyPasskeyRequired = false;
-    }
-
-    cancelPendingGithubAccount() {
-        this.cancelPendingOAuthAccount();
     }
 
     // =========================================================================
@@ -2419,10 +2398,10 @@ class AccountService {
         this.state.sessionVerified = false;
         this.state.oauthKeyringRequired =
             this.state.encryptionMode === 'PRF' &&
-            (this.state.githubLinked || this.state.googleLinked);
+            this.state.googleLinked;
         this.state.oauthLegacyPasskeyRequired =
             this.state.encryptionMode === 'LEGACY_PASSKEY' &&
-            (this.state.githubLinked || this.state.googleLinked);
+            this.state.googleLinked;
         syncService.clearCredentials();
         this.updateStatus();
         this.notify();
@@ -2493,7 +2472,6 @@ class AccountService {
         this.state.recoveryConfirmed = false;
         this.state.recoveryCode = null;
         this.state.recoveryRequired = false;
-        this.state.githubLinked = false;
         this.state.googleLinked = false;
         this.state.oauthProvider = null;
         this.state.oauthEmail = null;
@@ -2517,7 +2495,7 @@ class AccountService {
         if (this.getSyncKeyMaterial()) return;
         
         if (!this.state.accountId || !this.state.passkeySupported || this.state.busy) return;
-        if (this.state.githubLinked || this.state.googleLinked) return;
+        if (this.state.googleLinked) return;
         if (typeof PublicKeyCredential?.isConditionalMediationAvailable !== 'function') return;
         const supportsConditional = await PublicKeyCredential.isConditionalMediationAvailable();
         if (!supportsConditional) return;

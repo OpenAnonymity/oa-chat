@@ -1,6 +1,6 @@
 # Encryption Passkeys
 
-Google and GitHub are account authenticators. They authorize access to an OA
+Google is the SSO account authenticator. It authorizes access to an OA
 account's opaque sync records, but they are never used as encryption keys. New
 SSO accounts use a separate WebAuthn PRF passkey to unlock encryption locally.
 
@@ -116,7 +116,7 @@ identity-authenticated sync with redemption timing or wallet-size changes.
 Deferring redemption-triggered sync reduces that signal but does not
 cryptographically eliminate it.
 
-GitHub or Google cannot be attached to an existing legacy account. OAuth login
+Google cannot be attached to an existing legacy account. OAuth login
 creates or resolves a dedicated identity account partition; `link` mode is
 rejected by both client and server. This avoids silently changing the identity
 and recovery semantics of an existing account namespace.

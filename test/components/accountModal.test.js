@@ -3,6 +3,46 @@ import test from 'node:test';
 
 import AccountModal from '../../chat/components/AccountModal.js';
 
+test('account sign in offers Google as the only SSO provider', () => {
+    const originalDocument = globalThis.document;
+    globalThis.document = {
+        getElementById() {
+            return null;
+        }
+    };
+    const state = {
+        accountId: null,
+        passkeySupported: true,
+        busy: false,
+        action: null,
+        error: null
+    };
+    const modal = new AccountModal({
+        services: {
+            account: {
+                getState: () => state,
+                subscribe: () => () => {}
+            },
+            sync: {
+                getStatus: () => ({}),
+                subscribe: () => () => {}
+            }
+        }
+    });
+    modal.accountState = state;
+    modal.escapeHtml = value => String(value ?? '');
+
+    try {
+        const html = modal.renderAccountUI();
+        assert.match(html, /Continue with Google/);
+        assert.doesNotMatch(html, /Continue with GitHub/);
+        assert.doesNotMatch(html, /account-github-btn/);
+    } finally {
+        modal.destroy();
+        globalThis.document = originalDocument;
+    }
+});
+
 test('legacy linked account uses its existing passkey unlock path', async () => {
     const originalDocument = globalThis.document;
     globalThis.document = {
@@ -12,7 +52,7 @@ test('legacy linked account uses its existing passkey unlock path', async () => 
     };
     const state = {
         accountId: '1234567890123456',
-        oauthProvider: 'github',
+        oauthProvider: 'google',
         oauthLegacyPasskeyRequired: true
     };
     let unlockAccountId = null;
@@ -58,8 +98,7 @@ test('identity account describes ticket and preference sync', () => {
     };
     const state = {
         accountId: '1234567890123456',
-        githubLinked: true,
-        googleLinked: false,
+        googleLinked: true,
         encryptionMode: 'PRF',
         sessionVerified: true,
         status: 'unlocked',
@@ -105,9 +144,8 @@ test('missing legacy SSO email returns to provider sign in before passkey setup'
     };
     const state = {
         accountId: '1234567890123456',
-        githubLinked: true,
-        googleLinked: false,
-        oauthProvider: 'github',
+        googleLinked: true,
+        oauthProvider: 'google',
         oauthEmail: null,
         encryptionMode: 'PRF_PENDING',
         sessionVerified: false,
@@ -118,7 +156,7 @@ test('missing legacy SSO email returns to provider sign in before passkey setup'
         passkeySupported: true,
         busy: false,
         action: null,
-        error: 'Continue with GitHub again so OA can label your encryption passkey'
+        error: 'Continue with Google again so OA can label your encryption passkey'
     };
     const modal = new AccountModal({
         services: {
@@ -137,9 +175,9 @@ test('missing legacy SSO email returns to provider sign in before passkey setup'
 
     try {
         const html = modal.renderAccountUI();
-        assert.match(html, /Continue with GitHub/);
+        assert.match(html, /Continue with Google/);
         assert.match(html, /label your encryption passkey/);
-        assert.doesNotMatch(html, /GitHub sign in complete/);
+        assert.doesNotMatch(html, /Google sign in complete/);
         assert.doesNotMatch(html, /Create encryption passkey/);
     } finally {
         modal.destroy();

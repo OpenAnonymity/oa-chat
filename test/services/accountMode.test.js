@@ -1,16 +1,23 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import {
+import accountService, {
     inferPersistedEncryptionMode,
     oauthSessionNeedsEmailRefresh
 } from '../../chat/services/accountService.js';
+
+test('removed SSO providers are rejected by the account service', async () => {
+    await assert.rejects(
+        accountService.authenticateWithOAuth('github'),
+        /Unsupported sign-in provider/
+    );
+});
 
 test('old linked passkey settings retain legacy passkey provenance', () => {
     assert.equal(inferPersistedEncryptionMode({
         accountId: '1234567890123456',
         credentialId: 'legacy-authentication-credential',
-        githubLinked: true
+        googleLinked: true
     }), 'LEGACY_PASSKEY');
 });
 
