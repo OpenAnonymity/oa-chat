@@ -66,7 +66,11 @@ function createAccessHarness(overrides = {}) {
         ticketUsed,
         inferenceService,
         ticketClient: {
-            getTicketCount: () => overrides.ticketCount ?? 5
+            getTicketCount: () => (
+                typeof overrides.ticketCount === 'function'
+                    ? overrides.ticketCount()
+                    : overrides.ticketCount ?? 5
+            )
         },
         chatDB: {
             saveSession: async (targetSession) => {
@@ -237,6 +241,67 @@ test('acquireSessionAccess retries spent tickets before succeeding', async () =>
     assert.equal(token, 'fresh-key');
     assert.equal(harness.requested.length, 2);
     assert.deepEqual(harness.ticketUsed, [1]);
+});
+
+test('acquireSessionAccess retries after an invalidated generation is removed', async () => {
+    let remainingTickets = 4;
+    const harness = createAccessHarness({
+        ticketCount: () => remainingTickets,
+        requestAccess: async (targetSession, request, attempt) => {
+            if (attempt === 1) {
+                remainingTickets = 2;
+                const error = new Error('old generation');
+                error.code = 'TICKET_KEY_INVALIDATED';
+                error.invalidatedTicketsRemoved = 2;
+                throw error;
+            }
+            return { key: 'fresh-key', stationId: 'station-b' };
+        }
+    });
+
+    const token = await acquireSessionAccess({
+        session: harness.session,
+        models: [{ id: 'model-a', name: 'Model A' }],
+        reasoningEnabled: false,
+        inferenceService: harness.inferenceService,
+        ticketClient: harness.ticketClient,
+        chatDB: harness.chatDB,
+        getTicketCost: harness.getTicketCost,
+        getFallbackModelEntry: harness.getFallbackModelEntry,
+        ...harness.callbacks
+    });
+
+    assert.equal(token, 'fresh-key');
+    assert.equal(harness.requested.length, 2);
+});
+
+test('acquireSessionAccess explains when rotation removes too many tickets', async () => {
+    let remainingTickets = 2;
+    const harness = createAccessHarness({
+        ticketCount: () => remainingTickets,
+        getTicketCost: () => 2,
+        requestAccess: async () => {
+            remainingTickets = 0;
+            const error = new Error('old generation');
+            error.code = 'TICKET_KEY_INVALIDATED';
+            throw error;
+        }
+    });
+
+    await assert.rejects(
+        acquireSessionAccess({
+            session: harness.session,
+            models: [{ id: 'model-a', name: 'Model A' }],
+            reasoningEnabled: false,
+            inferenceService: harness.inferenceService,
+            ticketClient: harness.ticketClient,
+            chatDB: harness.chatDB,
+            getTicketCost: harness.getTicketCost,
+            getFallbackModelEntry: harness.getFallbackModelEntry,
+            ...harness.callbacks
+        }),
+        /rotated its ticket signing key.*Redeem a new invite code/
+    );
 });
 
 test('acquireSessionAccess clears and saves rejected verifier access', async () => {

@@ -10,8 +10,16 @@ import { PREF_KEYS } from './preferencesStore.js';
 import { withAccountDataLock } from './accountDataLock.js';
 import {
     createTicketTombstones,
+    filterTicketsByTombstones,
     mergeTicketTombstones
 } from './ticketTombstones.js';
+import {
+    filterTicketsByInvalidatedKeyIds,
+    getTicketKeyId,
+    normalizeInvalidatedTicketKeyIds,
+    normalizeTicketKeyId,
+    partitionTicketsByKeyId
+} from '../domain/ticketKeys.js';
 
 const STORAGE_KEY = 'inference_tickets';
 const ARCHIVE_KEY = 'inference_tickets_archive';
@@ -19,9 +27,10 @@ const DB_ACTIVE_KEY = 'tickets-active';
 const DB_ARCHIVE_KEY = 'tickets-archive';
 const DB_TOMBSTONES_KEY = 'tickets-tombstones';
 const LOCK_NAME = 'oa-inference-tickets';
+const DB_INVALIDATED_KEYS_KEY = 'tickets-invalidated-key-ids';
 const TICKETS_UPDATED_EVENT = 'tickets-updated';
 
-class TicketStore {
+export class TicketStore {
     constructor() {
         this.lockQueue = Promise.resolve();
         this.tickets = [];
@@ -80,7 +89,11 @@ class TicketStore {
                     if (payload.event === 'account_scope_changed') {
                         return this.handleAccountScopeChange(payload.data);
                     }
-                    if (payload.event === 'blob_received' && payload.data?.type === 'tickets') {
+                    if (payload.event === 'blob_received' && (
+                        payload.data?.type === 'tickets' ||
+                        payload.data?.type === 'ticket-invalidations' ||
+                        payload.data?.type === 'ticket-invalidation'
+                    )) {
                         return this.loadFromDatabase({
                             emitUpdate: true,
                             skipBroadcast: true
@@ -210,7 +223,8 @@ class TicketStore {
             if (!ticket || !ticket.finalized_ticket) return;
             const status = typeof ticket.status === 'string' ? ticket.status.toLowerCase() : '';
             const isArchived = status === 'archived' || status === 'consumed' || status === 'used' ||
-                ticket.used === true || !!ticket.consumed_at;
+                status === 'invalidated' || ticket.used === true || !!ticket.consumed_at ||
+                !!ticket.invalidated_at;
 
             if (isArchived) {
                 archivedTickets.push(ticket);
@@ -282,6 +296,11 @@ class TicketStore {
             }
 
             const cleaned = { ...ticket };
+            const keyId = getTicketKeyId(cleaned);
+            if (keyId && cleaned.ticket_key_id !== keyId) {
+                cleaned.ticket_key_id = keyId;
+                changed = true;
+            }
             if ('used' in cleaned) {
                 delete cleaned.used;
                 changed = true;
@@ -318,6 +337,16 @@ class TicketStore {
                 return;
             }
 
+            const status = typeof cleaned.status === 'string'
+                ? cleaned.status.toLowerCase()
+                : '';
+            if (!allowUsed && (status === 'invalidated' || !!cleaned.invalidated_at)) {
+                cleaned.status = 'invalidated';
+                archived.push(cleaned);
+                changed = true;
+                return;
+            }
+
             normalized.push(cleaned);
         });
 
@@ -340,24 +369,36 @@ class TicketStore {
 
     async readFromDatabase() {
         if (typeof chatDB === 'undefined' || !chatDB.db) {
-            return { active: [], archived: [], tombstones: [] };
+            return {
+                active: [],
+                archived: [],
+                tombstones: [],
+                invalidatedKeyIds: []
+            };
         }
 
         try {
-            const [active, archived, tombstones] = await Promise.all([
+            const [active, archived, tombstones, invalidatedKeyIds] = await Promise.all([
                 chatDB.getSetting(DB_ACTIVE_KEY),
                 chatDB.getSetting(DB_ARCHIVE_KEY),
-                chatDB.getSetting(DB_TOMBSTONES_KEY)
+                chatDB.getSetting(DB_TOMBSTONES_KEY),
+                chatDB.getSetting(DB_INVALIDATED_KEYS_KEY)
             ]);
 
             return {
                 active: Array.isArray(active) ? active : [],
                 archived: Array.isArray(archived) ? archived : [],
-                tombstones: Array.isArray(tombstones) ? tombstones : []
+                tombstones: Array.isArray(tombstones) ? tombstones : [],
+                invalidatedKeyIds: normalizeInvalidatedTicketKeyIds(invalidatedKeyIds)
             };
         } catch (error) {
             console.warn('Failed to load tickets from IndexedDB:', error);
-            return { active: [], archived: [], tombstones: [] };
+            return {
+                active: [],
+                archived: [],
+                tombstones: [],
+                invalidatedKeyIds: []
+            };
         }
     }
 
@@ -376,6 +417,12 @@ class TicketStore {
                             value: options.tombstones
                         });
                     }
+                    if (Array.isArray(options.invalidatedKeyIds)) {
+                        entries.push({
+                            key: DB_INVALIDATED_KEYS_KEY,
+                            value: normalizeInvalidatedTicketKeyIds(options.invalidatedKeyIds)
+                        });
+                    }
                     await chatDB.saveSettings(entries);
                 } else {
                     await chatDB.saveSetting(DB_ACTIVE_KEY, activeTickets);
@@ -384,6 +431,12 @@ class TicketStore {
                         await chatDB.saveSetting(
                             DB_TOMBSTONES_KEY,
                             options.tombstones
+                        );
+                    }
+                    if (Array.isArray(options.invalidatedKeyIds)) {
+                        await chatDB.saveSetting(
+                            DB_INVALIDATED_KEYS_KEY,
+                            normalizeInvalidatedTicketKeyIds(options.invalidatedKeyIds)
                         );
                     }
                 }
@@ -424,22 +477,45 @@ class TicketStore {
             }
             return;
         }
-        const { active, archived } = await this.readFromDatabase();
+        const {
+            active,
+            archived,
+            tombstones,
+            invalidatedKeyIds
+        } = await this.readFromDatabase();
         const { tickets: normalizedActive, archived: reclassified, changed } = this.normalizeTickets(active);
         const { tickets: normalizedArchive, changed: archiveChanged } = this.normalizeTickets(archived, { allowUsed: true });
-        const mergedArchive = this.mergeTickets(normalizedArchive, reclassified);
+        const generationFilteredActive = filterTicketsByInvalidatedKeyIds(
+            normalizedActive,
+            invalidatedKeyIds
+        );
+        const generationFilteredArchive = filterTicketsByInvalidatedKeyIds(
+            this.mergeTickets(normalizedArchive, reclassified),
+            invalidatedKeyIds
+        );
+        const [filteredActive, mergedArchive] = await Promise.all([
+            filterTicketsByTombstones(generationFilteredActive, tombstones),
+            filterTicketsByTombstones(generationFilteredArchive, tombstones)
+        ]);
+        const invalidatedTicketsRemoved = Math.max(
+            0,
+            active.length + archived.length - filteredActive.length - mergedArchive.length
+        );
 
-        if (changed || archiveChanged || reclassified.length > 0) {
-            await this.persistTickets(normalizedActive, mergedArchive, {
+        if (changed || archiveChanged || reclassified.length > 0 || invalidatedTicketsRemoved > 0) {
+            await this.persistTickets(filteredActive, mergedArchive, {
                 skipBroadcast: options.skipBroadcast,
-                emitUpdate: options.emitUpdate
+                emitUpdate: options.emitUpdate,
+                skipSync: options.skipSync ?? options.skipBroadcast,
+                tombstones,
+                invalidatedKeyIds
             });
             return;
         }
 
-        this.tickets = normalizedActive;
-        this.archive = normalizedArchive;
-        await this.markHadTicketsBeforeIfNeeded(normalizedActive.length, normalizedArchive.length);
+        this.tickets = filteredActive;
+        this.archive = mergedArchive;
+        await this.markHadTicketsBeforeIfNeeded(filteredActive.length, mergedArchive.length);
         if (options.emitUpdate !== false) {
             this.emitUpdate();
         }
@@ -472,8 +548,24 @@ class TicketStore {
         const mergedArchive = this.mergeTickets(normalizedArchive, reclassified);
 
         const existing = await this.readFromDatabase();
-        const combinedActive = this.mergeTickets(existing.active, normalizedActive);
-        const combinedArchive = this.mergeTickets(existing.archived, mergedArchive);
+        const generationFilteredActive = filterTicketsByInvalidatedKeyIds(
+            this.mergeTickets(existing.active, normalizedActive),
+            existing.invalidatedKeyIds
+        );
+        const generationFilteredArchive = filterTicketsByInvalidatedKeyIds(
+            this.mergeTickets(existing.archived, mergedArchive),
+            existing.invalidatedKeyIds
+        );
+        const [combinedActive, combinedArchive] = await Promise.all([
+            filterTicketsByTombstones(
+                generationFilteredActive,
+                existing.tombstones
+            ),
+            filterTicketsByTombstones(
+                generationFilteredArchive,
+                existing.tombstones
+            )
+        ]);
         const archivedIds = new Set(combinedArchive.map(ticket => ticket.finalized_ticket));
         const filteredActive = combinedActive.filter(ticket => !archivedIds.has(ticket.finalized_ticket));
 
@@ -520,9 +612,38 @@ class TicketStore {
     async addTickets(newTickets) {
         return this.withLock(async () => {
             await this.ensureDbReady();
-            const { active, archived } = await this.readFromDatabase();
+            const stored = await this.readFromDatabase();
+            const invalidatedKeyIds = normalizeInvalidatedTicketKeyIds(
+                stored.invalidatedKeyIds
+            );
+            // Reject reintroduced ticket generations during local additions.
+            const generationFilteredActive = filterTicketsByInvalidatedKeyIds(
+                stored.active,
+                invalidatedKeyIds
+            );
+            const generationFilteredArchive = filterTicketsByInvalidatedKeyIds(
+                stored.archived,
+                invalidatedKeyIds
+            );
+            const [active, archived] = await Promise.all([
+                filterTicketsByTombstones(
+                    generationFilteredActive,
+                    stored.tombstones
+                ),
+                filterTicketsByTombstones(
+                    generationFilteredArchive,
+                    stored.tombstones
+                )
+            ]);
             const { tickets } = this.normalizeTickets(newTickets);
-            const combined = this.mergeTickets(active, tickets);
+            const generationFilteredCombined = filterTicketsByInvalidatedKeyIds(
+                this.mergeTickets(active, tickets),
+                invalidatedKeyIds
+            );
+            const combined = await filterTicketsByTombstones(
+                generationFilteredCombined,
+                stored.tombstones
+            );
             await this.persistTickets(combined, archived);
             return combined.length;
         });
@@ -570,11 +691,20 @@ class TicketStore {
             const {
                 active,
                 archived,
-                tombstones
+                tombstones,
+                invalidatedKeyIds
             } = await this.readFromDatabase();
             const { tickets: normalized } = this.normalizeTickets(newActiveTickets);
+            const generationFiltered = filterTicketsByInvalidatedKeyIds(
+                normalized,
+                invalidatedKeyIds
+            );
+            const filtered = await filterTicketsByTombstones(
+                generationFiltered,
+                tombstones
+            );
             const retainedIds = new Set(
-                normalized.map(ticket => ticket.finalized_ticket)
+                filtered.map(ticket => ticket.finalized_ticket)
             );
             const removed = active.filter(
                 ticket => !retainedIds.has(ticket.finalized_ticket)
@@ -583,10 +713,11 @@ class TicketStore {
                 tombstones,
                 await createTicketTombstones(removed)
             );
-            await this.persistTickets(normalized, archived, {
-                tombstones: nextTombstones
+            await this.persistTickets(filtered, archived, {
+                tombstones: nextTombstones,
+                invalidatedKeyIds
             });
-            return normalized.length;
+            return filtered.length;
         });
     }
 
@@ -600,8 +731,21 @@ class TicketStore {
                     consumed_at: ticket.consumed_at || timestamp
                 }));
 
-            const { active, archived } = await this.readFromDatabase();
-            const merged = this.mergeTickets(archived, normalized);
+            const stored = await this.readFromDatabase();
+            const active = await filterTicketsByTombstones(
+                filterTicketsByInvalidatedKeyIds(
+                    stored.active,
+                    stored.invalidatedKeyIds
+                ),
+                stored.tombstones
+            );
+            const merged = await filterTicketsByTombstones(
+                filterTicketsByInvalidatedKeyIds(
+                    this.mergeTickets(stored.archived, normalized),
+                    stored.invalidatedKeyIds
+                ),
+                stored.tombstones
+            );
             await this.persistTickets(active, merged);
             return merged.length;
         });
@@ -617,7 +761,30 @@ class TicketStore {
 
         return this.withLock(async () => {
             await this.ensureDbReady();
-            const { active, archived } = await this.readFromDatabase();
+            const stored = await this.readFromDatabase();
+            const invalidatedKeyIds = normalizeInvalidatedTicketKeyIds(
+                stored.invalidatedKeyIds
+            );
+            // Apply tombstones again at the final selection boundary as
+            // defense in depth against direct or legacy writes.
+            const generationFilteredActive = filterTicketsByInvalidatedKeyIds(
+                stored.active,
+                invalidatedKeyIds
+            );
+            const generationFilteredArchive = filterTicketsByInvalidatedKeyIds(
+                stored.archived,
+                invalidatedKeyIds
+            );
+            const [active, archived] = await Promise.all([
+                filterTicketsByTombstones(
+                    generationFilteredActive,
+                    stored.tombstones
+                ),
+                filterTicketsByTombstones(
+                    generationFilteredArchive,
+                    stored.tombstones
+                )
+            ]);
 
             if (count <= 0) {
                 const error = new Error('Ticket count must be greater than zero.');
@@ -665,7 +832,51 @@ class TicketStore {
                     result
                 };
             } catch (error) {
-                if (error && error.consumeTickets) {
+                if (error?.code === 'TICKET_KEY_INVALIDATED') {
+                    const invalidatedKeyId = normalizeTicketKeyId(error.invalidatedKeyId);
+                    const activePartition = partitionTicketsByKeyId(active, invalidatedKeyId);
+                    const archivedPartition = partitionTicketsByKeyId(archived, invalidatedKeyId);
+                    const invalidatedActiveTickets = activePartition.matching;
+                    const selectedInvalidated = invalidatedActiveTickets.length > 0
+                        ? invalidatedActiveTickets
+                        : selected.filter(ticket => {
+                            const ticketKeyId = getTicketKeyId(ticket);
+                            return !invalidatedKeyId || ticketKeyId === invalidatedKeyId;
+                        });
+                    const invalidatedTokens = new Set(
+                        selectedInvalidated.map(ticket => ticket.finalized_ticket)
+                    );
+                    const updatedActive = invalidatedActiveTickets.length > 0
+                        ? activePartition.remaining
+                        : active.filter(
+                            ticket => !invalidatedTokens.has(ticket.finalized_ticket)
+                        );
+                    const updatedArchive = invalidatedKeyId
+                        ? archivedPartition.remaining
+                        : archived.filter(
+                            ticket => !invalidatedTokens.has(ticket.finalized_ticket)
+                        );
+                    const removedCount = (active.length - updatedActive.length)
+                        + (archived.length - updatedArchive.length);
+                    const currentInvalidatedKeyIds = normalizeInvalidatedTicketKeyIds(
+                        invalidatedKeyIds
+                    );
+                    const nextInvalidatedKeyIds = normalizeInvalidatedTicketKeyIds([
+                        ...currentInvalidatedKeyIds,
+                        invalidatedKeyId
+                    ]);
+                    if (
+                        removedCount > 0 ||
+                        nextInvalidatedKeyIds.length > currentInvalidatedKeyIds.length
+                    ) {
+                        await this.persistTickets(updatedActive, updatedArchive, {
+                            invalidatedKeyIds: nextInvalidatedKeyIds,
+                            skipSync: syncService.shouldDeferRedemptionSync()
+                        });
+                    }
+                    error.invalidatedTicketsRemoved = removedCount;
+                    error.remainingTickets = updatedActive.length;
+                } else if (error && error.consumeTickets) {
                     const usedTokens = Array.isArray(error.usedTokens)
                         ? error.usedTokens
                         : Array.isArray(error.usedTickets)
@@ -716,10 +927,31 @@ class TicketStore {
             const { tickets: normalizedActive } = this.normalizeTickets(activeTickets);
             const { tickets: normalizedArchived } = this.normalizeTickets(archivedTickets, { allowUsed: true });
 
-            const { active, archived } = await this.readFromDatabase();
+            const {
+                active,
+                archived,
+                tombstones,
+                invalidatedKeyIds
+            } = await this.readFromDatabase();
 
-            const mergedActive = this.mergeTickets(active, normalizedActive);
-            const mergedArchived = this.mergeTickets(archived, normalizedArchived);
+            const generationFilteredActive = filterTicketsByInvalidatedKeyIds(
+                this.mergeTickets(active, normalizedActive),
+                invalidatedKeyIds
+            );
+            const generationFilteredArchived = filterTicketsByInvalidatedKeyIds(
+                this.mergeTickets(archived, normalizedArchived),
+                invalidatedKeyIds
+            );
+            const [mergedActive, mergedArchived] = await Promise.all([
+                filterTicketsByTombstones(
+                    generationFilteredActive,
+                    tombstones
+                ),
+                filterTicketsByTombstones(
+                    generationFilteredArchived,
+                    tombstones
+                )
+            ]);
             const archivedIds = new Set(mergedArchived.map(ticket => ticket.finalized_ticket));
             const filteredActive = mergedActive.filter(ticket => !archivedIds.has(ticket.finalized_ticket));
 

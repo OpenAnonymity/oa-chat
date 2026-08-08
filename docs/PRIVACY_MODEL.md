@@ -224,6 +224,31 @@ Future: automated transparency log for public key consistency, similar to
 [Certificate Transparency](https://certificate.transparency.dev/) for TLS
 certificates.
 
+### Global key rotation and local invalidation
+
+An operator may deliberately replace the one global blind-signature key. This
+is different from serving a per-user key:
+
+- All clients observing a generation receive the same public key and global
+  `token_key_id`.
+- Rotation makes every ticket under prior generations unusable immediately.
+- An old-ticket response includes only that global invalidated key ID. The
+  client uses the ID embedded in each finalized RFC 9578 token to delete all
+  locally held tickets from the same generation.
+- Cross-device sync retains one encrypted, HMAC-addressed record per
+  invalidated generation so concurrent device writes cannot lose tombstones
+  or restore deleted old tickets. Each tombstone is only that same global
+  public-key fingerprint; no ticket bytes or identity link is added.
+- The org dashboard may show a generation's aggregate issued/redemption counts
+  and which invitation records issued blinded requests under it. It stores no
+  finalized tickets or mapping from an invitation's blinded requests to later
+  redemption.
+
+The key ID therefore enables revocation grouping without adding a user
+identifier. Blind signatures continue to prevent issuance-to-redemption
+linkage. Plaintext grouping remains client-side; cross-device tombstones leave
+a client only inside the existing end-to-end encrypted sync envelope.
+
 ## Zero-Trust Scope: OA Infrastructure
 
 For the identity-free account flow, "Zero trust" means users do not need to

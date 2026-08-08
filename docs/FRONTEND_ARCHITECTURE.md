@@ -71,8 +71,17 @@ flowchart TB
     model-picker/controller work.
 - 2026-05-06: Access acquisition moved behind `chat/application/accessController.js`.
   - The controller owns ticket-count checks, ticket redemption retry on spent
-    tickets, verifier submit-key proof persistence, verifier rejection handling,
+    tickets or after an invalidated key generation is removed, verifier
+    submit-key proof persistence, verifier rejection handling,
     `apiKeyShared` clearing, and final session persistence.
+  - Ticket sync carries encrypted invalidated-generation fingerprints as
+    append-only per-generation tombstones, with a legacy aggregate blob for
+    migration. Distinct HMAC-derived blob IDs make concurrent invalidations
+    merge-safe over the org's LWW store. Sync and local ticket mutations use
+    the same cross-tab ticket-storage lock, and sync schema v2 forces a one-time
+    full pull so upgraded clients rediscover previously unknown records.
+    Active/archive merges and imports filter against those fingerprints so an
+    offline device cannot resurrect rotated-out tickets.
   - `ChatApp` supplies UI/logging callbacks, so right-panel updates and pending
     phase changes stay in the frontend layer while ticketing/verifier behavior is
     covered by mocked unit tests.

@@ -21,6 +21,11 @@ import {
     filterTicketsByTombstones,
     mergeTicketTombstones
 } from './ticketTombstones.js';
+import {
+    filterTicketsByInvalidatedKeyIds,
+    normalizeInvalidatedTicketKeyIds,
+    normalizeTicketKeyId
+} from '../domain/ticketKeys.js';
 
 const SYNC_SALT = 'oa-sync-v1';
 const HMAC_SALT = 'oa-sync-id-v1';
@@ -31,11 +36,14 @@ const ACCOUNT_SETTINGS_KEY = 'account-settings';
 
 // Settings keys for sync metadata (local only)
 const SYNC_LAST_TIME_KEY = 'sync-lastSyncTime';
+const SYNC_SCHEMA_VERSION_KEY = 'sync-schema-version';
+const CURRENT_SYNC_SCHEMA_VERSION = 2;
 
 // Settings keys for syncable data
 const TICKETS_ACTIVE_KEY = 'tickets-active';
 const TICKETS_ARCHIVE_KEY = 'tickets-archive';
 const TICKETS_TOMBSTONES_KEY = 'tickets-tombstones';
+const TICKETS_INVALIDATED_KEYS_KEY = 'tickets-invalidated-key-ids';
 
 // Preference keys to sync
 const SYNCABLE_PREF_KEYS = [
@@ -52,8 +60,11 @@ const LOGICAL_IDS = {
     TICKETS_ACTIVE: 'tickets-active',
     TICKETS_ARCHIVE: 'tickets-archive',
     TICKETS_TOMBSTONES: 'tickets-tombstones',
+    TICKETS_INVALIDATED_KEYS: 'tickets-invalidated-key-ids',
+    TICKET_INVALIDATION_ITEM: 'ticket-invalidation-item',
     // Preferences use their key as logical ID
 };
+const MAX_SYNC_BLOBS_PER_REQUEST = 100;
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -168,7 +179,7 @@ async function decryptBlob(keyMaterial, logicalId, ciphertext, iv) {
     return JSON.parse(textDecoder.decode(plaintext));
 }
 
-class SyncService {
+export class SyncService {
     constructor() {
         this.syncInProgress = false;
         this.listeners = new Set();
@@ -243,7 +254,9 @@ class SyncService {
             TICKETS_ACTIVE_KEY,
             TICKETS_ARCHIVE_KEY,
             TICKETS_TOMBSTONES_KEY,
+            TICKETS_INVALIDATED_KEYS_KEY,
             SYNC_LAST_TIME_KEY,
+            SYNC_SCHEMA_VERSION_KEY,
             ...SYNCABLE_PREF_KEYS,
             ...SYNCABLE_PREF_KEYS.map(key => this.getPreferenceTimestampKey(key))
         ];
@@ -300,9 +313,9 @@ class SyncService {
     }
 
     async assertAccountDataAccess() {
-        const persistedAccountId = await chatDB.getSetting(
-            SYNC_ACCOUNT_SCOPE_KEY
-        );
+        const persistedAccountId = (
+            await chatDB.getSetting(SYNC_ACCOUNT_SCOPE_KEY)
+        ) || null;
         const localAccountId = this.localScopeAccountId;
         if (persistedAccountId !== localAccountId) {
             throw new Error('Account data scope changed in another tab');
@@ -486,7 +499,10 @@ class SyncService {
      * Build the mapping of opaque IDs to logical IDs.
      * This lets us identify what a blob is when we pull it.
      */
-    async _buildIdMapping(keyMaterial, credentialGeneration) {
+    async _buildIdMapping(
+        keyMaterial,
+        credentialGeneration = this.credentialGeneration
+    ) {
         if (
             this.idMapping &&
             this.idMappingGeneration === credentialGeneration
@@ -502,11 +518,19 @@ class SyncService {
             keyMaterial,
             LOGICAL_IDS.TICKETS_TOMBSTONES
         );
+        const invalidatedKeysId = await deriveOpaqueBlobId(
+            keyMaterial,
+            LOGICAL_IDS.TICKETS_INVALIDATED_KEYS
+        );
         mapping.set(ticketsActiveId, LOGICAL_IDS.TICKETS_ACTIVE);
         mapping.set(ticketsArchiveId, LOGICAL_IDS.TICKETS_ARCHIVE);
         mapping.set(
             ticketsTombstonesId,
             LOGICAL_IDS.TICKETS_TOMBSTONES
+        );
+        mapping.set(
+            invalidatedKeysId,
+            LOGICAL_IDS.TICKETS_INVALIDATED_KEYS
         );
 
         // Preferences
@@ -806,9 +830,22 @@ class SyncService {
         }
     }
 
-    async _pull(masterKey, accessToken, credentialGeneration, idMapping) {
+    async _pull(
+        masterKey,
+        accessToken,
+        credentialGeneration = this.credentialGeneration,
+        idMapping = this.idMapping || new Map()
+    ) {
         this.assertCredentialsCurrent(credentialGeneration);
-        const lastSync = await chatDB.getSetting(SYNC_LAST_TIME_KEY) || 0;
+        const localSchemaVersion = Number(
+            await chatDB.getSetting(SYNC_SCHEMA_VERSION_KEY)
+        ) || 0;
+        // Version 2 introduced dynamically addressed per-generation
+        // invalidation records. Each account performs one full pull after
+        // upgrade so blobs skipped as unknown by an older client are found.
+        const lastSync = localSchemaVersion < CURRENT_SYNC_SCHEMA_VERSION
+            ? 0
+            : await chatDB.getSetting(SYNC_LAST_TIME_KEY) || 0;
         this.assertCredentialsCurrent(credentialGeneration);
 
         const response = await this.fetchWithRetry(
@@ -855,11 +892,23 @@ class SyncService {
             if (applied) mergedCount++;
         }
 
+        const syncMetadata = [{
+            key: SYNC_SCHEMA_VERSION_KEY,
+            value: CURRENT_SYNC_SCHEMA_VERSION
+        }];
         if (server_time) {
-            this.assertCredentialsCurrent(credentialGeneration);
-            await chatDB.saveSetting(SYNC_LAST_TIME_KEY, server_time);
-            this.assertCredentialsCurrent(credentialGeneration);
+            syncMetadata.push({ key: SYNC_LAST_TIME_KEY, value: server_time });
         }
+        this.assertCredentialsCurrent(credentialGeneration);
+        if (typeof chatDB.saveSettings === 'function') {
+            await chatDB.saveSettings(syncMetadata);
+        } else {
+            for (const entry of syncMetadata) {
+                await chatDB.saveSetting(entry.key, entry.value);
+                this.assertCredentialsCurrent(credentialGeneration);
+            }
+        }
+        this.assertCredentialsCurrent(credentialGeneration);
 
         return { count: mergedCount };
     }
@@ -867,19 +916,17 @@ class SyncService {
     async _applyServerBlob(
         masterKey,
         serverBlob,
-        credentialGeneration,
-        idMapping
+        credentialGeneration = this.credentialGeneration,
+        idMapping = this.idMapping || new Map()
     ) {
         this.assertCredentialsCurrent(credentialGeneration);
         if (!serverBlob.ciphertext || !serverBlob.iv) return false;
 
-        // Find the logical ID for this opaque ID
-        const logicalId = idMapping.get(serverBlob.id);
-        if (!logicalId) {
-            // Unknown blob - might be from a newer client version, skip
-            console.warn('[SyncService] Unknown blob ID:', serverBlob.id);
-            return false;
-        }
+        // Fixed records map directly. Per-generation invalidation records use
+        // distinct opaque IDs so concurrent devices cannot overwrite one
+        // another; unknown IDs are therefore probed with the shared item key.
+        const mappedLogicalId = idMapping.get(serverBlob.id);
+        const logicalId = mappedLogicalId || LOGICAL_IDS.TICKET_INVALIDATION_ITEM;
 
         let payload;
         try {
@@ -890,8 +937,27 @@ class SyncService {
                 serverBlob.ciphertext,
                 serverBlob.iv
             );
+            if (!mappedLogicalId) {
+                const keyId = normalizeTicketKeyId(payload?.key_id);
+                if (payload?.type !== 'ticket-invalidation' || !keyId) {
+                    console.warn('[SyncService] Unknown blob ID:', serverBlob.id);
+                    return false;
+                }
+                const expectedOpaqueId = await deriveOpaqueBlobId(
+                    masterKey,
+                    `${LOGICAL_IDS.TICKET_INVALIDATION_ITEM}:${keyId}`
+                );
+                if (expectedOpaqueId !== serverBlob.id) {
+                    console.warn('[SyncService] Invalid ticket tombstone ID');
+                    return false;
+                }
+            }
         } catch (error) {
-            console.warn('[SyncService] Failed to decrypt blob:', serverBlob.id, error);
+            if (mappedLogicalId) {
+                console.warn('[SyncService] Failed to decrypt blob:', serverBlob.id, error);
+            } else {
+                console.warn('[SyncService] Unknown blob ID:', serverBlob.id);
+            }
             return false;
         }
         this.assertCredentialsCurrent(credentialGeneration);
@@ -902,6 +968,18 @@ class SyncService {
             await this._mergeTickets(
                 logicalId,
                 payload.data,
+                credentialGeneration
+            );
+            applied = true;
+        } else if (payload.type === 'ticket-invalidations') {
+            await this._mergeTicketInvalidations(
+                payload.data,
+                credentialGeneration
+            );
+            applied = true;
+        } else if (payload.type === 'ticket-invalidation') {
+            await this._mergeTicketInvalidations(
+                [payload.key_id],
                 credentialGeneration
             );
             applied = true;
@@ -917,7 +995,11 @@ class SyncService {
 
         if (applied) {
             this.notify('blob_received', { type: payload.type, logicalId });
-            if (payload.type === 'tickets') {
+            if (
+                payload.type === 'tickets' ||
+                payload.type === 'ticket-invalidations' ||
+                payload.type === 'ticket-invalidation'
+            ) {
                 storageEvents.broadcast(
                     'tickets-updated',
                     {
@@ -935,29 +1017,48 @@ class SyncService {
      * Key principle: consumed state ALWAYS wins.
      * If a ticket is in archive (consumed) anywhere, it's consumed everywhere.
      */
-    async _mergeTickets(logicalId, serverTickets, credentialGeneration) {
+    async _mergeTickets(
+        logicalId,
+        serverTickets,
+        credentialGeneration = this.credentialGeneration
+    ) {
         this.assertCredentialsCurrent(credentialGeneration);
         const isArchive = logicalId === LOGICAL_IDS.TICKETS_ARCHIVE;
         const isTombstones =
             logicalId === LOGICAL_IDS.TICKETS_TOMBSTONES;
-        const tickets = serverTickets || [];
+        const incomingTickets = Array.isArray(serverTickets) ? serverTickets : [];
 
-        // Get all local ticket state so every merge can honor both consumed
-        // records and cash-transfer deletion tombstones.
-        const localActive = await chatDB.getSetting(TICKETS_ACTIVE_KEY) || [];
-        const localArchive = await chatDB.getSetting(TICKETS_ARCHIVE_KEY) || [];
-        const localTombstones =
-            await chatDB.getSetting(TICKETS_TOMBSTONES_KEY) || [];
+        // Every ticket merge honors both per-ticket cash-transfer tombstones
+        // and global issuer-generation invalidation tombstones.
+        const [localActive, localArchive, localTombstones, rawInvalidatedKeyIds] =
+            await Promise.all([
+                chatDB.getSetting(TICKETS_ACTIVE_KEY),
+                chatDB.getSetting(TICKETS_ARCHIVE_KEY),
+                chatDB.getSetting(TICKETS_TOMBSTONES_KEY),
+                chatDB.getSetting(TICKETS_INVALIDATED_KEYS_KEY)
+            ]);
         this.assertCredentialsCurrent(credentialGeneration);
+        const active = Array.isArray(localActive) ? localActive : [];
+        const archive = Array.isArray(localArchive) ? localArchive : [];
+        const tombstones = Array.isArray(localTombstones) ? localTombstones : [];
+        const invalidatedKeyIds = normalizeInvalidatedTicketKeyIds(
+            rawInvalidatedKeyIds
+        );
+
+        const filterAllTombstones = async (tickets, ticketTombstones = tombstones) =>
+            filterTicketsByTombstones(
+                filterTicketsByInvalidatedKeyIds(tickets, invalidatedKeyIds),
+                ticketTombstones
+            );
 
         if (isTombstones) {
             const mergedTombstones = mergeTicketTombstones(
-                localTombstones,
-                tickets
+                tombstones,
+                incomingTickets
             );
             const [filteredActive, filteredArchive] = await Promise.all([
-                filterTicketsByTombstones(localActive, mergedTombstones),
-                filterTicketsByTombstones(localArchive, mergedTombstones)
+                filterAllTombstones(active, mergedTombstones),
+                filterAllTombstones(archive, mergedTombstones)
             ]);
             this.assertCredentialsCurrent(credentialGeneration);
             await chatDB.saveSettings([
@@ -972,10 +1073,20 @@ class SyncService {
             return;
         }
 
+        const [tickets, filteredLocalActive, filteredLocalArchive] =
+            await Promise.all([
+                filterAllTombstones(incomingTickets),
+                filterAllTombstones(active),
+                filterAllTombstones(archive)
+            ]);
+        this.assertCredentialsCurrent(credentialGeneration);
+
         if (isArchive) {
             // Merging archive (consumed tickets) - union of all consumed
-            const consumedIds = new Set(localArchive.map(t => t.finalized_ticket));
-            const mergedArchive = [...localArchive];
+            const consumedIds = new Set(
+                filteredLocalArchive.map(ticket => ticket.finalized_ticket)
+            );
+            const mergedArchive = [...filteredLocalArchive];
 
             for (const ticket of tickets) {
                 if (ticket.finalized_ticket && !consumedIds.has(ticket.finalized_ticket)) {
@@ -984,32 +1095,25 @@ class SyncService {
                 }
             }
 
-            // CRDT: Remove any newly-consumed tickets from active, then remove
-            // any ticket secret covered by a cash-transfer tombstone.
-            const activeWithoutConsumed = localActive.filter(t =>
-                !consumedIds.has(t.finalized_ticket)
+            // CRDT: consumed state wins over active state.
+            const filteredActive = filteredLocalActive.filter(ticket =>
+                !consumedIds.has(ticket.finalized_ticket)
             );
-            const [filteredActive, filteredArchive] = await Promise.all([
-                filterTicketsByTombstones(
-                    activeWithoutConsumed,
-                    localTombstones
-                ),
-                filterTicketsByTombstones(
-                    mergedArchive,
-                    localTombstones
-                )
-            ]);
             this.assertCredentialsCurrent(credentialGeneration);
             await chatDB.saveSettings([
-                { key: TICKETS_ARCHIVE_KEY, value: filteredArchive },
+                { key: TICKETS_ARCHIVE_KEY, value: mergedArchive },
                 { key: TICKETS_ACTIVE_KEY, value: filteredActive }
             ]);
             this.assertCredentialsCurrent(credentialGeneration);
         } else {
             // Merging active tickets - add new ones, but respect consumed state
-            const consumedIds = new Set(localArchive.map(t => t.finalized_ticket));
-            const activeIds = new Set(localActive.map(t => t.finalized_ticket));
-            const mergedActive = [...localActive];
+            const consumedIds = new Set(
+                filteredLocalArchive.map(ticket => ticket.finalized_ticket)
+            );
+            const activeIds = new Set(
+                filteredLocalActive.map(ticket => ticket.finalized_ticket)
+            );
+            const mergedActive = [...filteredLocalActive];
 
             for (const ticket of tickets) {
                 // Only add if not already active AND not consumed
@@ -1021,14 +1125,52 @@ class SyncService {
                 }
             }
 
-            const filteredActive = await filterTicketsByTombstones(
-                mergedActive,
-                localTombstones
-            );
             this.assertCredentialsCurrent(credentialGeneration);
-            await chatDB.saveSetting(TICKETS_ACTIVE_KEY, filteredActive);
+            await chatDB.saveSettings([
+                { key: TICKETS_ACTIVE_KEY, value: mergedActive },
+                { key: TICKETS_ARCHIVE_KEY, value: filteredLocalArchive }
+            ]);
             this.assertCredentialsCurrent(credentialGeneration);
         }
+    }
+
+    async _mergeTicketInvalidations(
+        serverKeyIds,
+        credentialGeneration = this.credentialGeneration
+    ) {
+        this.assertCredentialsCurrent(credentialGeneration);
+        const [rawLocalKeyIds, localActive, localArchive, localTombstones] =
+            await Promise.all([
+                chatDB.getSetting(TICKETS_INVALIDATED_KEYS_KEY),
+                chatDB.getSetting(TICKETS_ACTIVE_KEY),
+                chatDB.getSetting(TICKETS_ARCHIVE_KEY),
+                chatDB.getSetting(TICKETS_TOMBSTONES_KEY)
+            ]);
+        this.assertCredentialsCurrent(credentialGeneration);
+
+        const mergedKeyIds = normalizeInvalidatedTicketKeyIds([
+            ...normalizeInvalidatedTicketKeyIds(rawLocalKeyIds),
+            ...(Array.isArray(serverKeyIds) ? serverKeyIds : [])
+        ]);
+        const tombstones = Array.isArray(localTombstones) ? localTombstones : [];
+        const [filteredActive, filteredArchive] = await Promise.all([
+            filterTicketsByTombstones(
+                filterTicketsByInvalidatedKeyIds(localActive, mergedKeyIds),
+                tombstones
+            ),
+            filterTicketsByTombstones(
+                filterTicketsByInvalidatedKeyIds(localArchive, mergedKeyIds),
+                tombstones
+            )
+        ]);
+        this.assertCredentialsCurrent(credentialGeneration);
+
+        await chatDB.saveSettings([
+            { key: TICKETS_INVALIDATED_KEYS_KEY, value: mergedKeyIds },
+            { key: TICKETS_ACTIVE_KEY, value: filteredActive },
+            { key: TICKETS_ARCHIVE_KEY, value: filteredArchive }
+        ]);
+        this.assertCredentialsCurrent(credentialGeneration);
     }
 
     async _mergePreference(
@@ -1076,7 +1218,11 @@ class SyncService {
         return true;
     }
 
-    async _push(masterKey, accessToken, credentialGeneration) {
+    async _push(
+        masterKey,
+        accessToken,
+        credentialGeneration = this.credentialGeneration
+    ) {
         if (!this.credentialsAreCurrent(credentialGeneration)) {
             throw new Error('Sync credentials changed');
         }
@@ -1088,39 +1234,52 @@ class SyncService {
             return { count: 0 };
         }
 
-        const response = await this.fetchWithRetry(
-            `${ORG_API_BASE}/auth/sync`,
-            {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${accessToken}`,
-                    'Content-Type': 'application/json'
+        let acceptedCount = 0;
+        let currentAccessToken = accessToken;
+        for (
+            let offset = 0;
+            offset < blobs.length;
+            offset += MAX_SYNC_BLOBS_PER_REQUEST
+        ) {
+            this.assertCredentialsCurrent(credentialGeneration);
+            const batch = blobs.slice(
+                offset,
+                offset + MAX_SYNC_BLOBS_PER_REQUEST
+            );
+            const sendBatch = token => this.fetchWithRetry(
+                `${ORG_API_BASE}/auth/sync`,
+                {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    credentials: 'include',
+                    body: JSON.stringify({ blobs: batch })
                 },
-                credentials: 'include',
-                body: JSON.stringify({ blobs })
-            },
-            'Sync push'
-        );
-        if (!this.credentialsAreCurrent(credentialGeneration)) {
-            throw new Error('Sync credentials changed');
-        }
+                'Sync push'
+            );
 
-        if (!response.ok) {
+            let response = await sendBatch(currentAccessToken);
+            this.assertCredentialsCurrent(credentialGeneration);
             if (response.status === 401) {
-                const refreshed = await this.refreshAccessToken(credentialGeneration);
-                if (!refreshed) throw new Error('Authentication failed');
-                return this._push(
-                    masterKey,
-                    this.getAccessToken(),
+                const refreshed = await this.refreshAccessToken(
                     credentialGeneration
                 );
+                if (!refreshed) throw new Error('Authentication failed');
+                currentAccessToken = this.getAccessToken();
+                response = await sendBatch(currentAccessToken);
+                this.assertCredentialsCurrent(credentialGeneration);
             }
-            throw new Error(`Push failed: ${response.status}`);
-        }
+            if (!response.ok) {
+                throw new Error(`Push failed: ${response.status}`);
+            }
 
-        const { accepted } = await response.json();
-        this.assertCredentialsCurrent(credentialGeneration);
-        return { count: accepted?.length || 0 };
+            const { accepted } = await response.json();
+            this.assertCredentialsCurrent(credentialGeneration);
+            acceptedCount += accepted?.length || 0;
+        }
+        return { count: acceptedCount };
     }
 
     /**
@@ -1168,6 +1327,49 @@ class SyncService {
                 { type: 'tickets', data: tombstones }
             );
             blobs.push({ id: opaqueId, ciphertext, iv, version: 1 });
+        }
+
+        // Invalidated issuer generations are encrypted, append-only
+        // tombstones. The aggregate record supports migration; one immutable
+        // record per generation prevents concurrent devices from losing a
+        // tombstone through last-write-wins updates of the aggregate blob.
+        const invalidatedKeyIds = normalizeInvalidatedTicketKeyIds(
+            await chatDB.getSetting(TICKETS_INVALIDATED_KEYS_KEY)
+        );
+        if (invalidatedKeyIds.length > 0) {
+            const aggregateId = await deriveOpaqueBlobId(
+                masterKey,
+                LOGICAL_IDS.TICKETS_INVALIDATED_KEYS
+            );
+            const aggregate = await encryptBlob(
+                masterKey,
+                LOGICAL_IDS.TICKETS_INVALIDATED_KEYS,
+                { type: 'ticket-invalidations', data: invalidatedKeyIds }
+            );
+            blobs.push({
+                id: aggregateId,
+                ciphertext: aggregate.ciphertext,
+                iv: aggregate.iv,
+                version: 1
+            });
+
+            for (const keyId of invalidatedKeyIds) {
+                const itemId = await deriveOpaqueBlobId(
+                    masterKey,
+                    `${LOGICAL_IDS.TICKET_INVALIDATION_ITEM}:${keyId}`
+                );
+                const item = await encryptBlob(
+                    masterKey,
+                    LOGICAL_IDS.TICKET_INVALIDATION_ITEM,
+                    { type: 'ticket-invalidation', key_id: keyId }
+                );
+                blobs.push({
+                    id: itemId,
+                    ciphertext: item.ciphertext,
+                    iv: item.iv,
+                    version: 1
+                });
+            }
         }
 
         // Preferences

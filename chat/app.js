@@ -1730,6 +1730,18 @@ class ChatApp {
             this.showToast('Chat storage is running in compatibility mode. Close other tabs and reload to finish the upgrade.', 'error');
         });
 
+        window.addEventListener('ticket-key-invalidated', (event) => {
+            const removedCount = Number(event.detail?.removedCount || 0);
+            const removedLabel = removedCount > 0
+                ? `${removedCount} old ticket${removedCount === 1 ? '' : 's'} removed.`
+                : 'Old tickets were removed.';
+            this.showToast(
+                `The org rotated its ticket signing key. ${removedLabel}`,
+                'error',
+                7000
+            );
+        });
+
         // Now set up theme controls after chatInput is initialized
         this.updateThemeControls(themeManager.getPreference(), themeManager.getEffectiveTheme());
         this.themeUnsubscribe = themeManager.onChange((preference, effectiveTheme) => {
