@@ -57,9 +57,10 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     incoming sync blobs. Sync publishes one encrypted append-only record per
     invalidated generation (plus the legacy aggregate migration record), so
     concurrent devices cannot lose distinct tombstones through the org's LWW
-    blob store. Local ticket operations and sync merges share the
-    `oa-inference-tickets` Web Lock, preventing local/remote unions from
-    overwriting each other. Sync schema v2 performs one full pull after upgrade
+    blob store. Account-data transitions and sync merges share the outer
+    `oa-sync` Web Lock; local ticket mutations take their narrower ticket lock
+    inside that boundary. This nesting prevents local/remote unions and account
+    switches from overwriting each other. Sync schema v2 performs one full pull after upgrade
     so records skipped by older clients are rediscovered. Tombstones contain
     only global public-key fingerprints, never tickets or identity metadata.
     Never infer a batch from invite metadata or timestamps; the embedded
@@ -76,6 +77,18 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - The key ID is a shared public-generation fingerprint, not identity
     metadata. It stays in the user's local ticket store and does not weaken the
   blind-signature unlinkability boundary.
+- 2026-08-04: Account session refresh is owned by SuperTokens. See
+  [Account Sessions](ACCOUNT_SESSIONS.md). Browser requests use HttpOnly cookie
+  mode; Electron renderer requests use the same `sessionService` API but run the
+  SDK in the isolated desktop preload with header-mode tokens encrypted by the
+  main process. Keep access/refresh tokens out of OA response bodies,
+  IndexedDB/localStorage, renderer APIs, and hand-written `Authorization`
+  headers. `encryptedSyncService` retains only non-extractable client-side
+  derivation keys and relies on
+  the SDK's automatic refresh/retry. Keep both the SDK interception override and
+  `sessionService.fetch(...)` restricted to the org `/auth` path; widening that
+  boundary can attach identity-linked account cookies to unlinkable ticket
+  redemption or other privacy-sensitive org traffic.
 
 - 2026-07-31: OpenRouter catalog labels for Anthropic models are normalized to
   include the `Anthropic:` prefix when upstream omits it. Already-prefixed names

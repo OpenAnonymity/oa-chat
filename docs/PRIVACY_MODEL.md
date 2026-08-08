@@ -87,6 +87,13 @@ decorrelation between bulk purchase and individual per-session redemption. Even
 if such a side-channel were somehow exploited, no OA system sees prompts or
 responses -- the user's queries remain unlinkable and anonymous regardless.
 
+The browser's account-session SDK is deliberately scoped to the org `/auth`
+path. Both its interceptor and the app's account-fetch wrapper reject other
+paths, while direct org requests outside `/auth` omit browser credentials. This
+prevents an account cookie from accompanying finalized tickets at redemption,
+which would otherwise defeat issuance-to-redemption unlinkability regardless of
+the blind-signature cryptography.
+
 ### 3. Inference (direct to provider)
 
 See blog post [Section 2: Secure Inference Proxies](https://openanonymity.ai/blog/unlinkable-inference/#2-secure-inference-proxies)
@@ -167,6 +174,13 @@ for implementation details.
 | **Verifier** | API key hash (transient), station signatures, broadcast status | No | Raw key used transiently and immediately hashed. Key carries no user identity (blind signatures). |
 | **Inference provider** | API key + inference content (prompts/responses) | No | Key is ephemeral and anonymous. No user identity binding. Even a malicious provider cannot link prompts to a user or across sessions. |
 | **User** | Everything (their own tickets, keys, prompts, responses) | N/A | The user is the only party who can link all steps together. |
+
+SuperTokens is an account-session subsystem inside the org trust boundary. Its
+Core sees the OA account ID, session handles, and authentication timing needed
+for refresh/revocation. It receives no prompts, responses, finalized inference
+keys, or blinding secrets. Replacing OA's hand-rolled refresh tokens with this
+subsystem therefore does not add an identity-to-inference linkage: ticket
+blinding remains client-side and inference remains direct to the provider.
 
 
 ## What If Any OA Component Is Malicious?

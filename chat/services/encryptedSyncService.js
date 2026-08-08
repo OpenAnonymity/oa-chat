@@ -17,6 +17,7 @@ import { chatDB } from '../db.js';
 import { fetchRetry } from './fetchRetry.js';
 import storageEvents from './storageEvents.js';
 import { withAccountDataLock } from './accountDataLock.js';
+import sessionService from './sessionService.js';
 import {
     filterTicketsByTombstones,
     mergeTicketTombstones
@@ -187,8 +188,6 @@ export class SyncService {
         
         // Credentials (set by accountService)
         this.keyMaterial = null;
-        this.accessToken = null;
-        this.refreshTokenCallback = null;
         this.accountId = null;
         this.localScopeAccountId = null;
         this.identityBacked = false;
@@ -206,24 +205,16 @@ export class SyncService {
 
     setCredentials(
         keyMaterial,
-        accessToken,
-        refreshCallback,
         accountId,
         { identityBacked = false } = {}
     ) {
         this.credentialGeneration += 1;
         this.keyMaterial = keyMaterial;
-        this.accessToken = accessToken;
-        this.refreshTokenCallback = refreshCallback;
         this.accountId = accountId;
         this.localScopeAccountId = accountId;
         this.identityBacked = identityBacked;
         this.idMapping = null; // Reset mapping when credentials change
         this.idMappingGeneration = null;
-    }
-
-    updateAccessToken(accessToken) {
-        this.accessToken = accessToken;
     }
 
     clearCredentials() {
@@ -233,8 +224,6 @@ export class SyncService {
             this.localChangeDebounceTimer = null;
         }
         this.keyMaterial = null;
-        this.accessToken = null;
-        this.refreshTokenCallback = null;
         this.accountId = null;
         this.identityBacked = false;
         this.idMapping = null;
@@ -550,7 +539,7 @@ export class SyncService {
      * No separate flag needed.
      */
     isEnabled() {
-        return !!(this.keyMaterial && this.accessToken && this.accountId);
+        return !!(this.keyMaterial && this.accountId);
     }
 
     /**
@@ -604,15 +593,13 @@ export class SyncService {
             return false;
         }
         const credentialGeneration = this.credentialGeneration;
-        const accessToken = this.accessToken;
 
         try {
-            const response = await fetch(
+            const response = await sessionService.fetch(
                 `${ORG_API_BASE}/auth/sync/status`,
                 {
                     method: 'GET',
                     headers: {
-                        'Authorization': `Bearer ${accessToken}`,
                         'Content-Type': 'application/json'
                     },
                     credentials: 'include'
@@ -678,10 +665,6 @@ export class SyncService {
         return this.keyMaterial;
     }
 
-    getAccessToken() {
-        return this.accessToken;
-    }
-
     getPreferenceTimestampKey(key) {
         return `${SYNC_PREF_UPDATED_AT_PREFIX}${key}`;
     }
@@ -704,28 +687,15 @@ export class SyncService {
         }
     }
 
-    async refreshAccessToken(generation = this.credentialGeneration) {
-        if (!this.credentialsAreCurrent(generation)) return false;
-        if (!this.refreshTokenCallback) return false;
-        try {
-            const result = await this.refreshTokenCallback();
-            if (this.credentialsAreCurrent(generation) && result?.accessToken) {
-                this.accessToken = result.accessToken;
-                return true;
-            }
-        } catch (error) {
-            console.warn('[SyncService] Token refresh failed:', error);
-        }
-        return false;
-    }
-
     async fetchWithRetry(url, options, context = 'Sync') {
-        // Use shared retry utility with native fetch (default)
+        // SuperTokens performs one session refresh/retry. The shared retry
+        // utility handles only transient network and server failures.
         // Sync operations are idempotent (version-based) - safe to retry
         return fetchRetry(url, options, {
             context,
             maxAttempts: 3,
-            timeoutMs: 30000
+            timeoutMs: 30000,
+            fetchFn: sessionService.fetch.bind(sessionService)
         });
     }
 
@@ -743,10 +713,6 @@ export class SyncService {
             return { success: false, error: 'Account not unlocked' };
         }
 
-        const accessToken = this.getAccessToken();
-        if (!accessToken) {
-            return { success: false, error: 'No access token' };
-        }
         const accountId = this.accountId;
         const credentialGeneration = this.credentialGeneration;
 
@@ -757,7 +723,6 @@ export class SyncService {
         return this.withSyncLock(
             () => this._doSync(
                 masterKey,
-                accessToken,
                 accountId,
                 credentialGeneration
             )
@@ -766,7 +731,6 @@ export class SyncService {
 
     async _doSync(
         masterKey,
-        accessToken,
         accountId,
         credentialGeneration
     ) {
@@ -786,14 +750,12 @@ export class SyncService {
 
             const pullResult = await this._pull(
                 masterKey,
-                accessToken,
                 credentialGeneration,
                 idMapping
             );
             this.assertCredentialsCurrent(credentialGeneration);
             const pushResult = await this._push(
                 masterKey,
-                accessToken,
                 credentialGeneration
             );
             this.assertCredentialsCurrent(credentialGeneration);
@@ -832,7 +794,6 @@ export class SyncService {
 
     async _pull(
         masterKey,
-        accessToken,
         credentialGeneration = this.credentialGeneration,
         idMapping = this.idMapping || new Map()
     ) {
@@ -853,7 +814,6 @@ export class SyncService {
             {
                 method: 'GET',
                 headers: {
-                    'Authorization': `Bearer ${accessToken}`,
                     'Content-Type': 'application/json'
                 },
                 credentials: 'include'
@@ -863,16 +823,6 @@ export class SyncService {
         this.assertCredentialsCurrent(credentialGeneration);
 
         if (!response.ok) {
-            if (response.status === 401) {
-                const refreshed = await this.refreshAccessToken(credentialGeneration);
-                if (!refreshed) throw new Error('Authentication failed');
-                return this._pull(
-                    masterKey,
-                    this.getAccessToken(),
-                    credentialGeneration,
-                    idMapping
-                );
-            }
             throw new Error(`Pull failed: ${response.status}`);
         }
 
@@ -1220,7 +1170,6 @@ export class SyncService {
 
     async _push(
         masterKey,
-        accessToken,
         credentialGeneration = this.credentialGeneration
     ) {
         if (!this.credentialsAreCurrent(credentialGeneration)) {
@@ -1235,7 +1184,6 @@ export class SyncService {
         }
 
         let acceptedCount = 0;
-        let currentAccessToken = accessToken;
         for (
             let offset = 0;
             offset < blobs.length;
@@ -1246,12 +1194,11 @@ export class SyncService {
                 offset,
                 offset + MAX_SYNC_BLOBS_PER_REQUEST
             );
-            const sendBatch = token => this.fetchWithRetry(
+            const sendBatch = () => this.fetchWithRetry(
                 `${ORG_API_BASE}/auth/sync`,
                 {
                     method: 'POST',
                     headers: {
-                        'Authorization': `Bearer ${token}`,
                         'Content-Type': 'application/json'
                     },
                     credentials: 'include',
@@ -1260,17 +1207,8 @@ export class SyncService {
                 'Sync push'
             );
 
-            let response = await sendBatch(currentAccessToken);
+            const response = await sendBatch();
             this.assertCredentialsCurrent(credentialGeneration);
-            if (response.status === 401) {
-                const refreshed = await this.refreshAccessToken(
-                    credentialGeneration
-                );
-                if (!refreshed) throw new Error('Authentication failed');
-                currentAccessToken = this.getAccessToken();
-                response = await sendBatch(currentAccessToken);
-                this.assertCredentialsCurrent(credentialGeneration);
-            }
             if (!response.ok) {
                 throw new Error(`Push failed: ${response.status}`);
             }

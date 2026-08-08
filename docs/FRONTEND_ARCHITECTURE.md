@@ -119,6 +119,12 @@ flowchart TB
     `RightPanel`, `WelcomePanel`, `ThanksPanel`, `ChatInput`, and
     `MemoryEditor` now call those injected services instead of importing the
     gateways directly.
+  - Account and encrypted-sync HTTP calls share
+    `services/sessionService.js`. Browser mode initializes the SuperTokens
+    Session SDK locally with HttpOnly cookies; Electron mode delegates the same
+    high-level operations to the isolated preload. See
+    [Account Sessions](ACCOUNT_SESSIONS.md). Do not move session tokens into
+    controller state or persistence adapters.
   - Architecture tests now enforce that `chat/app.js` does not import concrete
     components, domain/application layers do not import UI, shell components do
     not import `chatDB`, and gateway-heavy shell components do not import the
