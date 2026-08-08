@@ -566,7 +566,7 @@ class TicketClient {
             try {
                 const { data: keyData } = await networkProxy.fetchWithRetryJson(
                     `${ORG_API_BASE}/api/ticket/issue/public-key`,
-                    {},
+                    { cache: 'no-store', credentials: 'omit' },
                     { context: 'Public key', maxAttempts: 3, timeoutMs: 10000 }
                 );
                 publicKey = keyData.public_key;
@@ -646,7 +646,9 @@ class TicketClient {
                     },
                     {
                         context: 'Alpha register',
-                        maxAttempts: 1,  // No retry - blinded tickets consumed on success
+                        // Exact blinded batches are replay-safe on the org;
+                        // retrying recovers a response lost after atomic commit.
+                        maxAttempts: 3,
                         timeoutMs: Math.max(120000, ticketCount * 50)
                     }
                 );

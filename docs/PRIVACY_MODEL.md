@@ -89,12 +89,14 @@ decorrelation between bulk purchase and individual per-session redemption. Even
 if such a side-channel were somehow exploited, no OA system sees prompts or
 responses -- the user's queries remain unlinkable and anonymous regardless.
 
-The browser's account-session SDK is deliberately scoped to the org `/auth`
-path. Both its interceptor and the app's account-fetch wrapper reject other
-paths, while direct org requests outside `/auth` omit browser credentials. This
-prevents an account cookie from accompanying finalized tickets at redemption,
-which would otherwise defeat issuance-to-redemption unlinkability regardless of
-the blind-signature cryptography.
+The browser's account-session SDK is deliberately scoped to the identity-bound
+org `/auth` and `/api/billing` paths. Billing claims require the account cookie
+because they authorize a paid entitlement, but contain only blinded requests.
+All accountless ticket redemption, split, code, model, and request-key paths
+omit browser credentials. This prevents an account cookie from accompanying
+finalized tickets at redemption, which would otherwise defeat
+issuance-to-redemption unlinkability regardless of the blind-signature
+cryptography.
 
 ### 3. Inference (direct to provider)
 
@@ -183,15 +185,16 @@ unverified, mismatched, and network-error results never activate the provisional
 child key. Because ticket spending commits before verification, a failed check
 discards the bounded child key but does not restore the ticket.
 
-The sole development exception requires both the oa-chat page hostname and its
-configured oa-org hostname to be an exact loopback value (`localhost`,
-`127.0.0.1`, or `::1`). In that environment the browser may skip the external
-verifier so a locally signed org response can be exercised end to end. The
-result is labeled `local-loopback-bypass`, never `verified`; it is unusable when
-the app is opened from any non-loopback host and is excluded from shared-access
-payloads. The security UI identifies it as a local development bypass, and
-production verifier ban/broadcast state is not applied to that credential.
-Production and staging therefore retain the fail-closed verifier path.
+The default development exception requires both the oa-chat page hostname and
+its configured oa-org hostname to be an exact loopback value (`localhost`,
+`127.0.0.1`, or `::1`). A separately compiled disposable-demo build may enable
+the explicit `OA_DEMO_VERIFIER_BYPASS` only together with HTTPS same-origin org
+routing. The build rejects OA production hostnames and never queries the
+production verifier. Both exceptions label the result as a bypass rather than
+`verified`, exclude the credential from shared-access payloads, and identify
+the reduced assurance in the security UI. Production and ordinary staging
+builds retain the fail-closed verifier path. See
+[Disposable Demo Frontend Routing](DEMO_DEPLOYMENT.md).
 
 ## What Each Component Can and Cannot See
 
@@ -370,7 +373,7 @@ network layer, the following metadata vectors exist and should be mitigated:
 
 | Vector             | Status                                                                                                                                                                                                               |
 | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| IP address         | oa-chat provides a built-in in-browser network proxy on by default for all ticket issuance and redemption requests, hiding the user's IP from the org and station. Users can additionally use their own VPN/Tor. |
+| IP address         | oa-chat's built-in proxy covers accountless invitation issuance, ticket redemption, and access requests, hiding the browser IP from the org/station. Account-authenticated billing issuance intentionally uses the narrow SuperTokens transport directly to the configured org (or a first-party same-origin deployment proxy), so a direct production org can observe the subscriber's source IP and request timing. It still sees only blinded requests and cannot link them to later finalized-ticket redemption. Users who need network-layer separation for this identity-bound issuance can use a trusted VPN/Tor; deployments may provide a first-party reverse proxy. |
 | Browser User-Agent | Standard browser fingerprinting concern; use a common browser or randomize UA.                                                                                                                                       |
 | Identity sync metadata | For SSO accounts, the org can observe when an authenticated sync occurs, ciphertext sizes, and stable opaque blob IDs. It cannot decrypt wallet contents, but may attempt to correlate changes with redemption. Redemption does not trigger immediate sync; consumed state propagates during a later initial/periodic sync. |
 

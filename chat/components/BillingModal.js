@@ -317,6 +317,7 @@ export default class BillingModal {
             BILLING_NO_ENTITLEMENT: 'No Premium ticket allowance is ready yet.',
             BILLING_ALLOWANCE_UNAVAILABLE: 'Your Premium ticket allowance is not ready yet.',
             BILLING_ALLOWANCE_INVALID: 'Your Premium ticket allowance could not be verified.',
+            BILLING_ISSUER_ROTATED: 'The monthly ticket period changed. Retry to prepare the current allowance.',
             BILLING_INCOMPLETE_RESPONSE: 'Private ticket preparation received an incomplete response.',
             BILLING_TOPUP_PENDING: 'Finish preparing the current ticket pack before buying another.',
             BILLING_TOPUP_INELIGIBLE: 'An active Premium subscription is required for ticket packs.',
@@ -330,6 +331,12 @@ export default class BillingModal {
     formatSubscriptionStatus(value) {
         const normalized = String(value || 'none').toLowerCase();
         return SAFE_SUBSCRIPTION_STATUSES.has(normalized) ? normalized : 'unavailable';
+    }
+
+    formatTicketEpochEnd(value) {
+        const date = new Date(Number(value) * 1000);
+        if (!Number.isFinite(date.getTime())) return 'the next UTC month boundary';
+        return `${date.toISOString().slice(0, 16).replace('T', ' ')} UTC`;
     }
 
     render() {
@@ -346,6 +353,9 @@ export default class BillingModal {
         const ticketPackStatus = status?.ticket_pack || null;
         const showTicketPack = Boolean(ticketPack && ticketPackStatus?.eligible === true);
         const ticketPackCount = Number(ticketPack?.tickets || ticketPackStatus?.ticket_count || 0);
+        const ticketPackExpiry = this.formatTicketEpochEnd(
+            ticketPack?.tickets_expire_at || plan?.ticket_epoch_expires_at
+        );
         const ticketPackState = String(ticketPackStatus?.state || 'ineligible');
         const progressLabel = progress
             ? `${progress.phase === 'finalizing' ? 'Finalizing' : progress.phase === 'claiming' ? 'Requesting signatures' : 'Preparing'}${progress.source === 'topup' ? ' ticket-pack' : ''} private tickets — ${progress.completed} / ${progress.total}`
@@ -370,6 +380,7 @@ export default class BillingModal {
                     <div class="mt-3 rounded-lg border border-border p-4">
                         <p class="text-sm font-semibold text-foreground">Buy ${ticketPackCount} tickets — ${this.escape(this.formatMoney(ticketPack))}</p>
                         <p class="mt-1 text-xs text-muted-foreground">A one-time Premium add-on. Prepare the tickets privately in this browser after payment.</p>
+                        <p class="mt-1 text-xs text-muted-foreground">Prepared pack tickets expire with the global issuer at ${this.escape(ticketPackExpiry)}. An unprepared paid pack remains available for a later month.</p>
                         ${ticketPackState === 'ready' && ticketPackStatus?.can_purchase === true ? `
                             <button id="billing-topup-btn" class="mt-3 w-full h-10 rounded-lg bg-blue-600 text-white font-medium disabled:opacity-50" ${this.busy ? 'disabled' : ''}>${this.busy === 'topup-checkout' ? 'Opening Checkout…' : `Buy ${ticketPackCount} tickets — ${this.escape(this.formatMoney(ticketPack))}`}</button>
                         ` : ''}

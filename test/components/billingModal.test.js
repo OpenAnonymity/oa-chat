@@ -58,7 +58,12 @@ test('ticket-pack UI renders server-provided $7 and 50-ticket values only for el
         currency: 'usd',
         interval: 'month',
         tickets_per_period: 300,
-        ticket_pack: { unit_amount: 700, currency: 'usd', tickets: 50 }
+        ticket_pack: {
+            unit_amount: 700,
+            currency: 'usd',
+            tickets: 50,
+            tickets_expire_at: 1788220800
+        }
     };
     const eligible = renderBilling({
         plan,
@@ -72,6 +77,8 @@ test('ticket-pack UI renders server-provided $7 and 50-ticket values only for el
     assert.match(eligible, /Buy 50 tickets/);
     assert.match(eligible, /\$7/);
     assert.match(eligible, /billing-topup-btn/);
+    assert.match(eligible, /Prepared pack tickets expire/);
+    assert.match(eligible, /2026-09-01 00:00 UTC/);
 
     const ineligible = renderBilling({
         plan,

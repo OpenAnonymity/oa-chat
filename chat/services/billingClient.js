@@ -5,6 +5,7 @@ import privacyPassProvider from './privacyPass.js';
 import ticketStore from './ticketStore.js';
 import billingPendingStore from './billingPendingStore.js';
 import { BILLING_CHECKOUT_STORAGE_KEY } from './billingState.js';
+import { normalizeTicketKeyId, ticketPublicKeyId } from '../domain/ticketKeys.js';
 
 const DEMO_IDENTITY_KEY = 'oa-billing-demo-account-id-v1';
 export const BILLING_TOPUP_RETURN_SESSION_KEY = 'oa-billing-topup-return-v1';
@@ -246,7 +247,7 @@ export class BillingClient {
         this.checkoutController = null;
         this.identityGeneration = 0;
         this.identityScope = this.auth.getKnownScope?.() || null;
-        this.autoProcessedScopes = new Set();
+        this.autoProcessedAllowances = new Set();
         this.unsubscribeAccount = this.auth.subscribe(state => this.handleIdentityChange(state));
     }
 
@@ -810,15 +811,60 @@ export class BillingClient {
         const assertActive = () => {
             this.assertAuthContext(auth, signal);
         };
+        const discardRotatedPending = async () => {
+            await this.pendingStore.delete(auth.scope);
+            this.progress = null;
+            this.status = null;
+            this.publish();
+            const error = new Error('The monthly ticket issuer changed. The saved private batch was discarded.');
+            error.code = 'BILLING_ISSUER_ROTATED';
+            throw error;
+        };
+        const fetchCurrentIssuer = async () => {
+            const issuer = await this.fetchPublicKey(signal);
+            assertActive();
+            return issuer;
+        };
+        const assertIssuerCurrent = async expectedKeyId => {
+            const issuer = await fetchCurrentIssuer();
+            if (expectedKeyId && expectedKeyId !== issuer.keyId) {
+                await discardRotatedPending();
+            }
+            return issuer;
+        };
 
         let pending = await this.pendingStore.get(auth.scope);
+        const currentIssuer = await fetchCurrentIssuer();
+        if (pending) {
+            const legacyFingerprint = await sha256(currentIssuer.publicKey);
+            const expectedFingerprint = pending.issuerFingerprint;
+            const fingerprintMatches = pending.issuerFingerprintVersion === 2
+                ? expectedFingerprint === currentIssuer.keyId
+                : (
+                    expectedFingerprint === legacyFingerprint ||
+                    expectedFingerprint === currentIssuer.keyId
+                );
+            if (!fingerprintMatches) {
+                await discardRotatedPending();
+            }
+            if (
+                pending.issuerFingerprintVersion !== 2 ||
+                pending.issuerFingerprint !== currentIssuer.keyId
+            ) {
+                pending = await this.pendingStore.put({
+                    ...pending,
+                    issuerFingerprint: currentIssuer.keyId,
+                    issuerFingerprintVersion: 2
+                });
+            }
+        }
         if (!pending) {
-            const publicKey = await this.fetchPublicKey(signal);
             pending = {
                 accountScope: auth.scope,
                 source,
                 claimRef,
-                issuerFingerprint: await sha256(publicKey),
+                issuerFingerprint: currentIssuer.keyId,
+                issuerFingerprintVersion: 2,
                 targetCount,
                 generatedCount: 0,
                 requests: [],
@@ -837,19 +883,18 @@ export class BillingClient {
         }
 
         if (!pending.signedResponses) {
-            const currentPublicKey = await this.fetchPublicKey(signal);
-            if (await sha256(currentPublicKey) !== pending.issuerFingerprint) {
-                throw new Error('The OA ticket issuer changed. The saved private batch was not submitted.');
-            }
             while (pending.generatedCount < targetCount) {
                 assertActive();
                 const end = Math.min(pending.generatedCount + CHUNK_SIZE, targetCount);
                 for (let index = pending.generatedCount; index < end; index += 1) {
-                    const created = await this.privacyPass.createSingleTokenRequest(currentPublicKey);
+                    const created = await this.privacyPass.createSingleTokenRequest(currentIssuer.publicKey);
                     pending.requests.push({
                         index,
                         blindedRequest: created.blindedRequest,
-                        serializedState: created.serializedState || this.privacyPass.serializeState(created.state, currentPublicKey)
+                        serializedState: created.serializedState || this.privacyPass.serializeState(
+                            created.state,
+                            currentIssuer.publicKey
+                        )
                     });
                 }
                 pending.generatedCount = end;
@@ -866,7 +911,8 @@ export class BillingClient {
             assertActive();
             updateProgress('claiming', 0);
             const claimBody = {
-                blinded_requests: roundTrip.requests.map(request => [request.index, request.blindedRequest])
+                blinded_requests: roundTrip.requests.map(request => [request.index, request.blindedRequest]),
+                expected_key_id: pending.issuerFingerprint
             };
             if (source === 'topup') claimBody.claim_ref = claimRef;
             let claim;
@@ -878,6 +924,9 @@ export class BillingClient {
                     signal
                 });
             } catch (error) {
+                if (error?.code === 'BILLING_ISSUER_ROTATED') {
+                    await discardRotatedPending();
+                }
                 if (source === 'topup' && error?.code === 'BILLING_NO_ENTITLEMENT') {
                     await this.pendingStore.delete(auth.scope);
                     this.progress = null;
@@ -891,6 +940,7 @@ export class BillingClient {
             pending = await this.pendingStore.put(pending);
         }
 
+        await assertIssuerCurrent(pending.issuerFingerprint);
         const signedMap = new Map(pending.signedResponses.map(entry => [entry[0], entry[1]]));
         while ((pending.finalizedCount || 0) < targetCount) {
             assertActive();
@@ -915,6 +965,7 @@ export class BillingClient {
         }
 
         assertActive();
+        await assertIssuerCurrent(pending.issuerFingerprint);
         const before = this.ticketStore.getCount();
         await this.ticketStore.addTickets(
             pending.finalizedTickets.map(validateNormalTicket),
@@ -938,29 +989,65 @@ export class BillingClient {
         this.assertAuthContext(auth, signal);
         this.status = await this.getStatus({ force: true, authContext: auth, signal });
         this.publish();
-        return { ticketsAdded: Math.max(0, after - before), totalActive: after };
+        return {
+            ticketsAdded: Math.max(0, after - before),
+            totalActive: after,
+            source,
+            claimRef: source === 'topup' ? claimRef : null
+        };
     }
 
     async fetchPublicKey(signal) {
         const response = await this.fetchImpl(`${this.baseUrl}/api/ticket/issue/public-key`, {
             headers: { Accept: 'application/json' },
             credentials: 'omit',
+            cache: 'no-store',
             signal
         });
         const data = await response.json();
-        if (!response.ok || !data.public_key) throw new Error('Unable to load the OA ticket issuer public key.');
-        return data.public_key;
+        if (!response.ok || !data.public_key) {
+            throw new Error('Unable to load the OA ticket issuer public key.');
+        }
+        const computedKeyId = await ticketPublicKeyId(data.public_key);
+        if (normalizeTicketKeyId(data.key_id) !== computedKeyId) {
+            throw new Error('The OA ticket issuer public key response is inconsistent.');
+        }
+        return { publicKey: data.public_key, keyId: computedKeyId };
     }
 
     async automaticallyPrepareOneBatch(options = {}) {
         const auth = await this.auth.resolve({ createDemo: true });
-        if (this.autoProcessedScopes.has(auth.scope)) return null;
+        const status = await this.getStatus({
+            force: true,
+            authContext: auth,
+            signal: options.signal
+        });
+        const existing = await this.pendingStore.get(auth.scope);
+        const hasTopup = ['claimable', 'claiming'].includes(status?.ticket_pack?.state);
+        if (!existing && Number(status?.available_batches || 0) < 1 && !hasTopup) {
+            return null;
+        }
+        const intended = resolveClaimContext(status, existing, this.plan);
+        const subscriptionPeriodEnd = Number(
+            status?.subscription?.current_period_end || 0
+        );
+        const intendedKey = intended.source === 'topup'
+            ? `${auth.scope}:topup:${intended.claimRef}`
+            : `${auth.scope}:subscription:${subscriptionPeriodEnd}`;
+        if (this.autoProcessedAllowances.has(intendedKey)) return null;
         const result = await this.prepareOneBatch({
             ...options,
             authContext: auth,
             allowNoEntitlement: true
         });
-        if (result) this.autoProcessedScopes.add(auth.scope);
+        if (result) {
+            const completedKey = result.source === 'topup'
+                ? `${auth.scope}:topup:${result.claimRef}`
+                : result.source === 'subscription'
+                    ? intendedKey
+                    : intendedKey;
+            this.autoProcessedAllowances.add(completedKey);
+        }
         return result;
     }
 }

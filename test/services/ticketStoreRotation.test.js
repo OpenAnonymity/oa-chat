@@ -31,6 +31,7 @@ test('consumeTickets deletes every ticket from an invalidated key generation', a
     ];
     const persisted = [];
     const store = new TicketStore();
+    store.withLock = async handler => handler();
     store.ensureDbReady = async () => {};
     store.readFromDatabase = async () => ({
         active,
@@ -73,6 +74,7 @@ test('consumeTickets never selects a stale synced ticket blocked by a tombstone'
         finalized_ticket: tokenForKeyId(currentKeyId, 2)
     };
     const store = new TicketStore();
+    store.withLock = async handler => handler();
     store.ensureDbReady = async () => {};
     store.readFromDatabase = async () => ({
         active: [staleTicket, currentTicket],
@@ -92,6 +94,7 @@ test('consumeTickets never selects a stale synced ticket blocked by a tombstone'
 test('per-generation sync tombstone reloads the in-memory ticket cache', async () => {
     const store = new TicketStore();
     const loadCalls = [];
+    store.withLock = async handler => handler();
     store.ensureDbReady = async () => {};
     store.migrateFromLocalStorage = async () => {};
     store.cleanLegacyTickets = async () => {};

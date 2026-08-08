@@ -9,12 +9,22 @@
 // signatures), and it is never in the inference data path (never sees prompts
 // or responses). Being closed-source is irrelevant -- its worst case is denial
 // of service, not privacy breach. See docs/PRIVACY_MODEL.md.
-export { ORG_API_BASE, ORG_AUTH_ORIGIN } from './services/orgEndpoints.js';
+import { ORG_API_BASE, ORG_AUTH_ORIGIN } from './services/orgEndpoints.js';
+export { ORG_API_BASE, ORG_AUTH_ORIGIN };
 
 // Verifier service -- hardware-attested (AMD SEV-SNP) station compliance
 // enforcer. Open-source and auditable. Enforces privacy toggles and key
 // ownership on stations. Not in the inference data path.
-export const VERIFIER_URL = 'https://verifier2.openanonymity.ai';
+const disposableDemoVerifierBypass = (
+    typeof __OA_DEMO_VERIFIER_BYPASS__ !== 'undefined' &&
+    __OA_DEMO_VERIFIER_BYPASS__ === true
+);
+// A deliberately unverified disposable demo never contacts the production
+// verifier. Its same-origin endpoint will fail closed for ordinary verifier
+// calls while the explicit demo policy marks local mock keys as unverified.
+export const VERIFIER_URL = disposableDemoVerifierBypass
+    ? ORG_API_BASE
+    : 'https://verifier2.openanonymity.ai';
 
 // WebSocket proxy -- a shared IP-hiding relay for all users (not a secret).
 // The "secret" parameter is a shared access token, not per-user. The proxy

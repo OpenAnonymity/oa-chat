@@ -1,7 +1,7 @@
 /**
  * Encrypted Sync Service
  * E2E encrypted sync for tickets and preferences across devices.
- * 
+ *
  * TRUE E2E ARCHITECTURE - Server sees NOTHING but opaque blobs
  * ------------------------------------------------------------
  * - Blob IDs are HMAC-derived (opaque to server)
@@ -185,7 +185,7 @@ export class SyncService {
         this.syncInProgress = false;
         this.listeners = new Set();
         this.syncTimer = null;
-        
+
         // Credentials (set by accountService)
         this.keyMaterial = null;
         this.accountId = null;
@@ -500,7 +500,7 @@ export class SyncService {
         }
 
         const mapping = new Map();
-        
+
         const ticketsActiveId = await deriveOpaqueBlobId(keyMaterial, LOGICAL_IDS.TICKETS_ACTIVE);
         const ticketsArchiveId = await deriveOpaqueBlobId(keyMaterial, LOGICAL_IDS.TICKETS_ARCHIVE);
         const ticketsTombstonesId = await deriveOpaqueBlobId(
@@ -615,14 +615,14 @@ export class SyncService {
             if (!this.credentialsAreCurrent(credentialGeneration)) return false;
 
             const hasChanges = serverLastSync > localLastSync;
-            
+
             // If no changes, we're confirmed in sync - update lastSyncTime
             if (!hasChanges) {
                 this.lastSyncTime = Date.now();
                 this.lastSyncResult = { success: true, pulled: 0, pushed: 0 };
                 this.notify('status_checked');
             }
-            
+
             return hasChanges;
         } catch (error) {
             console.warn('[SyncService] Status check failed:', error);
@@ -1067,7 +1067,7 @@ export class SyncService {
 
             for (const ticket of tickets) {
                 // Only add if not already active AND not consumed
-                if (ticket.finalized_ticket && 
+                if (ticket.finalized_ticket &&
                     !activeIds.has(ticket.finalized_ticket) &&
                     !consumedIds.has(ticket.finalized_ticket)) {
                     mergedActive.push(ticket);
@@ -1343,7 +1343,7 @@ export class SyncService {
         // Fast status polling - check if server has newer data
         const doStatusCheck = async () => {
             if (document.visibilityState !== 'visible' || !this.isEnabled()) return;
-            
+
             try {
                 const hasChanges = await this.hasRemoteChanges();
                 if (hasChanges) {

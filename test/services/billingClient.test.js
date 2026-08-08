@@ -52,6 +52,36 @@ function memoryLockManager() {
     };
 }
 
+function publicKey(value) {
+    return btoa(String(value)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+async function fingerprint(value) {
+    const normalized = String(value).replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4);
+    const bytes = Uint8Array.from(atob(padded), char => char.charCodeAt(0));
+    const digest = await globalThis.crypto.subtle.digest(
+        'SHA-256',
+        bytes
+    );
+    return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function legacyFingerprint(value) {
+    const digest = await globalThis.crypto.subtle.digest(
+        'SHA-256',
+        new TextEncoder().encode(String(value))
+    );
+    return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function publicKeyResponse(value) {
+    return response({
+        public_key: value,
+        key_id: await fingerprint(value)
+    });
+}
+
 test('billing recognizes only explicit loopback hostnames', () => {
     assert.equal(isLoopbackHostname('localhost'), true);
     assert.equal(isLoopbackHostname('127.0.0.1'), true);
@@ -887,7 +917,11 @@ test('automatic preparation processes at most one accumulated batch per page act
         pendingStore,
         fetchImpl: async url => {
             assert.ok(url.endsWith('/api/billing/status'));
-            return response({ available_batches: 3, plan: { tickets_per_period: 300 } });
+            return response({
+                available_batches: 3,
+                next_claim_ticket_count: 300,
+                plan: { tickets_per_period: 300 }
+            });
         }
     });
     let prepared = 0;
@@ -902,6 +936,88 @@ test('automatic preparation processes at most one accumulated batch per page act
     assert.equal(first.ticketsAdded, 300);
     assert.equal(second, null);
     assert.equal(prepared, 1);
+    client.destroy();
+});
+
+test('automatic preparation handles a later paid top-up after the subscription batch', async () => {
+    const pendingStore = new MemoryPendingStore();
+    const auth = makeAuth();
+    let status = {
+        available_batches: 1,
+        next_claim_ticket_count: 300,
+        plan: { tickets_per_period: 300, ticket_pack: { tickets: 50 } },
+        ticket_pack: { state: 'ready', ticket_count: 50 }
+    };
+    const client = new BillingClient({
+        authProvider: auth,
+        pendingStore,
+        fetchImpl: async url => {
+            assert.ok(url.endsWith('/api/billing/status'));
+            return response(status);
+        }
+    });
+    const prepared = [];
+    client.prepareOneBatch = async () => {
+        const topup = ['claimable', 'claiming'].includes(status.ticket_pack.state);
+        const result = topup
+            ? { ticketsAdded: 50, source: 'topup', claimRef: status.ticket_pack.claim_ref }
+            : { ticketsAdded: 300, source: 'subscription', claimRef: null };
+        prepared.push(result);
+        return result;
+    };
+
+    const subscription = await client.automaticallyPrepareOneBatch();
+    status = {
+        ...status,
+        available_batches: 0,
+        next_claim_ticket_count: 50,
+        ticket_pack: {
+            state: 'claimable',
+            ticket_count: 50,
+            claim_ref: 'f'.repeat(64)
+        }
+    };
+    const topup = await client.automaticallyPrepareOneBatch();
+    const repeatedTopup = await client.automaticallyPrepareOneBatch();
+
+    assert.equal(subscription.ticketsAdded, 300);
+    assert.equal(topup.ticketsAdded, 50);
+    assert.equal(repeatedTopup, null);
+    assert.deepEqual(prepared.map(result => result.source), ['subscription', 'topup']);
+    client.destroy();
+});
+
+test('automatic preparation handles successive subscription periods in one page', async () => {
+    const pendingStore = new MemoryPendingStore();
+    const auth = makeAuth();
+    let periodEnd = 1788134400;
+    const client = new BillingClient({
+        authProvider: auth,
+        pendingStore,
+        fetchImpl: async url => {
+            assert.ok(url.endsWith('/api/billing/status'));
+            return response({
+                available_batches: 1,
+                next_claim_ticket_count: 300,
+                subscription: {
+                    status: 'active',
+                    current_period_end: periodEnd
+                },
+                plan: { tickets_per_period: 300 }
+            });
+        }
+    });
+    let prepared = 0;
+    client.prepareOneBatch = async () => {
+        prepared += 1;
+        return { ticketsAdded: 300, source: 'subscription' };
+    };
+
+    assert.ok(await client.automaticallyPrepareOneBatch());
+    assert.equal(await client.automaticallyPrepareOneBatch(), null);
+    periodEnd = 1790812800;
+    assert.ok(await client.automaticallyPrepareOneBatch());
+    assert.equal(prepared, 2);
     client.destroy();
 });
 
@@ -964,6 +1080,7 @@ test('one prorated paid batch is blinded, signed, finalized, and imported withou
     const pendingStore = new MemoryPendingStore();
     const wallet = [];
     const claimBodies = [];
+    const publicKeyOptions = [];
     let statusCalls = 0;
     const client = new BillingClient({
         baseUrl: 'http://127.0.0.1:8005',
@@ -1004,7 +1121,8 @@ test('one prorated paid batch is blinded, signed, finalized, and imported withou
                 });
             }
             if (url.endsWith('/api/ticket/issue/public-key')) {
-                return response({ public_key: 'issuer-public-key' });
+                publicKeyOptions.push(options);
+                return publicKeyResponse(publicKey('issuer-public-key'));
             }
             if (url.endsWith('/api/billing/tickets/claim')) {
                 claimBodies.push({ body: JSON.parse(options.body), headers: options.headers });
@@ -1022,8 +1140,13 @@ test('one prorated paid batch is blinded, signed, finalized, and imported withou
     assert.equal(result.ticketsAdded, targetCount);
     assert.equal(wallet.length, targetCount);
     assert.equal(claimBodies.length, 1);
-    assert.deepEqual(Object.keys(claimBodies[0].body), ['blinded_requests']);
+    assert.deepEqual(Object.keys(claimBodies[0].body), ['blinded_requests', 'expected_key_id']);
     assert.equal(claimBodies[0].body.blinded_requests.length, targetCount);
+    assert.match(claimBodies[0].body.expected_key_id, /^[0-9a-f]{64}$/);
+    assert.equal(publicKeyOptions.length, 3);
+    assert.equal(publicKeyOptions.every(options => (
+        options.cache === 'no-store' && options.credentials === 'omit'
+    )), true);
     assert.equal(claimBodies[0].headers['X-OA-Demo-Account-ID'], 'local-test-user-1234');
     for (const ticket of wallet) {
         assert.deepEqual(Object.keys(ticket).sort(), [
@@ -1097,7 +1220,7 @@ test('a referenced 50-ticket top-up cannot be replaced by an older subscription 
                 });
             }
             if (url.endsWith('/api/ticket/issue/public-key')) {
-                return response({ public_key: 'issuer-public-key' });
+                return publicKeyResponse(publicKey('issuer-public-key'));
             }
             if (url.endsWith('/api/billing/tickets/claim')) {
                 claimBodies.push(JSON.parse(options.body));
@@ -1212,7 +1335,7 @@ test('a refunded top-up clears unrecoverable local claim state after server reje
                 });
             }
             if (url.endsWith('/api/ticket/issue/public-key')) {
-                return response({ public_key: 'issuer-public-key' });
+                return publicKeyResponse(publicKey('issuer-public-key'));
             }
             if (url.endsWith('/api/billing/tickets/claim')) {
                 claimCalls += 1;
@@ -1260,7 +1383,7 @@ test('server-provided finalized tickets fail closed before wallet import', async
         },
         fetchImpl: async (url) => {
             if (url.endsWith('/api/billing/status')) return response({ available_batches: 1, next_claim_ticket_count: 300, plan: { tickets_per_period: 300 } });
-            if (url.endsWith('/api/ticket/issue/public-key')) return response({ public_key: 'issuer-public-key' });
+            if (url.endsWith('/api/ticket/issue/public-key')) return publicKeyResponse(publicKey('issuer-public-key'));
             return response({ finalized_tickets: ['forbidden'], signed_responses: [] });
         }
     });
@@ -1296,7 +1419,7 @@ test('unexpected server metadata fails closed before wallet import', async () =>
         },
         fetchImpl: async url => {
             if (url.endsWith('/api/billing/status')) return response({ available_batches: 1, next_claim_ticket_count: 300, plan: { tickets_per_period: 300 } });
-            if (url.endsWith('/api/ticket/issue/public-key')) return response({ public_key: 'issuer-public-key' });
+            if (url.endsWith('/api/ticket/issue/public-key')) return publicKeyResponse(publicKey('issuer-public-key'));
             return response({
                 account_id: 'forbidden-account-link',
                 signed_responses: Array.from({ length: 300 }, (_, index) => [index, `signed-${index}`])
@@ -1331,7 +1454,8 @@ test('account change aborts work but leaves account-scoped recovery state untouc
     client.destroy();
 });
 
-test('reload resumes finalization from the saved chunk without regenerating requests', async () => {
+test('reload migrates a legacy signed fingerprint and resumes without regenerating requests', async () => {
+    const issuerPublicKey = publicKey('issuer-public-key');
     const pendingStore = new MemoryPendingStore();
     const requests = Array.from({ length: 300 }, (_, index) => ({
         index,
@@ -1347,7 +1471,7 @@ test('reload resumes finalization from the saved chunk without regenerating requ
     }));
     await pendingStore.put({
         accountScope: 'demo:local-test-user',
-        issuerFingerprint: 'saved-fingerprint',
+        issuerFingerprint: await legacyFingerprint(issuerPublicKey),
         targetCount: 300,
         generatedCount: 300,
         requests,
@@ -1357,6 +1481,12 @@ test('reload resumes finalization from the saved chunk without regenerating requ
         phase: 'finalizing',
         createdAt: '2026-01-01T00:00:00.000Z'
     });
+    const migrationWrites = [];
+    const durablePut = pendingStore.put.bind(pendingStore);
+    pendingStore.put = async record => {
+        migrationWrites.push(structuredClone(record));
+        return durablePut(record);
+    };
     const wallet = [];
     let generated = 0;
     let finalized = 0;
@@ -1391,6 +1521,7 @@ test('reload resumes finalization from the saved chunk without regenerating requ
                     }
                 });
             }
+            if (url.endsWith('/api/ticket/issue/public-key')) return publicKeyResponse(issuerPublicKey);
             throw new Error(`Unexpected request during finalization resume: ${url}`);
         }
     });
@@ -1401,10 +1532,32 @@ test('reload resumes finalization from the saved chunk without regenerating requ
     assert.equal(finalized, 150);
     assert.equal(result.ticketsAdded, 300);
     assert.equal(wallet.length, 300);
+    const migratedKeyId = await fingerprint(issuerPublicKey);
+    assert.equal(migrationWrites.some(record => (
+        record.issuerFingerprintVersion === 2 &&
+        record.issuerFingerprint === migratedKeyId
+    )), true);
+    client.destroy();
+});
+
+test('public-key loading rejects server key-id mismatches', async () => {
+    const issuerPublicKey = publicKey('issuer-public-key');
+    const client = new BillingClient({
+        fetchImpl: async () => response({
+            public_key: issuerPublicKey,
+            key_id: '0'.repeat(64)
+        })
+    });
+
+    await assert.rejects(
+        () => client.fetchPublicKey(),
+        /public key response is inconsistent/
+    );
     client.destroy();
 });
 
 test('wallet persistence failure keeps the completed local recovery record', async () => {
+    const issuerPublicKey = publicKey('issuer-public-key');
     const pendingStore = new MemoryPendingStore();
     const requests = Array.from({ length: 300 }, (_, index) => ({
         index,
@@ -1413,7 +1566,7 @@ test('wallet persistence failure keeps the completed local recovery record', asy
     }));
     await pendingStore.put({
         accountScope: 'demo:local-test-user',
-        issuerFingerprint: 'saved-fingerprint',
+        issuerFingerprint: await fingerprint(issuerPublicKey),
         targetCount: 300,
         generatedCount: 300,
         requests,
@@ -1442,6 +1595,7 @@ test('wallet persistence failure keeps the completed local recovery record', asy
         },
         fetchImpl: async url => {
             if (url.endsWith('/api/billing/status')) return response({ available_batches: 0, plan: {} });
+            if (url.endsWith('/api/ticket/issue/public-key')) return publicKeyResponse(issuerPublicKey);
             throw new Error(`Unexpected request: ${url}`);
         }
     });
@@ -1454,6 +1608,7 @@ test('wallet persistence failure keeps the completed local recovery record', asy
 });
 
 test('recovery accepts already-imported tickets in active or archived wallet storage', async () => {
+    const issuerPublicKey = publicKey('issuer-public-key');
     const pendingStore = new MemoryPendingStore();
     const requests = Array.from({ length: 300 }, (_, index) => ({
         index, blindedRequest: `blind-${index}`, serializedState: { index }
@@ -1466,7 +1621,7 @@ test('recovery accepts already-imported tickets in active or archived wallet sto
     }));
     await pendingStore.put({
         accountScope: 'demo:local-test-user',
-        issuerFingerprint: 'saved-fingerprint',
+        issuerFingerprint: await fingerprint(issuerPublicKey),
         targetCount: 300,
         generatedCount: 300,
         requests,
@@ -1490,6 +1645,7 @@ test('recovery accepts already-imported tickets in active or archived wallet sto
         },
         fetchImpl: async url => {
             if (url.endsWith('/api/billing/status')) return response({ available_batches: 0, plan: {} });
+            if (url.endsWith('/api/ticket/issue/public-key')) return publicKeyResponse(issuerPublicKey);
             throw new Error(`Unexpected request: ${url}`);
         }
     });
@@ -1499,6 +1655,60 @@ test('recovery accepts already-imported tickets in active or archived wallet sto
     assert.equal(result.totalActive, 299);
     assert.equal(await pendingStore.get('demo:local-test-user'), null);
     assert.equal(archived.length, 1);
+    client.destroy();
+});
+
+test('monthly issuer rotation clears signed recovery before finalization or wallet import', async () => {
+    const pendingStore = new MemoryPendingStore();
+    await pendingStore.put({
+        accountScope: 'demo:local-test-user',
+        source: 'subscription',
+        issuerFingerprint: await fingerprint(publicKey('previous-month-key')),
+        targetCount: 1,
+        generatedCount: 1,
+        requests: [{ index: 0, blindedRequest: 'blind-0', serializedState: { index: 0 } }],
+        signedResponses: [[0, 'signed-0']],
+        finalizedTickets: [],
+        finalizedCount: 0,
+        phase: 'signed',
+        createdAt: '2026-07-31T23:59:59.000Z'
+    });
+    let finalized = false;
+    let imported = false;
+    const client = new BillingClient({
+        authProvider: makeAuth(),
+        pendingStore,
+        lockManager: memoryLockManager(),
+        privacyPass: {
+            async finalizeToken() { finalized = true; }
+        },
+        ticketStore: {
+            getCount: () => 0,
+            getTickets: () => [],
+            async addTickets() { imported = true; }
+        },
+        fetchImpl: async url => {
+            if (url.endsWith('/api/billing/status')) {
+                return response({
+                    available_batches: 0,
+                    next_claim_ticket_count: 1,
+                    plan: { tickets_per_period: 300 }
+                });
+            }
+            if (url.endsWith('/api/ticket/issue/public-key')) {
+                return publicKeyResponse(publicKey('current-month-key'));
+            }
+            throw new Error(`Unexpected request: ${url}`);
+        }
+    });
+
+    await assert.rejects(
+        () => client.prepareOneBatch(),
+        error => error.code === 'BILLING_ISSUER_ROTATED'
+    );
+    assert.equal(finalized, false);
+    assert.equal(imported, false);
+    assert.equal(await pendingStore.get('demo:local-test-user'), null);
     client.destroy();
 });
 
@@ -1539,7 +1749,7 @@ test('one frozen billing identity is used across status and claim requests', asy
                     plan: { tickets_per_period: 300 }
                 });
             }
-            if (url.endsWith('/api/ticket/issue/public-key')) return response({ public_key: 'key' });
+            if (url.endsWith('/api/ticket/issue/public-key')) return publicKeyResponse(publicKey('key'));
             return response({
                 signed_responses: Array.from({ length: 300 }, (_, index) => [index, `signed-${index}`])
             });

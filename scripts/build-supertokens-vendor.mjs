@@ -26,7 +26,11 @@ const licenseSections = await Promise.all(licensePackages.map(async (packageName
         path.join(repoRoot, 'node_modules', packageName, 'LICENSE.md'),
         'utf8'
     );
-    return `# ${packageName}\n\n${license.trim()}\n`;
+    // Upstream license markdown contains trailing spaces on blank lines. Keep
+    // the checked-in vendor artifact deterministic across every production
+    // build instead of dirtying the worktree during prebuild.
+    const normalizedLicense = license.replace(/[ \t]+$/gm, '').trim();
+    return `# ${packageName}\n\n${normalizedLicense}\n`;
 }));
 await fs.writeFile(
     path.join(repoRoot, 'chat/vendor/supertokens-session.LICENSE.md'),

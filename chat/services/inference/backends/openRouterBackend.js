@@ -2,7 +2,10 @@ import openRouterAPI from '../../../api.js';
 import ticketClient from '../../ticketClient.js';
 import networkProxy from '../../networkProxy.js';
 import stationVerifier from '../../verifier.js';
-import { isLocalVerifierBypassAllowed } from '../localVerifierPolicy.js';
+import {
+    getVerifierBypassDetail,
+    isLocalVerifierBypassAllowed
+} from '../localVerifierPolicy.js';
 import {
     buildExplicitlyVerifiedOpenRouterSharePayload,
     clearUnverifiedOpenRouterAccess,
@@ -143,6 +146,7 @@ const openRouterBackend = {
     verification: {
         supports: true,
         allowsLocalBypass: () => allowsLocalVerifierBypass(),
+        getLocalBypassDetail: () => getVerifierBypassDetail(),
         init: () => stationVerifier.init(),
         startBroadcastCheck: (getCurrentSession, options) => stationVerifier.startBroadcastCheck(getCurrentSession, options),
         setBannedWarningCallback: (callback) => stationVerifier.setBannedWarningCallback(callback),

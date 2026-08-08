@@ -1151,13 +1151,19 @@ export class VerifierAttestationModal {
     getZeroTrustPresentation(evidence = {}) {
         const localLoopbackBypass = evidence?.submitKeyProof?.status ===
             LOCAL_LOOPBACK_VERIFIER_BYPASS_STATUS;
+        const disposableDemo = evidence?.submitKeyProof?.detail ===
+            'explicit_disposable_demo';
         return localLoopbackBypass
             ? {
                 localLoopbackBypass: true,
                 summaryTone: 'warn',
-                summaryTitle: 'Local verifier bypass active',
+                summaryTitle: disposableDemo
+                    ? 'Disposable demo verifier bypass active'
+                    : 'Local verifier bypass active',
                 summaryBody: 'This development key was issued without production verifier approval. It is not marked verified and cannot be shared.',
-                sectionIntro: 'This key is using the explicit loopback-only development path. The evidence below is informational and does not verify this key.'
+                sectionIntro: disposableDemo
+                    ? 'This key is using an explicit same-origin disposable-demo path. The evidence below is informational and does not verify this key.'
+                    : 'This key is using the explicit loopback-only development path. The evidence below is informational and does not verify this key.'
             }
             : {
                 localLoopbackBypass: false,

@@ -21,6 +21,7 @@
     "build": "npm run prepare:nanomem && node scripts/build.mjs",
     "preview": "python3 -m http.server 8080 -d dist",
     "test": "node scripts/run-unit-tests.mjs",
+    "vercel:demo-config": "node scripts/generate-demo-vercel-config.mjs",
     "vendor:supertokens": "node scripts/build-supertokens-vendor.mjs",
     "audit:model-labels": "node --no-warnings scripts/audit-model-labels.mjs",
     "predev": "npm run prepare:nanomem",

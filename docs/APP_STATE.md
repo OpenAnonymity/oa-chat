@@ -4,6 +4,76 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-08-07: Disposable Demo Same-Origin Routing
+
+- Normal production builds still target `https://org.openanonymity.ai`.
+  Disposable Vercel builds must compile `OA_ORG_SAME_ORIGIN=true`; account,
+  billing, ticket, and sync calls then use the exact frontend origin.
+- `scripts/generate-demo-vercel-config.mjs` validates an HTTPS oa-org tunnel and
+  creates deployment-only rewrites for `/auth/*`, `/api/*`, and `/chat/*`
+  before the SPA fallback. Do not commit a rotating tunnel hostname or expose
+  backend/provider secrets as frontend variables.
+- Deploy the disposable Vercel project with `vercel deploy --prod` and use its
+  stable production hostname for SuperTokens, WebAuthn, Google OAuth, and
+  cookie origins. Preview hostnames rotate and cannot satisfy that fixed
+  identity/callback contract.
+- A disposable station that is absent from an isolated verifier may compile
+  `OA_DEMO_VERIFIER_BYPASS=true` only with same-origin HTTPS routing. The build
+  rejects production OA hostnames, points no request at the production
+  verifier, labels the result as an unverified demo bypass, and prevents access
+  sharing. This is an explicit test-only privacy/assurance deviation requiring
+  user acceptance; omit it when an isolated verifier is available.
+  The guard rejects `openanonymity.ai` and every subdomain, not only the known
+  production frontend names, so a demo-bypass artifact cannot be hosted under
+  any OA production namespace.
+- Same-origin builds strip the production-org DNS prefetch from built HTML.
+  The production build keeps that hint. `scripts/build.mjs` must preserve the
+  tracked `chat/nanomem` symlink rather than copying over it and dirtying the
+  source tree.
+
+See [DEMO_DEPLOYMENT.md](DEMO_DEPLOYMENT.md) for the deployment contract.
+
+## 2026-08-07: Monthly Premium Ticket-Key Epoch
+
+- Premium renewal and the global Privacy Pass ticket generation share the
+  first-of-month 00:00 UTC boundary in oa-org. This must remain a global epoch,
+  not a per-account rotation: every subscription and invitation ticket uses the
+  same unlinkable issuer public key, and rotating it invalidates all earlier
+  generations immediately.
+- `BillingClient.runPreparation(...)` verifies the current RFC 9578 public-key
+  ID before generation, at the signed/finalization transition, and immediately
+  before durable wallet import. The same expected key ID is sent with the blind
+  claim so oa-org's generation fence can reject a rotation race before signing.
+  `BILLING_ISSUER_ROTATED` deletes the obsolete account-scoped pending record
+  and asks the user to retry the current allowance.
+- Pending records without `issuerFingerprintVersion: 2` use the pre-integration
+  hash-of-base64 convention. Accept one only when that legacy hash matches the
+  currently fetched key, then persist the RFC key ID and version before any
+  further recovery work; otherwise an already consumed signed allowance could
+  be discarded during upgrade.
+- An exact boundary race remains recoverable: oa-org rotates before reservation
+  and signing, and the claim completion transition is also atomically fenced
+  on the same key/month. Requests blinded to the old key fail without consuming
+  the entitlement; an issuance counted immediately before rotation is rolled
+  back, and the next browser attempt regenerates. Keep the issuer fingerprint
+  local-only and never add billing or account metadata to finalized tickets.
+- Invitation/ticket-code issuance and request-key, confidential-key, and split
+  redemption use exact-batch server replay records. Client retries must reuse
+  the identical serialized blind/ticket batch so a lost HTTP response cannot
+  consume a one-use credential, tickets, or an ephemeral key irrecoverably.
+  Ticket codes created by splitting are bound to their source key generation
+  and billing month so they cannot carry an allowance across rotation. The
+  split response carries that UTC month-end expiry and the right panel displays
+  it beside the one-show code.
+- oa-org keeps an owner-fenced, exact-request ticket-spend lease before any
+  downstream one-show key/code side effect. A crashed worker can be resumed by
+  the identical ticket batch; a completed request leaves a tombstone longer
+  than the spent-nonce record. After the secret replay window expires, the UI
+  must treat the request as completed/unrecoverable rather than trying to reuse
+  or release those tickets.
+
+See [ACCOUNT_BILLING.md](ACCOUNT_BILLING.md) for the full lifecycle.
+
 ## 2026-08-05: Premium $7 / 50-Ticket Top-Ups
 
 - The Premium modal renders the one-time pack only when both public
@@ -89,7 +159,10 @@ boundary.
   stale status responses are discarded after identity changes. Ticket recovery
   treats active and archived wallet records as imported, preserving archive
   precedence so a spent ticket is never resurrected.
-- One available allowance is prepared automatically per billing activation.
+- One available allowance is prepared automatically per billing activation and
+  entitlement identity. Subscription auto-preparation is keyed by
+  `current_period_end`, so a tab that survives into the next paid month can
+  prepare the new period; top-ups remain keyed by `claim_ref`.
   Additional accumulated allowances require an explicit action labeled with
   the next server-provided count. The modal intentionally omits server allowance
   counters such as `Current paid allowance`; those are not browser wallet counts.

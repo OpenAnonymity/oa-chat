@@ -61,7 +61,7 @@ class RightPanel {
         // Split controls state
         this.showSplitControls = false;
         this.splitCount = 1;
-        this.splitResult = null; // { code, ticketsConsumed }
+        this.splitResult = null; // { code, ticketsConsumed, expiresAt }
 
         // Ticket animation state
         this.currentTicket = null;
@@ -853,7 +853,8 @@ class RightPanel {
             this.showSplitControls = false;
             this.splitResult = {
                 code: result.code,
-                ticketsConsumed: result.ticketsConsumed || this.splitCount
+                ticketsConsumed: result.ticketsConsumed || this.splitCount,
+                expiresAt: result.expiresAt || null
             };
 
             // Auto-copy the code to clipboard
@@ -2080,6 +2081,11 @@ class RightPanel {
                             </svg>
                         </button>
                     </div>
+                    ${this.splitResult.expiresAt ? `
+                    <div class="split-result-share-label">
+                        Usable until ${this.escapeHtml(this.formatUTCtoLocal(this.splitResult.expiresAt))}
+                    </div>
+                    ` : ''}
                     ${splitShareUrl ? `
                     <div class="split-result-share">
                         <div class="split-result-share-label">

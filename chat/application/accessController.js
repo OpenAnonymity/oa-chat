@@ -261,7 +261,8 @@ export async function acquireVerifiedAccess(options = {}) {
         if (verifier.allowsLocalBypass?.() === true) {
             const proof = buildVerifierSubmitKeyProof({
                 status: LOCAL_LOOPBACK_VERIFIER_BYPASS_STATUS,
-                detail: 'explicit_loopback_development'
+                detail: verifier.getLocalBypassDetail?.() ||
+                    'explicit_loopback_development'
             }, result);
             result = {
                 ...result,

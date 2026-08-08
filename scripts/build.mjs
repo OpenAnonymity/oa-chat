@@ -15,6 +15,19 @@ const assetsDir = path.join(outDir, 'assets');
 const vectorDir = path.join(repoRoot, 'vector');
 const localInferenceDir = path.join(repoRoot, 'local_inference');
 const nanomemDir = path.join(repoRoot, 'nanomem');
+const sameOriginOrgSetting = process.env.OA_ORG_SAME_ORIGIN;
+if (sameOriginOrgSetting && !['true', 'false'].includes(sameOriginOrgSetting)) {
+    throw new Error('[build] OA_ORG_SAME_ORIGIN must be exactly true or false');
+}
+const sameOriginOrg = sameOriginOrgSetting === 'true';
+const demoVerifierBypassSetting = process.env.OA_DEMO_VERIFIER_BYPASS;
+if (demoVerifierBypassSetting && !['true', 'false'].includes(demoVerifierBypassSetting)) {
+    throw new Error('[build] OA_DEMO_VERIFIER_BYPASS must be exactly true or false');
+}
+const demoVerifierBypass = demoVerifierBypassSetting === 'true';
+if (demoVerifierBypass && !sameOriginOrg) {
+    throw new Error('[build] verifier bypass is allowed only in an explicit same-origin demo build');
+}
 
 const pathExists = async (target) => {
     try {
@@ -87,21 +100,6 @@ const build = async () => {
         }
     }
 
-    // Ensure chat/nanomem is a real directory so esbuild can resolve imports.
-    // In dev it's a symlink; in CI the symlink target may not survive filtering.
-    const chatNanomem = path.join(srcDir, 'nanomem');
-    await fs.rm(chatNanomem, { recursive: true, force: true });
-    await fs.cp(nanomemDir, chatNanomem, {
-        recursive: true,
-        filter: (src) => {
-            const rel = path.relative(nanomemDir, src);
-            if (!rel) return true;
-            if (rel === 'node_modules' || rel.startsWith('node_modules/')) return false;
-            if (rel === '.git' || rel.startsWith('.git')) return false;
-            return true;
-        }
-    });
-
     await fs.rm(outDir, { recursive: true, force: true });
     await fs.mkdir(path.join(repoRoot, 'dist'), { recursive: true });
     await fs.cp(srcDir, outDir, { recursive: true });
@@ -160,7 +158,11 @@ const build = async () => {
         chunkNames: 'chunk-[hash]',
         assetNames: 'asset-[hash]',
         target: ['es2020'],
-        define: { '__DEV__': 'false' },
+        define: {
+            '__DEV__': 'false',
+            '__OA_ORG_SAME_ORIGIN__': JSON.stringify(sameOriginOrg),
+            '__OA_DEMO_VERIFIER_BYPASS__': JSON.stringify(demoVerifierBypass)
+        },
         minify: true,
         metafile: true,
         logLevel: 'silent'
@@ -182,8 +184,31 @@ const build = async () => {
     const indexPath = path.join(outDir, 'index.html');
     let html = await fs.readFile(indexPath, 'utf8');
 
+    if (sameOriginOrg) {
+        // A disposable demo must not even warm production-org DNS. All org
+        // traffic is intentionally routed through the deployment origin.
+        html = html.replace(
+            /\s*<link\s+rel="dns-prefetch"\s+href="https:\/\/org\.openanonymity\.ai"\s*>/g,
+            ''
+        );
+    }
+
     html = replaceBundleBlock(html, 'PRELUDE', preludeScriptPath);
     html = replaceBundleBlock(html, 'APP', appScriptPath);
+
+    if (sameOriginOrg) {
+        const executableModuleSources = [...html.matchAll(
+            /<script\b[^>]*\btype="module"[^>]*\bsrc="([^"]+)"[^>]*>/g
+        )].map((match) => match[1].split('?')[0]);
+        const uncompiledModules = executableModuleSources.filter(
+            (source) => !source.startsWith('assets/')
+        );
+        if (uncompiledModules.length > 0 || /<script\b[^>]*\btype="module"[^>]*>\s*import\s*\(/.test(html)) {
+            throw new Error(
+                `[build] same-origin demo contains an uncompiled executable module: ${uncompiledModules.join(', ') || 'inline import'}`
+            );
+        }
+    }
 
     const appHash = appOutput[0].match(/-([a-z0-9]+)\.js$/i)?.[1];
     html = versionStaticAssetRefs(html, appHash);

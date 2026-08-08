@@ -13,6 +13,15 @@ function bytesToHex(bytes) {
     return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
+export async function ticketPublicKeyId(publicKey) {
+    const publicKeyBytes = decodeBase64Url(publicKey);
+    if (publicKeyBytes.length === 0) {
+        throw new Error('A valid ticket issuer public key is required');
+    }
+    const digest = await globalThis.crypto.subtle.digest('SHA-256', publicKeyBytes);
+    return bytesToHex(new Uint8Array(digest));
+}
+
 export function normalizeTicketKeyId(value) {
     const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
     return /^[0-9a-f]{64}$/.test(normalized) ? normalized : null;

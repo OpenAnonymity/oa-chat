@@ -35,3 +35,24 @@ test('localhost preview without the dev marker uses production org', () => {
         authOrigin: 'https://org.openanonymity.ai'
     });
 });
+
+test('demo build routes account and API traffic through its own HTTPS origin', () => {
+    assert.deepEqual(resolveOrgEndpoints({
+        hostname: 'oa-demo.vercel.app',
+        origin: 'https://oa-demo.vercel.app',
+        sameOriginEnabled: true
+    }), {
+        apiBase: 'https://oa-demo.vercel.app',
+        authOrigin: 'https://oa-demo.vercel.app'
+    });
+});
+
+test('same-origin mode rejects paths and non-HTTP browser schemes', () => {
+    for (const origin of ['https://oa-demo.vercel.app/path', 'app://openanonymity.ai']) {
+        assert.throws(() => resolveOrgEndpoints({
+            hostname: 'oa-demo.vercel.app',
+            origin,
+            sameOriginEnabled: true
+        }), /exact HTTP\(S\) origin/);
+    }
+});

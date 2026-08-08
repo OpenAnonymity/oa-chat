@@ -80,7 +80,7 @@ import {
     hasExplicitVerifierApprovalForAccessInfo,
     isVerifierResultApproved
 } from './services/inference/verifiedAccess.js';
-import { COUNCIL_MODE_FEATURE_FLAG } from './config.js';
+import { COUNCIL_MODE_FEATURE_FLAG, ORG_API_BASE } from './config.js';
 import {
     RESPONSE_MODE_SINGLE,
     RESPONSE_MODE_COUNCIL,
@@ -9982,6 +9982,12 @@ Your API key has been cleared. A new key from a different station will be obtain
 
 // Initialize app when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
+    // This public analytics endpoint must never inherit the first-party
+    // SuperTokens cookie in a same-origin disposable deployment.
+    fetch(`${ORG_API_BASE}/chat/v1/analytics/pageview`, {
+        method: 'POST',
+        credentials: 'omit'
+    }).catch(() => {});
     window.app = new ChatApp();
     window.oaDesktopReady = true;
 });

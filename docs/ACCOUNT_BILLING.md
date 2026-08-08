@@ -22,8 +22,17 @@ the server-provided amount and count to render “Buy 50 tickets — $7.”
 An eligible subscriber may buy packs sequentially without a lifetime limit, but
 only one open Checkout or paid/unclaimed pack is allowed at a time. The purchase
 button is replaced while Checkout is pending or the current pack is being
-prepared. A paid pack remains recoverable until its 50 blind signatures commit;
-issued tickets keep the existing issuer-key rotation behavior.
+prepared. An unprepared paid pack remains recoverable across month boundaries
+until its 50 blind signatures commit. Once prepared, its tickets expire at the
+next first-of-month 00:00 UTC global issuer rotation; the exact timestamp is
+returned by oa-org and disclosed beside the purchase control before Checkout.
+Blind issuance deliberately cannot restore only an identified subscriber's
+unused tickets after rotation without weakening unlinkability. Billing-enabled
+oa-org deployments rotate the one global issuer at the first instant of each
+UTC calendar month, matching the subscription renewal boundary. The rotation
+invalidates every ticket from earlier generations immediately; it is global,
+not subscriber-specific, because every account shares the same unlinkable
+issuer public key.
 
 The initial Welcome screen labels the paid path **Upgrade** and opens the public
 Premium modal before asking for authentication. If Checkout then needs an
@@ -59,6 +68,13 @@ the Blind RSA protocol prevents the signed blinded requests from being linked
 to the finalized tickets later redeemed. The final wallet records contain only
 `blinded_request`, `signed_response`, `finalized_ticket`, and `created_at`.
 
+Account-authenticated billing claims use the narrow SuperTokens transport
+directly to the configured org unless the deployment supplies a first-party
+same-origin reverse proxy. The org may therefore observe the subscriber's IP
+and claim timing in addition to their billing identity. This is metadata about
+identity-bound issuance, not a link to the blinded ticket tokens: later
+redemption remains credential-free and uses the accountless proxy path.
+
 The temporary development identity is created only when both oa-chat and
 oa-org use loopback. Production/non-loopback billing uses the narrow
 SuperTokens session transport for `/api/billing`; no access or refresh token is
@@ -81,6 +97,24 @@ Changing accounts aborts active work but leaves the old account's recovery
 record intact. The record is removed only after every finalized ticket is
 durably written to the ordinary wallet and read back from IndexedDB. A failed
 wallet write keeps the complete signed/finalized recovery record for retry.
+
+Before generating, claiming, resuming finalization, and importing, the client
+fetches the current issuer public key and compares its RFC 9578 SHA-256 key ID
+with the pending record. The claim carries that expected key ID through the
+server's fenced issuance path. A mismatch means the month/key epoch changed:
+the client deletes the old local recovery, imports no ticket, and reports
+`BILLING_ISSUER_ROTATED` so
+the user can retry against the current allowance. This also closes the boundary
+race where the browser fetched the old key immediately before oa-org rotated;
+the server releases any uncommitted reservation, and the next attempt discards
+the stale blinded state before reuse.
+
+Recovery records created before the RFC key-ID fence stored SHA-256 of the
+base64 public-key string. On the first compatible resume, the client accepts
+that legacy fingerprint only when it matches the currently fetched key, then
+durably rewrites the record to fingerprint version 2 (the RFC key ID) before
+claiming, finalizing, or importing. This preserves already signed recovery
+without weakening rotation detection.
 
 The browser holds a scope-specific Web Lock for the full preparation and
 recovery operation. This prevents two tabs for the same billing identity from
@@ -133,8 +167,11 @@ archived tickets as durably imported and never moves them back to the active
 wallet.
 
 Only one available entitlement is prepared automatically per local billing
-activation. Any additional paid allowances require an explicit preparation
-action whose label uses the server-provided `next_claim_ticket_count`.
+activation and entitlement identity. Subscription allowances use the Stripe
+`current_period_end` as that identity, so a long-lived tab can automatically
+prepare a later paid month; top-ups use their `claim_ref`. Any additional paid
+allowances require an explicit preparation action whose label uses the
+server-provided `next_claim_ticket_count`.
 After a top-up payment, the browser automatically prepares the referenced pack.
 If claiming has committed but wallet import has not, local recovery overrides a
 server `ready` state and continues blocking another purchase until IndexedDB
