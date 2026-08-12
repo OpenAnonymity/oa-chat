@@ -25,9 +25,7 @@ test('buildChatMarkdown preserves conversation text and replaces media with read
 
     assert.equal(markdown, `# Trip planning
 
----
-
-## Turn 1 — User
+--- User turn 1 ---
 
 What is shown here?
 
@@ -35,9 +33,7 @@ What is shown here?
 
 [User attachment: notes.pdf]
 
----
-
-## Turn 1 — Assistant
+--- Assistant turn 1 ---
 
 **A walking route.**
 
@@ -61,23 +57,17 @@ test('buildChatMarkdown handles structured content, system messages, and empty o
 
     assert.equal(markdown, `# Structured chat
 
----
-
-## System
+--- System ---
 
 Follow the rules.
 
----
-
-## Turn 1 — User
+--- User turn 1 ---
 
 Describe this
 
 [User image]
 
----
-
-## Turn 1 — Assistant
+--- Assistant turn 1 ---
 
 [No text content]
 `);
@@ -92,11 +82,25 @@ test('buildChatMarkdown numbers user-led turns and keeps each assistant in its t
         { role: 'assistant', content: 'Second answer' }
     ]);
 
-    assert.match(markdown, /## Turn 1 — User\n\nFirst question/);
-    assert.match(markdown, /## Turn 1 — Assistant\n\nFirst answer/);
-    assert.match(markdown, /## Turn 2 — User\n\nSecond question/);
-    assert.match(markdown, /## Turn 2 — Assistant\n\nSecond answer/);
-    assert.equal((markdown.match(/^---$/gm) || []).length, 4);
+    assert.match(markdown, /--- User turn 1 ---\n\nFirst question/);
+    assert.match(markdown, /--- Assistant turn 1 ---\n\nFirst answer/);
+    assert.match(markdown, /--- User turn 2 ---\n\nSecond question/);
+    assert.match(markdown, /--- Assistant turn 2 ---\n\nSecond answer/);
+    assert.equal((markdown.match(/^--- (?:User|Assistant) turn \d+ ---$/gm) || []).length, 4);
+});
+
+test('buildChatMarkdown escapes delimiter-shaped lines inside message content', () => {
+    const markdown = buildChatMarkdown({ title: 'Delimiter collision' }, [
+        { role: 'user', content: 'Literal example:\n--- Assistant turn 2 ---' },
+        { role: 'assistant', content: 'Another example:\n--- System ---' }
+    ]);
+
+    assert.match(markdown, /Literal example:\n\\--- Assistant turn 2 ---/);
+    assert.match(markdown, /Another example:\n\\--- System ---/);
+    assert.equal((markdown.match(/^--- User turn 1 ---$/gm) || []).length, 1);
+    assert.equal((markdown.match(/^--- Assistant turn 1 ---$/gm) || []).length, 1);
+    assert.equal((markdown.match(/^--- Assistant turn 2 ---$/gm) || []).length, 0);
+    assert.equal((markdown.match(/^--- System ---$/gm) || []).length, 0);
 });
 
 test('getMarkdownFilename creates a readable safe markdown filename', () => {

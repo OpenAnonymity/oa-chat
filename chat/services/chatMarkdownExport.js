@@ -80,12 +80,19 @@ function getRoleLabel(role) {
     return 'Message';
 }
 
-function getMessageHeading(message, turnNumber) {
+function getMessageDelimiter(message, turnNumber) {
     const roleLabel = getRoleLabel(message?.role);
     if (message?.role === 'user' || message?.role === 'assistant') {
-        return `Turn ${turnNumber} — ${roleLabel}`;
+        return `--- ${roleLabel} turn ${turnNumber} ---`;
     }
-    return roleLabel;
+    return `--- ${roleLabel} ---`;
+}
+
+function escapeDelimiterLines(content) {
+    return content.replace(
+        /^--- (?:(?:User|Assistant) turn \d+|System|Message) ---$/gm,
+        match => `\\${match}`
+    );
 }
 
 function cleanTitle(title) {
@@ -106,12 +113,12 @@ export function buildChatMarkdown(session, messages) {
             turnNumber = 1;
         }
 
-        const content = getMessageText(message?.content).trim();
+        const content = escapeDelimiterLines(getMessageText(message?.content)).trim();
         const placeholders = getMessagePlaceholders(message);
         const body = [content, ...placeholders].filter(Boolean).join('\n\n');
-        const heading = getMessageHeading(message, turnNumber);
+        const delimiter = getMessageDelimiter(message, turnNumber);
 
-        sections.push(`---\n\n## ${heading}\n\n${body || '[No text content]'}`);
+        sections.push(`${delimiter}\n\n${body || '[No text content]'}`);
     });
 
     return `${sections.join('\n\n')}\n`;
