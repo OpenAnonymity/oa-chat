@@ -63,4 +63,15 @@ test('Vercel builds upload symlink targets and nanomem without Git metadata', ()
     assert.match(vercelIgnore, /^!\/vector\/\*\*$/m);
     assert.match(vercelIgnore, /^!\/local_inference$/m);
     assert.match(vercelIgnore, /^!\/local_inference\/\*\*$/m);
+    assert.ok(
+        vercelIgnore.trimEnd().endsWith([
+            '**/.git',
+            '**/.git/**',
+            '.env',
+            '.env.*',
+            '**/.env',
+            '**/.env.*'
+        ].join('\n')),
+        'secret and nested Git deny rules must remain after every allowlist'
+    );
 });

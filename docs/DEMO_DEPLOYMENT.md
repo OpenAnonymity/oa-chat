@@ -30,7 +30,10 @@ The deploy upload includes the initialized `nanomem` source and the root
 but deliberately excludes all `.git` metadata. `npm run build` therefore skips
 submodule setup when `nanomem/src` is already present. Initialize the submodule
 locally before deploying; do not upload repository metadata or add a Git
-credential to the Vercel build merely to repeat submodule setup.
+credential to the Vercel build merely to repeat submodule setup. Keep the final
+nested `.git` and `.env*` deny rules after every broad allowlist in
+`.vercelignore`; their ordering prevents a future vendored directory from
+reintroducing local metadata or environment files.
 
 `OA_DEMO_VERIFIER_BYPASS=true` is an explicit test-only deviation for a
 disposable station that is not registered with the production hardware
