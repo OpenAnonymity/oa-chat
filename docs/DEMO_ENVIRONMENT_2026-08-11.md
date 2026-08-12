@@ -2,15 +2,18 @@
 
 This is the secret-free run record for the disposable SSO, SuperTokens,
 Stripe billing, monthly ticket-key rotation, and OpenRouter chat demo. The
-environment is test-only and is intended for teardown on 2026-08-12.
+environment is test-only. Teardown was originally planned for 2026-08-12; the
+user requested a final upgrade-flow repair on that date, so it remains
+live only for this validation and must be torn down when the user confirms the
+demo is no longer needed.
 
 ## Resolved source
 
-- deployed oa-chat runtime: `84339054b7e0bfce664676bcc3e93b59621278ec`
+- deployed oa-chat runtime: `adac81b02cc371551066675b35072938a3579a74`
   (`codex/integrated-subscription-rotation`)
-- post-deployment Vercel packaging hardening and handoff base:
-  `d2f0b6813cd0b979caee1dbf4d6f8911e718aae6` on the same branch. It is
-  tested but does not change the deployed runtime bundle.
+- user-facing upgrade/registration fix: `12d2f31ea5dbea8057a25397bc660494476f8cc6`;
+  Vercel symlink-target packaging and final nested metadata/env deny rules are
+  the two following commits included in the deployed runtime above.
 - oa-org: `c21f179acffce5b6c0be61fed5be0ac24652c081`
 - oa-station: `627556f5d933f34881c801fd451d7160a00a508d`
 - Services: `oa-org`, `oa-org-tunnel`, `oa-station`, and the local
@@ -46,10 +49,10 @@ authoritative amount.
   <https://oa-integrated-demo-20260807.vercel.app>
 - Vercel project/deployment:
   `prj_ifs4YkKjGnUq5tmzvl5KPG6i4LYh` /
-  `dpl_A38ehh8YcAyCWYkvEMoVLV9SuPDH`.
-- Vercel build marker: `FSLD5PBS`.
+  `dpl_CX3RzfLiVC8Q6a9pDyjw3np3bQkQ`.
+- Vercel build marker: `OZIU3763`.
 - Org quick tunnel:
-  `https://john-network-authorization-initiated.trycloudflare.com`.
+  `https://gather-imperial-kruger-challenge.trycloudflare.com`.
   It has no durable Cloudflare DNS resource; stopping the tunnel invalidates
   this hostname, and a restarted quick tunnel requires regenerated Vercel
   rewrites and a production redeploy.
@@ -95,6 +98,21 @@ sudo install -o root -g root -m 0444 /dev/null \
   SDK interception, and the authenticated provider-session read. The popup
   disclosed neither provider tokens nor the OA account identifier. OAuth start
   also recovered from a stale invalid SuperTokens access cookie.
+- On 2026-08-12, the prior quick-tunnel hostname had expired while Vercel still
+  routed to it, which caused the user-visible `Premium billing is unavailable`
+  and Google `Request failed` errors. The production rewrite now targets the
+  current healthy tunnel. A new live browser run loaded the exact US$35/month,
+  300-ticket plan without an error and completed Google account selection and
+  the one-time OAuth callback exchange.
+- Signed-out navigation and the premium CTA now say `Register and upgrade`.
+  The registration chooser exposes only `Continue with Google`; direct
+  passkey creation, passkey login, and standalone recovery are absent from
+  that surface. The separate post-SSO encryption-passkey ceremony remains
+  required to protect synced data and was reached successfully. A pending
+  upgrade resumes Stripe Checkout automatically after that ceremony. The
+  browser reached the real macOS authenticator prompt again, but the physical
+  biometric/security-key action remains user-owned, so the final continuation
+  into hosted Checkout is not yet claimed as a live E2E result.
 - The OA account now retains the authenticated Google identity for this
   disposable demo. Its encryption-passkey step reached the native passkey
   prompt, which still requires the user's local biometric/security-key action;
@@ -129,8 +147,9 @@ sudo install -o root -g root -m 0444 /dev/null \
   removed. The spent-nonce ledger and two completed-attempt tombstones remain
   intentionally for anti-replay retention; they contain no recoverable child
   key. Values are intentionally not recorded.
-- Automated suites: deployed oa-chat runtime 394/394; post-deployment oa-chat
-  packaging/handoff branch 395/395; oa-org 177/177; oa-station 25/25.
+- Automated suites: deployed oa-chat runtime 399/399, including registration,
+  plan-failure, OAuth-continuation, and Vercel packaging regressions; oa-org
+  177/177; oa-station 25/25.
 
 The release env files are `root:root` mode `0600`. Journals on both disposable
 hosts were rotated and vacuumed after the final redaction releases. The org
