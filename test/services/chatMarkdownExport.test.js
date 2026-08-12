@@ -25,7 +25,9 @@ test('buildChatMarkdown preserves conversation text and replaces media with read
 
     assert.equal(markdown, `# Trip planning
 
-## User
+---
+
+## Turn 1 — User
 
 What is shown here?
 
@@ -33,7 +35,9 @@ What is shown here?
 
 [User attachment: notes.pdf]
 
-## Assistant
+---
+
+## Turn 1 — Assistant
 
 **A walking route.**
 
@@ -57,21 +61,42 @@ test('buildChatMarkdown handles structured content, system messages, and empty o
 
     assert.equal(markdown, `# Structured chat
 
+---
+
 ## System
 
 Follow the rules.
 
-## User
+---
+
+## Turn 1 — User
 
 Describe this
 
 [User image]
 
-## Assistant
+---
+
+## Turn 1 — Assistant
 
 [No text content]
 `);
     assert.doesNotMatch(markdown, /example\.com/);
+});
+
+test('buildChatMarkdown numbers user-led turns and keeps each assistant in its turn', () => {
+    const markdown = buildChatMarkdown({ title: 'Two turns' }, [
+        { role: 'user', content: 'First question' },
+        { role: 'assistant', content: 'First answer' },
+        { role: 'user', content: 'Second question' },
+        { role: 'assistant', content: 'Second answer' }
+    ]);
+
+    assert.match(markdown, /## Turn 1 — User\n\nFirst question/);
+    assert.match(markdown, /## Turn 1 — Assistant\n\nFirst answer/);
+    assert.match(markdown, /## Turn 2 — User\n\nSecond question/);
+    assert.match(markdown, /## Turn 2 — Assistant\n\nSecond answer/);
+    assert.equal((markdown.match(/^---$/gm) || []).length, 4);
 });
 
 test('getMarkdownFilename creates a readable safe markdown filename', () => {

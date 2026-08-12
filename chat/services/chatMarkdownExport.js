@@ -80,6 +80,14 @@ function getRoleLabel(role) {
     return 'Message';
 }
 
+function getMessageHeading(message, turnNumber) {
+    const roleLabel = getRoleLabel(message?.role);
+    if (message?.role === 'user' || message?.role === 'assistant') {
+        return `Turn ${turnNumber} — ${roleLabel}`;
+    }
+    return roleLabel;
+}
+
 function cleanTitle(title) {
     return String(title || 'Untitled Chat')
         .replace(/[\r\n]+/g, ' ')
@@ -89,13 +97,21 @@ function cleanTitle(title) {
 
 export function buildChatMarkdown(session, messages) {
     const sections = [`# ${cleanTitle(session?.title)}`];
+    let turnNumber = 0;
 
     (Array.isArray(messages) ? messages : []).forEach(message => {
+        if (message?.role === 'user') {
+            turnNumber += 1;
+        } else if (message?.role === 'assistant' && turnNumber === 0) {
+            turnNumber = 1;
+        }
+
         const content = getMessageText(message?.content).trim();
         const placeholders = getMessagePlaceholders(message);
         const body = [content, ...placeholders].filter(Boolean).join('\n\n');
+        const heading = getMessageHeading(message, turnNumber);
 
-        sections.push(`## ${getRoleLabel(message?.role)}\n\n${body || '[No text content]'}`);
+        sections.push(`---\n\n## ${heading}\n\n${body || '[No text content]'}`);
     });
 
     return `${sections.join('\n\n')}\n`;

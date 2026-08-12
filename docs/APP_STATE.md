@@ -29,6 +29,8 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   action. It reads that session directly from local IndexedDB without switching the
   active chat, preserves message Markdown, and replaces user/model images and other
   attachments with readable placeholder lines instead of embedding binary data URLs.
+  Exported user/assistant headings include their shared conversation turn number
+  (`Turn 1 — User`, `Turn 1 — Assistant`) and horizontal rules delimit messages.
 
 - 2026-08-04: Plain `Cmd/Ctrl+F` uses an app-owned find-on-page toolbar instead
   of the browser's native find UI, so a forgotten find field cannot retain
