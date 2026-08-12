@@ -50,7 +50,7 @@ test('public pageview analytics never carries the account cookie', () => {
     assert.doesNotMatch(indexHtml, /import\(['"]\.\/config\.js['"]\)/);
 });
 
-test('Vercel builds use uploaded nanomem source without uploading Git metadata', () => {
+test('Vercel builds upload symlink targets and nanomem without Git metadata', () => {
     const packageJson = JSON.parse(readFileSync('package.json', 'utf8'));
     const vercelIgnore = readFileSync('.vercelignore', 'utf8');
 
@@ -59,4 +59,8 @@ test('Vercel builds use uploaded nanomem source without uploading Git metadata',
         /^if \[ -d nanomem\/src \]; then exit 0; fi;/
     );
     assert.doesNotMatch(vercelIgnore, /^!\/\.git(?:\/|$)/m);
+    assert.match(vercelIgnore, /^!\/vector$/m);
+    assert.match(vercelIgnore, /^!\/vector\/\*\*$/m);
+    assert.match(vercelIgnore, /^!\/local_inference$/m);
+    assert.match(vercelIgnore, /^!\/local_inference\/\*\*$/m);
 });

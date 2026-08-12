@@ -6,6 +6,8 @@
 !/nanomem
 !/chat
 !/chat/**
+!/vector
+!/vector/**
 !/local_inference
 !/local_inference/**
 !/scripts

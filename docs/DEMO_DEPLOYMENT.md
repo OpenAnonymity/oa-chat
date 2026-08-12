@@ -25,11 +25,12 @@ The generator accepts only an exact HTTPS origin. Its build command compiles
 station, provider, ticket, or SuperTokens secrets in the frontend build or
 Vercel environment.
 
-The deploy upload includes the initialized `nanomem` source but deliberately
-excludes all `.git` metadata. `npm run build` therefore skips submodule setup
-when `nanomem/src` is already present. Initialize the submodule locally before
-deploying; do not upload repository metadata or add a Git credential to the
-Vercel build merely to repeat submodule setup.
+The deploy upload includes the initialized `nanomem` source and the root
+`vector/` and `local_inference/` targets referenced by symlinks under `chat/`,
+but deliberately excludes all `.git` metadata. `npm run build` therefore skips
+submodule setup when `nanomem/src` is already present. Initialize the submodule
+locally before deploying; do not upload repository metadata or add a Git
+credential to the Vercel build merely to repeat submodule setup.
 
 `OA_DEMO_VERIFIER_BYPASS=true` is an explicit test-only deviation for a
 disposable station that is not registered with the production hardware
