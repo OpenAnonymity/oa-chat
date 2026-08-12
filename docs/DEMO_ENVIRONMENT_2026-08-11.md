@@ -108,17 +108,18 @@ sudo install -o root -g root -m 0444 /dev/null \
   The registration chooser exposes only `Continue with Google`; direct
   passkey creation, passkey login, and standalone recovery are absent from
   that surface. The separate post-SSO encryption-passkey ceremony remains
-  required to protect synced data and was reached successfully. A pending
-  upgrade resumes Stripe Checkout automatically after that ceremony. The
-  browser reached the real macOS authenticator prompt again, but the physical
-  biometric/security-key action remains user-owned, so the final continuation
-  into hosted Checkout is not yet claimed as a live E2E result.
+  required to protect synced data and completed successfully with the real
+  macOS authenticator. Pending-upgrade continuation is covered by browser-unit
+  tests. The original one-time intent was lost when its browser tab closed
+  during the physical-authenticator handoff, so the final live check reopened
+  `Upgrade to Premium` from the authenticated account and reached hosted
+  Stripe Checkout successfully.
 - The OA account now retains the authenticated Google identity for this
-  disposable demo. Its encryption-passkey step reached the native passkey
-  prompt, which still requires the user's local biometric/security-key action;
-  the ceremony was not completed, no encryption passkey was installed, and
-  encrypted Google wallet sync was therefore not E2E validated. No mock
-  authenticator or mock Google credential was used.
+  disposable demo. A real encryption passkey is installed, and the originating
+  browser reports `Encrypted with your passkey` and a completed sync. A
+  second-device restore was not performed, so cross-device encrypted Google
+  wallet recovery is not claimed as E2E validated. No mock authenticator or
+  mock Google credential was used.
 - The superseded Google client secret was disabled and deleted after the live
   flow proved the replacement. Only the replacement remains enabled, only the
   protected org environment stores it, and the temporary local copy was
@@ -127,7 +128,10 @@ sudo install -o root -g root -m 0444 /dev/null \
   and US$7 for a 50-ticket pack. A correctly signed webhook was processed and
   its exact replay was classified as duplicate. An unsigned webhook returned
   400. A sandbox customer-portal session succeeded and the throwaway customer
-  was deleted. No Checkout payment was completed.
+  was deleted. Live authenticated handoff created a sandbox Checkout session
+  showing a US$21.51 prorated first charge and US$35/month beginning on
+  2026-08-31. No payment details were entered and no Checkout payment or
+  subscription was completed.
 - The global ticket generation is anchored to the first instant of each UTC
   month. Redis reports billing month `2026-08`; spent-nonce retention is 400
   days. The public issuer endpoint reports `can_issue=true`.
