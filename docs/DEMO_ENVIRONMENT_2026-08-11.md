@@ -6,8 +6,11 @@ environment is test-only and is intended for teardown on 2026-08-12.
 
 ## Resolved source
 
-- oa-chat: `84339054b7e0bfce664676bcc3e93b59621278ec`
+- deployed oa-chat runtime: `84339054b7e0bfce664676bcc3e93b59621278ec`
   (`codex/integrated-subscription-rotation`)
+- post-deployment Vercel packaging hardening and handoff base:
+  `d2f0b6813cd0b979caee1dbf4d6f8911e718aae6` on the same branch. It is
+  tested but does not change the deployed runtime bundle.
 - oa-org: `c21f179acffce5b6c0be61fed5be0ac24652c081`
 - oa-station: `627556f5d933f34881c801fd451d7160a00a508d`
 - Services: `oa-org`, `oa-org-tunnel`, `oa-station`, and the local
@@ -95,7 +98,9 @@ sudo install -o root -g root -m 0444 /dev/null \
 - The OA account now retains the authenticated Google identity for this
   disposable demo. Its encryption-passkey step reached the native passkey
   prompt, which still requires the user's local biometric/security-key action;
-  no mock authenticator or mock Google credential was used.
+  the ceremony was not completed, no encryption passkey was installed, and
+  encrypted Google wallet sync was therefore not E2E validated. No mock
+  authenticator or mock Google credential was used.
 - The superseded Google client secret was disabled and deleted after the live
   flow proved the replacement. Only the replacement remains enabled, only the
   protected org environment stores it, and the temporary local copy was
@@ -124,7 +129,8 @@ sudo install -o root -g root -m 0444 /dev/null \
   removed. The spent-nonce ledger and two completed-attempt tombstones remain
   intentionally for anti-replay retention; they contain no recoverable child
   key. Values are intentionally not recorded.
-- Automated suites: oa-chat 395/395, oa-org 177/177, oa-station 25/25.
+- Automated suites: deployed oa-chat runtime 394/394; post-deployment oa-chat
+  packaging/handoff branch 395/395; oa-org 177/177; oa-station 25/25.
 
 The release env files are `root:root` mode `0600`. Journals on both disposable
 hosts were rotated and vacuumed after the final redaction releases. The org
@@ -204,3 +210,9 @@ Finally, delete the three sandbox Stripe resources listed above, archive both
 sandbox prices/products if they are retained for audit, and revoke
 `oa-integrated-demo-20260811-v2` from OpenRouter Management Keys. Preserve all
 other Stripe/OpenRouter resources and the pre-existing Vercel/AWS logins.
+
+Delete the dedicated Google OAuth web client named `OA SSO Vercel Demo`
+(`506663162190-4v4200umr5k3s29ms90me0aa8aohois9.apps.googleusercontent.com`)
+from project `stoked-mapper-503821-u8`. This removes the remaining replacement
+client secret and the demo callback/origin registration. Preserve every other
+Google Cloud client, credential, project, and resource.
