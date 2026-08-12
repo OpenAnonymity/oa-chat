@@ -25,6 +25,11 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
+- 2026-08-11: Each chat session's sidebar options menu has an `Export as Markdown`
+  action. It reads that session directly from local IndexedDB without switching the
+  active chat, preserves message Markdown, and replaces user/model images and other
+  attachments with readable placeholder lines instead of embedding binary data URLs.
+
 - 2026-08-04: Plain `Cmd/Ctrl+F` uses an app-owned find-on-page toolbar instead
   of the browser's native find UI, so a forgotten find field cannot retain
   keyboard focus after the user returns to the app. The toolbar follows standard
