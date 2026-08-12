@@ -106,6 +106,103 @@ test('prepares the backend-provided 300-ticket entitlement without identity meta
     });
 });
 
+test('persists a top-up claim context only in recovery and passes it to the claim callback', async () => {
+    const { preparer, records, active } = createHarness();
+    const claimRef = 'a'.repeat(64);
+    let observedContext = null;
+    const progress = [];
+
+    await preparer.prepare({
+        scope: 'account:topup',
+        ticketCount: 50,
+        claimContext: `topup:${claimRef}`,
+        fetchIssuerPublicKey: async () => 'public-key',
+        claimBlindedRequests: async (requests, context) => {
+            observedContext = context.claimContext;
+            assert.equal(records.get('account:topup').claimContext, `topup:${claimRef}`);
+            return {
+                signed_responses: requests.map(([index]) => [index, `signed-${index}`]),
+                tickets_issued: requests.length,
+                replayed: false
+            };
+        },
+        onProgress: snapshot => progress.push(snapshot)
+    });
+
+    assert.equal(observedContext, `topup:${claimRef}`);
+    assert.equal(records.size, 0);
+    assert.equal(active.length, 50);
+    assert.ok(progress.length > 0);
+    assert.ok(progress.every(snapshot => snapshot.source === 'topup'));
+    assert.ok(progress.every(snapshot => !Object.hasOwn(snapshot, 'claimContext')));
+    active.forEach(ticket => assert.equal(Object.keys(ticket).some(field => /claim|topup/i.test(field)), false));
+});
+
+test('resumes an unsigned saved top-up without the caller rediscovering its claim reference', async () => {
+    const { preparer, records, active } = createHarness();
+    const claimRef = 'b'.repeat(64);
+    records.set('account:resume-topup', {
+        accountScope: 'account:resume-topup',
+        claimContext: `topup:${claimRef}`,
+        issuerFingerprint: await sha256Hex('public-key'),
+        targetCount: 2,
+        generatedCount: 2,
+        requests: [0, 1].map(index => ({
+            index,
+            blindedRequest: `blinded-${index}`,
+            serializedState: `state-${index}`
+        })),
+        signedResponses: null,
+        finalizedTickets: [],
+        finalizedCount: 0,
+        phase: 'generating'
+    });
+
+    await preparer.prepare({
+        scope: 'account:resume-topup',
+        ticketCount: null,
+        fetchIssuerPublicKey: async () => 'public-key',
+        claimBlindedRequests: async (requests, context) => {
+            assert.equal(context.claimContext, `topup:${claimRef}`);
+            return { signed_responses: requests.map(([index]) => [index, `signed-${index}`]) };
+        }
+    });
+
+    assert.equal(records.size, 0);
+    assert.equal(active.length, 2);
+});
+
+test('rejects malformed or mismatched claim contexts without replacing recovery', async () => {
+    const { preparer, records } = createHarness();
+    await assert.rejects(() => preparer.prepare({
+        scope: 'account:bad-context',
+        ticketCount: 50,
+        claimContext: 'topup:not-a-ref',
+        fetchIssuerPublicKey: async () => 'public-key',
+        claimBlindedRequests: async () => ({})
+    }), error => error.code === 'ENTITLEMENT_INVALID_CLAIM_CONTEXT');
+
+    records.set('account:mismatch', {
+        accountScope: 'account:mismatch',
+        claimContext: `topup:${'c'.repeat(64)}`,
+        issuerFingerprint: await sha256Hex('public-key'),
+        targetCount: 50,
+        generatedCount: 0,
+        requests: [],
+        signedResponses: null,
+        finalizedTickets: [],
+        finalizedCount: 0
+    });
+    await assert.rejects(() => preparer.prepare({
+        scope: 'account:mismatch',
+        ticketCount: 50,
+        claimContext: 'subscription',
+        fetchIssuerPublicKey: async () => 'public-key',
+        claimBlindedRequests: async () => ({})
+    }), /does not match this account or allowance/);
+    assert.equal(records.get('account:mismatch').claimContext, `topup:${'c'.repeat(64)}`);
+});
+
 test('rejects finalized tickets and unexpected metadata from a claim response', () => {
     assert.throws(
         () => normalizeClaimResponses({ finalized_tickets: ['unsafe'] }, 1),

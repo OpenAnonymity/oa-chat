@@ -59,6 +59,15 @@ blinded requests." But it only ever sees the blinded form -- it never sees the
 underlying tokens. The browser stores no entitlement metadata in finalized
 ticket records.
 
+The public entitlement preparer may keep a narrowly validated local recovery
+context (`subscription` or `topup:<opaque 64-hex reference>`) while a browser is
+generating, claiming, finalizing, or importing a paid allowance. That context
+is passed only to the integration's blinded-claim callback. It is removed with
+the recovery record after durable wallet import and is never copied into a
+finalized ticket, wallet export, share, redemption request, or operational log.
+Progress callbacks expose only a redacted `subscription` or `topup` source; they
+never expose the opaque claim reference.
+
 ### 2. Requesting ephemeral API keys (ticket redemption)
 
 The user redeems a small number of finalized tickets for an ephemeral API key

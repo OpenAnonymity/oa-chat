@@ -74,6 +74,12 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - Client-side entitlement ticket blinding/finalization remains public through
     `application/entitlementTicketPreparer.js`; downstream integrations supply
     the authorized count and claim operation.
+  - Paid integrations can attach only `subscription` or
+    `topup:<64-hex-reference>` as local claim-recovery context. Reload recovery
+    reuses that saved context when invoking the blinded-claim callback. It stays
+    in the separate recovery record and never enters finalized tickets, wallet
+    exports, shares, redemptions, logs, or progress snapshots; progress exposes
+    only a redacted `subscription` or `topup` source.
 
 - 2026-07-31 (superseded for explicit loopback development by the 2026-08-08
   note above): Deployed station-v2 access requires explicit verifier approval.

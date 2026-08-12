@@ -11,6 +11,7 @@ const NORMAL_TICKET_FIELDS = new Set([
 ]);
 const FORBIDDEN_METADATA = /account|stripe|subscription|entitlement|claim/i;
 const CLAIM_RESPONSE_FIELDS = new Set(['signed_responses', 'tickets_issued', 'replayed']);
+const CLAIM_CONTEXT_PATTERN = /^(?:subscription|topup:[0-9a-f]{64})$/;
 
 function abortError(message = 'Aborted') {
     return new DOMException(message, 'AbortError');
@@ -75,6 +76,17 @@ function yieldToBrowser() {
     return new Promise(resolve => setTimeout(resolve, 0));
 }
 
+function normalizeClaimContext(value, { allowMissing = false } = {}) {
+    if ((value === undefined || value === null || value === '') && allowMissing) return null;
+    const normalized = String(value || 'subscription');
+    if (!CLAIM_CONTEXT_PATTERN.test(normalized)) {
+        const error = new Error('Entitlement preparation received an invalid claim context.');
+        error.code = 'ENTITLEMENT_INVALID_CLAIM_CONTEXT';
+        throw error;
+    }
+    return normalized;
+}
+
 export class EntitlementTicketPreparer {
     constructor(options = {}) {
         this.pendingStore = options.pendingStore || entitlementClaimRecoveryStore;
@@ -89,6 +101,7 @@ export class EntitlementTicketPreparer {
             ticketCount,
             fetchIssuerPublicKey,
             claimBlindedRequests,
+            claimContext,
             signal,
             onProgress
         } = options;
@@ -99,6 +112,9 @@ export class EntitlementTicketPreparer {
         if (typeof fetchIssuerPublicKey !== 'function' || typeof claimBlindedRequests !== 'function') {
             throw new Error('Entitlement preparation requires issuer and claim operations.');
         }
+        const requestedClaimContext = normalizeClaimContext(claimContext, {
+            allowMissing: requestedCount === null
+        });
         if (signal?.aborted) throw abortError();
 
         await this.ticketStore.init?.();
@@ -107,6 +123,7 @@ export class EntitlementTicketPreparer {
             requestedCount,
             fetchIssuerPublicKey,
             claimBlindedRequests,
+            requestedClaimContext,
             signal,
             onProgress
         });
@@ -128,6 +145,7 @@ export class EntitlementTicketPreparer {
             requestedCount,
             fetchIssuerPublicKey,
             claimBlindedRequests,
+            requestedClaimContext,
             signal,
             onProgress
         } = options;
@@ -148,14 +166,23 @@ export class EntitlementTicketPreparer {
             error.code = 'ENTITLEMENT_RECOVERY_NOT_FOUND';
             throw error;
         }
-        const updateProgress = (phase, completed) => {
-            onProgress?.({ phase, completed, total: targetCount, accountScope: scope });
-        };
+        const savedClaimContext = pending
+            ? normalizeClaimContext(pending.claimContext || 'subscription')
+            : null;
+        const activeClaimContext = savedClaimContext || requestedClaimContext || 'subscription';
+        const updateProgress = (phase, completed) => onProgress?.({
+            phase,
+            completed,
+            total: targetCount,
+            accountScope: scope,
+            source: activeClaimContext.startsWith('topup:') ? 'topup' : 'subscription'
+        });
         if (!pending) {
             const publicKey = await fetchIssuerPublicKey(signal);
             assertActive();
             pending = await this.pendingStore.put({
                 accountScope: scope,
+                claimContext: activeClaimContext,
                 issuerFingerprint: await sha256(publicKey),
                 targetCount,
                 generatedCount: 0,
@@ -167,7 +194,8 @@ export class EntitlementTicketPreparer {
                 createdAt: new Date().toISOString()
             });
         }
-        if (pending.targetCount !== targetCount || pending.accountScope !== scope) {
+        if (pending.targetCount !== targetCount || pending.accountScope !== scope ||
+            (!hasSignedRecovery && requestedClaimContext && activeClaimContext !== requestedClaimContext)) {
             throw new Error('Saved entitlement preparation does not match this account or allowance.');
         }
 
@@ -206,7 +234,7 @@ export class EntitlementTicketPreparer {
             updateProgress('claiming', 0);
             const claim = await claimBlindedRequests(
                 roundTrip.requests.map(request => [request.index, request.blindedRequest]),
-                { signal }
+                { signal, claimContext: activeClaimContext }
             );
             assertActive();
             pending.signedResponses = normalizeClaimResponses(claim, targetCount);
