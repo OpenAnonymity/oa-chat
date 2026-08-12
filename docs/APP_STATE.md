@@ -292,6 +292,17 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     Existing identity rows remain opaque storage records, but there is no
     GitHub authentication path into them.
 
+- 2026-08-11: Popup OAuth completion creates the SuperTokens browser session
+  through an intercepted API response.
+  - The callback navigation cannot deliver its `front-token` header to the
+    Session SDK. It instead posts a short-lived, opaque single-use completion
+    token to its exact opener. The client sends that token in the body of
+    `/auth/google/complete`; the backend atomically consumes it and creates the
+    HttpOnly session on that SDK-intercepted response.
+  - Keep the order `complete -> verify -> provider session read`. Creating the
+    session on the callback navigation or checking `doesSessionExist()` first
+    leaves the SDK unaware of a valid Core session.
+
 - 2026-07-30: SSO encryption passkeys use the provider email as their WebAuthn
   username and display name.
   - Google requests `openid email`. The org stores the verified email with the

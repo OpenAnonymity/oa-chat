@@ -43,6 +43,7 @@ const ACCOUNT_MASTER_KEY_BYTES = 'account-master-key-bytes';  // Legacy; removed
 const ACCOUNT_SYNC_DERIVATION_KEY = 'account-sync-derivation-key';
 const ACCOUNT_SYNC_ID_KEY = 'account-sync-id-key';
 const ACCOUNT_REQUEST_TIMEOUT_MS = 10000;
+const OAUTH_COMPLETION_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const OAUTH_PROVIDERS = Object.freeze({
     google: Object.freeze({ label: 'Google' })
 });
@@ -480,7 +481,14 @@ function waitForOAuthPopup(popup, provider, timeoutMs = 5 * 60 * 1000) {
                 return;
             }
             if (event.data.ok) {
-                finish(() => resolve());
+                const completionToken = event.data.completionToken;
+                if (!OAUTH_COMPLETION_TOKEN_PATTERN.test(completionToken)) {
+                    finish(() => reject(new Error(
+                        `${providerConfig.label} sign in completion was invalid`
+                    )));
+                    return;
+                }
+                finish(() => resolve(completionToken));
             } else {
                 finish(() => reject(new Error(
                     event.data.error || `${providerConfig.label} sign in failed`
@@ -517,6 +525,43 @@ function toFriendlyError(error) {
     if (error.name === 'OperationError') return 'Invalid recovery code, please check and try again';
     if (error.name === 'TokenInvalidatedError') return 'Session expired, please sign in again';
     return error.message || 'Unexpected error';
+}
+
+/**
+ * Complete a popup OAuth handoff through an intercepted account API request.
+ *
+ * The callback is a top-level navigation, so the browser SDK cannot observe a
+ * SuperTokens front-token response header there. The callback instead sends a
+ * short-lived, single-use completion token to its exact opener. Posting that
+ * token through the SDK creates the HttpOnly session in an intercepted
+ * response, after which normal session verification and reads are reliable.
+ */
+export async function bootstrapOAuthSession(
+    provider,
+    completionToken,
+    {
+        completeSession = () => fetchJson(`/auth/${provider}/complete`, {
+            completionToken
+        }),
+        fetchSession = () => fetchJson(`/auth/${provider}/session`, null, {
+            method: 'GET'
+        }),
+        verifySession = () => sessionService.verifySession()
+    } = {}
+) {
+    const providerConfig = getOAuthProvider(provider);
+    if (!OAUTH_COMPLETION_TOKEN_PATTERN.test(completionToken)) {
+        throw new Error(`${providerConfig.label} sign in completion was invalid`);
+    }
+
+    await completeSession();
+    const verified = await verifySession().catch(() => false);
+    if (!verified) {
+        throw new Error(
+            `${providerConfig.label} session could not be established`
+        );
+    }
+    return fetchSession();
 }
 
 class AccountService {
@@ -1470,16 +1515,12 @@ class AccountService {
             }
 
             popup.location.replace(startData.authorizationUrl);
-            await waitForOAuthPopup(popup, provider);
+            const completionToken = await waitForOAuthPopup(popup, provider);
 
-            if (!await sessionService.verifySession().catch(() => false)) {
-                throw new Error(
-                    `${providerConfig.label} session could not be established`
-                );
-            }
-            const session = await fetchJson(`/auth/${provider}/session`, null, {
-                method: 'GET'
-            });
+            const session = await bootstrapOAuthSession(
+                provider,
+                completionToken
+            );
             const accountId = normalizeAccountId(session.accountId);
             if (!accountId) {
                 throw new Error(
