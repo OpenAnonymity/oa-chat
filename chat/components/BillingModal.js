@@ -17,6 +17,7 @@ export default class BillingModal {
         this.busy = null;
         this.error = null;
         this.notice = null;
+        this.planRequestFailed = false;
         this.snapshot = this.billing?.snapshot?.() || {};
         this.unsubscribe = this.billing?.subscribe?.(snapshot => {
             this.snapshot = snapshot;
@@ -159,9 +160,12 @@ export default class BillingModal {
         this.busy = 'loading';
         this.error = null;
         this.notice = null;
+        this.planRequestFailed = false;
         this.render();
+        let planLoaded = false;
         try {
             await this.billing.getPlan({ force: true });
+            planLoaded = true;
             try {
                 const status = await this.billing.getStatus({ force: true, createDemo: true });
                 this.snapshot = this.billing.snapshot();
@@ -173,6 +177,7 @@ export default class BillingModal {
                 if (error?.code !== 'BILLING_AUTH_REQUIRED') throw error;
             }
         } catch (error) {
+            this.planRequestFailed = !planLoaded;
             this.error = this.safeErrorMessage(error, 'Premium billing is unavailable.');
         } finally {
             if (this.busy === 'loading') this.busy = null;
@@ -290,8 +295,10 @@ export default class BillingModal {
         }
     }
 
-    formatPrice(plan) {
-        if (!plan || !Number.isFinite(Number(plan.unit_amount))) return 'Loading price…';
+    formatPrice(plan, { failed = false } = {}) {
+        if (!plan || !Number.isFinite(Number(plan.unit_amount))) {
+            return failed ? 'Price unavailable' : 'Loading price…';
+        }
         const amount = new Intl.NumberFormat(undefined, {
             style: 'currency',
             currency: String(plan.currency || 'usd').toUpperCase(),
@@ -346,6 +353,13 @@ export default class BillingModal {
         const progress = this.snapshot.progress;
         const active = status?.premium_active === true ||
             ['active', 'trialing'].includes(status?.subscription?.status);
+        const planReady = !this.planRequestFailed &&
+            Number.isFinite(Number(plan?.unit_amount)) &&
+            Number(plan?.unit_amount) > 0 && Number(plan?.tickets_per_period) > 0;
+        const accountState = this.account?.getState?.() || {};
+        const checkoutLabel = accountState.sessionVerified
+            ? 'Upgrade with Stripe'
+            : 'Register and upgrade';
         const remaining = Number(status?.available_batches || 0);
         const ticketCount = Number(plan?.tickets_per_period || 0);
         const nextTicketCount = Number(status?.next_claim_ticket_count || 0);
@@ -371,8 +385,8 @@ export default class BillingModal {
                     <button id="billing-close-btn" class="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent" aria-label="Close">✕</button>
                 </div>
                 <div class="rounded-lg border border-border p-4 bg-muted/20">
-                    <p class="text-2xl font-semibold text-foreground">${this.formatPrice(plan)}</p>
-                    <p class="mt-1 text-sm text-muted-foreground">${ticketCount ? `${ticketCount} privacy-preserving tickets per full monthly period.` : 'Loading ticket allowance…'}</p>
+                    <p class="text-2xl font-semibold text-foreground">${this.formatPrice(plan, { failed: this.planRequestFailed })}</p>
+                    <p class="mt-1 text-sm text-muted-foreground">${ticketCount && !this.planRequestFailed ? `${ticketCount} privacy-preserving tickets per full monthly period.` : this.planRequestFailed ? 'Ticket allowance unavailable.' : 'Loading ticket allowance…'}</p>
                     <p class="mt-2 text-xs text-muted-foreground">Your first payment and ticket allowance are prorated until the next renewal.</p>
                     <p class="mt-3 text-xs text-muted-foreground">Your account proves payment only while tickets are issued. The finished tickets remain in this browser and are redeemed without your billing identity.</p>
                 </div>
@@ -405,7 +419,8 @@ export default class BillingModal {
                 ` : ''}
                 ${status ? `<p class="mt-4 text-sm text-muted-foreground">Subscription: <span class="text-foreground">${this.escape(this.formatSubscriptionStatus(status.subscription?.status))}</span></p>` : ''}
                 <div class="mt-5 flex flex-col gap-2">
-                    ${!active ? `<button id="billing-checkout-btn" class="w-full h-10 rounded-lg bg-blue-600 text-white font-medium disabled:opacity-50" ${this.busy ? 'disabled' : ''}>${this.busy === 'checkout' ? 'Opening Checkout…' : 'Upgrade with Stripe'}</button>` : ''}
+                    ${!active && planReady ? `<button id="billing-checkout-btn" class="w-full h-10 rounded-lg bg-blue-600 text-white font-medium disabled:opacity-50" ${this.busy ? 'disabled' : ''}>${this.busy === 'checkout' ? 'Opening Checkout…' : checkoutLabel}</button>` : ''}
+                    ${!active && !planReady ? `<button id="billing-retry-btn" class="w-full h-10 rounded-lg border border-border text-foreground font-medium disabled:opacity-50" ${this.busy ? 'disabled' : ''}>${this.busy === 'loading' ? 'Loading pricing…' : 'Retry pricing'}</button>` : ''}
                     ${remaining > 0 && !progress ? `<button id="billing-prepare-btn" class="w-full h-10 rounded-lg border border-border text-foreground font-medium disabled:opacity-50" ${this.busy ? 'disabled' : ''}>Prepare ${nextTicketCount || ticketCount || 300} private tickets</button>` : ''}
                     ${status?.portal_available ? `<button id="billing-portal-btn" class="w-full h-9 rounded-lg text-sm text-muted-foreground hover:text-foreground" ${this.busy ? 'disabled' : ''}>Manage billing</button>` : ''}
                 </div>
@@ -413,6 +428,7 @@ export default class BillingModal {
         this.overlay.onclick = event => { if (event.target === this.overlay) this.close(); };
         this.overlay.querySelector('#billing-close-btn')?.addEventListener('click', () => this.close());
         this.overlay.querySelector('#billing-checkout-btn')?.addEventListener('click', () => void this.checkout());
+        this.overlay.querySelector('#billing-retry-btn')?.addEventListener('click', () => void this.refresh());
         this.overlay.querySelector('#billing-prepare-btn')?.addEventListener('click', () => void this.startPreparation());
         this.overlay.querySelector('#billing-topup-btn')?.addEventListener('click', () => void this.purchaseTicketPack());
         this.overlay.querySelector('#billing-topup-cancel-btn')?.addEventListener('click', () => void this.cancelTicketPackCheckout());

@@ -126,17 +126,24 @@ boundary.
 
 ## 2026-07-31: Stripe Premium and Genuine Ticket Issuance
 
-- The sidebar has one adaptive entry: signed-out users see `Upgrade`; any local
+- The sidebar has one adaptive entry: signed-out users see `Register and upgrade`; any local
   account changes it to `Account` without a reload. Free accounts get an
   `Upgrade to Premium` action in Account, and subscribed accounts get
-  `Manage billing`. Logging out restores `Upgrade`.
-- `Upgrade` opens the public Premium modal without requiring an account, while
+  `Manage billing`. Logging out restores `Register and upgrade`.
+- `Register and upgrade` opens the public Premium modal without requiring an account, while
   starting Checkout routes through account creation or sign-in and resumes
-  exactly once afterward. The initial Welcome screen uses the same `Upgrade`
-  entry rather than mislabeling Premium as account creation. Explicitly
+  exactly once afterward. The initial Welcome screen uses the same
+  `Register and upgrade` entry. Explicitly
   cancelling the account step clears the session-scoped Checkout intent and
   returns to Premium. Public price and interval data come from oa-org's
   Stripe-validated `/api/billing/plan`; the UI does not hard-code the amount.
+  A failed plan request shows `Price unavailable`, offers a retry, and removes
+  the Checkout action until a validated price and allowance are loaded.
+- Signed-out registration currently exposes Google SSO only. Legacy direct
+  passkey creation, account-number passkey login, and recovery-code entry points
+  remain compatible in the service layer but are intentionally absent from the
+  registration picker. Google-first accounts still create or use an encryption
+  passkey after OAuth because that passkey protects synced ciphertext locally.
 - Checkout, status, portal access, and paid claims use `BillingAuthProvider`.
   Local development may create a random identity only when both oa-chat and
   oa-org are loopback. Non-loopback deployments require the account adapter.

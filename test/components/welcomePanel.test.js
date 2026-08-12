@@ -2,10 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import WelcomePanel from '../../chat/components/WelcomePanel.js';
 
-test('initial welcome screen offers Upgrade without mislabeling it as account creation', () => {
+test('initial welcome screen offers Register and upgrade', () => {
     const source = String(WelcomePanel.prototype.renderWelcomeStep);
     assert.match(source, /id="welcome-upgrade-btn"/);
-    assert.match(source, /<span>Upgrade<\/span>/);
+    assert.match(source, /<span>Register and upgrade<\/span>/);
     assert.doesNotMatch(source, /id="create-account-btn"/);
 });
 

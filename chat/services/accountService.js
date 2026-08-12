@@ -527,6 +527,13 @@ function toFriendlyError(error) {
     return error.message || 'Unexpected error';
 }
 
+export function toFriendlyOAuthError(error) {
+    if (Number(error?.status) >= 500) {
+        return 'Google sign-in is temporarily unavailable. Please retry.';
+    }
+    return toFriendlyError(error);
+}
+
 /**
  * Complete a popup OAuth handoff through an intercepted account API request.
  *
@@ -1676,7 +1683,7 @@ class AccountService {
                 oauthRecoveryRequired: false,
                 oauthKeyringRequired: false,
                 oauthLegacyPasskeyRequired: false,
-                error: toFriendlyError(error)
+                error: toFriendlyOAuthError(error)
             });
             if (
                 syncSuspended &&

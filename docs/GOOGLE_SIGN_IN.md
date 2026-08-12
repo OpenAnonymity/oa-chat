@@ -7,6 +7,9 @@ or entering the unlinkable-inference path. See
 
 ## User flows
 
+- **Registration picker:** Google SSO is the only option currently displayed.
+  Direct passkey registration, account-number passkey login, and recovery-code
+  controls are hidden from this entry surface.
 - **New SSO account:** Continue with Google, authorize the app, then create an
   encryption passkey. No OA account number or recovery code is shown.
 - **Returning browser:** Google authenticates first. A logged-out or new browser

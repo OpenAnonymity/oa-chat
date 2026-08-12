@@ -92,10 +92,10 @@ class AccountModal {
         // Only show logged-in (green) after session is verified with server
         const hasAccount = !!this.accountState?.accountId;
         const isLoggedIn = hasAccount && this.accountState?.sessionVerified;
-        const label = hasAccount ? 'Account' : 'Upgrade';
+        const label = hasAccount ? 'Account' : 'Register and upgrade';
         tabBtn.dataset.status = isLoggedIn ? 'logged-in' : 'none';
         tabBtn.title = isLoggedIn ? 'Account (logged in)' : label;
-        tabBtn.setAttribute('aria-label', hasAccount ? 'Account' : 'Upgrade to Premium');
+        tabBtn.setAttribute('aria-label', hasAccount ? 'Account' : 'Register and upgrade');
         tabBtn.setAttribute('aria-controls', hasAccount ? 'account-modal' : 'billing-modal');
         const labelNode = tabBtn.querySelector('[data-account-nav-label]');
         if (labelNode) labelNode.textContent = label;
@@ -271,6 +271,7 @@ class AccountModal {
         this.render();
         if (result.status === 'unlocked') {
             this.app?.showToast?.(`Signed in with ${providerLabel}`, 'success');
+            this.resumePremiumCheckoutIfPending();
         }
     }
 
@@ -488,6 +489,7 @@ class AccountModal {
         if (success) {
             this.recoveryInputValue = '';
             this.app?.showToast?.(`Signed in with ${providerLabel}`, 'success');
+            this.resumePremiumCheckoutIfPending();
         }
     }
 
@@ -503,6 +505,7 @@ class AccountModal {
                 : await this.accountService.unlockOAuthKeyring();
         if (success) {
             this.app?.showToast?.('Encrypted data unlocked', 'success');
+            this.resumePremiumCheckoutIfPending();
         }
     }
 
@@ -1013,71 +1016,14 @@ class AccountModal {
             `;
         }
 
-        // No account - show create/login
-        const accountValue = this.escapeHtml(
-            this.accountInputValue || this.formatAccountId(accountId)
-        );
-        const recoveryValue = this.escapeHtml(this.recoveryInputValue || '');
-        const showRecovery = this.showRecoveryInput;
+        // Registration is Google-only for now. The post-SSO encryption passkey
+        // remains mandatory because it, not Google, protects synced data.
         const continuingToPremium = this.hasPendingPremiumCheckout();
 
         return `
             <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}" style="padding:24px 24px 18px">
-                <style>
-                    .account-input-wrap {
-                        background: hsl(var(--color-muted) / 0.25);
-                        border: 1px solid hsl(var(--color-border));
-                        transition: border-color 0.15s, box-shadow 0.15s;
-                    }
-                    .account-input-wrap:focus-within {
-                        border-color: hsl(var(--color-muted-foreground));
-                        box-shadow: 0 0 0 3px hsl(var(--color-muted) / 0.2);
-                    }
-                    .dark .account-input-wrap {
-                        background: rgba(255,255,255,0.04);
-                    }
-                    .account-btn-create {
-                        position: relative;
-                        overflow: hidden;
-                    }
-                    .account-btn-create::after {
-                        content: "";
-                        position: absolute; inset: 0;
-                        border-radius: inherit;
-                        opacity: 0.035;
-                        pointer-events: none;
-                        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-                    }
-                    .account-btn-create {
-                        background: hsl(217 91% 45%);
-                        border: 1px solid rgba(255,255,255,0.10);
-                    }
-                    .account-btn-create:hover:not(:disabled) {
-                        background: hsl(217 91% 40%);
-                    }
-                    .account-link {
-                        color: hsl(var(--color-foreground));
-                        text-decoration: underline transparent;
-                        text-underline-offset: 2px;
-                        transition: text-decoration-color 0.15s;
-                    }
-                    .account-link:hover {
-                        text-decoration-color: hsl(var(--color-foreground) / 0.5);
-                    }
-                    .account-recovery-link {
-                        text-decoration: underline transparent;
-                        text-underline-offset: 2px;
-                        transition: text-decoration-color 0.15s, color 0.15s;
-                    }
-                    .account-recovery-link:hover {
-                        text-decoration-color: currentColor;
-                        color: hsl(var(--color-foreground));
-                    }
-                </style>
-
-                <!-- Header -->
                 <div class="flex items-center justify-between mb-1">
-                    <h3 class="text-base font-medium text-foreground">${showRecovery ? 'Account Recovery' : continuingToPremium ? 'Continue to OA Premium' : 'Account'}</h3>
+                    <h3 class="text-base font-medium text-foreground">${continuingToPremium ? 'Register and upgrade' : 'Continue with Google'}</h3>
                     <button id="close-account-modal" class="text-muted-foreground hover:text-foreground transition-colors p-1 -mr-1 rounded-lg hover:bg-accent" aria-label="Close">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
@@ -1085,11 +1031,9 @@ class AccountModal {
                     </button>
                 </div>
 
-                <p class="text-xs text-muted-foreground" style="margin-bottom:20px">${showRecovery
-                    ? 'Recover your account with the recovery code saved at account creation time.'
-                    : continuingToPremium
-                        ? 'Create or sign in to an account to continue securely to Stripe Checkout. You will not need to click Upgrade again.'
-                        : 'Google authenticates your account. Your passkey separately encrypts synced data so the org cannot read it.'
+                <p class="text-xs text-muted-foreground" style="margin-bottom:20px">${continuingToPremium
+                    ? 'Continue with Google to register or sign in. Stripe Checkout opens automatically after authentication.'
+                    : 'Google authenticates your account. A separate encryption passkey protects synced data so the org cannot read it.'
                 }</p>
 
                 ${!passkeySupported ? `
@@ -1098,90 +1042,10 @@ class AccountModal {
                     </div>
                 ` : ''}
 
-                ${!showRecovery ? `
-                    <!-- OAuth sign in -->
-                    <button id="account-google-btn" class="w-full h-10 rounded-lg text-sm font-medium border border-border bg-background text-foreground hover:bg-accent transition-colors disabled:opacity-50 flex items-center justify-center gap-2 mb-2" type="button" ${isBusy ? 'disabled' : ''}>
-                        ${this.renderOAuthProviderIcon('google')}
-                        Continue with Google
-                    </button>
-                    <div class="flex items-center gap-3" style="margin:16px 0">
-                        <div class="flex-1 h-px bg-border"></div>
-                        <span class="text-xs text-muted-foreground">or use a passkey</span>
-                        <div class="flex-1 h-px bg-border"></div>
-                    </div>
-
-                    <!-- Create account -->
-                    <button id="generate-account-btn" class="account-btn-create w-full h-10 rounded-lg text-sm font-medium text-white transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5" type="button" ${isBusy || !passkeySupported ? 'disabled' : ''}>
-                        <svg class="w-3.5 h-3.5 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
-                        </svg>
-                        ${continuingToPremium ? 'Create account and continue' : 'Create new account'}
-                    </button>
-
-                    <!-- Divider -->
-                    <div class="flex items-center gap-3" style="margin:16px 0">
-                        <div class="flex-1 h-px bg-border"></div>
-                        <span class="text-xs text-muted-foreground">passkey login</span>
-                        <div class="flex-1 h-px bg-border"></div>
-                    </div>
-                ` : ''}
-
-                <!-- Login / Recovery section -->
-                <div class="flex flex-col" style="gap:10px">
-                    ${showRecovery ? `
-                        <div class="account-input-wrap flex items-center w-full h-10 rounded-lg">
-                            <input
-                                id="account-id-input"
-                                type="text"
-                                inputmode="numeric"
-                                maxlength="19"
-                                placeholder="0000 0000 0000 0000"
-                                class="flex-1 h-full px-3 text-center font-mono text-sm tracking-widest bg-transparent text-foreground placeholder:text-muted-foreground/40 focus:outline-none"
-                                value="${accountValue}"
-                                autocomplete="off"
-                            />
-                        </div>
-                        <div class="account-input-wrap flex items-center w-full h-10 rounded-lg">
-                            <input
-                                id="account-recovery-code-input"
-                                type="text"
-                                placeholder="Recovery code"
-                                class="flex-1 h-full px-3 text-sm bg-transparent text-foreground placeholder:text-muted-foreground/40 focus:outline-none"
-                                value="${recoveryValue}"
-                                ${isBusy ? 'disabled' : ''}
-                            />
-                            <button id="account-recovery-submit-btn" type="button" class="flex-shrink-0 w-8 h-8 m-1 rounded-md bg-blue-600 text-white hover:bg-blue-700 transition-colors flex items-center justify-center disabled:opacity-50" title="Recover account" aria-label="Recover account" ${isBusy ? 'disabled' : ''}>
-                                <svg class="w-4 h-4" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                                    <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
-                                </svg>
-                            </button>
-                        </div>
-                        <button id="account-recovery-toggle-btn" class="text-xs text-muted-foreground account-recovery-link py-1 text-left" type="button">
-                            Back to passkey login
-                        </button>
-                    ` : `
-                        <div class="account-input-wrap flex items-center w-full h-10 rounded-lg">
-                            <input
-                                id="account-id-input"
-                                type="text"
-                                inputmode="numeric"
-                                maxlength="19"
-                                placeholder="0000 0000 0000 0000"
-                                class="flex-1 h-full px-3 text-center font-mono text-sm tracking-widest bg-transparent text-foreground placeholder:text-muted-foreground/40 focus:outline-none"
-                                value="${accountValue}"
-                                autocomplete="off"
-                            />
-                            <button id="account-passkey-btn" type="button" class="flex-shrink-0 w-8 h-8 m-1 rounded-md bg-blue-600 text-white hover:bg-blue-700 transition-colors flex items-center justify-center disabled:opacity-50" title="Log in with passkey" aria-label="Log in with passkey" ${isBusy || !passkeySupported ? 'disabled' : ''}>
-                                <svg class="w-4 h-4" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                                    <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
-                                </svg>
-                            </button>
-                        </div>
-                        <button id="account-recovery-toggle-btn" class="text-xs text-muted-foreground account-recovery-link py-1 text-left" type="button">
-                            Recover your account
-                        </button>
-                    `}
-                </div>
+                <button id="account-google-btn" class="w-full h-10 rounded-lg text-sm font-medium border border-border bg-background text-foreground hover:bg-accent transition-colors disabled:opacity-50 flex items-center justify-center gap-2" type="button" ${isBusy || !passkeySupported ? 'disabled' : ''}>
+                    ${this.renderOAuthProviderIcon('google')}
+                    Continue with Google
+                </button>
 
                 ${state.error ? `<p class="text-xs text-destructive mt-3 text-center">${this.escapeHtml(state.error)}</p>` : ''}
             </div>

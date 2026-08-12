@@ -44,13 +44,48 @@ function renderBilling(snapshot, busy = null) {
         querySelector() { return null; }
     };
     modal.snapshot = snapshot;
+    modal.account = { getState: () => ({}) };
     modal.busy = busy;
     modal.error = null;
     modal.notice = null;
+    modal.planRequestFailed = false;
     modal.escape = value => String(value ?? '');
     modal.render();
     return modal.overlay.innerHTML;
 }
+
+test('billing plan failures replace placeholders and block Checkout until retry succeeds', () => {
+    const modal = Object.create(BillingModal.prototype);
+    modal.isOpen = true;
+    modal.overlay = { innerHTML: '', querySelector() { return null; } };
+    modal.snapshot = { plan: null, status: null };
+    modal.account = { getState: () => ({}) };
+    modal.busy = null;
+    modal.error = 'Premium billing is unavailable.';
+    modal.notice = null;
+    modal.planRequestFailed = true;
+    modal.escape = value => String(value ?? '');
+
+    modal.render();
+
+    assert.match(modal.overlay.innerHTML, /Price unavailable/);
+    assert.match(modal.overlay.innerHTML, /Ticket allowance unavailable/);
+    assert.match(modal.overlay.innerHTML, /id="billing-retry-btn"/);
+    assert.doesNotMatch(modal.overlay.innerHTML, /id="billing-checkout-btn"/);
+});
+
+test('signed-out validated plan uses Register and upgrade', () => {
+    const html = renderBilling({
+        plan: {
+            unit_amount: 3500,
+            currency: 'usd',
+            interval: 'month',
+            tickets_per_period: 300
+        },
+        status: null
+    });
+    assert.match(html, /Register and upgrade/);
+});
 
 test('ticket-pack UI renders server-provided $7 and 50-ticket values only for eligible subscribers', () => {
     const plan = {
@@ -251,7 +286,7 @@ test('adaptive sidebar label follows account presence without requiring a paid s
     try {
         modal.accountState = {};
         modal.updateTabIndicator();
-        assert.equal(label.textContent, 'Upgrade');
+        assert.equal(label.textContent, 'Register and upgrade');
         assert.equal(attributes.get('aria-controls'), 'billing-modal');
 
         modal.accountState = { accountId: 'alpha', sessionVerified: false };
@@ -424,7 +459,7 @@ test('completed account creation automatically resumes a pending Premium Checkou
 
 test('account authentication explains the Premium continuation', () => {
     const source = String(AccountModal.prototype.renderAccountUI);
-    assert.match(source, /Continue to OA Premium/);
-    assert.match(source, /continue securely to Stripe Checkout/);
-    assert.match(source, /Create account and continue/);
+    assert.match(source, /Register and upgrade/);
+    assert.match(source, /Stripe Checkout opens automatically/);
+    assert.doesNotMatch(source, /Create account and continue/);
 });

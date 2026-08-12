@@ -1238,7 +1238,7 @@ class WelcomePanel {
                     <svg class="w-4 h-4 flex-shrink-0" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v18m6-12-6-6-6 6" />
                     </svg>
-                    <span>Upgrade</span>
+                    <span>Register and upgrade</span>
                 </button>
                 <div class="flex items-stretch gap-2">
                     <a

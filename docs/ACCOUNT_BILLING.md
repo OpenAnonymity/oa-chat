@@ -34,12 +34,18 @@ invalidates every ticket from earlier generations immediately; it is global,
 not subscriber-specific, because every account shares the same unlinkable
 issuer public key.
 
-The initial Welcome screen labels the paid path **Upgrade** and opens the public
+The initial Welcome screen labels the paid path **Register and upgrade** and opens the public
 Premium modal before asking for authentication. If Checkout then needs an
-account, successful creation or sign-in consumes a session-scoped intent and
+account, Google SSO is the only registration option shown. Successful sign-in
+consumes a session-scoped intent and
 continues to Stripe exactly once. Cancelling that account step clears the intent
 and returns to Premium, so a later account action cannot trigger a surprise
 redirect.
+
+The public modal enables the Checkout action only after oa-org returns a
+validated price and ticket allowance. An upstream failure replaces loading
+placeholders with a clear unavailable state and a retry control; it never lets
+the user continue from an unvalidated plan.
 
 ## Privacy Boundary
 

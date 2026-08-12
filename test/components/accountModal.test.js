@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import AccountModal from '../../chat/components/AccountModal.js';
+import { toFriendlyOAuthError } from '../../chat/services/accountService.js';
 
-test('account sign in offers Google as the only SSO provider', () => {
+test('account registration offers only Google SSO', () => {
     const originalDocument = globalThis.document;
     globalThis.document = {
         getElementById() {
@@ -35,12 +36,38 @@ test('account sign in offers Google as the only SSO provider', () => {
     try {
         const html = modal.renderAccountUI();
         assert.match(html, /Continue with Google/);
-        assert.doesNotMatch(html, /Continue with GitHub/);
-        assert.doesNotMatch(html, /account-github-btn/);
+        assert.doesNotMatch(html, /or use a passkey/i);
+        assert.doesNotMatch(html, /passkey login/i);
+        assert.doesNotMatch(html, /Recover your account/i);
+        assert.doesNotMatch(html, /generate-account-btn/);
+        assert.doesNotMatch(html, /account-passkey-btn/);
+        assert.doesNotMatch(html, /account-recovery-toggle-btn/);
     } finally {
         modal.destroy();
         globalThis.document = originalDocument;
     }
+});
+
+test('account service turns upstream failures into actionable Google copy', () => {
+    assert.equal(
+        toFriendlyOAuthError(Object.assign(new Error('Bad Gateway'), { status: 502 })),
+        'Google sign-in is temporarily unavailable. Please retry.'
+    );
+});
+
+test('an already-unlocked Google account resumes pending Checkout', async () => {
+    const modal = Object.create(AccountModal.prototype);
+    let resumed = 0;
+    modal.accountService = {
+        authenticateWithOAuth: async () => ({ status: 'unlocked' })
+    };
+    modal.render = () => {};
+    modal.resumePremiumCheckoutIfPending = () => { resumed += 1; return true; };
+    modal.app = { showToast() {} };
+
+    await modal.handleOAuthAuthentication('google');
+
+    assert.equal(resumed, 1);
 });
 
 test('legacy linked account uses its existing passkey unlock path', async () => {
@@ -56,6 +83,7 @@ test('legacy linked account uses its existing passkey unlock path', async () => 
         oauthLegacyPasskeyRequired: true
     };
     let unlockAccountId = null;
+    let resumed = 0;
     const account = {
         getState: () => state,
         subscribe: () => () => {},
@@ -76,6 +104,7 @@ test('legacy linked account uses its existing passkey unlock path', async () => 
     });
     modal.accountState = state;
     modal.escapeHtml = value => String(value ?? '');
+    modal.resumePremiumCheckoutIfPending = () => { resumed += 1; return true; };
 
     try {
         const html = modal.renderOAuthUnlockUI();
@@ -83,6 +112,7 @@ test('legacy linked account uses its existing passkey unlock path', async () => 
         assert.match(html, /1234 5678 9012 3456/);
         await modal.handleOAuthKeyringUnlock();
         assert.equal(unlockAccountId, state.accountId);
+        assert.equal(resumed, 1);
     } finally {
         modal.destroy();
         globalThis.document = originalDocument;
