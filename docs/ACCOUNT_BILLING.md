@@ -47,6 +47,14 @@ validated price and ticket allowance. An upstream failure replaces loading
 placeholders with a clear unavailable state and a retry control; it never lets
 the user continue from an unvalidated plan.
 
+On a Stripe success return or reload recovery, reconciliation waits for the
+persisted OA account and background SuperTokens session verification. The UI
+shell is constructed before `accountService.init()`, so its initial
+`sessionVerified=false` snapshot is not treated as a final sign-out and cannot
+skip paid-ticket preparation.
+Cancellation returns wait without a fail-open timeout until that account scope is
+known, so a slow restore cannot later resume a Checkout the user cancelled.
+
 ## Privacy Boundary
 
 ```text

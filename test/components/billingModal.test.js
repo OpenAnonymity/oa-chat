@@ -268,6 +268,143 @@ test('expired top-up success return does not toast or prepare tickets', async ()
     }
 });
 
+test('Checkout success waits for restored account verification before reconciling', async () => {
+    const originalWindow = globalThis.window;
+    let accountState = { isReady: false, accountId: null, sessionVerified: false };
+    const listeners = new Set();
+    let reconciliations = 0;
+    let clearedParams = false;
+    globalThis.window = {
+        location: {
+            search: '?billing=success&session_id=cs_test_restored_account'
+        }
+    };
+    const modal = Object.create(BillingModal.prototype);
+    modal.accountReadyTimeoutMs = 100;
+    modal.account = {
+        getState: () => ({ ...accountState }),
+        subscribe(listener) {
+            listeners.add(listener);
+            return () => listeners.delete(listener);
+        }
+    };
+    modal.billing = {
+        async reconcileCheckout() {
+            reconciliations += 1;
+            return { available_batches: 1 };
+        }
+    };
+    modal.app = { showToast() {} };
+    modal.open = () => { modal.isOpen = true; };
+    modal.render = () => {};
+    modal.clearReturnParams = () => { clearedParams = true; };
+    modal.startPreparation = () => {};
+    modal.error = null;
+    modal.notice = null;
+    modal.busy = null;
+
+    try {
+        const handling = modal.handleBillingReturn();
+        await Promise.resolve();
+        accountState = { isReady: true, accountId: 'account-a', sessionVerified: false };
+        listeners.forEach(listener => listener({ ...accountState }));
+        await Promise.resolve();
+        assert.equal(reconciliations, 0);
+
+        accountState = { ...accountState, sessionVerified: true };
+        listeners.forEach(listener => listener({ ...accountState }));
+        await handling;
+
+        assert.equal(reconciliations, 1);
+        assert.equal(clearedParams, true);
+    } finally {
+        globalThis.window = originalWindow;
+    }
+});
+
+test('subscription cancellation waits for restored account before discarding saved Checkout', async () => {
+    const originalWindow = globalThis.window;
+    let accountState = { isReady: false, accountId: null, sessionVerified: false };
+    const listeners = new Set();
+    let discarded = 0;
+    let clearedParams = false;
+    globalThis.window = { location: { search: '?billing=cancelled' } };
+    const modal = Object.create(BillingModal.prototype);
+    modal.accountReadyTimeoutMs = 0;
+    modal.account = {
+        getState: () => ({ ...accountState }),
+        subscribe(listener) {
+            listeners.add(listener);
+            return () => listeners.delete(listener);
+        }
+    };
+    modal.billing = {
+        discardKnownCheckout(kind) {
+            assert.equal(kind, 'subscription');
+            discarded += 1;
+        }
+    };
+    modal.open = () => { modal.isOpen = true; };
+    modal.clearReturnParams = () => { clearedParams = true; };
+
+    try {
+        const handling = modal.handleBillingReturn();
+        await new Promise(resolve => setTimeout(resolve, 5));
+        assert.equal(discarded, 0);
+        assert.equal(clearedParams, false);
+
+        accountState = { isReady: true, accountId: 'account-a', sessionVerified: true };
+        listeners.forEach(listener => listener({ ...accountState }));
+        await handling;
+
+        assert.equal(discarded, 1);
+        assert.equal(clearedParams, true);
+    } finally {
+        globalThis.window = originalWindow;
+    }
+});
+
+test('saved Checkout recovery waits for account verification after reload', async () => {
+    let accountState = { isReady: true, accountId: 'account-a', sessionVerified: false };
+    const listeners = new Set();
+    let resumed = 0;
+    let prepared = 0;
+    const modal = Object.create(BillingModal.prototype);
+    modal.accountReadyTimeoutMs = 100;
+    modal.recoveryPromise = null;
+    modal.returnHandlingPromise = Promise.resolve();
+    modal.account = {
+        getState: () => ({ ...accountState }),
+        subscribe(listener) {
+            listeners.add(listener);
+            return () => listeners.delete(listener);
+        }
+    };
+    modal.billing = {
+        async resumeSavedCheckout() {
+            resumed += 1;
+            return { available_batches: 1 };
+        },
+        async resumeKnownBilling() {
+            throw new Error('saved Checkout should take precedence');
+        }
+    };
+    modal.app = { showToast() {} };
+    modal.open = () => { modal.isOpen = true; };
+    modal.startPreparation = () => { prepared += 1; };
+
+    const recovery = modal.recoverKnownBilling();
+    await Promise.resolve();
+    assert.equal(resumed, 0);
+
+    accountState = { ...accountState, sessionVerified: true };
+    listeners.forEach(listener => listener({ ...accountState }));
+    await recovery;
+
+    assert.equal(resumed, 1);
+    assert.equal(prepared, 1);
+});
+
 test('adaptive sidebar label follows account presence without requiring a paid subscription', () => {
     const attributes = new Map();
     const label = { textContent: '' };

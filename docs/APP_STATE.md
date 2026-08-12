@@ -139,6 +139,12 @@ boundary.
   Stripe-validated `/api/billing/plan`; the UI does not hard-code the amount.
   A failed plan request shows `Price unavailable`, offers a retry, and removes
   the Checkout action until a validated price and allowance are loaded.
+- Stripe success and saved-Checkout recovery wait for account initialization
+  and SuperTokens verification before reconciliation. Components mount before
+  `accountService.init()`, so billing must not interpret the initial
+  `sessionVerified=false` state as an authenticated user having signed out.
+  Explicit Checkout cancellation remains pending until the account scope is
+  settled; it must not time out into generic saved-Checkout recovery.
 - Signed-out registration currently exposes Google SSO only. Legacy direct
   passkey creation, account-number passkey login, and recovery-code entry points
   remain compatible in the service layer but are intentionally absent from the

@@ -18,21 +18,91 @@ export default class BillingModal {
         this.error = null;
         this.notice = null;
         this.planRequestFailed = false;
+        this.accountReadyTimeoutMs = 10000;
+        this.recoveryPromise = null;
         this.snapshot = this.billing?.snapshot?.() || {};
         this.unsubscribe = this.billing?.subscribe?.(snapshot => {
             this.snapshot = snapshot;
             if (this.isOpen) this.render();
         });
-        this.handleBillingReturn();
-        void this.billing?.resumeKnownBilling?.().catch(error => {
-            if (error?.name !== 'AbortError') {
-                console.warn('[Billing] Saved Premium preparation is waiting for a safe retry.');
-            }
+        this.returnHandlingPromise = this.handleBillingReturn().catch(() => {
+            console.warn('[Billing] Checkout return recovery paused safely.');
         });
+        const initialAccountState = this.account?.getState?.() || {};
+        this.lastVerifiedAccountId = initialAccountState.sessionVerified
+            ? initialAccountState.accountId
+            : null;
+        this.accountUnsubscribe = this.account?.subscribe?.(state => {
+            const verifiedAccountId = state?.sessionVerified ? state.accountId : null;
+            const becameVerified = !!verifiedAccountId && verifiedAccountId !== this.lastVerifiedAccountId;
+            this.lastVerifiedAccountId = verifiedAccountId;
+            if (this.isOpen) this.render();
+            if (becameVerified) void this.recoverKnownBilling();
+        });
+        void this.recoverKnownBilling();
     }
 
     destroy() {
         this.unsubscribe?.();
+        this.accountUnsubscribe?.();
+    }
+
+    async waitForAccountBillingContext(timeoutMs = this.accountReadyTimeoutMs) {
+        const readState = () => this.account?.getState?.() || {};
+        const isSettled = state => state?.isReady !== false &&
+            (!state?.accountId || state?.sessionVerified === true);
+        const initial = readState();
+        if (isSettled(initial) || !this.account?.subscribe) return initial;
+
+        return new Promise(resolve => {
+            let finished = false;
+            let unsubscribe = () => {};
+            let timeout = null;
+            const finish = state => {
+                if (finished) return;
+                finished = true;
+                if (timeout !== null) clearTimeout(timeout);
+                unsubscribe();
+                resolve(state);
+            };
+            const check = state => {
+                if (isSettled(state)) finish(state);
+            };
+            if (timeoutMs !== null) {
+                timeout = setTimeout(() => finish(readState()), timeoutMs);
+            }
+            unsubscribe = this.account.subscribe(check) || (() => {});
+            check(readState());
+        });
+    }
+
+    recoverKnownBilling() {
+        if (this.recoveryPromise) return this.recoveryPromise;
+        const work = (async () => {
+            const returnRecovered = await this.returnHandlingPromise;
+            if (returnRecovered) return returnRecovered;
+            await this.waitForAccountBillingContext();
+            try {
+                const resumed = await this.billing?.resumeSavedCheckout?.();
+                if (resumed) {
+                    this.open();
+                    this.app.showToast?.('Premium payment confirmed. Preparing private tickets.', 'success');
+                    void this.startPreparation({ automatic: true });
+                    return resumed;
+                }
+                return await this.billing?.resumeKnownBilling?.();
+            } catch (error) {
+                if (error?.name !== 'AbortError') {
+                    console.warn('[Billing] Saved Premium preparation is waiting for a safe retry.');
+                }
+                return null;
+            }
+        })();
+        const tracked = work.finally(() => {
+            if (this.recoveryPromise === tracked) this.recoveryPromise = null;
+        });
+        this.recoveryPromise = tracked;
+        return tracked;
     }
 
     rememberCheckoutIntent() {
@@ -68,21 +138,10 @@ export default class BillingModal {
         const params = new URLSearchParams(window.location.search);
         const outcome = params.get('billing');
         const sessionId = params.get('session_id');
-        if (!outcome) {
-            try {
-                const resumed = await this.billing.resumeSavedCheckout?.();
-                if (resumed) {
-                    this.open();
-                    this.app.showToast?.('Premium payment confirmed. Preparing private tickets.', 'success');
-                    void this.startPreparation({ automatic: true });
-                }
-            } catch (error) {
-                this.open();
-                this.error = this.safeErrorMessage(error, 'Payment confirmation is still pending.');
-                this.render();
-            }
-            return;
-        }
+        if (!outcome) return false;
+        let returnRecovered = false;
+        const cancellationNeedsKnownScope = ['cancelled', 'topup_cancelled'].includes(outcome);
+        await this.waitForAccountBillingContext(cancellationNeedsKnownScope ? null : this.accountReadyTimeoutMs);
         this.open();
         if (['success', 'topup_success'].includes(outcome) && sessionId) {
             const kind = outcome === 'topup_success' ? 'topup' : 'subscription';
@@ -91,6 +150,7 @@ export default class BillingModal {
             try {
                 const confirmed = await this.billing.reconcileCheckout(sessionId, { kind });
                 if (confirmed) {
+                    returnRecovered = true;
                     this.app.showToast?.(
                         kind === 'topup'
                             ? 'Ticket-pack payment confirmed. Preparing private tickets.'
@@ -126,6 +186,7 @@ export default class BillingModal {
             if (outcome === 'cancelled') this.billing.discardKnownCheckout?.('subscription');
             this.clearReturnParams();
         }
+        return returnRecovered;
     }
 
     clearReturnParams() {
