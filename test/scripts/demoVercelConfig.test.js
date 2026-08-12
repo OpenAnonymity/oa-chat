@@ -49,3 +49,14 @@ test('public pageview analytics never carries the account cookie', () => {
     );
     assert.doesNotMatch(indexHtml, /import\(['"]\.\/config\.js['"]\)/);
 });
+
+test('Vercel builds use uploaded nanomem source without uploading Git metadata', () => {
+    const packageJson = JSON.parse(readFileSync('package.json', 'utf8'));
+    const vercelIgnore = readFileSync('.vercelignore', 'utf8');
+
+    assert.match(
+        packageJson.scripts['prepare:nanomem'],
+        /^if \[ -d nanomem\/src \]; then exit 0; fi;/
+    );
+    assert.doesNotMatch(vercelIgnore, /^!\/\.git(?:\/|$)/m);
+});

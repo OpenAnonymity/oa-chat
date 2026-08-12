@@ -302,6 +302,10 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - Keep the order `complete -> verify -> provider session read`. Creating the
     session on the callback navigation or checking `doesSessionExist()` first
     leaves the SDK unaware of a valid Core session.
+  - `/auth/google/start` is deliberately session-independent. It must remain
+    usable when a browser carries a stale invalid SuperTokens access cookie;
+    linking mode is still rejected, and an `expectedAccountId` is only a
+    continuity hint that cannot create or retarget an identity mapping.
 
 - 2026-07-30: SSO encryption passkeys use the provider email as their WebAuthn
   username and display name.

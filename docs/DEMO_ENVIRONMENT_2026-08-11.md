@@ -6,9 +6,9 @@ environment is test-only and is intended for teardown on 2026-08-12.
 
 ## Resolved source
 
-- oa-chat: `8f4ad56a752f98db0cb5322d2096ba790e66a0f6`
+- oa-chat: `84339054b7e0bfce664676bcc3e93b59621278ec`
   (`codex/integrated-subscription-rotation`)
-- oa-org: `a6fcd96aa5452bd5a7851d97b0a646ffe8ec1d77`
+- oa-org: `c21f179acffce5b6c0be61fed5be0ac24652c081`
 - oa-station: `627556f5d933f34881c801fd451d7160a00a508d`
 - Services: `oa-org`, `oa-org-tunnel`, `oa-station`, and the local
   `current-supertokens-*` Docker Compose services.
@@ -43,8 +43,8 @@ authoritative amount.
   <https://oa-integrated-demo-20260807.vercel.app>
 - Vercel project/deployment:
   `prj_ifs4YkKjGnUq5tmzvl5KPG6i4LYh` /
-  `dpl_9XQRCiNWW2eSRaLXh96h7WCwVSfn`.
-- Vercel build marker: `7U6HNSQB`.
+  `dpl_A38ehh8YcAyCWYkvEMoVLV9SuPDH`.
+- Vercel build marker: `FSLD5PBS`.
 - Org quick tunnel:
   `https://john-network-authorization-initiated.trycloudflare.com`.
   It has no durable Cloudflare DNS resource; stopping the tunnel invalidates
@@ -86,8 +86,20 @@ sudo install -o root -g root -m 0444 /dev/null \
 - SuperTokens and its Postgres container are healthy. WebAuthn and cookie
   origins use the stable Vercel origin. An unauthenticated refresh correctly
   returned 401 and cleared the session-cookie boundary.
-- Google OAuth is intentionally disabled because the required Google passkey
-  reauthentication was unavailable. No mock Google credential was installed.
+- Google OAuth is enabled for the stable Vercel origin and its exact callback.
+  A real browser E2E passed Google account selection, PKCE/state/nonce
+  validation, the 60-second one-time completion-token exchange, SuperTokens
+  SDK interception, and the authenticated provider-session read. The popup
+  disclosed neither provider tokens nor the OA account identifier. OAuth start
+  also recovered from a stale invalid SuperTokens access cookie.
+- The OA account now retains the authenticated Google identity for this
+  disposable demo. Its encryption-passkey step reached the native passkey
+  prompt, which still requires the user's local biometric/security-key action;
+  no mock authenticator or mock Google credential was used.
+- The superseded Google client secret was disabled and deleted after the live
+  flow proved the replacement. Only the replacement remains enabled, only the
+  protected org environment stores it, and the temporary local copy was
+  removed.
 - Stripe is in test mode. The public plan reports US$35/month for 300 tickets
   and US$7 for a 50-ticket pack. A correctly signed webhook was processed and
   its exact replay was classified as duplicate. An unsigned webhook returned
@@ -112,16 +124,18 @@ sudo install -o root -g root -m 0444 /dev/null \
   removed. The spent-nonce ledger and two completed-attempt tombstones remain
   intentionally for anti-replay retention; they contain no recoverable child
   key. Values are intentionally not recorded.
-- Automated suites: oa-chat 391/391, oa-org 173/173, oa-station 25/25.
+- Automated suites: oa-chat 395/395, oa-org 177/177, oa-station 25/25.
 
 The release env files are `root:root` mode `0600`. Journals on both disposable
-hosts were rotated and vacuumed after the final redaction releases; all-unit
-current-journal scans found zero credential values or credential-derived
-prefixes. Local and remote release archives, temporary test scripts, response
-bodies, build env files, and replay-test directories were removed. No
-temporary Vercel token was created; the existing authenticated session was
-used. The task-specific SSH private key is intentionally retained at mode
-0600 only while the environment remains live.
+hosts were rotated and vacuumed after the final redaction releases. The org
+journal was rotated again after the live OAuth test so the earlier pre-filter
+callback query record was removed. Current all-unit scans found zero OAuth
+query material, credential values, or credential-derived prefixes. Local and
+remote release archives, OAuth secret copies, temporary test scripts, response
+bodies, build env files, replay-test directories, and failed Vercel deployments
+were removed. No temporary Vercel token was created; the existing authenticated
+session was used. The task-specific SSH private key is intentionally retained
+at mode 0600 only while the environment remains live.
 
 The Stripe setup is disposable and test-only. It currently uses a broad test
 secret enforced by backend test-mode checks, plus stripe-python 12.5.1 with API

@@ -16,7 +16,7 @@
     "terser": "^5.31.0"
   },
   "scripts": {
-    "prepare:nanomem": "if [ -n \"$GITHUB_PAT\" ]; then git submodule set-url nanomem \"https://${GITHUB_PAT}@github.com/OpenAnonymity/nanomem.git\" && git submodule sync; fi; git submodule update --init nanomem",
+    "prepare:nanomem": "if [ -d nanomem/src ]; then exit 0; fi; if [ -n \"$GITHUB_PAT\" ]; then git submodule set-url nanomem \"https://${GITHUB_PAT}@github.com/OpenAnonymity/nanomem.git\" && git submodule sync; fi; git submodule update --init nanomem",
     "prebuild": "npm run vendor:supertokens",
     "build": "npm run prepare:nanomem && node scripts/build.mjs",
     "preview": "python3 -m http.server 8080 -d dist",
