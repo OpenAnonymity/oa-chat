@@ -57,7 +57,10 @@ await esbuild.build({
 });
 
 const bundledTests = await collectTests(outDir);
-const child = spawn(process.execPath, ['--test', ...bundledTests], {
+// Node's parallel test workers can intermittently fail while deserializing a
+// worker result on the deployment runtime. The suite already bundles every
+// test into one temporary tree, so run it serially for a deterministic gate.
+const child = spawn(process.execPath, ['--test', '--test-concurrency=1', ...bundledTests], {
     stdio: 'inherit'
 });
 
