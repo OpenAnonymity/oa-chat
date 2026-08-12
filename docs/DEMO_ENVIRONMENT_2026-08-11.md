@@ -9,7 +9,7 @@ demo is no longer needed.
 
 ## Resolved source
 
-- deployed oa-chat runtime: `adac81b02cc371551066675b35072938a3579a74`
+- deployed oa-chat runtime: `3f64525a73ddca28634ecbd9478fb609313d73b0`
   (`codex/integrated-subscription-rotation`)
 - user-facing upgrade/registration fix: `12d2f31ea5dbea8057a25397bc660494476f8cc6`;
   Vercel symlink-target packaging and final nested metadata/env deny rules are
@@ -49,8 +49,8 @@ authoritative amount.
   <https://oa-integrated-demo-20260807.vercel.app>
 - Vercel project/deployment:
   `prj_ifs4YkKjGnUq5tmzvl5KPG6i4LYh` /
-  `dpl_CX3RzfLiVC8Q6a9pDyjw3np3bQkQ`.
-- Vercel build marker: `OZIU3763`.
+  `dpl_3L4VjDV2fkKm87RsK5TZUXRz9RQa`.
+- Vercel build marker: `6OYETOED`.
 - Org quick tunnel:
   `https://gather-imperial-kruger-challenge.trycloudflare.com`.
   It has no durable Cloudflare DNS resource; stopping the tunnel invalidates
@@ -128,10 +128,21 @@ sudo install -o root -g root -m 0444 /dev/null \
   and US$7 for a 50-ticket pack. A correctly signed webhook was processed and
   its exact replay was classified as duplicate. An unsigned webhook returned
   400. A sandbox customer-portal session succeeded and the throwaway customer
-  was deleted. Live authenticated handoff created a sandbox Checkout session
-  showing a US$21.51 prorated first charge and US$35/month beginning on
-  2026-08-31. No payment details were entered and no Checkout payment or
-  subscription was completed.
+  was deleted. On 2026-08-12 a real Stripe sandbox Checkout completed with
+  Stripe's standard Visa test payment method: the US$21.51 prorated first
+  charge succeeded and the US$35/month subscription became active, with the
+  next period beginning on 2026-08-31. No real funds or live payment method
+  were used. The browser restored the existing SuperTokens account after the
+  Stripe return, reconciled the webhook-created 184-ticket prorated allowance,
+  and privately imported exactly 184 tickets. Its visible wallet rose from 1
+  to 185; a full reload remained at 185 and did not duplicate the allowance.
+- The paid-return validation exposed and fixed an initialization race in which
+  the billing component could reconcile before the persisted account session
+  finished background verification. Checkout success and saved-session
+  recovery now wait for the verified account context, and explicit cancellation
+  waits fail-closed for the restored account scope. The focused billing tests
+  pass 25/25 and the full oa-chat suite passes 402/402; a fresh adversarial
+  review approved the change with no remaining findings.
 - The global ticket generation is anchored to the first instant of each UTC
   month. Redis reports billing month `2026-08`; spent-nonce retention is 400
   days. The public issuer endpoint reports `can_issue=true`.
@@ -141,19 +152,27 @@ sudo install -o root -g root -m 0444 /dev/null \
 - Browser E2E passed: client-side blinding, two-ticket redemption, signed
   station-bound child-key issuance, TLS-over-WebSocket relay, and a real
   OpenRouter completion returning `OA demo ready`.
+- Post-payment browser E2E also passed from the 184-ticket paid allowance:
+  client-side tickets redeemed into a new station-bound key, TLS-over-WebSocket
+  relay connected, and GPT-4o-mini returned a live OpenRouter response. Two
+  other catalog selections returned upstream provider/no-endpoint errors before
+  the stable model was selected; billing, issuance, and station redemption had
+  already succeeded in those attempts.
 - Post-hardening revalidation issued two blinded tickets, provisioned a real
   station-bound child key, completed a provider request, replayed the exact
   request successfully, and rejected cross-scope ticket reuse.
-- Throwaway cleanup removed every E2E child key and its station replay row. The
+- Throwaway cleanup removed the two child keys created by the final paid E2E
+  and their two station replay rows. The
   station has zero tracked/replay rows and the OpenRouter account is back at
   its pre-test baseline of one preserved unrelated child key. Invitation state
   is active 0 and used 0; the final invitation record and request replay were
   removed. The spent-nonce ledger and two completed-attempt tombstones remain
   intentionally for anti-replay retention; they contain no recoverable child
   key. Values are intentionally not recorded.
-- Automated suites: deployed oa-chat runtime 399/399, including registration,
-  plan-failure, OAuth-continuation, and Vercel packaging regressions; oa-org
-  177/177; oa-station 25/25.
+- Automated suites: deployed oa-chat runtime 402/402, including registration,
+  plan-failure, OAuth-continuation, Vercel packaging, verified-session Checkout
+  recovery, and slow cancellation restoration regressions; oa-org 177/177;
+  oa-station 25/25.
 
 The release env files are `root:root` mode `0600`. Journals on both disposable
 hosts were rotated and vacuumed after the final redaction releases. The org
@@ -165,6 +184,12 @@ bodies, build env files, replay-test directories, and failed Vercel deployments
 were removed. No temporary Vercel token was created; the existing authenticated
 session was used. The task-specific SSH private key is intentionally retained
 at mode 0600 only while the environment remains live.
+
+After the final frontend deployment, both `oa-org` and `oa-station` reported
+`active`, `Result=success`, and `NRestarts=0`. Their local listeners returned
+the expected org billing-plan HTTP 200 and station unmounted-root HTTP 404.
+The current all-unit journal credential-pattern scans remained at zero after
+the paid browser E2E and child-key cleanup.
 
 The Stripe setup is disposable and test-only. It currently uses a broad test
 secret enforced by backend test-mode checks, plus stripe-python 12.5.1 with API
@@ -229,8 +254,12 @@ vercel remove oa-integrated-demo-20260807 --yes \
   --scope team_RuDlwCKuvIERVUIsjPe4dElB
 ```
 
-Finally, delete the three sandbox Stripe resources listed above, archive both
-sandbox prices/products if they are retained for audit, and revoke
+Before removing Stripe catalog resources, cancel every sandbox subscription
+whose line item uses either exact demo price listed above, then delete only the
+corresponding sandbox demo customer records. This includes the active
+subscription created by the paid browser E2E; preserve every customer and
+subscription that does not reference those exact demo prices. Then delete the
+demo webhook, archive/delete both sandbox prices and products, and revoke
 `oa-integrated-demo-20260811-v2` from OpenRouter Management Keys. Preserve all
 other Stripe/OpenRouter resources and the pre-existing Vercel/AWS logins.
 
