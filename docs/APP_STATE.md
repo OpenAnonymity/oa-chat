@@ -30,8 +30,14 @@ reading code alone.
   The production build keeps that hint. `scripts/build.mjs` must preserve the
   tracked `chat/nanomem` symlink rather than copying over it and dirtying the
   source tree.
+- Immutable station archives still need an empty, secret-free `station/.env`
+  marker (`root:root`, mode `0444`) before service start, even when systemd
+  provides the real protected environment file. See the run record before a
+  clean redeploy; omitting the marker causes a restart loop.
 
-See [DEMO_DEPLOYMENT.md](DEMO_DEPLOYMENT.md) for the deployment contract.
+See [DEMO_DEPLOYMENT.md](DEMO_DEPLOYMENT.md) for the deployment contract and
+[DEMO_ENVIRONMENT_2026-08-11.md](DEMO_ENVIRONMENT_2026-08-11.md) for the
+secret-free record and teardown targets of the integrated disposable run.
 
 ## 2026-08-07: Monthly Premium Ticket-Key Epoch
 

@@ -1,0 +1,192 @@
+# Disposable Integrated Demo — 2026-08-11
+
+This is the secret-free run record for the disposable SSO, SuperTokens,
+Stripe billing, monthly ticket-key rotation, and OpenRouter chat demo. The
+environment is test-only and is intended for teardown on 2026-08-12.
+
+## Resolved source
+
+- oa-chat: `8f4ad56a752f98db0cb5322d2096ba790e66a0f6`
+  (`codex/integrated-subscription-rotation`)
+- oa-org: `a6fcd96aa5452bd5a7851d97b0a646ffe8ec1d77`
+- oa-station: `627556f5d933f34881c801fd451d7160a00a508d`
+- Services: `oa-org`, `oa-org-tunnel`, `oa-station`, and the local
+  `current-supertokens-*` Docker Compose services.
+
+## AWS resources
+
+- Account/profile: `427880590996` / `PowerUserAccess-427880590996`
+- Region/AZ: `us-west-2` / `us-west-2a`
+- VPC/subnet: `vpc-0a3ab48f5972d7331` /
+  `subnet-0b8aa4c0c622cabf6`
+- oa-org: `i-00260443022bfb718`, `t3.small`, public
+  `18.236.111.64`, private `172.31.33.213`, security group
+  `sg-0aa04203a116b6a1b`, encrypted 16-GiB volume
+  `vol-0badb5310390f428e`.
+- oa-station: `i-0df039bb513c6969f`, `t3.small`, public
+  `52.36.189.137`, private `172.31.34.102`, security group
+  `sg-0edb5659bf0266f7e`, encrypted 16-GiB volume
+  `vol-0e962f36589319653`.
+- Both public addresses are auto-assigned and can change after stop/start.
+  SSH is restricted to `64.124.162.234/32`. Port 8005 is allowed only from
+  the station security group, and port 8000 only from the org security group.
+- IMDSv2 is required and no instance profile is attached.
+
+Approximate idle cost is about US$1.35/day for two on-demand `t3.small`
+instances, 32 GiB of gp3 storage, and two public IPv4 addresses, before
+traffic, Vercel, Stripe, or OpenRouter usage. Consult the AWS bill for the
+authoritative amount.
+
+## Frontend and external test resources
+
+- Production demo URL:
+  <https://oa-integrated-demo-20260807.vercel.app>
+- Vercel project/deployment:
+  `prj_ifs4YkKjGnUq5tmzvl5KPG6i4LYh` /
+  `dpl_9XQRCiNWW2eSRaLXh96h7WCwVSfn`.
+- Vercel build marker: `7U6HNSQB`.
+- Org quick tunnel:
+  `https://john-network-authorization-initiated.trycloudflare.com`.
+  It has no durable Cloudflare DNS resource; stopping the tunnel invalidates
+  this hostname, and a restarted quick tunnel requires regenerated Vercel
+  rewrites and a production redeploy.
+- Stripe sandbox product/price IDs:
+  `prod_V3W3uObhCZGEB0` / `price_1U3P1bA0v0eJ5dSdjctjx6nl` and
+  `prod_V3W41whdmNWoPA` / `price_1U3P20A0v0eJ5dSdoEQLYu26`.
+- Stripe sandbox webhook: `we_1U3P5kA0v0eJ5dSdRb66BGnk`.
+- An accidental live product `prod_V3VlW3JD1fC1WG` was archived immediately;
+  no live Price, customer, or charge was created.
+- OpenRouter management key name:
+  `oa-integrated-demo-20260811-v2`. The credential exists only in the
+  station's protected environment file. The obsolete predecessor was deleted.
+
+## Immutable release deployment note
+
+Both Python services run from SHA-addressed release directories behind a
+`current` symlink. A clean station archive needs one additional, secret-free
+marker before the first service start: create
+`/opt/oa-station/current/station/.env` as a zero-byte `root:root` file at mode
+`0444`. The application checks for this local marker even though all real
+configuration comes from systemd's `/etc/oa-station.env`. Omitting it causes a
+restart loop. The marker contains no values and the protected systemd env file
+remains `root:root` mode `0600`.
+
+For example, after switching `current` and before starting the service:
+
+```bash
+sudo install -o root -g root -m 0444 /dev/null \
+  /opt/oa-station/current/station/.env
+```
+
+## Enabled capabilities and validation
+
+- Same-origin Vercel routing for `/auth/*`, `/api/*`, and `/chat/*` passed.
+  The demo verifier bypass is compile-time, test-only, fail-closed on every
+  `*.openanonymity.ai` hostname, and does not contact the production verifier.
+- SuperTokens and its Postgres container are healthy. WebAuthn and cookie
+  origins use the stable Vercel origin. An unauthenticated refresh correctly
+  returned 401 and cleared the session-cookie boundary.
+- Google OAuth is intentionally disabled because the required Google passkey
+  reauthentication was unavailable. No mock Google credential was installed.
+- Stripe is in test mode. The public plan reports US$35/month for 300 tickets
+  and US$7 for a 50-ticket pack. A correctly signed webhook was processed and
+  its exact replay was classified as duplicate. An unsigned webhook returned
+  400. A sandbox customer-portal session succeeded and the throwaway customer
+  was deleted. No Checkout payment was completed.
+- The global ticket generation is anchored to the first instant of each UTC
+  month. Redis reports billing month `2026-08`; spent-nonce retention is 400
+  days. The public issuer endpoint reports `can_issue=true`.
+- The station is registered and certified. OrgAuth uses its 64-hex-character
+  Ed25519 heartbeat fallback key. Provider telemetry is disabled; provider
+  child-key cleanup remains enabled.
+- Browser E2E passed: client-side blinding, two-ticket redemption, signed
+  station-bound child-key issuance, TLS-over-WebSocket relay, and a real
+  OpenRouter completion returning `OA demo ready`.
+- Post-hardening revalidation issued two blinded tickets, provisioned a real
+  station-bound child key, completed a provider request, replayed the exact
+  request successfully, and rejected cross-scope ticket reuse.
+- Throwaway cleanup removed every E2E child key and its station replay row. The
+  station has zero tracked/replay rows and the OpenRouter account is back at
+  its pre-test baseline of one preserved unrelated child key. Invitation state
+  is active 0 and used 0; the final invitation record and request replay were
+  removed. The spent-nonce ledger and two completed-attempt tombstones remain
+  intentionally for anti-replay retention; they contain no recoverable child
+  key. Values are intentionally not recorded.
+- Automated suites: oa-chat 391/391, oa-org 173/173, oa-station 25/25.
+
+The release env files are `root:root` mode `0600`. Journals on both disposable
+hosts were rotated and vacuumed after the final redaction releases; all-unit
+current-journal scans found zero credential values or credential-derived
+prefixes. Local and remote release archives, temporary test scripts, response
+bodies, build env files, and replay-test directories were removed. No
+temporary Vercel token was created; the existing authenticated session was
+used. The task-specific SSH private key is intentionally retained at mode
+0600 only while the environment remains live.
+
+The Stripe setup is disposable and test-only. It currently uses a broad test
+secret enforced by backend test-mode checks, plus stripe-python 12.5.1 with API
+version `2025-08-27.basil`. Before any production promotion, replace that key
+with a least-privilege restricted key and upgrade/revalidate the Stripe SDK and
+API version.
+
+## Stop and teardown
+
+Stop both instances (public IPs and the quick-tunnel hostname may rotate on
+restart):
+
+```bash
+aws ec2 stop-instances \
+  --profile PowerUserAccess-427880590996 --region us-west-2 \
+  --instance-ids i-00260443022bfb718 i-0df039bb513c6969f
+```
+
+Terminate the exact disposable instances and wait:
+
+```bash
+aws ec2 terminate-instances \
+  --profile PowerUserAccess-427880590996 --region us-west-2 \
+  --instance-ids i-00260443022bfb718 i-0df039bb513c6969f
+aws ec2 wait instance-terminated \
+  --profile PowerUserAccess-427880590996 --region us-west-2 \
+  --instance-ids i-00260443022bfb718 i-0df039bb513c6969f
+```
+
+After termination, remove the dedicated cross-references and security groups:
+
+```bash
+aws ec2 revoke-security-group-ingress \
+  --profile PowerUserAccess-427880590996 --region us-west-2 \
+  --group-id sg-0aa04203a116b6a1b --protocol tcp --port 8005 \
+  --source-group sg-0edb5659bf0266f7e
+aws ec2 revoke-security-group-ingress \
+  --profile PowerUserAccess-427880590996 --region us-west-2 \
+  --group-id sg-0edb5659bf0266f7e --protocol tcp --port 8000 \
+  --source-group sg-0aa04203a116b6a1b
+aws ec2 delete-security-group \
+  --profile PowerUserAccess-427880590996 --region us-west-2 \
+  --group-id sg-0aa04203a116b6a1b
+aws ec2 delete-security-group \
+  --profile PowerUserAccess-427880590996 --region us-west-2 \
+  --group-id sg-0edb5659bf0266f7e
+```
+
+The two volumes are deletion-on-termination roots; verify they are absent
+after the instance wait. Remove the local SSH material only after AWS teardown:
+
+```bash
+unlink /tmp/oa-integrated-demo.n6Gvy1/oa-integrated-demo-20260808-ed25519
+unlink /tmp/oa-integrated-demo.n6Gvy1/oa-integrated-demo-20260808-ed25519.pub
+unlink /tmp/oa-integrated-demo.n6Gvy1/known_hosts
+```
+
+Remove the disposable Vercel project from the already authenticated team:
+
+```bash
+vercel remove oa-integrated-demo-20260807 --yes \
+  --scope team_RuDlwCKuvIERVUIsjPe4dElB
+```
+
+Finally, delete the three sandbox Stripe resources listed above, archive both
+sandbox prices/products if they are retained for audit, and revoke
+`oa-integrated-demo-20260811-v2` from OpenRouter Management Keys. Preserve all
+other Stripe/OpenRouter resources and the pre-existing Vercel/AWS logins.
