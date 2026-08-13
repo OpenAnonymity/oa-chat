@@ -7755,6 +7755,30 @@ class ChatApp {
         }
     }
 
+    /**
+     * Exports one chat session as a local Markdown file without changing sessions.
+     */
+    async exportChatAsMarkdown(sessionId = this.state.currentSessionId) {
+        const session = this.state.sessionsById?.get?.(sessionId) ||
+            this.state.sessions.find(candidate => candidate.id === sessionId);
+        if (!session) {
+            this.showToast('Chat not found', 'error');
+            return false;
+        }
+
+        try {
+            const messages = await chatDB.getSessionMessages(session.id);
+            const { downloadChatAsMarkdown } = await import('./services/chatMarkdownExport.js');
+            downloadChatAsMarkdown(session, messages);
+            this.showToast('Chat exported as Markdown', 'success');
+            return true;
+        } catch (error) {
+            console.error('Markdown export failed:', error);
+            this.showToast('Failed to export chat', 'error');
+            return false;
+        }
+    }
+
     setSidebarHiddenAttribute(isHidden) {
         if (isHidden) {
             document.documentElement.setAttribute('data-left-sidebar-hidden', 'true');

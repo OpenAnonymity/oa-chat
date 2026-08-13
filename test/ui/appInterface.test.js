@@ -46,6 +46,7 @@ function createMockApp(overrides = {}) {
         copySessionLink: () => calls.push(['copySessionLink']),
         deleteCurrentSessionShare: () => calls.push(['deleteCurrentSessionShare']),
         exportChatToPdf: () => calls.push(['exportChatToPdf']),
+        exportChatAsMarkdown: (sessionId) => calls.push(['exportChatAsMarkdown', sessionId]),
         updateSessionTitle: (sessionId, title) => calls.push(['updateSessionTitle', sessionId, title]),
         updateToolbarDivider: () => calls.push(['updateToolbarDivider']),
         setMemoryFeatureEnabled: async (enabled) => calls.push(['setMemoryFeatureEnabled', enabled]),
@@ -178,12 +179,14 @@ test('sidebar interface exposes sidebar-only elements and proxies actions', asyn
     await ui.toggleSessionStar('session-1');
     await ui.switchSession('session-2');
     await ui.updateSessionTitle('session-2', 'Title');
+    await ui.exportChatAsMarkdown('session-2');
     ui.updateToolbarDivider();
 
     assert.deepEqual(calls, [
         ['toggleSessionStar', 'session-1'],
         ['switchSession', 'session-2'],
         ['updateSessionTitle', 'session-2', 'Title'],
+        ['exportChatAsMarkdown', 'session-2'],
         ['updateToolbarDivider']
     ]);
 });

@@ -25,6 +25,16 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
+- 2026-08-11: Each chat session's sidebar options menu has an `Export as Markdown`
+  action. It reads that session directly from local IndexedDB without switching the
+  active chat, preserves message Markdown, and replaces user/model images and other
+  attachments with readable placeholder lines instead of embedding binary data URLs.
+  Exported messages use explicit plain-text delimiters with shared conversation turn
+  numbers (`--- User turn 1 ---`, `--- Assistant turn 1 ---`). These remain literal
+  text under CommonMark, which keeps them visible and deterministic for text parsers.
+  Delimiter-shaped lines inside message content are prefixed with a Markdown backslash
+  escape so they cannot be mistaken for transcript boundaries in the source file.
+
 - 2026-08-04: Plain `Cmd/Ctrl+F` uses an app-owned find-on-page toolbar instead
   of the browser's native find UI, so a forgotten find field cannot retain
   keyboard focus after the user returns to the app. The toolbar follows standard
