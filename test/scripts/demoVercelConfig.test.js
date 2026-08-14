@@ -32,13 +32,10 @@ test('demo Vercel config proxies only org API surfaces before the SPA fallback',
     ]);
 });
 
-test('demo relay override is compile-time isolated and proxy requests have a hard fallback timeout', () => {
+test('demo relay override is compile-time isolated', () => {
     const buildSource = readFileSync('scripts/build.mjs', 'utf8');
-    const proxySource = readFileSync('chat/services/networkProxy.js', 'utf8');
 
-    assert.match(buildSource, /OA_DEMO_PROXY_URL requires an explicit same-origin verifier-bypass demo/);
-    assert.match(proxySource, /PROXY_FETCH_TIMEOUT_MS\s*=\s*10000/);
-    assert.match(proxySource, /Promise\.race\(\[session\.fetch\(resource, init\), guard\]\)/);
+    assert.match(buildSource, /OA_DEMO_PROXY_URL requires an explicit same-origin verifier-bypass demo and an exact root WSS origin/);
 });
 
 test('demo Vercel config rejects insecure or path-bearing upstreams', () => {
@@ -49,6 +46,18 @@ test('demo Vercel config rejects insecure or path-bearing upstreams', () => {
         'not-a-url'
     ]) {
         assert.throws(() => buildDemoVercelConfig(origin), /exact HTTPS origin|valid HTTPS origin/);
+    }
+
+    for (const proxyUrl of [
+        'ws://wisp.example.com/',
+        'wss://wisp.example.com/path/',
+        'wss://wisp.example.com/$(echo-owned)/',
+        'wss://wisp.example.com/;echo-owned;/'
+    ]) {
+        assert.throws(
+            () => buildDemoVercelConfig('https://mock-org.example.com', true, proxyUrl),
+            /exact root WSS origin/
+        );
     }
 });
 

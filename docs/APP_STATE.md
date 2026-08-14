@@ -38,9 +38,10 @@ reading code alone.
   Google OAuth and the commercial registration flow.
 - A disposable same-origin verifier-bypass build may use a credential-free
   alternate Wisp endpoint through `OA_DEMO_PROXY_URL` when the ordinary relay
-  is unavailable. Production builds retain the normal relay. Proxy requests
-  have a ten-second hard timeout so an unresponsive WASM transport closes and
-  enters the existing visible direct-fallback path instead of hanging forever.
+  is unavailable. Production builds retain the normal relay. Same-origin demo
+  API requests have a ten-second hard timeout so an unresponsive WASM
+  transport closes and enters the existing visible direct-fallback path
+  instead of hanging forever. Provider inference streams remain unbounded.
 
 See [EXTENSIONS.md](EXTENSIONS.md) for the supported contract. The Premium
 entries below describe the pre-extraction implementation history; the current

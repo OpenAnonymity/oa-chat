@@ -46,11 +46,13 @@ must not enable this flag without the user's explicit acceptance.
 
 If the ordinary shared Wisp relay is unavailable, the disposable demo may
 compile an alternate public relay with `OA_DEMO_PROXY_URL`. The build accepts
-only a credential-free `wss://` endpoint ending in `/`, and only together with
+only a credential-free root `wss://` origin, and only together with
 same-origin routing and the explicit verifier bypass. Production builds retain
-the normal relay. Proxy fetches also have a ten-second hard timeout; an
-unresponsive WASM transport is closed and follows the existing, visibly
+the normal relay. Same-origin demo API fetches have a ten-second hard timeout;
+an unresponsive WASM transport is closed and follows the existing, visibly
 reported direct-fallback policy instead of hanging ticket redemption forever.
+Provider inference streams remain unbounded and are not retried direct merely
+because a model takes longer than ten seconds to return headers.
 
 Configure the backend with the stable Vercel origin consistently:
 

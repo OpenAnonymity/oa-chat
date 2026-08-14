@@ -1,14 +1,13 @@
-import { PROXY_URL } from '../config.js';
+import { DEMO_PROXY_FETCH_TIMEOUT_MS, PROXY_URL } from '../config.js';
 import transportHints from './inference/transportHints.js';
 import preferencesStore, { PREF_KEYS } from './preferencesStore.js';
 import { fetchRetry, fetchRetryJson } from './fetchRetry.js';
+import { guardProxyFetch, resolveProxyFetchTimeoutMs } from './proxyFetchGuard.js';
 
 const DEFAULT_SETTINGS = {
     enabled: true,
     fallbackToDirect: true
 };
-const PROXY_FETCH_TIMEOUT_MS = 10000;
-
 // TLS info parsing patterns (supports both OpenSSL and mbedTLS output formats)
 const TLS_PATTERNS = {
     // OpenSSL: "SSL connection using TLSv1.3 / ..."
@@ -643,33 +642,17 @@ class NetworkProxy {
         const session = this.httpSession;
         const signal = init.signal || null;
         if (!session) throw new Error('HTTPSession is unavailable');
-        if (signal?.aborted) {
-            const error = new Error('Request aborted');
-            error.name = 'AbortError';
-            throw error;
-        }
-
-        let timeoutId = null;
-        let abortHandler = null;
-        const guard = new Promise((_, reject) => {
-            timeoutId = setTimeout(() => {
-                const error = new Error('Network proxy request timed out');
-                error.code = 'PROXY_TIMEOUT';
-                reject(error);
-            }, PROXY_FETCH_TIMEOUT_MS);
-
-            if (signal) {
-                abortHandler = () => {
-                    const error = new Error('Request aborted');
-                    error.name = 'AbortError';
-                    reject(error);
-                };
-                signal.addEventListener('abort', abortHandler, { once: true });
-            }
-        });
+        const timeoutMs = resolveProxyFetchTimeoutMs(
+            resource,
+            typeof window !== 'undefined' ? window.location.origin : null,
+            DEMO_PROXY_FETCH_TIMEOUT_MS
+        );
 
         try {
-            return await Promise.race([session.fetch(resource, init), guard]);
+            return await guardProxyFetch(
+                () => session.fetch(resource, init),
+                { signal, timeoutMs }
+            );
         } catch (error) {
             if (error?.code === 'PROXY_TIMEOUT' || error?.name === 'AbortError') {
                 try {
@@ -684,9 +667,6 @@ class NetworkProxy {
                 }
             }
             throw error;
-        } finally {
-            if (timeoutId !== null) clearTimeout(timeoutId);
-            if (signal && abortHandler) signal.removeEventListener('abort', abortHandler);
         }
     }
 

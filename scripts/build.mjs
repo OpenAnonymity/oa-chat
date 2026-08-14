@@ -52,8 +52,8 @@ if (demoProxyUrlSetting) {
     }
     if (!sameOriginOrg || !demoVerifierBypass || demoProxyUrl.protocol !== 'wss:' ||
         demoProxyUrl.username || demoProxyUrl.password || demoProxyUrl.search ||
-        demoProxyUrl.hash || !demoProxyUrl.pathname.endsWith('/')) {
-        throw new Error('[build] OA_DEMO_PROXY_URL requires an explicit same-origin verifier-bypass demo and an exact WSS endpoint ending in /');
+        demoProxyUrl.hash || demoProxyUrl.pathname !== '/') {
+        throw new Error('[build] OA_DEMO_PROXY_URL requires an explicit same-origin verifier-bypass demo and an exact root WSS origin');
     }
 }
 

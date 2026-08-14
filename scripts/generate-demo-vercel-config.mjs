@@ -30,8 +30,8 @@ export function buildDemoVercelConfig(rawOrgOrigin, enableVerifierBypass = false
             throw new Error('OA_DEMO_PROXY_URL must be a valid WSS URL');
         }
         if (proxyUrl.protocol !== 'wss:' || proxyUrl.username || proxyUrl.password ||
-            proxyUrl.search || proxyUrl.hash || !proxyUrl.pathname.endsWith('/')) {
-            throw new Error('OA_DEMO_PROXY_URL must be an exact WSS endpoint ending in /');
+            proxyUrl.search || proxyUrl.hash || proxyUrl.pathname !== '/') {
+            throw new Error('OA_DEMO_PROXY_URL must be an exact root WSS origin');
         }
         proxyBuildSetting = ` OA_DEMO_PROXY_URL=${proxyUrl.toString()}`;
     }

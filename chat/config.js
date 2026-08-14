@@ -36,6 +36,7 @@ export const VERIFIER_URL = disposableDemoVerifierBypass
 // content (TLS terminates at the destination). For stronger IP privacy, users
 // can use their own VPN/Tor instead of or in addition to this relay.
 export const PROXY_URL = disposableDemoProxyUrl || 'wss://oa-1.refraction.network/?secret=1f45ceecf768790c8389ff704612d5cf';
+export const DEMO_PROXY_FETCH_TIMEOUT_MS = disposableDemoProxyUrl ? 10000 : null;
 
 // Base URL for shared chat links
 export const SHARE_BASE_URL = 'https://chat.openanonymity.ai';
