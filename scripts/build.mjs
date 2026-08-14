@@ -9,8 +9,22 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 
+const args = process.argv.slice(2);
+const readArg = (name) => {
+    const index = args.indexOf(name);
+    if (index === -1) return null;
+    if (!args[index + 1] || args[index + 1].startsWith('--')) {
+        throw new Error(`[build] ${name} requires a value`);
+    }
+    return args[index + 1];
+};
+const appEntryArgument = readArg('--app-entry');
+const outputDirectoryArgument = readArg('--out-dir');
+
 const srcDir = path.join(repoRoot, 'chat');
-const outDir = path.join(repoRoot, 'dist');
+const outDir = outputDirectoryArgument
+    ? path.resolve(process.cwd(), outputDirectoryArgument)
+    : path.join(repoRoot, 'dist');
 const assetsDir = path.join(outDir, 'assets');
 const vectorDir = path.join(repoRoot, 'vector');
 const localInferenceDir = path.join(repoRoot, 'local_inference');
@@ -39,7 +53,9 @@ const pathExists = async (target) => {
 };
 
 const entryPoints = {
-    app: path.join(srcDir, 'app.js'),
+    app: appEntryArgument
+        ? path.resolve(process.cwd(), appEntryArgument)
+        : path.join(srcDir, 'standalone.js'),
     prelude: path.join(srcDir, 'prelude.js')
 };
 
@@ -158,6 +174,18 @@ const build = async () => {
         chunkNames: 'chunk-[hash]',
         assetNames: 'asset-[hash]',
         target: ['es2020'],
+        loader: {
+            '.png': 'file',
+            '.jpg': 'file',
+            '.jpeg': 'file',
+            '.gif': 'file',
+            '.webp': 'file',
+            '.svg': 'file',
+            '.woff': 'file',
+            '.woff2': 'file',
+            '.ttf': 'file',
+            '.otf': 'file'
+        },
         define: {
             '__DEV__': 'false',
             '__OA_ORG_SAME_ORIGIN__': JSON.stringify(sameOriginOrg),
@@ -180,6 +208,9 @@ const build = async () => {
 
     const appScriptPath = toPosixPath(path.relative(outDir, appOutput[0]));
     const preludeScriptPath = toPosixPath(path.relative(outDir, preludeOutput[0]));
+    const appCssPath = appOutput[1].cssBundle
+        ? toPosixPath(path.relative(outDir, path.resolve(appOutput[1].cssBundle)))
+        : null;
 
     const indexPath = path.join(outDir, 'index.html');
     let html = await fs.readFile(indexPath, 'utf8');
@@ -195,6 +226,9 @@ const build = async () => {
 
     html = replaceBundleBlock(html, 'PRELUDE', preludeScriptPath);
     html = replaceBundleBlock(html, 'APP', appScriptPath);
+    if (appCssPath) {
+        html = html.replace('</head>', `    <link rel="stylesheet" href="${appCssPath}">\n</head>`);
+    }
 
     if (sameOriginOrg) {
         const executableModuleSources = [...html.matchAll(
@@ -239,6 +273,7 @@ const build = async () => {
     }
 
     console.log(`Built app bundle: ${appScriptPath}`);
+    if (appCssPath) console.log(`Built app styles: ${appCssPath}`);
     console.log(`Built prelude bundle: ${preludeScriptPath}`);
     if (appHash) console.log(`Build hash: ${appHash}`);
 };

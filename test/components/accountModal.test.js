@@ -55,19 +55,19 @@ test('account service turns upstream failures into actionable Google copy', () =
     );
 });
 
-test('an already-unlocked Google account resumes pending Checkout', async () => {
+test('an already-unlocked Google account completes without commercial coupling', async () => {
     const modal = Object.create(AccountModal.prototype);
-    let resumed = 0;
+    let toast = '';
     modal.accountService = {
         authenticateWithOAuth: async () => ({ status: 'unlocked' })
     };
     modal.render = () => {};
-    modal.resumePremiumCheckoutIfPending = () => { resumed += 1; return true; };
-    modal.app = { showToast() {} };
+    modal.app = { showToast(message) { toast = message; } };
 
     await modal.handleOAuthAuthentication('google');
 
-    assert.equal(resumed, 1);
+    assert.equal(toast, 'Signed in with Google');
+    assert.equal('resumePremiumCheckoutIfPending' in modal, false);
 });
 
 test('legacy linked account uses its existing passkey unlock path', async () => {
@@ -83,7 +83,6 @@ test('legacy linked account uses its existing passkey unlock path', async () => 
         oauthLegacyPasskeyRequired: true
     };
     let unlockAccountId = null;
-    let resumed = 0;
     const account = {
         getState: () => state,
         subscribe: () => () => {},
@@ -104,7 +103,6 @@ test('legacy linked account uses its existing passkey unlock path', async () => 
     });
     modal.accountState = state;
     modal.escapeHtml = value => String(value ?? '');
-    modal.resumePremiumCheckoutIfPending = () => { resumed += 1; return true; };
 
     try {
         const html = modal.renderOAuthUnlockUI();
@@ -112,7 +110,7 @@ test('legacy linked account uses its existing passkey unlock path', async () => 
         assert.match(html, /1234 5678 9012 3456/);
         await modal.handleOAuthKeyringUnlock();
         assert.equal(unlockAccountId, state.accountId);
-        assert.equal(resumed, 1);
+        assert.equal('resumePremiumCheckoutIfPending' in modal, false);
     } finally {
         modal.destroy();
         globalThis.document = originalDocument;

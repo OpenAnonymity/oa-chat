@@ -2,29 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import WelcomePanel from '../../chat/components/WelcomePanel.js';
 
-test('initial welcome screen offers Register and upgrade', () => {
+test('initial welcome screen exposes an isolated commercial action slot', () => {
     const source = String(WelcomePanel.prototype.renderWelcomeStep);
-    assert.match(source, /id="welcome-upgrade-btn"/);
-    assert.match(source, /<span>Register and upgrade<\/span>/);
+    assert.match(source, /data-oa-extension-slot="welcome\.actions"/);
+    assert.doesNotMatch(source, /welcome-upgrade-btn/);
+    assert.doesNotMatch(source, /Register and upgrade/);
     assert.doesNotMatch(source, /id="create-account-btn"/);
-});
-
-test('Welcome Upgrade closes onboarding and opens Premium', () => {
-    const panel = Object.create(WelcomePanel.prototype);
-    let closed = 0;
-    let opened = 0;
-    panel.close = () => { closed += 1; };
-    panel.app = { billingModal: { open: () => { opened += 1; } } };
-    const originalSetTimeout = globalThis.setTimeout;
-    globalThis.setTimeout = callback => { callback(); return 1; };
-
-    try {
-        panel.handleUpgrade();
-        assert.equal(closed, 1);
-        assert.equal(opened, 1);
-    } finally {
-        globalThis.setTimeout = originalSetTimeout;
-    }
 });
 
 test('post-ticket success screen retains honest optional account creation', () => {
@@ -33,8 +16,7 @@ test('post-ticket success screen retains honest optional account creation', () =
     assert.match(source, /Create Account/);
 });
 
-test('an open Premium surface suppresses delayed first-run onboarding', () => {
-    const panel = Object.create(WelcomePanel.prototype);
-    panel.app = { billingModal: { isOpen: true } };
-    assert.equal(panel.shouldShow(), false);
+test('public welcome panel has no direct commercial implementation references', () => {
+    const source = String(WelcomePanel);
+    assert.doesNotMatch(source, /billingModal|billingState|Premium/);
 });

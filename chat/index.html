@@ -383,10 +383,11 @@
                     </div>
                 </div>
             </div>
-            <button id="account-tab-btn" data-status="none" class="account-tab-btn" type="button" aria-label="Register and upgrade" aria-controls="billing-modal" aria-expanded="false">
+            <button id="account-tab-btn" data-status="none" class="account-tab-btn" type="button" aria-label="Account" aria-controls="account-modal" aria-expanded="false">
                 <span class="account-tab-dot" aria-hidden="true"></span>
-                <span data-account-nav-label>Register and upgrade</span>
+                <span data-account-nav-label>Account</span>
             </button>
+            <div data-oa-extension-slot="sidebar.accountActions" hidden></div>
         </aside>
 
         <div class="flex flex-1 min-w-0">
@@ -903,8 +904,7 @@
     <!-- Account Modal -->
     <div id="account-modal" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"></div>
 
-    <!-- Premium Billing Modal -->
-    <div id="billing-modal" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"></div>
+    <div data-oa-extension-slot="modalLayer" hidden></div>
 
     <!-- Memory Editor Modal -->
     <div id="memory-editor-modal" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"></div>
@@ -946,7 +946,7 @@
 
     <!-- Single entry point - app bootstraps -->
     <!-- BUNDLE:APP -->
-    <script type="module" src="app.js?v=premium-billing-v1"></script>
+    <script type="module" src="standalone.js?v=extensions-v2"></script>
     <!-- /BUNDLE:APP -->
 </body>
 </html>

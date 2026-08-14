@@ -6,7 +6,7 @@
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import themeManager from '../services/themeManager.js';
 import SmoothProgress from '../services/smoothProgress.js';
-import { hasPendingBillingHandoff } from '../services/billingState.js';
+import { SLOT_NAMES } from '../extensions/extensionHost.js';
 import TurnstileBubble from './TurnstileBubble.js';
 
 // localStorage key for synchronous pre-hydration check (matches preferencesStore snapshot)
@@ -76,16 +76,6 @@ class WelcomePanel {
     }
 
     shouldShow() {
-        // A deliberately opened Premium surface takes precedence over generic
-        // first-run access onboarding, even before Checkout state is persisted.
-        if (this.app?.billingModal?.isOpen) return false;
-        // Checkout return and recovery own the foreground until paid tickets are
-        // safely imported. The generic no-ticket onboarding must not cover them.
-        if (hasPendingBillingHandoff({
-            search: globalThis.location?.search || '',
-            localStorage: globalThis.localStorage,
-            sessionStorage: globalThis.sessionStorage
-        })) return false;
         // Don't show if dismissed
         if (localStorage.getItem(STORAGE_KEY_DISMISSED) === 'true') return false;
         // Don't show if user already has tickets
@@ -615,11 +605,6 @@ class WelcomePanel {
         setTimeout(() => this.app.accountModal?.open(), 150);
     }
 
-    handleUpgrade() {
-        this.close();
-        setTimeout(() => this.app.billingModal?.open?.(), 150);
-    }
-
     handleStartChatting() {
         this.close();
         setTimeout(() => this.app.elements.messageInput?.focus(), 150);
@@ -879,6 +864,8 @@ class WelcomePanel {
             dialog.classList.remove('welcome-modal-enter');
         }
         this.animateOnNextRender = false;
+
+        this.app.extensionSlots?.refresh?.(SLOT_NAMES.WELCOME_ACTIONS);
 
         if (this.step !== 'welcome') {
             this.resetWelcomeDialogAnchor();
@@ -1229,17 +1216,7 @@ class WelcomePanel {
                 </div>
 
                 <!-- Action buttons -->
-                <button
-                    id="welcome-upgrade-btn"
-                    type="button"
-                    class="welcome-btn-blue-glass w-full h-10 px-3 mb-2 rounded-lg text-sm font-medium text-white transition-colors flex items-center justify-center gap-1.5 ${controlsDisabled ? 'pointer-events-none opacity-60' : ''}"
-                    ${controlsDisabled ? 'disabled' : ''}
-                >
-                    <svg class="w-4 h-4 flex-shrink-0" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v18m6-12-6-6-6 6" />
-                    </svg>
-                    <span>Register and upgrade</span>
-                </button>
+                <div data-oa-extension-slot="welcome.actions" hidden></div>
                 <div class="flex items-stretch gap-2">
                     <a
                         href="https://openanonymity.ai/beta"
@@ -1575,11 +1552,6 @@ class WelcomePanel {
         const createAccountBtn = document.getElementById('create-account-btn');
         if (createAccountBtn) {
             createAccountBtn.onclick = () => this.handleCreateAccount();
-        }
-
-        const welcomeUpgradeBtn = document.getElementById('welcome-upgrade-btn');
-        if (welcomeUpgradeBtn) {
-            welcomeUpgradeBtn.onclick = () => this.handleUpgrade();
         }
 
         const startChattingBtn = document.getElementById('start-chatting-btn');

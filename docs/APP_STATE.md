@@ -4,6 +4,32 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-08-14: Public core and private commercial composition
+
+- Stripe presentation, Checkout orchestration, top-up state, and subscription
+  UI now live in the private `oa-commercial` composition. Standalone `oa-chat`
+  contains no billing modal, Stripe client, pricing copy, or upgrade CTA.
+- `chat/publicApi.js` is the only supported downstream import. Extension API v2
+  provides four isolated UI slots and narrow account, public-org, ticket, and
+  UI capabilities; downstream code must not import oa-chat internals.
+- The public entitlement preparer retains the privacy-sensitive browser work:
+  blinding, issuer-generation validation, strict response allowlisting,
+  unblinding, crash-safe IndexedDB recovery, and durable ordinary-wallet
+  import. This keeps the unlinkability boundary auditable in the public tree
+  without placing commercial product logic there.
+- The existing `oa-billing-local-v1` IndexedDB name is intentionally retained
+  so a pending preparation survives the extraction. The record format is
+  generic entitlement state and final wallet tickets contain no account,
+  payment, subscription, or claim metadata.
+- Account registration remains Google-only in the public Account surface.
+  A commercial extension observes only the sanitized account snapshot and can
+  resume an upgrade after the verified session becomes ready; Account itself
+  has no Checkout-specific callback.
+
+See [EXTENSIONS.md](EXTENSIONS.md) for the supported contract. The Premium
+entries below describe the pre-extraction implementation history; the current
+commercial behavior is documented and tested in `oa-commercial`.
+
 ## 2026-08-07: Disposable Demo Same-Origin Routing
 
 - Normal production builds still target `https://org.openanonymity.ai`.
@@ -78,7 +104,7 @@ secret-free record and teardown targets of the integrated disposable run.
   must treat the request as completed/unrecoverable rather than trying to reuse
   or release those tickets.
 
-See [ACCOUNT_BILLING.md](ACCOUNT_BILLING.md) for the full lifecycle.
+The active lifecycle is documented in `oa-commercial/docs/BILLING.md`.
 
 ## 2026-08-05: Premium $7 / 50-Ticket Top-Ups
 
@@ -121,8 +147,8 @@ See [ACCOUNT_BILLING.md](ACCOUNT_BILLING.md) for the full lifecycle.
   never enters sync, exports, wallet state, tickets, or logs. Purchase fills the
   ordinary wallet and does not redeem a ticket or alter issuer-key rotation.
 
-See [ACCOUNT_BILLING.md](ACCOUNT_BILLING.md) for the full contract and privacy
-boundary.
+The active contract and privacy boundary are documented in
+`oa-commercial/docs/BILLING.md`.
 
 ## 2026-07-31: Stripe Premium and Genuine Ticket Issuance
 
@@ -185,7 +211,7 @@ boundary.
   Additional accumulated allowances require an explicit action labeled with
   the next server-provided count. The modal intentionally omits server allowance
   counters such as `Current paid allowance`; those are not browser wallet counts.
-  See [ACCOUNT_BILLING.md](ACCOUNT_BILLING.md).
+  See `oa-commercial/docs/BILLING.md` for the extracted implementation.
 
 ## How Agents Should Use This
 

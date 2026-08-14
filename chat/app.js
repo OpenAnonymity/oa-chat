@@ -27,6 +27,7 @@ import shareService from './services/shareService.js';
 import { getTicketCost, initModelTiers } from './services/modelTiers.js';
 import { initPinnedModels, onPinnedModelsUpdate, getDefaultModelConfig, getDisabledModels, getPinnedModels, getStandardizedModelDisplayName } from './services/modelConfig.js';
 import accountService from './services/accountService.js';
+import sessionService from './services/sessionService.js';
 import apiKeyStore from './services/apiKeyStore.js';
 import { generateUlid21 } from './services/ulid.js';
 import { chatDB } from './db.js';
@@ -76,6 +77,13 @@ import {
     persistVerifierSubmitKeyProof as persistVerifierSubmitKeyProofValue
 } from './application/accessController.js';
 import CouncilController from './application/councilController.js';
+import {
+    getPendingEntitlementClaim,
+    prepareEntitlementBatch
+} from './application/entitlementTicketPreparer.js';
+import { ExtensionHost } from './extensions/extensionHost.js';
+import { toExtensionAccountSnapshot } from './extensions/extensionAccountSnapshot.js';
+import { normalizeTicketKeyId, ticketPublicKeyId } from './domain/ticketKeys.js';
 import {
     hasExplicitVerifierApprovalForAccessInfo,
     isVerifierResultApproved
@@ -149,7 +157,7 @@ const DELETE_HISTORY_COPY = {
  * Manages application state, coordinates UI components, and handles business logic.
  */
 class ChatApp {
-    constructor() {
+    constructor(options = {}) {
         this.state = {
             sessions: [],
             sessionsById: new Map(),
@@ -297,6 +305,9 @@ class ChatApp {
             inferenceService,
             ticketClient
         });
+        this.extensions = Array.isArray(options.extensions) ? options.extensions : [];
+        this.extensionHost = new ExtensionHost();
+        this.extensionSlots = this.extensionHost.slots;
 
         // Link preview state
         this.linkPreviewCard = document.getElementById('link-preview-card');
@@ -309,7 +320,106 @@ class ChatApp {
         this.editingMessageId = null; // Track which message is being edited
         this.editDrafts = new Map(); // messageId -> { content, files } for side-effect-free prompt edits
 
-        this.init();
+        this.ready = this.init();
+    }
+
+    async resolveExtensionAuthContext() {
+        await accountService.init();
+        const state = accountService.getState();
+        if (!state?.accountId || !state?.sessionVerified) {
+            const error = new Error('A verified OA account session is required.');
+            error.code = 'ACCOUNT_AUTH_REQUIRED';
+            throw error;
+        }
+        return Object.freeze({
+            scope: `account:${state.accountId}`,
+            mode: 'account'
+        });
+    }
+
+    async requestExtensionAccountApi(path, init = {}) {
+        const url = new URL(String(path || ''), ORG_API_BASE);
+        const orgUrl = new URL(ORG_API_BASE);
+        if (url.origin !== orgUrl.origin ||
+            (url.pathname !== '/api/billing' && !url.pathname.startsWith('/api/billing/'))) {
+            throw new TypeError('Extension account requests are restricted to the org billing API.');
+        }
+        return sessionService.fetch(url.toString(), {
+            ...init,
+            credentials: 'include'
+        });
+    }
+
+    async requestExtensionPublicApi(path, init = {}) {
+        const url = new URL(String(path || ''), ORG_API_BASE);
+        const orgUrl = new URL(ORG_API_BASE);
+        const allowed = url.pathname === '/api/billing/plan' ||
+            url.pathname === '/api/ticket/issue/public-key';
+        if (url.origin !== orgUrl.origin || !allowed) {
+            throw new TypeError('Extension public requests are restricted to approved org APIs.');
+        }
+        return fetch(url.toString(), {
+            ...init,
+            credentials: 'omit'
+        });
+    }
+
+    async getExtensionTicketIssuer(signal) {
+        const response = await this.requestExtensionPublicApi('/api/ticket/issue/public-key', {
+            headers: { Accept: 'application/json' },
+            cache: 'no-store',
+            signal
+        });
+        let data = {};
+        try {
+            data = await response.json();
+        } catch {
+            // The normalized error below intentionally omits the response body.
+        }
+        if (!response.ok || typeof data.public_key !== 'string' || !data.public_key) {
+            const error = new Error('Unable to load the OA ticket issuer public key.');
+            error.code = 'TICKET_ISSUER_UNAVAILABLE';
+            throw error;
+        }
+        const computedKeyId = await ticketPublicKeyId(data.public_key);
+        const advertisedKeyId = normalizeTicketKeyId(data.key_id);
+        if (!advertisedKeyId || advertisedKeyId !== computedKeyId) {
+            const error = new Error('The OA ticket issuer returned an inconsistent key identifier.');
+            error.code = 'TICKET_ISSUER_KEY_MISMATCH';
+            throw error;
+        }
+        return Object.freeze({ publicKey: data.public_key, keyId: computedKeyId });
+    }
+
+    createExtensionContext() {
+        const getAccountSnapshot = () => toExtensionAccountSnapshot(accountService.getState());
+        return Object.freeze({
+            slots: Object.freeze({
+                mount: (name, element) => this.extensionSlots.mount(name, element)
+            }),
+            account: Object.freeze({
+                getSnapshot: getAccountSnapshot,
+                subscribe: listener => typeof listener === 'function'
+                    ? accountService.subscribe(() => listener(getAccountSnapshot()))
+                    : (() => {}),
+                resolveAuthContext: () => this.resolveExtensionAuthContext(),
+                request: (path, init) => this.requestExtensionAccountApi(path, init)
+            }),
+            org: Object.freeze({
+                baseUrl: ORG_API_BASE,
+                requestPublic: (path, init) => this.requestExtensionPublicApi(path, init)
+            }),
+            tickets: Object.freeze({
+                getPendingEntitlementClaim,
+                prepareEntitlementBatch,
+                getIssuerPublicKey: signal => this.getExtensionTicketIssuer(signal)
+            }),
+            ui: Object.freeze({
+                openAccount: () => this.accountModal?.open?.(),
+                closeWelcome: () => this.welcomePanel?.close?.(),
+                showToast: (...args) => this.showToast(...args)
+            })
+        });
     }
 
     detectInitialLinkContext() {
@@ -1724,6 +1834,10 @@ class ChatApp {
         this.ui = new VanillaChatUi(this);
         Object.assign(this, this.ui.mountShell());
         this.setupSidebarFilterControls();
+
+        // Extensions mount independently. Their failures never prevent the
+        // public chat shell, account system, or inference path from starting.
+        void this.extensionHost.mountAll(this.extensions, this.createExtensionContext());
 
         // Render core shell immediately so non-sidebar UI is never blank on startup.
         this.chatArea.renderEmptyStateImmediate();
@@ -9980,14 +10094,17 @@ Your API key has been cleared. A new key from a different station will be obtain
     }
 }
 
-// Initialize app when DOM is loaded
-document.addEventListener('DOMContentLoaded', () => {
+export function createChatApp(options = {}) {
     // This public analytics endpoint must never inherit the first-party
     // SuperTokens cookie in a same-origin disposable deployment.
     fetch(`${ORG_API_BASE}/chat/v1/analytics/pageview`, {
         method: 'POST',
         credentials: 'omit'
     }).catch(() => {});
-    window.app = new ChatApp();
+    const app = new ChatApp(options);
+    window.app = app;
     window.oaDesktopReady = true;
-});
+    return app;
+}
+
+export { ChatApp };
