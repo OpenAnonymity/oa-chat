@@ -1,5 +1,9 @@
 const LOCAL_ORG_HOSTS = new Set(['localhost', '127.0.0.1']);
-const PRODUCTION_ORG_ORIGIN = 'https://org.openanonymity.ai';
+const PRODUCTION_ORG_ORIGIN = (
+    typeof __OA_PRODUCTION_ORG_ORIGIN__ === 'string'
+        ? __OA_PRODUCTION_ORG_ORIGIN__
+        : 'https://org.openanonymity.ai'
+);
 const LOCAL_AUTH_ORIGIN = 'http://localhost:8005';
 
 function resolveSameOriginEndpoints(origin) {
@@ -27,6 +31,9 @@ export function resolveOrgEndpoints({
     }
     if (sameOriginEnabled) {
         return resolveSameOriginEndpoints(origin);
+    }
+    if (!PRODUCTION_ORG_ORIGIN) {
+        throw new Error('Production oa-org fallback is unavailable in this build');
     }
     return {
         apiBase: PRODUCTION_ORG_ORIGIN,

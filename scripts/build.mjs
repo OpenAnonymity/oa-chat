@@ -189,6 +189,9 @@ const build = async () => {
         define: {
             '__DEV__': 'false',
             '__OA_ORG_SAME_ORIGIN__': JSON.stringify(sameOriginOrg),
+            '__OA_PRODUCTION_ORG_ORIGIN__': JSON.stringify(
+                sameOriginOrg ? '' : 'https://org.openanonymity.ai'
+            ),
             '__OA_DEMO_VERIFIER_BYPASS__': JSON.stringify(demoVerifierBypass)
         },
         minify: true,
@@ -248,6 +251,22 @@ const build = async () => {
     html = versionStaticAssetRefs(html, appHash);
 
     await fs.writeFile(indexPath, html, 'utf8');
+
+    if (sameOriginOrg) {
+        // The source tree is copied for non-module runtime assets, but this
+        // module is bundled into the executable graph. Do not publish its
+        // dormant production fallback in an isolated same-origin demo.
+        await fs.rm(path.join(outDir, 'services', 'orgEndpoints.js'), { force: true });
+        const publishedJs = await collectJsFiles(outDir);
+        for (const filePath of publishedJs) {
+            const source = await fs.readFile(filePath, 'utf8');
+            if (source.includes('org.openanonymity.ai')) {
+                throw new Error(
+                    `[build] same-origin demo artifact retains a production-org fallback: ${path.relative(outDir, filePath)}`
+                );
+            }
+        }
+    }
 
     const jsFiles = await collectJsFiles(assetsDir);
     await Promise.all(jsFiles.map(async (filePath) => {

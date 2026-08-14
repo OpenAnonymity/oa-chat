@@ -28,6 +28,10 @@ reading code alone.
 - A composition mounted below `/` passes `routeRoot` to `createChatApp`.
   Ticket-code path cleanup and generated shared-chat links use that root, so a
   refresh cannot fall back to the composition's separate landing document.
+- Same-origin production builds replace the production-org fallback at compile
+  time and remove the now-bundled raw `services/orgEndpoints.js` copy. The
+  build scans every published JavaScript file for that hostname, so an inert
+  source copy cannot silently weaken the disposable-demo isolation claim.
 
 See [EXTENSIONS.md](EXTENSIONS.md) for the supported contract. The Premium
 entries below describe the pre-extraction implementation history; the current
@@ -75,6 +79,10 @@ secret-free record and teardown targets of the integrated disposable run.
   not a per-account rotation: every subscription and invitation ticket uses the
   same unlinkable issuer public key, and rotating it invalidates all earlier
   generations immediately.
+- The Redis epoch marker includes both the UTC billing month and Stripe mode.
+  Changing a deployment from test to live rotates under the ordinary global
+  fence even within the same month, preventing sandbox-issued tickets from
+  crossing into live billing resources.
 - `BillingClient.runPreparation(...)` verifies the current RFC 9578 public-key
   ID before generation, at the signed/finalization transition, and immediately
   before durable wallet import. The same expected key ID is sent with the blind
