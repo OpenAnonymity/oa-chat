@@ -42,6 +42,20 @@ const demoVerifierBypass = demoVerifierBypassSetting === 'true';
 if (demoVerifierBypass && !sameOriginOrg) {
     throw new Error('[build] verifier bypass is allowed only in an explicit same-origin demo build');
 }
+const demoProxyUrlSetting = process.env.OA_DEMO_PROXY_URL || '';
+if (demoProxyUrlSetting) {
+    let demoProxyUrl;
+    try {
+        demoProxyUrl = new URL(demoProxyUrlSetting);
+    } catch {
+        throw new Error('[build] OA_DEMO_PROXY_URL must be a valid WSS URL');
+    }
+    if (!sameOriginOrg || !demoVerifierBypass || demoProxyUrl.protocol !== 'wss:' ||
+        demoProxyUrl.username || demoProxyUrl.password || demoProxyUrl.search ||
+        demoProxyUrl.hash || !demoProxyUrl.pathname.endsWith('/')) {
+        throw new Error('[build] OA_DEMO_PROXY_URL requires an explicit same-origin verifier-bypass demo and an exact WSS endpoint ending in /');
+    }
+}
 
 const pathExists = async (target) => {
     try {
@@ -192,7 +206,8 @@ const build = async () => {
             '__OA_PRODUCTION_ORG_ORIGIN__': JSON.stringify(
                 sameOriginOrg ? '' : 'https://org.openanonymity.ai'
             ),
-            '__OA_DEMO_VERIFIER_BYPASS__': JSON.stringify(demoVerifierBypass)
+            '__OA_DEMO_VERIFIER_BYPASS__': JSON.stringify(demoVerifierBypass),
+            '__OA_DEMO_PROXY_URL__': JSON.stringify(demoProxyUrlSetting)
         },
         minify: true,
         metafile: true,

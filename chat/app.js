@@ -308,6 +308,7 @@ class ChatApp {
             ticketClient
         });
         this.extensions = Array.isArray(options.extensions) ? options.extensions : [];
+        this.welcomePanelEnabled = options.welcomePanel !== false;
         this.extensionHost = new ExtensionHost();
         this.extensionSlots = this.extensionHost.slots;
 
@@ -1998,10 +1999,13 @@ class ChatApp {
                 await this.thanksPanel.init().catch((error) => {
                     console.warn('Thanks panel init failed:', error);
                 });
-            } else {
+            } else if (this.welcomePanelEnabled) {
                 await this.welcomePanel.init().catch((error) => {
                     console.warn('Welcome panel init failed:', error);
                 });
+            } else {
+                this.welcomePanel.close();
+                document.documentElement.setAttribute('data-welcome-hidden', 'true');
             }
         })();
 

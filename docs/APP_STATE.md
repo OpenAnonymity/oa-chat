@@ -32,6 +32,15 @@ reading code alone.
   time and remove the now-bundled raw `services/orgEndpoints.js` copy. The
   build scans every published JavaScript file for that hostname, so an inert
   source copy cannot silently weaken the disposable-demo isolation claim.
+- `createChatApp({ welcomePanel: false })` lets the commercial composition
+  suppress the legacy invite/free-access Welcome modal without changing the
+  standalone public default. This prevents that first-run surface from racing
+  Google OAuth and the commercial registration flow.
+- A disposable same-origin verifier-bypass build may use a credential-free
+  alternate Wisp endpoint through `OA_DEMO_PROXY_URL` when the ordinary relay
+  is unavailable. Production builds retain the normal relay. Proxy requests
+  have a ten-second hard timeout so an unresponsive WASM transport closes and
+  enters the existing visible direct-fallback path instead of hanging forever.
 
 See [EXTENSIONS.md](EXTENSIONS.md) for the supported contract. The Premium
 entries below describe the pre-extraction implementation history; the current

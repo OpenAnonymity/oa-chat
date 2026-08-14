@@ -19,6 +19,10 @@ const disposableDemoVerifierBypass = (
     typeof __OA_DEMO_VERIFIER_BYPASS__ !== 'undefined' &&
     __OA_DEMO_VERIFIER_BYPASS__ === true
 );
+const disposableDemoProxyUrl = (
+    typeof __OA_DEMO_PROXY_URL__ !== 'undefined' &&
+    typeof __OA_DEMO_PROXY_URL__ === 'string'
+) ? __OA_DEMO_PROXY_URL__ : '';
 // A deliberately unverified disposable demo never contacts the production
 // verifier. Its same-origin endpoint will fail closed for ordinary verifier
 // calls while the explicit demo policy marks local mock keys as unverified.
@@ -31,7 +35,7 @@ export const VERIFIER_URL = disposableDemoVerifierBypass
 // operator sees connection metadata (timing, connecting IPs) but not request
 // content (TLS terminates at the destination). For stronger IP privacy, users
 // can use their own VPN/Tor instead of or in addition to this relay.
-export const PROXY_URL = 'wss://oa-1.refraction.network/?secret=1f45ceecf768790c8389ff704612d5cf';
+export const PROXY_URL = disposableDemoProxyUrl || 'wss://oa-1.refraction.network/?secret=1f45ceecf768790c8389ff704612d5cf';
 
 // Base URL for shared chat links
 export const SHARE_BASE_URL = 'https://chat.openanonymity.ai';

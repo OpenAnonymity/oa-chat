@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export function buildDemoVercelConfig(rawOrgOrigin, enableVerifierBypass = false) {
+export function buildDemoVercelConfig(rawOrgOrigin, enableVerifierBypass = false, demoProxyUrl = '') {
     let orgOrigin;
     try {
         orgOrigin = new URL(String(rawOrgOrigin || ''));
@@ -21,9 +21,23 @@ export function buildDemoVercelConfig(rawOrgOrigin, enableVerifierBypass = false
     }
 
     const origin = orgOrigin.origin;
+    let proxyBuildSetting = '';
+    if (demoProxyUrl) {
+        let proxyUrl;
+        try {
+            proxyUrl = new URL(demoProxyUrl);
+        } catch {
+            throw new Error('OA_DEMO_PROXY_URL must be a valid WSS URL');
+        }
+        if (proxyUrl.protocol !== 'wss:' || proxyUrl.username || proxyUrl.password ||
+            proxyUrl.search || proxyUrl.hash || !proxyUrl.pathname.endsWith('/')) {
+            throw new Error('OA_DEMO_PROXY_URL must be an exact WSS endpoint ending in /');
+        }
+        proxyBuildSetting = ` OA_DEMO_PROXY_URL=${proxyUrl.toString()}`;
+    }
     return {
         outputDirectory: 'dist',
-        buildCommand: `OA_ORG_SAME_ORIGIN=true OA_DEMO_VERIFIER_BYPASS=${enableVerifierBypass ? 'true' : 'false'} npm run build`,
+        buildCommand: `OA_ORG_SAME_ORIGIN=true OA_DEMO_VERIFIER_BYPASS=${enableVerifierBypass ? 'true' : 'false'}${proxyBuildSetting} npm run build`,
         rewrites: [
             { source: '/auth/:path*', destination: `${origin}/auth/:path*` },
             { source: '/api/:path*', destination: `${origin}/api/:path*` },
@@ -44,7 +58,8 @@ async function main() {
     }
     const config = buildDemoVercelConfig(
         process.env.OA_DEMO_ORG_ORIGIN,
-        bypassSetting === 'true'
+        bypassSetting === 'true',
+        process.env.OA_DEMO_PROXY_URL || ''
     );
     await fs.writeFile(
         path.resolve(outputPath),

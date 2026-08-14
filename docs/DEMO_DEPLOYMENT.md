@@ -11,6 +11,7 @@ Vercel configuration at an explicit temporary path:
 ```bash
 OA_DEMO_ORG_ORIGIN=https://mock-org-tunnel.example \
   OA_DEMO_VERIFIER_BYPASS=true \
+  OA_DEMO_PROXY_URL=wss://demo-relay.example/ \
   npm run vercel:demo-config -- /tmp/oa-demo-vercel.json
 vercel deploy --prod --local-config /tmp/oa-demo-vercel.json --project <demo-project>
 ```
@@ -42,6 +43,14 @@ verifier. It works only in an HTTPS same-origin build, is rejected on
 unverified, and prevents sharing them. Omit it when an isolated verifier is
 available; provider-backed chat will otherwise remain fail-closed. Deployment
 must not enable this flag without the user's explicit acceptance.
+
+If the ordinary shared Wisp relay is unavailable, the disposable demo may
+compile an alternate public relay with `OA_DEMO_PROXY_URL`. The build accepts
+only a credential-free `wss://` endpoint ending in `/`, and only together with
+same-origin routing and the explicit verifier bypass. Production builds retain
+the normal relay. Proxy fetches also have a ten-second hard timeout; an
+unresponsive WASM transport is closed and follows the existing, visibly
+reported direct-fallback policy instead of hanging ticket redemption forever.
 
 Configure the backend with the stable Vercel origin consistently:
 

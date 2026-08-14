@@ -5,11 +5,15 @@ import { readFileSync } from 'node:fs';
 import { buildDemoVercelConfig } from '../../scripts/generate-demo-vercel-config.mjs';
 
 test('demo Vercel config proxies only org API surfaces before the SPA fallback', () => {
-    const config = buildDemoVercelConfig('https://mock-org.example.com', true);
+    const config = buildDemoVercelConfig(
+        'https://mock-org.example.com',
+        true,
+        'wss://wisp.example.com/'
+    );
 
     assert.equal(
         config.buildCommand,
-        'OA_ORG_SAME_ORIGIN=true OA_DEMO_VERIFIER_BYPASS=true npm run build'
+        'OA_ORG_SAME_ORIGIN=true OA_DEMO_VERIFIER_BYPASS=true OA_DEMO_PROXY_URL=wss://wisp.example.com/ npm run build'
     );
     assert.deepEqual(config.rewrites, [
         {
@@ -26,6 +30,15 @@ test('demo Vercel config proxies only org API surfaces before the SPA fallback',
         },
         { source: '/(.*)', destination: '/index.html' }
     ]);
+});
+
+test('demo relay override is compile-time isolated and proxy requests have a hard fallback timeout', () => {
+    const buildSource = readFileSync('scripts/build.mjs', 'utf8');
+    const proxySource = readFileSync('chat/services/networkProxy.js', 'utf8');
+
+    assert.match(buildSource, /OA_DEMO_PROXY_URL requires an explicit same-origin verifier-bypass demo/);
+    assert.match(proxySource, /PROXY_FETCH_TIMEOUT_MS\s*=\s*10000/);
+    assert.match(proxySource, /Promise\.race\(\[session\.fetch\(resource, init\), guard\]\)/);
 });
 
 test('demo Vercel config rejects insecure or path-bearing upstreams', () => {
