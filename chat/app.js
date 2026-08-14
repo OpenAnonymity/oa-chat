@@ -326,8 +326,8 @@ class ChatApp {
     async resolveExtensionAuthContext() {
         await accountService.init();
         const state = accountService.getState();
-        if (!state?.accountId || !state?.sessionVerified) {
-            const error = new Error('A verified OA account session is required.');
+        if (!state?.accountId || !state?.sessionVerified || state?.status !== 'unlocked') {
+            const error = new Error('A verified and locally unlocked OA account is required.');
             error.code = 'ACCOUNT_AUTH_REQUIRED';
             throw error;
         }
