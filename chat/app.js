@@ -24,6 +24,7 @@ import {
     stripMemoryPromptUserData
 } from './services/memoryBridge.js';
 import shareService from './services/shareService.js';
+import { configureAppRouteRoot } from './services/appRoutes.js';
 import { getTicketCost, initModelTiers } from './services/modelTiers.js';
 import { initPinnedModels, onPinnedModelsUpdate, getDefaultModelConfig, getDisabledModels, getPinnedModels, getStandardizedModelDisplayName } from './services/modelConfig.js';
 import accountService from './services/accountService.js';
@@ -297,6 +298,7 @@ class ChatApp {
         this.pendingTicketCode = null;
         this.pendingCouncilConfig = null;
         this.pendingCouncilLayoutPreference = false;
+        this.appRouteRoot = configureAppRouteRoot(options.routeRoot || '/');
         this.hasInitialLinkContext = this.detectInitialLinkContext();
         this.splitCodeWarningOverlay = null;
         this.councilController = new CouncilController({
@@ -2298,7 +2300,7 @@ class ChatApp {
         // Clean URL: remove /tickets path and tickets param, keep other params (e.g., s)
         let needsClean = false;
         if (source === 'path') {
-            url.pathname = '/';
+            url.pathname = this.appRouteRoot;
             needsClean = true;
         }
         if (url.searchParams.has('tickets')) {

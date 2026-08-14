@@ -25,6 +25,9 @@ reading code alone.
   A commercial extension observes only the sanitized account snapshot and can
   resume an upgrade after the verified session becomes ready; Account itself
   has no Checkout-specific callback.
+- A composition mounted below `/` passes `routeRoot` to `createChatApp`.
+  Ticket-code path cleanup and generated shared-chat links use that root, so a
+  refresh cannot fall back to the composition's separate landing document.
 
 See [EXTENSIONS.md](EXTENSIONS.md) for the supported contract. The Premium
 entries below describe the pre-extraction implementation history; the current

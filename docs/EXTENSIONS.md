@@ -6,14 +6,21 @@ import only `chat/publicApi.js` and pass optional extensions to `createChatApp`:
 ```js
 import { createChatApp, EXTENSION_API_VERSION } from './chat/publicApi.js';
 
-createChatApp({ extensions: [{
-    id: 'example',
-    apiVersion: EXTENSION_API_VERSION,
-    async mount(context) {
-        // Return an optional cleanup function.
-    }
-}] });
+createChatApp({
+    routeRoot: '/chat/',
+    extensions: [{
+        id: 'example',
+        apiVersion: EXTENSION_API_VERSION,
+        async mount(context) {
+            // Return an optional cleanup function.
+        }
+    }]
+});
 ```
+
+`routeRoot` is optional and defaults to `/`. A composition that mounts the
+chat document below `/` must pass its absolute mount path so ticket-link
+cleanup and generated shared-chat URLs stay reload-safe on that route.
 
 Extension API version 2 supports these named slots:
 
