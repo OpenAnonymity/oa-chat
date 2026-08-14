@@ -42,6 +42,11 @@ reading code alone.
   API requests have a ten-second hard timeout so an unresponsive WASM
   transport closes and enters the existing visible direct-fallback path
   instead of hanging forever. Provider inference streams remain unbounded.
+- Vercel demo config repeats the non-secret compile flags in `build.env`, and
+  the disposable project should store the same Production variables. A build
+  can otherwise succeed under a project-level command override while silently
+  retaining the production-org endpoint. Handoff must inspect the emitted app
+  bundle for both absence of that endpoint and presence of the demo relay.
 
 See [EXTENSIONS.md](EXTENSIONS.md) for the supported contract. The Premium
 entries below describe the pre-extraction implementation history; the current

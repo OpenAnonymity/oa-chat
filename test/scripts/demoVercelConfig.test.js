@@ -15,6 +15,11 @@ test('demo Vercel config proxies only org API surfaces before the SPA fallback',
         config.buildCommand,
         'OA_ORG_SAME_ORIGIN=true OA_DEMO_VERIFIER_BYPASS=true OA_DEMO_PROXY_URL=wss://wisp.example.com/ npm run build'
     );
+    assert.deepEqual(config.build.env, {
+        OA_ORG_SAME_ORIGIN: 'true',
+        OA_DEMO_VERIFIER_BYPASS: 'true',
+        OA_DEMO_PROXY_URL: 'wss://wisp.example.com/'
+    });
     assert.deepEqual(config.rewrites, [
         {
             source: '/auth/:path*',

@@ -16,6 +16,13 @@ OA_DEMO_ORG_ORIGIN=https://mock-org-tunnel.example \
 vercel deploy --prod --local-config /tmp/oa-demo-vercel.json --project <demo-project>
 ```
 
+The generated config sets the three public demo flags in both the build
+command and `build.env`. Also store them as non-sensitive Production variables
+on the disposable Vercel project; this survives a project-level Build Command
+override. After deployment, fetch the emitted app bundle and fail the handoff
+if it contains `org.openanonymity.ai` or lacks the configured demo relay host.
+Do not infer same-origin isolation from a successful Vercel build alone.
+
 Use the disposable project's stable production hostname for every backend
 origin below. A preview deployment has a unique hostname and will not receive
 cookies or OAuth callbacks configured for the stable project domain.

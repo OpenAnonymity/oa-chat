@@ -35,9 +35,15 @@ export function buildDemoVercelConfig(rawOrgOrigin, enableVerifierBypass = false
         }
         proxyBuildSetting = ` OA_DEMO_PROXY_URL=${proxyUrl.toString()}`;
     }
+    const buildEnv = {
+        OA_ORG_SAME_ORIGIN: 'true',
+        OA_DEMO_VERIFIER_BYPASS: enableVerifierBypass ? 'true' : 'false'
+    };
+    if (demoProxyUrl) buildEnv.OA_DEMO_PROXY_URL = new URL(demoProxyUrl).toString();
     return {
         outputDirectory: 'dist',
         buildCommand: `OA_ORG_SAME_ORIGIN=true OA_DEMO_VERIFIER_BYPASS=${enableVerifierBypass ? 'true' : 'false'}${proxyBuildSetting} npm run build`,
+        build: { env: buildEnv },
         rewrites: [
             { source: '/auth/:path*', destination: `${origin}/auth/:path*` },
             { source: '/api/:path*', destination: `${origin}/api/:path*` },
