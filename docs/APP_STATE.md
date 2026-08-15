@@ -64,8 +64,15 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 - 2026-08-07: The public chat shell now has an optional versioned extension seam.
   - `chat/publicApi.js` exposes `createChatApp`, extension API version 1, and
-    three stable slots: `sidebar.accountActions`, `account.commercial`, and
-    `modalLayer`.
+    four stable slots: `sidebar.accountActions`, `account.menuActions`,
+    `account.commercial`, and `modalLayer`.
+  - The sidebar footer remains core-owned. Signed-out users see Account;
+    verified sessions see the available email identity (or Account fallback)
+    and a gear menu containing Account & security, extension actions, and Log
+    out. The menu restores focus on Escape and supports arrow/Home/End keys.
+  - `account.menuActions` is the preferred commercial membership entry. It
+    exposes no billing state or credentials to the core; older sidebar and
+    account-modal slots remain available for compatible integrations.
   - Standalone startup passes no extensions. Empty slots are invisible and the
     public Account UI remains fully functional.
   - Account modal rerenders recreate their slot host and ask the slot registry

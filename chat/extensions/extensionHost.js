@@ -2,6 +2,7 @@ export const EXTENSION_API_VERSION = 1;
 
 export const SLOT_NAMES = Object.freeze({
     SIDEBAR_ACCOUNT_ACTIONS: 'sidebar.accountActions',
+    ACCOUNT_MENU_ACTIONS: 'account.menuActions',
     ACCOUNT_COMMERCIAL: 'account.commercial',
     MODAL_LAYER: 'modalLayer'
 });

@@ -31,6 +31,9 @@ test('public HTML keeps Account and contains only invisible generic extension ho
     const sidebarSlotIndex = html.indexOf('data-oa-extension-slot="sidebar.accountActions"');
     assert.ok(accountIndex >= 0, 'public Account button must remain present');
     assert.ok(sidebarSlotIndex > accountIndex, 'sidebar slot must immediately follow Account');
+    assert.match(html, /id="account-settings-btn"[^>]+aria-haspopup="menu"/);
+    assert.match(html, /id="account-settings-menu"[^>]+role="menu"[^>]+hidden/);
+    assert.match(html, /data-oa-extension-slot="account\.menuActions" hidden/);
     assert.match(html, /data-oa-extension-slot="sidebar\.accountActions" hidden/);
     assert.match(html, /data-oa-extension-slot="modalLayer" hidden/);
     assert.doesNotMatch(html, /upgrade-tab-btn|billing-modal|Upgrade with Stripe|subscription status/i);

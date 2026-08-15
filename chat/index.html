@@ -269,7 +269,7 @@
     <div id="app" class="flex flex-col md:flex-row h-full w-full">
         <!-- Left Sidebar: Chat Sessions -->
         <aside id="sidebar" class="relative flex-shrink-0 flex flex-col bg-background border-r border-border h-full min-h-0 overflow-hidden transition-[width,border-width] duration-300 ease-in-out w-64">
-            <div class="flex h-full w-full flex-col gap-2 p-2">
+            <div class="sidebar-main-content flex h-full w-full flex-col gap-2 p-2">
                 <div class="flex w-full items-center gap-1 pr-1">
                     <button id="new-chat-btn" class="btn-ghost-hover flex-1 inline-flex items-center whitespace-nowrap transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 gap-2 bg-card border border-border text-foreground shadow-sm h-9 rounded-md px-3 justify-start">
                         <span class="text-sm">New Chat</span>
@@ -368,10 +368,40 @@
                     </div>
                 </div>
             </div>
-            <button id="account-tab-btn" data-status="none" class="account-tab-btn" type="button" aria-label="Account" aria-controls="account-modal" aria-expanded="false">
-                <span class="account-tab-dot" aria-hidden="true"></span>
-                <span>Account</span>
-            </button>
+            <div id="account-nav" class="account-nav">
+                <div class="account-nav-row">
+                    <button id="account-tab-btn" data-status="none" class="account-tab-btn" type="button" aria-label="Account" aria-controls="account-modal" aria-expanded="false">
+                        <span class="account-tab-avatar" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 7.5a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.5 20.25a7.5 7.5 0 0115 0" />
+                            </svg>
+                            <span class="account-tab-dot"></span>
+                        </span>
+                        <span id="account-identity-label" class="account-identity-label">Account</span>
+                    </button>
+                    <button id="account-settings-btn" class="account-settings-btn" type="button" aria-label="Open account settings" aria-haspopup="menu" aria-controls="account-settings-menu" aria-expanded="false" hidden>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.592c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.197.72.258 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.244c.275.476.183 1.077-.224 1.447l-.961.877c-.28.255-.42.63-.411 1.009a6.78 6.78 0 010 .255c-.01.378.13.753.41 1.008l.962.877c.407.37.5.971.224 1.447l-1.296 2.244a1.125 1.125 0 01-1.37.49l-1.217-.456c-.355-.133-.75-.073-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.542-.56.94-1.11.94h-2.592c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.063-.374-.313-.686-.645-.87a6.52 6.52 0 01-.22-.127c-.325-.197-.72-.258-1.075-.124l-1.217.456a1.125 1.125 0 01-1.37-.49l-1.296-2.244a1.125 1.125 0 01.224-1.447l.961-.877c.28-.255.42-.63.411-1.009a6.78 6.78 0 010-.255c.01-.378-.13-.753-.41-1.008l-.962-.877a1.125 1.125 0 01-.224-1.447l1.296-2.244a1.125 1.125 0 011.37-.49l1.217.456c.355.133.75.073 1.076-.124.072-.044.146-.086.22-.128.331-.183.581-.495.644-.869l.213-1.281z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                    </button>
+                </div>
+                <div id="account-settings-menu" class="account-settings-menu" role="menu" aria-label="Account settings" hidden>
+                    <button id="account-security-menu-item" class="account-menu-item" type="button" role="menuitem" tabindex="-1">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 7.5a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.5 20.25a7.5 7.5 0 0115 0" />
+                        </svg>
+                        <span>Account &amp; security</span>
+                    </button>
+                    <div data-oa-extension-slot="account.menuActions" hidden></div>
+                    <button id="account-logout-menu-item" class="account-menu-item account-menu-item-danger" type="button" role="menuitem" tabindex="-1">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.625A2.625 2.625 0 0013.125 3h-6.75A2.625 2.625 0 003.75 5.625v12.75A2.625 2.625 0 006.375 21h6.75a2.625 2.625 0 002.625-2.625V15m-3-3h8.25m0 0l-3-3m3 3l-3 3" />
+                        </svg>
+                        <span>Log out</span>
+                    </button>
+                </div>
+            </div>
             <div data-oa-extension-slot="sidebar.accountActions" hidden></div>
         </aside>
 
