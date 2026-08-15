@@ -47,6 +47,13 @@ reading code alone.
   can otherwise succeed under a project-level command override while silently
   retaining the production-org endpoint. Handoff must inspect the emitted app
   bundle for both absence of that endpoint and presence of the demo relay.
+- The commercial composition now uses a three-panel, self-hosted-Newsreader
+  landing page from `oa-commercial/feature/pre-chat-landing`, reconciled with
+  the reviewed Google-only account handoff. Apple, passkey, recovery, and
+  access-code alternatives remain absent. Its Premium modal keeps server-owned
+  subscription/top-up prices and eligibility, exposes Customer Portal and
+  ticket-pack actions when status authorizes them, and adds a collapsed ticket
+  explanation without hard-coding model costs.
 
 See [EXTENSIONS.md](EXTENSIONS.md) for the supported contract. The Premium
 entries below describe the pre-extraction implementation history; the current
