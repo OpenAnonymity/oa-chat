@@ -67,7 +67,7 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     four stable slots: `sidebar.accountActions`, `account.menuActions`,
     `account.commercial`, and `modalLayer`.
   - The sidebar footer remains core-owned. Signed-out users see Account;
-    verified sessions see the available email identity (or Account fallback)
+    verified sessions see the available account or SSO email identity (or Account fallback)
     and a gear menu containing Account & security, extension actions, and Log
     out. The menu restores focus on Escape and supports arrow/Home/End keys.
   - `account.menuActions` is the preferred commercial membership entry. It

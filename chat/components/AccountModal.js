@@ -165,8 +165,9 @@ class AccountModal {
         const isLoggedIn = this.accountState?.accountId && this.accountState?.sessionVerified;
         tabBtn.dataset.status = isLoggedIn ? 'logged-in' : 'none';
         tabBtn.title = isLoggedIn ? 'Account (logged in)' : 'Account';
-        const email = typeof this.accountState?.email === 'string'
-            ? this.accountState.email.trim()
+        const accountEmail = this.accountState?.oauthEmail || this.accountState?.email;
+        const email = typeof accountEmail === 'string'
+            ? accountEmail.trim()
             : '';
         if (identityLabel) identityLabel.textContent = isLoggedIn && email ? email : 'Account';
         tabBtn.setAttribute('aria-label', isLoggedIn && email ? `Account for ${email}` : 'Account');

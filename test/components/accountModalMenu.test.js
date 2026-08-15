@@ -32,7 +32,7 @@ test('signed-in account footer exposes an accessible keyboard settings menu', ()
         accountId: 'account-123',
         sessionVerified: true,
         status: 'unlocked',
-        email: 'member@example.com'
+        oauthEmail: 'member@example.com'
     };
     let accountListener = null;
     const documentListeners = new Map();
