@@ -425,6 +425,10 @@ class ChatApp {
         });
     }
 
+    refreshExtensionSlot(name) {
+        return this.extensionSlots.refresh(name);
+    }
+
     detectInitialLinkContext() {
         try {
             const url = new URL(window.location.href);

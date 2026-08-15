@@ -505,7 +505,7 @@ class AccountModal {
             const actionRow = dialog.querySelector('[data-account-actions]');
             if (actionRow) dialog.insertBefore(commercialSlot, actionRow);
             else dialog.appendChild(commercialSlot);
-            this.app.extensionSlots?.refresh?.(SLOT_NAMES.ACCOUNT_COMMERCIAL);
+            this.app.refreshExtensionSlot?.(SLOT_NAMES.ACCOUNT_COMMERCIAL);
         }
 
         this.attachEventListeners();

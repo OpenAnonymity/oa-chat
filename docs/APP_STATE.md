@@ -12,6 +12,11 @@ reading code alone.
 - `chat/publicApi.js` is the only supported downstream import. Extension API v2
   provides four isolated UI slots and narrow account, public-org, ticket, and
   UI capabilities; downstream code must not import oa-chat internals.
+- Component rerenders refresh extension hosts through the narrow
+  `refreshExtensionSlot(name)` UI-facade method. Do not reach through the
+  component facade for `extensionSlots`: that registry is intentionally not
+  exposed, and doing so silently drops mounted commercial controls when a
+  modal replaces its contents.
 - The public entitlement preparer retains the privacy-sensitive browser work:
   blinding, issuer-generation validation, strict response allowlisting,
   unblinding, crash-safe IndexedDB recovery, and durable ordinary-wallet

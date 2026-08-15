@@ -865,7 +865,7 @@ class WelcomePanel {
         }
         this.animateOnNextRender = false;
 
-        this.app.extensionSlots?.refresh?.(SLOT_NAMES.WELCOME_ACTIONS);
+        this.app.refreshExtensionSlot?.(SLOT_NAMES.WELCOME_ACTIONS);
 
         if (this.step !== 'welcome') {
             this.resetWelcomeDialogAnchor();

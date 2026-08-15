@@ -55,6 +55,10 @@ function createMockApp(overrides = {}) {
         updateSessionTitle: (sessionId, title) => calls.push(['updateSessionTitle', sessionId, title]),
         updateToolbarDivider: () => calls.push(['updateToolbarDivider']),
         setMemoryFeatureEnabled: async (enabled) => calls.push(['setMemoryFeatureEnabled', enabled]),
+        refreshExtensionSlot: (name) => {
+            calls.push(['refreshExtensionSlot', name]);
+            return true;
+        },
         hasActiveSessionListCriteria: () => true,
         getSessionListEmptyText: () => 'No sessions'
     };
@@ -361,7 +365,11 @@ test('component app facade exposes an explicit compatibility contract', () => {
     assert.equal(facade.getDefaultModelName(), 'Default Model');
     assert.deepEqual(facade.getFallbackModelEntry(), { id: 'model-a', name: 'Model A' });
     assert.deepEqual(facade.setParallelDefaults({ enabled: true }), { enabled: true });
-    assert.deepEqual(calls, [['setParallelDefaults', { enabled: true }]]);
+    assert.equal(facade.refreshExtensionSlot('account.commercial'), true);
+    assert.deepEqual(calls, [
+        ['setParallelDefaults', { enabled: true }],
+        ['refreshExtensionSlot', 'account.commercial']
+    ]);
     assert.equal(facade.notARealAppField, undefined);
 
     facade.searchEnabled = false;

@@ -22,6 +22,12 @@ test('public welcome panel has no direct commercial implementation references', 
     assert.doesNotMatch(source, /billingModal|billingState|Premium/);
 });
 
+test('welcome rerenders refresh extension actions through the UI facade', () => {
+    const source = String(WelcomePanel.prototype.render);
+    assert.match(source, /refreshExtensionSlot\?\.\(SLOT_NAMES\.WELCOME_ACTIONS\)/);
+    assert.doesNotMatch(source, /extensionSlots/);
+});
+
 test('a composed client can suppress both legacy ticket panels without changing the public default', () => {
     const appSource = readFileSync('chat/app.js', 'utf8');
     assert.match(appSource, /this\.welcomePanelEnabled\s*=\s*options\.welcomePanel\s*!==\s*false/);

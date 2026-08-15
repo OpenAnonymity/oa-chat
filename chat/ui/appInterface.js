@@ -239,6 +239,7 @@ const COMPONENT_APP_KEYS = new Set([
     'normalizeModelName',
     'processContentWithLatex',
     'pruneMemoryRetrievedContextFromMessage',
+    'refreshExtensionSlot',
     'reasoningEffort',
     'reasoningEnabled',
     'regenerateCouncilLane',

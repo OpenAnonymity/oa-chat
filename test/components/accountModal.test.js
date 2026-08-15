@@ -4,6 +4,12 @@ import test from 'node:test';
 import AccountModal from '../../chat/components/AccountModal.js';
 import { toFriendlyOAuthError } from '../../chat/services/accountService.js';
 
+test('account rerenders refresh the commercial slot through the UI facade', () => {
+    const source = String(AccountModal.prototype.render);
+    assert.match(source, /refreshExtensionSlot\?\.\(SLOT_NAMES\.ACCOUNT_COMMERCIAL\)/);
+    assert.doesNotMatch(source, /extensionSlots/);
+});
+
 test('account registration offers only Google SSO', () => {
     const originalDocument = globalThis.document;
     globalThis.document = {
