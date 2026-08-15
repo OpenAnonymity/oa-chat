@@ -74,8 +74,10 @@ GOOGLE_OAUTH_RETURN_ORIGINS=["https://<chat-host>"]
 For local development use `http://localhost:8005/auth/google/callback` as the
 authorized redirect URI. The org—not browser JavaScript—performs the code
 exchange, so a JavaScript origin is not required for the Google client.
-`npm run dev` proxies browser API calls to the local org, while the OAuth popup
-callback remains on canonical `localhost:8005`.
+`npm run dev` serves the chat on port `8080`; browser API calls go directly to
+the local org on port `8005`, while the OAuth popup callback remains on
+canonical `localhost:8005`. Allow the chat origin in the local org's CORS and
+OAuth return-origin settings.
 
 ## Regression checks
 

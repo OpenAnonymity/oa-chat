@@ -174,15 +174,11 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - Superseded by the 2026-07-30 passkey-label entry above: Google now requests
     `openid email`, and the org retains the verified email with `sub` so it can
     label the user's encryption passkey.
-  - `npm run dev` serves static assets and proxies non-static requests to the
-    local org on port `8005`. The browser therefore uses its own origin for
-    passkey, OAuth, ticket, and sync API calls, avoiding local-network/CORS
-    restrictions. OAuth callbacks still come directly from port `8005`, so
-    `ORG_AUTH_ORIGIN` remains separate from the local `ORG_API_BASE`.
-    The dev server injects a runtime-only proxy marker, so `npm run preview` on
-    localhost still uses `https://org.openanonymity.ai`. The callback host is
-    canonical `localhost`; requests to the dev server via `127.0.0.1` redirect
-    there before the app loads.
+  - `npm run dev` serves static assets on port `8080`; browser API calls go
+    directly to the loopback org on port `8005`. Keep the chat origin in the
+    local org's CORS and OAuth return-origin settings. OAuth callbacks use
+    canonical `localhost:8005`, so `ORG_AUTH_ORIGIN` remains separate when the
+    chat is opened through another loopback spelling.
   - `authenticateWithGoogle(...)` uses the shared popup
     flow and the org's HttpOnly refresh cookie. OAuth/access tokens never travel
     through the popup message or app URL.
