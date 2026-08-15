@@ -21,8 +21,11 @@ let pinnedModels = [];
 let disabledModels = [];
 let updatedAt = null;
 
+const DEFAULT_MODEL_ID = 'openrouter/auto';
+
 // Fallback pinned models (used when API is unavailable or returns empty)
 const FALLBACK_PINNED_MODELS = [
+    DEFAULT_MODEL_ID,
     'openai/gpt-5.3-chat',
     'openai/gpt-5.3',
     'openai/gpt-5.2-chat',
@@ -38,6 +41,7 @@ const FALLBACK_PINNED_MODELS = [
 const DEFAULT_CONFIG = {
     // Custom display name overrides (model ID -> display name)
     displayNameOverrides: {
+        [DEFAULT_MODEL_ID]: 'Auto Router',
         'openai/gpt-5.3-chat': 'OpenAI: GPT-5.3 Instant',
         'openai/gpt-5.3': 'OpenAI: GPT-5.3 Thinking',
         'openai/gpt-5.2-chat': 'OpenAI: GPT-5.2 Instant',
@@ -218,12 +222,17 @@ export function getDisabledModels() {
 
 /**
  * Get the default model ID.
- * Mirrors the first model in the pinned list so server-side availability can
- * promote the default without requiring a client release.
+ * Auto Router is the product default unless the org explicitly disables it.
+ * Pinned models remain the ordered fallback list when the default is disabled
+ * or absent from the loaded provider catalog.
  * @returns {string|null}
  */
 export function getDefaultModelId() {
-    return getPinnedModels()[0] || FALLBACK_PINNED_MODELS[0] || null;
+    if (!disabledModels.includes(DEFAULT_MODEL_ID)) {
+        return DEFAULT_MODEL_ID;
+    }
+
+    return getPinnedModels()[0] || null;
 }
 
 /**

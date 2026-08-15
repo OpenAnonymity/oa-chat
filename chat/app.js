@@ -125,6 +125,7 @@ const SIDEBAR_CLOSE_DURATION_MS = 220;
 
 // Used to upgrade users who were implicitly on the prior default.
 const PREVIOUS_DEFAULT_MODEL_NAMES = [
+    'OpenAI: GPT-5.3 Instant',
     'OpenAI: GPT-5.2 Instant',
     'OpenAI: GPT-5.1 Instant'
 ];

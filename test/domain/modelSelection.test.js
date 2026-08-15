@@ -28,7 +28,7 @@ test('filterDisabledModels returns a copy and removes disabled ids', () => {
     ]);
 });
 
-test('getFallbackModelEntry prefers pinned order before default id and first available model', () => {
+test('getFallbackModelEntry prefers the configured default before pinned and catalog fallbacks', () => {
     const models = [
         { id: 'openai/a', name: 'A' },
         { id: 'openai/b', name: 'B' }
@@ -36,7 +36,7 @@ test('getFallbackModelEntry prefers pinned order before default id and first ava
 
     assert.deepEqual(
         getFallbackModelEntry(models, 'openai/a', ['missing', 'openai/b']),
-        { id: 'openai/b', name: 'B' }
+        { id: 'openai/a', name: 'A' }
     );
     assert.deepEqual(getFallbackModelEntry(models, 'openai/b'), { id: 'openai/b', name: 'B' });
     assert.deepEqual(getFallbackModelEntry(models, 'missing'), { id: 'openai/a', name: 'A' });
@@ -133,22 +133,22 @@ test('findModelByNameOrId tolerates trailing display-name whitespace', () => {
 test('upgradeDefaultModelPreference upgrades configured previous defaults', () => {
     assert.equal(
         upgradeDefaultModelPreference(
-            'OpenAI: GPT-5.2 Instant',
-            ['OpenAI: GPT-5.2 Instant', 'OpenAI: GPT-5.1 Instant'],
-            'OpenAI: GPT-5.3 Instant'
+            'OpenAI: GPT-5.3 Instant',
+            ['OpenAI: GPT-5.3 Instant', 'OpenAI: GPT-5.2 Instant', 'OpenAI: GPT-5.1 Instant'],
+            'Auto Router'
         ),
-        'OpenAI: GPT-5.3 Instant'
+        'Auto Router'
     );
     assert.equal(
         upgradeDefaultModelPreference(
             'OpenAI: GPT-5.1 Instant',
-            ['OpenAI: GPT-5.2 Instant', 'OpenAI: GPT-5.1 Instant'],
-            'OpenAI: GPT-5.3 Instant'
+            ['OpenAI: GPT-5.3 Instant', 'OpenAI: GPT-5.2 Instant', 'OpenAI: GPT-5.1 Instant'],
+            'Auto Router'
         ),
-        'OpenAI: GPT-5.3 Instant'
+        'Auto Router'
     );
     assert.equal(
-        upgradeDefaultModelPreference('Anthropic: Claude', 'OpenAI: GPT-5.2 Instant', 'OpenAI: GPT-5.3 Instant'),
+        upgradeDefaultModelPreference('Anthropic: Claude', 'OpenAI: GPT-5.3 Instant', 'Auto Router'),
         'Anthropic: Claude'
     );
 });

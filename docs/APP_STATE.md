@@ -651,19 +651,19 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     the panel so a quick ask cannot linger across session switches. Starting a
     normal send or regeneration hides any active quick ask before the main
     session stream begins.
-- 2026-05-30: Fresh-chat default model follows the pinned model order.
-  - `modelConfig.getDefaultModelConfig()` now derives `defaultModelId` and
-    `defaultModelName` from the first current pinned model, falling back to the
-    local pinned list only before org availability data is cached or fetched.
-  - Send-time fallback also walks the pinned model IDs in order, so if the top
-    pinned model is unavailable in the loaded catalog the next visible pinned
-    model is selected before falling back to the catalog's first model.
+- 2026-08-14: Fresh-chat default model is OpenRouter Auto Router.
+  - `modelConfig.getDefaultModelConfig()` returns `openrouter/auto` / `Auto Router`
+    unless the org explicitly disables that model. The pinned model order is an
+    availability fallback rather than an override of the product default.
+  - Send-time fallback tries Auto Router first, then walks pinned model IDs in
+    order if Auto Router is absent from the loaded catalog, and finally uses the
+    catalog's first selectable model.
   - `ModelPicker` refreshes its default label when pinned-model config updates
     and asks `ChatApp.getDefaultModelName()` for empty-session display, keeping
     the button aligned with the rendered pinned section after models load.
-  - Stored preferences matching recent default labels (`GPT-5.1/5.2 Instant`)
-    upgrade to the current pinned default; per-session model choices are still
-    left intact.
+  - Stored preferences matching recent default labels (`GPT-5.1/5.2/5.3
+    Instant`) upgrade to Auto Router. Explicit custom preferences and
+    per-session model choices are still left intact.
   - When fresh pinned-model data arrives after a stale local cache, the
     availability refresh reruns the stored default preference upgrade and updates
     the no-session pending model if it was still tracking the old default.

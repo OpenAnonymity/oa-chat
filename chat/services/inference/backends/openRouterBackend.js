@@ -40,8 +40,8 @@ const openRouterBackend = {
     accessShortLabel: 'API',
     accessType: 'api-key',
     baseUrl: OPENROUTER_BASE_URL,
-    defaultModelId: 'openai/gpt-5.3-chat',
-    defaultModelName: 'OpenAI: GPT-5.3 Instant',
+    defaultModelId: 'openrouter/auto',
+    defaultModelName: 'Auto Router',
     tls: {
         captureHosts: ['openrouter.ai'],
         verifyUrl: OPENROUTER_MODELS_URL,

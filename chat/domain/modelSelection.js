@@ -32,7 +32,7 @@ export function getFallbackModelEntry(models, defaultModelId, preferredModelIds 
     const preferredIds = [];
     const seen = new Set();
 
-    for (const modelId of [...(preferredModelIds || []), defaultModelId]) {
+    for (const modelId of [defaultModelId, ...(preferredModelIds || [])]) {
         if (typeof modelId !== 'string') continue;
         const normalizedId = modelId.trim();
         if (!normalizedId || seen.has(normalizedId)) continue;
