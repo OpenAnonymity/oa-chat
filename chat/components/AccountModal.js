@@ -106,6 +106,13 @@ class AccountModal {
         return menu ? [...menu.querySelectorAll('[role="menuitem"]:not([disabled])')] : [];
     }
 
+    getAccountMenuReturnTarget() {
+        const settingsBtn = document.getElementById('account-settings-btn');
+        return settingsBtn && !settingsBtn.hidden
+            ? settingsBtn
+            : document.getElementById('account-tab-btn');
+    }
+
     openAccountMenu() {
         const settingsBtn = document.getElementById('account-settings-btn');
         const menu = document.getElementById('account-settings-menu');

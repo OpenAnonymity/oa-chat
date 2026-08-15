@@ -357,6 +357,7 @@ class ChatApp {
             }),
             ui: Object.freeze({
                 openAccount: () => this.accountModal?.open?.(),
+                getAccountMenuReturnTarget: () => this.accountModal?.getAccountMenuReturnTarget?.() || null,
                 showToast: (...args) => this.showToast(...args)
             })
         });

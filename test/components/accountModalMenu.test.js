@@ -87,6 +87,7 @@ test('signed-in account footer exposes an accessible keyboard settings menu', ()
     try {
         assert.equal(label.textContent, 'member@example.com');
         assert.equal(settings.hidden, false);
+        assert.equal(modal.getAccountMenuReturnTarget(), settings);
 
         settings.onclick();
         assert.equal(menu.hidden, false);

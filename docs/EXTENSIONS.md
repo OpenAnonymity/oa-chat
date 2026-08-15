@@ -45,7 +45,9 @@ The supported slots in API version 1 are:
 Nodes mounted there should be buttons with `role="menuitem"` and the shared
 `account-menu-item` class. The core menu owns focus movement, Escape handling,
 outside-click dismissal, and Account/logout actions. Extensions own their
-menu-item label and destination. The legacy `sidebar.accountActions` and
+menu-item label and destination. A dialog opened from this slot should use
+`context.ui.getAccountMenuReturnTarget()` as its focus-return target because
+the menu itself closes after selection. The legacy `sidebar.accountActions` and
 `account.commercial` slots remain supported for compatibility.
 
 The context also provides narrow account, entitlement-ticket, and UI
