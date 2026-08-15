@@ -421,6 +421,7 @@ class ChatApp {
             ui: Object.freeze({
                 openAccount: () => this.accountModal?.open?.(),
                 closeWelcome: () => this.welcomePanel?.close?.(),
+                getAccountMenuReturnTarget: () => this.accountModal?.getAccountMenuReturnTarget?.() || null,
                 showToast: (...args) => this.showToast(...args)
             })
         });
