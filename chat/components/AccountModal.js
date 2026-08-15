@@ -6,6 +6,7 @@
 import { SLOT_NAMES } from '../extensions/extensionHost.js';
 
 const MODAL_CLASSES = 'w-full max-w-sm rounded-xl border border-border bg-background shadow-2xl p-5 mx-4 flex flex-col';
+const MODAL_FOCUSABLE_SELECTOR = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
 
 class AccountModal {
     constructor(app) {
@@ -44,6 +45,12 @@ class AccountModal {
         // UI state
         this.returnFocusEl = null;
         this.escapeHandler = null;
+        this.menuOpen = false;
+        this.accountMenuTrigger = null;
+        this.onDocumentPointerDown = event => {
+            const nav = document.getElementById('account-nav');
+            if (this.menuOpen && !nav?.contains(event.target)) this.closeAccountMenu();
+        };
 
         this.accountUnsubscribe = this.accountService.subscribe(state => {
             this.accountState = state;
@@ -60,37 +67,155 @@ class AccountModal {
             }
         });
 
-        this.attachTabListener();
+        this.attachAccountNavListeners();
         this.updateTabIndicator();
     }
 
-    attachTabListener() {
+    attachAccountNavListeners() {
         const tabBtn = document.getElementById('account-tab-btn');
         if (tabBtn) {
             tabBtn.onclick = () => {
-                this.isOpen ? this.close() : this.open();
+                if (this.isAccountMenuAvailable()) {
+                    this.menuOpen ? this.closeAccountMenu(true) : this.openAccountMenu(tabBtn);
+                    return;
+                }
+                this.isOpen ? this.close() : this.open(tabBtn);
+            };
+            tabBtn.onkeydown = event => {
+                if (!this.isAccountMenuAvailable()) return;
+                if (['ArrowDown', 'Enter', ' '].includes(event.key)) {
+                    event.preventDefault();
+                    this.openAccountMenu(tabBtn);
+                }
             };
         }
+        const settingsBtn = document.getElementById('account-settings-btn');
+        const menu = document.getElementById('account-settings-menu');
+        const accountItem = document.getElementById('account-security-menu-item');
+        const logoutItem = document.getElementById('account-logout-menu-item');
+        if (settingsBtn) {
+            settingsBtn.onclick = () => this.menuOpen ? this.closeAccountMenu(true) : this.openAccountMenu(settingsBtn);
+            settingsBtn.onkeydown = event => {
+                if (['ArrowDown', 'Enter', ' '].includes(event.key)) {
+                    event.preventDefault();
+                    this.openAccountMenu(settingsBtn);
+                }
+            };
+        }
+        if (menu) {
+            menu.onkeydown = event => this.handleAccountMenuKeydown(event);
+            menu.onclick = event => {
+                if (event.target.closest?.('[role="menuitem"]')) this.closeAccountMenu();
+            };
+        }
+        if (accountItem) accountItem.onclick = () => {
+            this.closeAccountMenu();
+            this.open(settingsBtn);
+        };
+        if (logoutItem) logoutItem.onclick = () => {
+            this.closeAccountMenu();
+            void this.handleAccountClear();
+        };
+        document.addEventListener?.('pointerdown', this.onDocumentPointerDown);
+    }
+
+    getAccountMenuItems() {
+        const menu = document.getElementById('account-settings-menu');
+        return menu ? [...menu.querySelectorAll('[role="menuitem"]:not([disabled])')] : [];
+    }
+
+    isAccountMenuAvailable() {
+        return Boolean(
+            this.accountState?.accountId &&
+            this.accountState?.sessionVerified &&
+            this.accountState?.status === 'unlocked'
+        );
+    }
+
+    getAccountMenuReturnTarget() {
+        const trigger = this.accountMenuTrigger;
+        if (trigger && !trigger.hidden) return trigger;
+        return document.getElementById('account-tab-btn');
+    }
+
+    openAccountMenu(trigger = null) {
+        const tabBtn = document.getElementById('account-tab-btn');
+        const settingsBtn = document.getElementById('account-settings-btn');
+        const menu = document.getElementById('account-settings-menu');
+        if (!settingsBtn || !menu || !this.isAccountMenuAvailable()) return;
+        this.close();
+        this.menuOpen = true;
+        this.accountMenuTrigger = trigger || tabBtn || settingsBtn;
+        menu.hidden = false;
+        settingsBtn.setAttribute('aria-expanded', 'true');
+        tabBtn?.setAttribute('aria-expanded', 'true');
+        this.app.extensionSlots?.refresh?.(SLOT_NAMES.ACCOUNT_MENU_ACTIONS);
+        this.getAccountMenuItems()[0]?.focus();
+    }
+
+    closeAccountMenu(restoreFocus = false) {
+        const settingsBtn = document.getElementById('account-settings-btn');
+        const tabBtn = document.getElementById('account-tab-btn');
+        const menu = document.getElementById('account-settings-menu');
+        const returnTarget = this.accountMenuTrigger || settingsBtn || tabBtn;
+        this.menuOpen = false;
+        if (menu) menu.hidden = true;
+        settingsBtn?.setAttribute('aria-expanded', 'false');
+        tabBtn?.setAttribute('aria-expanded', 'false');
+        this.accountMenuTrigger = null;
+        if (restoreFocus) returnTarget?.focus?.();
+    }
+
+    handleAccountMenuKeydown(event) {
+        const items = this.getAccountMenuItems();
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            this.closeAccountMenu(true);
+            return;
+        }
+        if (event.key === 'Tab') {
+            this.closeAccountMenu();
+            return;
+        }
+        if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) || items.length === 0) return;
+        event.preventDefault();
+        const current = Math.max(0, items.indexOf(event.target));
+        const next = event.key === 'Home' ? 0
+            : event.key === 'End' ? items.length - 1
+                : event.key === 'ArrowDown' ? (current + 1) % items.length
+                    : (current - 1 + items.length) % items.length;
+        items[next].focus();
     }
 
     updateTabIndicator() {
         const tabBtn = document.getElementById('account-tab-btn');
+        const identityLabel = document.getElementById('account-identity-label');
+        const settingsBtn = document.getElementById('account-settings-btn');
         if (!tabBtn) return;
         // Only show logged-in (green) after session is verified with server
-        const hasAccount = !!this.accountState?.accountId;
-        const isLoggedIn = hasAccount && this.accountState?.sessionVerified;
+        const isLoggedIn = this.accountState?.accountId &&
+            this.accountState?.sessionVerified &&
+            this.accountState?.status === 'unlocked';
         tabBtn.dataset.status = isLoggedIn ? 'logged-in' : 'none';
         tabBtn.title = isLoggedIn ? 'Account (logged in)' : 'Account';
-        tabBtn.setAttribute('aria-label', 'Account');
-        tabBtn.setAttribute('aria-controls', 'account-modal');
-        const labelNode = tabBtn.querySelector('[data-account-nav-label]');
-        if (labelNode) labelNode.textContent = 'Account';
+        const accountEmail = this.accountState?.oauthEmail || this.accountState?.email;
+        const email = typeof accountEmail === 'string'
+            ? accountEmail.trim()
+            : '';
+        if (identityLabel) identityLabel.textContent = isLoggedIn && email ? email : 'Account';
+        tabBtn.setAttribute('aria-label', isLoggedIn && email ? `Account for ${email}` : 'Account');
+        tabBtn.setAttribute('aria-controls', isLoggedIn ? 'account-settings-menu' : 'account-modal');
+        if (isLoggedIn) tabBtn.setAttribute('aria-haspopup', 'menu');
+        else tabBtn.removeAttribute?.('aria-haspopup');
+        if (settingsBtn) settingsBtn.hidden = !isLoggedIn;
+        if (!isLoggedIn) this.closeAccountMenu();
     }
 
-    open() {
+    open(returnFocusEl = null) {
         if (this.isOpen || !this.overlay) return;
+        this.closeAccountMenu();
         this.isOpen = true;
-        this.returnFocusEl = document.activeElement;
+        this.returnFocusEl = returnFocusEl || document.activeElement;
 
         this.resetCreationFlow();
         this.recoveryStep = 'idle';
@@ -469,6 +594,7 @@ class AccountModal {
     }
 
     async handleAccountClear() {
+        this.closeAccountMenu();
         await this.accountService.clearLocalAccount();
         this.accountInputValue = '';
         this.recoveryInputValue = '';
@@ -1156,6 +1282,8 @@ class AccountModal {
 
     destroy() {
         this.clearAnimationTimeouts();
+        this.closeAccountMenu();
+        document.removeEventListener('pointerdown', this.onDocumentPointerDown);
         if (this.accountUnsubscribe) {
             this.accountUnsubscribe();
             this.accountUnsubscribe = null;

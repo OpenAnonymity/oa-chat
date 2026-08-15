@@ -301,6 +301,32 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   The deadline is rechecked when the tab/app becomes visible or focused so
   background timer throttling cannot leave a stale find toolbar open.
 
+- 2026-08-07: The public chat shell now has an optional versioned extension seam.
+  - `chat/publicApi.js` exposes `createChatApp`, extension API version 2, and
+    stable slots including `sidebar.accountActions`, `account.menuActions`,
+    `account.commercial`, `welcome.actions`, and `modalLayer`.
+  - The sidebar footer remains core-owned. Signed-out users see Account;
+    verified sessions see the available email identity (or Account fallback)
+    and a gear menu containing Account & security, extension actions, and Log
+    out. The menu restores focus on Escape and supports arrow/Home/End keys.
+  - `account.menuActions` is the preferred commercial membership entry. It
+    exposes no billing state or credentials to the core; older sidebar and
+    account-modal slots remain available for compatible integrations.
+  - Standalone startup passes no extensions. Empty slots are invisible and the
+    public Account UI remains fully functional.
+  - Account modal rerenders recreate their slot host and ask the slot registry
+    to reattach the existing extension-owned node. Extensions must never query
+    or import internal component/service implementation details.
+  - Client-side entitlement ticket blinding/finalization remains public through
+    `application/entitlementTicketPreparer.js`; downstream integrations supply
+    the authorized count and claim operation.
+  - Paid integrations can attach only `subscription` or
+    `topup:<64-hex-reference>` as local claim-recovery context. Reload recovery
+    reuses that saved context when invoking the blinded-claim callback. It stays
+    in the separate recovery record and never enters finalized tickets, wallet
+    exports, shares, redemptions, logs, or progress snapshots; progress exposes
+    only a redacted `subscription` or `topup` source.
+
 - 2026-07-31: Ticket signing-key rotation is an immediate invalidation
   boundary.
   - Every newly redeemed ticket stores the global RFC 9578 `token_key_id` as

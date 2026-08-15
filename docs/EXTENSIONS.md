@@ -25,11 +25,24 @@ cleanup and generated shared-chat URLs stay reload-safe on that route.
 Extension API version 2 supports these named slots:
 
 - `sidebar.accountActions`
+- `account.menuActions`
 - `account.commercial`
 - `welcome.actions`
 - `modalLayer`
 
 The context exposes only narrow capabilities:
+`account.menuActions` is rendered inside the signed-in account settings menu.
+Nodes mounted there should be buttons with `role="menuitem"` and the shared
+`account-menu-item` class. The core menu owns focus movement, Escape handling,
+outside-click dismissal, and Account/logout actions. Extensions own their
+menu-item label and destination. The legacy `sidebar.accountActions` and
+`account.commercial` slots remain supported for compatibility.
+
+The context also provides narrow account, entitlement-ticket, and UI
+capabilities. `account.getSnapshot()` exposes only `isReady`, `accountId`,
+`sessionVerified`, and `status`; it never exposes credentials or recovery
+material. Calling `tickets.prepareEntitlementBatch()` without a `ticketCount`
+only resumes an already-saved preparation for that scope.
 
 - `account.getSnapshot()` and `account.subscribe()` return `isReady`,
   `accountId`, `sessionVerified`, and `status`; no credential, recovery, email,
