@@ -561,6 +561,8 @@ class AccountService {
             error: null,
             status: 'none',
             sessionVerified: false,  // True only after /refresh confirms session is valid
+            // Becomes true only after the account-bound local wallet scope is active.
+            accountScopeReady: false,
             googleLinked: false,
             oauthProvider: null,
             oauthEmail: null,
@@ -1432,6 +1434,7 @@ class AccountService {
      * @param {boolean} enableForNewAccount - If true, enables sync (for new accounts)
      */
     async initializeSync(enableForNewAccount = false) {
+        let accountScopeActivated = false;
         try {
             // Set credentials on sync service (avoids circular dependency)
             const keyMaterial = this.getSyncKeyMaterial();
@@ -1458,6 +1461,7 @@ class AccountService {
                 adoptUnscoped: enableForNewAccount ||
                     this.localAccountContinuity
             });
+            accountScopeActivated = true;
             this.localAccountContinuity = true;
             syncService.setCredentials(
                 keyMaterial,
@@ -1483,6 +1487,11 @@ class AccountService {
             syncService.startPeriodicSync();
         } catch (error) {
             console.warn('[AccountService] Failed to initialize sync:', error);
+        } finally {
+            if (this.state.accountScopeReady !== accountScopeActivated) {
+                this.state.accountScopeReady = accountScopeActivated;
+                this.notify();
+            }
         }
     }
 
@@ -1574,6 +1583,7 @@ class AccountService {
         this.setState({
             busy: true,
             action: link ? `${provider}_link` : `${provider}_login`,
+            accountScopeReady: link ? this.state.accountScopeReady : false,
             error: null,
             oauthProvider: provider,
             oauthSetupRequired: false,
@@ -2368,6 +2378,7 @@ class AccountService {
         this.syncIdKey = null;
         this.accessToken = null;
         this.state.sessionVerified = false;
+        this.state.accountScopeReady = false;
         // Electron: clear invalid refresh token
         if (PLATFORM === 'electron') {
             this.refreshToken = null;
@@ -2396,6 +2407,7 @@ class AccountService {
         this.syncIdKey = null;
         this.accessToken = null;
         this.state.sessionVerified = false;
+        this.state.accountScopeReady = false;
         this.state.oauthKeyringRequired =
             this.state.encryptionMode === 'PRF' &&
             this.state.googleLinked;
@@ -2434,6 +2446,7 @@ class AccountService {
         this.syncIdKey = null;
         this.accessToken = null;
         this.state.sessionVerified = false;
+        this.state.accountScopeReady = false;
         // Electron: clear persisted refresh token
         if (PLATFORM === 'electron') {
             this.refreshToken = null;
@@ -2479,6 +2492,7 @@ class AccountService {
         this.state.oauthRecoveryRequired = false;
         this.state.oauthKeyringRequired = false;
         this.state.oauthLegacyPasskeyRequired = false;
+        this.state.accountScopeReady = false;
         this.recoveryPayload = null;
         this.keyringWrappers = [];
         this.localAccountContinuity = false;

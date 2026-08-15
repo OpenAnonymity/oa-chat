@@ -32,9 +32,9 @@ const LOCAL_ORG_PROXY_ENABLED = globalThis.__OA_LOCAL_ORG_PROXY__ === true;
 export const ORG_API_BASE = resolveOrgApiBase(CURRENT_LOCATION, {
     localProxyEnabled: LOCAL_ORG_PROXY_ENABLED
 });
-export const ORG_AUTH_ORIGIN = isLoopbackHostname(CURRENT_LOCATION?.hostname)
-    ? 'http://localhost:8005'
-    : ORG_API_BASE;
+// OAuth starts and callbacks must use the same host as the API so the
+// host-only OAuth nonce cookie survives the round trip (including 127.0.0.1).
+export const ORG_AUTH_ORIGIN = ORG_API_BASE;
 
 // Verifier service -- hardware-attested (AMD SEV-SNP) station compliance
 // enforcer. Open-source and auditable. Enforces privacy toggles and key

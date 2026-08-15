@@ -321,6 +321,15 @@ class ChatApp {
             error.code = 'ACCOUNT_AUTH_REQUIRED';
             throw error;
         }
+        if (
+            state.sessionVerified !== true ||
+            state.status !== 'unlocked' ||
+            state.accountScopeReady !== true
+        ) {
+            const error = new Error('Unlock the account before using account services.');
+            error.code = 'ACCOUNT_AUTH_REQUIRED';
+            throw error;
+        }
 
         let token = accountService.getAccessToken();
         if (!token) {
@@ -328,7 +337,13 @@ class ChatApp {
             state = accountService.getState();
             token = accountService.getAccessToken();
         }
-        if (!token || !state?.accountId) {
+        if (
+            !token ||
+            !state?.accountId ||
+            state.sessionVerified !== true ||
+            state.status !== 'unlocked' ||
+            state.accountScopeReady !== true
+        ) {
             const error = new Error('The account session is unavailable or expired.');
             error.code = 'ACCOUNT_AUTH_REQUIRED';
             throw error;

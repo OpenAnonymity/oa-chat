@@ -6,6 +6,7 @@
 import { SLOT_NAMES } from '../extensions/extensionHost.js';
 
 const MODAL_CLASSES = 'w-full max-w-sm rounded-xl border border-border bg-background shadow-2xl p-5 mx-4 flex flex-col';
+const MODAL_FOCUSABLE_SELECTOR = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
 
 class AccountModal {
     constructor(app) {
@@ -190,13 +191,57 @@ class AccountModal {
         this.accountService.clearErrors();
         this.render();
         this.overlay.classList.remove('hidden');
+        this.focusModal();
 
         const tabBtn = document.getElementById('account-tab-btn');
         if (tabBtn) tabBtn.setAttribute('aria-expanded', 'true');
 
         this.overlay.onclick = (e) => { if (e.target === this.overlay) this.handleCloseAttempt(); };
-        this.escapeHandler = (e) => { if (e.key === 'Escape') this.handleCloseAttempt(); };
+        this.escapeHandler = (e) => this.handleModalKeydown(e);
         document.addEventListener('keydown', this.escapeHandler);
+    }
+
+    getModalFocusable() {
+        return this.overlay
+            ? [...this.overlay.querySelectorAll(MODAL_FOCUSABLE_SELECTOR)]
+            : [];
+    }
+
+    focusModal(preferredId = '') {
+        if (!this.isOpen || !this.overlay) return;
+        const preferred = preferredId ? document.getElementById(preferredId) : null;
+        if (preferred && this.overlay.contains(preferred) && preferred.focus) {
+            preferred.focus();
+            return;
+        }
+        const target = this.getModalFocusable()[0] ||
+            this.overlay.querySelector('[role="dialog"]');
+        target?.focus?.();
+    }
+
+    handleModalKeydown(event) {
+        if (!this.isOpen) return;
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            this.handleCloseAttempt();
+            return;
+        }
+        if (event.key !== 'Tab') return;
+        const focusable = this.getModalFocusable();
+        if (focusable.length === 0) {
+            event.preventDefault();
+            this.overlay.querySelector('[role="dialog"]')?.focus?.();
+            return;
+        }
+        const first = focusable[0];
+        const last = focusable.at(-1);
+        const active = document.activeElement;
+        const outside = !this.overlay.contains(active);
+        if ((event.shiftKey && (active === first || outside)) ||
+            (!event.shiftKey && (active === last || outside))) {
+            event.preventDefault();
+            (event.shiftKey ? last : first).focus();
+        }
     }
 
     handleCloseAttempt() {
@@ -576,6 +621,10 @@ class AccountModal {
     render() {
         if (!this.overlay) return;
 
+        const activeElement = document.activeElement;
+        const hadModalFocus = this.isOpen && this.overlay.contains(activeElement);
+        const activeElementId = hadModalFocus ? activeElement?.id || '' : '';
+
         const state = this.accountState || {};
         const accountId = state.accountId;
 
@@ -599,12 +648,13 @@ class AccountModal {
             this.app.extensionSlots?.refresh?.(SLOT_NAMES.ACCOUNT_COMMERCIAL);
         }
         this.attachEventListeners();
+        if (hadModalFocus) this.focusModal(activeElementId);
     }
 
     renderHeader(title, showClose = true) {
         return `
             <div class="flex items-center justify-between mb-4">
-                <h3 class="text-base font-medium text-foreground">${title}</h3>
+                <h3 id="account-modal-title" class="text-base font-medium text-foreground">${title}</h3>
                 ${showClose ? `
                     <button id="close-account-modal" class="text-muted-foreground hover:text-foreground transition-colors p-1 -mr-1 rounded-lg hover:bg-accent" aria-label="Close">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
@@ -621,7 +671,7 @@ class AccountModal {
         const providerLabel = this.getOAuthProviderLabel();
 
         return `
-            <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}">
+            <div role="dialog" aria-modal="true" aria-labelledby="account-modal-title" tabindex="-1" class="${MODAL_CLASSES}">
                 ${this.renderHeader(step === 'complete' ? 'Account Created' : step === 'error' ? 'Error' : step.startsWith('oauth_') ? `Continue with ${providerLabel}` : 'Create Account')}
                 <div class="flex-1 flex items-center justify-center">
                     ${this.renderCreationBody(step)}
@@ -917,7 +967,7 @@ class AccountModal {
             })();
 
             return `
-                <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}">
+                <div role="dialog" aria-modal="true" aria-labelledby="account-modal-title" tabindex="-1" class="${MODAL_CLASSES}">
                     ${this.renderHeader('Account')}
                     <div class="flex-1 flex flex-col items-center justify-center py-4">
                         <div class="flex items-center gap-4 mb-3">
@@ -973,7 +1023,7 @@ class AccountModal {
         const showRecovery = this.showRecoveryInput;
 
         return `
-            <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}" style="padding:24px 24px 18px">
+            <div role="dialog" aria-modal="true" aria-labelledby="account-modal-title" tabindex="-1" class="${MODAL_CLASSES}" style="padding:24px 24px 18px">
                 <style>
                     .account-input-wrap {
                         background: hsl(var(--color-muted) / 0.25);
@@ -1028,7 +1078,7 @@ class AccountModal {
 
                 <!-- Header -->
                 <div class="flex items-center justify-between mb-1">
-                    <h3 class="text-base font-medium text-foreground">${showRecovery ? 'Account Recovery' : 'Account'}</h3>
+                    <h3 id="account-modal-title" class="text-base font-medium text-foreground">${showRecovery ? 'Account Recovery' : 'Account'}</h3>
                     <button id="close-account-modal" class="text-muted-foreground hover:text-foreground transition-colors p-1 -mr-1 rounded-lg hover:bg-accent" aria-label="Close">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
@@ -1146,7 +1196,7 @@ class AccountModal {
         const isLegacyPasskey = state.oauthLegacyPasskeyRequired;
 
         return `
-            <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}">
+            <div role="dialog" aria-modal="true" aria-labelledby="account-modal-title" tabindex="-1" class="${MODAL_CLASSES}">
                 ${this.renderHeader(
                     isLegacyMigration
                         ? 'Upgrade encrypted data'
@@ -1216,7 +1266,7 @@ class AccountModal {
 
         if (isVerifying) {
             return `
-                <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}">
+                <div role="dialog" aria-modal="true" aria-labelledby="account-modal-title" tabindex="-1" class="${MODAL_CLASSES}">
                     ${this.renderHeader('Recovering Account', false)}
                     <div class="flex-1 flex flex-col items-center justify-center py-8">
                         <div class="w-10 h-10 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div>
@@ -1230,7 +1280,7 @@ class AccountModal {
 
         // Adding passkey step - show explanation before passkey prompt
         return `
-            <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}">
+            <div role="dialog" aria-modal="true" aria-labelledby="account-modal-title" tabindex="-1" class="${MODAL_CLASSES}">
                 ${this.renderHeader('Replace Passkey', false)}
                 <div class="flex-1 flex flex-col items-center justify-center py-6">
                     <div class="w-12 h-12 bg-blue-100 dark:bg-blue-500/20 rounded-full flex items-center justify-center mb-4">
@@ -1253,7 +1303,7 @@ class AccountModal {
         const formattedAccountId = accountId ? this.formatAccountId(accountId) : '';
 
         return `
-            <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}">
+            <div role="dialog" aria-modal="true" aria-labelledby="account-modal-title" tabindex="-1" class="${MODAL_CLASSES}">
                 ${this.renderHeader('Account Recovered', false)}
                 <div class="flex-1 flex flex-col items-center justify-center py-6">
                     <div class="w-14 h-14 bg-emerald-100 dark:bg-emerald-500/20 rounded-full flex items-center justify-center mb-3">

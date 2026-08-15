@@ -7,6 +7,7 @@ test('extension account snapshots expose only the documented non-secret fields',
         isReady: true,
         accountId: 'account-123',
         sessionVerified: true,
+        accountScopeReady: true,
         status: 'unlocked',
         credentialId: 'secret-credential',
         recoveryCode: 'secret-recovery-code',
@@ -18,6 +19,7 @@ test('extension account snapshots expose only the documented non-secret fields',
         isReady: true,
         accountId: 'account-123',
         sessionVerified: true,
+        accountScopeReady: true,
         status: 'unlocked'
     });
     assert.equal(Object.isFrozen(snapshot), true);

@@ -12,9 +12,7 @@ export function resolveOrgEndpoints({
     const apiBase = resolveOrgApiBase({ hostname, origin }, { localProxyEnabled });
     return {
         apiBase,
-        authOrigin: ['localhost', '127.0.0.1', '[::1]', '::1'].includes(hostname)
-            ? 'http://localhost:8005'
-            : apiBase
+        authOrigin: apiBase
     };
 }
 

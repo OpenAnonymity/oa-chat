@@ -6,6 +6,7 @@ export function toExtensionAccountSnapshot(state = {}) {
         isReady: state.isReady === true,
         accountId: state.accountId || null,
         sessionVerified: state.sessionVerified === true,
+        accountScopeReady: state.accountScopeReady === true,
         status: EXPOSED_ACCOUNT_STATUSES.has(state.status) ? state.status : 'none'
     });
 }

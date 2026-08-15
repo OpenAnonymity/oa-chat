@@ -35,6 +35,8 @@ test('account sign in offers Google as the only SSO provider', () => {
     try {
         const html = modal.renderAccountUI();
         assert.match(html, /Continue with Google/);
+        assert.match(html, /role="dialog" aria-modal="true" aria-labelledby="account-modal-title" tabindex="-1"/);
+        assert.match(html, /id="account-modal-title"/);
         assert.doesNotMatch(html, /Continue with GitHub/);
         assert.doesNotMatch(html, /account-github-btn/);
     } finally {
@@ -80,6 +82,8 @@ test('legacy linked account uses its existing passkey unlock path', async () => 
     try {
         const html = modal.renderOAuthUnlockUI();
         assert.match(html, /Use legacy passkey/);
+        assert.match(html, /aria-labelledby="account-modal-title"/);
+        assert.match(html, /id="account-modal-title"/);
         assert.match(html, /1234 5678 9012 3456/);
         await modal.handleOAuthKeyringUnlock();
         assert.equal(unlockAccountId, state.accountId);

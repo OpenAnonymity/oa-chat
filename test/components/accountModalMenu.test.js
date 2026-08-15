@@ -117,3 +117,54 @@ test('signed-in account footer exposes an accessible keyboard settings menu', ()
         globalThis.document = previousDocument;
     }
 });
+
+test('account dialog traps keyboard focus and restores the focused control after rerender', () => {
+    const previousDocument = globalThis.document;
+    const elements = new Map();
+    const documentImpl = {
+        activeElement: null,
+        getElementById(id) { return elements.get(id) || null; }
+    };
+    const first = createElement(documentImpl);
+    first.id = 'close-account-modal';
+    const last = createElement(documentImpl);
+    last.id = 'oauth-keyring-submit-btn';
+    const dialog = createElement(documentImpl);
+    const overlay = createElement(documentImpl, { children: [first, last, dialog] });
+    overlay.querySelectorAll = () => [first, last];
+    overlay.querySelector = selector => selector === '[role="dialog"]' ? dialog : null;
+    const modal = Object.create(AccountModal.prototype);
+    modal.isOpen = true;
+    modal.overlay = overlay;
+    modal.handleCloseAttempt = () => {};
+    elements.set(first.id, first);
+    elements.set(last.id, last);
+    globalThis.document = documentImpl;
+
+    try {
+        let prevented = false;
+        documentImpl.activeElement = last;
+        modal.handleModalKeydown({
+            key: 'Tab',
+            shiftKey: false,
+            preventDefault() { prevented = true; }
+        });
+        assert.equal(prevented, true);
+        assert.equal(documentImpl.activeElement, first);
+
+        prevented = false;
+        modal.handleModalKeydown({
+            key: 'Tab',
+            shiftKey: true,
+            preventDefault() { prevented = true; }
+        });
+        assert.equal(prevented, true);
+        assert.equal(documentImpl.activeElement, last);
+
+        documentImpl.activeElement = first;
+        modal.focusModal('oauth-keyring-submit-btn');
+        assert.equal(documentImpl.activeElement, last);
+    } finally {
+        globalThis.document = previousDocument;
+    }
+});
