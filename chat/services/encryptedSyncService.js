@@ -1223,6 +1223,10 @@ class SyncService {
 
         this.statusCheckTimer = setInterval(doStatusCheck, statusCheckInterval);
         this.fullSyncTimer = setInterval(doFullSync, fullSyncInterval);
+        // Node returns timer handles that otherwise keep the unit-test process
+        // alive. Browsers return numeric IDs, so these optional calls are inert.
+        this.statusCheckTimer.unref?.();
+        this.fullSyncTimer.unref?.();
 
         // Sync when tab becomes visible
         this.visibilityHandler = () => {

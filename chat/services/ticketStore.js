@@ -133,12 +133,15 @@ class TicketStore {
     emitUpdate() {
         if (typeof window !== 'undefined') {
             this.publishRedactedAuditSummary();
-            window.dispatchEvent(new CustomEvent(TICKETS_UPDATED_EVENT));
+            window.dispatchEvent?.(new CustomEvent(TICKETS_UPDATED_EVENT));
         }
     }
 
     publishRedactedAuditSummary() {
         if (typeof window === 'undefined' || typeof document === 'undefined' ||
+            typeof document.querySelector !== 'function' ||
+            typeof document.createElement !== 'function' ||
+            typeof document.head?.appendChild !== 'function' ||
             !['localhost', '127.0.0.1', '[::1]'].includes(window.location?.hostname)) {
             return;
         }

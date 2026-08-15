@@ -25,13 +25,13 @@ test('local dev endpoints keep the OAuth callback on canonical localhost', () =>
     });
 });
 
-test('localhost preview without the dev marker uses production org', () => {
+test('localhost preview without the dev marker uses the local org', () => {
     assert.deepEqual(resolveOrgEndpoints({
         hostname: 'localhost',
         origin: 'http://localhost:8080',
         localProxyEnabled: false
     }), {
-        apiBase: 'https://org.openanonymity.ai',
-        authOrigin: 'https://org.openanonymity.ai'
+        apiBase: 'http://localhost:8005',
+        authOrigin: 'http://localhost:8005'
     });
 });

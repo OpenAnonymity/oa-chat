@@ -9,7 +9,32 @@
 // signatures), and it is never in the inference data path (never sees prompts
 // or responses). Being closed-source is irrelevant -- its worst case is denial
 // of service, not privacy breach. See docs/PRIVACY_MODEL.md.
-export { ORG_API_BASE, ORG_AUTH_ORIGIN } from './services/orgEndpoints.js';
+const PRODUCTION_ORG_API_BASE = 'https://org.openanonymity.ai';
+const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+
+export function isLoopbackHostname(hostname) {
+    return LOOPBACK_HOSTNAMES.has(hostname || '');
+}
+
+export function resolveOrgApiBase(locationLike = null, { localProxyEnabled = false } = {}) {
+    const hostname = locationLike?.hostname;
+    if (isLoopbackHostname(hostname)) {
+        if (localProxyEnabled && locationLike?.origin) {
+            return locationLike.origin;
+        }
+        return `http://${hostname}:8005`;
+    }
+    return PRODUCTION_ORG_API_BASE;
+}
+
+const CURRENT_LOCATION = typeof window !== 'undefined' ? window.location : null;
+const LOCAL_ORG_PROXY_ENABLED = globalThis.__OA_LOCAL_ORG_PROXY__ === true;
+export const ORG_API_BASE = resolveOrgApiBase(CURRENT_LOCATION, {
+    localProxyEnabled: LOCAL_ORG_PROXY_ENABLED
+});
+export const ORG_AUTH_ORIGIN = isLoopbackHostname(CURRENT_LOCATION?.hostname)
+    ? 'http://localhost:8005'
+    : ORG_API_BASE;
 
 // Verifier service -- hardware-attested (AMD SEV-SNP) station compliance
 // enforcer. Open-source and auditable. Enforces privacy toggles and key

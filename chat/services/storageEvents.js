@@ -21,6 +21,7 @@ class StorageEvents {
 
         if (typeof BroadcastChannel === 'function') {
             this.channel = new BroadcastChannel('oa-storage-events');
+            this.channel.unref?.();
             this.channel.addEventListener('message', (event) => {
                 this.handleMessage(event.data);
             });
