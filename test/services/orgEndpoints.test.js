@@ -25,11 +25,7 @@ test('local dev endpoints keep OAuth callback cookies on the API host', () => {
     });
 });
 
-test('direct local org OAuth never changes localhost and 127.0.0.1 hosts', () => {
-    assert.equal(resolveOrgEndpoints({
-        hostname: '127.0.0.1',
-        origin: 'http://127.0.0.1:8081'
-    }).authOrigin, 'http://127.0.0.1:8005');
+test('documented local Google callback keeps the canonical localhost cookie host', () => {
     assert.equal(resolveOrgEndpoints({
         hostname: 'localhost',
         origin: 'http://localhost:8081'

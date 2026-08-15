@@ -77,7 +77,9 @@ exchange, so a JavaScript origin is not required for the Google client.
 `npm run dev` serves the chat on port `8080`; browser API calls go directly to
 the local org on port `8005`, while the OAuth popup callback remains on
 canonical `localhost:8005`. Allow the chat origin in the local org's CORS and
-OAuth return-origin settings.
+OAuth return-origin settings. The commercial wrapper uses `localhost:8081`.
+Do not open either client as `127.0.0.1`: Google returns to the configured
+`localhost` callback, and OAuth nonce cookies are host-specific.
 
 ## Regression checks
 
