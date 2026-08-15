@@ -22,9 +22,11 @@ test('public welcome panel has no direct commercial implementation references', 
     assert.doesNotMatch(source, /billingModal|billingState|Premium/);
 });
 
-test('a composed client can suppress the legacy welcome panel without changing the public default', () => {
+test('a composed client can suppress both legacy ticket panels without changing the public default', () => {
     const appSource = readFileSync('chat/app.js', 'utf8');
     assert.match(appSource, /this\.welcomePanelEnabled\s*=\s*options\.welcomePanel\s*!==\s*false/);
+    assert.match(appSource, /if \(hadTicketsBefore && this\.welcomePanelEnabled\)[\s\S]*?this\.thanksPanel\.init/);
     assert.match(appSource, /else if \(this\.welcomePanelEnabled\)[\s\S]*?this\.welcomePanel\.init/);
+    assert.match(appSource, /this\.thanksPanel\.close\(\)/);
     assert.match(appSource, /this\.welcomePanel\.close\(\)/);
 });

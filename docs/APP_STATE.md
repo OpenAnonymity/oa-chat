@@ -33,9 +33,11 @@ reading code alone.
   build scans every published JavaScript file for that hostname, so an inert
   source copy cannot silently weaken the disposable-demo isolation claim.
 - `createChatApp({ welcomePanel: false })` lets the commercial composition
-  suppress the legacy invite/free-access Welcome modal without changing the
-  standalone public default. This prevents that first-run surface from racing
-  Google OAuth and the commercial registration flow.
+  suppress both legacy invite/free-access ticket panels: the first-run Welcome
+  modal and the post-ticket Thanks/no-tickets modal. The standalone public
+  default is unchanged. Guard both branches when changing ticket-startup logic;
+  otherwise an authenticated commercial account that once held tickets can
+  unexpectedly fall back into the old invite-code flow.
 - A disposable same-origin verifier-bypass build may use a credential-free
   alternate Wisp endpoint through `OA_DEMO_PROXY_URL` when the ordinary relay
   is unavailable. Production builds retain the normal relay. Same-origin demo

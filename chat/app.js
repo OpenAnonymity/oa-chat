@@ -1995,7 +1995,7 @@ class ChatApp {
             networkProxy.initialize().catch(err => console.warn('Proxy init failed:', err));
 
             const hadTicketsBefore = !!await preferencesStore.getPreference(PREF_KEYS.hadTicketsBefore);
-            if (hadTicketsBefore) {
+            if (hadTicketsBefore && this.welcomePanelEnabled) {
                 await this.thanksPanel.init().catch((error) => {
                     console.warn('Thanks panel init failed:', error);
                 });
@@ -2004,6 +2004,7 @@ class ChatApp {
                     console.warn('Welcome panel init failed:', error);
                 });
             } else {
+                this.thanksPanel.close();
                 this.welcomePanel.close();
                 document.documentElement.setAttribute('data-welcome-hidden', 'true');
             }
