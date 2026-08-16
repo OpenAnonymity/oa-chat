@@ -3771,24 +3771,9 @@ html[data-left-sidebar-closing="true"] #sidebar .sidebar-toggle-tooltip {
     min-height: 3rem; /* pt-2 (8px) + h-9 (36px) + pb-1 (4px) = 48px */
     z-index: 30;
     background-color: hsl(var(--color-background));
-    border-bottom: 1px solid transparent;
-    /* Fast background transition so overlay appears quickly when screen narrows */
-    transition: border-color 0.15s ease, min-height 0.2s ease, background-color 0.1s ease;
+    /* Fast background transition so overlay appears quickly when screen narrows. */
+    transition: min-height 0.2s ease, background-color 0.1s ease;
     overflow: hidden; /* Prevent any content overflow */
-}
-
-/* Mobile toolbar divider - simple horizontal line below toolbar (JS controls visibility) */
-#mobile-toolbar-divider {
-    display: none; /* JS toggles to 'block' when scrolled on mobile */
-    height: 1px;
-    background-color: rgba(0, 0, 0, 0.12);
-    flex-shrink: 0;
-}
-
-/* Dark mode divider */
-.dark #mobile-toolbar-divider,
-:root.dark #mobile-toolbar-divider {
-    background-color: rgba(255, 255, 255, 0.2);
 }
 
 /* Desktop toolbar: ALWAYS absolute position to prevent layout jumps */
@@ -3810,7 +3795,6 @@ html[data-left-sidebar-closing="true"] #sidebar .sidebar-toggle-tooltip {
 /* Wide screen mode: transparent toolbar, content visible behind buttons */
 .chat-toolbar.toolbar-wide {
     background-color: transparent;
-    border-bottom-color: transparent !important;
     pointer-events: none; /* Allow clicks through transparent areas */
 }
 
@@ -3848,11 +3832,6 @@ html[data-right-panel-hidden="true"] #show-right-panel-btn {
 }
 
 /* Show right panel button on mobile too (panel is overlay on narrow screens). */
-
-/* Divider appears when scrolled AND content overlaps with toolbar */
-.chat-toolbar.toolbar-divider-visible {
-    border-bottom-color: hsl(var(--color-border));
-}
 
 /* --- Mobile Sidebar Backdrop --- */
 .mobile-sidebar-backdrop {

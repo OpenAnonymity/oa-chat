@@ -58,6 +58,11 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - A code that was already consumed is reported separately from a code that
     is expired, missing, or belongs to a different OA environment.
 
+- 2026-08-16: The chat toolbar no longer draws a horizontal separator.
+  - The toolbar still switches between opaque and floating presentation as
+    side panels change the available width, but neither desktop nor mobile
+    adds a rule above the conversation content.
+
 - 2026-08-16: The full signed-in identity row opens the account action menu.
   - Clicking either the email/avatar row or its gear opens the same Account,
     extension-action, and Log out menu; signed-out clicks still open Account.
