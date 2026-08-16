@@ -96,6 +96,7 @@ test('commercial ticket management replaces right-panel redemption with one comp
     const source = fs.readFileSync('chat/components/RightPanel.js', 'utf8');
     assert.match(source, /hasExternalTicketManager/);
     assert.match(source, /id="open-ticket-manager-btn"/);
+    assert.match(source, /rounded-lg px-0 text-left text-xs/);
     assert.match(source, /Manage inference tickets, \$\{this\.ticketCount\} available/);
     assert.match(source, /this\.app\.openTicketManagement\?\.\(event\.currentTarget\)/);
     assert.match(source, /hasExternalTicketManager \? '' :/);

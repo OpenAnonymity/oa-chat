@@ -2033,7 +2033,7 @@ class RightPanel {
                     <button
                         id="open-ticket-manager-btn"
                         type="button"
-                        class="btn-ghost-hover flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left text-xs text-foreground transition-all duration-150"
+                        class="btn-ghost-hover flex h-9 w-full items-center gap-2 rounded-lg px-0 text-left text-xs text-foreground transition-all duration-150"
                         aria-label="Manage inference tickets, ${this.ticketCount} available"
                     >
                         <svg class="h-3.5 w-3.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
