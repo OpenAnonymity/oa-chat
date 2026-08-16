@@ -437,8 +437,9 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     wallet records, account credentials, billing identifiers, or inference data.
   - A commercial extension can register one compact right-panel ticket-count
     action that opens Membership. While registered, the right panel omits its
-    ticket-code and ticket-explanation controls; Membership supplies Import,
-    Export, Share, and account-free access-code redemption in one place.
+    ticket-code controls but keeps a collapsed question-mark explanation of
+    inference tickets. Membership supplies Import, Export, Share, and
+    account-free access-code redemption in one place.
     Standalone public builds still render their original access-code controls.
   - The compact ticket launcher's icon and label share the same left edge as
     the Ephemeral Access Key heading below it; avoid adding nested horizontal

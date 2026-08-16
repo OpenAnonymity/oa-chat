@@ -101,3 +101,13 @@ test('commercial ticket management replaces right-panel redemption with one comp
     assert.match(source, /this\.app\.openTicketManagement\?\.\(event\.currentTarget\)/);
     assert.match(source, /hasExternalTicketManager \? '' :/);
 });
+
+test('commercial ticket launcher keeps a question-mark ticket explanation', () => {
+    const source = fs.readFileSync('chat/components/RightPanel.js', 'utf8');
+    assert.match(source, /id="toggle-external-ticket-info-btn"/);
+    assert.match(source, /aria-controls="external-ticket-info-panel"/);
+    assert.match(source, /aria-expanded="\$\{this\.showExternalTicketInfo \? 'true' : 'false'\}"/);
+    assert.match(source, /Inference tickets provide unlinkable access to frontier AI models/);
+    assert.match(source, /queries go directly to the model provider—not OA/);
+    assert.match(source, /this\.updateExternalTicketInfoVisibility\(\)/);
+});
