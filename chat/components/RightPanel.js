@@ -2053,22 +2053,18 @@ class RightPanel {
                         <button
                             id="open-ticket-manager-btn"
                             type="button"
-                            class="btn-ghost-hover flex h-9 min-w-0 flex-1 items-center gap-2 rounded-lg px-0 text-left text-xs text-foreground transition-all duration-150"
+                            class="btn-ghost-hover inline-flex min-w-0 items-center gap-1.5 rounded-md text-left text-xs font-medium text-foreground transition-all duration-150"
                             aria-label="Manage inference tickets, ${this.ticketCount} available"
                         >
-                            <svg class="h-3.5 w-3.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z"></path>
+                            <svg class="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z"></path>
                             </svg>
-                            <span>Inference tickets</span>
-                            <span class="ml-auto font-semibold">${this.ticketCount}</span>
-                            <svg class="h-3 w-3 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m9 18 6-6-6-6"></path>
-                            </svg>
+                            <span>Inference Tickets: <span class="font-semibold">${this.ticketCount}</span></span>
                         </button>
                         <button
                             id="toggle-external-ticket-info-btn"
                             type="button"
-                            class="inline-flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full border border-border text-[9px] text-muted-foreground transition-all hover:border-foreground/20 hover:bg-accent hover:text-foreground"
+                            class="inline-flex h-3.5 w-3.5 flex-shrink-0 items-center justify-center rounded-full border border-border text-[8px] text-muted-foreground transition-all hover:border-foreground/20 hover:bg-accent hover:text-foreground"
                             title="${this.showExternalTicketInfo ? 'Hide inference ticket description' : 'What is an inference ticket?'}"
                             aria-label="${this.showExternalTicketInfo ? 'Hide inference ticket description' : 'What is an inference ticket?'}"
                             aria-controls="external-ticket-info-panel"

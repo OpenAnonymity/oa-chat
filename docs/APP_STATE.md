@@ -444,6 +444,11 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - The compact ticket launcher's icon and label share the same left edge as
     the Ephemeral Access Key heading below it; avoid adding nested horizontal
     padding to the launcher.
+  - The commercial launcher deliberately preserves the production ticket
+    header treatment: `Inference Tickets: N` uses the same `text-xs font-medium`
+    typography as the public client, and its small question-mark control sits
+    immediately after the count. Do not replace it with a full-width navigation
+    row or move the help control to the far edge of the panel.
   - Export remains a move operation and keeps the public confirmation that
     clears the exported local wallet to prevent double spending.
 
