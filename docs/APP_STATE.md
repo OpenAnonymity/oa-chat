@@ -251,6 +251,17 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     provisional key is discarded locally and remains bounded by its limit and expiry.
   - Search, relay, and memory should be disabled for the one-prompt smoke test.
     Text reasoning is always enabled in this revision, so use its lowest effort.
+- 2026-08-16: Sticky Parallel width can be collapsed with the existing width icon.
+  - Active Parallel/Council with two model columns stays wide and hides the
+    manual width control. A one-model Parallel configuration, or a session
+    returned to Chat after Parallel, shows the existing expand/collapse icon.
+  - The control has no visible label. Its assistive name switches between
+    `Expand view` and `Collapse view`, and a per-session collapsed hint keeps
+    old Parallel transcripts narrow until multi-column mode is active again.
+
+- 2026-07-31: OpenRouter catalog labels for Anthropic models are normalized to
+  include the `Anthropic:` prefix when upstream omits it. Already-prefixed names
+  remain unchanged.
 - 2026-07-16: Parallel/Council share and provider-display rebase notes.
   - Shared chat payloads serialize `responseMode` and `councilConfig`, and both
     first import plus update-import paths restore those fields. Otherwise imported

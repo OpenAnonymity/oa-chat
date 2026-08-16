@@ -522,15 +522,17 @@ test('parallel layout stays wide for transcripts and forks with council output',
         true,
         'Parallel/Council layout should stay aligned with manual wide mode width'
     );
+    assert.equal(appSource.includes('councilLayoutRequiresMultipleColumns(session'), true);
+    assert.equal(appSource.includes("btn.setAttribute('aria-label', isWide ? 'Collapse view' : 'Expand view')"), true);
     assert.equal(
-        appSource.includes('const usesParallelLayout = this.sessionUsesCouncilLayout(this.getCurrentSession());'),
+        appSource.includes('if (hasSession && !isMobile && !parallelRequiresWide)'),
         true,
-        'wide-mode button visibility should read the same Parallel/Council layout source of truth'
+        'the existing width control should stay hidden only while multiple Parallel columns require wide layout'
     );
     assert.equal(
-        appSource.includes('if (hasSession && !isMobile && !usesParallelLayout)'),
+        appSource.includes('session?.councilLayoutCollapsed === true && !requiresMultipleColumns'),
         true,
-        'wide-mode button should be hidden while Parallel/Council layout owns transcript width'
+        'single-model and post-Parallel sessions should be able to collapse the sticky layout'
     );
 });
 
