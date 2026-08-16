@@ -106,6 +106,7 @@ class RightPanel {
         // Ticket info panel state - check localStorage snapshot first to avoid flash
         const savedTicketInfoVisible = localStorage.getItem('oa-ticket-info-visible');
         this.showTicketInfo = savedTicketInfoVisible === 'false' ? false : true;
+        this.showExternalTicketInfo = false;
         this.lastAppliedVisibility = null;
         this.panelFadeCleanupTimer = null;
         this.panelFadeAnimation = null;
@@ -349,6 +350,24 @@ class RightPanel {
 
         toggleInfoBtn.title = this.showTicketInfo ? 'Hide ticket info' : 'Show ticket info';
         toggleInfoBtn.setAttribute('aria-pressed', this.showTicketInfo ? 'true' : 'false');
+    }
+
+    updateExternalTicketInfoVisibility() {
+        const panel = document.getElementById('external-ticket-info-panel');
+        const toggle = document.getElementById('toggle-external-ticket-info-btn');
+        if (!panel || !toggle) return;
+
+        const show = this.showExternalTicketInfo;
+        panel.classList.toggle('mt-2', show);
+        panel.classList.toggle('max-h-[480px]', show);
+        panel.classList.toggle('max-h-0', !show);
+        panel.classList.toggle('opacity-100', show);
+        panel.classList.toggle('opacity-0', !show);
+        panel.classList.toggle('pointer-events-none', !show);
+        panel.setAttribute('aria-hidden', show ? 'false' : 'true');
+        toggle.title = show ? 'Hide inference ticket description' : 'What is an inference ticket?';
+        toggle.setAttribute('aria-label', show ? 'Hide inference ticket description' : 'What is an inference ticket?');
+        toggle.setAttribute('aria-expanded', show ? 'true' : 'false');
     }
 
     setupEventListeners() {
@@ -2028,21 +2047,41 @@ class RightPanel {
         return `
                 ${hasExternalTicketManager ? `
                 <div class="p-3">
-                    <button
-                        id="open-ticket-manager-btn"
-                        type="button"
-                        class="btn-ghost-hover flex h-9 w-full items-center gap-2 rounded-lg px-0 text-left text-xs text-foreground transition-all duration-150"
-                        aria-label="Manage inference tickets, ${this.ticketCount} available"
+                    <div class="flex items-center gap-1.5">
+                        <button
+                            id="open-ticket-manager-btn"
+                            type="button"
+                            class="btn-ghost-hover flex h-9 min-w-0 flex-1 items-center gap-2 rounded-lg px-0 text-left text-xs text-foreground transition-all duration-150"
+                            aria-label="Manage inference tickets, ${this.ticketCount} available"
+                        >
+                            <svg class="h-3.5 w-3.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z"></path>
+                            </svg>
+                            <span>Inference tickets</span>
+                            <span class="ml-auto font-semibold">${this.ticketCount}</span>
+                            <svg class="h-3 w-3 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m9 18 6-6-6-6"></path>
+                            </svg>
+                        </button>
+                        <button
+                            id="toggle-external-ticket-info-btn"
+                            type="button"
+                            class="inline-flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full border border-border text-[9px] text-muted-foreground transition-all hover:border-foreground/20 hover:bg-accent hover:text-foreground"
+                            title="${this.showExternalTicketInfo ? 'Hide inference ticket description' : 'What is an inference ticket?'}"
+                            aria-label="${this.showExternalTicketInfo ? 'Hide inference ticket description' : 'What is an inference ticket?'}"
+                            aria-controls="external-ticket-info-panel"
+                            aria-expanded="${this.showExternalTicketInfo ? 'true' : 'false'}"
+                        >?</button>
+                    </div>
+                    <div
+                        id="external-ticket-info-panel"
+                        class="${this.showExternalTicketInfo ? 'mt-2 max-h-[480px] opacity-100' : 'max-h-0 opacity-0 pointer-events-none'} overflow-hidden transition-all duration-200 ease-in-out"
+                        aria-hidden="${this.showExternalTicketInfo ? 'false' : 'true'}"
                     >
-                        <svg class="h-3.5 w-3.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z"></path>
-                        </svg>
-                        <span>Inference tickets</span>
-                        <span class="ml-auto font-semibold">${this.ticketCount}</span>
-                        <svg class="h-3 w-3 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m9 18 6-6-6-6"></path>
-                        </svg>
-                    </button>
+                        <p class="rounded-lg border border-border bg-muted/5 p-2 text-[10px] leading-relaxed text-muted-foreground">
+                            Inference tickets provide unlinkable access to frontier AI models. Your device redeems them for a short-lived API key, usable until its time or credit limit is reached. Blind signatures prevent redeemed tickets from being linked to your purchase, and your queries go directly to the model provider—not OA.
+                        </p>
+                    </div>
                 </div>
                 ` : `
                 <!-- Invitation Code Section -->
@@ -2527,6 +2566,14 @@ class RightPanel {
         if (ticketManagerButton) {
             ticketManagerButton.onclick = event => {
                 this.app.openTicketManagement?.(event.currentTarget);
+            };
+        }
+
+        const toggleExternalTicketInfo = document.getElementById('toggle-external-ticket-info-btn');
+        if (toggleExternalTicketInfo) {
+            toggleExternalTicketInfo.onclick = () => {
+                this.showExternalTicketInfo = !this.showExternalTicketInfo;
+                this.updateExternalTicketInfoVisibility();
             };
         }
 
