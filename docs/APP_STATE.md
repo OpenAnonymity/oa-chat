@@ -414,8 +414,17 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - `context.tickets.subscribe()` waits for local ticket storage, then emits
     only the existing count/max-share/busy snapshot, never wallet records or
     ticket cryptographic material. A transient startup zero is not emitted.
+  - Signed-in snapshots remain ineligible for automatic billing until the
+    account's initial encrypted sync succeeds. Returning accounts therefore
+    cannot be charged against a temporary empty wallet before remote tickets
+    arrive.
   - This supports downstream opt-in zero-ticket refill UX without putting
     Stripe, billing identity, or charging logic into the public client.
+
+- 2026-08-16: Parallel per-model regeneration uses the same combined ticket
+  preflight as send and full regeneration.
+  - The preflight counts a fresh Memory key when needed plus only the selected
+    lane's fresh model access, and runs before later messages are deleted.
 
 - 2026-08-16: The full signed-in identity row opens the account action menu.
   - Clicking either the email/avatar row or its gear opens the same Account,

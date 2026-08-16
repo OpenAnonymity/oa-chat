@@ -33,9 +33,11 @@ test('commercial extensions receive redacted ticket-count updates without wallet
 
     assert.match(context, /tickets:\s*Object\.freeze/);
     assert.match(context, /window\.addEventListener\('tickets-updated', notify\)/);
+    assert.match(context, /accountService\.subscribe\(notify\)/);
     assert.match(context, /storageManager\.init\(\)\.then/);
     assert.match(context, /if \(!active \|\| !ready\) return/);
     assert.match(context, /getMembershipTicketToolsSnapshot/);
+    assert.match(context, /toExtensionTicketSnapshot/);
     assert.doesNotMatch(context, /getTickets\(|peekTicket|finalized_ticket|signature|nonce/);
 });
 

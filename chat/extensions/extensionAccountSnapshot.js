@@ -7,6 +7,7 @@ export function toExtensionAccountSnapshot(state = {}) {
         accountId: state.accountId || null,
         sessionVerified: state.sessionVerified === true,
         accountScopeReady: state.accountScopeReady === true,
+        ticketSyncReady: state.ticketSyncReady === true,
         status: EXPOSED_ACCOUNT_STATUSES.has(state.status) ? state.status : 'none'
     });
 }
