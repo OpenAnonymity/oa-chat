@@ -373,6 +373,33 @@ class ChatApp {
                 prepareEntitlementBatch: (options) => prepareEntitlementBatch(options),
                 getToolsSnapshot: () => this.rightPanel?.getMembershipTicketToolsSnapshot?.() ||
                     Object.freeze({ ticketCount: 0, maxShareCount: 0, busy: false }),
+                subscribe: (listener) => {
+                    if (typeof listener !== 'function') return () => {};
+                    let active = true;
+                    let ready = false;
+                    const notify = () => {
+                        if (!active || !ready) return;
+                        try {
+                            listener(
+                                this.rightPanel?.getMembershipTicketToolsSnapshot?.()
+                                || Object.freeze({ ticketCount: 0, maxShareCount: 0, busy: false })
+                            );
+                        } catch (error) {
+                            console.warn('Ticket snapshot listener failed:', error);
+                        }
+                    };
+                    window.addEventListener('tickets-updated', notify);
+                    void storageManager.init().then(() => {
+                        ready = true;
+                        notify();
+                    }).catch(error => {
+                        console.warn('Ticket snapshot subscription could not initialize storage:', error);
+                    });
+                    return () => {
+                        active = false;
+                        window.removeEventListener('tickets-updated', notify);
+                    };
+                },
                 importTickets: (file) => this.rightPanel?.handleImportTickets?.(
                     file,
                     null,

@@ -63,6 +63,13 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     side panels change the available width, but neither desktop nor mobile
     adds a rule above the conversation content.
 
+- 2026-08-16: Extensions can subscribe to redacted ticket-count changes.
+  - `context.tickets.subscribe()` waits for local ticket storage, then emits
+    only the existing count/max-share/busy snapshot, never wallet records or
+    ticket cryptographic material. A transient startup zero is not emitted.
+  - This supports downstream opt-in zero-ticket refill UX without putting
+    Stripe, billing identity, or charging logic into the public client.
+
 - 2026-08-16: The full signed-in identity row opens the account action menu.
   - Clicking either the email/avatar row or its gear opens the same Account,
     extension-action, and Log out menu; signed-out clicks still open Account.
