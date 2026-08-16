@@ -96,7 +96,9 @@ test('commercial ticket management replaces right-panel redemption with one comp
     const source = fs.readFileSync('chat/components/RightPanel.js', 'utf8');
     assert.match(source, /hasExternalTicketManager/);
     assert.match(source, /id="open-ticket-manager-btn"/);
-    assert.match(source, /rounded-lg px-0 text-left text-xs/);
+    assert.match(source, /text-left text-xs font-medium/);
+    assert.match(source, /Inference Tickets: <span class="font-semibold">\$\{this\.ticketCount\}<\/span>/);
+    assert.doesNotMatch(source, /id="open-ticket-manager-btn"[\s\S]{0,900}d="m9 18 6-6-6-6"/);
     assert.match(source, /Manage inference tickets, \$\{this\.ticketCount\} available/);
     assert.match(source, /this\.app\.openTicketManagement\?\.\(event\.currentTarget\)/);
     assert.match(source, /hasExternalTicketManager \? '' :/);
@@ -105,6 +107,7 @@ test('commercial ticket management replaces right-panel redemption with one comp
 test('commercial ticket launcher keeps a question-mark ticket explanation', () => {
     const source = fs.readFileSync('chat/components/RightPanel.js', 'utf8');
     assert.match(source, /id="toggle-external-ticket-info-btn"/);
+    assert.match(source, /h-3\.5 w-3\.5 flex-shrink-0 items-center justify-center rounded-full/);
     assert.match(source, /aria-controls="external-ticket-info-panel"/);
     assert.match(source, /aria-expanded="\$\{this\.showExternalTicketInfo \? 'true' : 'false'\}"/);
     assert.match(source, /Inference tickets provide unlinkable access to frontier AI models/);
