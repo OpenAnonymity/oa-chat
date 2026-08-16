@@ -401,6 +401,15 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     extension-action, and Log out menu; signed-out clicks still open Account.
   - Focus returns to whichever control opened the menu, and the identity row
     exposes menu semantics only while a verified, unlocked account is active.
+- 2026-08-16: Commercial Membership can host the public ticket tools.
+  - The extension context exposes count-only ticket-tool state plus the existing
+    import, export, split/share, and access-code operations. It never exposes
+    wallet records, account credentials, billing identifiers, or inference data.
+  - Import, Export, and Split are no longer rendered in the right panel. The
+    anonymous access-code form remains there only while no verified, unlocked
+    account is active; downstream Membership supplies the signed-in placement.
+  - Export remains a move operation and keeps the public confirmation that
+    clears the exported local wallet to prevent double spending.
 
 
 - 2026-08-07: Google is the only supported SSO provider.

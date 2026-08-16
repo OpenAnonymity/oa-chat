@@ -96,6 +96,9 @@ class RightPanel {
                 this.renderTopSectionOnly();
             }
         });
+        this.accountUnsubscribe = this.app.services.account?.subscribe?.(() => {
+            if (this.hasMounted) this.renderTopSectionOnly();
+        }) || null;
 
         // Invitation code dropdown state - check localStorage snapshot first to avoid flash
         const savedFormVisible = localStorage.getItem('oa-invitation-form-visible');
@@ -265,6 +268,16 @@ class RightPanel {
 
     getMaxSplitCount() {
         return Math.min(50, this.ticketCount);
+    }
+
+    getMembershipTicketToolsSnapshot() {
+        const ticketCount = Number(this.app.services.tickets.getTicketCount?.() || 0);
+        this.ticketCount = ticketCount;
+        return Object.freeze({
+            ticketCount,
+            maxShareCount: Math.min(50, ticketCount),
+            busy: Boolean(this.isImporting || this.isSplitting || this.isRegistering)
+        });
     }
 
     getTicketShareBaseUrl() {
@@ -599,11 +612,13 @@ class RightPanel {
         }, 500);
     }
 
-    async handleRegister(invitationCode) {
+    async handleRegister(invitationCode, options = {}) {
         if (!invitationCode || invitationCode.length !== 24) {
             this.registrationError = 'Invalid ticket code (must be 24 characters)';
             this.renderTopSectionOnly();
-            return;
+            const error = new Error(this.registrationError);
+            if (options.throwOnError) throw error;
+            return null;
         }
 
         this.isRegistering = true;
@@ -621,6 +636,7 @@ class RightPanel {
             await this.app.services.tickets.alphaRegister(invitationCode, (message, percent) => {
                 this.smoothProgress.set(percent);
                 this.registrationProgress = { message, percent };
+                options.onProgress?.({ message, percent });
                 // Update message text directly to avoid innerHTML replacement
                 const msgEl = document.querySelector('[data-smooth-progress-msg="right-panel"]');
                 if (msgEl) msgEl.textContent = message;
@@ -659,10 +675,13 @@ class RightPanel {
                 this.updateTicketInfoVisibility();
                 this.updateTicketInfoToggleButton();
             }, 2000);
+            return Object.freeze({ ticketCount: this.ticketCount });
         } catch (error) {
             this.registrationError = error.message;
             this.smoothProgress.stop();
             this.registrationProgress = null;
+            if (options.throwOnError) throw error;
+            return null;
         } finally {
             this.isRegistering = false;
             this.renderTopSectionOnly();
@@ -692,7 +711,7 @@ class RightPanel {
         });
     }
 
-    async handleImportTickets(file, inputEl = null) {
+    async handleImportTickets(file, inputEl = null, options = {}) {
         if (!file || this.isImporting) return;
 
         this.isImporting = true;
@@ -719,11 +738,18 @@ class RightPanel {
                     message: `Imported ${totalAdded} ticket${totalAdded !== 1 ? 's' : ''} (${result.addedActive} active, ${result.addedArchived} used).`
                 };
             }
+            return Object.freeze({
+                addedActive: Number(result.addedActive || 0),
+                addedArchived: Number(result.addedArchived || 0),
+                ticketCount: this.ticketCount
+            });
         } catch (error) {
             this.importStatus = {
                 type: 'error',
                 message: error.message || 'Failed to import tickets.'
             };
+            if (options.throwOnError) throw error;
+            return null;
         } finally {
             this.isImporting = false;
             if (inputEl) {
@@ -743,14 +769,14 @@ class RightPanel {
         }
     }
 
-    async handleExportTickets() {
+    async handleExportTickets(options = {}) {
+        let outcome = null;
         try {
             const result = await exportTickets();
             if (result.cancelled) {
                 // User cancelled - no message needed
-                return;
-            }
-            if (result.success) {
+                outcome = Object.freeze({ cancelled: true });
+            } else if (result.success) {
                 const total = result.activeCount + result.archivedCount;
                 this.ticketCount = this.app.services.tickets.getTicketCount();
                 this.loadNextTicket();
@@ -764,23 +790,34 @@ class RightPanel {
                     message: 'Failed to export tickets.'
                 };
             }
+            if (!outcome) {
+                outcome = Object.freeze({
+                    cancelled: false,
+                    success: result.success === true,
+                    activeCount: Number(result.activeCount || 0),
+                    archivedCount: Number(result.archivedCount || 0),
+                    ticketCount: this.ticketCount
+                });
+            }
         } catch (error) {
             this.importStatus = {
                 type: 'error',
                 message: error.message || 'Failed to export tickets.'
             };
-        }
+            if (options.throwOnError) throw error;
+        } finally {
+            this.renderTopSectionOnly();
 
-        this.renderTopSectionOnly();
-
-        if (this.importStatus?.type === 'success') {
-            setTimeout(() => {
-                if (this.importStatus?.type === 'success') {
-                    this.importStatus = null;
-                    this.renderTopSectionOnly();
-                }
-            }, 2500);
+            if (this.importStatus?.type === 'success') {
+                setTimeout(() => {
+                    if (this.importStatus?.type === 'success') {
+                        this.importStatus = null;
+                        this.renderTopSectionOnly();
+                    }
+                }, 2500);
+            }
         }
+        return outcome;
     }
 
     handleSplitToggle() {
@@ -836,42 +873,62 @@ class RightPanel {
     }
 
     async handleSplitConfirm() {
-        if (this.isSplitting) return;
+        const result = await this.performTicketSplit(this.splitCount, { autoCopy: true });
+        if (result) {
+            this.showSplitControls = false;
+            this.splitResult = result;
+        }
+        this.renderTopSectionOnly();
+    }
+
+    async performTicketSplit(count, options = {}) {
+        if (this.isSplitting) return null;
         const maxSplitCount = this.getMaxSplitCount();
-        if (this.splitCount <= 0 || this.splitCount > maxSplitCount) {
-            this.app?.showToast?.(`You can split at most ${maxSplitCount} tickets at a time.`, 'error');
-            return;
+        const normalizedCount = Number(count);
+        if (!Number.isInteger(normalizedCount) || normalizedCount <= 0 || normalizedCount > maxSplitCount) {
+            const error = new Error(`You can share at most ${maxSplitCount} tickets at a time.`);
+            if (options.throwOnError) throw error;
+            this.app?.showToast?.(error.message, 'error');
+            return null;
         }
 
         this.isSplitting = true;
         this.renderTopSectionOnly();
 
         try {
-            const result = await this.app.services.tickets.splitTickets(this.splitCount);
+            const result = await this.app.services.tickets.splitTickets(normalizedCount);
             this.ticketCount = this.app.services.tickets.getTicketCount();
             this.loadNextTicket();
-            this.showSplitControls = false;
-            this.splitResult = {
+            const splitResult = Object.freeze({
                 code: result.code,
-                ticketsConsumed: result.ticketsConsumed || this.splitCount,
-                expiresAt: result.expiresAt || null
-            };
+                ticketsConsumed: result.ticketsConsumed || normalizedCount,
+                expiresAt: result.expiresAt || null,
+                shareUrl: this.getTicketCodeShareUrl(result.code)
+            });
 
             // Auto-copy the code to clipboard
-            try {
-                await navigator.clipboard.writeText(result.code);
-                this.app?.showToast?.('Code copied to clipboard!', 'success');
-            } catch (copyError) {
-                console.error('Failed to auto-copy code:', copyError);
-                // Don't show error toast, user can still manually copy
+            if (options.autoCopy) {
+                try {
+                    await navigator.clipboard.writeText(result.code);
+                    this.app?.showToast?.('Code copied to clipboard!', 'success');
+                } catch (copyError) {
+                    console.error('Failed to auto-copy code:', copyError);
+                    // Don't show error toast, user can still manually copy
+                }
             }
+            return splitResult;
         } catch (error) {
+            if (options.throwOnError) throw error;
             this.app?.showToast?.(error.message || 'Failed to split tickets.', 'error');
+            return null;
         } finally {
             this.isSplitting = false;
+            this.renderTopSectionOnly();
         }
+    }
 
-        this.renderTopSectionOnly();
+    splitTicketsForMembership(count) {
+        return this.performTicketSplit(count, { autoCopy: false, throwOnError: true });
     }
 
     handleSplitCancel() {
@@ -1952,6 +2009,13 @@ class RightPanel {
         const splitShareUrl = this.getTicketCodeShareUrl(this.splitResult?.code);
         const splitShareUrlEscaped = splitShareUrl ? this.escapeHtml(splitShareUrl) : '';
         const splitShareUrlAttribute = splitShareUrl ? this.escapeHtmlAttribute(splitShareUrl) : '';
+        const accountState = this.app.services.account?.getState?.() || {};
+        const showGuestAccessCode = !(
+            accountState.accountId &&
+            accountState.sessionVerified &&
+            accountState.status === 'unlocked'
+        );
+        const showLegacyTicketTools = false;
 
         return `
                 <!-- Invitation Code Section -->
@@ -1972,7 +2036,7 @@ class RightPanel {
                             ?
                         </button>
                     </div>
-                    <button
+                    ${showGuestAccessCode ? `<button
                         id="toggle-invitation-form-btn"
                         class="btn-ghost-hover inline-flex items-center gap-1 px-2 py-1 text-[10px] rounded-md border border-border bg-background transition-all duration-200 shadow-sm"
                     >
@@ -1980,10 +2044,10 @@ class RightPanel {
                         <svg class="w-2.5 h-2.5 transition-transform ${this.showInvitationForm ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
                         </svg>
-                    </button>
+                    </button>` : ''}
                 </div>
 
-                <div class="mt-2 flex items-center gap-1.5">
+                ${showLegacyTicketTools ? `<div class="mt-2 flex items-center gap-1.5">
                     <input
                         id="import-tickets-input"
                         type="file"
@@ -2116,8 +2180,9 @@ class RightPanel {
                     ` : ''}
                 </div>
                 ` : ''}
+                ` : ''}
 
-                ${this.showInvitationForm ? `
+                ${showGuestAccessCode && this.showInvitationForm ? `
                     <form id="invitation-code-form" class="space-y-2 mt-3 p-3 bg-muted/10 rounded-lg">
                         <div class="invitation-code-input-shell flex items-center w-full h-8 border border-border rounded-md bg-background transition-all">
                             <input
@@ -3025,6 +3090,10 @@ class RightPanel {
         if (this.proxyUnsubscribe) {
             this.proxyUnsubscribe();
             this.proxyUnsubscribe = null;
+        }
+        if (this.accountUnsubscribe) {
+            this.accountUnsubscribe();
+            this.accountUnsubscribe = null;
         }
     }
 }
