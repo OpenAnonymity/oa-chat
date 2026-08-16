@@ -8,6 +8,7 @@ test('signed-in ticket counts are not billing-ready before encrypted sync', () =
         { ticketCount: 0, maxShareCount: 0, busy: false, tickets: ['secret'] },
         {
             accountId: 'account-123',
+            isReady: true,
             sessionVerified: true,
             status: 'unlocked',
             accountScopeReady: true,
@@ -26,6 +27,7 @@ test('signed-in ticket counts are not billing-ready before encrypted sync', () =
         { ticketCount: 8, maxShareCount: 8, busy: false },
         {
             accountId: 'account-123',
+            isReady: true,
             sessionVerified: true,
             status: 'unlocked',
             accountScopeReady: true,
@@ -36,8 +38,19 @@ test('signed-in ticket counts are not billing-ready before encrypted sync', () =
 });
 
 test('anonymous ticket counts become billing-ready after local storage initialization', () => {
-    assert.equal(toExtensionTicketSnapshot(
-        { ticketCount: 0, maxShareCount: 0, busy: false },
-        { accountId: null }
-    ).readyForAutomaticBilling, true);
+    const tools = { ticketCount: 0, maxShareCount: 0, busy: false };
+    assert.equal(
+        toExtensionTicketSnapshot(tools, {
+            accountId: null,
+            isReady: false
+        }).readyForAutomaticBilling,
+        false
+    );
+    assert.equal(
+        toExtensionTicketSnapshot(tools, {
+            accountId: null,
+            isReady: true
+        }).readyForAutomaticBilling,
+        true
+    );
 });

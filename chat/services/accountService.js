@@ -1068,6 +1068,14 @@ class AccountService {
                 return;
             }
             // No persisted key - will need passkey
+        } else {
+            // A previous account can leave its active data scope behind if the
+            // browser closes between clearing account settings and completing
+            // logout. Preserve that account-bound wallet in its scoped snapshot
+            // and restore the anonymous wallet before extensions can observe a
+            // billing-ready zero balance.
+            await syncService.deactivateAccountScope(null);
+            syncService.setLocalAccountScope(null);
         }
         
         this.state.isReady = true;

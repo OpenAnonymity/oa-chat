@@ -88,6 +88,12 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - The extension context exposes count-only ticket-tool state plus the existing
     import, export, split/share, and access-code operations. It never exposes
     wallet records, account credentials, billing identifiers, or inference data.
+  - Ticket counts remain billing-unready until account startup finishes. For an
+    anonymous session, startup first archives any stale account-bound wallet and
+    restores the anonymous scope; for a signed-in session, readiness additionally
+    requires verified unlock, scope activation, and the first encrypted ticket
+    sync. This prevents checkout recovery or automatic refills from acting on a
+    transient zero balance.
   - A commercial extension can register one compact right-panel ticket-count
     action that opens Membership. While registered, the right panel omits its
     ticket-code controls but keeps a collapsed question-mark explanation of

@@ -5,6 +5,83 @@ import { chatDB } from '../../chat/db.js';
 import accountService from '../../chat/services/accountService.js';
 import syncService from '../../chat/services/encryptedSyncService.js';
 
+test('anonymous startup restores the anonymous wallet before billing becomes ready', async () => {
+    const originals = {
+        db: chatDB.db,
+        init: chatDB.init,
+        getSetting: chatDB.getSetting,
+        deactivateAccountScope: syncService.deactivateAccountScope,
+        setLocalAccountScope: syncService.setLocalAccountScope
+    };
+    const events = [];
+    chatDB.db = {};
+    chatDB.init = async () => {};
+    chatDB.getSetting = async key => (
+        key === 'account-settings' ? null : undefined
+    );
+    syncService.deactivateAccountScope = async accountId => {
+        events.push(['deactivate', accountId]);
+        assert.equal(accountService.state.isReady, false);
+    };
+    syncService.setLocalAccountScope = accountId => {
+        events.push(['local', accountId]);
+        assert.equal(accountService.state.isReady, false);
+    };
+    accountService.state.isReady = false;
+    accountService.state.accountId = null;
+
+    try {
+        await accountService.init();
+        assert.deepEqual(events, [
+            ['deactivate', null],
+            ['local', null]
+        ]);
+        assert.equal(accountService.state.isReady, true);
+    } finally {
+        chatDB.db = originals.db;
+        chatDB.init = originals.init;
+        chatDB.getSetting = originals.getSetting;
+        syncService.deactivateAccountScope = originals.deactivateAccountScope;
+        syncService.setLocalAccountScope = originals.setLocalAccountScope;
+        accountService.state.isReady = false;
+        accountService.state.accountId = null;
+        accountService.updateStatus();
+    }
+});
+
+test('anonymous startup stays billing-unready when scope restoration fails', async () => {
+    const originals = {
+        db: chatDB.db,
+        init: chatDB.init,
+        getSetting: chatDB.getSetting,
+        deactivateAccountScope: syncService.deactivateAccountScope
+    };
+    chatDB.db = {};
+    chatDB.init = async () => {};
+    chatDB.getSetting = async () => null;
+    syncService.deactivateAccountScope = async () => {
+        throw new Error('scope restore failed');
+    };
+    accountService.state.isReady = false;
+    accountService.state.accountId = null;
+
+    try {
+        await assert.rejects(
+            accountService.init(),
+            /scope restore failed/
+        );
+        assert.equal(accountService.state.isReady, false);
+    } finally {
+        chatDB.db = originals.db;
+        chatDB.init = originals.init;
+        chatDB.getSetting = originals.getSetting;
+        syncService.deactivateAccountScope = originals.deactivateAccountScope;
+        accountService.state.isReady = false;
+        accountService.state.accountId = null;
+        accountService.updateStatus();
+    }
+});
+
 test('new SSO keyring setup adopts the existing device wallet', async () => {
     const originals = {
         getSyncKeyMaterial: accountService.getSyncKeyMaterial,
