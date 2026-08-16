@@ -64,8 +64,12 @@ only resumes an already-saved preparation for that scope.
 - `ui` provides the supported Account, Welcome, and toast actions.
 
 Commercial membership surfaces may call the public ticket-tool capabilities
-`getToolsSnapshot`, `importTickets`, `exportTickets`, `shareTickets`, and
-`redeemAccessCode`. These reuse the browser-wallet operations already used by
+`getToolsSnapshot`, `subscribe`, `importTickets`, `exportTickets`, `shareTickets`,
+and `redeemAccessCode`. `subscribe` emits the same redacted count/busy snapshot
+after ticket storage is ready and after local wallet updates; it never emits the
+temporary zero used while IndexedDB is loading. It is the supported seam for a
+downstream opt-in refill experience to notice a transition to zero. These reuse
+the browser-wallet operations already used by
 the standalone UI. Snapshots expose counts and busy state only; operations
 return aggregate counts or the intentionally shareable split code/link, never
 wallet ticket material, account credentials, billing identifiers, or inference

@@ -25,6 +25,20 @@ test('core startup never awaits optional extension mounting', () => {
     assert.doesNotMatch(source, /await this\.extensionHost\.mountAll/);
 });
 
+test('commercial extensions receive redacted ticket-count updates without wallet records', () => {
+    const source = read('chat/app.js');
+    const contextStart = source.indexOf('createExtensionContext()');
+    const contextEnd = source.indexOf('detectInitialLinkContext()', contextStart);
+    const context = source.slice(contextStart, contextEnd);
+
+    assert.match(context, /tickets:\s*Object\.freeze/);
+    assert.match(context, /window\.addEventListener\('tickets-updated', notify\)/);
+    assert.match(context, /storageManager\.init\(\)\.then/);
+    assert.match(context, /if \(!active \|\| !ready\) return/);
+    assert.match(context, /getMembershipTicketToolsSnapshot/);
+    assert.doesNotMatch(context, /getTickets\(|peekTicket|finalized_ticket|signature|nonce/);
+});
+
 test('public HTML keeps Account and contains only invisible generic extension hosts', () => {
     const html = read('chat/index.html');
     const accountIndex = html.indexOf('id="account-tab-btn"');
