@@ -43,3 +43,15 @@ test('send preflights the combined budget before adding the user message', () =>
         < sendSource.indexOf("addMessage('user'")
     );
 });
+
+test('Parallel lane regeneration preflights Memory with only that lane', () => {
+    const source = fs.readFileSync('chat/app.js', 'utf8');
+    const start = source.indexOf('async regenerateCouncilLane(');
+    const end = source.indexOf('\n    async ', start + 20);
+    const method = source.slice(start, end);
+    assert.match(method, /preflightTurnTicketBudget\(session, regenerationContent, \{\s*councilStageEntry: stageEntry/);
+    assert.ok(
+        method.indexOf('preflightTurnTicketBudget') < method.indexOf('messagesToDelete'),
+        'preflight must run before later messages are deleted'
+    );
+});

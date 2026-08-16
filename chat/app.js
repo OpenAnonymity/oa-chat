@@ -59,6 +59,7 @@ import {
 } from './domain/quickAsk.js';
 import { normalizePendingPhase as normalizeStreamingPendingPhase } from './domain/streamingState.js';
 import { buildTurnTicketBudget } from './domain/turnTicketBudget.js';
+import { toExtensionTicketSnapshot } from './extensions/extensionTicketSnapshot.js';
 import {
     filterDisabledModels as filterDisabledModelsValue,
     getFallbackModelEntry as getFallbackModelEntryValue,
@@ -380,15 +381,17 @@ class ChatApp {
                     const notify = () => {
                         if (!active || !ready) return;
                         try {
-                            listener(
+                            listener(toExtensionTicketSnapshot(
                                 this.rightPanel?.getMembershipTicketToolsSnapshot?.()
-                                || Object.freeze({ ticketCount: 0, maxShareCount: 0, busy: false })
-                            );
+                                || Object.freeze({ ticketCount: 0, maxShareCount: 0, busy: false }),
+                                getAccountSnapshot()
+                            ));
                         } catch (error) {
                             console.warn('Ticket snapshot listener failed:', error);
                         }
                     };
                     window.addEventListener('tickets-updated', notify);
+                    const unsubscribeAccount = accountService.subscribe(notify);
                     void storageManager.init().then(() => {
                         ready = true;
                         notify();
@@ -397,6 +400,7 @@ class ChatApp {
                     });
                     return () => {
                         active = false;
+                        unsubscribeAccount();
                         window.removeEventListener('tickets-updated', notify);
                     };
                 },
@@ -3989,7 +3993,7 @@ class ChatApp {
         return getTicketCost(modelId, reasoningEnabled);
     }
 
-    async getFreshInferenceTicketRequirement(session) {
+    async getFreshInferenceTicketRequirement(session, { councilStageEntry = null } = {}) {
         if (!session) return { tickets: 0, label: 'the selected model' };
 
         if (!Array.isArray(this.state.models) || this.state.models.length === 0) {
@@ -4003,6 +4007,19 @@ class ChatApp {
 
         if (this.isCouncilModeActive(session) && this.councilController) {
             const entries = this.councilController.resolveModelEntries(session);
+            if (councilStageEntry) {
+                const laneEntry = this.councilController.resolveEntryForStage1Entry(
+                    session,
+                    councilStageEntry,
+                    entries
+                );
+                return {
+                    tickets: laneEntry?.id
+                        ? this.councilController.calculateFreshTicketRequirement(session, [laneEntry])
+                        : 0,
+                    label: laneEntry?.name || councilStageEntry?.model || 'the selected model'
+                };
+            }
             const normalizedConfig = normalizeCouncilConfig(
                 session.councilConfig,
                 session.model || entries[0]?.name || null
@@ -4035,14 +4052,14 @@ class ChatApp {
         };
     }
 
-    async preflightTurnTicketBudget(session, content) {
+    async preflightTurnTicketBudget(session, content, options = {}) {
         const memoryTickets = this.memoryFeatureEnabled
             && this.memoryMode
             && Boolean(content)
             && !hasValidMemoryKey(session)
             ? CONFIDENTIAL_KEY_TICKETS
             : 0;
-        const inference = await this.getFreshInferenceTicketRequirement(session);
+        const inference = await this.getFreshInferenceTicketRequirement(session, options);
         const budget = buildTurnTicketBudget({
             availableTickets: ticketClient.getTicketCount(),
             inferenceTickets: inference.tickets,
@@ -6122,6 +6139,13 @@ class ChatApp {
 
         const userMessage = [...messages.slice(0, messageIndex)].reverse().find(m => m.role === 'user');
         if (!userMessage) return;
+
+        const regenerationContent = options.skipMemoryAugment
+            ? ''
+            : this.getMessageTextContent(userMessage.content).trim();
+        if (!await this.preflightTurnTicketBudget(session, regenerationContent, {
+            councilStageEntry: stageEntry
+        })) return;
 
         const messagesToDelete = messages.slice(messageIndex + 1);
         for (const msg of messagesToDelete) {

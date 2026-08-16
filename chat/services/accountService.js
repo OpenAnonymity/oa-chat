@@ -563,6 +563,8 @@ class AccountService {
             sessionVerified: false,  // True only after /refresh confirms session is valid
             // Becomes true only after the account-bound local wallet scope is active.
             accountScopeReady: false,
+            // Becomes true after this account's first encrypted sync has settled successfully.
+            ticketSyncReady: false,
             googleLinked: false,
             oauthProvider: null,
             oauthEmail: null,
@@ -594,6 +596,19 @@ class AccountService {
         this.syncDerivationKey = null;
         this.syncIdKey = null;
         this.localAccountContinuity = false;
+
+        syncService.subscribe(({ event }) => {
+            if (!['sync_complete', 'status_checked'].includes(event)) return;
+            if (
+                !this.state.accountId ||
+                syncService.accountId !== this.state.accountId ||
+                this.state.sessionVerified !== true ||
+                this.state.accountScopeReady !== true ||
+                this.state.ticketSyncReady === true
+            ) return;
+            this.state.ticketSyncReady = true;
+            this.notify();
+        });
 
         // Set up global callback for token invalidation
         onTokenInvalidated = () => this.handleTokenInvalidation();
@@ -1435,6 +1450,10 @@ class AccountService {
      */
     async initializeSync(enableForNewAccount = false) {
         let accountScopeActivated = false;
+        if (this.state.ticketSyncReady) {
+            this.state.ticketSyncReady = false;
+            this.notify();
+        }
         try {
             // Set credentials on sync service (avoids circular dependency)
             const keyMaterial = this.getSyncKeyMaterial();
@@ -1481,7 +1500,19 @@ class AccountService {
             
             // Sync is automatically enabled when credentials are set
             // Start sync immediately
-            syncService.sync().catch(err => {
+            const syncAccountId = this.state.accountId;
+            syncService.sync().then(result => {
+                if (
+                    result?.success === true &&
+                    this.state.accountId === syncAccountId &&
+                    this.state.sessionVerified === true &&
+                    this.state.accountScopeReady === true &&
+                    this.state.ticketSyncReady !== true
+                ) {
+                    this.state.ticketSyncReady = true;
+                    this.notify();
+                }
+            }).catch(err => {
                 console.warn('[AccountService] Initial sync failed:', err);
             });
             syncService.startPeriodicSync();
@@ -2379,6 +2410,7 @@ class AccountService {
         this.accessToken = null;
         this.state.sessionVerified = false;
         this.state.accountScopeReady = false;
+        this.state.ticketSyncReady = false;
         // Electron: clear invalid refresh token
         if (PLATFORM === 'electron') {
             this.refreshToken = null;
@@ -2408,6 +2440,7 @@ class AccountService {
         this.accessToken = null;
         this.state.sessionVerified = false;
         this.state.accountScopeReady = false;
+        this.state.ticketSyncReady = false;
         this.state.oauthKeyringRequired =
             this.state.encryptionMode === 'PRF' &&
             this.state.googleLinked;
@@ -2447,6 +2480,7 @@ class AccountService {
         this.accessToken = null;
         this.state.sessionVerified = false;
         this.state.accountScopeReady = false;
+        this.state.ticketSyncReady = false;
         // Electron: clear persisted refresh token
         if (PLATFORM === 'electron') {
             this.refreshToken = null;
@@ -2493,6 +2527,7 @@ class AccountService {
         this.state.oauthKeyringRequired = false;
         this.state.oauthLegacyPasskeyRequired = false;
         this.state.accountScopeReady = false;
+        this.state.ticketSyncReady = false;
         this.recoveryPayload = null;
         this.keyringWrappers = [];
         this.localAccountContinuity = false;
