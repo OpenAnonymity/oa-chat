@@ -3838,10 +3838,22 @@ class ChatApp {
         return Array.isArray(messages) && messages.some((message) => this.messageUsesCouncilLayout(message));
     }
 
+    getCouncilLayoutLaneCount(session = this.getCurrentSession()) {
+        if (!session) return 0;
+        const fallbackModelName = this.normalizeModelName(session.model) || session.model || null;
+        return normalizeCouncilConfig(session.councilConfig, fallbackModelName).members.length;
+    }
+
+    councilLayoutRequiresMultipleColumns(session = this.getCurrentSession()) {
+        return this.isCouncilModeActive(session) && this.getCouncilLayoutLaneCount(session) > 1;
+    }
+
     sessionUsesCouncilLayout(session = this.getCurrentSession(), messages = null) {
         if (!COUNCIL_MODE_FEATURE_FLAG) return false;
         const isPendingCouncilMode = !session && this.pendingCouncilConfig?.enabled === true;
         const isPendingCouncilLayoutPreference = !session && this.pendingCouncilLayoutPreference === true;
+        const requiresMultipleColumns = this.councilLayoutRequiresMultipleColumns(session);
+        if (session?.councilLayoutCollapsed === true && !requiresMultipleColumns) return false;
         return this.isCouncilModeActive(session)
             || isPendingCouncilMode
             || isPendingCouncilLayoutPreference
@@ -3938,6 +3950,7 @@ class ChatApp {
         );
         if (requestedEnabled) {
             session.hasCouncilLayoutPreference = true;
+            delete session.councilLayoutCollapsed;
         }
         if (!requestedEnabled && this.councilController) {
             this.councilController.seedSessionAccessFromPrimaryLane(session);
@@ -8511,9 +8524,12 @@ class ChatApp {
         const hasSession = !!this.getCurrentSession();
         const sidebarHidden = this.elements.sidebar?.classList.contains('sidebar-hidden');
         const isMobile = this.isMobileView();
-        const usesParallelLayout = this.sessionUsesCouncilLayout(this.getCurrentSession());
+        const session = this.getCurrentSession();
+        const usesParallelLayout = this.sessionUsesCouncilLayout(session);
+        const parallelRequiresWide = this.councilLayoutRequiresMultipleColumns(session);
+        const isWide = document.documentElement.classList.contains('wide-mode') || usesParallelLayout;
 
-        if (hasSession && !isMobile && !usesParallelLayout) {
+        if (hasSession && !isMobile && !parallelRequiresWide) {
             btn.classList.remove('hidden');
             btn.classList.add('flex');
             // When sidebar hidden: show-sidebar-btn at left-4, wide-mode at left-14
@@ -8529,6 +8545,8 @@ class ChatApp {
             btn.classList.add('hidden');
             btn.classList.remove('flex');
         }
+        btn.classList.toggle('wide-active', isWide);
+        btn.setAttribute('aria-label', isWide ? 'Collapse view' : 'Expand view');
     }
 
     /**
@@ -8569,6 +8587,27 @@ class ChatApp {
      * Toggles wide mode on/off.
      */
     toggleWideMode() {
+        const session = this.getCurrentSession();
+        const hasParallelLayoutHistory = Boolean(
+            session?.hasCouncilLayoutPreference ||
+            session?.hasCouncilTranscript ||
+            this.isCouncilModeActive(session)
+        );
+        if (hasParallelLayoutHistory && !this.councilLayoutRequiresMultipleColumns(session)) {
+            const isWide = document.documentElement.classList.contains('wide-mode') ||
+                this.sessionUsesCouncilLayout(session);
+            if (isWide) {
+                session.councilLayoutCollapsed = true;
+                this.applyWideMode(false);
+                preferencesStore.savePreference(PREF_KEYS.wideMode, false);
+            } else {
+                delete session.councilLayoutCollapsed;
+            }
+            void chatDB.saveSession(session);
+            this.updateCouncilLayoutMode(session);
+            setTimeout(() => this.updateToolbarDivider(), 200);
+            return;
+        }
         const isWide = !document.documentElement.classList.contains('wide-mode');
         this.applyWideMode(isWide);
         preferencesStore.savePreference(PREF_KEYS.wideMode, isWide);

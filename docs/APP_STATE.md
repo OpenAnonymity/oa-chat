@@ -564,6 +564,15 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - Superseded by the 2026-07-29 account-scope entry above: syncable local state
     is now snapshotted and restored per account.
 
+- 2026-08-16: Sticky Parallel width can be collapsed with the existing width icon.
+  - Active Parallel/Council with two model columns stays wide and hides the
+    manual width control. A one-model Parallel configuration, or a session
+    returned to Chat after Parallel, shows the existing expand/collapse icon.
+  - The control has no visible label. Its assistive name switches between
+    `Expand view` and `Collapse view`, and a per-session collapsed hint keeps
+    old Parallel transcripts narrow until multi-column mode is active again.
+
+
 - 2026-07-11: OpenRouter `~author/*-latest` aliases normalize in the catalog adapter,
   while provider display/icon metadata resolves through the shared provider registry;
   cached OpenRouter catalog entries also recompute provider metadata from their model
