@@ -213,3 +213,34 @@ test('an invalidated sync does not overwrite replacement-account UI state', asyn
         syncService.clearCredentials();
     }
 });
+
+test('an awaited blob notification settles only after wallet hydration listeners', async () => {
+    let releaseHydration;
+    let notificationSettled = false;
+    const hydrationPending = new Promise(resolve => {
+        releaseHydration = resolve;
+    });
+    const unsubscribe = syncService.subscribe(async ({ event, data }) => {
+        if (event === 'blob_received' && data?.type === 'tickets') {
+            await hydrationPending;
+        }
+    });
+
+    try {
+        const pendingNotification = syncService.notifyAndWait(
+            'blob_received',
+            { type: 'tickets', logicalId: 'tickets-active' }
+        ).then(() => {
+            notificationSettled = true;
+        });
+
+        await new Promise(resolve => setTimeout(resolve, 0));
+        assert.equal(notificationSettled, false);
+
+        releaseHydration();
+        await pendingNotification;
+        assert.equal(notificationSettled, true);
+    } finally {
+        unsubscribe();
+    }
+});

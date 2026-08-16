@@ -650,6 +650,17 @@ class SyncService {
         });
     }
 
+    async notifyAndWait(event, data = null) {
+        const payload = { event, data, timestamp: Date.now() };
+        await Promise.all([...this.listeners].map(async handler => {
+            try {
+                await handler(payload);
+            } catch (error) {
+                console.warn('Sync listener error:', error);
+            }
+        }));
+    }
+
     getMasterKey() {
         return this.keyMaterial;
     }
@@ -916,7 +927,13 @@ class SyncService {
         this.assertCredentialsCurrent(credentialGeneration);
 
         if (applied) {
-            this.notify('blob_received', { type: payload.type, logicalId });
+            // Ticket-store listeners hydrate the in-memory wallet from the
+            // merged database state. Wait for that work before sync_complete
+            // can expose the wallet as safe for automatic billing decisions.
+            await this.notifyAndWait('blob_received', {
+                type: payload.type,
+                logicalId
+            });
             if (payload.type === 'tickets') {
                 storageEvents.broadcast(
                     'tickets-updated',
