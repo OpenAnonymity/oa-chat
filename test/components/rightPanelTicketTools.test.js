@@ -91,3 +91,12 @@ test('right panel renders ticket transfer controls only through Membership', () 
     assert.match(source, /const showLegacyTicketTools = false/);
     assert.match(source, /showGuestAccessCode && this\.showInvitationForm/);
 });
+
+test('commercial ticket management replaces right-panel redemption with one compact launcher', () => {
+    const source = fs.readFileSync('chat/components/RightPanel.js', 'utf8');
+    assert.match(source, /hasExternalTicketManager/);
+    assert.match(source, /id="open-ticket-manager-btn"/);
+    assert.match(source, /Manage inference tickets, \$\{this\.ticketCount\} available/);
+    assert.match(source, /this\.app\.openTicketManagement\?\.\(event\.currentTarget\)/);
+    assert.match(source, /hasExternalTicketManager \? '' :/);
+});

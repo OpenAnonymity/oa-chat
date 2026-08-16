@@ -88,9 +88,11 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - The extension context exposes count-only ticket-tool state plus the existing
     import, export, split/share, and access-code operations. It never exposes
     wallet records, account credentials, billing identifiers, or inference data.
-  - Import, Export, and Split are no longer rendered in the right panel. The
-    anonymous access-code form remains there only while no verified, unlocked
-    account is active; downstream Membership supplies the signed-in placement.
+  - A commercial extension can register one compact right-panel ticket-count
+    action that opens Membership. While registered, the right panel omits its
+    ticket-code and ticket-explanation controls; Membership supplies Import,
+    Export, Share, and account-free access-code redemption in one place.
+    Standalone public builds still render their original access-code controls.
   - Export remains a move operation and keeps the public confirmation that
     clears the exported local wallet to prevent double spending.
 

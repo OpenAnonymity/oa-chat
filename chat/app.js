@@ -301,6 +301,7 @@ class ChatApp {
         this.extensions = Array.isArray(options.extensions) ? options.extensions : [];
         this.extensionHost = new ExtensionHost();
         this.extensionSlots = this.extensionHost.slots;
+        this.ticketManagementAction = null;
 
         // Link preview state
         this.linkPreviewCard = document.getElementById('link-preview-card');
@@ -355,6 +356,32 @@ class ChatApp {
             scope: `account:${state.accountId}`,
             headers: Object.freeze({ Authorization: `Bearer ${token}` })
         });
+    }
+
+    registerTicketManagementAction(handler) {
+        if (typeof handler !== 'function') return () => {};
+        this.ticketManagementAction = handler;
+        this.rightPanel?.renderTopSectionOnly?.();
+        return () => {
+            if (this.ticketManagementAction !== handler) return;
+            this.ticketManagementAction = null;
+            this.rightPanel?.renderTopSectionOnly?.();
+        };
+    }
+
+    hasTicketManagementAction() {
+        return typeof this.ticketManagementAction === 'function';
+    }
+
+    openTicketManagement(trigger = null) {
+        if (!this.hasTicketManagementAction()) return false;
+        try {
+            this.ticketManagementAction(trigger);
+            return true;
+        } catch (error) {
+            console.warn('Ticket management action failed:', error);
+            return false;
+        }
     }
 
     createExtensionContext() {
@@ -419,6 +446,7 @@ class ChatApp {
             ui: Object.freeze({
                 openAccount: () => this.accountModal?.open?.(),
                 getAccountMenuReturnTarget: () => this.accountModal?.getAccountMenuReturnTarget?.() || null,
+                registerTicketManagement: handler => this.registerTicketManagementAction(handler),
                 showToast: (...args) => this.showToast(...args)
             })
         });

@@ -2023,8 +2023,28 @@ class RightPanel {
             accountState.status === 'unlocked'
         );
         const showLegacyTicketTools = false;
+        const hasExternalTicketManager = this.app.hasTicketManagementAction?.() === true;
 
         return `
+                ${hasExternalTicketManager ? `
+                <div class="p-3">
+                    <button
+                        id="open-ticket-manager-btn"
+                        type="button"
+                        class="btn-ghost-hover flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left text-xs text-foreground transition-all duration-150"
+                        aria-label="Manage inference tickets, ${this.ticketCount} available"
+                    >
+                        <svg class="h-3.5 w-3.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z"></path>
+                        </svg>
+                        <span>Inference tickets</span>
+                        <span class="ml-auto font-semibold">${this.ticketCount}</span>
+                        <svg class="h-3 w-3 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m9 18 6-6-6-6"></path>
+                        </svg>
+                    </button>
+                </div>
+                ` : `
                 <!-- Invitation Code Section -->
                 <div class="p-3">
                 <div class="flex items-center justify-between">
@@ -2247,8 +2267,10 @@ class RightPanel {
                 ` : ''}
 
             </div>
+            `}
 
             <!-- Ticket Visualization Section -->
+            ${hasExternalTicketManager ? '' : `
             <div id="ticket-info-panel" class="mx-3 ${this.showTicketInfo ? 'mb-3 max-h-[480px] opacity-100 translate-y-0' : 'mb-0 max-h-0 opacity-0 -translate-y-1 pointer-events-none'} overflow-hidden transition-all duration-200 ease-in-out" aria-hidden="${this.showTicketInfo ? 'false' : 'true'}">
                 <div class="p-2 bg-muted/5 rounded-lg border border-border">
                         <div id="ticket-info-header" class="flex items-center gap-2 cursor-pointer group">
@@ -2312,6 +2334,7 @@ class RightPanel {
                     </div>
                 </div>
             </div>
+            `}
 
             ${hasTickets && !hasApiKey && !this.currentTicket ? `
                 <div class="mx-3 mb-3 p-4">
@@ -2500,6 +2523,13 @@ class RightPanel {
      * Attaches event listeners to the top section elements only.
      */
     attachTopSectionEventListeners() {
+        const ticketManagerButton = document.getElementById('open-ticket-manager-btn');
+        if (ticketManagerButton) {
+            ticketManagerButton.onclick = event => {
+                this.app.openTicketManagement?.(event.currentTarget);
+            };
+        }
+
         // Toggle invitation form button
         const toggleFormBtn = document.getElementById('toggle-invitation-form-btn');
         if (toggleFormBtn) {
