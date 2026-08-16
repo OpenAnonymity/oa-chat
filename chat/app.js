@@ -315,6 +315,7 @@ class ChatApp {
         this.welcomePanelEnabled = options.welcomePanel !== false;
         this.extensionHost = new ExtensionHost();
         this.extensionSlots = this.extensionHost.slots;
+        this.ticketManagementAction = null;
 
         // Link preview state
         this.linkPreviewCard = document.getElementById('link-preview-card');
@@ -401,6 +402,31 @@ class ChatApp {
             throw error;
         }
         return Object.freeze({ publicKey: data.public_key, keyId: computedKeyId });
+
+    registerTicketManagementAction(handler) {
+        if (typeof handler !== 'function') return () => {};
+        this.ticketManagementAction = handler;
+        this.rightPanel?.renderTopSectionOnly?.();
+        return () => {
+            if (this.ticketManagementAction !== handler) return;
+            this.ticketManagementAction = null;
+            this.rightPanel?.renderTopSectionOnly?.();
+        };
+    }
+
+    hasTicketManagementAction() {
+        return typeof this.ticketManagementAction === 'function';
+    }
+
+    openTicketManagement(trigger = null) {
+        if (!this.hasTicketManagementAction()) return false;
+        try {
+            this.ticketManagementAction(trigger);
+            return true;
+        } catch (error) {
+            console.warn('Ticket management action failed:', error);
+            return false;
+        }
     }
 
     createExtensionContext() {
@@ -473,6 +499,7 @@ class ChatApp {
                 openAccount: () => this.accountModal?.open?.(),
                 closeWelcome: () => this.welcomePanel?.close?.(),
                 getAccountMenuReturnTarget: () => this.accountModal?.getAccountMenuReturnTarget?.() || null,
+                registerTicketManagement: handler => this.registerTicketManagementAction(handler),
                 showToast: (...args) => this.showToast(...args)
             })
         });

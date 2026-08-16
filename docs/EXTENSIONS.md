@@ -78,6 +78,11 @@ return aggregate counts or the intentionally shareable split code/link, never
 wallet ticket material, account credentials, billing identifiers, or inference
 content.
 
+`context.ui.registerTicketManagement(handler)` lets a downstream membership
+surface replace the standalone ticket-code controls in the right panel with one
+compact ticket-count button. The handler receives that button as the dialog's
+focus-return target. Unmounting the extension restores the standalone controls,
+so code redemption remains available in public builds with no extension.
 
 Extensions must not import oa-chat internals under `components/`, `services/`,
 `domain/`, `application/`, or `ui/`. An extension failure is isolated and does

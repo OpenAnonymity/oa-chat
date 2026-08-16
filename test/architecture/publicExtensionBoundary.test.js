@@ -38,6 +38,7 @@ test('commercial extensions receive redacted ticket-count updates without wallet
     assert.match(context, /if \(!active \|\| !ready\) return/);
     assert.match(context, /getMembershipTicketToolsSnapshot/);
     assert.match(context, /toExtensionTicketSnapshot/);
+    assert.match(context, /registerTicketManagement/);
     assert.doesNotMatch(context, /getTickets\(|peekTicket|finalized_ticket|signature|nonce/);
 });
 

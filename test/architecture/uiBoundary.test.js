@@ -769,6 +769,16 @@ test('right panel shows lane-scoped ephemeral keys for Parallel and Council', ()
     assert.equal(appSource.includes('this.rightPanel?.onSessionChange?.(null);'), true);
 });
 
+test('right panel can reach extension-owned ticket management through its narrowed facade', () => {
+    const appInterfaceSource = read('chat/ui/appInterface.js');
+    const rightPanelSource = read('chat/components/RightPanel.js');
+
+    assert.equal(appInterfaceSource.includes("'hasTicketManagementAction'"), true);
+    assert.equal(appInterfaceSource.includes("'openTicketManagement'"), true);
+    assert.equal(rightPanelSource.includes('this.app.hasTicketManagementAction?.()'), true);
+    assert.equal(rightPanelSource.includes('this.app.openTicketManagement?.(event.currentTarget)'), true);
+});
+
 test('completed assistant content uses shared markdown finalization path', () => {
     const source = read('chat/components/ChatArea.js');
     const appSource = read('chat/app.js');
