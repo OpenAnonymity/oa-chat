@@ -4,6 +4,19 @@ import test from 'node:test';
 import { chatDB } from '../../chat/db.js';
 import syncService from '../../chat/services/encryptedSyncService.js';
 
+test('an absent persisted scope is the anonymous scope', async () => {
+    const originalGetSetting = chatDB.getSetting;
+    chatDB.getSetting = async () => undefined;
+    syncService.setLocalAccountScope(null);
+
+    try {
+        assert.equal(await syncService.assertAccountDataAccess(), null);
+    } finally {
+        chatDB.getSetting = originalGetSetting;
+        syncService.setLocalAccountScope(null);
+    }
+});
+
 test('account scopes do not carry tickets between SSO accounts', async () => {
     const originalGetSetting = chatDB.getSetting;
     const originalSaveSetting = chatDB.saveSetting;

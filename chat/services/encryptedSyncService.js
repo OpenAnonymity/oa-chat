@@ -300,9 +300,9 @@ class SyncService {
     }
 
     async assertAccountDataAccess() {
-        const persistedAccountId = await chatDB.getSetting(
-            SYNC_ACCOUNT_SCOPE_KEY
-        );
+        const persistedAccountId = (
+            await chatDB.getSetting(SYNC_ACCOUNT_SCOPE_KEY)
+        ) || null;
         const localAccountId = this.localScopeAccountId;
         if (persistedAccountId !== localAccountId) {
             throw new Error('Account data scope changed in another tab');

@@ -94,6 +94,9 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     requires verified unlock, scope activation, and the first encrypted ticket
     sync. This prevents checkout recovery or automatic refills from acting on a
     transient zero balance.
+  - The account-data guard canonicalizes a missing persisted scope to the
+    anonymous `null` scope. It still rejects every real account mismatch while
+    allowing a clean anonymous wallet to accept prepared tickets.
   - A commercial extension can register one compact right-panel ticket-count
     action that opens Membership. While registered, the right panel omits its
     ticket-code controls but keeps a collapsed question-mark explanation of
