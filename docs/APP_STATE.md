@@ -396,6 +396,15 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   as Llama, Gemini, Claude, or Nemotron; bare names should fall back to neutral
   initials when catalog metadata is unavailable.
 
+- 2026-08-16: Ticket-code share links stay within their issuing environment.
+  - Ticket codes are one-time and environment-scoped, so the sender's current
+    origin is retained instead of hard-coding the production chat host.
+  - Commercial/preview chat links use `/chat/?tickets=<code>`; root-mounted
+    public chat links use `/?tickets=<code>`. This keeps Sandbox codes on the
+    Sandbox backend and preserves automatic recipient redemption.
+  - A code that was already consumed is reported separately from a code that
+    is expired, missing, or belongs to a different OA environment.
+
 - 2026-08-16: The full signed-in identity row opens the account action menu.
   - Clicking either the email/avatar row or its gear opens the same Account,
     extension-action, and Log out menu; signed-out clicks still open Account.

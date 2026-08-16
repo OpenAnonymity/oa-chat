@@ -52,6 +52,40 @@ test('membership share reuses split behavior and returns only the share result',
     await assert.rejects(() => panel.splitTicketsForMembership(3), /at most 2 tickets/);
 });
 
+test('ticket share links stay on the environment and app path that issued them', () => {
+    const panel = createPanel();
+    delete panel.getTicketCodeShareUrl;
+    const code = 'A'.repeat(24);
+
+    assert.equal(
+        panel.getTicketCodeShareUrl(code, {
+            origin: 'https://oa-billing-demo.vercel.app',
+            pathname: '/chat/'
+        }),
+        `https://oa-billing-demo.vercel.app/chat/?tickets=${code}`
+    );
+    assert.equal(
+        panel.getTicketCodeShareUrl(code, {
+            origin: 'https://chat.openanonymity.ai',
+            pathname: '/'
+        }),
+        `https://chat.openanonymity.ai/?tickets=${code}`
+    );
+});
+
+test('ticket-code redemption errors distinguish used and wrong-environment codes', () => {
+    const panel = createPanel();
+
+    assert.equal(
+        panel.getTicketCodeRegistrationError(new Error('Code already used')),
+        'This ticket code was already redeemed.'
+    );
+    assert.match(
+        panel.getTicketCodeRegistrationError(new Error('Code not found or expired')),
+        /different OA environment/
+    );
+});
+
 test('right panel renders ticket transfer controls only through Membership', () => {
     const source = fs.readFileSync('chat/components/RightPanel.js', 'utf8');
     assert.match(source, /const showLegacyTicketTools = false/);
