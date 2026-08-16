@@ -18,6 +18,7 @@ import {
     augmentQueryAdaptive as runMemoryAugmentQueryAdaptive,
     CONFIDENTIAL_KEY_TICKETS,
     ensureMemoryKey,
+    hasValidMemoryKey,
     ingestMessages as ingestMemoryMessages,
     invalidateMemoryKey,
     isMemoryAuthError,
@@ -57,6 +58,7 @@ import {
     normalizeQuickAskSelection
 } from './domain/quickAsk.js';
 import { normalizePendingPhase as normalizeStreamingPendingPhase } from './domain/streamingState.js';
+import { buildTurnTicketBudget } from './domain/turnTicketBudget.js';
 import {
     filterDisabledModels as filterDisabledModelsValue,
     getFallbackModelEntry as getFallbackModelEntryValue,
@@ -3960,6 +3962,74 @@ class ChatApp {
         return getTicketCost(modelId, reasoningEnabled);
     }
 
+    async getFreshInferenceTicketRequirement(session) {
+        if (!session) return { tickets: 0, label: 'the selected model' };
+
+        if (!Array.isArray(this.state.models) || this.state.models.length === 0) {
+            try {
+                await this.loadModels();
+            } catch (error) {
+                console.warn('Unable to load models for ticket preflight:', error);
+                return { tickets: 0, label: 'the selected model' };
+            }
+        }
+
+        if (this.isCouncilModeActive(session) && this.councilController) {
+            const entries = this.councilController.resolveModelEntries(session);
+            const normalizedConfig = normalizeCouncilConfig(
+                session.councilConfig,
+                session.model || entries[0]?.name || null
+            );
+            const synthesisEntry = normalizedConfig.outputMode === COUNCIL_OUTPUT_SYNTHESIS
+                ? this.councilController.resolveSynthesisEntry(session, entries)
+                : null;
+            const accessEntries = synthesisEntry ? [...entries, synthesisEntry] : entries;
+            return {
+                tickets: this.councilController.calculateFreshTicketRequirement(session, accessEntries),
+                label: accessEntries.length > 1 ? 'the selected models' : (accessEntries[0]?.name || 'the selected model')
+            };
+        }
+
+        const hasAccessToken = !!inferenceService.getAccessToken(session);
+        if (hasAccessToken && !inferenceService.isAccessExpired(session)) {
+            return { tickets: 0, label: session.model || 'the selected model' };
+        }
+
+        const modelName = this.normalizeModelName(session.model)
+            || session.model
+            || inferenceService.getDefaultModelName(session);
+        const modelEntry = this.state.models.find(model => model.name === modelName)
+            || this.state.models.find(model => model.id === modelName)
+            || this.getFallbackModelEntry(session);
+
+        return {
+            tickets: modelEntry ? this.getTicketCost(modelEntry.id, this.reasoningEnabled) : 0,
+            label: modelEntry?.name || modelName || 'the selected model'
+        };
+    }
+
+    async preflightTurnTicketBudget(session, content) {
+        const memoryTickets = this.memoryFeatureEnabled
+            && this.memoryMode
+            && Boolean(content)
+            && !hasValidMemoryKey(session)
+            ? CONFIDENTIAL_KEY_TICKETS
+            : 0;
+        const inference = await this.getFreshInferenceTicketRequirement(session);
+        const budget = buildTurnTicketBudget({
+            availableTickets: ticketClient.getTicketCount(),
+            inferenceTickets: inference.tickets,
+            memoryTickets,
+            modelLabel: inference.label
+        });
+
+        if (budget.sufficient) return true;
+
+        this.showToast(budget.message, 'error', 7000);
+        this.floatingPanel?.showMessage?.(budget.message, 'error', 7000);
+        return false;
+    }
+
     async refreshAccessAfterCreditExhaustion(session, { typingId = null } = {}) {
         if (!session) throw new Error('No active session found.');
 
@@ -5548,12 +5618,15 @@ class ChatApp {
         // Check if current session is already streaming
         const streamingState = this.getSessionStreamingState(session.id);
         if (streamingState.isStreaming) return;
-        this.reserveAccessAcquisitionHandoff(session);
-        this.chatArea?.closeQuickAskWindow?.();
 
         // Get the last user message to anchor during regeneration
         const messages = await chatDB.getSessionMessages(session.id);
         const lastUserMessage = [...messages].reverse().find(m => m.role === 'user');
+        const regenerationContent = this.getMessageTextContent(lastUserMessage?.content).trim();
+        if (!await this.preflightTurnTicketBudget(session, regenerationContent)) return;
+
+        this.reserveAccessAcquisitionHandoff(session);
+        this.chatArea?.closeQuickAskWindow?.();
 
         // Create abort controller for this stream
         const abortController = new AbortController();
@@ -6156,6 +6229,12 @@ class ChatApp {
         // Check if current session is already streaming
         const streamingState = this.getSessionStreamingState(session.id);
         if (streamingState.isStreaming) return;
+
+        // Memory and model access draw from the same wallet. Check the complete
+        // turn before either path can consume a ticket, so Memory cannot spend
+        // the final ticket and leave the selected model unable to start.
+        if (!await this.preflightTurnTicketBudget(session, content)) return;
+
         this.reserveAccessAcquisitionHandoff(session);
         this.chatArea?.closeQuickAskWindow?.();
 

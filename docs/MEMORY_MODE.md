@@ -9,6 +9,10 @@ This document describes the root `oa-chat` memory-mode integration that reuses
   Chat/Parallel response-mode slider.
 - Memory mode only brings in the `augment_query` flow; it can be combined with
   either single-model Chat or Parallel/Council turns.
+- Before a send or regeneration can redeem either key, the client checks the
+  combined fresh-ticket budget for Memory and the selected model response(s).
+  If the wallet is short, neither path spends a ticket and an on-screen alert
+  explains the Memory and model portions of the requirement.
 - The global Memory feature switch can disable Memory across live retrieval,
   post-turn extraction, editor/backfill/import/export entry points, and key
   redemption.
