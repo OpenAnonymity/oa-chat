@@ -12,6 +12,7 @@ function createElement(documentImpl, options = {}) {
         children: options.children || [],
         classList: { add() {}, remove() {} },
         setAttribute(name, value) { attributes.set(name, String(value)); },
+        removeAttribute(name) { attributes.delete(name); },
         getAttribute(name) { return attributes.get(name) ?? null; },
         focus() {
             this.focusCount += 1;
@@ -87,13 +88,26 @@ test('signed-in account footer exposes an accessible keyboard settings menu', ()
     try {
         assert.equal(label.textContent, 'member@example.com');
         assert.equal(settings.hidden, false);
-        assert.equal(modal.getAccountMenuReturnTarget(), settings);
+        assert.equal(modal.getAccountMenuReturnTarget(), tab);
+
+        tab.onclick();
+        assert.equal(menu.hidden, false);
+        assert.equal(tab.getAttribute('aria-expanded'), 'true');
+        assert.equal(accountItem.focusCount, 1);
+        assert.deepEqual(refreshedSlots, [SLOT_NAMES.ACCOUNT_MENU_ACTIONS]);
+
+        menu.onkeydown({ key: 'Escape', target: accountItem, preventDefault() {} });
+        assert.equal(menu.hidden, true);
+        assert.equal(tab.focusCount, 1);
 
         settings.onclick();
         assert.equal(menu.hidden, false);
         assert.equal(settings.getAttribute('aria-expanded'), 'true');
-        assert.equal(accountItem.focusCount, 1);
-        assert.deepEqual(refreshedSlots, [SLOT_NAMES.ACCOUNT_MENU_ACTIONS]);
+        assert.equal(accountItem.focusCount, 2);
+        assert.deepEqual(refreshedSlots, [
+            SLOT_NAMES.ACCOUNT_MENU_ACTIONS,
+            SLOT_NAMES.ACCOUNT_MENU_ACTIONS
+        ]);
 
         menu.onkeydown({ key: 'ArrowDown', target: accountItem, preventDefault() {} });
         assert.equal(membershipItem.focusCount, 1);

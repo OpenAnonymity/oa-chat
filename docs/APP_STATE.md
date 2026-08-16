@@ -396,6 +396,13 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   as Llama, Gemini, Claude, or Nemotron; bare names should fall back to neutral
   initials when catalog metadata is unavailable.
 
+- 2026-08-16: The full signed-in identity row opens the account action menu.
+  - Clicking either the email/avatar row or its gear opens the same Account,
+    extension-action, and Log out menu; signed-out clicks still open Account.
+  - Focus returns to whichever control opened the menu, and the identity row
+    exposes menu semantics only while a verified, unlocked account is active.
+
+
 - 2026-08-07: Google is the only supported SSO provider.
   - The account UI and client account state no longer expose GitHub sign-in,
     GitHub-linked flags, or GitHub compatibility wrappers.
