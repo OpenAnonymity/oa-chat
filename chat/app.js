@@ -368,7 +368,20 @@ class ChatApp {
                 resolveAuthContext: () => this.resolveExtensionAuthContext()
             }),
             tickets: Object.freeze({
-                prepareEntitlementBatch: (options) => prepareEntitlementBatch(options)
+                prepareEntitlementBatch: (options) => prepareEntitlementBatch(options),
+                getToolsSnapshot: () => this.rightPanel?.getMembershipTicketToolsSnapshot?.() ||
+                    Object.freeze({ ticketCount: 0, maxShareCount: 0, busy: false }),
+                importTickets: (file) => this.rightPanel?.handleImportTickets?.(
+                    file,
+                    null,
+                    { throwOnError: true }
+                ),
+                exportTickets: () => this.rightPanel?.handleExportTickets?.({ throwOnError: true }),
+                shareTickets: (count) => this.rightPanel?.splitTicketsForMembership?.(count),
+                redeemAccessCode: (code, onProgress) => this.rightPanel?.handleRegister?.(
+                    this.rightPanel.normalizeInvitationCode(code),
+                    { throwOnError: true, onProgress }
+                )
             }),
             ui: Object.freeze({
                 openAccount: () => this.accountModal?.open?.(),

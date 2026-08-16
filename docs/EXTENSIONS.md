@@ -50,11 +50,19 @@ menu-item label and destination. A dialog opened from this slot should use
 the menu itself closes after selection. The legacy `sidebar.accountActions` and
 `account.commercial` slots remain supported for compatibility.
 
-The context also provides narrow account, entitlement-ticket, and UI
+The context also provides narrow account, entitlement-ticket, ticket-tool, and UI
 capabilities. `account.getSnapshot()` exposes only `isReady`, `accountId`,
 `sessionVerified`, and `status`; it never exposes credentials or recovery
 material. Calling `tickets.prepareEntitlementBatch()` without a `ticketCount`
 only resumes an already-saved preparation for that scope.
+
+Commercial membership surfaces may call the public ticket-tool capabilities
+`getToolsSnapshot`, `importTickets`, `exportTickets`, `shareTickets`, and
+`redeemAccessCode`. These reuse the browser-wallet operations already used by
+the standalone UI. Snapshots expose counts and busy state only; operations
+return aggregate counts or the intentionally shareable split code/link, never
+wallet ticket material, account credentials, billing identifiers, or inference
+content.
 
 Extensions must not import files under `components/`, `services/`, `domain/`,
 or `application/`. Those modules are internal and may change without an
