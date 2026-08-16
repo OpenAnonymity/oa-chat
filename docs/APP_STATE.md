@@ -93,6 +93,9 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     ticket-code and ticket-explanation controls; Membership supplies Import,
     Export, Share, and account-free access-code redemption in one place.
     Standalone public builds still render their original access-code controls.
+  - The compact ticket launcher's icon and label share the same left edge as
+    the Ephemeral Access Key heading below it; avoid adding nested horizontal
+    padding to the launcher.
   - Export remains a move operation and keeps the public confirmation that
     clears the exported local wallet to prevent double spending.
 
