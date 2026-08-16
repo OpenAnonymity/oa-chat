@@ -10,7 +10,6 @@ import { getActivityDescription, getActivityIcon, getStatusDotClass, formatTimes
 import { getTicketCost } from '../services/modelTiers.js';
 import { exportTickets } from '../services/globalExport.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
-import { SHARE_BASE_URL } from '../config.js';
 import SmoothProgress from '../services/smoothProgress.js';
 
 // Layout constant for toolbar overlay prediction
@@ -279,27 +278,36 @@ class RightPanel {
         });
     }
 
-    getTicketShareBaseUrl() {
-        const configuredBase = String(SHARE_BASE_URL || '').trim();
-        const fallbackBase = String(window.location.origin || '').trim();
-        const candidate = configuredBase || fallbackBase;
-        if (!candidate) return '';
+    getTicketCodeShareUrl(code, location = window.location) {
+        const normalizedCode = this.normalizeInvitationCode(code);
+        if (normalizedCode.length !== 24) return '';
 
-        const baseWithProtocol = /^https?:\/\//i.test(candidate) ? candidate : `https://${candidate}`;
         try {
-            const parsed = new URL(baseWithProtocol);
-            return `${parsed.protocol}//${parsed.host}`;
+            const origin = String(location?.origin || '').trim();
+            if (!origin) return '';
+
+            // One-time ticket codes must be redeemed in the environment that
+            // issued them. Commercial and preview builds mount chat at /chat/;
+            // the public client is also supported at the origin root.
+            const pathname = String(location?.pathname || '/');
+            const appPath = /^\/chat(?:\/|$)/i.test(pathname) ? '/chat/' : '/';
+            const url = new URL(appPath, origin);
+            url.searchParams.set('tickets', normalizedCode);
+            return url.toString();
         } catch {
             return '';
         }
     }
 
-    getTicketCodeShareUrl(code) {
-        const normalizedCode = this.normalizeInvitationCode(code);
-        if (normalizedCode.length !== 24) return '';
-        const baseUrl = this.getTicketShareBaseUrl();
-        if (!baseUrl) return '';
-        return `${baseUrl}/tickets/${encodeURIComponent(normalizedCode)}`;
+    getTicketCodeRegistrationError(error) {
+        const message = String(error?.message || '').trim();
+        if (/already used|already redeemed/i.test(message)) {
+            return 'This ticket code was already redeemed.';
+        }
+        if (/not found|expired/i.test(message)) {
+            return 'This ticket code is unavailable. It may have expired or come from a different OA environment.';
+        }
+        return message || 'Unable to redeem this ticket code.';
     }
 
     escapeHtml(text) {
@@ -676,10 +684,11 @@ class RightPanel {
             }, 2000);
             return Object.freeze({ ticketCount: this.ticketCount });
         } catch (error) {
-            this.registrationError = error.message;
+            console.warn('Ticket code redemption failed:', error);
+            this.registrationError = this.getTicketCodeRegistrationError(error);
             this.smoothProgress.stop();
             this.registrationProgress = null;
-            if (options.throwOnError) throw error;
+            if (options.throwOnError) throw new Error(this.registrationError);
             return null;
         } finally {
             this.isRegistering = false;
