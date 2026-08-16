@@ -49,6 +49,12 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
+- 2026-08-16: The full signed-in identity row opens the account action menu.
+  - Clicking either the email/avatar row or its gear opens the same Account,
+    extension-action, and Log out menu; signed-out clicks still open Account.
+  - Focus returns to whichever control opened the menu, and the identity row
+    exposes menu semantics only while a verified, unlocked account is active.
+
 - 2026-08-08: Local oa-org inference has an explicit loopback-only verifier bypass.
   - It activates only when both the oa-chat page and configured oa-org URL use
     exact loopback hostnames (`localhost`, `127.0.0.1`, or IPv6 loopback) over

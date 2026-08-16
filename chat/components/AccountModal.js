@@ -46,6 +46,7 @@ class AccountModal {
         this.returnFocusEl = null;
         this.escapeHandler = null;
         this.menuOpen = false;
+        this.accountMenuTrigger = null;
         this.onDocumentPointerDown = event => {
             const nav = document.getElementById('account-nav');
             if (this.menuOpen && !nav?.contains(event.target)) this.closeAccountMenu();
@@ -76,13 +77,28 @@ class AccountModal {
         const menu = document.getElementById('account-settings-menu');
         const accountItem = document.getElementById('account-security-menu-item');
         const logoutItem = document.getElementById('account-logout-menu-item');
-        if (tabBtn) tabBtn.onclick = () => this.isOpen ? this.close() : this.open(tabBtn);
+        if (tabBtn) {
+            tabBtn.onclick = () => {
+                if (this.isAccountMenuAvailable()) {
+                    this.menuOpen ? this.closeAccountMenu(true) : this.openAccountMenu(tabBtn);
+                    return;
+                }
+                this.isOpen ? this.close() : this.open(tabBtn);
+            };
+            tabBtn.onkeydown = event => {
+                if (!this.isAccountMenuAvailable()) return;
+                if (['ArrowDown', 'Enter', ' '].includes(event.key)) {
+                    event.preventDefault();
+                    this.openAccountMenu(tabBtn);
+                }
+            };
+        }
         if (settingsBtn) {
-            settingsBtn.onclick = () => this.menuOpen ? this.closeAccountMenu(true) : this.openAccountMenu();
+            settingsBtn.onclick = () => this.menuOpen ? this.closeAccountMenu(true) : this.openAccountMenu(settingsBtn);
             settingsBtn.onkeydown = event => {
                 if (['ArrowDown', 'Enter', ' '].includes(event.key)) {
                     event.preventDefault();
-                    this.openAccountMenu();
+                    this.openAccountMenu(settingsBtn);
                 }
             };
         }
@@ -108,33 +124,46 @@ class AccountModal {
         return menu ? [...menu.querySelectorAll('[role="menuitem"]:not([disabled])')] : [];
     }
 
-    getAccountMenuReturnTarget() {
-        const settingsBtn = document.getElementById('account-settings-btn');
-        return settingsBtn && !settingsBtn.hidden
-            ? settingsBtn
-            : document.getElementById('account-tab-btn');
+    isAccountMenuAvailable() {
+        return Boolean(
+            this.accountState?.accountId &&
+            this.accountState?.sessionVerified &&
+            this.accountState?.status === 'unlocked'
+        );
     }
 
-    openAccountMenu() {
+    getAccountMenuReturnTarget() {
+        const trigger = this.accountMenuTrigger;
+        if (trigger && !trigger.hidden) return trigger;
+        return document.getElementById('account-tab-btn');
+    }
+
+    openAccountMenu(trigger = null) {
+        const tabBtn = document.getElementById('account-tab-btn');
         const settingsBtn = document.getElementById('account-settings-btn');
         const menu = document.getElementById('account-settings-menu');
-        const isLoggedIn = this.accountState?.accountId && this.accountState?.sessionVerified;
-        if (!settingsBtn || !menu || !isLoggedIn) return;
+        if (!settingsBtn || !menu || !this.isAccountMenuAvailable()) return;
         this.close();
         this.menuOpen = true;
+        this.accountMenuTrigger = trigger || tabBtn || settingsBtn;
         menu.hidden = false;
         settingsBtn.setAttribute('aria-expanded', 'true');
+        tabBtn?.setAttribute('aria-expanded', 'true');
         this.app.extensionSlots?.refresh?.(SLOT_NAMES.ACCOUNT_MENU_ACTIONS);
         this.getAccountMenuItems()[0]?.focus();
     }
 
     closeAccountMenu(restoreFocus = false) {
         const settingsBtn = document.getElementById('account-settings-btn');
+        const tabBtn = document.getElementById('account-tab-btn');
         const menu = document.getElementById('account-settings-menu');
+        const returnTarget = this.accountMenuTrigger || settingsBtn || tabBtn;
         this.menuOpen = false;
         if (menu) menu.hidden = true;
         settingsBtn?.setAttribute('aria-expanded', 'false');
-        if (restoreFocus) settingsBtn?.focus();
+        tabBtn?.setAttribute('aria-expanded', 'false');
+        this.accountMenuTrigger = null;
+        if (restoreFocus) returnTarget?.focus?.();
     }
 
     handleAccountMenuKeydown(event) {
@@ -175,6 +204,9 @@ class AccountModal {
             : '';
         if (identityLabel) identityLabel.textContent = isLoggedIn && email ? email : 'Account';
         tabBtn.setAttribute('aria-label', isLoggedIn && email ? `Account for ${email}` : 'Account');
+        tabBtn.setAttribute('aria-controls', isLoggedIn ? 'account-settings-menu' : 'account-modal');
+        if (isLoggedIn) tabBtn.setAttribute('aria-haspopup', 'menu');
+        else tabBtn.removeAttribute?.('aria-haspopup');
         if (settingsBtn) settingsBtn.hidden = !isLoggedIn;
         if (!isLoggedIn) this.closeAccountMenu();
     }
