@@ -422,7 +422,7 @@
         <div class="flex flex-1 min-w-0">
             <!-- Main Content Area -->
             <main class="relative flex-1 flex flex-col min-w-0 min-h-0 h-full">
-                <!-- Chat Toolbar - fixed at top, divider appears on scroll when content overlaps -->
+                <!-- Chat Toolbar - fixed at top without a separating rule -->
                 <div id="chat-toolbar" class="chat-toolbar flex-shrink-0 flex flex-nowrap items-center justify-between px-2 pt-2 pb-1">
                     <!-- Left toolbar buttons -->
                     <div class="flex items-center gap-1">
@@ -470,9 +470,6 @@
                         </button>
                     </div>
                 </div>
-                <!-- Mobile toolbar divider - separate element for reliable positioning -->
-                <div id="mobile-toolbar-divider"></div>
-
                 <!-- Status Indicator Dot (Always visible) -->
                 <!-- FEATURE DISABLED: Status indicator and activity banner - uncomment to re-enable -->
                 <!--

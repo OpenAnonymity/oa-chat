@@ -1390,12 +1390,8 @@ class ChatApp {
     }
 
     /**
-     * Updates toolbar mode and divider visibility.
-     * - Wide screens (no overlap): toolbar floats over content, no blocking
-     * - Narrow screens (overlap): toolbar blocks content, divider shows when content scrolls behind
-     */
-    /**
-     * Updates toolbar state. Can predict final width with widthDelta parameter.
+     * Updates the toolbar's floating state. Can predict final width with
+     * widthDelta without drawing a separator above the conversation.
      * @param {number} widthDelta - Optional: predicted change in main area width (negative = narrower)
      */
     updateToolbarDivider(widthDelta = 0) {
@@ -1415,25 +1411,12 @@ class ChatApp {
             return;
         }
 
-        // On mobile (< 768px), toolbar never floats - show divider when scrolled
+        // On mobile (< 768px), the toolbar never floats.
         const isMobile = window.innerWidth < 768;
-        const mobileDivider = document.getElementById('mobile-toolbar-divider');
 
         if (isMobile) {
             toolbar.classList.remove('toolbar-floating');
-            toolbar.classList.remove('toolbar-divider-visible'); // Use separate divider element on mobile
-
-            // On mobile, show divider element if user has scrolled down past threshold
-            const hasScrolled = chatArea.scrollTop > 10; // Small threshold to avoid flickering
-            if (mobileDivider) {
-                mobileDivider.style.display = hasScrolled ? 'block' : 'none';
-            }
             return;
-        }
-
-        // Hide mobile divider on desktop
-        if (mobileDivider) {
-            mobileDivider.style.display = 'none';
         }
 
         // Desktop: Check if content area overlaps with toolbar buttons
@@ -1451,20 +1434,6 @@ class ChatApp {
         const isWideScreen = sideMargin >= buttonAreaWidth;
         toolbar.classList.toggle('toolbar-wide', isWideScreen);
 
-        // Only show divider on narrow screens when content scrolls past toolbar
-        if (isWideScreen) {
-            toolbar.classList.remove('toolbar-divider-visible');
-            return;
-        }
-
-        // Narrow screen: show divider when content crosses toolbar
-        const toolbarBottom = toolbar.getBoundingClientRect().bottom;
-        const firstMessage = messagesContainer.firstElementChild;
-        const threshold = 8;
-        const contentCrossesToolbar = firstMessage &&
-            firstMessage.getBoundingClientRect().top < (toolbarBottom - threshold);
-
-        toolbar.classList.toggle('toolbar-divider-visible', contentCrossesToolbar);
     }
 
     /**
