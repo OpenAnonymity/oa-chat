@@ -498,6 +498,7 @@ class ChatApp {
             ui: Object.freeze({
                 openAccount: () => this.accountModal?.open?.(),
                 closeWelcome: () => this.welcomePanel?.close?.(),
+                closeAccount: () => this.accountModal?.handleCloseAttempt?.(),
                 getAccountMenuReturnTarget: () => this.accountModal?.getAccountMenuReturnTarget?.() || null,
                 registerTicketManagement: handler => this.registerTicketManagementAction(handler),
                 showToast: (...args) => this.showToast(...args)

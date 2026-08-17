@@ -40,6 +40,12 @@ menu-item label and destination. A dialog opened from this slot should use
 the menu itself closes after selection. The legacy `sidebar.accountActions` and
 `account.commercial` slots remain supported for compatibility.
 
+An action rendered inside the legacy `account.commercial` slot must not stack a
+second modal over Account. Capture `context.ui.getAccountMenuReturnTarget()`,
+call `context.ui.closeAccount()`, and only then open the extension-owned dialog
+with the captured element as its focus-return target. The close request honors
+Account's protected recovery and authorization steps.
+
 The context also provides narrow account, entitlement-ticket, ticket-tool, and UI
 capabilities. `account.getSnapshot()` exposes only `isReady`, `accountId`,
 `sessionVerified`, `accountScopeReady`, `ticketSyncReady`, and `status`; it
