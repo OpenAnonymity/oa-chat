@@ -11,6 +11,7 @@ import { getTicketCost } from '../services/modelTiers.js';
 import { exportTickets } from '../services/globalExport.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import SmoothProgress from '../services/smoothProgress.js';
+import { SLOT_NAMES } from '../extensions/extensionHost.js';
 
 // Layout constant for toolbar overlay prediction
 const RIGHT_PANEL_WIDTH = 288; // 18rem = 288px
@@ -2078,6 +2079,7 @@ class RightPanel {
                             Inference tickets provide unlinkable access to frontier AI models. Your device redeems them for a short-lived API key, usable until its time or credit limit is reached. Blind signatures prevent redeemed tickets from being linked to your purchase, and your queries go directly to the model provider—not OA.
                         </p>
                     </div>
+                    <div data-oa-extension-slot="${SLOT_NAMES.RIGHT_PANEL_TICKET_STATUS}" hidden></div>
                 </div>
                 ` : `
                 <!-- Invitation Code Section -->
@@ -2853,6 +2855,7 @@ class RightPanel {
 
         // Generate and update only the top section HTML
         topSection.innerHTML = this.generateTopSectionHTML();
+        this.app.extensionSlots?.refresh?.(SLOT_NAMES.RIGHT_PANEL_TICKET_STATUS);
 
         // Re-attach event listeners for the top section only
         this.attachTopSectionEventListeners();
@@ -3086,6 +3089,8 @@ class RightPanel {
             </div>
             </div>
         `;
+
+        this.app.extensionSlots?.refresh?.(SLOT_NAMES.RIGHT_PANEL_TICKET_STATUS);
 
         // Attach event listeners
         this.attachEventListeners();

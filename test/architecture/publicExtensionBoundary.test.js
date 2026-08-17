@@ -70,6 +70,15 @@ test('empty extension hosts have no visible footprint', () => {
     assert.match(styles, /\[data-oa-extension-slot\]\[hidden\]\s*\{\s*display:\s*none\s*!important/);
 });
 
+test('the right-panel ticket status is an invisible generic extension slot', () => {
+    const host = read('chat/extensions/extensionHost.js');
+    const panel = read('chat/components/RightPanel.js');
+    assert.match(host, /RIGHT_PANEL_TICKET_STATUS:\s*'rightPanel\.ticketStatus'/);
+    assert.match(panel, /data-oa-extension-slot="\$\{SLOT_NAMES\.RIGHT_PANEL_TICKET_STATUS\}" hidden/);
+    assert.match(panel, /extensionSlots\?\.refresh\?\.\(SLOT_NAMES\.RIGHT_PANEL_TICKET_STATUS\)/);
+    assert.doesNotMatch(panel, /Payment received|private tickets ready|Checkout canceled/);
+});
+
 test('commercial account slot is omitted from account creation and recovery flows', () => {
     const source = read('chat/components/AccountModal.js');
     assert.match(source, /if \(dialog && !isCreationFlow && !isRecoveryFlow\)/);

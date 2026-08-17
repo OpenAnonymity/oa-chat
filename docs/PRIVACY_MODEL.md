@@ -181,6 +181,15 @@ See
 [Google Sign-In](GOOGLE_SIGN_IN.md)
 for implementation details.
 
+Commercial UI extensions receive only redacted aggregate ticket state through
+the public extension context: local count, maximum share count, busy/readiness,
+and preparation progress supplied by the commercial flow itself. The generic
+right-panel ticket-status slot is a DOM placement seam, not a wallet or billing
+API. It never exposes finalized tickets, blind-signature material, access codes,
+account credentials, Checkout session IDs, claim references, prompts, or model
+responses. Signed-in ticket snapshots remain unavailable until verified unlock,
+account-scope activation, and the first encrypted wallet sync complete.
+
 ## What Each Component Can and Cannot See
 
 
