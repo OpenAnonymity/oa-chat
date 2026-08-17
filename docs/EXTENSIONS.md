@@ -72,8 +72,8 @@ only resumes an already-saved preparation for that scope.
 
 Commercial membership surfaces may call the public ticket-tool capabilities
 `getToolsSnapshot`, `subscribe`, `importTickets`, `exportTickets`, `shareTickets`,
-and `redeemAccessCode`. `subscribe` emits the same redacted count/busy snapshot
-after ticket storage is ready and after local wallet updates; it never emits the
+`redeemAccessCode`, and `registerShortageHandler`. `subscribe` emits the same
+redacted count/busy snapshot after ticket storage is ready and after local wallet updates; it never emits the
 temporary zero used while IndexedDB is loading. It is the supported seam for a
 downstream opt-in refill experience to notice a transition to zero. For a
 signed-in account, `readyForAutomaticBilling` remains false until initial
@@ -83,6 +83,17 @@ the standalone UI. Snapshots expose counts and busy state only; operations
 return aggregate counts or the intentionally shareable split code/link, never
 wallet ticket material, account credentials, billing identifiers, or inference
 content.
+
+`tickets.registerShortageHandler(handler)` is called only after a user tries to
+send or regenerate a request whose synchronized wallet balance is below the
+complete turn budget. Its frozen payload contains only `availableTickets` and
+`requiredTickets`; it excludes the prompt, model identities, Memory context,
+session identifiers, and account data. A commercial extension may use this
+user-initiated signal to start a previously consented refill or present an
+explicit purchase surface. The core request remains unsent, so a refill or
+purchase cannot duplicate an inference request.
+Signed-in core preflight does not call this handler until the account is
+verified, unlocked, scope-ready, and ticket-synchronized.
 
 `context.ui.registerTicketManagement(handler)` lets a downstream membership
 surface replace the standalone ticket-code controls in the right panel with one

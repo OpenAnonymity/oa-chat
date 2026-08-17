@@ -62,6 +62,7 @@ import {
 import { normalizePendingPhase as normalizeStreamingPendingPhase } from './domain/streamingState.js';
 import { buildTurnTicketBudget } from './domain/turnTicketBudget.js';
 import { toExtensionTicketSnapshot } from './extensions/extensionTicketSnapshot.js';
+import { toExtensionTicketShortage } from './extensions/extensionTicketShortage.js';
 import {
     filterDisabledModels as filterDisabledModelsValue,
     getFallbackModelEntry as getFallbackModelEntryValue,
@@ -316,6 +317,7 @@ class ChatApp {
         this.extensionHost = new ExtensionHost();
         this.extensionSlots = this.extensionHost.slots;
         this.ticketManagementAction = null;
+        this.ticketShortageHandler = null;
 
         // Link preview state
         this.linkPreviewCard = document.getElementById('link-preview-card');
@@ -429,6 +431,25 @@ class ChatApp {
         }
     }
 
+    registerTicketShortageHandler(handler) {
+        if (typeof handler !== 'function') return () => {};
+        this.ticketShortageHandler = handler;
+        return () => {
+            if (this.ticketShortageHandler === handler) this.ticketShortageHandler = null;
+        };
+    }
+
+    async notifyTicketShortage(budget) {
+        if (typeof this.ticketShortageHandler !== 'function') return false;
+        try {
+            await this.ticketShortageHandler(toExtensionTicketShortage(budget));
+            return true;
+        } catch (error) {
+            console.warn('Ticket shortage handler failed:', error);
+            return false;
+        }
+    }
+
     createExtensionContext() {
         const getAccountSnapshot = () => toExtensionAccountSnapshot(accountService.getState());
         return Object.freeze({
@@ -493,7 +514,8 @@ class ChatApp {
                 redeemAccessCode: (code, onProgress) => this.rightPanel?.handleRegister?.(
                     this.rightPanel.normalizeInvitationCode(code),
                     { throwOnError: true, onProgress }
-                )
+                ),
+                registerShortageHandler: handler => this.registerTicketShortageHandler(handler)
             }),
             ui: Object.freeze({
                 openAccount: () => this.accountModal?.open?.(),
@@ -4197,8 +4219,24 @@ class ChatApp {
 
         if (budget.sufficient) return true;
 
+        const accountState = accountService.getState();
+        if (accountState?.accountId && (
+            accountState.sessionVerified !== true ||
+            accountState.status !== 'unlocked' ||
+            accountState.accountScopeReady !== true ||
+            accountState.ticketSyncReady !== true
+        )) {
+            const message = accountState.status === 'unlocked'
+                ? 'Your inference tickets are still loading. Try again shortly.'
+                : 'Unlock your account to load your inference tickets.';
+            this.showToast(message, 'info', 5000);
+            this.floatingPanel?.showMessage?.(message, 'info', 5000);
+            return false;
+        }
+
         this.showToast(budget.message, 'error', 7000);
         this.floatingPanel?.showMessage?.(budget.message, 'error', 7000);
+        await this.notifyTicketShortage(budget);
         return false;
     }
 

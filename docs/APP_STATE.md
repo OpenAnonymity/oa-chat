@@ -396,6 +396,19 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   as Llama, Gemini, Claude, or Nemotron; bare names should fall back to neutral
   initials when catalog metadata is unavailable.
 
+- 2026-08-17: Insufficient-ticket preflight exposes a redacted commercial hook.
+  - After synchronized budget calculation blocks a send or regeneration,
+    `context.tickets.registerShortageHandler()` receives only aggregate
+    `availableTickets` and `requiredTickets` counts. Prompts, model identities,
+    Memory context, sessions, and account data stay inside core.
+  - The original inference request remains unsent. A commercial build may use
+    this user-initiated event to start an already-consented refill or show an
+    explicit purchase surface without risking a duplicate model request.
+  - Signed-in preflight never treats the temporary pre-sync balance as a
+    shortage. It asks the user to wait for ticket loading (or unlock) and does
+    not notify the commercial handler until account scope and ticket sync are
+    ready.
+
 - 2026-08-17: Commercial Checkout recovery can render beside the public ticket count.
   - `rightPanel.ticketStatus` is a generic extension slot below the compact
     Inference Tickets launcher. Core owns its location and reattaches mounted
