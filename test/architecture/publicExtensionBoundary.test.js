@@ -39,6 +39,8 @@ test('commercial extensions receive redacted ticket-count updates without wallet
     assert.match(context, /getMembershipTicketToolsSnapshot/);
     assert.match(context, /toExtensionTicketSnapshot/);
     assert.match(context, /registerTicketManagement/);
+    assert.match(context, /registerShortageHandler/);
+    assert.match(source, /toExtensionTicketShortage/);
     assert.match(context, /closeAccount:\s*\(\) => this\.accountModal\?\.handleCloseAttempt\?\.\(\)/);
     assert.doesNotMatch(context, /getTickets\(|peekTicket|finalized_ticket|signature|nonce/);
 });
