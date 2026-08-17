@@ -396,6 +396,17 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   as Llama, Gemini, Claude, or Nemotron; bare names should fall back to neutral
   initials when catalog metadata is unavailable.
 
+- 2026-08-17: Commercial Checkout recovery can render beside the public ticket count.
+  - `rightPanel.ticketStatus` is a generic extension slot below the compact
+    Inference Tickets launcher. Core owns its location and reattaches mounted
+    nodes after each top-section rerender; it contains no billing copy or state.
+  - The commercial extension sends only aggregate preparation progress and
+    ticket counts into its own slot node. The slot never receives ticket
+    records, billing identifiers, account credentials, or inference content.
+  - Post-sign-in plan routing must wait for verified unlock, account-scope
+    activation, the first encrypted ticket sync, and a billing-ready ticket
+    snapshot. A transient startup zero must never open Membership.
+
 - 2026-08-16: Ticket-code share links stay within their issuing environment.
   - Ticket codes are one-time and environment-scoped, so the sender's current
     origin is retained instead of hard-coding the production chat host.

@@ -5,6 +5,7 @@ export const SLOT_NAMES = Object.freeze({
     ACCOUNT_MENU_ACTIONS: 'account.menuActions',
     ACCOUNT_COMMERCIAL: 'account.commercial',
     WELCOME_ACTIONS: 'welcome.actions',
+    RIGHT_PANEL_TICKET_STATUS: 'rightPanel.ticketStatus',
     MODAL_LAYER: 'modalLayer'
 });
 
