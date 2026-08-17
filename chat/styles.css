@@ -5478,21 +5478,6 @@ html {
     white-space: nowrap;
 }
 
-.account-tab-dot {
-    position: absolute;
-    right: -1px;
-    bottom: -1px;
-    width: 6px;
-    height: 6px;
-    border: 1px solid hsl(var(--color-background));
-    border-radius: 9999px;
-    background-color: hsl(var(--color-muted-foreground));
-}
-
-.account-tab-btn[data-status="logged-in"] .account-tab-dot {
-    background-color: var(--color-status-success);
-}
-
 .account-tab-btn[data-status="logged-in"] .account-tab-avatar {
     color: hsl(var(--color-foreground));
 }

@@ -22,6 +22,7 @@ test('empty local wallets are not gated by automatic access modals', () => {
     // Removing automatic onboarding must not remove either optional access path.
     assert.equal(appSource.includes('await accountService.init()'), true);
     assert.equal(indexSource.includes('id="account-tab-btn"'), true);
+    assert.equal(indexSource.includes('account-tab-dot'), false);
     assert.equal(accountModalSource.includes("document.getElementById('account-tab-btn')"), true);
     assert.equal(rightPanelSource.includes('this.showInvitationForm = true'), true);
     assert.equal(rightPanelSource.includes('tickets.alphaRegister(invitationCode'), true);
