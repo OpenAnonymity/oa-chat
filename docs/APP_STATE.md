@@ -114,6 +114,10 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     inference tickets. Membership supplies Import, Export, Share, and
     account-free access-code redemption in one place.
     Standalone public builds still render their original access-code controls.
+  - Signed-out commercial actions may transition from the Account dialog into
+    Membership through `context.ui.closeAccount()`. They must capture
+    `getAccountMenuReturnTarget()` first, close Account, and then open the next
+    dialog so only one modal and one keyboard focus trap are active.
   - The compact ticket launcher's icon and label share the same left edge as
     the Ephemeral Access Key heading below it; avoid adding nested horizontal
     padding to the launcher.
