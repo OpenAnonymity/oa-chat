@@ -4,12 +4,14 @@ import test from 'node:test';
 import { chatDB } from '../../chat/db.js';
 import accountService from '../../chat/services/accountService.js';
 import syncService from '../../chat/services/encryptedSyncService.js';
+import sessionService from '../../chat/services/sessionService.js';
 
 test('anonymous startup restores the anonymous wallet before billing becomes ready', async () => {
     const originals = {
         db: chatDB.db,
         init: chatDB.init,
         getSetting: chatDB.getSetting,
+        sessionInit: sessionService.init,
         deactivateAccountScope: syncService.deactivateAccountScope,
         setLocalAccountScope: syncService.setLocalAccountScope
     };
@@ -19,6 +21,7 @@ test('anonymous startup restores the anonymous wallet before billing becomes rea
     chatDB.getSetting = async key => (
         key === 'account-settings' ? null : undefined
     );
+    sessionService.init = async () => {};
     syncService.deactivateAccountScope = async accountId => {
         events.push(['deactivate', accountId]);
         assert.equal(accountService.state.isReady, false);
@@ -41,6 +44,7 @@ test('anonymous startup restores the anonymous wallet before billing becomes rea
         chatDB.db = originals.db;
         chatDB.init = originals.init;
         chatDB.getSetting = originals.getSetting;
+        sessionService.init = originals.sessionInit;
         syncService.deactivateAccountScope = originals.deactivateAccountScope;
         syncService.setLocalAccountScope = originals.setLocalAccountScope;
         accountService.state.isReady = false;
@@ -54,11 +58,13 @@ test('anonymous startup stays billing-unready when scope restoration fails', asy
         db: chatDB.db,
         init: chatDB.init,
         getSetting: chatDB.getSetting,
+        sessionInit: sessionService.init,
         deactivateAccountScope: syncService.deactivateAccountScope
     };
     chatDB.db = {};
     chatDB.init = async () => {};
     chatDB.getSetting = async () => null;
+    sessionService.init = async () => {};
     syncService.deactivateAccountScope = async () => {
         throw new Error('scope restore failed');
     };
@@ -75,6 +81,7 @@ test('anonymous startup stays billing-unready when scope restoration fails', asy
         chatDB.db = originals.db;
         chatDB.init = originals.init;
         chatDB.getSetting = originals.getSetting;
+        sessionService.init = originals.sessionInit;
         syncService.deactivateAccountScope = originals.deactivateAccountScope;
         accountService.state.isReady = false;
         accountService.state.accountId = null;

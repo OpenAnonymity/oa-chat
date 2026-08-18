@@ -28,9 +28,9 @@ Extension API version 2 supports these named slots:
 - `account.menuActions`
 - `account.commercial`
 - `welcome.actions`
+- `rightPanel.ticketStatus`
 - `modalLayer`
 
-The context exposes only narrow capabilities:
 `account.menuActions` is rendered inside the signed-in account settings menu.
 Nodes mounted there should be buttons with `role="menuitem"` and the shared
 `account-menu-item` class. The core menu owns focus movement, Escape handling,
@@ -54,8 +54,9 @@ never exposes credentials or recovery material. Calling
 only resumes an already-saved preparation for that scope.
 
 - `account.getSnapshot()` and `account.subscribe()` return `isReady`,
-  `accountId`, `sessionVerified`, and `status`; no credential, recovery, email,
-  or encryption material crosses the boundary.
+  `accountId`, `sessionVerified`, `accountScopeReady`, `ticketSyncReady`, and
+  `status`; no credential, recovery, email, or encryption material crosses the
+  boundary.
 - `account.resolveAuthContext()` returns an opaque account scope only after the
   SuperTokens session is verified.
 - `account.request()` permits only authenticated oa-org `/api/billing*` calls.
@@ -68,7 +69,8 @@ only resumes an already-saved preparation for that scope.
 - `tickets.prepareEntitlementBatch()` owns browser-side blinding, strict claim
   response validation, unblinding, durable wallet import, and crash recovery.
   Final tickets contain only ordinary ticket fields.
-- `ui` provides the supported Account, Welcome, and toast actions.
+- `ui` provides the supported Account, Welcome, ticket-management, and toast
+  actions.
 
 Commercial membership surfaces may call the public ticket-tool capabilities
 `getToolsSnapshot`, `subscribe`, `importTickets`, `exportTickets`, `shareTickets`,

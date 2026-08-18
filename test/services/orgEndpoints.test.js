@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { resolveOrgEndpoints } from '../../chat/services/orgEndpoints.js';
 
-test('local dev endpoints keep OAuth callback cookies on the API host', () => {
+test('local dev endpoints keep the OAuth callback on canonical localhost', () => {
     const localhost = resolveOrgEndpoints({
         hostname: 'localhost',
         origin: 'http://localhost:8080',
@@ -17,11 +17,11 @@ test('local dev endpoints keep OAuth callback cookies on the API host', () => {
 
     assert.deepEqual(localhost, {
         apiBase: 'http://localhost:8080',
-        authOrigin: 'http://localhost:8080'
+        authOrigin: 'http://localhost:8005'
     });
     assert.deepEqual(loopback, {
         apiBase: 'http://127.0.0.1:8080',
-        authOrigin: 'http://127.0.0.1:8080'
+        authOrigin: 'http://localhost:8005'
     });
 });
 

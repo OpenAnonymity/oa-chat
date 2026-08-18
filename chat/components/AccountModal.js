@@ -1332,7 +1332,7 @@ class AccountModal {
     destroy() {
         this.clearAnimationTimeouts();
         this.closeAccountMenu();
-        document.removeEventListener('pointerdown', this.onDocumentPointerDown);
+        document.removeEventListener?.('pointerdown', this.onDocumentPointerDown);
         if (this.accountUnsubscribe) {
             this.accountUnsubscribe();
             this.accountUnsubscribe = null;

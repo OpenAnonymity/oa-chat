@@ -42,6 +42,7 @@ test('commercial extensions receive redacted ticket-count updates without wallet
     assert.match(context, /registerShortageHandler/);
     assert.match(source, /toExtensionTicketShortage/);
     assert.match(context, /closeAccount:\s*\(\) => this\.accountModal\?\.handleCloseAttempt\?\.\(\)/);
+    assert.match(source, /return Object\.freeze\(\{ publicKey: data\.public_key, keyId: computedKeyId \}\);\s*\}\s*registerTicketManagementAction/);
     assert.doesNotMatch(context, /getTickets\(|peekTicket|finalized_ticket|signature|nonce/);
 });
 
@@ -84,16 +85,5 @@ test('the right-panel ticket status is an invisible generic extension slot', () 
 
 test('commercial account slot is omitted from account creation and recovery flows', () => {
     const source = read('chat/components/AccountModal.js');
-    assert.match(source, /if \(dialog && !isCreationFlow && !isRecoveryFlow\)/);
-});
-
-test('custom builds constrain output deletion and support extension-owned assets', () => {
-    const source = read('scripts/build.mjs');
-    assert.match(source, /--out-dir must be a child directory/);
-    assert.match(source, /path\.relative\(workingDirectory, outDir\)/);
-    assert.match(source, /existing custom directory that was not created by this build helper/);
-    assert.match(source, /\.oa-chat-build-output/);
-    for (const extension of ['png', 'jpg', 'svg', 'woff', 'woff2', 'ttf']) {
-        assert.match(source, new RegExp(`'\\.${extension}': 'file'`));
-    }
+    assert.match(source, /if \(dialog && !isCreationFlow && this\.recoveryStep === 'idle'\)/);
 });

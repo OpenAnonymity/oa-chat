@@ -404,6 +404,7 @@ class ChatApp {
             throw error;
         }
         return Object.freeze({ publicKey: data.public_key, keyId: computedKeyId });
+    }
 
     registerTicketManagementAction(handler) {
         if (typeof handler !== 'function') return () => {};

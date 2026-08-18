@@ -46,6 +46,7 @@ test('membership share reuses split behavior and returns only the share result',
     assert.deepEqual(result, {
         code: 'A'.repeat(24),
         ticketsConsumed: 3,
+        expiresAt: null,
         shareUrl: `https://chat.example/tickets/${'A'.repeat(24)}`
     });
     assert.equal(panel.ticketCount, 2);
