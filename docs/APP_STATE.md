@@ -420,6 +420,12 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     activation, the first encrypted ticket sync, and a billing-ready ticket
     snapshot. A transient startup zero must never open Membership.
 
+- 2026-08-18: Submitted prompt bubbles keep the normal chat reading width.
+  - Normal, manual-wide, and Parallel/Council layouts cap user prompts at the
+    shared `44rem` reading width. Short prompts remain content-sized and
+    right-aligned; only assistant lane responses use the expanded transcript
+    width in Parallel/Council.
+
 - 2026-08-16: Ticket-code share links stay within their issuing environment.
   - Ticket codes are one-time and environment-scoped, so the sender's current
     origin is retained instead of hard-coding the production chat host.

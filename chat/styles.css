@@ -736,6 +736,7 @@ html.switching-theme *::after {
 /* Message styles */
 .message-user {
     position: relative;
+    max-width: min(100%, var(--message-reading-width, 44rem));
     background-color: hsl(var(--blue-700));
     color: hsl(var(--color-accent-primary-foreground));
     border-radius: 0.875rem;
@@ -2995,7 +2996,8 @@ textarea:focus {
 
 /* Wide mode - increases message container max-width */
 #messages-container {
-    --messages-max-width: 44rem;
+    --message-reading-width: 44rem;
+    --messages-max-width: var(--message-reading-width);
     position: relative;
     max-width: var(--messages-max-width);
     transition: max-width 0.2s ease;
