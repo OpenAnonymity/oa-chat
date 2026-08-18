@@ -522,6 +522,11 @@ test('parallel layout stays wide for transcripts and forks with council output',
         true,
         'Parallel/Council layout should stay aligned with manual wide mode width'
     );
+    assert.equal(
+        styles.includes('max-width: min(100%, var(--message-reading-width, 44rem));'),
+        true,
+        'submitted prompts should keep normal reading width in wide and Parallel layouts'
+    );
     assert.equal(appSource.includes('councilLayoutRequiresMultipleColumns(session'), true);
     assert.equal(appSource.includes("btn.setAttribute('aria-label', isWide ? 'Collapse view' : 'Expand view')"), true);
     assert.equal(
