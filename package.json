@@ -6,7 +6,7 @@
   "homepage": "https://openanonymity.ai",
   "repository": {
     "type": "git",
-    "url": "https://github.com/OpenAnonymity/oa-fastchat.git"
+    "url": "https://github.com/OpenAnonymity/oa-chat.git"
   },
   "private": true,
   "license": "MIT",
